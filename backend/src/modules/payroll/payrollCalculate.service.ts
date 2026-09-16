@@ -832,7 +832,18 @@ export async function calculatePayrollRunScoped(
               WHERE a.employee_id = e.id AND a.active_status = 1
               ORDER BY a.effective_from DESC, a.created_at DESC
               LIMIT 1))
-       JOIN salary_structure_master ss      ON ss.id = esa.structure_id
+       -- LEFT, not JOIN: an employee assigned salary directly via salary_component_assignments
+       -- (no structure template — esa.structure_id NULL) has no salary_structure_master row to
+       -- match. An INNER JOIN here silently dropped that employee from empRows entirely — not
+       -- underpaid, excluded from the run altogether — which the Step 7 salary resolution below
+       -- (scaRow-first, structure-template fallback) never got a chance to run for. Confirmed live
+       -- 2026-09-16: 104 active employees carry esa.structure_id IS NULL, 73 with a real active
+       -- salary_component_assignments row (including MAS63459/RAVIKAR MISHRA), and every one of
+       -- them eligible for the August 2026 run (by effective_from) was missing from its
+       -- salary_prep_line. ss.basic_pct/hra_pct below already tolerate NULL via the ?? 40 / ?? 20
+       -- fallback in the hasFixedComponents===false branch only, which a scaRow-resolved employee
+       -- never takes, so this changes nothing for the ~14,455 structure-based employees.
+       LEFT JOIN salary_structure_master ss ON ss.id = esa.structure_id
        LEFT JOIN process_master pm          ON pm.id = e.process_id
        LEFT JOIN branch_master bm           ON bm.id = e.branch_id
        LEFT JOIN salary_prep_line spl_existing

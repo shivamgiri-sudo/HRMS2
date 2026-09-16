@@ -794,6 +794,7 @@
     "1753_payroll_debit_account_config.sql",
     "1754_salary_transfer_batch.sql",
     "1756_bank_exception_auto_assign_event.sql",
+    "1757_roster_command_center_console_page_codes.sql",
     "1758_grn_accounts_head_approval_stage.sql",
     "1760_exit_absconding_since.sql",
     "1762_fnf_transfer_batch.sql",
@@ -813,7 +814,13 @@
     "1773_branch_wfm_role_and_page_access.sql",
     "1774_trainer_clearance_removed.sql",
     "1775_pnl_seat_billing_line.sql",
-    "1776_wfm_process_operations_access.sql"
+    "1776_wfm_process_operations_access.sql",
+    "1777_branch_head_wfm_page_access.sql",
+    "1778_attendance_lookup_branch_head_payroll_hr.sql",
+    "1779_live_monitoring_process_branch_wfm_access.sql",
+    "1780_employee_master_snapshot_salary_start_joining_month.sql",
+    "1781_roster_live_monitoring_admin_hr_regression_fix.sql",
+    "1782_notification_template_employee_identity.sql"
   ],
   "approvedDeletions": [
     {
@@ -965,7 +972,6 @@
     "1652_rename_duplicate_employees_to_db_bill_codes.sql",
     "1652_update_duplicate_employee_data.sql",
     "1653_insert_hrms_employees_to_dbbill.sql",
-    "1757_roster_command_center_console_page_codes.sql",
     "175_clean_department_master.sql",
     "1767_onfido_external_audit_add_total_columns.sql",
     "204_personal_contact_fields.sql",

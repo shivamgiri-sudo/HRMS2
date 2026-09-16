@@ -41,6 +41,23 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
 
+/**
+ * Employee Master Export, per user request 2026-09-16: every value in this report uppercase.
+ * String columns only (numbers/dates already come back as formatted strings from SQL and get
+ * uppercased along with them, harmlessly -- "01-Sep-2026" becomes "01-SEP-2026" like the rest of
+ * the row). employee_code is excluded: it is the join key employeeMaster()'s snapshot fast-path
+ * matches back against the live `employees` table (`ems.employee_code = e.employee_code`), so
+ * changing its case here would only be safe if that join were case-insensitive by collation --
+ * not worth the risk when every real employee_code in this dataset is already upper-case.
+ */
+function uppercaseDisplayValues(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    out[key] = key !== "employee_code" && typeof value === "string" ? value.toUpperCase() : value;
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // db_bill legacy-master fallback (employee-master only)
 // ---------------------------------------------------------------------------
@@ -335,8 +352,8 @@ export async function headcount(
 const SNAPSHOT_DISPLAY_COLUMNS = [
   "employee_code", "biometric_code", "employment_type", "employee_name", "father_husband_name",
   "father_husband_relation", "gender", "nominee_name", "nominee_relation", "nominee_dob",
-  "date_of_birth", "date_of_joining", "designation_name", "billable_status", "department_name",
-  "emp_for", "profile_type", "branch_name", "cost_centre_name", "qualification",
+  "date_of_birth", "date_of_joining", "joining_month", "designation_name", "billable_status",
+  "department_name", "emp_for", "profile_type", "branch_name", "cost_centre_name", "qualification",
   "qualification_details", "passed_out_year", "passed_out_state", "passed_out_city",
   "passed_out_percentage", "working_experience", "experience_years", "marital_status",
   "family_annual_income", "count_of_dependents", "reporting_manager", "reporting_manager_mobile",
@@ -344,6 +361,7 @@ const SNAPSHOT_DISPLAY_COLUMNS = [
   "permanent_pincode", "current_address_line1", "current_city", "current_state",
   "current_pincode", "contact_number", "permanent_landline", "temporary_mobile",
   "temporary_landline", "email", "document_done", "gross", "ctc_offered", "net_in_hand",
+  "salary_effective_date",
   "bank_account_number", "ifsc_code", "bank_name", "bank_branch", "passport_no", "dl_no",
   "uan_number", "epf_number", "pf_eligible", "esi_number", "esi_eligible", "entry_date",
   "status", "date_of_leaving", "left_remarks", "source_type", "source", "box_file_no",
@@ -551,6 +569,9 @@ export async function employeeMasterLive(
            lm.land_line_t AS temporary_landline,
            DATE_FORMAT(e.date_of_birth, '%d-%b-%Y') AS date_of_birth,
            DATE_FORMAT(e.date_of_joining, '%d-%b-%Y') AS date_of_joining,
+           -- Joining Month, MMM'YY (e.g. Aug'26) -- purely derived from date_of_joining, never a
+           -- separately-stored value, so it can never disagree with DOJ above.
+           DATE_FORMAT(e.date_of_joining, '%b''%y') AS joining_month,
            DATE_FORMAT(e.date_of_exit, '%d-%b-%Y') AS date_of_leaving,
            -- Tenure/AON: joined-to-(exit or today), in whole years + months. Never guessed for
            -- an employee with no joining date.
@@ -606,12 +627,24 @@ export async function employeeMasterLive(
            addr_perm.state         AS permanent_state,
            addr_perm.pincode       AS permanent_pincode,
            lm.document_done,
-           DATE_FORMAT(esa.effective_from, '%d-%b-%Y') AS salary_effective_date,
+           -- Salary Start Date: sca.effective_date first (the row the Payroll Head's own
+           -- review screen writes -- see payroll-head-review.service.ts), esa.effective_from
+           -- as the broader-coverage fallback for employees assigned before that flow existed.
+           DATE_FORMAT(COALESCE(sca.effective_date, esa.effective_from), '%d-%b-%Y') AS salary_effective_date,
            esa.ctc_annual           AS ctc_annual,
            ssm.structure_name       AS salary_structure_name,
-           COALESCE(ess.gross, e.gross_salary) AS gross,
-           COALESCE(ess.ctc_offered, ess.offered_ctc) AS ctc_offered,
-           COALESCE(ess.net_in_hand, e.net_inhand) AS net_in_hand,
+           -- Gross/CTC/NetInHand: salary_component_assignments (sca) is the table the Payroll
+           -- Head's final-salary review actually writes to (payroll-head-review.service.ts,
+           -- and the same source payrollCalculate.service.ts/running-salary.service.ts pay
+           -- from) -- monthly figures, *12 to match this report's annual convention. Falls
+           -- back to employee_salary_assignment.ctc_annual (kept in sync with sca, wider
+           -- coverage) for CTC, then to employee_salary_snapshot -- the mostly-empty, never-
+           -- updated-after-hire onboarding mirror this report used to read exclusively, which
+           -- is why a Payroll Head's post-hire revision (e.g. MAS63459, reviewed 2026-09-02)
+           -- never showed up here.
+           COALESCE(sca.gross * 12, ess.gross, e.gross_salary) AS gross,
+           COALESCE(sca.ctc * 12, esa.ctc_annual, ess.ctc_offered, ess.offered_ctc) AS ctc_offered,
+           COALESCE(sca.net_estimate * 12, ess.net_in_hand, e.net_inhand) AS net_in_hand,
            bd.bank_name             AS bank_name,
            bd.bank_branch           AS bank_branch,
            bd.ifsc_code             AS ifsc_code,
@@ -735,6 +768,15 @@ export async function employeeMasterLive(
          WHERE active_status = 1
       ) esa ON esa.employee_id = e.id AND esa.rn = 1
       LEFT JOIN salary_structure_master ssm ON ssm.id = esa.structure_id
+      -- The table payroll-head-review.service.ts actually writes final salary to (both the
+      -- initial approval and every later revision) -- see the Gross/CTC/NetInHand comment
+      -- above. Same latest-active-row shape as the esa/ess subqueries above it.
+      LEFT JOIN (
+        SELECT employee_id, gross, ctc, net_estimate, effective_date,
+               ROW_NUMBER() OVER (PARTITION BY employee_id ORDER BY effective_date DESC, assigned_at DESC, id DESC) AS rn
+          FROM salary_component_assignments
+         WHERE status = 'active'
+      ) sca ON sca.employee_id = e.id AND sca.rn = 1
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
 
@@ -792,7 +834,7 @@ export async function employeeMasterLive(
   }
 
   return {
-    rows: enriched,
+    rows: enriched.map(uppercaseDisplayValues),
     rowCount: options.includeTotal ? total : rows.length,
     isTruncated: options.includeTotal ? total > enriched.length : rows.length === options.limit,
     nextCursor,

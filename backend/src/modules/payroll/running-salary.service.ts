@@ -30,6 +30,11 @@ export async function computeRunningSalary(
   professional_tax: number;
   esic_applicable: boolean;
   gross_monthly: number;
+  // True when no Payroll-Head-approved salary_component_assignments row and no real
+  // salary_structure_component template exist for this employee, so every figure above is 0
+  // rather than a guessed CTC/12 split. Consumers should render "Unresolved — awaiting
+  // Payroll Head salary approval", never a bare 0 that reads as "on zero salary".
+  salary_unresolved: boolean;
   // ── APR provenance (display only — see the split below) ────────────────────
   apr_eligible: boolean;
   apr_verified_payable_days: number | null;
@@ -65,7 +70,16 @@ export async function computeRunningSalary(
             bm.state AS state_code
        FROM employees e
        JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
-       JOIN salary_structure_master ss     ON ss.id = esa.structure_id
+       -- LEFT, not JOIN: an employee assigned salary directly via salary_component_assignments
+       -- (esa.structure_id NULL, no structure template) has no salary_structure_master row.
+       -- An INNER JOIN here made this whole query return zero rows for that employee, so
+       -- emp came back undefined and _zeroResult() fired below regardless of the scaRow
+       -- fallback a few lines down being fully able to answer for them. Confirmed live
+       -- 2026-09-16 on MAS63459 (RAVIKAR MISHRA) -- running salary showed 0 despite an active
+       -- salary_component_assignments row (gross 54,000). ss.basic_pct/hra_pct are only read
+       -- in the hasFixedComponents===false branch below (?? 40 / ?? 20 fallback), which a
+       -- scaRow-resolved employee never reaches.
+       LEFT JOIN salary_structure_master ss ON ss.id = esa.structure_id
        LEFT JOIN branch_master bm          ON bm.id = e.branch_id
        LEFT JOIN designation_master dm     ON dm.id = e.designation_id
        LEFT JOIN department_master dp      ON dp.id = e.department_id
@@ -153,8 +167,14 @@ export async function computeRunningSalary(
   // Professional tax from slab if state is known
   const { getPtFromSlab } = await import("./payrollCalculate.service.js");
 
-  // Use fixed component sum as Gross if available, else fall back to CTC/12
-  const monthlyGross = hasFixedComponents ? fixedGross : (emp.ctc_annual / 12);
+  // Owner ruling 2026-09-16: never invent a salary figure. hasFixedComponents is true only
+  // when either salary_component_assignments (Payroll Head's own approved row) or a real
+  // salary_structure_component template resolved a value. When neither exists -- an
+  // employee still waiting on Payroll Head's salary review, e.g. a new joiner -- there is
+  // nothing approved to pay against, so gross is 0 and salaryUnresolved is surfaced rather
+  // than guessing a CTC/12-with-40/20-split figure nobody signed off on.
+  const monthlyGross = hasFixedComponents ? fixedGross : 0;
+  const salaryUnresolved = !hasFixedComponents;
 
   // Active calendar days (handling mid-month joins/exits)
   const activeCalDays = await _activeCalendarDays(employeeId, runMonth);
@@ -447,6 +467,7 @@ export async function computeRunningSalary(
     professional_tax: Math.round(earnedCalc.professional_tax * 100) / 100,
     esic_applicable: !esicOptOut && monthlyGross <= esicWageLimit,
     gross_monthly: Math.round(monthlyGross * 100) / 100,
+    salary_unresolved: salaryUnresolved,
     apr_eligible: aprEligible,
     apr_verified_payable_days: aprEligible
       ? Math.round(Math.max(0, cappedEarned - fallbackPaidDays) * 10) / 10
@@ -503,6 +524,7 @@ function _zeroResult() {
     professional_tax: 0,
     esic_applicable: false as boolean,
     gross_monthly: 0,
+    salary_unresolved: true,
     apr_eligible: false,
     apr_verified_payable_days: null as number | null,
     apr_verified_salary_till_date: null as number | null,

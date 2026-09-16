@@ -20,8 +20,8 @@ import type { ExecScope, ExecOptions } from "./executors/types.js";
 const SNAPSHOT_COLUMNS = [
   "employee_code", "biometric_code", "employment_type", "employee_name", "father_husband_name",
   "father_husband_relation", "gender", "nominee_name", "nominee_relation", "nominee_dob",
-  "date_of_birth", "date_of_joining", "designation_name", "billable_status", "department_name",
-  "emp_for", "profile_type", "branch_name", "cost_centre_name", "qualification",
+  "date_of_birth", "date_of_joining", "joining_month", "designation_name", "billable_status",
+  "department_name", "emp_for", "profile_type", "branch_name", "cost_centre_name", "qualification",
   "qualification_details", "passed_out_year", "passed_out_state", "passed_out_city",
   "passed_out_percentage", "working_experience", "experience_years", "marital_status",
   "family_annual_income", "count_of_dependents", "reporting_manager", "reporting_manager_mobile",
@@ -29,6 +29,7 @@ const SNAPSHOT_COLUMNS = [
   "permanent_pincode", "current_address_line1", "current_city", "current_state",
   "current_pincode", "contact_number", "permanent_landline", "temporary_mobile",
   "temporary_landline", "email", "document_done", "gross", "ctc_offered", "net_in_hand",
+  "salary_effective_date",
   "bank_account_number", "ifsc_code", "bank_name", "bank_branch", "passport_no", "dl_no",
   "uan_number", "epf_number", "pf_eligible", "esi_number", "esi_eligible", "entry_date",
   "status", "date_of_leaving", "left_remarks", "source_type", "source", "box_file_no",
