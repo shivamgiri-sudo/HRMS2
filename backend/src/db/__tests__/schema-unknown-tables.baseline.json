@@ -77,5 +77,11 @@
   ],
   "modules/sales-upload/sales-upload.service.ts": [
     "db_masmis"
+  ],
+  "modules/bulk-upload/bulk-upload.routes.ts": [
+    "bulk_import_queue"
+  ],
+  "workers/bulk-import.worker.ts": [
+    "bulk_import_queue"
   ]
 }
