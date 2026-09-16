@@ -94,12 +94,18 @@ async function getUsersForBranchRole(roleKey: string, branchId: string): Promise
 
 async function getUsersForGlobalRole(roleKey: string): Promise<ResolvedUser[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
+    // Owner directive (2026-09-16): never email an employee who is not active in the
+    // system. ur.active_status only says the role grant is live, not whether the person
+    // still works here — the employees join (LEFT, so a role holder with no employee
+    // record at all is not dropped) closes that gap.
     `SELECT DISTINCT ur.user_id AS userId, au.email
      FROM user_roles ur
      JOIN auth_user au ON au.id = ur.user_id
+     LEFT JOIN employees e ON e.user_id = au.id
      WHERE ur.role_key = ?
        AND ur.active_status = 1
-       AND ur.user_id IS NOT NULL`,
+       AND ur.user_id IS NOT NULL
+       AND (e.id IS NULL OR e.active_status = 1)`,
     [roleKey],
   );
   return (rows as any[]).map((r) => ({ userId: r.userId, email: r.email ?? null }));
@@ -137,12 +143,17 @@ async function branchHrEmails(branchId: string | null): Promise<string[]> {
   const [scoped] = await db.execute<RowDataPacket[]>(
     // user_id, for the same reason as above — manager_employee_id is NULL on
     // every row, so this would have found no branch HR either.
+    // Owner directive (2026-09-16): never email an employee who is not active in the
+    // system — the employees join (LEFT, so a role holder with no employee record is not
+    // dropped) closes the same "role grant active, person has left" gap as above.
     `SELECT DISTINCT au.email
        FROM user_assignment_scope uas
        JOIN auth_user au ON au.id = uas.user_id
+       LEFT JOIN employees e ON e.user_id = au.id
       WHERE uas.role_key IN ('hr', 'branch_hr') AND uas.branch_id = ?
         AND uas.active_status = 1 AND au.email IS NOT NULL
-        AND COALESCE(au.is_blocked, 0) = 0`,
+        AND COALESCE(au.is_blocked, 0) = 0
+        AND (e.id IS NULL OR e.active_status = 1)`,
     [branchId],
   ).catch(() => [[]] as unknown as [RowDataPacket[]]);
   const emails = (scoped as RowDataPacket[]).map((r) => String(r.email));

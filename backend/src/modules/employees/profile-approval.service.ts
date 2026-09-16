@@ -32,14 +32,25 @@ async function findPendingApprovalId(employeeId: string, requestType: string): P
   return (rows[0] as any)?.id ?? null;
 }
 
-/** Fetch emails of all active payroll/payroll_hr/payroll_head users. */
+/**
+ * Fetch emails of all active payroll/payroll_hr/payroll_head users.
+ *
+ * `ur.active_status = 1` only says the role grant hasn't been revoked — it says nothing
+ * about whether the person holding it still works here. Owner directive (2026-09-16): never
+ * email an employee who is not active in the system. The employees join below is LEFT, and
+ * a NULL employees row (a role holder with no employee record at all) is let through rather
+ * than dropped — the exclusion is specifically for someone confirmed to have left, not for
+ * an account this table cannot identify.
+ */
 async function getPayrollEmails(): Promise<string[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT au.email
      FROM user_roles ur
      JOIN auth_user au ON au.id = ur.user_id
+     LEFT JOIN employees e ON e.user_id = au.id
      WHERE ur.role_key IN ('payroll', 'payroll_hr', 'payroll_head')
        AND ur.active_status = 1
+       AND (e.id IS NULL OR e.active_status = 1)
        AND au.email IS NOT NULL
        AND au.email != ''`
   );
