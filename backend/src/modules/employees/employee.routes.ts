@@ -1141,15 +1141,23 @@ router.get("/stats", requireRole("admin", "hr", "manager", "ceo", "branch_head",
   res.json({ data: rows[0] });
 }));
 
+// branch_wfm, payroll_hr added 2026-09-16 (owner request, ATTENDANCE_LOOKUP page): both were
+// already recognized by buildScopeWhereClause's allowedRoles below, so their real
+// user_assignment_scope rows already row-scope them correctly (branch_head/branch_wfm and
+// most payroll_hr accounts hold scope_type='branch'; payroll_head and a few payroll_hr
+// accounts hold scope_type='all') — this only had to add the missing role gate, not build
+// new scoping. branch_head was already scoped-aware here but missing from two of the three
+// route gates below.
+//
 // GET /api/employees/hr-hub/filter-options - scoped options from active employee assignments
-router.get("/hr-hub/filter-options", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin", "wfm"), h(async (req: any, res: any) => {
+router.get("/hr-hub/filter-options", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin", "wfm", "branch_head", "branch_wfm", "payroll_hr"), h(async (req: any, res: any) => {
   const parsed = employeeFiltersSchema.safeParse(req.query);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const { branchId, processId, designationId } = parsed.data;
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
-    ["hr", "manager", "payroll_head", "payroll_admin", "wfm", "branch_head"],
+    ["hr", "manager", "payroll_head", "payroll_admin", "wfm", "branch_head", "branch_wfm", "payroll_hr"],
     {
       branchId: "e.branch_id",
       processId: "e.process_id",
@@ -1238,13 +1246,13 @@ router.get("/hr-hub/filter-options", requireRole("super_admin", "admin", "hr", "
   });
 }));
 
-router.get("/hr-hub/today-summary", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin", "wfm", "branch_head"), h(async (req: any, res: any) => {
+router.get("/hr-hub/today-summary", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin", "wfm", "branch_head", "branch_wfm", "payroll_hr"), h(async (req: any, res: any) => {
   // IST today: UTC+5:30
   const nowIST = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
   const today = nowIST.toISOString().slice(0, 10);
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
-    ["hr", "manager", "payroll_head", "payroll_admin", "wfm", "branch_head"],
+    ["hr", "manager", "payroll_head", "payroll_admin", "wfm", "branch_head", "branch_wfm", "payroll_hr"],
     { branchId: "e.branch_id", processId: "e.process_id" },
     { allowAdminBypass: true, allowCeoAllRead: true }
   );
@@ -1304,7 +1312,7 @@ router.get("/hr-hub/today-summary", requireRole("super_admin", "admin", "hr", "p
 }));
 
 // GET /api/employees/hr-hub — enriched employee list for People Attendance & Earnings Hub
-router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin", "wfm"), h(async (req: any, res: any) => {
+router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", "payroll_admin", "wfm", "branch_head", "branch_wfm", "payroll_hr"), h(async (req: any, res: any) => {
   const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
   if (!/^\d{4}-\d{2}$/.test(month)) {
     return res.status(400).json({ success: false, error: "month must be YYYY-MM" });
@@ -1322,7 +1330,7 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
 
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
-    ["hr", "manager", "payroll_head", "payroll_admin", "wfm", "branch_head"],
+    ["hr", "manager", "payroll_head", "payroll_admin", "wfm", "branch_head", "branch_wfm", "payroll_hr"],
     { branchId: "e.branch_id", processId: "e.process_id", departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id" },
     { allowAdminBypass: true, allowCeoAllRead: true }
   );

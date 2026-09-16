@@ -11,7 +11,11 @@ import type { HubEmployee, HubFilters } from "@/hooks/useAttendanceHub";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 
-const ALLOWED_ROLES = ["super_admin", "admin", "hr", "payroll_head", "payroll_admin", "wfm"] as const;
+// branch_head, branch_wfm, payroll_hr added 2026-09-16 (owner request) — the backend
+// (/api/employees/hr-hub*) already row-scopes them to their own branch via
+// buildScopeWhereClause + user_assignment_scope, matching super_admin/payroll_head's
+// existing org-wide access.
+const ALLOWED_ROLES = ["super_admin", "admin", "hr", "payroll_head", "payroll_admin", "wfm", "branch_head", "branch_wfm", "payroll_hr"] as const;
 
 const DEFAULT_FILTERS: HubFilters = {
   search: "",

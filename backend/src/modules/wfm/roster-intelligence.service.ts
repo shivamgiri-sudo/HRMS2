@@ -126,8 +126,25 @@ const INCOMPLETE_THRESHOLD = 0.8;
  * Called by cron at 7 AM IST.
  */
 export async function generateManagerDailyDigests(
-  date: string = yesterdayDate()
+  date: string = yesterdayDate(),
+  scope?: RosterIntelligenceScope
 ): Promise<ManagerDailyDigest[]> {
+  if (scope?.branchIds?.length === 0 || scope?.processIds?.length === 0) return [];
+
+  // Scoped on e (the team member), not mgr — a branch-scoped or process-scoped caller sees
+  // digests for managers whose team sits in their branch/process, matching
+  // detectUnplannedAbsences's convention above.
+  const scopeConds: string[] = [];
+  const scopeParams: unknown[] = [];
+  if (scope?.branchIds) {
+    scopeConds.push(`e.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`);
+    scopeParams.push(...scope.branchIds);
+  }
+  if (scope?.processIds) {
+    scopeConds.push(`e.process_id IN (${scope.processIds.map(() => "?").join(",")})`);
+    scopeParams.push(...scope.processIds);
+  }
+
   // Get all managers with active team members who have roster for the date
   const [managers] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT
@@ -139,8 +156,9 @@ export async function generateManagerDailyDigests(
      JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = ?
      WHERE e.active_status = 1
        AND e.employment_status = 'Active'
-       AND mgr.active_status = 1`,
-    [date]
+       AND mgr.active_status = 1
+       ${scopeConds.map((c) => `AND ${c}`).join("\n       ")}`,
+    [date, ...scopeParams]
   );
 
   const digests: ManagerDailyDigest[] = [];
@@ -500,6 +518,13 @@ export async function generateBranchDashboard(
 
 // ── Unplanned Absence Detection ──────────────────────────────────────────────
 
+// Caller's RBAC scope, resolved by roster-intelligence.routes.ts from
+// resolveDashboardScopeForRequest — not a raw UI filter. `undefined` on a field means the
+// caller's scope is unrestricted on that dimension (ORG_ALL, or the wfm/super_admin roles
+// this endpoint left untouched); an empty array means the caller's scope resolved to zero
+// branches/processes and must fail CLOSED (matches getCosecLatestPunches's convention).
+export type RosterIntelligenceScope = { branchIds?: string[]; processIds?: string[] };
+
 /**
  * Detect employees who are rostered for a shift but haven't punched in.
  * Called every 30 minutes to catch RED alerts.
@@ -508,10 +533,24 @@ export async function generateBranchDashboard(
  */
 export async function detectUnplannedAbsences(
   date: string = todayDate(),
-  gracePeriodMinutes: number = 30
+  gracePeriodMinutes: number = 30,
+  scope?: RosterIntelligenceScope
 ): Promise<UnplannedAbsenceAlert[]> {
+  if (scope?.branchIds?.length === 0 || scope?.processIds?.length === 0) return [];
+
   const now = new Date();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+  const scopeConds: string[] = [];
+  const scopeParams: unknown[] = [];
+  if (scope?.branchIds) {
+    scopeConds.push(`e.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`);
+    scopeParams.push(...scope.branchIds);
+  }
+  if (scope?.processIds) {
+    scopeConds.push(`e.process_id IN (${scope.processIds.map(() => "?").join(",")})`);
+    scopeParams.push(...scope.processIds);
+  }
 
   // Find employees rostered for shifts that have started but haven't punched in
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -536,8 +575,9 @@ export async function detectUnplannedAbsences(
      WHERE e.active_status = 1
        AND e.employment_status = 'Active'
        AND ra.assignment_type NOT IN ('WEEK_OFF', 'LEAVE', 'HOLIDAY', 'TRAINING')
-       AND att.clock_in_time IS NULL`,
-    [date, date]
+       AND att.clock_in_time IS NULL
+       ${scopeConds.map((c) => `AND ${c}`).join("\n       ")}`,
+    [date, date, ...scopeParams]
   );
 
   const alerts: UnplannedAbsenceAlert[] = [];

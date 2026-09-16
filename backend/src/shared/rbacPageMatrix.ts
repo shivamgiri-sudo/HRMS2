@@ -711,6 +711,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "ATTENDANCE_DISPUTES",
     "ATTENDANCE_REGULARIZATION",
     "ROSTER_MASTER",
+    // Owner-specified access list, 2026-09-16.
+    "ATTENDANCE_LOOKUP",
   ],
   branch_hr: [
     "ATS_BRANCH_HEAD_APPROVAL",
@@ -759,6 +761,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "PAYROLL_HOLIDAY_WORK_REQUESTS",
     "TEAM_ROSTER",
     "WEEK_OFF_PREFERENCES",
+    // Owner-specified access list, 2026-09-16 (Live Monitoring tab, respective-branch scoped).
+    "WFM_ROSTER_LIVE_MONITORING",
   ],
   employee: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
@@ -1024,6 +1028,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "WFM_ROSTER_SHIFT_EFFECTIVENESS", "WFM_ROSTER_AUDIT_TRAIL",
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "WFM_ATTENDANCE_DASHBOARD",
+    // Owner-specified access list, 2026-09-16 (Live Monitoring tab, respective-process scoped).
+    "WFM_ROSTER_LIVE_MONITORING",
   ],
   payroll_hr: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
@@ -1031,6 +1037,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     // Granted live after that re-import; see the finance_head entry above.
     "FINANCE_SALARY_VOUCHER",
     "PAYROLL_EPF_COMPLIANCE",
+    // Owner-specified access list, 2026-09-16 ("Branch Payroll HR").
+    "ATTENDANCE_LOOKUP",
   ],
   process_manager: [
     // Merged /wfm/roster-command-center console — Team Roster, Trends & Publish tabs.
@@ -1038,6 +1046,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     // Added 2026-08-22: see the manager entry above — same gap, same fix. Migration 1544.
     "TEAM_ATTENDANCE",
+    // Owner-specified access list, 2026-09-16 (Live Monitoring tab, respective-process scoped).
+    "WFM_ROSTER_LIVE_MONITORING",
   ],
   qa: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
