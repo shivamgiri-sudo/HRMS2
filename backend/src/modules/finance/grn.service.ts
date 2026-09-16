@@ -1532,6 +1532,17 @@ export const grnService = {
 
     const conditions: string[] = [];
     const params: unknown[] = [];
+    // IDC/... GRNs are the db_bill legacy petty-cash import (CompId 2), bulk-inserted under a
+    // migration-sentinel created_by — never raised live through this app, no vendor/invoice/
+    // process attached. Kept in the database for audit; excluded from the working list/search
+    // view. A caller that explicitly quotes an IDC number in grnNumber/search still finds it —
+    // this only hides them from the unfiltered browse. Owner ruling 2026-09-16.
+    if (
+      !(filters.grnNumber && filters.grnNumber.toUpperCase().includes("IDC"))
+      && !(filters.search && filters.search.toUpperCase().includes("IDC"))
+    ) {
+      conditions.push("g.grn_number NOT LIKE 'IDC/%'");
+    }
     if (filters.branchScope) {
       const filter = financeBranchFilter(filters.branchScope, "g.branch_id");
       if (filter.sql !== "1=1") {
@@ -2241,7 +2252,9 @@ export const grnService = {
     branchScope?: FinanceBranchScope;
     financialYear?: string;
   }) {
-    const conditions: string[] = [];
+    // Same IDC exclusion as listGrns() — the legacy db_bill petty-cash import must not inflate
+    // the approval-backlog counters that Vendor Payment Dispatch surfaces.
+    const conditions: string[] = ["g.grn_number NOT LIKE 'IDC/%'"];
     const params: unknown[] = [];
     if (filters.branchScope) {
       const filter = financeBranchFilter(filters.branchScope, "g.branch_id");
