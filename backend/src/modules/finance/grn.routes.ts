@@ -131,7 +131,7 @@ if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const upload = multer({
   dest: UPLOAD_DIR,
-  limits: { fileSize: 20 * 1024 * 1024 },
+  limits: { fileSize: 30 * 1024 * 1024 },
   fileFilter(_req, file, callback) {
     const allowedExtensions = [".pdf", ".jpg", ".jpeg", ".png", ".webp"];
     const allowedMimeTypes = [
