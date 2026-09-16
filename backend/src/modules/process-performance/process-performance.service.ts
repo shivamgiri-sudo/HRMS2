@@ -219,8 +219,6 @@ function buildAggregateSql(groupBy: Grain, scopeSql: string) {
       -- 4 calls must not move the process score as far as one audited on 400.
       -- It is also what makes this cell agree with the drill-down behind it,
       -- which averages the underlying rows directly.
-      SUM(q.quality_sum) / NULLIF(SUM(q.audited_calls), 0) AS quality_score,
-      COALESCE(SUM(q.audited_calls), 0)             AS audited_calls,
       SUM(o.aht_sum) / NULLIF(SUM(o.aht_days), 0)   AS aht
     FROM employees e
     LEFT JOIN process_master pm ON pm.id = e.process_id
@@ -269,22 +267,6 @@ function buildAggregateSql(groupBy: Grain, scopeSql: string) {
        WHERE s.period_code BETWEEN ? AND ?
        GROUP BY s.employee_id
     ) cost ON cost.employee_id = e.id
-    LEFT JOIN (
-      -- Quality comes from the call audit warehouse, NOT from kpi_daily_actual.
-      -- Live for August: this table holds 13,513 assessed calls across 10+
-      -- processes, every one of which matches an employee_code; the
-      -- QUALITY_SCORE metric in kpi_daily_actual held 414 rows reaching two.
-      -- mas_hrms.qa_audit is empty, so it is not the source either.
-      SELECT q.User AS employee_code,
-             SUM(q.quality_percentage) AS quality_sum,
-             COUNT(*)                  AS audited_calls
-        FROM db_audit.call_quality_assessment q
-       -- CallDate is a DATETIME: BETWEEN would stop at 00:00 and silently drop
-       -- the whole of the last day in the window.
-       WHERE q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
-         AND q.User IS NOT NULL AND q.User <> ''
-       GROUP BY q.User
-    ) q ON q.employee_code = e.employee_code
     LEFT JOIN (
       SELECT k.employee_id,
              SUM(k.actual_value) AS aht_sum,
@@ -363,6 +345,51 @@ const staleExitsNote = (lastExitOn: string | null) =>
     lastExitOn ? `; the most recent exit on file is ${lastExitOn}` : ""
   }. That is a gap in the exit records, not a month without leavers.`;
 
+/**
+ * Quality data fetched SEPARATELY from the main aggregate to prevent a slow or
+ * unavailable db_audit connection from blocking attendance/shrinkage/headcount.
+ *
+ * Aggregated by the same group as the main query (process / manager / agent) so
+ * toSections can look up by group_id without doing per-employee math.
+ * Returns null on any error so the caller degrades gracefully.
+ */
+async function fetchQuality(
+  grain: Grain,
+  scope: { sql: string; params: unknown[] },
+  filters: PerfFilters,
+): Promise<Map<string, { quality_sum: number; audited_calls: number }> | null> {
+  const { groupCol } = groupColumns(grain);
+  const narrow = narrowing(filters);
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      // CallDate is a DATETIME: BETWEEN stops at 00:00 and silently drops the whole
+      // last day — keep the >= / < DATE_ADD pattern.
+      `SELECT ${groupCol} AS group_id,
+              SUM(q.quality_percentage) AS quality_sum,
+              COUNT(*)                  AS audited_calls
+         FROM db_audit.call_quality_assessment q
+         JOIN employees e ON e.employee_code = q.User
+        WHERE q.CallDate >= ? AND q.CallDate < DATE_ADD(?, INTERVAL 1 DAY)
+          AND q.User IS NOT NULL AND q.User <> ''
+          AND e.active_status = 1
+          AND ${groupCol} IS NOT NULL
+          AND (${scope.sql}) ${narrow.sql}
+        GROUP BY group_id`,
+      [filters.from, filters.to, ...scope.params, ...narrow.params],
+    );
+    return new Map(
+      rows.map((r) => [
+        String(r.group_id),
+        { quality_sum: Number(r.quality_sum), audited_calls: Number(r.audited_calls) },
+      ]),
+    );
+  } catch {
+    // db_audit unreachable or query timed out — surface no_data for quality only,
+    // leave headcount / shrinkage / attendance unaffected.
+    return null;
+  }
+}
+
 interface RowContext {
   grain: Grain;
   /** Exits in the window for this group, counted OUTSIDE the active-employee filter. */
@@ -370,6 +397,11 @@ interface RowContext {
   /** Contracted seats for this group, process grain only. */
   mandate: number | null;
   coverage: Coverage;
+  /**
+   * Per-group quality totals from db_audit, merged after the main query so a
+   * slow audit DB does not block headcount/shrinkage. Null = quality fetch failed.
+   */
+  qualityByGroupId: Map<string, { quality_sum: number; audited_calls: number }> | null;
 }
 
 /** Turns one aggregate row plus its out-of-band context into the cells the UI renders. */
@@ -443,8 +475,16 @@ function toSections(r: RowDataPacket, ctx: RowContext): SectionValue[] {
         ? "No exits or headcount recorded for this group in the period."
         : staleExitsNote(ctx.coverage.lastExitOn)),
     sec("quality", "percent",
-      r.quality_score == null ? null : Math.round(Number(r.quality_score) * 100) / 100,
-      "higher_is_better", "No call was audited for this group in the period."),
+      (() => {
+        if (!ctx.qualityByGroupId) return null; // db_audit unavailable — degrade gracefully
+        const q = ctx.qualityByGroupId.get(String(r.group_id));
+        if (!q || !q.audited_calls) return null;
+        return Math.round((q.quality_sum / q.audited_calls) * 100) / 100;
+      })(),
+      "higher_is_better",
+      ctx.qualityByGroupId === null
+        ? "Quality data could not be loaded for this period."
+        : "No call was audited for this group in the period."),
     sec("operations", "seconds",
       r.aht == null ? null : Math.round(Number(r.aht)),
       "lower_is_better", "No dialler activity recorded for this group in the period."),
@@ -552,18 +592,36 @@ async function fetchRows(
     filters.from, filters.to,                       // attendance window
     filters.from, filters.to,                       // hygiene window
     toPeriod(filters.from), toPeriod(filters.to),   // people-cost periods
-    filters.from, filters.to,                       // quality window
     filters.from, filters.to,                       // operations window
     ...scope.params,
     ...narrow.params,
   ];
 
-  const [rows] = await db.execute<RowDataPacket[]>(sql, params);
-  const exits = await fetchExits(grain, scope, filters);
-  const coverage = await fetchCoverage(filters);
-  const mandate = grain === "process"
-    ? await fetchMandate(scope, filters)
+  // Run all independent queries in parallel — previously sequential awaits added
+  // ~3–5 round trips of latency on every page load.
+  const [rowsResult, exitsResult, coverageResult, mandateResult, qualityResult] =
+    await Promise.allSettled([
+      db.execute<RowDataPacket[]>(sql, params),
+      fetchExits(grain, scope, filters),
+      fetchCoverage(filters),
+      grain === "process"
+        ? fetchMandate(scope, filters)
+        : Promise.resolve(new Map<string, number>()),
+      fetchQuality(grain, scope, filters),
+    ]);
+
+  if (rowsResult.status === "rejected") throw rowsResult.reason;
+
+  const rows = (rowsResult.value as [RowDataPacket[], unknown])[0];
+  const exits = exitsResult.status === "fulfilled" ? exitsResult.value : new Map<string, number>();
+  const coverage = coverageResult.status === "fulfilled"
+    ? coverageResult.value
+    : { lateMarking: false, reconciliation: false, exitsPosted: false, lastExitOn: null };
+  const mandate = mandateResult.status === "fulfilled"
+    ? mandateResult.value
     : new Map<string, number>();
+  // qualityResult is already null-safe: fetchQuality returns null on error
+  const qualityByGroupId = qualityResult.status === "fulfilled" ? qualityResult.value : null;
 
   return rows.map((r) => {
     const id = String(r.group_id);
@@ -578,6 +636,7 @@ async function fetchRows(
         coverage,
         exits: exits.get(id) ?? 0,
         mandate: grain === "process" ? mandate.get(id) ?? null : null,
+        qualityByGroupId,
       }),
     };
   });
