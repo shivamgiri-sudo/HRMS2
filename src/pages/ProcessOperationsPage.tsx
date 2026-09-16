@@ -654,14 +654,39 @@ function LivePanel({ title, sub, children }: { title: string; sub?: string; chil
   );
 }
 
-/** KPI tile matching the Live Dashboard's KpiCard, so both tabs read as one system. */
-function LiveKpiCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color: string }) {
+type TrendDir = "positive" | "negative" | "action" | "neutral";
+
+function TrendChip({ trend, label }: { trend: TrendDir; label: string }) {
+  const Icon = trend === "positive" ? ArrowUpRight : trend === "negative" ? ArrowDownRight : trend === "action" ? AlertTriangle : Minus;
+  const col = trend === "positive"
+    ? { bg: "rgba(20,184,166,.14)", br: "#14b8a6", tx: "#0d9488" }
+    : trend === "negative"
+    ? { bg: "rgba(239,68,68,.14)", br: "#f87171", tx: "#dc2626" }
+    : trend === "action"
+    ? { bg: "rgba(245,158,11,.14)", br: "#f59e0b", tx: "#d97706" }
+    : { bg: "rgba(100,116,139,.14)", br: "#94a3b8", tx: "#475569" };
   return (
-    <div style={{ position: "relative", minHeight: 88, padding: "11px 14px", borderRadius: 15, color: "#fff", overflow: "hidden", boxShadow: "0 10px 24px rgba(16,35,57,.10)", background: color }}>
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px",
+      borderRadius: 999, fontSize: 9, fontWeight: 800,
+      background: col.bg, border: `1px solid ${col.br}`, color: col.tx }}>
+      <Icon size={9} /><span>{label}</span>
+    </div>
+  );
+}
+
+/** KPI tile matching the Live Dashboard's KpiCard, so both tabs read as one system. */
+function LiveKpiCard({ label, value, sub, color, onClick, trend, trendLabel }: {
+  label: string; value: string | number; sub?: string; color: string;
+  onClick?: () => void; trend?: TrendDir; trendLabel?: string;
+}) {
+  return (
+    <div style={{ position: "relative", minHeight: 88, padding: "11px 14px", borderRadius: 15, color: "#fff", overflow: "hidden", boxShadow: "0 10px 24px rgba(16,35,57,.10)", background: color, cursor: onClick ? "pointer" : undefined }}
+      onClick={onClick}>
       <div aria-hidden style={{ position: "absolute", width: 64, height: 64, borderRadius: "50%", right: -16, top: -22, background: "rgba(255,255,255,.13)" }} />
       <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: ".45px", fontWeight: 900, opacity: 0.88 }}>{label}</div>
       <div style={{ fontSize: 24, fontWeight: 950, marginTop: 4, lineHeight: 1.1 }}>{value}</div>
       {sub && <div style={{ fontSize: 9, marginTop: 5, opacity: 0.82, fontWeight: 700 }}>{sub}</div>}
+      {trend && trendLabel && <div style={{ marginTop: 5 }}><TrendChip trend={trend} label={trendLabel} /></div>}
     </div>
   );
 }
@@ -2880,17 +2905,18 @@ const REVENUE_STATUS_LABEL: Record<string, string> = {
 };
 
 /** A single stat in the Business Health grid — value, its own honest-null state, a caption. */
-function HealthStat({ label, value, caption, tone, icon: Icon, fillPct, fillGood }: {
+function HealthStat({ label, value, caption, tone, icon: Icon, fillPct, fillGood, onClick }: {
   label: string; value: string; caption?: string; tone?: "good" | "bad" | "neutral"; icon?: typeof Users;
   /** 0-100 -- when set, draws a Mydashboards-style fill bar under the value
    *  (e.g. headcount/mandate). Clamped to a 4% minimum so a real-but-tiny
    *  fill never reads as visually empty, same as the reference component. */
-  fillPct?: number; fillGood?: boolean;
+  fillPct?: number; fillGood?: boolean; onClick?: () => void;
 }) {
   const color = tone === "good" ? C_GREEN : tone === "bad" ? C_RED_TEXT : C_SLATE;
   const noData = value === "no data";
   return (
-    <div className="relative overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-2 min-w-[128px] transition-shadow hover:shadow-sm">
+    <div className={`relative overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-2 min-w-[128px] transition-shadow hover:shadow-sm${onClick ? " cursor-pointer hover:shadow-md" : ""}`}
+      onClick={onClick}>
       {/* MetricCard idiom (Mydashboards): a solid-color top strip instead of a
           tinted border, so the accent stays crisp at this radius, plus the
           icon chip's background derived from the exact same hex the strip
@@ -3155,7 +3181,7 @@ function ProcessCardInsightsPanel({ processId: _processId, ops, onDrill }: {
  * dedicated shrinkage table has never been populated at process grain for
  * any process in this system yet.
  */
-function BusinessHealthPanel({ processId }: { processId: string }) {
+function BusinessHealthPanel({ processId, onOpen }: { processId: string; onOpen?: (key: string) => void }) {
   const { data, isLoading } = useQuery({
     queryKey: ["process-operations", "business-health", processId],
     queryFn: () => hrmsApi.get<HrmsEnvelope<ProcessBusinessHealth>>(
@@ -3196,22 +3222,27 @@ function BusinessHealthPanel({ processId }: { processId: string }) {
               <HealthStat label="Revenue" value={currency(finance.revenue)}
                 caption={revenueStatusLabel}
                 tone={revenueIsFallback ? "neutral" : finance.revenue && finance.revenue > 0 ? "good" : "neutral"}
-                icon={revenueIsFallback ? AlertTriangle : undefined} />
-              <HealthStat label="GRN (vendor cost)" value={currency(finance.grn)} tone="neutral" />
+                icon={revenueIsFallback ? AlertTriangle : undefined}
+                onClick={() => onOpen?.("hs_revenue")} />
+              <HealthStat label="GRN (vendor cost)" value={currency(finance.grn)} tone="neutral"
+                onClick={() => onOpen?.("hs_grn")} />
               <HealthStat label="Agent Salary"
                 value={finance.agentSalaryIsRealThisMonth ? currency(finance.agentSalary) : "no data"}
                 caption={!finance.agentSalaryIsRealThisMonth ? "Pending payroll run" : undefined}
-                tone="neutral" icon={Users} />
+                tone="neutral" icon={Users}
+                onClick={() => onOpen?.("hs_salary")} />
               <HealthStat label="EBIT"
                 value={finance.agentSalaryIsRealThisMonth ? currency(finance.ebit) : "no data"}
                 caption={!finance.agentSalaryIsRealThisMonth ? "Pending payroll run" : undefined}
-                tone={!finance.agentSalaryIsRealThisMonth || finance.ebit === null ? "neutral" : finance.ebit >= 0 ? "good" : "bad"} />
+                tone={!finance.agentSalaryIsRealThisMonth || finance.ebit === null ? "neutral" : finance.ebit >= 0 ? "good" : "bad"}
+                onClick={() => onOpen?.("hs_ebit")} />
               <HealthStat label="Operating %"
                 value={finance.agentSalaryIsRealThisMonth
                   ? (finance.operatingProfitPct === null ? "no data" : `${finance.operatingProfitPct.toFixed(1)}%`)
                   : "no data"}
                 caption={!finance.agentSalaryIsRealThisMonth ? "Pending payroll run" : undefined}
-                tone={!finance.agentSalaryIsRealThisMonth || finance.operatingProfitPct === null ? "neutral" : finance.operatingProfitPct >= 0 ? "good" : "bad"} />
+                tone={!finance.agentSalaryIsRealThisMonth || finance.operatingProfitPct === null ? "neutral" : finance.operatingProfitPct >= 0 ? "good" : "bad"}
+                onClick={() => onOpen?.("hs_op_pct")} />
             </div>
           ) : (
             <p className="text-[11px] text-slate-400 italic py-1">{finance.reason}</p>
@@ -3228,21 +3259,27 @@ function BusinessHealthPanel({ processId }: { processId: string }) {
             <HealthStat label="Active Headcount" value={String(headcount.activeHc)} icon={Users}
               caption={headcount.available && headcount.mandatedHc ? `of ${headcount.mandatedHc} sanctioned` : undefined}
               fillPct={headcount.available && headcount.mandatedHc ? (headcount.activeHc / headcount.mandatedHc) * 100 : undefined}
-              fillGood={headcount.available && headcount.mandatedHc ? headcount.activeHc >= headcount.mandatedHc : undefined} />
+              fillGood={headcount.available && headcount.mandatedHc ? headcount.activeHc >= headcount.mandatedHc : undefined}
+              onClick={() => onOpen?.("hs_active_hc")} />
             {headcount.available ? (
               <>
-                <HealthStat label="Mandate" value={headcount.mandatedHc !== null ? String(headcount.mandatedHc) : "no data"} icon={Target} />
+                <HealthStat label="Mandate" value={headcount.mandatedHc !== null ? String(headcount.mandatedHc) : "no data"} icon={Target}
+                  onClick={() => onOpen?.("hs_mandate")} />
                 <HealthStat label="Available Now" value={String(headcount.availableCount)} icon={UserCheck}
-                  caption="staffed on process" tone="neutral" />
+                  caption="staffed on process" tone="neutral"
+                  onClick={() => onOpen?.("hs_available")} />
                 <HealthStat label="Gap vs Mandate"
                   value={headcount.gap !== null ? (headcount.gap === 0 ? "0" : headcount.gap > 0 ? `+${headcount.gap}` : String(headcount.gap)) : "no data"}
                   icon={headcount.gap !== null && headcount.gap < 0 ? AlertTriangle : ArrowUpRight}
                   caption={headcount.gap !== null ? (headcount.gap >= 0 ? "above mandate" : "below mandate") : undefined}
-                  tone={headcount.gap === null ? "neutral" : headcount.gap >= 0 ? "good" : "bad"} />
+                  tone={headcount.gap === null ? "neutral" : headcount.gap >= 0 ? "good" : "bad"}
+                  onClick={() => onOpen?.("hs_hc_gap")} />
                 <HealthStat label="Buffer" value={headcount.buffer !== null ? `+${headcount.buffer}` : "no data"} icon={ArrowUpRight}
-                  caption="above mandate" tone={headcount.buffer !== null && headcount.buffer > 0 ? "good" : "neutral"} />
+                  caption="above mandate" tone={headcount.buffer !== null && headcount.buffer > 0 ? "good" : "neutral"}
+                  onClick={() => onOpen?.("hs_buffer")} />
                 <HealthStat label="Shortfall" value={headcount.shortfall !== null ? String(headcount.shortfall) : "no data"} icon={AlertTriangle}
-                  caption="below mandate" tone={headcount.shortfall !== null && headcount.shortfall > 0 ? "bad" : "neutral"} />
+                  caption="below mandate" tone={headcount.shortfall !== null && headcount.shortfall > 0 ? "bad" : "neutral"}
+                  onClick={() => onOpen?.("hs_shortfall")} />
               </>
             ) : (
               <div className="col-span-2 rounded-lg border border-dashed border-slate-200 dark:border-slate-700 px-3 py-2">
@@ -3260,15 +3297,20 @@ function BusinessHealthPanel({ processId }: { processId: string }) {
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             <HealthStat label="Open Requisitions" value={String(hiring.openRequisitions)} icon={Briefcase}
-              tone={hiring.openRequisitions > 0 ? "neutral" : "good"} />
+              tone={hiring.openRequisitions > 0 ? "neutral" : "good"}
+              onClick={() => onOpen?.("hs_req")} />
             <HealthStat label="Open Positions" value={String(hiring.openPositions)} icon={Target}
-              caption="positions yet to be filled" tone={hiring.openPositions > 0 ? "bad" : "good"} />
+              caption="positions yet to be filled" tone={hiring.openPositions > 0 ? "bad" : "good"}
+              onClick={() => onOpen?.("hs_positions")} />
             <HealthStat label="Hired (all time)" value={String(hiring.hiredCount)} icon={UserPlus}
-              caption="filled via requisition" tone="good" />
+              caption="filled via requisition" tone="good"
+              onClick={() => onOpen?.("hs_hired")} />
             <HealthStat label="Pending Hiring" value={String(hiring.pendingHiringCount)} icon={Hourglass}
-              caption="requested minus fulfilled" tone={hiring.pendingHiringCount > 0 ? "bad" : "good"} />
+              caption="requested minus fulfilled" tone={hiring.pendingHiringCount > 0 ? "bad" : "good"}
+              onClick={() => onOpen?.("hs_pending")} />
             <HealthStat label="Candidates in Pipeline" value={String(hiring.candidatesInPipeline)} icon={Users2}
-              caption="matched by process" tone="neutral" />
+              caption="matched by process" tone="neutral"
+              onClick={() => onOpen?.("hs_pipeline")} />
           </div>
         </div>
 
@@ -4162,6 +4204,208 @@ function InsightsPanel({ d, processId, metricKey, period }: {
   );
 }
 
+/** Drill-down drawer for CEO KPI strip and Business Health tiles — uses already-loaded health data, no extra API call. */
+function SummaryTileDrillDrawer({ metricKey, health, passCount, failCount, onClose }: {
+  metricKey: string | null;
+  health?: ProcessBusinessHealth;
+  passCount: number;
+  failCount: number;
+  onClose: () => void;
+}) {
+  const f = health?.finance;
+  const hc = health?.headcount;
+  const hi = health?.hiring;
+
+  const fmtL = (v: number | null | undefined): string => {
+    if (v === null || v === undefined) return "—";
+    const abs = Math.abs(v); const s = v < 0 ? "−" : "";
+    if (abs >= 10_000_000) return `${s}₹${(abs / 10_000_000).toFixed(1)}Cr`;
+    if (abs >= 100_000) return `${s}₹${(abs / 100_000).toFixed(1)}L`;
+    if (abs >= 1_000) return `${s}₹${(abs / 1_000).toFixed(0)}K`;
+    return `${s}₹${abs.toLocaleString("en-IN")}`;
+  };
+
+  const qualityPct = (passCount + failCount) > 0 ? Math.round((passCount / (passCount + failCount)) * 100) : null;
+  const revPerAgent = (f?.revenue && (hc?.activeHc ?? 0) > 0) ? Math.round(f.revenue / hc!.activeHc) : null;
+
+  type Entry = { title: string; value: string; target?: string; trend: TrendDir; trendLabel: string; analysis: string; actions: string[]; related: string[] };
+
+  const cfg: Record<string, Entry> = {
+    // ── CEO strip ──────────────────────────────────────────────────────────────
+    ceo_revenue: {
+      title: "Revenue", value: f?.available ? fmtL(f.revenue) : "—",
+      trend: !f?.available ? "action" : (f.revenue && f.revenue > 0 ? "positive" : "action"),
+      trendLabel: !f?.available ? "Data gap" : f?.revenueStatus === "accounting_fallback" ? "Fallback mode" : "On track",
+      analysis: f?.available
+        ? `Monthly revenue is ${fmtL(f.revenue)}, recognised via ${f.revenueStatus === "accounting_fallback" ? "accounting fallback" : "configured billing rules"}. Revenue is the top-line health signal — sustained growth indicates healthy client delivery and billing accuracy.`
+        : `Revenue data unavailable for this process. ${f?.reason ?? "Configure billing rules in process settings to enable live P&L tracking."}`,
+      actions: f?.available && f.revenue && f.revenue > 0
+        ? ["Verify billing rule matches current client contract", "Cross-check with client invoice register", "Compare to prior month to confirm growth trajectory"]
+        : ["Configure revenue billing rules for this process", "Contact finance team to map billing entries", "Upload manual revenue data if billing rules cannot be set"],
+      related: ["Operating %", "EBIT", "Rev / Agent"],
+    },
+    ceo_op_pct: {
+      title: "Operating %",
+      value: f?.agentSalaryIsRealThisMonth && f.operatingProfitPct !== null ? `${f.operatingProfitPct.toFixed(1)}%` : "—",
+      target: "12–18% (BPO benchmark)",
+      trend: !f?.agentSalaryIsRealThisMonth || f?.operatingProfitPct === null ? "action"
+        : f.operatingProfitPct >= 12 ? "positive" : f.operatingProfitPct >= 0 ? "action" : "negative",
+      trendLabel: !f?.agentSalaryIsRealThisMonth ? "Payroll pending" : f?.operatingProfitPct === null ? "No data"
+        : f.operatingProfitPct >= 12 ? "Healthy" : f.operatingProfitPct >= 0 ? "Below target" : "Loss",
+      analysis: f?.agentSalaryIsRealThisMonth && f?.operatingProfitPct !== null
+        ? `Operating margin is ${f.operatingProfitPct.toFixed(1)}% (${fmtL(f.ebit)} EBIT ÷ ${fmtL(f.revenue)} revenue). BPO benchmark is 12–18%. ${f.operatingProfitPct >= 12 ? "This process is in the healthy range." : f.operatingProfitPct >= 0 ? "Margin is below benchmark — review cost structure." : "Process is operating at a loss — immediate action required on cost or revenue."}`
+        : "Operating % requires payroll data to compute. Once the current month's payroll run is complete, this will reflect EBIT ÷ Revenue.",
+      actions: f?.operatingProfitPct !== null && f.operatingProfitPct < 12
+        ? ["Review agent salary costs against revenue ratio", "Check GRN/vendor costs for optimisation opportunities", "Verify revenue rules capture all billable volume", "Escalate to operations head if loss persists beyond this month"]
+        : ["Monitor monthly — flag if drops below 12%", "Track GRN trend for creeping vendor cost increases"],
+      related: ["Revenue", "EBIT", "Agent Salary", "Rev / Agent"],
+    },
+    ceo_quality: {
+      title: "Quality Score", value: qualityPct !== null ? `${qualityPct}%` : "—",
+      target: "≥ 80% metrics on target",
+      trend: qualityPct === null ? "action" : qualityPct >= 80 ? "positive" : qualityPct >= 55 ? "action" : "negative",
+      trendLabel: qualityPct === null ? "No data" : qualityPct >= 80 ? "On target" : qualityPct >= 55 ? "Action req." : "Critical",
+      analysis: qualityPct !== null
+        ? `${passCount} of ${passCount + failCount} targeted KPI metrics are meeting their targets — a quality score of ${qualityPct}%. ${qualityPct >= 80 ? "Process is performing well across all monitored KPIs." : qualityPct >= 55 ? "Over a third of metrics are off-target. Review failing metrics in the KPI sections below." : "More than half of targeted metrics are failing. Immediate review across all KPI sections required."}`
+        : "No targeted metrics configured. Set targets for KPI metrics to enable quality scoring.",
+      actions: qualityPct !== null && qualityPct < 80
+        ? ["Scroll to KPI Sections below to identify failing metrics", "Focus on metrics with Action Required status first", "Check for stale data feeds — staleness masks true performance", "Schedule weekly review with team leads for bottom performers"]
+        : ["Continue weekly monitoring cadence", "Review thresholds if all metrics consistently pass"],
+      related: ["HC vs Mandate", "Rev / Agent", "Active Headcount"],
+    },
+    ceo_hc: {
+      title: "HC vs Mandate",
+      value: hc?.gap !== null && hc?.gap !== undefined ? (hc.gap >= 0 ? `+${hc.gap}` : String(hc.gap)) : "—",
+      target: "0 or above (fully staffed)",
+      trend: hc?.gap === null || hc?.gap === undefined ? "action" : hc.gap >= 0 ? "positive" : "negative",
+      trendLabel: hc?.gap === null || hc?.gap === undefined ? "No mandate" : hc.gap >= 0 ? "Fully staffed" : "Understaffed",
+      analysis: hc?.available
+        ? `Active headcount is ${hc.activeHc} against a mandate of ${hc.mandatedHc ?? "unset"}. Gap: ${hc.gap !== null ? (hc.gap >= 0 ? `+${hc.gap} (above mandate)` : `${hc.gap} (below mandate)`) : "unknown"}. ${hc.gap !== null && hc.gap < 0 ? `A shortfall of ${Math.abs(hc.gap)} reduces process capacity and increases per-agent workload.` : "Process is operating at or above mandated staffing levels."}`
+        : "Mandate data is not configured for this process. Set mandate headcount in the process master to enable gap tracking.",
+      actions: hc?.gap !== null && hc.gap < 0
+        ? [`Raise ${Math.abs(hc.gap)} requisition(s) to close the HC gap`, "Review available pipeline for quick fills", "Escalate shortfall to operations manager if persistent", "Consider cross-process allocation while hiring is in progress"]
+        : ["Monitor monthly — raise requisitions proactively before mandate is breached", "Keep hiring pipeline active even when fully staffed"],
+      related: ["Rev / Agent", "Quality Score", "Candidates in Pipeline", "Open Positions"],
+    },
+    ceo_rev_agent: {
+      title: "Rev / Agent", value: fmtL(revPerAgent),
+      target: "Process-specific billing rate",
+      trend: revPerAgent === null ? "action" : revPerAgent > 0 ? "positive" : "action",
+      trendLabel: revPerAgent === null ? "No data" : "Monthly productivity",
+      analysis: revPerAgent !== null
+        ? `Each active agent generates ${fmtL(revPerAgent)} of revenue per month (${fmtL(f?.revenue)} ÷ ${hc?.activeHc ?? 0} agents). Compare against your client contract rate to assess margin per seat.`
+        : "Rev/Agent requires both revenue data and active headcount. Configure billing rules and verify all agents are mapped to this process.",
+      actions: revPerAgent !== null
+        ? ["Compare to prior month to identify productivity trajectory", "Check if revenue per seat matches client billing rate", "Flag agents with significantly below-average output for coaching", "Balance quality score against Rev/Agent — volume over compliance is a risk"]
+        : ["Configure revenue billing rules for this process", "Verify all active agents are correctly mapped"],
+      related: ["Revenue", "Active Headcount", "Quality Score"],
+    },
+    // ── Business Health — Finance ──────────────────────────────────────────────
+    hs_revenue: { title: "Revenue", value: f?.available ? fmtL(f.revenue) : "—", trend: !f?.available ? "action" : f?.revenue && f.revenue > 0 ? "positive" : "action", trendLabel: !f?.available ? "No data" : "This month", analysis: `Monthly process revenue is ${fmtL(f?.revenue)}. This feeds directly into operating profit and margin calculations.`, actions: ["Verify billing rule is correctly mapped to this process", "Cross-check with client invoice register"], related: ["EBIT", "Operating %", "GRN (vendor cost)"] },
+    hs_grn: { title: "GRN (Vendor Cost)", value: f?.available ? fmtL(f.grn) : "—", trend: "neutral", trendLabel: "Vendor cost", analysis: `GRN vendor costs this month: ${fmtL(f?.grn)}. This is deducted from revenue when computing EBIT.`, actions: ["Review vendor invoices for accuracy", "Identify optimisation opportunities in vendor costs"], related: ["EBIT", "Revenue"] },
+    hs_salary: { title: "Agent Salary", value: f?.agentSalaryIsRealThisMonth ? fmtL(f.agentSalary) : "Pending payroll", trend: !f?.agentSalaryIsRealThisMonth ? "action" : "neutral", trendLabel: !f?.agentSalaryIsRealThisMonth ? "Payroll pending" : "This month", analysis: !f?.agentSalaryIsRealThisMonth ? "Agent salary has not yet been processed for the current month. Run payroll to populate this metric." : `Agent salary cost is ${fmtL(f?.agentSalary)}, the primary cost driver for this process.`, actions: !f?.agentSalaryIsRealThisMonth ? ["Run current month payroll", "Verify all active agents are enrolled in payroll"] : ["Monitor salary cost as % of revenue", "Review against billing rate per agent"], related: ["EBIT", "Operating %", "Revenue"] },
+    hs_ebit: { title: "EBIT", value: f?.agentSalaryIsRealThisMonth ? fmtL(f.ebit) : "Pending payroll", target: "> 0 (profitable)", trend: !f?.agentSalaryIsRealThisMonth || f?.ebit === null ? "action" : f.ebit >= 0 ? "positive" : "negative", trendLabel: !f?.agentSalaryIsRealThisMonth ? "Payroll pending" : f?.ebit !== null && f.ebit >= 0 ? "Profitable" : "Loss", analysis: f?.agentSalaryIsRealThisMonth && f?.ebit !== null ? `EBIT is ${fmtL(f.ebit)} (Revenue ${fmtL(f?.revenue)} − GRN ${fmtL(f?.grn)} − Salary ${fmtL(f?.agentSalary)}). ${f.ebit >= 0 ? "Process is profitable this month." : "Process is at a loss — cost or revenue action required."}` : "EBIT computation requires completed payroll. Run the current month's payroll to enable P&L.", actions: f?.ebit !== null && f.ebit < 0 ? ["Investigate revenue shortfall vs prior month", "Review all cost components for reduction opportunities", "Escalate to operations head"] : ["Monitor monthly EBIT trend", "Ensure all cost inputs are complete and accurate"], related: ["Revenue", "GRN (vendor cost)", "Agent Salary", "Operating %"] },
+    hs_op_pct: { title: "Operating %", value: f?.agentSalaryIsRealThisMonth && f?.operatingProfitPct !== null ? `${f.operatingProfitPct.toFixed(1)}%` : "Pending payroll", target: "12–18% (BPO benchmark)", trend: !f?.agentSalaryIsRealThisMonth || f?.operatingProfitPct === null ? "action" : f.operatingProfitPct >= 12 ? "positive" : f.operatingProfitPct >= 0 ? "action" : "negative", trendLabel: !f?.agentSalaryIsRealThisMonth ? "Payroll pending" : f?.operatingProfitPct !== null && f.operatingProfitPct >= 12 ? "Healthy" : "Below target", analysis: f?.agentSalaryIsRealThisMonth && f?.operatingProfitPct !== null ? `Operating margin ${f.operatingProfitPct.toFixed(1)}% — BPO benchmark is 12–18%. ${f.operatingProfitPct >= 12 ? "This process is in the healthy range." : "Below benchmark — review cost structure."}` : "Requires completed payroll to compute.", actions: ["Compare to BPO benchmark (12–18%)", "Review cost structure if below target", "Verify revenue recognition rules are complete"], related: ["EBIT", "Revenue", "Agent Salary"] },
+    // ── Business Health — Headcount ────────────────────────────────────────────
+    hs_active_hc: { title: "Active Headcount", value: String(hc?.activeHc ?? "—"), trend: "neutral", trendLabel: "On process", analysis: `${hc?.activeHc ?? 0} active employees are currently allocated to this process. ${hc?.mandatedHc ? `Mandate is ${hc.mandatedHc} — gap is ${hc.gap !== null ? (hc.gap >= 0 ? `+${hc.gap}` : String(hc.gap)) : "unknown"}.` : "No mandate configured."}`, actions: ["Verify all active agents are correctly mapped to this process", "Check agents on leave that reduce availability"], related: ["HC vs Mandate", "Available Now", "Gap vs Mandate"] },
+    hs_mandate: { title: "Mandate", value: hc?.mandatedHc !== null && hc?.mandatedHc !== undefined ? String(hc.mandatedHc) : "Not configured", trend: hc?.mandatedHc ? "neutral" : "action", trendLabel: hc?.mandatedHc ? "Sanctioned" : "Not configured", analysis: hc?.mandatedHc ? `Mandate headcount is ${hc.mandatedHc}. This is the target staffing level set for this process.` : "No mandate has been configured for this process. Set it in process master to enable gap tracking.", actions: hc?.mandatedHc ? ["Review mandate periodically as client volume changes", "Update mandate when contract headcount changes"] : ["Configure mandate headcount in process master settings", "Align with client contract staffing requirements"], related: ["Active Headcount", "Gap vs Mandate", "Shortfall"] },
+    hs_available: { title: "Available Now", value: String(hc?.availableCount ?? "—"), trend: "neutral", trendLabel: "Staffed today", analysis: `${hc?.availableCount ?? 0} agents are currently available and staffed on this process. This may differ from active headcount due to leave, training or other unavailability.`, actions: ["Review agents on leave vs mandate requirements", "Plan leave coverage to avoid availability gaps on peak days"], related: ["Active Headcount", "HC vs Mandate"] },
+    hs_hc_gap: { title: "Gap vs Mandate", value: hc?.gap !== null && hc?.gap !== undefined ? (hc.gap >= 0 ? `+${hc.gap}` : String(hc.gap)) : "—", target: "0 or above", trend: hc?.gap === null || hc?.gap === undefined ? "action" : hc.gap >= 0 ? "positive" : "negative", trendLabel: hc?.gap === null || hc?.gap === undefined ? "No mandate" : hc.gap >= 0 ? "Above mandate" : "Below mandate", analysis: hc?.gap !== null && hc?.gap !== undefined ? `Current gap vs mandate: ${hc.gap >= 0 ? `+${hc.gap} (above mandate)` : `${hc.gap} (below mandate)`}. ${hc.gap < 0 ? "Understaffing increases per-agent workload and can impact quality and SLAs." : "Process is adequately staffed at or above mandate."}` : "Mandate not configured — gap cannot be computed.", actions: hc?.gap !== null && hc.gap < 0 ? [`Raise ${Math.abs(hc.gap)} new requisition(s) immediately`, "Check hiring pipeline for near-ready candidates", "Escalate to operations manager if gap is persistent"] : ["Continue monitoring — proactively raise reqs before mandate is breached"], related: ["Active Headcount", "Mandate", "Buffer", "Shortfall"] },
+    hs_buffer: { title: "Buffer", value: hc?.buffer !== null && hc?.buffer !== undefined ? `+${hc.buffer}` : "—", trend: hc?.buffer !== null && hc?.buffer !== undefined && hc.buffer > 0 ? "positive" : "neutral", trendLabel: "Above mandate", analysis: `Buffer of ${hc?.buffer ?? 0} agents above mandate. A positive buffer provides capacity for leave coverage and volume spikes.`, actions: ["Maintain buffer for SLA protection during leave peaks", "Review if excess buffer is generating unnecessary cost"], related: ["Active Headcount", "Mandate", "Gap vs Mandate"] },
+    hs_shortfall: { title: "Shortfall", value: String(hc?.shortfall ?? "—"), target: "0", trend: hc?.shortfall !== null && hc?.shortfall !== undefined && hc.shortfall > 0 ? "negative" : "positive", trendLabel: hc?.shortfall ? "Below mandate" : "None", analysis: `Shortfall of ${hc?.shortfall ?? 0} agents below mandate. ${hc?.shortfall && hc.shortfall > 0 ? "This directly impacts capacity, SLAs and agent workload." : "Process is fully staffed against mandate."}`, actions: hc?.shortfall && hc.shortfall > 0 ? ["Raise immediate requisitions to close the shortfall", "Escalate to operations manager", "Consider cross-process temporary allocation"] : ["Continue monitoring — proactively prevent shortfall building up"], related: ["Active Headcount", "Gap vs Mandate", "Open Positions"] },
+    // ── Business Health — Hiring ───────────────────────────────────────────────
+    hs_req: { title: "Open Requisitions", value: String(hi?.openRequisitions ?? "—"), trend: (hi?.openRequisitions ?? 0) > 0 ? "action" : "positive", trendLabel: (hi?.openRequisitions ?? 0) > 0 ? "Hiring active" : "No open reqs", analysis: `${hi?.openRequisitions ?? 0} open hiring requisition(s) for this process. Open requisitions indicate active demand for new hires.`, actions: ["Review each requisition for priority and timeline", "Ensure JDs are published and pipeline is active", "Close fulfilled requisitions promptly"], related: ["Open Positions", "Candidates in Pipeline", "Gap vs Mandate"] },
+    hs_positions: { title: "Open Positions", value: String(hi?.openPositions ?? "—"), target: "0 (all filled)", trend: (hi?.openPositions ?? 0) > 0 ? "negative" : "positive", trendLabel: (hi?.openPositions ?? 0) > 0 ? "Unfilled" : "All filled", analysis: `${hi?.openPositions ?? 0} position(s) yet to be filled. Each unfilled position contributes to headcount gap and operational risk.`, actions: ["Prioritise filling positions linked to mandate shortfall", "Escalate aged positions to senior recruiter", "Review selection criteria if time-to-fill is high"], related: ["Open Requisitions", "Candidates in Pipeline", "Shortfall"] },
+    hs_hired: { title: "Hired (All Time)", value: String(hi?.hiredCount ?? "—"), trend: "positive", trendLabel: "Cumulative", analysis: `${hi?.hiredCount ?? 0} candidates have been hired via formal requisitions for this process. This is a cumulative metric since tracking began.`, actions: ["Use hire data to benchmark time-to-fill for future planning", "Track attrition against total hires to assess retention rate"], related: ["Open Requisitions", "Pending Hiring"] },
+    hs_pending: { title: "Pending Hiring", value: String(hi?.pendingHiringCount ?? "—"), trend: (hi?.pendingHiringCount ?? 0) > 0 ? "action" : "positive", trendLabel: (hi?.pendingHiringCount ?? 0) > 0 ? "Pending" : "None pending", analysis: `${hi?.pendingHiringCount ?? 0} hiring request(s) raised but not yet fulfilled. These represent demand that has not yet translated into offers or joins.`, actions: ["Review pending requests for blockers", "Escalate long-pending requests to senior recruiter", "Ensure each pending request has an active pipeline"], related: ["Open Positions", "Candidates in Pipeline", "Gap vs Mandate"] },
+    hs_pipeline: { title: "Candidates in Pipeline", value: String(hi?.candidatesInPipeline ?? "—"), trend: (hi?.candidatesInPipeline ?? 0) > 0 ? "positive" : "action", trendLabel: (hi?.candidatesInPipeline ?? 0) > 0 ? "Active pipeline" : "Empty pipeline", analysis: `${hi?.candidatesInPipeline ?? 0} candidate(s) in the active hiring pipeline matched to this process. A healthy pipeline ensures open positions can be filled quickly.`, actions: ["Target pipeline of at least 3× open positions count", "Move candidates through stages promptly to reduce drop-off", "Review selection pass rate — low rate indicates JD/sourcing mismatch"], related: ["Open Positions", "Open Requisitions", "Pending Hiring"] },
+  };
+
+  const entry = cfg[metricKey ?? ""];
+  if (!entry) return null;
+
+  const headerGrad = metricKey === "ceo_revenue" ? "linear-gradient(135deg,#1e3a5f,#2f6fed)"
+    : metricKey === "ceo_op_pct" ? "linear-gradient(135deg,#047857,#10b981)"
+    : metricKey === "ceo_quality" ? "linear-gradient(135deg,#0369a1,#06b6d4)"
+    : metricKey === "ceo_hc" ? "linear-gradient(135deg,#047857,#10b981)"
+    : metricKey === "ceo_rev_agent" ? "linear-gradient(135deg,#5b21b6,#7c5ce5)"
+    : (metricKey ?? "").startsWith("hs_revenue") || (metricKey ?? "").startsWith("hs_grn") || (metricKey ?? "").startsWith("hs_ebit") || (metricKey ?? "").startsWith("hs_op_pct") || (metricKey ?? "").startsWith("hs_salary") ? "linear-gradient(135deg,#1e40af,#3b82f6)"
+    : (metricKey ?? "").startsWith("hs_active") || (metricKey ?? "").startsWith("hs_mandate") || (metricKey ?? "").startsWith("hs_available") || (metricKey ?? "").startsWith("hs_hc") || (metricKey ?? "").startsWith("hs_buffer") || (metricKey ?? "").startsWith("hs_shortfall") ? "linear-gradient(135deg,#6d28d9,#8b5cf6)"
+    : "linear-gradient(135deg,#b45309,#f59e0b)";
+
+  const bannerCol = entry.trend === "positive"
+    ? { bg: "#f0fdf4", border: "#86efac", text: "#15803d", label: "Positive Trend" }
+    : entry.trend === "negative"
+    ? { bg: "#fef2f2", border: "#fca5a5", text: "#dc2626", label: "Negative Trend" }
+    : entry.trend === "action"
+    ? { bg: "#fffbeb", border: "#fcd34d", text: "#d97706", label: "Action Required" }
+    : { bg: "#f8fafc", border: "#e2e8f0", text: "#64748b", label: "Informational" };
+  const BannerIcon = entry.trend === "positive" ? ArrowUpRight : entry.trend === "negative" ? ArrowDownRight : entry.trend === "action" ? AlertTriangle : Minus;
+
+  return (
+    <Sheet open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <SheetContent side="right" className="w-full max-w-sm p-0 overflow-y-auto border-l-0 shadow-2xl">
+        {/* Header */}
+        <div style={{ background: headerGrad, padding: "18px 20px 16px" }}>
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: ".45px", fontWeight: 900, color: "rgba(255,255,255,.75)", marginBottom: 4 }}>Depth Analysis</p>
+              <p style={{ fontSize: 18, fontWeight: 900, color: "#fff", lineHeight: 1.2 }}>{entry.title}</p>
+              <p style={{ fontSize: 22, fontWeight: 950, color: "#fff", marginTop: 4, lineHeight: 1 }}>{entry.value}</p>
+              {entry.target && <p style={{ fontSize: 9, color: "rgba(255,255,255,.7)", marginTop: 3, fontWeight: 700 }}>Target: {entry.target}</p>}
+            </div>
+            <div className="flex flex-col items-end gap-2 shrink-0">
+              <button onClick={onClose} style={{ background: "rgba(255,255,255,.15)", border: "none", borderRadius: 8, padding: "4px 6px", cursor: "pointer", color: "#fff" }}><X size={14} /></button>
+              <TrendChip trend={entry.trend} label={entry.trendLabel} />
+            </div>
+          </div>
+        </div>
+        {/* Body */}
+        <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Trend status banner */}
+          <div style={{ background: bannerCol.bg, border: `1px solid ${bannerCol.border}`, borderRadius: 10, padding: "10px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+            <BannerIcon size={14} style={{ color: bannerCol.text, flexShrink: 0 }} />
+            <div>
+              <p style={{ fontSize: 10, fontWeight: 900, color: bannerCol.text, textTransform: "uppercase", letterSpacing: ".4px" }}>{bannerCol.label}</p>
+              <p style={{ fontSize: 11, color: bannerCol.text, marginTop: 2, opacity: 0.85, lineHeight: 1.4 }}>{entry.trendLabel}</p>
+            </div>
+          </div>
+          {/* Analysis */}
+          <div>
+            <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".45px", color: "#64748b", marginBottom: 6 }}>Analysis</p>
+            <p style={{ fontSize: 12, color: "#334155", lineHeight: 1.65 }}>{entry.analysis}</p>
+          </div>
+          {/* Action items */}
+          {entry.actions.length > 0 && (
+            <div>
+              <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".45px", color: "#64748b", marginBottom: 6 }}>Action Items</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {entry.actions.map((a, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 10px" }}>
+                    <span style={{ background: "#f59e0b", color: "#fff", borderRadius: "50%", width: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 900, flexShrink: 0, marginTop: 1 }}>{i + 1}</span>
+                    <p style={{ fontSize: 11, color: "#92400e", lineHeight: 1.5 }}>{a}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* Related metrics */}
+          {entry.related.length > 0 && (
+            <div>
+              <p style={{ fontSize: 9, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".45px", color: "#64748b", marginBottom: 6 }}>Related Metrics</p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {entry.related.map((r) => (
+                  <span key={r} style={{ background: "#f1f5f9", border: "1px solid #cbd5e1", borderRadius: 999, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: "#475569" }}>{r}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 /**
  * The drill-down drawer: the formula, the source it reads, the filter on every
  * field, and each daily reading with the parts it divided.
@@ -4884,6 +5128,7 @@ export default function ProcessOperationsPage() {
   const [active, setActive] = useState<string | null>(null);
   const [branchFilter, setBranchFilter] = useState<string>("all");
   const [drill, setDrill] = useState<string | null>(null);
+  const [summaryDrill, setSummaryDrill] = useState<string | null>(null);
   const [period, setPeriod] = useState<ReportPeriod>("trend");
   const [manualEntryOpen, setManualEntryOpen] = useState(false);
   const [view, setView] = useState<"kpi" | "live" | "sales">(() => {
@@ -5200,14 +5445,20 @@ export default function ProcessOperationsPage() {
                     <LiveKpiCard label="Revenue"
                       value={h?.finance?.available ? fmtL(h.finance.revenue) : "—"}
                       sub={h?.finance?.revenueStatus === "accounting_fallback" ? "accounting fallback" : "this month"}
-                      color="linear-gradient(135deg,#1e3a5f,#2f6fed)" />
+                      color="linear-gradient(135deg,#1e3a5f,#2f6fed)"
+                      onClick={() => setSummaryDrill("ceo_revenue")}
+                      trend={!h?.finance?.available ? "action" : h?.finance?.revenue && h.finance.revenue > 0 ? "positive" : "action"}
+                      trendLabel={!h?.finance?.available ? "Data gap" : h?.finance?.revenueStatus === "accounting_fallback" ? "Fallback" : "On track"} />
                     <LiveKpiCard label="Operating %"
                       value={h?.finance?.agentSalaryIsRealThisMonth && h.finance.operatingProfitPct !== null
                         ? `${h.finance.operatingProfitPct.toFixed(1)}%` : "—"}
                       sub={!h?.finance?.agentSalaryIsRealThisMonth ? "payroll pending" : "EBIT ÷ Revenue"}
                       color={h?.finance?.agentSalaryIsRealThisMonth && h.finance.operatingProfitPct !== null
                         ? (h.finance.operatingProfitPct >= 0 ? "linear-gradient(135deg,#047857,#10b981)" : "linear-gradient(135deg,#be123c,#f43f5e)")
-                        : "linear-gradient(135deg,#334155,#64748b)"} />
+                        : "linear-gradient(135deg,#334155,#64748b)"}
+                      onClick={() => setSummaryDrill("ceo_op_pct")}
+                      trend={!h?.finance?.agentSalaryIsRealThisMonth || h?.finance?.operatingProfitPct === null ? "action" : h.finance.operatingProfitPct >= 12 ? "positive" : h.finance.operatingProfitPct >= 0 ? "action" : "negative"}
+                      trendLabel={!h?.finance?.agentSalaryIsRealThisMonth ? "Payroll pending" : h?.finance?.operatingProfitPct === null ? "No data" : h.finance.operatingProfitPct >= 12 ? "Healthy" : h.finance.operatingProfitPct >= 0 ? "Below target" : "Loss"} />
                     <LiveKpiCard label="Quality Score"
                       value={qualityPct !== null ? `${qualityPct}%` : "—"}
                       sub={`${passCount} on target · ${failCount} failing`}
@@ -5215,17 +5466,26 @@ export default function ProcessOperationsPage() {
                         ? (qualityPct >= 80 ? "linear-gradient(135deg,#047857,#10b981)"
                           : qualityPct >= 55 ? "linear-gradient(135deg,#b45309,#f59e0b)"
                           : "linear-gradient(135deg,#be123c,#f43f5e)")
-                        : "linear-gradient(135deg,#0369a1,#06b6d4)"} />
+                        : "linear-gradient(135deg,#0369a1,#06b6d4)"}
+                      onClick={() => setSummaryDrill("ceo_quality")}
+                      trend={qualityPct === null ? "action" : qualityPct >= 80 ? "positive" : qualityPct >= 55 ? "action" : "negative"}
+                      trendLabel={qualityPct === null ? "No data" : qualityPct >= 80 ? "On target" : qualityPct >= 55 ? "Action req." : "Critical"} />
                     <LiveKpiCard label="HC vs Mandate"
                       value={hcGap !== null ? (hcGap >= 0 ? `+${hcGap}` : String(hcGap)) : `${ops.headcount} HC`}
                       sub={hcGap !== null ? (hcGap >= 0 ? "above mandate" : "below mandate") : "no mandate set"}
                       color={hcGap !== null
                         ? (hcGap >= 0 ? "linear-gradient(135deg,#047857,#10b981)" : "linear-gradient(135deg,#be123c,#f43f5e)")
-                        : "linear-gradient(135deg,#1e3a5f,#2f6fed)"} />
+                        : "linear-gradient(135deg,#1e3a5f,#2f6fed)"}
+                      onClick={() => setSummaryDrill("ceo_hc")}
+                      trend={hcGap === null ? "action" : hcGap >= 0 ? "positive" : "negative"}
+                      trendLabel={hcGap === null ? "No mandate" : hcGap >= 0 ? "Fully staffed" : "Understaffed"} />
                     <LiveKpiCard label="Rev / Agent"
                       value={fmtL(revPerAgent)}
                       sub="monthly productivity"
-                      color="linear-gradient(135deg,#5b21b6,#7c5ce5)" />
+                      color="linear-gradient(135deg,#5b21b6,#7c5ce5)"
+                      onClick={() => setSummaryDrill("ceo_rev_agent")}
+                      trend={revPerAgent === null ? "action" : "positive"}
+                      trendLabel={revPerAgent === null ? "No data" : "Per seat"} />
                   </div>
                 );
               })()}
@@ -5287,7 +5547,7 @@ export default function ProcessOperationsPage() {
                   )}
 
                   {/* ── ZONE 1: Business Context (CEO reads first) ──────────── */}
-                  {current && <LivePanel title="Business Health"><BusinessHealthPanel processId={current} /></LivePanel>}
+                  {current && <LivePanel title="Business Health"><BusinessHealthPanel processId={current} onOpen={setSummaryDrill} /></LivePanel>}
 
                   {/* ── ZONE 2: Root Cause — why quality is where it is ─────── */}
                   {current && <LivePanel title="Root Cause vs. Workforce"><WorkforceCorrelationPanel processId={current} period={period} /></LivePanel>}
@@ -5370,6 +5630,13 @@ export default function ProcessOperationsPage() {
           {current && (
             <DrilldownDrawer processId={current} metricKey={drill} period={period} onClose={() => setDrill(null)} />
           )}
+          <SummaryTileDrillDrawer
+            metricKey={summaryDrill}
+            health={healthForBoard?.data}
+            passCount={passCount}
+            failCount={failCount}
+            onClose={() => setSummaryDrill(null)}
+          />
           <ManualEntryDrawer
             open={manualEntryOpen}
             processId={current}
