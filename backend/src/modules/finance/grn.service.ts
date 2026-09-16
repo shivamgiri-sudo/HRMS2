@@ -282,7 +282,7 @@ async function createUnbudgetedDraft(
   // belong to the branch the GRN is being raised for. Without this an unbudgeted GRN would be the
   // one create path able to attribute spend to another branch's cost centre.
   const [costCentreRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, cost_centre_name, branch_id
+    `SELECT id, cost_centre_name, branch_id, process_id
        FROM cost_centre_master
       WHERE id = ? AND active_status = 1
       LIMIT 1`,
@@ -356,7 +356,7 @@ async function createUnbudgetedDraft(
       amount_without_tax, tax_amount, amount_with_tax, pnl_cost_amount, amount,
       bill_date, accounting_period, payment_terms_days, due_date, description, remarks, status,
       financial_year, budget_id, budget_line_id, is_unbudgeted, created_by, created_at)
-     VALUES (?,NULL,?,?,?,NULL,?,'direct',?,?,?,?,?,'amount',0,
+     VALUES (?,NULL,?,?,?,?,?,'direct',?,?,?,?,?,'amount',0,
              'exclusive',0,'cgst_sgst',100,
              0,0,0,0,0,
              ?,?,?,?,?,?,'draft',?,NULL,NULL,1,?,NOW())`,
@@ -365,6 +365,11 @@ async function createUnbudgetedDraft(
       payload.grnType,
       payload.branchId,
       payload.companyCode?.trim() || null,
+      // No budget line to carry a process on this path, so the cost centre's own mapping
+      // (owner ruling 2026-09-16) is the source: most cost centres are 1:1 with a process/
+      // client, unlike finance_budget_line.process_id, which is almost never populated (see
+      // the budgeted twin below).
+      costCentre.process_id ?? null,
       payload.costCentreId,
       vendor.vendorId,
       vendor.vendorName,
@@ -442,6 +447,20 @@ export const grnService = {
       payload.budgetLineId!,
       payload.branchId
     ) as any;
+
+    // finance_budget_line.process_id is almost never set (4 of 790 rows, live-verified
+    // 2026-09-16) — nobody fills a Process in when building a budget line. The cost centre the
+    // line is planned against usually already carries one (from the legacy process_name_bill
+    // backfill), so that is the fallback rather than leaving every budgeted GRN's Process blank.
+    // Same mapping the unbudgeted path above uses directly off the raiser's own cost centre pick.
+    let costCentreProcessId: string | null = null;
+    if (!budgetLine.process_id && budgetLine.cost_centre_id) {
+      const [ccRows] = await db.execute<RowDataPacket[]>(
+        `SELECT process_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
+        [budgetLine.cost_centre_id]
+      );
+      costCentreProcessId = (ccRows[0] as any)?.process_id ?? null;
+    }
 
     // An explicit accountingPeriod is only ever present when the caller asked to book into a
     // month other than the bill date's own month — grn.routes.ts's periodOverrideRoles gate has
@@ -617,7 +636,7 @@ export const grnService = {
         payload.grnType,
         payload.branchId,
         payload.companyCode?.trim() || null,
-        budgetLine.process_id ?? null,
+        budgetLine.process_id ?? costCentreProcessId,
         budgetLine.cost_centre_id ?? null,
         costClass,
         vendor.vendorId,
@@ -669,7 +688,7 @@ export const grnService = {
       grn_number: null,
       budget_id: budgetLine.budget_id,
       budget_line_id: budgetLine.id,
-      process_id: budgetLine.process_id ?? null,
+      process_id: budgetLine.process_id ?? costCentreProcessId,
       cost_centre_id: budgetLine.cost_centre_id ?? null,
       cost_class: costClass,
       quantity,
