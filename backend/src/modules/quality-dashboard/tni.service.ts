@@ -62,6 +62,10 @@ export type TniParam = (typeof TNI_PARAMS)[number];
 export interface TniAgentRow {
   agent_code: string;
   agent_name: string;
+  process_name: string;
+  reporting_manager: string;
+  branch_name: string;
+  cost_centre_name: string;
   audit_count: number;
   avg_cq_score: number;
   /** pass % per param, keyed by param name */
@@ -100,28 +104,48 @@ function buildSelectColumns(): string {
 export async function getTniAnalysis(
   startDate: string,
   endDate: string,
-  clientId?: string | null
+  clientId?: string | null,
+  branchId?: string | null,
+  processId?: string | null,
+  costCentreId?: string | null,
 ): Promise<{ agents: TniAgentRow[]; summary: TniSummary; thresholds: TniThresholds }> {
   const pool = getShivamgiriPool();
 
-  const clientCond = clientId ? " AND q.ClientId = ?" : "";
-  const baseParams: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+  const conditions: string[] = [];
+  const baseParams: (string | number)[] = [startDate, endDate];
+
+  if (clientId) { conditions.push("AND q.ClientId = ?"); baseParams.push(clientId); }
+  if (branchId) { conditions.push("AND e.branch_id = ?"); baseParams.push(branchId); }
+  if (processId) { conditions.push("AND e.process_id = ?"); baseParams.push(processId); }
+  if (costCentreId) { conditions.push("AND e.cost_centre_id = ?"); baseParams.push(costCentreId); }
+
+  const extraCond = conditions.join(" ");
 
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
       q.User AS agent_code,
-      COALESCE(am.AgentName, q.User) AS agent_name,
+      COALESCE(am.AgentName, e.full_name, q.User) AS agent_name,
+      COALESCE(pm.process_name, '') AS process_name,
+      COALESCE(rm.full_name, '') AS reporting_manager,
+      COALESCE(bm.branch_name, '') AS branch_name,
+      COALESCE(ccm.cost_centre_name, '') AS cost_centre_name,
       COUNT(*) AS audit_count,
       ROUND(AVG(q.quality_percentage), 1) AS avg_cq_score,
       ${buildSelectColumns()}
      FROM db_audit.call_quality_assessment q
      LEFT JOIN Shivamgiri.AgentMaster am
        ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+     LEFT JOIN mas_hrms.employees e
+       ON e.employee_code = q.User COLLATE utf8mb4_unicode_ci AND e.active_status = 1
+     LEFT JOIN mas_hrms.process_master pm ON pm.id = e.process_id
+     LEFT JOIN mas_hrms.branch_master bm ON bm.id = e.branch_id
+     LEFT JOIN mas_hrms.cost_centre_master ccm ON ccm.id = e.cost_centre_id
+     LEFT JOIN mas_hrms.employees rm ON rm.id = e.reporting_manager_id
      WHERE q.CallDate BETWEEN ? AND ?
        AND q.quality_percentage IS NOT NULL
        AND q.User IS NOT NULL AND TRIM(q.User) != ''
-       ${clientCond}
-     GROUP BY q.User, am.AgentName
+       ${extraCond}
+     GROUP BY q.User, am.AgentName, e.full_name, pm.process_name, rm.full_name, bm.branch_name, ccm.cost_centre_name
      ORDER BY audit_count DESC`,
     baseParams
   );
@@ -134,6 +158,10 @@ export async function getTniAnalysis(
     return {
       agent_code: String(row.agent_code ?? ""),
       agent_name: String(row.agent_name ?? row.agent_code ?? "Unknown"),
+      process_name: String(row.process_name ?? ""),
+      reporting_manager: String(row.reporting_manager ?? ""),
+      branch_name: String(row.branch_name ?? ""),
+      cost_centre_name: String(row.cost_centre_name ?? ""),
       audit_count: Number(row.audit_count ?? 0),
       avg_cq_score: Number(row.avg_cq_score ?? 0),
       params,
@@ -156,7 +184,18 @@ export async function getTniAnalysis(
   const agents: TniAgentRow[] = rawAgents.map((a) => {
     let flagCount = 0;
     for (const p of TNI_PARAMS) if (a.params[p] < thresholds[p]) flagCount++;
-    return { ...a, tni_flag_count: flagCount };
+    return {
+      agent_code: a.agent_code,
+      agent_name: a.agent_name,
+      process_name: a.process_name,
+      reporting_manager: a.reporting_manager,
+      branch_name: a.branch_name,
+      cost_centre_name: a.cost_centre_name,
+      audit_count: a.audit_count,
+      avg_cq_score: a.avg_cq_score,
+      params: a.params,
+      tni_flag_count: flagCount,
+    };
   });
 
   // Sort: most failures first

@@ -134,16 +134,30 @@ function dateDefaults(query: Record<string, unknown>): { from: string; to: strin
  * routing gap, not an empty feature.
  */
 
-// GET /api/quality-dashboard/tni-analysis?from=&to=&client_id=
+// GET /api/quality-dashboard/tni-analysis?from=&to=&client_id=&branch_id=&process_id=&cost_centre_id=
 router.get("/tni-analysis", requireRole(...TNI_ROLES), h(async (req, res) => {
   const { from, to } = dateDefaults(req.query);
-  const clientId = typeof req.query.client_id === "string" && req.query.client_id.trim()
-    ? req.query.client_id.trim()
+  const qs = (key: string) => typeof req.query[key] === "string" && (req.query[key] as string).trim()
+    ? (req.query[key] as string).trim()
     : null;
-  const data = await getTniAnalysis(from, to, clientId);
-  // Spread rather than nested under `data`: the page reads `agents` and `summary` off the
-  // response root, matching how it documents the endpoint.
+  const data = await getTniAnalysis(from, to, qs("client_id"), qs("branch_id"), qs("process_id"), qs("cost_centre_id"));
   return res.json({ success: true, ...data });
+}));
+
+// GET /api/quality-dashboard/tni-filter-options — branches, processes, cost centres for filter dropdowns
+router.get("/tni-filter-options", requireRole(...TNI_ROLES), h(async (_req, res) => {
+  const [branches, processes, costCentres] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT id, branch_name AS name FROM mas_hrms.branch_master WHERE active_status = 1 ORDER BY branch_name`
+    ).then(([r]) => r),
+    db.execute<RowDataPacket[]>(
+      `SELECT id, process_name AS name FROM mas_hrms.process_master WHERE active_status = 1 ORDER BY process_name`
+    ).then(([r]) => r),
+    db.execute<RowDataPacket[]>(
+      `SELECT id, cost_centre_name AS name FROM mas_hrms.cost_centre_master WHERE active_status = 1 ORDER BY cost_centre_name`
+    ).then(([r]) => r),
+  ]);
+  return res.json({ success: true, branches, processes, costCentres });
 }));
 
 // GET /api/quality-dashboard/tni-agent-params?from=&to=&agent_code=&param=&client_id=

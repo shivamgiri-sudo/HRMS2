@@ -81,11 +81,17 @@ const FALLBACK_THRESHOLD = 60; // used only if the API response is missing thres
 interface TniAgentRow {
   agent_code: string;
   agent_name: string;
+  process_name: string;
+  reporting_manager: string;
+  branch_name: string;
+  cost_centre_name: string;
   audit_count: number;
   avg_cq_score: number;
   params: Record<ParamKey, number>;
   tni_flag_count: number;
 }
+
+interface FilterOption { id: string; name: string; }
 
 interface TniSummary {
   total_agents: number;
@@ -297,19 +303,36 @@ function SidePanel({
 
 export default function NativeTNIAnalysis() {
   const { toast } = useToast();
-  const [from, setFrom]       = useState(firstOfMonth());
-  const [to, setTo]           = useState(today());
+  const [from, setFrom]         = useState(firstOfMonth());
+  const [to, setTo]             = useState(today());
   const [clientId, setClientId] = useState("all");
+  const [branchId, setBranchId] = useState("all");
+  const [processId, setProcessId] = useState("all");
+  const [costCentreId, setCostCentreId] = useState("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [sidePanel, setSidePanel] = useState<SidePanelState | null>(null);
 
+  const filterOptsQ = useQuery({
+    queryKey: ["tni-filter-options"],
+    queryFn: () => hrmsApi.get<{ branches: FilterOption[]; processes: FilterOption[]; costCentres: FilterOption[] }>(
+      "/api/quality-dashboard/tni-filter-options"
+    ),
+    staleTime: 5 * 60 * 1000,
+  });
+  const branches    = filterOptsQ.data?.branches    ?? [];
+  const processes   = filterOptsQ.data?.processes   ?? [];
+  const costCentres = filterOptsQ.data?.costCentres ?? [];
+
   const qs = new URLSearchParams({
     from, to,
-    ...(clientId !== "all" ? { client_id: clientId } : {}),
+    ...(clientId     !== "all" ? { client_id:      clientId }     : {}),
+    ...(branchId     !== "all" ? { branch_id:      branchId }     : {}),
+    ...(processId    !== "all" ? { process_id:     processId }    : {}),
+    ...(costCentreId !== "all" ? { cost_centre_id: costCentreId } : {}),
   }).toString();
 
   const tniQ = useQuery({
-    queryKey: ["tni-analysis", from, to, clientId],
+    queryKey: ["tni-analysis", from, to, clientId, branchId, processId, costCentreId],
     queryFn: () =>
       hrmsApi.get<{ agents: TniAgentRow[]; summary: TniSummary; thresholds?: Record<ParamKey, number> }>(
         `/api/quality-dashboard/tni-analysis?${qs}`
@@ -338,12 +361,14 @@ export default function NativeTNIAnalysis() {
   const exportCsv = useCallback(() => {
     if (!agents.length) return;
     const headers = [
-      "Agent Code", "Agent Name", "Audit Count", "Avg CQ Score",
+      "Agent Code", "Agent Name", "Process Name", "Reporting Manager",
+      "Branch", "Cost Centre", "Audit Count", "Avg CQ Score",
       "TNI Flag Count",
       ...PARAMS.map((p) => p.label),
     ];
     const rows = agents.map((a) => [
-      a.agent_code, a.agent_name, a.audit_count, a.avg_cq_score, a.tni_flag_count,
+      a.agent_code, a.agent_name, a.process_name, a.reporting_manager,
+      a.branch_name, a.cost_centre_name, a.audit_count, a.avg_cq_score, a.tni_flag_count,
       ...PARAMS.map((p) => a.params[p.key]),
     ]);
     const csv = [headers, ...rows].map((r) => r.join(",")).join("\n");
@@ -454,38 +479,52 @@ export default function NativeTNIAnalysis() {
           <CardContent className="pt-4 pb-4">
             <div className="flex flex-wrap items-end gap-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
-                  From
-                </label>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">From</label>
                 <input
-                  type="date"
-                  value={from}
-                  onChange={(e) => setFrom(e.target.value)}
+                  type="date" value={from} onChange={(e) => setFrom(e.target.value)}
                   className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
-                  To
-                </label>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">To</label>
                 <input
-                  type="date"
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
+                  type="date" value={to} onChange={(e) => setTo(e.target.value)}
                   className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
-                  Client / Process
-                </label>
-                <Select value={clientId} onValueChange={setClientId}>
-                  <SelectTrigger className="w-48 h-9 text-sm border-slate-200">
-                    <SelectValue placeholder="All Clients" />
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Branch</label>
+                <Select value={branchId} onValueChange={setBranchId}>
+                  <SelectTrigger className="w-44 h-9 text-sm border-slate-200">
+                    <SelectValue placeholder="All Branches" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Clients</SelectItem>
-                    {/* Client list can be loaded via /api/quality-dashboard/clients if needed */}
+                    <SelectItem value="all">All Branches</SelectItem>
+                    {branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Process</label>
+                <Select value={processId} onValueChange={setProcessId}>
+                  <SelectTrigger className="w-48 h-9 text-sm border-slate-200">
+                    <SelectValue placeholder="All Processes" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Processes</SelectItem>
+                    {processes.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Cost Centre</label>
+                <Select value={costCentreId} onValueChange={setCostCentreId}>
+                  <SelectTrigger className="w-48 h-9 text-sm border-slate-200">
+                    <SelectValue placeholder="All Cost Centres" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Cost Centres</SelectItem>
+                    {costCentres.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -586,6 +625,12 @@ export default function NativeTNIAnalysis() {
                         <TableHead className="sticky left-8 z-10 bg-slate-50 min-w-[180px] text-xs font-semibold text-slate-600">
                           Agent
                         </TableHead>
+                        <TableHead className="text-xs font-semibold text-slate-600 min-w-[140px]">
+                          Process Name
+                        </TableHead>
+                        <TableHead className="text-xs font-semibold text-slate-600 min-w-[140px]">
+                          Reporting Manager
+                        </TableHead>
                         <TableHead className="text-xs font-semibold text-slate-600 text-center w-16">
                           Audits
                         </TableHead>
@@ -598,10 +643,10 @@ export default function NativeTNIAnalysis() {
                         {PARAMS.map((p) => (
                           <TableHead
                             key={p.key}
-                            className="text-xs font-semibold text-slate-500 text-center min-w-[72px] whitespace-nowrap"
+                            className="text-xs font-semibold text-slate-500 text-center min-w-[72px] whitespace-normal"
                             title={friendlyParamName(p.key)}
                           >
-                            <span className="block max-w-[72px] overflow-hidden text-ellipsis">{p.label}</span>
+                            <span className="block text-center leading-tight">{p.label}</span>
                           </TableHead>
                         ))}
                       </TableRow>
@@ -629,6 +674,14 @@ export default function NativeTNIAnalysis() {
                               {a.agent_name}
                             </div>
                             <div className="text-xs text-slate-400">{a.agent_code}</div>
+                          </TableCell>
+                          {/* Process Name */}
+                          <TableCell className="text-xs text-slate-600">
+                            {a.process_name || <span className="text-slate-300">—</span>}
+                          </TableCell>
+                          {/* Reporting Manager */}
+                          <TableCell className="text-xs text-slate-600">
+                            {a.reporting_manager || <span className="text-slate-300">—</span>}
                           </TableCell>
                           {/* Audit count */}
                           <TableCell className="text-center text-xs text-slate-600">
