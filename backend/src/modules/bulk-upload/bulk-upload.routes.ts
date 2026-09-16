@@ -46,6 +46,71 @@ router.get("/templates", requireRole("admin", "hr", "super_admin", "wfm", "wfm_a
 }));
 
 /**
+ * Aggregate counters for Process Performance V2's landing page header
+ * ("Total Files Uploaded" / "Active Users") -- real COUNT/COUNT DISTINCT
+ * queries against upload_batch, not invented numbers. Scoped to exactly
+ * the upload_type_codes this page's own uploader arrays write (kept in
+ * sync by hand with src/pages/ProcessPerformanceV2Page.tsx -- 41 codes as
+ * of 2026-09-16), so this reflects only Process Performance V2's own
+ * uploads, not every bulk-upload feature in the app. Same row-level
+ * scoping as GET /batches above, so a branch-scoped user sees counts for
+ * their own branch/process, not the whole company's.
+ */
+const PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES = [
+  "AW_BILLING_MASMIS", "AW_INBOUND_MASMIS", "AW_MANDATE_MASMIS", "AW_NEW_CDR_MASMIS", "AW_OUT_MASMIS",
+  "BB_APR_MASMIS", "BB_CART_MASMIS", "BB_CHAT_MASMIS", "BB_SALE_MASMIS",
+  "BIRLANU_APR_MASMIS", "BIRLANU_SALE_MASMIS",
+  "CL_APR_MASMIS", "CL_CHAT_MASMIS", "CL_DISPO_MASMIS", "CL_EMAIL_RAW_MASMIS", "CL_FEEDBACK_MASMIS",
+  "CL_IB_CDR_MASMIS", "CL_OUTBOUND_MASMIS", "CL_QUALITY_MASMIS", "CL_RECHURN_CALL_MASMIS",
+  "GNC_ALLOCATION_MASMIS", "GNC_APR", "GNC_CHAT_MASMIS", "GNC_SALE_MASMIS",
+  "LP_FEEDBACK_APR_MASMIS", "LP_FEEDBACK_CDR_MASMIS", "LP_ONBOARDING_APR_MASMIS", "LP_ONBOARDING_CDR_MASMIS",
+  "NEEMANS_AGENT_DETAILS_MASMIS", "NEEMANS_ALLOCATION_MASMIS", "NEEMANS_APR_MASMIS", "NEEMANS_CHAT_MASMIS",
+  "NEEMANS_MONTH_TARGET_MASMIS", "NEEMANS_SALE_RAW_MASMIS",
+  "OWNER_AGENT_DETAILS_MASMIS", "OWNER_CDR_MASMIS", "OWNER_SALE_MASMIS",
+  "PRE_AGENT_DETAILS_MASMIS", "PRE_CDR_MASMIS", "PRE_SALE_MASMIS",
+  "SATYA_ALLOCATION_MASMIS", "SATYA_CDR_MASMIS",
+];
+
+router.get("/process-performance-v2-stats", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const scope = await buildScopeWhereClause(
+    userId,
+    ["admin", "hr", "wfm", "wfm_analyst", "payroll", "payroll_hr", "branch_head", "branch_admin"],
+    { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
+    { allowAdminBypass: true },
+  );
+
+  // Optional ?codes=A,B,C narrows the same aggregate to one company's own
+  // upload types (e.g. the BellaVita hub card asking only about BB_*),
+  // instead of the whole page's 41-code total. Any code not in the known
+  // list is dropped rather than passed to SQL — cheap guard since these
+  // reach a raw IN(...) list, even though every value is parameterized.
+  const requestedCodes = String(req.query.codes ?? "")
+    .split(",")
+    .map((c) => c.trim())
+    .filter((c) => PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES.includes(c));
+  const typeCodes = requestedCodes.length ? requestedCodes : PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES;
+
+  const typeCodePlaceholders = typeCodes.map(() => "?").join(",");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total_files, COUNT(DISTINCT ub.uploaded_by) AS active_users
+       FROM upload_batch ub
+       LEFT JOIN employees uploader_emp ON uploader_emp.user_id = ub.uploaded_by
+      WHERE ub.upload_type_code IN (${typeCodePlaceholders})
+        AND (ub.uploaded_by = ? OR (${scope.sql}))`,
+    [...typeCodes, userId, ...scope.params],
+  );
+
+  res.json({
+    success: true,
+    data: {
+      totalFilesUploaded: Number(rows[0]?.total_files ?? 0),
+      activeUsers: Number(rows[0]?.active_users ?? 0),
+    },
+  });
+}));
+
+/**
  * Upload Batch History.
  *
  * WHAT THIS USED TO DO. `SELECT * FROM upload_batch ORDER BY created_at DESC LIMIT 50` â€” no scope

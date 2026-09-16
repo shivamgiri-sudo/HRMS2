@@ -194,6 +194,80 @@ export async function getConsolidatedTrend(filters: InboundFilters) {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
+type AgentRow = {
+  agent_id: string;
+  agent_name: string | null;
+  offered: number;
+  answered: number;
+  sl_num: number;
+  acht: number;
+  unique_phones: number;
+};
+
+/**
+ * Agent-wise breakdown for one project's selected date range — same
+ * Pattern A/B query shape as runProjectQuery, just GROUP BY AgentId
+ * instead of date. VDCL (the queue/no-agent sentinel every Pattern-A/B
+ * client uses) is excluded, same as the login_count calculation above:
+ * there is no real agent to attribute those rows to.
+ */
+export async function getProjectAgentSummary(filters: InboundFilters, projectKey: string) {
+  const p = PROJECTS.find((x) => x.key === projectKey);
+  if (!p) throw new Error(`Unknown project key: ${projectKey}`);
+
+  const { startDate, endDate } = filters;
+  const pool = await getDialerPool();
+  const ph = p.campaigns.map(() => "?").join(",");
+  const params: (string | number)[] = [startDate, endDate, ...p.campaigns];
+
+  let sql: string;
+  if (p.pattern === "A") {
+    sql = `SELECT AgentId AS agent_id, MAX(AgentName) AS agent_name,
+      SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS offered,
+      SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS answered,
+      SUM(CASE WHEN TIME_TO_SEC(QueueDuration) <= 20 AND DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS sl_num,
+      ROUND(AVG(CASE WHEN DisconnBy != 'HOLDTIME' THEN CallDurationSecond END),0) AS acht,
+      COUNT(DISTINCT CASE WHEN DisconnBy != 'HOLDTIME' THEN PhoneNumber END) AS unique_phones
+     FROM dialer_db.${p.table}
+     WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
+       AND CampaignName IN (${ph}) AND AgentId != 'VDCL'
+     GROUP BY AgentId ORDER BY offered DESC`;
+  } else {
+    sql = `SELECT AgentId AS agent_id, MAX(AgentName) AS agent_name,
+      COUNT(*) AS offered,
+      COUNT(*) AS answered,
+      SUM(CASE WHEN TIME_TO_SEC(QueueDuration) <= 30 THEN 1 ELSE 0 END) AS sl_num,
+      ROUND(AVG(CallDurationSecond),0) AS acht,
+      COUNT(DISTINCT PhoneNumber) AS unique_phones
+     FROM dialer_db.${p.table}
+     WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
+       AND CampaignName IN (${ph}) AND AgentId != 'VDCL'
+     GROUP BY AgentId ORDER BY offered DESC`;
+  }
+
+  const [rows] = await pool.execute(sql, params);
+  return (rows as AgentRow[]).map((r) => {
+    const offered = n(r.offered);
+    const answered = n(r.answered);
+    const sl_num = n(r.sl_num);
+    const unique_phones = n(r.unique_phones);
+    return {
+      agentId: r.agent_id,
+      // Additive field -- MAX(AgentName) alongside the existing AgentId
+      // grouping. cdr_in_4/etc. all carry a real AgentName column (confirmed
+      // live) that this query simply never selected before; every existing
+      // consumer of this endpoint keeps working unchanged and now also gets
+      // a human-readable name instead of a bare login id.
+      agentName: r.agent_name || r.agent_id,
+      offered,
+      answered,
+      sl_pct: offered ? Math.round((sl_num / offered) * 10000) / 100 : 0,
+      acht: n(r.acht),
+      repeat_pct: offered ? Math.round(((offered - unique_phones) / offered) * 10000) / 100 : 0,
+    };
+  });
+}
+
 export async function getProjectHourly(filters: InboundFilters, projectKey: string) {
   const p = PROJECTS.find((x) => x.key === projectKey);
   if (!p) throw new Error(`Unknown project key: ${projectKey}`);
