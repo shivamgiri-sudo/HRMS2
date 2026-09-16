@@ -675,16 +675,27 @@ function TrendChip({ trend, label }: { trend: TrendDir; label: string }) {
 }
 
 /** KPI tile matching the Live Dashboard's KpiCard, so both tabs read as one system. */
-function LiveKpiCard({ label, value, sub, color, onClick, trend, trendLabel }: {
+/** `ringPct`: when set (a real 0-100 rate, e.g. quality pass-rate — never a signed metric like
+ *  Operating % which can go negative), the tile shows a small ring instead of the plain number,
+ *  matching the donut/gauge pattern from the reference dashboards. Layout only — same data. */
+function LiveKpiCard({ label, value, sub, color, onClick, trend, trendLabel, ringPct }: {
   label: string; value: string | number; sub?: string; color: string;
-  onClick?: () => void; trend?: TrendDir; trendLabel?: string;
+  onClick?: () => void; trend?: TrendDir; trendLabel?: string; ringPct?: number | null;
 }) {
   return (
     <div style={{ position: "relative", minHeight: 88, padding: "11px 14px", borderRadius: 15, color: "#fff", overflow: "hidden", boxShadow: "0 10px 24px rgba(16,35,57,.10)", background: color, cursor: onClick ? "pointer" : undefined }}
       onClick={onClick}>
       <div aria-hidden style={{ position: "absolute", width: 64, height: 64, borderRadius: "50%", right: -16, top: -22, background: "rgba(255,255,255,.13)" }} />
       <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: ".45px", fontWeight: 900, opacity: 0.88 }}>{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 950, marginTop: 4, lineHeight: 1.1 }}>{value}</div>
+      {ringPct !== undefined && ringPct !== null ? (
+        // The ring already renders the percentage inside itself — showing `value` again next
+        // to it would just repeat the same number, so the ring stands alone here.
+        <div style={{ marginTop: 6 }}>
+          <GasScoreRing pct={ringPct} color="#fff" size={48} innerBg="transparent" showLabel={false} />
+        </div>
+      ) : (
+        <div style={{ fontSize: 24, fontWeight: 950, marginTop: 4, lineHeight: 1.1 }}>{value}</div>
+      )}
       {sub && <div style={{ fontSize: 9, marginTop: 5, opacity: 0.82, fontWeight: 700 }}>{sub}</div>}
       {trend && trendLabel && <div style={{ marginTop: 5 }}><TrendChip trend={trend} label={trendLabel} /></div>}
     </div>
@@ -693,20 +704,25 @@ function LiveKpiCard({ label, value, sub, color, onClick, trend, trendLabel }: {
 
 // ── GAS premium visual components ─────────────────────────────────────────
 
-/** Conic-gradient score ring (matches GAS .score-ring) */
-function GasScoreRing({ pct, color = "#45d49a" }: { pct: number; color?: string }) {
+/** Conic-gradient score ring (matches GAS .score-ring). `size`/`innerBg`/`showLabel` default to
+ *  the original 82px dark-navy-card look; the CEO-strip tile passes a smaller size and its own
+ *  tile color for the inner disc so the ring reads correctly on a colored (not dark-navy) card. */
+function GasScoreRing({ pct, color = "#45d49a", size = 82, innerBg = "#0e3454", showLabel = true }: {
+  pct: number; color?: string; size?: number; innerBg?: string; showLabel?: boolean;
+}) {
   const safeColor = pct >= 80 ? "#45d49a" : pct >= 55 ? "#e89b19" : "#e5484d";
   const ringColor = color === "#45d49a" ? safeColor : color;
+  const innerSize = Math.round(size * 0.744);
   return (
     <div style={{
-      width: 82, height: 82, borderRadius: "50%", flexShrink: 0,
+      width: size, height: size, borderRadius: "50%", flexShrink: 0,
       background: `conic-gradient(${ringColor} ${pct}%,rgba(255,255,255,.13) 0)`,
       boxShadow: "0 10px 22px rgba(3,20,36,.20)", display: "grid", placeItems: "center", position: "relative",
     }}>
-      <div style={{ width: 61, height: 61, borderRadius: "50%", background: "#0e3454", position: "absolute" }} />
+      <div style={{ width: innerSize, height: innerSize, borderRadius: "50%", background: innerBg, position: "absolute" }} />
       <div style={{ position: "relative", textAlign: "center", lineHeight: 1 }}>
-        <strong style={{ fontSize: 22, color: "#fff", display: "block" }}>{Math.round(pct)}%</strong>
-        <small style={{ color: "#9fc8da", fontSize: 7.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: .5 }}>SCORE</small>
+        <strong style={{ fontSize: Math.round(size * 0.268), color: "#fff", display: "block" }}>{Math.round(pct)}%</strong>
+        {showLabel && <small style={{ color: "#9fc8da", fontSize: 7.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: .5 }}>SCORE</small>}
       </div>
     </div>
   );
@@ -897,7 +913,7 @@ function Sparkline({ trend, color, big }: { trend: Reading["trend"]; color: stri
 /**
  * Was the uniform gradient KPI tile every metric rendered as, regardless of
  * whether it was fine or failing. Replaced by HeroKpiCard (below) for the one
- * metric per section actually worth that much space, and MiniKpiChip for
+ * metric per section actually worth that much space, and EnhancedMetricCard for
  * everything else -- same click-through, same status colouring, no wall of
  * identically-sized tiles. Kept as a title for the shared delta-hover copy.
  */
@@ -988,73 +1004,8 @@ function HeroKpiCard({ r, staleAfter, period, onOpen }: {
   );
 }
 
-/**
- * GAS-style KPI card for a section metric — left accent bar, corner orb,
- * colored value (pass/fail/accent), delta indicator. Clicking opens the
- * drilldown drawer just as the original chip did.
- */
-function MiniKpiChip({ r, accent, staleAfter, onOpen }: {
-  r: Reading; accent: string; staleAfter: number; onOpen: () => void;
-}) {
-  const stale = r.staleDays !== null && r.staleDays > staleAfter;
-  const status = targetStatus(r);
-  const valueColor = status === "fail" ? "#e5484d" : status === "pass" ? "#18a866" : accent;
-  const d = deltaOf(r);
-  const fresh = r.provisional ? freshnessCaption(r) : null;
-  return (
-    <button type="button" onClick={onOpen} title="Open the full working behind this number"
-      style={{
-        background: `linear-gradient(145deg,#fff 58%,${accent}14 100%)`,
-        border: "1px solid #dfe6ee", borderRadius: 14,
-        padding: "9px 11px 8px", minHeight: 84, width: 152,
-        position: "relative", overflow: "hidden",
-        boxShadow: "0 6px 16px rgba(16,35,57,.065)",
-        cursor: "pointer", textAlign: "left", flexShrink: 0,
-        transition: "box-shadow .18s,transform .18s",
-      }}
-      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 10px 22px rgba(16,35,57,.11)"; }}
-      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = ""; (e.currentTarget as HTMLElement).style.boxShadow = "0 6px 16px rgba(16,35,57,.065)"; }}
-      className="focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
-    >
-      {/* Left accent bar */}
-      <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 4, background: accent, borderRadius: "14px 0 0 14px" }} />
-      {/* Corner orb */}
-      <div style={{ position: "absolute", width: 58, height: 58, borderRadius: "50%", right: -24, top: -25, background: `${accent}14` }} />
-      {/* Header row: label + dot */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6, paddingLeft: 7 }}>
-        <p style={{ fontSize: 8.5, textTransform: "uppercase", letterSpacing: ".45px", color: "#6d7b8c", fontWeight: 900, lineHeight: 1.2, minHeight: 20, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "normal", wordBreak: "break-word" }}>
-          {r.label}
-        </p>
-        <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: accent, boxShadow: `0 0 0 4px ${accent}1a` }} />
-          {r.source === "manual" && <PenLine className="h-2 w-2 text-purple-500" />}
-          {stale && <Clock style={{ width: 8, height: 8, color: "#e89b19" }} />}
-        </div>
-      </div>
-      {/* Value row */}
-      <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginTop: 4, paddingLeft: 7 }}>
-        <span style={{ lineHeight: 1.1, fontWeight: 950, color: r.value === null ? "#94a3b8" : valueColor, fontStyle: r.value === null ? "italic" : undefined, fontSize: r.value === null ? 12 : 21 } as React.CSSProperties}>
-          {formatValue(r.value, r.unit)}
-        </span>
-        {d && (
-          <span style={{ fontSize: 9, fontWeight: 900, color: d.good === null ? "#94a3b8" : d.good ? "#18a866" : "#e5484d" }}>
-            {d.delta === 0 ? "flat" : (d.delta > 0 ? "↑" : "↓") + Math.abs(d.delta).toFixed(1)}
-          </span>
-        )}
-        {fresh && <span style={{ fontSize: 8, color: "#2f6fed", fontWeight: 700 }}>{fresh.short}</span>}
-      </div>
-      {/* Target caption */}
-      {targetCaption(r) && (
-        <p style={{ marginTop: 4, fontSize: 8, color: "#8390a0", fontWeight: 700, paddingLeft: 7, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {targetCaption(r)}
-        </p>
-      )}
-    </button>
-  );
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
-// ── ENHANCED KPI METRIC CARD (replaces MiniKpiChip in the grid) ──────────
+// ── ENHANCED KPI METRIC CARD ──────────────────────────────────────────────
 // Responsive width, always-visible mini sparkline, animated target bar,
 // pass/fail tint, numerator/denominator, stale/manual badges.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -5464,6 +5415,7 @@ export default function ProcessOperationsPage() {
                       trendLabel={!h?.finance?.agentSalaryIsRealThisMonth ? "Payroll pending" : h?.finance?.operatingProfitPct === null ? "No data" : h.finance.operatingProfitPct >= 12 ? "Healthy" : h.finance.operatingProfitPct >= 0 ? "Below target" : "Loss"} />
                     <LiveKpiCard label="Quality Score"
                       value={qualityPct !== null ? `${qualityPct}%` : "—"}
+                      ringPct={qualityPct}
                       sub={`${passCount} on target · ${failCount} failing`}
                       color={qualityPct !== null
                         ? (qualityPct >= 80 ? "linear-gradient(135deg,#047857,#10b981)"
@@ -5549,17 +5501,14 @@ export default function ProcessOperationsPage() {
                     </div>
                   )}
 
-                  {/* ── ZONE 1: Business Context (CEO reads first) ──────────── */}
-                  {current && <LivePanel title="Business Health"><BusinessHealthPanel processId={current} onOpen={setSummaryDrill} /></LivePanel>}
-
-                  {/* ── ZONE 2: Root Cause — why quality is where it is ─────── */}
-                  {current && <LivePanel title="Root Cause vs. Workforce"><WorkforceCorrelationPanel processId={current} period={period} /></LivePanel>}
-
-                  {/* ── ZONE 3: Quality Overview ────────────────────────────── */}
-                  {current && ops && <LivePanel title="Performance Distribution"><ProcessCardInsightsPanel processId={current} ops={ops} onDrill={setDrill} /></LivePanel>}
-
-                  {/* Voice of the customer — what clients/customers are saying */}
-                  {current && <LivePanel title="Voice of Customer"><VoiceOfCustomerPanel processId={current} period={period} /></LivePanel>}
+                  {/* ── ZONE 1-3: Business Context, Root Cause, Quality Overview, Voice of
+                      Customer (CEO reads first) — 2-column grid, same density fix as Zones 4-5 ── */}
+                  <div className="grid gap-4 grid-cols-1 xl:grid-cols-2">
+                    {current && <LivePanel title="Business Health"><BusinessHealthPanel processId={current} onOpen={setSummaryDrill} /></LivePanel>}
+                    {current && <LivePanel title="Root Cause vs. Workforce"><WorkforceCorrelationPanel processId={current} period={period} /></LivePanel>}
+                    {current && ops && <LivePanel title="Performance Distribution"><ProcessCardInsightsPanel processId={current} ops={ops} onDrill={setDrill} /></LivePanel>}
+                    {current && <LivePanel title="Voice of Customer"><VoiceOfCustomerPanel processId={current} period={period} /></LivePanel>}
+                  </div>
 
                   {/* Conversion funnel + quality trend charts */}
                   {charts.length > 0 && (
@@ -5578,13 +5527,19 @@ export default function ProcessOperationsPage() {
                   </div>
 
                   {/* ── ZONE 4: Quality Deep-Dives (operations managers) ─────── */}
-                  {current && <LivePanel title="Fatal Calls Analysis"><FatalCallsPanel processId={current} period={period} /></LivePanel>}
-                  {current && <LivePanel title="Critical Signals"><CriticalSignalsPanel processId={current} period={period} /></LivePanel>}
-                  {current && <LivePanel title="Customer Risk"><CustomerRiskCardsPanel processId={current} period={period} /></LivePanel>}
-                  {current && <LivePanel title="Agent Audit Summary"><AgentAuditSummaryPanel processId={current} period={period} /></LivePanel>}
-                  {current && <LivePanel title="Score Components"><ScoreComponentsPanel processId={current} period={period} /></LivePanel>}
-                  {current && <LivePanel title="ACHT Categorization"><AchtCategorizationPanel processId={current} period={period} /></LivePanel>}
-                  {current && <LivePanel title="Daily Quality Trend"><DailyQualityTrendPanel processId={current} /></LivePanel>}
+                  {/* 2-column grid instead of a full-width vertical stack — matches the reference
+                      dashboards' density; each panel keeps its own internal scroll/overflow untouched. */}
+                  {current && (
+                    <div className="grid gap-4 grid-cols-1 xl:grid-cols-2">
+                      <LivePanel title="Fatal Calls Analysis"><FatalCallsPanel processId={current} period={period} /></LivePanel>
+                      <LivePanel title="Critical Signals"><CriticalSignalsPanel processId={current} period={period} /></LivePanel>
+                      <LivePanel title="Customer Risk"><CustomerRiskCardsPanel processId={current} period={period} /></LivePanel>
+                      <LivePanel title="Agent Audit Summary"><AgentAuditSummaryPanel processId={current} period={period} /></LivePanel>
+                      <LivePanel title="Score Components"><ScoreComponentsPanel processId={current} period={period} /></LivePanel>
+                      <LivePanel title="ACHT Categorization"><AchtCategorizationPanel processId={current} period={period} /></LivePanel>
+                      <LivePanel title="Daily Quality Trend"><DailyQualityTrendPanel processId={current} /></LivePanel>
+                    </div>
+                  )}
 
                   {/* ── Zone divider: quality deep-dives above / analyst drill-downs below ── */}
                   <div className="flex items-center gap-3 py-1">
@@ -5596,11 +5551,15 @@ export default function ProcessOperationsPage() {
                   </div>
 
                   {/* ── ZONE 5: Analyst Drill-Downs (QA / Process analysts) ─── */}
-                  {current && <LivePanel title="Fatal Analysis"><FatalAnalysisPanel processId={current} period={period} /></LivePanel>}
-                  {current && <LivePanel title="Scenario Distribution"><ScenarioDistributionPanel processId={current} period={period} /></LivePanel>}
-                  {current && <LivePanel title="Day-wise Scenario Audit"><DayWiseScenarioAuditPanel processId={current} period={period} /></LivePanel>}
-                  {current && <LivePanel title="Repeat Analysis"><RepeatAnalysisPanel processId={current} period={period} /></LivePanel>}
-                  {current && <LivePanel title="Fraud Call Detection"><FraudCallPanel processId={current} period={period} /></LivePanel>}
+                  {current && (
+                    <div className="grid gap-4 grid-cols-1 xl:grid-cols-2">
+                      <LivePanel title="Fatal Analysis"><FatalAnalysisPanel processId={current} period={period} /></LivePanel>
+                      <LivePanel title="Scenario Distribution"><ScenarioDistributionPanel processId={current} period={period} /></LivePanel>
+                      <LivePanel title="Day-wise Scenario Audit"><DayWiseScenarioAuditPanel processId={current} period={period} /></LivePanel>
+                      <LivePanel title="Repeat Analysis"><RepeatAnalysisPanel processId={current} period={period} /></LivePanel>
+                      <LivePanel title="Fraud Call Detection"><FraudCallPanel processId={current} period={period} /></LivePanel>
+                    </div>
+                  )}
 
                   {/* ── KPI Sections header ──────────────────────────────── */}
                   <div className="flex items-center gap-3 py-1">
