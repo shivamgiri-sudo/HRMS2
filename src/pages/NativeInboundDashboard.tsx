@@ -244,7 +244,7 @@ function AllProjectsView({ from, to }: { from: string; to: string }) {
 }
 
 // ── Single project detail view ─────────────────────────────────────────────────
-function ProjectDetailView({ projectKey, from, to }: { projectKey: string; from: string; to: string }) {
+export function ProjectDetailView({ projectKey, from, to }: { projectKey: string; from: string; to: string }) {
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [trend, setTrend] = useState<ProjectTrend[]>([]);
   const [hourly, setHourly] = useState<HourlyPoint[]>([]);
