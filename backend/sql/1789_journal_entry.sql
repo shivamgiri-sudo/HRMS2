@@ -64,9 +64,14 @@ CREATE TABLE IF NOT EXISTS journal_entry_line (
   credit_amount     DECIMAL(18,2) NOT NULL DEFAULT 0,
   narration         TEXT          NULL COMMENT 'Line-level detail (e.g. "TDS @2% withheld") when it differs from the header narration.',
   created_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- A line moves exactly one side, Tally-style — the balance across the whole entry is what
+  -- must net to zero, not any single line. MySQL does not accept COMMENT on a table-level
+  -- CONSTRAINT/CHECK clause (only on columns and the table itself), unlike every other
+  -- annotation in this file — live-verified 2026-09-17, the syntax error this produced was
+  -- this migration's first-ever real run against MySQL.
   CONSTRAINT chk_jel_one_side CHECK (
     (debit_amount > 0 AND credit_amount = 0) OR (credit_amount > 0 AND debit_amount = 0)
-  ) COMMENT 'A line moves exactly one side, Tally-style — the balance across the whole entry is what must net to zero, not any single line.',
+  ),
   INDEX idx_jel_entry (journal_entry_id),
   INDEX idx_jel_account (account_type, account_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
