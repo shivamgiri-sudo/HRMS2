@@ -4,7 +4,6 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { buildScopeWhereClause, hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
-import { nocRequired, nocValidated } from "../payroll/noc.service.js";
 import { exitService } from "./exit.service.js";
 
 export const exitSecureRouter = Router();
@@ -109,39 +108,17 @@ async function finalExitBlockers(exitRequestId: string): Promise<string[]> {
     if (Number(ff.is_ff_provisional) === 1) blockers.push("F&F is provisional");
   }
 
-  // NOC (2026-08-27). noc.service.ts has exported nocValidated() since it was written and
-  // nothing ever called it: the NOC upload/validate workflow recorded a decision that no
-  // downstream step consulted, so a leaver could reach "exited" — and their F&F be settled —
-  // with the NOC still missing or rejected. Every other module's docs described NOC as the
-  // gate on release; this is the first code that makes that true.
-  //
-  // Gated on nocRequired() rather than applied unconditionally, deliberately. That function
-  // already encodes who needs one (inactive, and either an FNF with net_payable > 0 or an
-  // open salary run) and was tuned to stop over-triggering on finalized runs. Reusing it
-  // means this blocker cannot fire for a leaver the business never wanted a NOC from, and
-  // any future change to the policy moves both call sites at once.
-  //
-  // Failure is non-fatal by design: if the NOC lookup itself errors, exit is NOT blocked.
-  // Refusing every exit because a query failed would be a worse outage than the gap this
-  // closes, and the surrounding transition has no way to distinguish the two.
-  const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT employee_id FROM exit_request WHERE id = ? LIMIT 1`,
-    [exitRequestId],
-  );
-  const employeeId = empRows[0]?.employee_id as string | undefined;
-  if (employeeId) {
-    try {
-      const { required, reason } = await nocRequired(String(employeeId));
-      if (required && !(await nocValidated(String(employeeId), "fnf"))) {
-        blockers.push(
-          `NOC not validated${reason ? ` (${reason})` : ""} — upload and validate it in Payroll › NOC Management`,
-        );
-      }
-    } catch (err) {
-      console.error("[exit.secure] NOC blocker check failed, not blocking exit:", err);
-    }
-  }
-
+  // NOC is deliberately NOT checked here (owner ruling 2026-09-16, reversing the 2026-08-27
+  // change below this comment used to make). NOC gates money and paperwork, not the exit
+  // date/status itself:
+  //   - F&F payout: gated independently by noc-release-gate.service.ts, which keys off
+  //     employees.employment_status flipping to inactive/terminated — the exact write this
+  //     transition performs. That gate does not depend on exit_request ever reaching "exited".
+  //   - Experience/relieving letter: gated independently in the letters module.
+  // Blocking the "exited" transition itself on NOC left an employee stuck active — no exit
+  // date, active_status still 1 — for however long NOC took, even after every clearance task
+  // was done and F&F was approved. That is the bug this removal fixes. See noc.service.ts's
+  // nocRequired()/nocValidated() for the money/letter gates that replace this one.
   return blockers;
 }
 
@@ -498,7 +475,8 @@ exitSecureRouter.post("/:id/objection", h(async (req: any, res: any) => {
 
 /**
  * Test-only export. finalExitBlockers is module-private on purpose — it is not a second
- * entry point into the exit FSM — but the NOC gate inside it is a rule that must stay
- * pinned, so the test drives the real function rather than a copy of its logic.
+ * entry point into the exit FSM — but its clearance-task/F&F blockers (and the deliberate
+ * absence of a NOC blocker) are rules that must stay pinned, so the test drives the real
+ * function rather than a copy of its logic.
  */
 export const __testFinalExitBlockers = finalExitBlockers;

@@ -25,6 +25,7 @@ import { randomUUID, createHash, randomBytes } from "crypto";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
+import { EMPLOYMENT_END_DATE_SELECT } from "./employment-end-date.js";
 
 /**
  * The pooled connection db.getConnection() actually hands back.
@@ -482,6 +483,32 @@ export async function openCase(params: {
       `SELECT id FROM exit_request WHERE employee_id = ?
         ORDER BY created_at DESC LIMIT 1`, [params.employeeId]);
     exitRequestId = (er[0]?.id as string) ?? null;
+  }
+
+  // NOC can only be initiated on or after the employee's last working day (owner ruling
+  // 2026-09-16) — never ahead of it, so nobody opens a case (and sends the leaver a form
+  // invite) for someone who hasn't actually reached their LWD yet. Reuses the same shared LWD
+  // resolver payroll itself reads from — COALESCE of the exit_request's confirmed/proposed LWD
+  // for an accepted/notice_serving/exited resignation, then employees.date_of_exit, then
+  // date_of_leaving — rather than inventing a second, narrower definition here. See
+  // employment-end-date.ts's own header for why that precedence matters.
+  const [lwdRows] = await db.execute<RowDataPacket[]>(
+    `SELECT ${EMPLOYMENT_END_DATE_SELECT} AS lwd FROM employees e WHERE e.id = ? LIMIT 1`,
+    [params.employeeId],
+  );
+  const lwd = lwdRows[0]?.lwd as string | null | undefined;
+  if (!lwd) {
+    throw refuse(
+      409, "NOC_LWD_NOT_KNOWN",
+      "This employee has no confirmed or proposed last working day yet. NOC can only be initiated once the last working day is known.",
+    );
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  if (lwd > today) {
+    throw refuse(
+      409, "NOC_LWD_NOT_REACHED",
+      `NOC can only be initiated on or after the last working day (${lwd}).`,
+    );
   }
 
   const caseId = randomUUID();
