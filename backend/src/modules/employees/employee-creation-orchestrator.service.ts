@@ -507,15 +507,22 @@ export async function createEmployeeFromCandidate(
     // that do (profile display, ESI docs, DPDP export, etc.) — this is additive, not a
     // replacement. Only written when the onboarding form actually captured at least one
     // structured field, so this never creates an empty row for no reason.
-    // All four columns are NOT NULL in employee_address — every one must be present
-    // before the INSERT, otherwise MySQL strict mode throws "Column 'city' cannot be null".
-    // .some() was the original guard but fires if only address_line1 is filled; use
-    // explicit non-empty checks on each required field instead.
+    // All four columns are NOT NULL in employee_address, so the INSERT still needs a
+    // non-null value for each -- but requiring address_line1 to be one of them (the
+    // original gate) was the bug: verified live 2026-09-16 that of 32,983
+    // candidate_onboarding_profile rows ever submitted, precisely ZERO have
+    // present_address_line1 filled alongside city/state/pincode -- the onboarding form
+    // does not collect a street-line address at all, only city/state/pincode via a
+    // picker. Gating on address_line1 meant this INSERT had never fired for a single
+    // employee since it shipped (2026-09-12), discarding real city/state/pincode data
+    // for every new hire. City/state/pincode are the fields that actually identify a
+    // location and the report's *_city/*_state/*_pincode columns read; address_line1
+    // falls back to '' (a real empty value, not NULL) rather than blocking the whole
+    // row when the form never asked for it.
     const hasPresentAddress = !!(
-      candRow?.present_address_line1 && String(candRow.present_address_line1).trim() &&
-      candRow?.present_city          && String(candRow.present_city).trim() &&
-      candRow?.present_state         && String(candRow.present_state).trim() &&
-      candRow?.present_pincode       && String(candRow.present_pincode).trim()
+      candRow?.present_city  && String(candRow.present_city).trim() &&
+      candRow?.present_state && String(candRow.present_state).trim() &&
+      candRow?.present_pincode && String(candRow.present_pincode).trim()
     );
     if (hasPresentAddress) {
       await conn.execute(
@@ -528,15 +535,14 @@ export async function createEmployeeFromCandidate(
            city          = COALESCE(NULLIF(city,''), VALUES(city)),
            state         = COALESCE(NULLIF(state,''), VALUES(state)),
            pincode       = COALESCE(NULLIF(pincode,''), VALUES(pincode))`,
-        [employeeId, candRow?.present_address_line1 ?? null, candRow?.present_address_line2 ?? null,
+        [employeeId, String(candRow?.present_address_line1 ?? "").trim(), candRow?.present_address_line2 ?? null,
          candRow?.present_city ?? null, candRow?.present_state ?? null, candRow?.present_pincode ?? null]
       );
     }
     const hasPermanentAddress = !!(
-      candRow?.permanent_address_line1 && String(candRow.permanent_address_line1).trim() &&
-      candRow?.permanent_city          && String(candRow.permanent_city).trim() &&
-      candRow?.permanent_state         && String(candRow.permanent_state).trim() &&
-      candRow?.permanent_pincode       && String(candRow.permanent_pincode).trim()
+      candRow?.permanent_city  && String(candRow.permanent_city).trim() &&
+      candRow?.permanent_state && String(candRow.permanent_state).trim() &&
+      candRow?.permanent_pincode && String(candRow.permanent_pincode).trim()
     );
     if (hasPermanentAddress) {
       await conn.execute(
@@ -549,7 +555,7 @@ export async function createEmployeeFromCandidate(
            city          = COALESCE(NULLIF(city,''), VALUES(city)),
            state         = COALESCE(NULLIF(state,''), VALUES(state)),
            pincode       = COALESCE(NULLIF(pincode,''), VALUES(pincode))`,
-        [employeeId, candRow?.permanent_address_line1 ?? null, candRow?.permanent_address_line2 ?? null,
+        [employeeId, String(candRow?.permanent_address_line1 ?? "").trim(), candRow?.permanent_address_line2 ?? null,
          candRow?.permanent_city ?? null, candRow?.permanent_state ?? null, candRow?.permanent_pincode ?? null]
       );
     }
