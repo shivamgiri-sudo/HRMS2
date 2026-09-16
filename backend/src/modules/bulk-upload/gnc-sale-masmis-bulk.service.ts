@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
 import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
@@ -22,11 +23,19 @@ import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-inser
  * SHOW COLUMNS) -- the real columns are "sale_date" and "order_id". This
  * service targets the verified live column names, not the repo's code.
  *
- * No dedup key: db_masmis.gnc_sale has none (My Dashboards' own upload_log
- * pattern is insert-only, revert-by-deleting-the-batch), and introducing
- * one here would silently diverge from how every other row in this shared
- * table already behaves. upload_batch_id tags each row for the same kind
- * of revert.
+ * order_id is now enforced UNIQUE (sql/1778_gnc_sale_order_id_unique.sql),
+ * per explicit user request -- the live table had 543 exact re-upload
+ * duplicate rows (same order, same amount, same line item, re-inserted
+ * under a different upload_batch_id) before that migration's dedup step
+ * ran. This importer now upserts by order_id: a row whose order_id already
+ * exists gets UPDATEd in place (refreshing uploaded_at/upload_batch_id)
+ * instead of re-inserted -- see findExistingOrderIds() below.
+ *
+ * CAVEAT: "My Dashboards" (the other tool sharing this table, see above)
+ * is insert-only and outside this repo's control. If IT ever re-inserts an
+ * order_id this uniqueness constraint already holds, that insert will now
+ * fail with a duplicate-key error where it previously silently duplicated
+ * the row -- a real behavior change for that tool, not just this one.
  */
 
 export const GNC_SALE_HEADERS = [
@@ -102,6 +111,69 @@ interface BatchRow extends RowDataPacket {
   normalized_data: string | Record<string, unknown>;
 }
 
+interface ParsedRow {
+  rowId: string;
+  rowNo: number;
+  orderId: string;
+  week: string;
+  saleDate: string;
+  empId: string;
+  empName: string;
+  tl: string;
+  t1: string | null;
+  t3: string;
+  customerNumber: string;
+  emailId: string;
+  paymentStatus: string;
+  grossAmount: number | null;
+  sumBeforeGst: number | null;
+  campaign: string;
+  discountCode: string;
+  saleCount: number | null;
+  status: string;
+  lineItemName: string;
+  saleLob: string;
+  target: number | null;
+  saleSource: string;
+}
+
+function toInsertValues(r: ParsedRow, batchId: string): unknown[] {
+  return [
+    r.week, r.saleDate, r.empId, r.empName, r.tl, r.t1, r.t3, r.customerNumber, r.emailId,
+    r.paymentStatus, r.grossAmount, r.sumBeforeGst, r.orderId, r.campaign, r.discountCode,
+    r.saleCount, r.status, r.lineItemName, r.saleLob, r.target, r.saleSource,
+    null, // uploaded_by: My Dashboards' numeric user id space -- HRMS user ids are UUIDs
+          // and don't fit this int column; the real HRMS uploader is tracked on our own
+          // upload_batch row instead, never fabricated as a fake numeric id here.
+    batchId,
+  ];
+}
+
+interface ExistingOrderRow extends RowDataPacket {
+  order_id: string;
+  id: number;
+}
+
+/** order_id is enforced UNIQUE on db_masmis.gnc_sale (sql/1778) -- looks up
+ * which of this batch's order_ids already exist so re-uploading the same
+ * file/overlapping date range updates the existing row instead of trying
+ * to insert a second one. IN() is chunked (500/query) since a batch can
+ * have thousands of rows. */
+async function findExistingOrderIds(orderIds: string[]): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  const unique = Array.from(new Set(orderIds));
+  const chunkSize = 500;
+  for (let offset = 0; offset < unique.length; offset += chunkSize) {
+    const chunk = unique.slice(offset, offset + chunkSize);
+    const [rows] = await db.execute<ExistingOrderRow[]>(
+      `SELECT order_id, id FROM db_masmis.gnc_sale WHERE order_id IN (${chunk.map(() => "?").join(",")})`,
+      chunk,
+    );
+    for (const row of rows) map.set(row.order_id, row.id);
+  }
+  return map;
+}
+
 export async function importGncSaleMasmisBatch(
   batchId: string,
   importedByUserId: string,
@@ -116,7 +188,7 @@ export async function importGncSaleMasmisBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  const insertRows: ChunkInsertRow[] = [];
+  const parsedRows: ParsedRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -131,37 +203,69 @@ export async function importGncSaleMasmisBatch(
       errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    insertRows.push({
+    parsedRows.push({
       rowId: row.id,
       rowNo: row.row_no,
-      values: [
-        get(data, "Week", "week"),
-        saleDate,
-        get(data, "EMP ID", "emp_id", "emp id"),
-        get(data, "Emp_Name", "emp_name", "emp name"),
-        get(data, "TL", "tl"),
-        parseGncDate(get(data, "T1", "t1")), // t1 is a real DATE column, not free text
-        get(data, "T3", "t3"),
-        blankDash(get(data, "CustomerNumber", "customer number", "customer_number")),
-        blankDash(get(data, "E-mail ID", "email id", "email_id")),
-        get(data, "Payment Status", "payment_status"),
-        parseNullableFloat(get(data, "Gross Amount", "gross_amount")),
-        parseNullableFloat(get(data, "Sum Before GST", "sum_before_gst")),
-        orderId,
-        get(data, "Campaign", "campaign"),
-        blankDash(get(data, "Discount Code", "discount_code")),
-        parseNullableInt(get(data, "Count", "count")),
-        get(data, "Status", "status"),
-        blankDash(get(data, "Lineitem name", "line_item_name", "line item name")),
-        get(data, "Sale Lob", "sale_lob"),
-        parseNullableInt(get(data, "Target", "target")),
-        get(data, "Sale Source", "sale_source"),
-        null, // uploaded_by: My Dashboards' numeric user id space -- HRMS user ids are UUIDs
-              // and don't fit this int column; the real HRMS uploader is tracked on our own
-              // upload_batch row instead, never fabricated as a fake numeric id here.
-        batchId,
-      ],
+      orderId,
+      week: get(data, "Week", "week"),
+      saleDate,
+      empId: get(data, "EMP ID", "emp_id", "emp id"),
+      empName: get(data, "Emp_Name", "emp_name", "emp name"),
+      tl: get(data, "TL", "tl"),
+      t1: parseGncDate(get(data, "T1", "t1")), // t1 is a real DATE column, not free text
+      t3: get(data, "T3", "t3"),
+      customerNumber: blankDash(get(data, "CustomerNumber", "customer number", "customer_number")),
+      emailId: blankDash(get(data, "E-mail ID", "email id", "email_id")),
+      paymentStatus: get(data, "Payment Status", "payment_status"),
+      grossAmount: parseNullableFloat(get(data, "Gross Amount", "gross_amount")),
+      sumBeforeGst: parseNullableFloat(get(data, "Sum Before GST", "sum_before_gst")),
+      campaign: get(data, "Campaign", "campaign"),
+      discountCode: blankDash(get(data, "Discount Code", "discount_code")),
+      saleCount: parseNullableInt(get(data, "Count", "count")),
+      status: get(data, "Status", "status"),
+      lineItemName: blankDash(get(data, "Lineitem name", "line_item_name", "line item name")),
+      saleLob: get(data, "Sale Lob", "sale_lob"),
+      target: parseNullableInt(get(data, "Target", "target")),
+      saleSource: get(data, "Sale Source", "sale_source"),
     });
+  }
+
+  const existingByOrderId = await findExistingOrderIds(parsedRows.map((r) => r.orderId));
+  const toInsert = parsedRows.filter((r) => !existingByOrderId.has(r.orderId));
+  const toUpdate = parsedRows.filter((r) => existingByOrderId.has(r.orderId));
+
+  const insertRows: ChunkInsertRow[] = toInsert.map((r) => ({
+    rowId: r.rowId,
+    rowNo: r.rowNo,
+    values: toInsertValues(r, batchId),
+  }));
+
+  let updatedRows = 0;
+  for (const r of toUpdate) {
+    const existingId = existingByOrderId.get(r.orderId)!;
+    try {
+      await withDeadlockRetry(() =>
+        db.execute(
+          `UPDATE db_masmis.gnc_sale SET
+             week = ?, sale_date = ?, emp_id = ?, emp_name = ?, tl = ?, t1 = ?, t3 = ?,
+             customer_number = ?, email_id = ?, payment_status = ?, gross_amount = ?, sum_before_gst = ?,
+             campaign = ?, discount_code = ?, sale_count = ?, status = ?, line_item_name = ?, sale_lob = ?,
+             target = ?, sale_source = ?, uploaded_at = NOW(), upload_batch_id = ?
+           WHERE id = ?`,
+          [
+            r.week, r.saleDate, r.empId, r.empName, r.tl, r.t1, r.t3, r.customerNumber, r.emailId,
+            r.paymentStatus, r.grossAmount, r.sumBeforeGst, r.campaign, r.discountCode, r.saleCount,
+            r.status, r.lineItemName, r.saleLob, r.target, r.saleSource, batchId, existingId,
+          ],
+        ),
+      );
+      updatedRows++;
+    } catch (err: unknown) {
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      const msg = `Row ${r.rowNo}: ${rawMsg}`;
+      errors.push(msg);
+      errorUpdates.push({ rowId: r.rowId, message: msg.slice(0, 500) });
+    }
   }
 
   const inserted = await chunkedMasmisInsert({
@@ -173,16 +277,19 @@ export async function importGncSaleMasmisBatch(
     placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     rows: insertRows,
   });
-  const importedRows = inserted.importedRows;
+  // importedRows counts both freshly inserted rows and rows that matched an
+  // existing order_id and were refreshed in place -- both are a successfully
+  // persisted row from the uploader's point of view.
+  const importedRows = inserted.importedRows + updatedRows;
   errorUpdates.push(...inserted.errorUpdates);
   for (const u of inserted.errorUpdates) errors.push(u.message);
   const errorRows = errorUpdates.length;
 
-  if (importedRows > 0) {
+  if (inserted.importedRows > 0) {
     await db.execute(
       `INSERT INTO db_masmis.upload_log (batch_id, table_name, file_name, row_count, uploaded_by)
        VALUES (?, 'gnc_sale', ?, ?, NULL)`,
-      [batchId, `HRMS2 upload by ${importedByUserId}`, importedRows],
+      [batchId, `HRMS2 upload by ${importedByUserId}`, inserted.importedRows],
     );
   }
 

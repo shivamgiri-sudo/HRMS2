@@ -1,12 +1,23 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { BellavitaMasmisUploader } from "@/components/process-performance/BellavitaMasmisUploader";
 import { ProjectDetailView } from "@/pages/NativeInboundDashboard";
+import { BellavitaSaleDashboard } from "@/components/process-performance/BellavitaSaleDashboard";
+import { GncSaleDashboard } from "@/components/process-performance/GncSaleDashboard";
+import { GncInboundDashboard } from "@/components/process-performance/GncInboundDashboard";
+import { NeemansCartDashboard } from "@/components/process-performance/NeemansCartDashboard";
+import { HousingOwnerDashboard } from "@/components/process-performance/HousingOwnerDashboard";
+import { hrmsApi } from "@/lib/hrmsApi";
+import { TONE_CLASSES, type Tone } from "@/lib/processPerformanceTones";
+import { UploaderHub, type UploaderHubItem } from "@/components/process-performance/UploaderHub";
+import { UploaderWorkspace } from "@/components/process-performance/UploaderWorkspace";
 import {
   Activity, ChevronLeft, ChevronRight, LayoutDashboard, Upload,
   ShoppingBag, MessageSquare, ShoppingCart, Target, Users,
   Receipt, PhoneIncoming, PhoneOutgoing, ClipboardList,
-  Mail, Star, ShieldCheck, Repeat, RotateCcw,
+  Mail, Star, ShieldCheck, Repeat, RotateCcw, TrendingUp,
+  Heart, Footprints, HeartPulse, Home, Crown, Shirt, FileText, Tag,
+  Building2, Globe, Settings, Zap, LayoutGrid, UploadCloud,
 } from "lucide-react";
 
 /**
@@ -36,6 +47,26 @@ const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
   { key: "exicom", label: "Exicom" },
 ];
 
+/** Icon + color per company, purely a visual grouping aid on the landing
+ * grid — has no bearing on which uploaders/dashboards a company has. */
+const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?: string }>; tone: Tone }> = {
+  bellavita: { icon: ShoppingBag, tone: "rose" },
+  gnc: { icon: Heart, tone: "emerald" },
+  neemans: { icon: Footprints, tone: "violet" },
+  appreciate_health: { icon: HeartPulse, tone: "sky" },
+  housing_owner: { icon: Home, tone: "orange" },
+  housing_premium: { icon: Crown, tone: "amber" },
+  clovia: { icon: Shirt, tone: "red" },
+  birlanu: { icon: FileText, tone: "indigo" },
+  satya_retail: { icon: Tag, tone: "yellow" },
+  lp_feedback: { icon: MessageSquare, tone: "blue" },
+  lp_onboarding: { icon: Users, tone: "pink" },
+  dalmia: { icon: Building2, tone: "green" },
+  dubangladesh: { icon: Globe, tone: "cyan" },
+  viega: { icon: Settings, tone: "purple" },
+  exicom: { icon: Zap, tone: "fuchsia" },
+};
+
 /**
  * Named dashboard entries per company. "inbound" entries render the exact
  * same live dialer_db view as /call-master/inbound/:projectKey (via the
@@ -46,12 +77,17 @@ const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
  * separate mapping. "stub" entries are the pre-existing "nothing built
  * yet" placeholders (Neemans' Sale/Allocation cards) -- unchanged.
  */
-const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" }>>> = {
+const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "neemans_cart" | "housing_owner_sale" }>>> = {
   bellavita: [
+    { key: "sale_performance", label: "Sale Performance", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
     { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%", kind: "inbound" },
   ],
+  housing_owner: [
+    { key: "sale_performance", label: "Sale Performance", description: "Revenue vs target, AM/TL/agent-wise, call connect% — live from uploaded owner sale/CDR/roster data", kind: "housing_owner_sale" },
+  ],
   gnc: [
-    { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%", kind: "inbound" },
+    { key: "sale_performance", label: "Sale Performance", description: "Turn over, prepaid%, allocation, top performers — live from uploaded sale data", kind: "gnc_sale" },
+    { key: "inbound", label: "Inbound", description: "Live call performance — Overview, agent-wise & date-wise breakdowns", kind: "inbound" },
   ],
   clovia: [
     { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%", kind: "inbound" },
@@ -59,6 +95,7 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
   neemans: [
     { key: "sale", label: "Sale Dashboard", description: "Coming soon", kind: "stub" },
     { key: "allocation", label: "Allocation Dashboard", description: "Coming soon", kind: "stub" },
+    { key: "cart", label: "Abandoned Cart Dashboard", description: "Cart count, value, disposition & agent-wise breakdown — live from uploaded cart data", kind: "neemans_cart" },
     { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%, FCR%", kind: "inbound" },
   ],
   dalmia: [
@@ -201,13 +238,30 @@ const LP_ONBOARDING_UPLOADERS = [
   { code: "LP_ONBOARDING_CDR_MASMIS", label: "CDR", description: "Upload LP Onboarding call detail records", icon: PhoneOutgoing },
 ];
 
+/** Every company that has a real uploader array, keyed for UploaderHub/
+ * UploaderWorkspace — Dalmia/DU Bangladesh/Viega/Exicom are deliberately
+ * absent (Inbound-dashboard-only so far) and fall through to the stub. */
+const UPLOADERS_BY_COMPANY: Partial<Record<CompanyKey, UploaderHubItem[]>> = {
+  bellavita: BELLAVITA_UPLOADERS,
+  gnc: GNC_UPLOADERS,
+  neemans: NEEMANS_UPLOADERS,
+  appreciate_health: APPRECIATE_HEALTH_UPLOADERS,
+  housing_owner: HOUSING_OWNER_UPLOADERS,
+  housing_premium: HOUSING_PREMIUM_UPLOADERS,
+  clovia: CLOVIA_UPLOADERS,
+  birlanu: BIRLANU_UPLOADERS,
+  satya_retail: SATYA_RETAIL_UPLOADERS,
+  lp_feedback: LP_FEEDBACK_UPLOADERS,
+  lp_onboarding: LP_ONBOARDING_UPLOADERS,
+};
+
 function BoxGrid({ children }: { children: React.ReactNode }) {
   return <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">{children}</div>;
 }
 
 function Box({
-  icon: Icon, label, description, onClick,
-}: { icon: React.ComponentType<{ className?: string }>; label: string; description: string; onClick: () => void }) {
+  icon: Icon, label, description, onClick, tone = "slate",
+}: { icon: React.ComponentType<{ className?: string }>; label: string; description: string; onClick: () => void; tone?: Tone }) {
   return (
     <button
       type="button"
@@ -215,7 +269,7 @@ function Box({
       className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-indigo-300 hover:shadow-md"
     >
       <div className="flex items-center gap-3">
-        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-900 text-white">
+        <span className={`flex h-10 w-10 items-center justify-center rounded-full ${TONE_CLASSES[tone]}`}>
           <Icon className="h-4.5 w-4.5" />
         </span>
         <div>
@@ -225,6 +279,22 @@ function Box({
       </div>
       <ChevronRight className="h-4 w-4 text-slate-300" />
     </button>
+  );
+}
+
+function StatCard({
+  icon: Icon, label, value, tone, loading,
+}: { icon: React.ComponentType<{ className?: string }>; label: string; value: number; tone: Tone; loading?: boolean }) {
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${TONE_CLASSES[tone]}`}>
+        <Icon className="h-5 w-5" />
+      </span>
+      <div>
+        <div className="text-lg font-bold text-slate-900">{loading ? "—" : value.toLocaleString()}</div>
+        <div className="text-xs text-slate-500">{label}</div>
+      </div>
+    </div>
   );
 }
 
@@ -289,7 +359,21 @@ export default function ProcessPerformanceV2Page() {
   const [company, setCompany] = useState<CompanyKey | null>(null);
   const [section, setSection] = useState<SectionKey | null>(null);
   const [selectedUploader, setSelectedUploader] = useState<{ code: string; label: string } | null>(null);
-  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" } | null>(null);
+  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "neemans_cart" | "housing_owner_sale" } | null>(null);
+  const [stats, setStats] = useState({ totalFilesUploaded: 0, activeUsers: 0 });
+  const [statsLoading, setStatsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    hrmsApi
+      .get<{ success: boolean; data: { totalFilesUploaded: number; activeUsers: number } }>(
+        "/api/bulk-upload/process-performance-v2-stats",
+      )
+      .then((res) => { if (!cancelled) setStats(res.data); })
+      .catch(() => { /* leave zeros — the stat cards show 0 rather than block the page */ })
+      .finally(() => { if (!cancelled) setStatsLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   const companyLabel = COMPANIES.find((c) => c.key === company)?.label ?? "";
   const sectionLabel = SECTIONS.find((s) => s.key === section)?.label ?? "";
@@ -302,31 +386,61 @@ export default function ProcessPerformanceV2Page() {
   return (
     <DashboardLayout>
       <div className="p-4 sm:p-6 space-y-4">
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
-            <Activity className="h-4.5 w-4.5" />
-          </span>
-          <div>
-            <h1 className="text-lg font-bold text-slate-900">Process Performance V2</h1>
-            <p className="text-xs text-slate-500">
-              {company ? (section ? `${companyLabel} / ${sectionLabel}` : companyLabel) : "Select a process"}
-            </p>
+        {company && (
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+              <Activity className="h-4.5 w-4.5" />
+            </span>
+            <div>
+              <h1 className="text-lg font-bold text-slate-900">Process Performance V2</h1>
+              <p className="text-xs text-slate-500">
+                {section ? `${companyLabel} / ${sectionLabel}` : companyLabel}
+              </p>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Level 1: company picker */}
         {!company && (
-          <BoxGrid>
-            {COMPANIES.map((c) => (
-              <Box
-                key={c.key}
-                icon={ShoppingBag}
-                label={c.label}
-                description="Open process"
-                onClick={() => setCompany(c.key)}
-              />
-            ))}
-          </BoxGrid>
+          <div className="space-y-6">
+            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-50 via-violet-50 to-fuchsia-50 p-6 sm:p-8">
+              <p className="text-xs font-bold uppercase tracking-wider text-indigo-500">Welcome</p>
+              <h1 className="mt-1 text-2xl font-bold text-slate-900 sm:text-3xl">Process Performance V2</h1>
+              <p className="mt-1 max-w-xl text-sm text-slate-600">
+                Select a process to manage data, upload files and view performance dashboards.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <StatCard icon={LayoutGrid} label="Total Processes" value={COMPANIES.length} tone="emerald" />
+              <StatCard icon={UploadCloud} label="Total Files Uploaded" value={stats.totalFilesUploaded} tone="indigo" loading={statsLoading} />
+              <StatCard icon={Users} label="Active Users" value={stats.activeUsers} tone="fuchsia" loading={statsLoading} />
+            </div>
+
+            <div>
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-bold text-slate-900">All Processes</h2>
+                <Link to="/bulk-upload" className="text-xs font-semibold text-indigo-600 hover:underline">
+                  View All
+                </Link>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {COMPANIES.map((c) => {
+                  const meta = COMPANY_META[c.key];
+                  return (
+                    <Box
+                      key={c.key}
+                      icon={meta.icon}
+                      tone={meta.tone}
+                      label={c.label}
+                      description="Open process"
+                      onClick={() => setCompany(c.key)}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Level 2: section picker (Dashboards / Uploader) */}
@@ -348,7 +462,7 @@ export default function ProcessPerformanceV2Page() {
         )}
 
         {/* Level 3: Dashboards — blank for now (single stub for every company without named sub-dashboards) */}
-        {(company === "appreciate_health" || company === "housing_owner" || company === "housing_premium" || company === "birlanu" || company === "satya_retail" || company === "lp_feedback" || company === "lp_onboarding") && section === "dashboards" && (
+        {(company === "appreciate_health" || company === "housing_premium" || company === "birlanu" || company === "satya_retail" || company === "lp_feedback" || company === "lp_onboarding") && section === "dashboards" && (
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel, "Dashboards"]} onBack={backToCompany} />
             <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white p-16 text-sm text-slate-400">
@@ -366,7 +480,7 @@ export default function ProcessPerformanceV2Page() {
               {DASHBOARDS_BY_COMPANY[company]!.map((d) => (
                 <Box
                   key={d.key}
-                  icon={d.kind === "inbound" ? PhoneIncoming : LayoutDashboard}
+                  icon={d.kind === "inbound" ? PhoneIncoming : d.kind === "bellavita_sale" || d.kind === "gnc_sale" || d.kind === "housing_owner_sale" ? TrendingUp : d.kind === "neemans_cart" ? ShoppingCart : LayoutDashboard}
                   label={d.label}
                   description={d.description}
                   onClick={() => setSelectedDashboard({ key: d.key, label: d.label, kind: d.kind })}
@@ -380,7 +494,19 @@ export default function ProcessPerformanceV2Page() {
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel, "Dashboards", selectedDashboard.label]} onBack={backToDashboardGrid} />
             {selectedDashboard.kind === "inbound" ? (
-              <InboundDashboardTab projectKey={company} />
+              // GNC's Inbound gets its own beautified Overview/Agent-wise/Date-wise
+              // dashboard (GncInboundDashboard) per explicit user request -- every
+              // other "inbound" company keeps the original shared InboundDashboardTab/
+              // ProjectDetailView untouched.
+              company === "gnc" ? <GncInboundDashboard /> : <InboundDashboardTab projectKey={company} />
+            ) : selectedDashboard.kind === "bellavita_sale" ? (
+              <BellavitaSaleDashboard />
+            ) : selectedDashboard.kind === "gnc_sale" ? (
+              <GncSaleDashboard />
+            ) : selectedDashboard.kind === "neemans_cart" ? (
+              <NeemansCartDashboard />
+            ) : selectedDashboard.kind === "housing_owner_sale" ? (
+              <HousingOwnerDashboard />
             ) : (
               <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white p-16 text-sm text-slate-400">
                 Nothing here yet
@@ -390,267 +516,32 @@ export default function ProcessPerformanceV2Page() {
         )}
 
         {/* Level 3: Uploader — pick a data type, then upload right here */}
-        {company === "bellavita" && section === "uploader" && !selectedUploader && (
+        {/* Level 3: Uploader hub + workspace — every company with a real uploader
+            array (all except Dalmia/DU Bangladesh/Viega/Exicom, Inbound-only so
+            far) shares this one design instead of a duplicated block each. */}
+        {company && UPLOADERS_BY_COMPANY[company] && section === "uploader" && !selectedUploader && (
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel, "Data Uploader"]} onBack={backToCompany} />
-            <BoxGrid>
-              {BELLAVITA_UPLOADERS.map((u) => (
-                <Box
-                  key={u.code}
-                  icon={u.icon}
-                  label={u.label}
-                  description={u.description}
-                  onClick={() => setSelectedUploader({ code: u.code, label: u.label })}
-                />
-              ))}
-            </BoxGrid>
+            <UploaderHub
+              companyLabel={companyLabel}
+              companyIcon={COMPANY_META[company].icon}
+              tone={COMPANY_META[company].tone}
+              uploaders={UPLOADERS_BY_COMPANY[company]!}
+              typeCodes={UPLOADERS_BY_COMPANY[company]!.map((u) => u.code)}
+              onSelect={(item) => setSelectedUploader(item)}
+            />
           </div>
         )}
 
-        {company === "bellavita" && section === "uploader" && selectedUploader && (
+        {company && UPLOADERS_BY_COMPANY[company] && section === "uploader" && selectedUploader && (
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel, "Data Uploader", selectedUploader.label]} onBack={backToUploaderGrid} />
-            <BellavitaMasmisUploader templateCode={selectedUploader.code} label={selectedUploader.label} />
-          </div>
-        )}
-
-        {company === "gnc" && section === "uploader" && !selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader"]} onBack={backToCompany} />
-            <BoxGrid>
-              {GNC_UPLOADERS.map((u) => (
-                <Box
-                  key={u.code}
-                  icon={u.icon}
-                  label={u.label}
-                  description={u.description}
-                  onClick={() => setSelectedUploader({ code: u.code, label: u.label })}
-                />
-              ))}
-            </BoxGrid>
-          </div>
-        )}
-
-        {company === "gnc" && section === "uploader" && selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader", selectedUploader.label]} onBack={backToUploaderGrid} />
-            <BellavitaMasmisUploader templateCode={selectedUploader.code} label={selectedUploader.label} />
-          </div>
-        )}
-
-        {company === "neemans" && section === "uploader" && !selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader"]} onBack={backToCompany} />
-            <BoxGrid>
-              {NEEMANS_UPLOADERS.map((u) => (
-                <Box
-                  key={u.code}
-                  icon={u.icon}
-                  label={u.label}
-                  description={u.description}
-                  onClick={() => setSelectedUploader({ code: u.code, label: u.label })}
-                />
-              ))}
-            </BoxGrid>
-          </div>
-        )}
-
-        {company === "neemans" && section === "uploader" && selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader", selectedUploader.label]} onBack={backToUploaderGrid} />
-            <BellavitaMasmisUploader templateCode={selectedUploader.code} label={selectedUploader.label} />
-          </div>
-        )}
-
-        {company === "appreciate_health" && section === "uploader" && !selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader"]} onBack={backToCompany} />
-            <BoxGrid>
-              {APPRECIATE_HEALTH_UPLOADERS.map((u) => (
-                <Box
-                  key={u.code}
-                  icon={u.icon}
-                  label={u.label}
-                  description={u.description}
-                  onClick={() => setSelectedUploader({ code: u.code, label: u.label })}
-                />
-              ))}
-            </BoxGrid>
-          </div>
-        )}
-
-        {company === "appreciate_health" && section === "uploader" && selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader", selectedUploader.label]} onBack={backToUploaderGrid} />
-            <BellavitaMasmisUploader templateCode={selectedUploader.code} label={selectedUploader.label} />
-          </div>
-        )}
-
-        {company === "housing_owner" && section === "uploader" && !selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader"]} onBack={backToCompany} />
-            <BoxGrid>
-              {HOUSING_OWNER_UPLOADERS.map((u) => (
-                <Box
-                  key={u.code}
-                  icon={u.icon}
-                  label={u.label}
-                  description={u.description}
-                  onClick={() => setSelectedUploader({ code: u.code, label: u.label })}
-                />
-              ))}
-            </BoxGrid>
-          </div>
-        )}
-
-        {company === "housing_owner" && section === "uploader" && selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader", selectedUploader.label]} onBack={backToUploaderGrid} />
-            <BellavitaMasmisUploader templateCode={selectedUploader.code} label={selectedUploader.label} />
-          </div>
-        )}
-
-        {company === "housing_premium" && section === "uploader" && !selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader"]} onBack={backToCompany} />
-            <BoxGrid>
-              {HOUSING_PREMIUM_UPLOADERS.map((u) => (
-                <Box
-                  key={u.code}
-                  icon={u.icon}
-                  label={u.label}
-                  description={u.description}
-                  onClick={() => setSelectedUploader({ code: u.code, label: u.label })}
-                />
-              ))}
-            </BoxGrid>
-          </div>
-        )}
-
-        {company === "housing_premium" && section === "uploader" && selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader", selectedUploader.label]} onBack={backToUploaderGrid} />
-            <BellavitaMasmisUploader templateCode={selectedUploader.code} label={selectedUploader.label} />
-          </div>
-        )}
-
-        {company === "clovia" && section === "uploader" && !selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader"]} onBack={backToCompany} />
-            <BoxGrid>
-              {CLOVIA_UPLOADERS.map((u) => (
-                <Box
-                  key={u.code}
-                  icon={u.icon}
-                  label={u.label}
-                  description={u.description}
-                  onClick={() => setSelectedUploader({ code: u.code, label: u.label })}
-                />
-              ))}
-            </BoxGrid>
-          </div>
-        )}
-
-        {company === "clovia" && section === "uploader" && selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader", selectedUploader.label]} onBack={backToUploaderGrid} />
-            <BellavitaMasmisUploader templateCode={selectedUploader.code} label={selectedUploader.label} />
-          </div>
-        )}
-
-        {company === "birlanu" && section === "uploader" && !selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader"]} onBack={backToCompany} />
-            <BoxGrid>
-              {BIRLANU_UPLOADERS.map((u) => (
-                <Box
-                  key={u.code}
-                  icon={u.icon}
-                  label={u.label}
-                  description={u.description}
-                  onClick={() => setSelectedUploader({ code: u.code, label: u.label })}
-                />
-              ))}
-            </BoxGrid>
-          </div>
-        )}
-
-        {company === "birlanu" && section === "uploader" && selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader", selectedUploader.label]} onBack={backToUploaderGrid} />
-            <BellavitaMasmisUploader templateCode={selectedUploader.code} label={selectedUploader.label} />
-          </div>
-        )}
-
-        {company === "satya_retail" && section === "uploader" && !selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader"]} onBack={backToCompany} />
-            <BoxGrid>
-              {SATYA_RETAIL_UPLOADERS.map((u) => (
-                <Box
-                  key={u.code}
-                  icon={u.icon}
-                  label={u.label}
-                  description={u.description}
-                  onClick={() => setSelectedUploader({ code: u.code, label: u.label })}
-                />
-              ))}
-            </BoxGrid>
-          </div>
-        )}
-
-        {company === "satya_retail" && section === "uploader" && selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader", selectedUploader.label]} onBack={backToUploaderGrid} />
-            <BellavitaMasmisUploader templateCode={selectedUploader.code} label={selectedUploader.label} />
-          </div>
-        )}
-
-        {company === "lp_feedback" && section === "uploader" && !selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader"]} onBack={backToCompany} />
-            <BoxGrid>
-              {LP_FEEDBACK_UPLOADERS.map((u) => (
-                <Box
-                  key={u.code}
-                  icon={u.icon}
-                  label={u.label}
-                  description={u.description}
-                  onClick={() => setSelectedUploader({ code: u.code, label: u.label })}
-                />
-              ))}
-            </BoxGrid>
-          </div>
-        )}
-
-        {company === "lp_feedback" && section === "uploader" && selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader", selectedUploader.label]} onBack={backToUploaderGrid} />
-            <BellavitaMasmisUploader templateCode={selectedUploader.code} label={selectedUploader.label} />
-          </div>
-        )}
-
-        {company === "lp_onboarding" && section === "uploader" && !selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader"]} onBack={backToCompany} />
-            <BoxGrid>
-              {LP_ONBOARDING_UPLOADERS.map((u) => (
-                <Box
-                  key={u.code}
-                  icon={u.icon}
-                  label={u.label}
-                  description={u.description}
-                  onClick={() => setSelectedUploader({ code: u.code, label: u.label })}
-                />
-              ))}
-            </BoxGrid>
-          </div>
-        )}
-
-        {company === "lp_onboarding" && section === "uploader" && selectedUploader && (
-          <div className="space-y-4">
-            <Breadcrumb parts={[companyLabel, "Data Uploader", selectedUploader.label]} onBack={backToUploaderGrid} />
-            <BellavitaMasmisUploader templateCode={selectedUploader.code} label={selectedUploader.label} />
+            <UploaderWorkspace
+              companyLabel={companyLabel}
+              uploaders={UPLOADERS_BY_COMPANY[company]!}
+              initialCode={selectedUploader.code}
+              tone={COMPANY_META[company].tone}
+            />
           </div>
         )}
 
