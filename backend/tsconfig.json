@@ -37,7 +37,11 @@
     "scripts/redispatch-dead-esign-kits.ts",
     // Sends a real email asking a real person to re-enter their bank account
     // number; same rule as the scripts above.
-    "scripts/request-bank-resubmit.ts"
+    "scripts/request-bank-resubmit.ts",
+    // Journal Task 6 (Phase 6 of the double-entry plan) — posts real journal_entry/
+    // journal_entry_line rows for historical GRNs and Payment Vouchers when run with --apply;
+    // same rule as the scripts above.
+    "scripts/backfill-journal-entries.ts"
   ],
   "exclude": ["node_modules", "dist", "tests", "src/tests", "src/**/__tests__"]
 }

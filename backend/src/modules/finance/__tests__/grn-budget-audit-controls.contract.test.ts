@@ -719,9 +719,27 @@ describe("Legacy grn.service.ts reviewGrn — STATE_CHANGED runtime paths (DB mo
   it("finance_head approve: STATE_CHANGED/409 when affectedRows is 0", async () => {
     // 3-stage chain (owner ruling, 2026-09-12): Finance Head's own precondition is now
     // accounts_head_approved, not branch_head_approved.
-    setupLegacyMocks({ status: "accounts_head_approved", branch_head_reviewed_by: BH_REVIEWER });
-    // budgetConsumptionService.consume is module-mocked (see top of file), so the next call
-    // reviewGrn's finance_head-approve branch makes is the guarded UPDATE itself.
+    setupLegacyMocks({
+      status: "accounts_head_approved",
+      branch_head_reviewed_by: BH_REVIEWER,
+      // postGrnApprovalJournalEntry (Journal Task 2) now runs before the guarded UPDATE on
+      // this path and refuses a vendor GRN with no vendor_id — the base grnRow() doesn't set
+      // one, so this override is required for the journal post to reach the guarded UPDATE at
+      // all rather than failing earlier with GRN_VENDOR_MISSING.
+      vendor_id: "vendor-001",
+    });
+    // budgetConsumptionService.consume is module-mocked (see top of file), so the next calls
+    // reviewGrn's finance_head-approve branch makes are all from postGrnApprovalJournalEntry
+    // (Journal Task 2, runs inside the same transaction before the guarded UPDATE — see
+    // grn-reversal-wiring.diff): the expense-ledger lookup, then journalService.post()'s own
+    // INSERT INTO journal_entry and one INSERT INTO journal_entry_line per line (2 lines here
+    // — expense debit, vendor credit; neither destructures its result, but each still consumes
+    // one queued mock response, and skipping them shifts every mock after it by one call,
+    // which is what silently broke this test the first time this diff was tested).
+    mockConnection.execute.mockResolvedValueOnce([[{ id: "expense-sub-head-001" }], []]); // resolveExpenseSubHeadAccountId
+    mockConnection.execute.mockResolvedValueOnce([{}, undefined]); // INSERT INTO journal_entry
+    mockConnection.execute.mockResolvedValueOnce([{}, undefined]); // INSERT INTO journal_entry_line (expense debit)
+    mockConnection.execute.mockResolvedValueOnce([{}, undefined]); // INSERT INTO journal_entry_line (vendor credit)
     mockConnection.execute.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]); // guarded UPDATE
     const { grnService } = await import("../grn.service.js");
     await expect(

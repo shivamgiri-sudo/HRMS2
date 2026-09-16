@@ -64,6 +64,10 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
       .mockResolvedValueOnce([[{ running_balance: 100000 }]]) // last ledger entry
       .mockResolvedValueOnce([[]]) // SELECT payment_voucher_grn_allocation — none, falls back to linked_vendor_payment_id
       .mockResolvedValueOnce([{}]) // INSERT bank_account_ledger_entry (cash movement)
+      .mockResolvedValueOnce([[{ vendor_id: "vendor-1" }]]) // Journal Task 3: SELECT vendor_id FROM vendor_payment_tracking
+      .mockResolvedValueOnce([{}]) // Journal Task 3: INSERT journal_entry
+      .mockResolvedValueOnce([{}]) // Journal Task 3: INSERT journal_entry_line (Dr vendor)
+      .mockResolvedValueOnce([{}]) // Journal Task 3: INSERT journal_entry_line (Cr bank)
       .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE payment_voucher SET status='released'
       .mockResolvedValueOnce([{}]); // writeVoucherAudit
     dispatch.mockResolvedValueOnce({
@@ -95,6 +99,12 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
       .mockResolvedValueOnce([{}]) // cash movement entry
       .mockResolvedValueOnce([[{ id: "tds-account-id" }]]) // SELECT TDS Payable payable_account_master
       .mockResolvedValueOnce([{}]) // INSERT TDS memo entry
+      .mockResolvedValueOnce([[{ vendor_id: "vendor-1" }]]) // Journal Task 3: SELECT vendor_id FROM vendor_payment_tracking
+      .mockResolvedValueOnce([[{ id: "tds-account-id-2" }]]) // Journal Task 3: resolveTdsPayableAccountId() — its own lookup, separate from the memo-row one above
+      .mockResolvedValueOnce([{}]) // Journal Task 3: INSERT journal_entry
+      .mockResolvedValueOnce([{}]) // Journal Task 3: INSERT journal_entry_line (Dr vendor, net+tds)
+      .mockResolvedValueOnce([{}]) // Journal Task 3: INSERT journal_entry_line (Cr bank, net)
+      .mockResolvedValueOnce([{}]) // Journal Task 3: INSERT journal_entry_line (Cr TDS Payable)
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([{}]);
     dispatch.mockResolvedValueOnce({
@@ -119,6 +129,10 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
       .mockResolvedValueOnce([[{ running_balance: 100000 }]])
       .mockResolvedValueOnce([[]]) // SELECT payment_voucher_grn_allocation — none
       .mockResolvedValueOnce([{}]) // cash movement entry
+      .mockResolvedValueOnce([[{ vendor_id: "vendor-1" }]]) // Journal Task 3: SELECT vendor_id FROM vendor_payment_tracking
+      .mockResolvedValueOnce([{}]) // Journal Task 3: INSERT journal_entry
+      .mockResolvedValueOnce([{}]) // Journal Task 3: INSERT journal_entry_line (Dr vendor)
+      .mockResolvedValueOnce([{}]) // Journal Task 3: INSERT journal_entry_line (Cr bank)
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([{}]);
     dispatch.mockResolvedValueOnce({
@@ -145,7 +159,14 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
         { vendor_payment_tracking_id: "vpt-2", allocated_amount: "2000.00" },
       ]])
       .mockResolvedValueOnce([{}]) // ledger entry for allocation 1
+      .mockResolvedValueOnce([[{ vendor_id: "vendor-1" }]]) // Journal Task 3: vendor_id lookup, allocation 1
       .mockResolvedValueOnce([{}]) // ledger entry for allocation 2
+      .mockResolvedValueOnce([[{ vendor_id: "vendor-1" }]]) // Journal Task 3: vendor_id lookup, allocation 2
+      .mockResolvedValueOnce([{}]) // Journal Task 3: INSERT journal_entry (one entry for the whole voucher)
+      .mockResolvedValueOnce([{}]) // line: alloc1 Dr vendor
+      .mockResolvedValueOnce([{}]) // line: alloc1 Cr bank
+      .mockResolvedValueOnce([{}]) // line: alloc2 Dr vendor
+      .mockResolvedValueOnce([{}]) // line: alloc2 Cr bank
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([{}]);
     dispatch
@@ -168,6 +189,10 @@ describe("paymentVoucherService.release — vendor_grn branch", () => {
       .mockResolvedValueOnce([[{ running_balance: 100000 }]])
       .mockResolvedValueOnce([[]]) // no allocation rows -> single fallback
       .mockResolvedValueOnce([{}])
+      .mockResolvedValueOnce([[{ vendor_id: "vendor-1" }]]) // Journal Task 3: vendor_id lookup
+      .mockResolvedValueOnce([{}]) // Journal Task 3: INSERT journal_entry
+      .mockResolvedValueOnce([{}]) // Journal Task 3: line Dr vendor
+      .mockResolvedValueOnce([{}]) // Journal Task 3: line Cr bank
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([{}]);
     dispatch.mockResolvedValueOnce({ payment: { grn_number: "GRN-1" }, transactions: [{ tds_amount: 0 }] });
@@ -247,6 +272,10 @@ describe("paymentVoucherService.release — Finance Head releases their own rais
       .mockResolvedValueOnce([[{ running_balance: 100000 }]])
       .mockResolvedValueOnce([[]])
       .mockResolvedValueOnce([{}])
+      .mockResolvedValueOnce([[{ vendor_id: "vendor-1" }]]) // Journal Task 3: vendor_id lookup
+      .mockResolvedValueOnce([{}]) // Journal Task 3: INSERT journal_entry
+      .mockResolvedValueOnce([{}]) // Journal Task 3: line Dr vendor
+      .mockResolvedValueOnce([{}]) // Journal Task 3: line Cr bank
       .mockResolvedValueOnce([{ affectedRows: 1 }])
       .mockResolvedValueOnce([{}]);
     dispatch.mockResolvedValueOnce({ payment: { grn_number: "GRN-1" }, transactions: [{ tds_amount: 0 }] });

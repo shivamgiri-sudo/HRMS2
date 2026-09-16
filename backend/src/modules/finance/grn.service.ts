@@ -27,6 +27,8 @@ import {
 import { budgetClosureService } from "../process-pnl/budget-closure.service.js";
 import { refuse } from "../process-pnl/finance-error.js";
 import { notifyGrnStage, resolveGrnNotifications } from "./grn-notify.js";
+import { postGrnApprovalJournalEntry } from "./grn-journal-posting.service.js";
+import { journalService } from "./journal.service.js";
 
 export type GrnType = "vendor" | "imprest";
 export type GrnStatus =
@@ -1054,6 +1056,21 @@ export const grnService = {
           // branch, so it never gets one.
           grnNumber = await resolveGrnNumberOnSubmit(grn);
 
+          // Journal Task 2 — posts Dr Expense:<head>:<sub_head> / Cr Vendor (or Cr Imprest
+          // Float for an imprest GRN), inside this same transaction, gross amount matching
+          // budgetConsumptionService.consume() above exactly, and after grnNumber so the
+          // journal narration carries the real GRN number rather than falling back to the raw
+          // id. Unconditional on noBudgetLine — an unbudgeted GRN still creates a real expense
+          // and a real creditor; it's only the BUDGET tracking that has nothing to consume, not
+          // the accounting event. A resolution failure here (see grn-journal-posting.service.ts)
+          // throws and rolls back the whole approval, including the consume() call above,
+          // rather than leaving budget consumed with no journal entry behind it.
+          await postGrnApprovalJournalEntry(
+            connection,
+            { ...(grn as any), grn_number: grnNumber ?? grn.grn_number },
+            actorUserId,
+          );
+
           const [fhUpdateResult] = await connection.execute<ResultSetHeader>(
             `UPDATE grn_request
                 SET status = ?,
@@ -1410,6 +1427,22 @@ export const grnService = {
           Number(grn.quantity),
           Number(grn.amount_without_tax) || undefined,
         );
+      }
+
+      // Journal Task 5 — reverse this GRN's journal entry (Task 2), if one exists. It may not:
+      // a GRN approved before Task 2 went live, or before Phase 6's historical backfill runs,
+      // has no journal_entry to find — that's expected, not an error, so this looks it up
+      // rather than assuming one is there. reversed_by_entry_id IS NULL guards against
+      // reversing an already-reversed entry a second time (journalService.reverse() would
+      // refuse it anyway, but checking here avoids the query round-trip and the noise of a
+      // caught-and-ignored refusal).
+      const [[liveEntry]] = await connection.execute<RowDataPacket[]>(
+        `SELECT id FROM journal_entry
+          WHERE source_type = 'grn' AND source_id = ? AND reversed_by_entry_id IS NULL`,
+        [grnId],
+      );
+      if (liveEntry) {
+        await journalService.reverse(connection, String((liveEntry as any).id), actorUserId, trimmedReason);
       }
 
       const [result] = await connection.execute<ResultSetHeader>(
