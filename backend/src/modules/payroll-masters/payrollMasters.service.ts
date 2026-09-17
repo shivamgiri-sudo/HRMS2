@@ -133,7 +133,15 @@ export async function listPackages(filters: {
     SELECT spm.*,
            sbm.slab_from, sbm.slab_to, sbm.band_name
     FROM salary_package_master spm
-    LEFT JOIN salary_band_master sbm ON sbm.band_code = spm.band_code AND sbm.active_status = 1
+    LEFT JOIN (
+      SELECT band_code,
+             MIN(slab_from) AS slab_from,
+             MAX(slab_to)   AS slab_to,
+             MIN(band_name) AS band_name
+      FROM salary_band_master
+      WHERE active_status = 1
+      GROUP BY band_code
+    ) sbm ON sbm.band_code = spm.band_code
     WHERE 1=1`;
   const params: unknown[] = [];
   // Retired packages must not be offerable. This endpoint is what fills every
