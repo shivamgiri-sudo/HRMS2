@@ -28,10 +28,80 @@ type AccountLedgerEntry = {
   narration: string;
   sourceType: string;
   sourceId: string;
+  branchName: string | null;
+  costCentreName: string | null;
+  processName: string | null;
   debitAmount: number;
   creditAmount: number;
   runningBalance: number;
 };
+
+type FilterOption = { id: string; name: string };
+
+/** Branch / Cost Centre / Process pickers shared by Trial Balance and Head/Sub-head Spend —
+ *  a single query, deduped by React Query across both tabs. */
+function useLedgerFilterOptions() {
+  const query = useQuery({
+    queryKey: ["ledger-reports-filter-options"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: { branches: FilterOption[]; costCentres: FilterOption[]; processes: FilterOption[] } }>(
+        "/api/finance/ledger-reports/filter-options",
+      );
+      return res.data;
+    },
+  });
+  return {
+    branches: query.data?.branches ?? [],
+    costCentres: query.data?.costCentres ?? [],
+    processes: query.data?.processes ?? [],
+  };
+}
+
+const ALL_VALUE = "__all__";
+
+function DepthFilters({
+  branchId, setBranchId, costCentreId, setCostCentreId, processId, setProcessId,
+}: {
+  branchId: string; setBranchId: (v: string) => void;
+  costCentreId: string; setCostCentreId: (v: string) => void;
+  processId: string; setProcessId: (v: string) => void;
+}) {
+  const { branches, costCentres, processes } = useLedgerFilterOptions();
+  return (
+    <>
+      <div className="min-w-[160px]">
+        <Label>Branch</Label>
+        <Select value={branchId || ALL_VALUE} onValueChange={(v) => setBranchId(v === ALL_VALUE ? "" : v)}>
+          <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All branches" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_VALUE}>All branches</SelectItem>
+            {branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="min-w-[160px]">
+        <Label>Cost Centre</Label>
+        <Select value={costCentreId || ALL_VALUE} onValueChange={(v) => setCostCentreId(v === ALL_VALUE ? "" : v)}>
+          <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All cost centres" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_VALUE}>All cost centres</SelectItem>
+            {costCentres.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="min-w-[160px]">
+        <Label>Process</Label>
+        <Select value={processId || ALL_VALUE} onValueChange={(v) => setProcessId(v === ALL_VALUE ? "" : v)}>
+          <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All processes" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_VALUE}>All processes</SelectItem>
+            {processes.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+    </>
+  );
+}
 
 type HeadSubHeadRow = {
   accountId: string;
@@ -71,7 +141,7 @@ function AccountLedgerDrawer({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-2xl">
+      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-4xl">
         <SheetHeader className="border-b px-5 py-4">
           <SheetTitle className="text-sm">{accountLabel}</SheetTitle>
           <p className="text-xs text-muted-foreground">
@@ -90,6 +160,9 @@ function AccountLedgerDrawer({
                   <th className="py-2 pr-2">Date</th>
                   <th className="py-2 pr-2">Narration</th>
                   <th className="py-2 pr-2">Source</th>
+                  <th className="py-2 pr-2">Branch</th>
+                  <th className="py-2 pr-2">Cost Centre</th>
+                  <th className="py-2 pr-2">Process</th>
                   <th className="py-2 pr-2 text-right">Debit</th>
                   <th className="py-2 pr-2 text-right">Credit</th>
                   <th className="py-2 text-right">Balance</th>
@@ -105,6 +178,9 @@ function AccountLedgerDrawer({
                         {e.sourceType === "grn" ? "GRN" : e.sourceType === "payment_voucher" ? "Payment Voucher" : e.sourceType}
                       </Badge>
                     </td>
+                    <td className="max-w-[120px] truncate py-2 pr-2 text-slate-600" title={e.branchName ?? undefined}>{e.branchName ?? "—"}</td>
+                    <td className="max-w-[140px] truncate py-2 pr-2 text-slate-600" title={e.costCentreName ?? undefined}>{e.costCentreName ?? "—"}</td>
+                    <td className="max-w-[120px] truncate py-2 pr-2 text-slate-600" title={e.processName ?? undefined}>{e.processName ?? "—"}</td>
                     <td className="py-2 pr-2 text-right tabular-nums text-rose-600">{e.debitAmount ? money(e.debitAmount) : "—"}</td>
                     <td className="py-2 pr-2 text-right tabular-nums text-emerald-600">{e.creditAmount ? money(e.creditAmount) : "—"}</td>
                     <td className="py-2 text-right font-semibold tabular-nums text-slate-800">{money(e.runningBalance)}</td>
@@ -126,14 +202,21 @@ function AccountLedgerDrawer({
 
 function TrialBalanceTab() {
   const [asOfDate, setAsOfDate] = useState("");
+  const [branchId, setBranchId] = useState("");
+  const [costCentreId, setCostCentreId] = useState("");
+  const [processId, setProcessId] = useState("");
   const [drill, setDrill] = useState<{ accountType: string; accountId: string; label: string } | null>(null);
 
   const query = useQuery({
-    queryKey: ["trial-balance", asOfDate],
+    queryKey: ["trial-balance", asOfDate, branchId, costCentreId, processId],
     queryFn: async () => {
-      const qs = asOfDate ? `?asOfDate=${asOfDate}` : "";
+      const qs = new URLSearchParams();
+      if (asOfDate) qs.set("asOfDate", asOfDate);
+      if (branchId) qs.set("branchId", branchId);
+      if (costCentreId) qs.set("costCentreId", costCentreId);
+      if (processId) qs.set("processId", processId);
       const res = await hrmsApi.get<{ success: boolean; data: { rows: TrialBalanceRow[]; balanced: boolean; totalDebit: number; totalCredit: number } }>(
-        `/api/finance/ledger-reports/trial-balance${qs}`,
+        `/api/finance/ledger-reports/trial-balance?${qs.toString()}`,
       );
       return res.data;
     },
@@ -143,9 +226,16 @@ function TrialBalanceTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <Label>As of date</Label>
-          <Input type="date" className="h-8 w-40 text-xs" value={asOfDate} onChange={(e) => setAsOfDate(e.target.value)} />
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <Label>As of date</Label>
+            <Input type="date" className="h-8 w-40 text-xs" value={asOfDate} onChange={(e) => setAsOfDate(e.target.value)} />
+          </div>
+          <DepthFilters
+            branchId={branchId} setBranchId={setBranchId}
+            costCentreId={costCentreId} setCostCentreId={setCostCentreId}
+            processId={processId} setProcessId={setProcessId}
+          />
         </div>
         {query.data && (
           <Badge
@@ -309,14 +399,20 @@ function VendorLedgerTab() {
 function HeadSubHeadLedgerTab() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [branchId, setBranchId] = useState("");
+  const [costCentreId, setCostCentreId] = useState("");
+  const [processId, setProcessId] = useState("");
   const [drill, setDrill] = useState<{ accountId: string; label: string } | null>(null);
 
   const query = useQuery({
-    queryKey: ["ledger-reports-head-subhead", from, to],
+    queryKey: ["ledger-reports-head-subhead", from, to, branchId, costCentreId, processId],
     queryFn: async () => {
       const qs = new URLSearchParams();
       if (from) qs.set("from", from);
       if (to) qs.set("to", to);
+      if (branchId) qs.set("branchId", branchId);
+      if (costCentreId) qs.set("costCentreId", costCentreId);
+      if (processId) qs.set("processId", processId);
       const res = await hrmsApi.get<{ success: boolean; data: HeadSubHeadRow[] }>(`/api/finance/ledger-reports/head-subhead-ledger?${qs.toString()}`);
       return res.data ?? [];
     },
@@ -329,6 +425,11 @@ function HeadSubHeadLedgerTab() {
       <div className="flex flex-wrap items-end gap-3">
         <div><Label>From</Label><Input type="date" className="h-8 text-xs" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
         <div><Label>To</Label><Input type="date" className="h-8 text-xs" value={to} onChange={(e) => setTo(e.target.value)} /></div>
+        <DepthFilters
+          branchId={branchId} setBranchId={setBranchId}
+          costCentreId={costCentreId} setCostCentreId={setCostCentreId}
+          processId={processId} setProcessId={setProcessId}
+        />
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-white/60 bg-white/95 shadow-sm">

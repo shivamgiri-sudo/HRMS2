@@ -23,11 +23,25 @@ const h =
 ledgerReportsRouter.use(requireAuth);
 
 ledgerReportsRouter.get(
+  "/filter-options",
+  requireRole(...BANK_ACCOUNT_READ_ROLES),
+  h(async (_req, res) => {
+    const result = await ledgerReportsService.filterOptions();
+    res.json({ success: true, data: result });
+  }),
+);
+
+ledgerReportsRouter.get(
   "/trial-balance",
   requireRole(...BANK_ACCOUNT_READ_ROLES),
   h(async (req, res) => {
     const asOfDate = req.query.asOfDate ? String(req.query.asOfDate) : undefined;
-    const result = await ledgerReportsService.trialBalance(asOfDate);
+    const filters = {
+      branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
+      processId: req.query.processId ? String(req.query.processId) : undefined,
+    };
+    const result = await ledgerReportsService.trialBalance(asOfDate, filters);
     res.json({ success: true, data: result });
   }),
 );
@@ -49,7 +63,12 @@ ledgerReportsRouter.get(
   h(async (req, res) => {
     const from = req.query.from ? String(req.query.from) : undefined;
     const to = req.query.to ? String(req.query.to) : undefined;
-    const result = await ledgerReportsService.headSubHeadLedger(from, to);
+    const filters = {
+      branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+      costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
+      processId: req.query.processId ? String(req.query.processId) : undefined,
+    };
+    const result = await ledgerReportsService.headSubHeadLedger(from, to, filters);
     res.json({ success: true, data: result });
   }),
 );

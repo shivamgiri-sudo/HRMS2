@@ -225,6 +225,29 @@ function maskVoucherRow(row: any) {
   return { ...row, amount: Number(row.amount ?? 0) };
 }
 
+/**
+ * Resolves a batch of auth_user ids to display names (found 2026-09-17 CEO/CA compliance
+ * review — the approval timeline and audit trail both carried raised_by/ceo_approved_by/
+ * released_by/actor_user_id as raw UUIDs and nothing ever resolved them to a name; a reviewer
+ * asking "who approved this payment" had to go to the database directly). Same
+ * COALESCE(employee full_name, email) fallback access.routes.ts's own /users listing uses, so a
+ * name here always matches what the User Management screen would show for the same person.
+ */
+async function resolveActorNames(userIds: (string | null | undefined)[]): Promise<Map<string, string>> {
+  const ids = [...new Set(userIds.filter((id): id is string => Boolean(id)))];
+  if (ids.length === 0) return new Map();
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT au.id, COALESCE(NULLIF(TRIM(e.full_name), ''), au.email) AS name
+       FROM auth_user au
+       LEFT JOIN employees e ON e.user_id = au.id AND e.active_status = 1
+      WHERE au.id IN (${ids.map(() => "?").join(",")})`,
+    ids,
+  );
+  const names = new Map<string, string>();
+  for (const r of rows as RowDataPacket[]) names.set(String(r.id), r.name);
+  return names;
+}
+
 export const paymentVoucherService = {
   async list(filters: { status?: string; sourceType?: string; bankAccountId?: string; limit?: number }) {
     const conditions: string[] = ["1=1"];
@@ -367,13 +390,56 @@ export const paymentVoucherService = {
       ? await getVendorAdvanceBalance(db, String((row as any).linked_vendor_id))
       : null;
 
+    const approvalEvents = (await listFinanceApprovalEvents("payment_voucher", id)) as any[];
+
+    // Live balance of the account this voucher would debit (found 2026-09-17 CEO/CA compliance
+    // review — neither the CEO approving nor the Finance Head releasing could see, anywhere in
+    // this UI, whether the account has enough money). Deliberately NOT company_bank_account.
+    // opening_balance — that column is a seed/rolling figure only accurate immediately after a
+    // reconciliation close (see bank-reconciliation-period.service.ts's own close()), exactly the
+    // staleness the raise form's own comment on this page already warns about. The real current
+    // figure is the latest bank_account_ledger_entry.running_balance, same source release()
+    // itself reads before moving money.
+    const [[lastLedgerEntry]] = (row as any).bank_account_id
+      ? await db.execute<RowDataPacket[]>(
+          `SELECT running_balance FROM bank_account_ledger_entry
+            WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+          [(row as any).bank_account_id],
+        )
+      : [[undefined]];
+    const [[bankAccountRow]] = (row as any).bank_account_id
+      ? await db.execute<RowDataPacket[]>(`SELECT opening_balance FROM company_bank_account WHERE id = ?`, [(row as any).bank_account_id])
+      : [[undefined]];
+    const currentBankBalance = lastLedgerEntry
+      ? Number((lastLedgerEntry as any).running_balance)
+      : bankAccountRow
+        ? Number((bankAccountRow as any).opening_balance)
+        : null;
+
+    // Actor names — one batched lookup covering every id this response touches (the voucher's
+    // own raised_by/ceo_approved_by/released_by/accounts_reviewed_by/changes_requested_by, plus
+    // every approval_events and audit_log actor_user_id).
+    const actorNames = await resolveActorNames([
+      (row as any).raised_by, (row as any).ceo_approved_by, (row as any).released_by,
+      (row as any).accounts_reviewed_by, (row as any).changes_requested_by,
+      ...approvalEvents.map((e) => e.actor_user_id),
+      ...(auditRows as any[]).map((e) => e.actor_user_id),
+    ]);
+    const nameOf = (userId: string | null | undefined) => (userId ? actorNames.get(String(userId)) ?? null : null);
+
     return {
       ...maskVoucherRow(row),
+      raised_by_name: nameOf((row as any).raised_by),
+      ceo_approved_by_name: nameOf((row as any).ceo_approved_by),
+      released_by_name: nameOf((row as any).released_by),
+      accounts_reviewed_by_name: nameOf((row as any).accounts_reviewed_by),
+      changes_requested_by_name: nameOf((row as any).changes_requested_by),
+      current_bank_balance: currentBankBalance,
       grn_allocations: grnAllocationRows,
       // The raise -> CEO-approve -> release timeline (drill-down mandate's "Approval / workflow
       // timeline" section) — same generic reader every other finance entity type uses.
-      approval_events: await listFinanceApprovalEvents("payment_voucher", id),
-      audit_log: auditRows,
+      approval_events: approvalEvents.map((e) => ({ ...e, actor_name: nameOf(e.actor_user_id) })),
+      audit_log: (auditRows as any[]).map((e) => ({ ...e, actor_name: nameOf(e.actor_user_id) })),
       consumption_since_replenishment: consumptionSinceReplenishment,
       vendor_advance_balance: advanceBalance,
     };
@@ -672,6 +738,24 @@ export const paymentVoucherService = {
           priority: "high",
         }).catch(() => undefined);
       }
+    } else if (decision === "reject") {
+      // Was silently un-notified (found 2026-09-17 CEO/CA compliance review) — approve and
+      // request_changes both tell the raiser, reject is the one outcome most likely to need
+      // their attention (the voucher is now dead, not just paused) and was the one saying
+      // nothing at all. Same pattern as request_changes above.
+      const raisedBy = String((await this.get(id))?.raised_by ?? "");
+      if (raisedBy) {
+        await inboxService.createItem({
+          user_id: raisedBy,
+          type: "payment_voucher_rejected",
+          title: `Payment Voucher rejected by CEO`,
+          description: note?.trim() || "No reason given.",
+          entity_type: "payment_voucher",
+          entity_id: id,
+          action_url: "/finance/payment-vouchers",
+          priority: "high",
+        }).catch(() => undefined);
+      }
     }
 
     return this.get(id);
@@ -834,6 +918,22 @@ export const paymentVoucherService = {
       // back the whole release, same as every other refusal in this transaction.
       const journalLines: JournalLineInput[] = [];
       let tdsPayableAccountId: string | null = null;
+
+      // Branch/cost-centre/process depth (owner directive 2026-09-17, same dimension GRN
+      // postings already carry — 1798_journal_entry_branch_cost_centre_process.sql). A
+      // multi-GRN voucher can span allocations with different cost centres; narrowing to
+      // "only keep a value every source agrees on" is the same non-guessing discipline that
+      // migration's own header describes, not a new policy invented here. undefined = no
+      // source seen yet, null = sources disagreed (or none had a value), string = everything
+      // seen so far agrees.
+      let branchCandidate: string | null | undefined;
+      let costCentreCandidate: string | null | undefined;
+      let processCandidate: string | null | undefined;
+      const narrow = (current: string | null | undefined, next: string | null | undefined): string | null | undefined => {
+        if (next == null) return current;
+        if (current === undefined) return next;
+        return current === next ? current : null;
+      };
       const resolveTdsPayableAccountId = async () => {
         if (tdsPayableAccountId !== null) return tdsPayableAccountId;
         const [[row]] = await connection.execute<RowDataPacket[]>(
@@ -945,9 +1045,12 @@ export const paymentVoucherService = {
           // vendor_id isn't on dispatchResult.payment when release() calls dispatch() with its
           // own connection (see dispatch()'s own comment on that shape) — read it directly.
           const [[vptRow]] = await connection.execute<RowDataPacket[]>(
-            `SELECT vendor_id FROM vendor_payment_tracking WHERE id = ?`,
+            `SELECT vendor_id, branch_id, cost_centre_id, process_id FROM vendor_payment_tracking WHERE id = ?`,
             [alloc.vendorPaymentTrackingId],
           );
+          branchCandidate = narrow(branchCandidate, (vptRow as any)?.branch_id ?? null);
+          costCentreCandidate = narrow(costCentreCandidate, (vptRow as any)?.cost_centre_id ?? null);
+          processCandidate = narrow(processCandidate, (vptRow as any)?.process_id ?? null);
           if ((vptRow as any)?.vendor_id) {
             journalLines.push(
               ...vendorGrnLines({
@@ -966,6 +1069,7 @@ export const paymentVoucherService = {
           [v.linked_imprest_manager_id],
         );
         if (!manager) throw new PaymentVoucherError("Linked imprest manager no longer exists", 404);
+        branchCandidate = narrow(branchCandidate, (manager as any).branch_id ?? null);
 
         await imprestLedgerService.post(
           {
@@ -1016,6 +1120,7 @@ export const paymentVoucherService = {
         // Real money out to the vendor, no GRN behind it — same bank-debit shape as the
         // 'general' lane, plus crediting this vendor's advance balance so it's available to
         // draw down later via a 'vendor_advance_application' voucher.
+        branchCandidate = narrow(branchCandidate, (bankAccount as any).branch_id ?? null);
         runningBalance = roundMoney(runningBalance - amount);
         await connection.execute(
           `INSERT INTO bank_account_ledger_entry
@@ -1099,6 +1204,14 @@ export const paymentVoucherService = {
         }));
 
         for (const alloc of applicationAllocations) {
+          const [[applicationVptRow]] = await connection.execute<RowDataPacket[]>(
+            `SELECT branch_id, cost_centre_id, process_id FROM vendor_payment_tracking WHERE id = ?`,
+            [alloc.vendorPaymentTrackingId],
+          );
+          branchCandidate = narrow(branchCandidate, (applicationVptRow as any)?.branch_id ?? null);
+          costCentreCandidate = narrow(costCentreCandidate, (applicationVptRow as any)?.cost_centre_id ?? null);
+          processCandidate = narrow(processCandidate, (applicationVptRow as any)?.process_id ?? null);
+
           const applicationDispatch = await vendorPaymentLedgerService.dispatch(
             alloc.vendorPaymentTrackingId,
             {
@@ -1146,6 +1259,7 @@ export const paymentVoucherService = {
         // against whatever Payable Account (Salary Payable / Statutory Dues / Bank Charges /
         // TDS Payable / Other) the voucher was raised under. particulars carries the "what this
         // is for" a GRN number or imprest manager name would otherwise supply.
+        branchCandidate = narrow(branchCandidate, (bankAccount as any).branch_id ?? null);
         runningBalance = roundMoney(runningBalance - amount);
         await connection.execute(
           `INSERT INTO bank_account_ledger_entry
@@ -1177,6 +1291,23 @@ export const paymentVoucherService = {
         );
       }
 
+      // Sufficient-funds guard (found 2026-09-17 CEO/CA compliance review) — release() tracked
+      // runningBalance through every cash-moving lane above but never refused if it went
+      // negative, so a voucher could overdraw the recorded bank balance with nobody warned.
+      // Skipped for vendor_advance_application — that lane never touches runningBalance (no cash
+      // moves, it settles a GRN on paper against an existing advance), so checking it here would
+      // block a paper adjustment over a balance condition it had no part in creating.
+      // -0.01 tolerance for paisa rounding noise only, matching roundMoney()'s own 2-decimal
+      // convention; a real shortfall is never that small. Checked here, before ANY row commits
+      // (still inside this transaction — connection.rollback() in the catch below undoes
+      // everything above on throw).
+      if (v.source_type !== "vendor_advance_application" && runningBalance < -0.01) {
+        throw new PaymentVoucherError(
+          `This release would take the account's recorded balance to ₹${roundMoney(runningBalance)} — below zero. Refusing to release rather than silently overdraw the account.`,
+          409,
+        );
+      }
+
       // Journal Task 3 — the single post() for this entire release, covering every lane and
       // every allocation above. One payment_voucher = one journal_entry = one Tally voucher.
       // Nothing to post is legitimate (e.g. a vendor_advance_application with zero TDS) — post()
@@ -1188,6 +1319,9 @@ export const paymentVoucherService = {
           sourceType: "payment_voucher",
           sourceId: id,
           postedBy: actorUserId,
+          branchId: branchCandidate ?? null,
+          costCentreId: costCentreCandidate ?? null,
+          processId: processCandidate ?? null,
           lines: journalLines,
         });
       }

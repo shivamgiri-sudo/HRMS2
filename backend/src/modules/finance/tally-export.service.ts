@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { refuse } from "../process-pnl/finance-error.js";
 
 /**
  * Tally XML export (PRD §6.2.1) — the ENVELOPE > BODY > DATA > TALLYMESSAGE > VOUCHER format,
@@ -358,8 +359,34 @@ ${body}
     return { xml, isFinal, entryCount: rows.length, totalDebit, totalCredit };
   },
 
+  /**
+   * The live export's actual source, as of the 2026-09-17 cutover (owner directive). Computes
+   * BOTH buildEnvelope() (legacy, bank_account_ledger_entry) and buildEnvelopeFromJournal() (the
+   * general ledger) for the same range and only returns the journal-based result when they
+   * agree on entry count and total debit — otherwise refuses rather than risk exporting figures
+   * to Tally/GST filing that the two systems disagree on. Once every voucher release and
+   * historical backfill run has actually posted through the journal, the two will always agree
+   * and this check costs one extra read; if they ever diverge, that is exactly the class of bug
+   * a statutory export must never paper over.
+   */
+  async buildEnvelopeVerified(bankAccountId: string, from?: string, to?: string) {
+    const [journalResult, legacyResult] = await Promise.all([
+      this.buildEnvelopeFromJournal(bankAccountId, from, to),
+      this.buildEnvelope(bankAccountId, from, to),
+    ]);
+    const totalDiff = Math.abs(journalResult.totalDebit - legacyResult.totalDebit);
+    if (journalResult.entryCount !== legacyResult.entryCount || totalDiff > 0.01) {
+      throw refuse(
+        409,
+        "TALLY_EXPORT_PARITY_MISMATCH",
+        `Journal-based export (${journalResult.entryCount} vouchers, ₹${journalResult.totalDebit.toFixed(2)}) disagrees with the legacy bank-ledger export (${legacyResult.entryCount} vouchers, ₹${legacyResult.totalDebit.toFixed(2)}) for bank account ${bankAccountId}${from || to ? ` (${from ?? "…"} to ${to ?? "…"})` : ""}. Refusing to export rather than risk wrong figures reaching Tally/GST filing — run backend/scripts/verify-tally-export-parity.ts for this account and range to investigate.`,
+      );
+    }
+    return journalResult;
+  },
+
   async exportAndLog(bankAccountId: string, from: string | undefined, to: string | undefined, actorUserId: string, actorRole?: string) {
-    const result = await this.buildEnvelope(bankAccountId, from, to);
+    const result = await this.buildEnvelopeVerified(bankAccountId, from, to);
     await logSensitiveAction({
       actor_user_id: actorUserId,
       actor_role: actorRole,
