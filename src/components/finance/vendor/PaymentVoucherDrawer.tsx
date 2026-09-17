@@ -9,8 +9,9 @@
 // payment_voucher row; opening it from either page must therefore offer exactly the same
 // actions and show exactly the same state. Two copies of this JSX would drift within a
 // release or two — one component cannot.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -55,6 +56,8 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
   const [reviewNote, setReviewNote] = useState("");
   const [releaseForm, setReleaseForm] = useState({ paymentMode: "", paymentDate: new Date().toISOString().slice(0, 10), transactionRef: "" });
   const [withdrawReason, setWithdrawReason] = useState("");
+  const [attachmentOpening, setAttachmentOpening] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const detailQuery = useQuery({
     queryKey: ["payment-voucher-detail", voucherId],
@@ -122,6 +125,28 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
     onSuccess: () => { toast({ title: "Voucher withdrawn" }); invalidate(); setWithdrawReason(""); },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
+  const attachmentMutation = useMutation({
+    mutationFn: async ({ id, file }: { id: string; file: File }) => {
+      const form = new FormData();
+      form.append("file", file);
+      return (await hrmsApi.postForm(`/api/finance/payment-vouchers/${id}/attachment`, form)).data;
+    },
+    onSuccess: () => { toast({ title: "Attachment saved" }); invalidate(); },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const openAttachment = async (id: string) => {
+    setAttachmentOpening(true);
+    try {
+      const blob = await hrmsApi.getBlob(`/api/finance/payment-vouchers/${id}/attachment`);
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      toast({ title: "Error", description: e instanceof Error ? e.message : "Could not open the attachment", variant: "destructive" });
+    } finally {
+      setAttachmentOpening(false);
+    }
+  };
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -197,6 +222,57 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
                     </>
                   )}
                 </dl>
+              </section>
+
+              <section>
+                <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Supporting Document</h3>
+                {detailQuery.data.attachment_original_name ? (
+                  <div className="flex items-center gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+                    <Paperclip className="h-4 w-4 shrink-0 text-slate-400" />
+                    <div className="min-w-0 flex-1">
+                      <button
+                        type="button"
+                        className="cursor-pointer truncate font-semibold text-blue-700 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={attachmentOpening}
+                        onClick={() => openAttachment(detailQuery.data!.id)}
+                      >
+                        {detailQuery.data.attachment_original_name}
+                      </button>
+                      <p className="text-slate-400">
+                        Uploaded by {detailQuery.data.attachment_uploaded_by_name ?? "—"}
+                        {detailQuery.data.attachment_uploaded_at ? ` — ${dateTime(detailQuery.data.attachment_uploaded_at)}` : ""}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400">None</p>
+                )}
+                {detailQuery.data.status !== "released"
+                  && (canRelease || canApprove || String(detailQuery.data.raised_by) === String(user?.id)) && (
+                    <div className="mt-2">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".pdf,.jpg,.jpeg,.png,.webp"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = "";
+                          if (file) attachmentMutation.mutate({ id: detailQuery.data!.id, file });
+                        }}
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="cursor-pointer"
+                        disabled={attachmentMutation.isPending}
+                        onClick={() => fileInputRef.current?.click()}
+                      >
+                        <Paperclip className="mr-1.5 h-3.5 w-3.5" />
+                        {detailQuery.data.attachment_original_name ? "Replace attachment" : "Attach invoice / bank advice"}
+                      </Button>
+                    </div>
+                )}
               </section>
 
               {(() => {
