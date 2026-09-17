@@ -1384,20 +1384,20 @@ async function ensureDatabaseExists(
     await conn.query(
       `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
     );
-    // ALTER DATABASE acquires a global MDL and can time out under load on a live server.
-    // The charset was set correctly at initial setup; swallow the lock timeout rather than
-    // blocking startup — the schema is already correct.
-    try {
+    // ALTER DATABASE acquires a global MDL that blocks ALL concurrent DDL (CREATE TABLE, ALTER
+    // TABLE) for the database's full duration — including the workers' own ensureTable() calls.
+    // Skip it entirely if the charset is already correct; the DB has been utf8mb4_unicode_ci
+    // since initial setup and this idempotent ALTER is noise on an established production server.
+    const [charsetRows] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT DEFAULT_CHARACTER_SET_NAME cs, DEFAULT_COLLATION_NAME co
+         FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?`,
+      [dbName]
+    );
+    const already = charsetRows[0]?.cs === "utf8mb4" && charsetRows[0]?.co === "utf8mb4_unicode_ci";
+    if (!already) {
       await conn.query(
         `ALTER DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
       );
-    } catch (alterErr: unknown) {
-      const code = (alterErr as any)?.code ?? "";
-      if (code === "ER_LOCK_WAIT_TIMEOUT" || code === "ER_LOCK_DEADLOCK") {
-        console.warn(`[migration] ALTER DATABASE charset skipped — lock timeout under load (safe to ignore, charset already set)`);
-      } else {
-        throw alterErr;
-      }
     }
     console.log(`[migration] database '${dbName}' ensured`);
   } finally {
