@@ -19802,6 +19802,7 @@
       "error_flag",
       "gcp_code",
       "company_name",
+      "gtin",
       "sku_count",
       "data_source",
       "source_reference",
