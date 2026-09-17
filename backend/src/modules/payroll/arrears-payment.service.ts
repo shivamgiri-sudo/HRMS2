@@ -230,7 +230,7 @@ export const arrearsPaymentService = {
     if (filter.status) { clauses.push("status = ?"); params.push(filter.status); }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM payroll_arrears_payment ${where} ORDER BY requested_at DESC`,
+      `SELECT * FROM payroll_arrears_payment ${where} ORDER BY requested_at DESC LIMIT 500`,
       params,
     );
     return rows as ArrearsPayment[];

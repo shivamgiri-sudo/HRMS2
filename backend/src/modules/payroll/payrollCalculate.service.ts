@@ -987,6 +987,96 @@ export async function calculatePayrollRunScoped(
    */
   const ptBlockedEmployees: Array<{ employee_id: string; employee_code: string; reason: string }> = [];
 
+  // Pre-batch reads: one query per data type for all employees, eliminating N+1 inside the loop.
+  const loopMonthStart = `${run.run_month}-01`;
+  const loopMonthEnd   = `${run.run_month}-${String(daysInMonth).padStart(2, "0")}`;
+  const empIds = employees.map((e) => e.employee_id);
+  const empIdPh = () => empIds.map(() => "?").join(", ");
+
+  const desigByEmp = new Map<string, { designation_name: string; dept_name: string }>();
+  if (empIds.length > 0) {
+    const [dRows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id, COALESCE(dm.designation_name, '') AS designation_name, COALESCE(dept.dept_name, '') AS dept_name
+         FROM employees e
+         LEFT JOIN designation_master dm  ON dm.id  = e.designation_id
+         LEFT JOIN department_master dept ON dept.id = e.department_id
+        WHERE e.id IN (${empIdPh()})`,
+      empIds,
+    );
+    for (const r of dRows as any[]) desigByEmp.set(r.id as string, r);
+  }
+
+  const adrCountByEmp = new Map<string, number>();
+  if (empIds.length > 0) {
+    const [cntRows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_id, COUNT(*) AS cnt
+         FROM attendance_daily_record
+        WHERE employee_id IN (${empIdPh()})
+          AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
+        GROUP BY employee_id`,
+      [...empIds, loopMonthStart, loopMonthEnd],
+    );
+    for (const r of cntRows as any[]) adrCountByEmp.set(r.employee_id as string, Number(r.cnt));
+  }
+
+  const attByEmp = new Map<string, AttendanceRow>();
+  if (empIds.length > 0) {
+    const [aRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         adr.employee_id,
+         COUNT(CASE WHEN adr.attendance_status NOT IN ('week_off','holiday') THEN 1 END) AS working_days,
+         COUNT(CASE WHEN adr.attendance_status = 'present'        THEN 1 END) AS present_days,
+         COUNT(CASE WHEN adr.attendance_status = 'leave_approved' THEN 1 END) AS leave_days,
+         COALESCE(SUM(adr.lwp_value), 0)                                       AS lwp_days,
+         COALESCE(SUM(adr.late_mark), 0)                                       AS late_marks,
+         COALESCE(SUM(CASE WHEN adr.attendance_source = 'dialler'
+                            THEN adr.raw_minutes / 60.0 END), NULL)            AS dialer_hours
+       FROM attendance_daily_record adr
+       WHERE adr.employee_id IN (${empIdPh()})
+         AND DATE(CONVERT_TZ(adr.record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
+       GROUP BY adr.employee_id`,
+      [...empIds, loopMonthStart, loopMonthEnd],
+    );
+    for (const r of aRows as any[]) attByEmp.set(r.employee_id as string, r as unknown as AttendanceRow);
+  }
+
+  const paidBaseByEmp = new Map<string, number>();
+  if (empIds.length > 0) {
+    const [pbRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         adr.employee_id,
+         COALESCE(SUM(
+           CASE
+             WHEN adr.attendance_status = 'present'        THEN 1.0
+             WHEN adr.attendance_status = 'late'           THEN 1.0
+             WHEN adr.attendance_status = 'half_day'       THEN 0.5
+             WHEN adr.attendance_status = 'leave_approved' THEN 1.0
+             ELSE 0
+           END
+         ), 0) AS paid_base
+       FROM attendance_daily_record adr
+       WHERE adr.employee_id IN (${empIdPh()})
+         AND DATE(CONVERT_TZ(adr.record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
+       GROUP BY adr.employee_id`,
+      [...empIds, loopMonthStart, loopMonthEnd],
+    );
+    for (const r of pbRows as any[]) paidBaseByEmp.set(r.employee_id as string, Number(r.paid_base));
+  }
+
+  const wfmPresentByEmp = new Map<string, number>();
+  if (empIds.length > 0) {
+    const [wRows] = await db.execute<RowDataPacket[]>(
+      `SELECT s.employee_id,
+              COUNT(CASE WHEN s.current_status IN ('Logged Out','Logged In') THEN 1 END) AS present_days
+         FROM wfm_attendance_session s
+        WHERE s.employee_id IN (${empIdPh()})
+          AND s.session_date BETWEEN ? AND ?
+        GROUP BY s.employee_id`,
+      [...empIds, loopMonthStart, loopMonthEnd],
+    );
+    for (const r of wRows as any[]) wfmPresentByEmp.set(r.employee_id as string, Number((r as any).present_days));
+  }
+
   try {
   for (const emp of employees) {
     const monthStart = `${run.run_month}-01`;
@@ -1016,55 +1106,18 @@ export async function calculatePayrollRunScoped(
     }
     processedCount++;
 
-    // Step 1: Load designation and department to determine attendance source
-    // Use conn (transaction connection) for all reads inside the loop to ensure
-    // a consistent snapshot and avoid dirty reads from concurrent payroll runs.
-    const [desigRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT dm.designation_name, dept.dept_name
-       FROM employees e
-       LEFT JOIN designation_master dm ON dm.id = e.designation_id
-       LEFT JOIN department_master dept ON dept.id = e.department_id
-       WHERE e.id = ? LIMIT 1`,
-      [emp.employee_id]
-    );
-    const desig = (desigRows[0] as any) ?? {};
+    // Step 1: Designation / department from the pre-batched map (no per-employee query).
+    const desig = desigByEmp.get(emp.employee_id) ?? { designation_name: '', dept_name: '' };
     const isOpsExecutive =
       /executive/i.test(desig.designation_name ?? '') &&
       /operations/i.test(desig.dept_name ?? '');
 
-    // Check if attendance_daily_record has been populated for this employee+month.
-    // record_date is stored as UTC datetime; compare in IST (+05:30) to avoid off-by-one on month boundaries.
-    const [adrCountRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt FROM attendance_daily_record
-       WHERE employee_id = ?
-         AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?`,
-      [emp.employee_id, monthStart, monthEnd]
-    );
-    const hasEngineData = Number((adrCountRows[0] as any).cnt ?? 0) > 0;
+    // hasEngineData / att / paidBase — looked up from pre-batched maps (no per-employee queries).
+    const hasEngineData = (adrCountByEmp.get(emp.employee_id) ?? 0) > 0;
 
     let att: AttendanceRow;
-
     if (hasEngineData) {
-      // Use attendance_daily_record — role-aware (dialler/biometric) with half-days, leaves, holidays
-      const [attRows] = await db.execute<RowDataPacket[]>(
-        `SELECT
-           ? AS employee_id,
-           (SELECT COUNT(*) FROM attendance_daily_record
-            WHERE employee_id = ?
-              AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
-              AND attendance_status NOT IN ('week_off','holiday')) AS working_days,
-           COUNT(CASE WHEN adr.attendance_status = 'present'        THEN 1 END) AS present_days,
-           COUNT(CASE WHEN adr.attendance_status = 'leave_approved' THEN 1 END) AS leave_days,
-           COALESCE(SUM(adr.lwp_value), 0)                                       AS lwp_days,
-           COALESCE(SUM(adr.late_mark), 0)                                       AS late_marks,
-           COALESCE(SUM(CASE WHEN adr.attendance_source = 'dialler'
-                              THEN adr.raw_minutes / 60.0 END), NULL)            AS dialer_hours
-         FROM attendance_daily_record adr
-         WHERE adr.employee_id = ?
-           AND DATE(CONVERT_TZ(adr.record_date, '+00:00', '+05:30')) BETWEEN ? AND ?`,
-        [emp.employee_id, emp.employee_id, monthStart, monthEnd, emp.employee_id, monthStart, monthEnd]
-      );
-      att = (attRows as AttendanceRow[])[0] ?? {
+      att = attByEmp.get(emp.employee_id) ?? {
         employee_id: emp.employee_id,
         working_days: defaultWorkingDays,
         present_days: defaultWorkingDays,
@@ -1074,53 +1127,22 @@ export async function calculatePayrollRunScoped(
         dialer_hours: null,
       };
     } else {
-      // Fallback: legacy session-count query (no attendance engine data yet)
-      const [attRows] = await db.execute<RowDataPacket[]>(
-        `SELECT
-           ? AS employee_id,
-           ? AS working_days,
-           COUNT(CASE WHEN s.current_status IN ('Logged Out','Logged In') THEN 1 END) AS present_days,
-           0 AS leave_days,
-           (? - COUNT(CASE WHEN s.current_status IN ('Logged Out','Logged In') THEN 1 END)) AS lwp_days,
-           0 AS late_marks,
-           NULL AS dialer_hours
-         FROM wfm_attendance_session s
-         WHERE s.employee_id = ? AND s.session_date BETWEEN ? AND ?`,
-        [emp.employee_id, defaultWorkingDays, defaultWorkingDays, emp.employee_id, monthStart, monthEnd]
-      );
-      att = (attRows as AttendanceRow[])[0] ?? {
+      const wfmPresent = wfmPresentByEmp.get(emp.employee_id) ?? 0;
+      att = {
         employee_id: emp.employee_id,
         working_days: defaultWorkingDays,
-        present_days: defaultWorkingDays,
+        present_days: wfmPresent,
         leave_days: 0,
-        lwp_days: 0,
+        lwp_days: defaultWorkingDays - wfmPresent,
         late_marks: 0,
         dialer_hours: null,
       };
     }
 
-    // Step 2: Paid base calculation
-    // present(1) + half_day(0.5) + all approved leave types(1 each)
-    // Use attendance_daily_record which already has status per day
-    const [paidBaseRows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         COALESCE(SUM(
-           CASE
-             WHEN adr.attendance_status = 'present'         THEN 1.0
-             WHEN adr.attendance_status = 'late'            THEN 1.0
-             WHEN adr.attendance_status = 'half_day'        THEN 0.5
-             WHEN adr.attendance_status = 'leave_approved'  THEN 1.0
-             ELSE 0
-           END
-         ), 0) AS paid_base
-       FROM attendance_daily_record adr
-       WHERE adr.employee_id = ?
-         AND DATE(CONVERT_TZ(adr.record_date, '+00:00', '+05:30')) BETWEEN ? AND ?`,
-      [emp.employee_id, monthStart, monthEnd]
-    );
-    let paidBase = Number((paidBaseRows[0] as any)?.paid_base ?? 0);
-    // Fallback when attendance engine has no data yet
-    if (!hasEngineData) paidBase = att.present_days + att.leave_days;
+    // Step 2: Paid base — from pre-batched map; fallback for employees with no ADR data.
+    let paidBase = hasEngineData
+      ? (paidBaseByEmp.get(emp.employee_id) ?? 0)
+      : att.present_days + att.leave_days;
 
     // Step 4: Week-off eligibility and holiday resolution
     //
