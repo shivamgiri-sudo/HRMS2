@@ -384,6 +384,12 @@ function mockAdvanceConnection(opts: {
       const row = opts.vendorPaymentTrackingRows?.[vptId] ?? { vendor_id: "vendor-1", due_amount: 3000, tds_deducted_amount: 0, paid_amount: 0 };
       return [[row]];
     }
+    if (text.includes("FROM vendor_payment_tracking") && text.includes("cost_centre_id")) {
+      // Depth-dimension lookup (branch/cost-centre/process) — vendorGrnLines/vendorAdvanceApplicationLines
+      // callers narrow across allocations; returning nulls here means every existing test's
+      // journalLines assertions stay unaffected (the depth fields aren't part of journalLines).
+      return [[{ branch_id: null, cost_centre_id: null, process_id: null }]];
+    }
     if (text.includes("FROM vendor_advance_ledger") && text.includes("balance_after")) {
       return [opts.advanceBalance != null ? [{ balance_after: opts.advanceBalance }] : []];
     }

@@ -834,6 +834,22 @@ export const paymentVoucherService = {
       // back the whole release, same as every other refusal in this transaction.
       const journalLines: JournalLineInput[] = [];
       let tdsPayableAccountId: string | null = null;
+
+      // Branch/cost-centre/process depth (owner directive 2026-09-17, same dimension GRN
+      // postings already carry — 1798_journal_entry_branch_cost_centre_process.sql). A
+      // multi-GRN voucher can span allocations with different cost centres; narrowing to
+      // "only keep a value every source agrees on" is the same non-guessing discipline that
+      // migration's own header describes, not a new policy invented here. undefined = no
+      // source seen yet, null = sources disagreed (or none had a value), string = everything
+      // seen so far agrees.
+      let branchCandidate: string | null | undefined;
+      let costCentreCandidate: string | null | undefined;
+      let processCandidate: string | null | undefined;
+      const narrow = (current: string | null | undefined, next: string | null | undefined): string | null | undefined => {
+        if (next == null) return current;
+        if (current === undefined) return next;
+        return current === next ? current : null;
+      };
       const resolveTdsPayableAccountId = async () => {
         if (tdsPayableAccountId !== null) return tdsPayableAccountId;
         const [[row]] = await connection.execute<RowDataPacket[]>(
@@ -945,9 +961,12 @@ export const paymentVoucherService = {
           // vendor_id isn't on dispatchResult.payment when release() calls dispatch() with its
           // own connection (see dispatch()'s own comment on that shape) — read it directly.
           const [[vptRow]] = await connection.execute<RowDataPacket[]>(
-            `SELECT vendor_id FROM vendor_payment_tracking WHERE id = ?`,
+            `SELECT vendor_id, branch_id, cost_centre_id, process_id FROM vendor_payment_tracking WHERE id = ?`,
             [alloc.vendorPaymentTrackingId],
           );
+          branchCandidate = narrow(branchCandidate, (vptRow as any)?.branch_id ?? null);
+          costCentreCandidate = narrow(costCentreCandidate, (vptRow as any)?.cost_centre_id ?? null);
+          processCandidate = narrow(processCandidate, (vptRow as any)?.process_id ?? null);
           if ((vptRow as any)?.vendor_id) {
             journalLines.push(
               ...vendorGrnLines({
@@ -966,6 +985,7 @@ export const paymentVoucherService = {
           [v.linked_imprest_manager_id],
         );
         if (!manager) throw new PaymentVoucherError("Linked imprest manager no longer exists", 404);
+        branchCandidate = narrow(branchCandidate, (manager as any).branch_id ?? null);
 
         await imprestLedgerService.post(
           {
@@ -1016,6 +1036,7 @@ export const paymentVoucherService = {
         // Real money out to the vendor, no GRN behind it — same bank-debit shape as the
         // 'general' lane, plus crediting this vendor's advance balance so it's available to
         // draw down later via a 'vendor_advance_application' voucher.
+        branchCandidate = narrow(branchCandidate, (bankAccount as any).branch_id ?? null);
         runningBalance = roundMoney(runningBalance - amount);
         await connection.execute(
           `INSERT INTO bank_account_ledger_entry
@@ -1099,6 +1120,14 @@ export const paymentVoucherService = {
         }));
 
         for (const alloc of applicationAllocations) {
+          const [[applicationVptRow]] = await connection.execute<RowDataPacket[]>(
+            `SELECT branch_id, cost_centre_id, process_id FROM vendor_payment_tracking WHERE id = ?`,
+            [alloc.vendorPaymentTrackingId],
+          );
+          branchCandidate = narrow(branchCandidate, (applicationVptRow as any)?.branch_id ?? null);
+          costCentreCandidate = narrow(costCentreCandidate, (applicationVptRow as any)?.cost_centre_id ?? null);
+          processCandidate = narrow(processCandidate, (applicationVptRow as any)?.process_id ?? null);
+
           const applicationDispatch = await vendorPaymentLedgerService.dispatch(
             alloc.vendorPaymentTrackingId,
             {
@@ -1146,6 +1175,7 @@ export const paymentVoucherService = {
         // against whatever Payable Account (Salary Payable / Statutory Dues / Bank Charges /
         // TDS Payable / Other) the voucher was raised under. particulars carries the "what this
         // is for" a GRN number or imprest manager name would otherwise supply.
+        branchCandidate = narrow(branchCandidate, (bankAccount as any).branch_id ?? null);
         runningBalance = roundMoney(runningBalance - amount);
         await connection.execute(
           `INSERT INTO bank_account_ledger_entry
@@ -1188,6 +1218,9 @@ export const paymentVoucherService = {
           sourceType: "payment_voucher",
           sourceId: id,
           postedBy: actorUserId,
+          branchId: branchCandidate ?? null,
+          costCentreId: costCentreCandidate ?? null,
+          processId: processCandidate ?? null,
           lines: journalLines,
         });
       }

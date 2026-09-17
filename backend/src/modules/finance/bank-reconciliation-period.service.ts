@@ -104,7 +104,7 @@ export const bankReconciliationPeriodService = {
   },
 
   async close(periodId: string, statementClosingBalance: number, actorUserId: string): Promise<{ closed: true }> {
-    const [[period]] = await db.execute<RowDataPacket[]>(`SELECT id, bank_account_id, to_date, status FROM bank_reconciliation_period WHERE id = ?`, [periodId]);
+    const [[period]] = await db.execute<RowDataPacket[]>(`SELECT id, bank_account_id, from_date, to_date, status FROM bank_reconciliation_period WHERE id = ?`, [periodId]);
     if (!period) throw new BankReconciliationPeriodError("Reconciliation period not found.", 404);
     if (period.status !== "open") throw new BankReconciliationPeriodError("Period is not open.");
 
@@ -133,6 +133,54 @@ export const bankReconciliationPeriodService = {
     if (difference !== 0) {
       throw new BankReconciliationPeriodError(
         `Doesn't balance: HRMS says ₹${expectedStatementBalance} after outstanding items, statement says ₹${round2(statementClosingBalance)} — difference of ₹${Math.abs(difference)}.`,
+      );
+    }
+
+    // Owner directive 2026-09-17 ("wire bank reconciliation to the journal"): before locking
+    // this period's books, verify the general ledger (journal_entry_line, account_type=
+    // 'bank_account') agrees with the bank ledger over this SAME period window. Scoped to
+    // [from_date, to_date] rather than an absolute balance — company_bank_account.opening_balance
+    // is overwritten by every close() (see below), so it is not a stable anchor to compute an
+    // absolute journal balance from; comparing "how much moved through this window" in both
+    // systems avoids depending on that mutable column or on any full-history running-balance
+    // chain being correct all the way back.
+    //
+    // A bank account is only ever CREDITED in the journal when cash leaves
+    // (payment-voucher-journal-lines.ts) and only ever DEBITED when cash comes in
+    // (bank-reconciliation-match.service.ts's postAdjustment(), for a deposit the statement
+    // shows that HRMS never recorded) — the mirror image of bank_account_ledger_entry's
+    // debit=out/credit=in convention, so the two movements must sum to zero.
+    //
+    // Today this is a no-op for every real account (0 bank_account journal lines exist yet —
+    // grn-journal-posting.service.ts never touches account_type='bank_account' at all, and no
+    // payment voucher has ever released), so it only starts refusing once real journal activity
+    // and real bank-ledger activity would actually diverge — exactly the moment a books-close
+    // should catch it.
+    const [[bankLedgerMovement]] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(credit_amount - debit_amount), 0) AS net_change
+         FROM bank_account_ledger_entry
+        WHERE bank_account_id = ? AND entry_date BETWEEN ? AND ?`,
+      [period.bank_account_id, period.from_date, period.to_date],
+    );
+    const [[journalMovement]] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(jel.debit_amount - jel.credit_amount), 0) AS net_change
+         FROM journal_entry_line jel
+         JOIN journal_entry je ON je.id = jel.journal_entry_id
+        WHERE jel.account_type = 'bank_account' AND jel.account_id = ?
+          AND je.entry_date BETWEEN ? AND ? AND je.reversed_by_entry_id IS NULL`,
+      [period.bank_account_id, period.from_date, period.to_date],
+    );
+    // Both sums are "signed change in the bank's actual cash balance" in their own convention
+    // (bank ledger: credit-debit, cash in minus cash out; journal: debit-credit, the standard
+    // asset-account convention where a debit increases the balance) — for the same real cash
+    // movements they must be EQUAL, not sum to zero. bale.debit_amount (cash out) is the same
+    // event as jel.creditAmount (bank_account credited), and bale.credit_amount (cash in) is
+    // the same event as jel.debitAmount — so Σ(bale.credit-debit) and Σ(jel.debit-credit) both
+    // land on the same signed number when the two systems agree.
+    const journalDifference = round2(Number(bankLedgerMovement.net_change) - Number(journalMovement.net_change));
+    if (journalDifference !== 0) {
+      throw new BankReconciliationPeriodError(
+        `The general ledger disagrees with the bank ledger for this period (${period.from_date} to ${period.to_date}): bank ledger moved ₹${round2(Number(bankLedgerMovement.net_change))}, journal moved ₹${round2(Number(journalMovement.net_change))} — difference of ₹${Math.abs(journalDifference)}. Refusing to close rather than lock books the two systems don't agree on.`,
       );
     }
 
