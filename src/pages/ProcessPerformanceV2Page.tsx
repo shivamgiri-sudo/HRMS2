@@ -6,15 +6,25 @@ import { BellavitaSaleDashboard } from "@/components/process-performance/Bellavi
 import { GncSaleDashboard } from "@/components/process-performance/GncSaleDashboard";
 import { GncInboundDashboard } from "@/components/process-performance/GncInboundDashboard";
 import { NeemansCartDashboard } from "@/components/process-performance/NeemansCartDashboard";
+import { NeemansPerformanceDashboard } from "@/components/process-performance/NeemansPerformanceDashboard";
+import { NeemansChatDashboard } from "@/components/process-performance/NeemansChatDashboard";
+import { BellavitaChatDashboard } from "@/components/process-performance/BellavitaChatDashboard";
+import { BellavitaCartDashboard } from "@/components/process-performance/BellavitaCartDashboard";
 import { HousingOwnerDashboard } from "@/components/process-performance/HousingOwnerDashboard";
+import { HousingPremiumSaleDashboard } from "@/components/process-performance/HousingPremiumSaleDashboard";
+import { LpFeedbackDashboard } from "@/components/process-performance/LpFeedbackDashboard";
+import { LpOnboardingDashboard } from "@/components/process-performance/LpOnboardingDashboard";
+import { SatyaRetailDashboard } from "@/components/process-performance/SatyaRetailDashboard";
+import { CloviaDashboard } from "@/components/process-performance/CloviaDashboard";
+import { BirlanuDashboard } from "@/components/process-performance/BirlanuDashboard";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { TONE_CLASSES, type Tone } from "@/lib/processPerformanceTones";
+import { TONE_CLASSES, TONE_GRADIENT_CLASSES, type Tone } from "@/lib/processPerformanceTones";
 import { UploaderHub, type UploaderHubItem } from "@/components/process-performance/UploaderHub";
 import { UploaderWorkspace } from "@/components/process-performance/UploaderWorkspace";
 import {
   Activity, ChevronLeft, ChevronRight, LayoutDashboard, Upload,
   ShoppingBag, MessageSquare, ShoppingCart, Target, Users,
-  Receipt, PhoneIncoming, PhoneOutgoing, ClipboardList,
+  Receipt, PhoneIncoming, PhoneOutgoing, PhoneCall, ClipboardList,
   Mail, Star, ShieldCheck, Repeat, RotateCcw, TrendingUp,
   Heart, Footprints, HeartPulse, Home, Crown, Shirt, FileText, Tag,
   Building2, Globe, Settings, Zap, LayoutGrid, UploadCloud,
@@ -77,24 +87,41 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
  * separate mapping. "stub" entries are the pre-existing "nothing built
  * yet" placeholders (Neemans' Sale/Allocation cards) -- unchanged.
  */
-const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "neemans_cart" | "housing_owner_sale" }>>> = {
+const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" }>>> = {
   bellavita: [
     { key: "sale_performance", label: "Sale Performance", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
+    { key: "chat_performance", label: "Chat Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
+    { key: "cart_performance", label: "Cart Recovery", description: "Cart value, connect%, discount codes, agent-wise + Repeat Allocation — live from uploaded cart data", kind: "bellavita_cart" },
     { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%", kind: "inbound" },
   ],
   housing_owner: [
     { key: "sale_performance", label: "Sale Performance", description: "Revenue vs target, AM/TL/agent-wise, call connect% — live from uploaded owner sale/CDR/roster data", kind: "housing_owner_sale" },
+  ],
+  housing_premium: [
+    { key: "sale_performance", label: "Sale Performance", description: "Revenue vs target, TL/agent-wise, call connect% — live from uploaded Premium sale/CDR/roster data", kind: "housing_premium_sale" },
+  ],
+  lp_feedback: [
+    { key: "call_performance", label: "Feedback Call Performance", description: "Login/calls/connectivity, lead-source, week-wise & agent-wise — live from uploaded APR/CDR data", kind: "lp_feedback" },
+  ],
+  lp_onboarding: [
+    { key: "call_performance", label: "Onboarding Call Performance", description: "Login/calls/connectivity, lead-source, week-wise & agent-wise — live from uploaded APR/CDR data", kind: "lp_onboarding" },
+  ],
+  satya_retail: [
+    { key: "beat_performance", label: "Beat & Call Performance", description: "Allocation/connect%, warehouse-wise & agent-wise — live from uploaded allocation/CDR data", kind: "satya_retail_dashboard" },
   ],
   gnc: [
     { key: "sale_performance", label: "Sale Performance", description: "Turn over, prepaid%, allocation, top performers — live from uploaded sale data", kind: "gnc_sale" },
     { key: "inbound", label: "Inbound", description: "Live call performance — Overview, agent-wise & date-wise breakdowns", kind: "inbound" },
   ],
   clovia: [
-    { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%", kind: "inbound" },
+    { key: "dashboard", label: "Dashboard", description: "Inbound (live calls), Email/Chat/Feedback/Quality/Headcount and slot-wise/hourly views — beautiful multi-slide dashboard", kind: "clovia_dashboard" },
+  ],
+  birlanu: [
+    { key: "dashboard", label: "Dashboard", description: "Lead-to-sale funnel, conversion%, business/brand/zone/agent-wise, TAT compliance — live from uploaded Sale/APR data", kind: "birlanu_dashboard" },
   ],
   neemans: [
-    { key: "sale", label: "Sale Dashboard", description: "Coming soon", kind: "stub" },
-    { key: "allocation", label: "Allocation Dashboard", description: "Coming soon", kind: "stub" },
+    { key: "performance", label: "Sale, Allocation & Productivity", description: "Combined dashboard over Sale/Allocation/Productivity uploads — TL, agent-wise & date-wise, live", kind: "neemans_performance" },
+    { key: "chat", label: "Chat Performance", description: "Tickets, resolved%, LOB-wise & agent-wise, FRT/resolution/CSAT — live from uploaded chat data", kind: "neemans_chat" },
     { key: "cart", label: "Abandoned Cart Dashboard", description: "Cart count, value, disposition & agent-wise breakdown — live from uploaded cart data", kind: "neemans_cart" },
     { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%, FCR%", kind: "inbound" },
   ],
@@ -113,7 +140,7 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
 };
 
 const SECTIONS: Array<{ key: SectionKey; label: string; description: string }> = [
-  { key: "dashboards", label: "Dashboards", description: "Coming soon" },
+  { key: "dashboards", label: "Dashboards", description: "Live KPI dashboards, built from uploaded data" },
   { key: "uploader", label: "Uploader", description: "Bulk data uploaders" },
 ];
 
@@ -256,7 +283,7 @@ const UPLOADERS_BY_COMPANY: Partial<Record<CompanyKey, UploaderHubItem[]>> = {
 };
 
 function BoxGrid({ children }: { children: React.ReactNode }) {
-  return <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">{children}</div>;
+  return <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">{children}</div>;
 }
 
 function Box({
@@ -266,18 +293,19 @@ function Box({
     <button
       type="button"
       onClick={onClick}
-      className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-indigo-300 hover:shadow-md"
+      className={`group relative flex items-center justify-between overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-transparent hover:shadow-lg`}
     >
-      <div className="flex items-center gap-3">
-        <span className={`flex h-10 w-10 items-center justify-center rounded-full ${TONE_CLASSES[tone]}`}>
-          <Icon className="h-4.5 w-4.5" />
+      <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${TONE_GRADIENT_CLASSES[tone]} opacity-0 transition-opacity duration-200 group-hover:opacity-60`} />
+      <div className="relative z-10 flex items-center gap-3.5">
+        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl shadow-sm transition-transform duration-200 group-hover:scale-105 ${TONE_CLASSES[tone]}`}>
+          <Icon className="h-5 w-5" />
         </span>
         <div>
           <div className="text-sm font-bold text-slate-900">{label}</div>
           <div className="text-xs text-slate-500">{description}</div>
         </div>
       </div>
-      <ChevronRight className="h-4 w-4 text-slate-300" />
+      <ChevronRight className="relative z-10 h-4 w-4 shrink-0 text-slate-300 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-slate-500" />
     </button>
   );
 }
@@ -359,7 +387,7 @@ export default function ProcessPerformanceV2Page() {
   const [company, setCompany] = useState<CompanyKey | null>(null);
   const [section, setSection] = useState<SectionKey | null>(null);
   const [selectedUploader, setSelectedUploader] = useState<{ code: string; label: string } | null>(null);
-  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "neemans_cart" | "housing_owner_sale" } | null>(null);
+  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" } | null>(null);
   const [stats, setStats] = useState({ totalFilesUploaded: 0, activeUsers: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
 
@@ -454,6 +482,7 @@ export default function ProcessPerformanceV2Page() {
                   icon={s.key === "dashboards" ? LayoutDashboard : Upload}
                   label={s.label}
                   description={s.description}
+                  tone={s.key === "dashboards" ? "indigo" : "emerald"}
                   onClick={() => setSection(s.key)}
                 />
               ))}
@@ -462,7 +491,7 @@ export default function ProcessPerformanceV2Page() {
         )}
 
         {/* Level 3: Dashboards — blank for now (single stub for every company without named sub-dashboards) */}
-        {(company === "appreciate_health" || company === "housing_premium" || company === "birlanu" || company === "satya_retail" || company === "lp_feedback" || company === "lp_onboarding") && section === "dashboards" && (
+        {company === "appreciate_health" && section === "dashboards" && (
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel, "Dashboards"]} onBack={backToCompany} />
             <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white p-16 text-sm text-slate-400">
@@ -480,9 +509,10 @@ export default function ProcessPerformanceV2Page() {
               {DASHBOARDS_BY_COMPANY[company]!.map((d) => (
                 <Box
                   key={d.key}
-                  icon={d.kind === "inbound" ? PhoneIncoming : d.kind === "bellavita_sale" || d.kind === "gnc_sale" || d.kind === "housing_owner_sale" ? TrendingUp : d.kind === "neemans_cart" ? ShoppingCart : LayoutDashboard}
+                  icon={d.kind === "inbound" ? PhoneIncoming : d.kind === "bellavita_sale" || d.kind === "gnc_sale" || d.kind === "housing_owner_sale" || d.kind === "housing_premium_sale" || d.kind === "neemans_performance" ? TrendingUp : d.kind === "neemans_cart" || d.kind === "bellavita_cart" ? ShoppingCart : d.kind === "clovia_dashboard" ? LayoutGrid : d.kind === "lp_feedback" || d.kind === "lp_onboarding" || d.kind === "satya_retail_dashboard" ? PhoneCall : d.kind === "bellavita_chat" || d.kind === "neemans_chat" ? MessageSquare : LayoutDashboard}
                   label={d.label}
                   description={d.description}
+                  tone={company ? COMPANY_META[company].tone : "slate"}
                   onClick={() => setSelectedDashboard({ key: d.key, label: d.label, kind: d.kind })}
                 />
               ))}
@@ -505,8 +535,28 @@ export default function ProcessPerformanceV2Page() {
               <GncSaleDashboard />
             ) : selectedDashboard.kind === "neemans_cart" ? (
               <NeemansCartDashboard />
+            ) : selectedDashboard.kind === "neemans_performance" ? (
+              <NeemansPerformanceDashboard />
+            ) : selectedDashboard.kind === "neemans_chat" ? (
+              <NeemansChatDashboard />
+            ) : selectedDashboard.kind === "bellavita_chat" ? (
+              <BellavitaChatDashboard />
+            ) : selectedDashboard.kind === "bellavita_cart" ? (
+              <BellavitaCartDashboard />
             ) : selectedDashboard.kind === "housing_owner_sale" ? (
               <HousingOwnerDashboard />
+            ) : selectedDashboard.kind === "housing_premium_sale" ? (
+              <HousingPremiumSaleDashboard />
+            ) : selectedDashboard.kind === "lp_feedback" ? (
+              <LpFeedbackDashboard />
+            ) : selectedDashboard.kind === "lp_onboarding" ? (
+              <LpOnboardingDashboard />
+            ) : selectedDashboard.kind === "satya_retail_dashboard" ? (
+              <SatyaRetailDashboard />
+            ) : selectedDashboard.kind === "clovia_dashboard" ? (
+              <CloviaDashboard />
+            ) : selectedDashboard.kind === "birlanu_dashboard" ? (
+              <BirlanuDashboard />
             ) : (
               <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white p-16 text-sm text-slate-400">
                 Nothing here yet
