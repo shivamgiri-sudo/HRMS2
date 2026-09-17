@@ -25,7 +25,10 @@ import {
   ChevronDown,
   ChevronUp,
   Loader2,
+  RefreshCw,
+  Search,
   ShieldAlert,
+  X,
 } from "lucide-react";
 
 interface FraudAlert {
@@ -81,6 +84,8 @@ export default function NativeFraudAlertReview() {
 
   const [statusFilter, setStatusFilter] = useState<string>("open");
   const [offset, setOffset]             = useState(0);
+  const [search, setSearch]             = useState("");
+  const [typeFilter, setTypeFilter]     = useState<string>("all");
 
   const [stats, setStats] = useState<StatRow[] | null>(null);
 
@@ -117,8 +122,21 @@ export default function NativeFraudAlertReview() {
     setOffset(0);
   };
 
+  // Alert types seen on this page, for the type filter — derived from the
+  // stats endpoint (all-time, all-status) rather than the current page of
+  // alerts, so the option list doesn't shrink/reshuffle as filters change.
+  const alertTypeOptions = Array.from(new Set((stats ?? []).map((s) => s.alert_type))).sort();
+
+  const searchTerm = search.trim().toLowerCase();
+  const filteredAlerts = alerts.filter((a) => {
+    if (typeFilter !== "all" && a.alert_type !== typeFilter) return false;
+    if (!searchTerm) return true;
+    const haystack = `${a.candidate_name ?? ""} ${a.applied_for_branch ?? ""} ${a.matched_candidate_name ?? ""}`.toLowerCase();
+    return haystack.includes(searchTerm);
+  });
+
   // Group alerts by candidate so one candidate with multiple flags shows one panel
-  const candidateAlerts = alerts.reduce<Record<string, FraudAlert[]>>((acc, a) => {
+  const candidateAlerts = filteredAlerts.reduce<Record<string, FraudAlert[]>>((acc, a) => {
     const key = a.candidate_id;
     (acc[key] ??= []).push(a);
     return acc;
@@ -140,15 +158,29 @@ export default function NativeFraudAlertReview() {
         <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-red-600 via-rose-600 to-pink-600 text-white p-6 shadow-lg">
           <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
           <div className="absolute right-24 bottom-0 h-16 w-16 rounded-full bg-red-300/20 blur-xl" />
-          <p className="text-xs font-bold uppercase tracking-widest text-red-200">Payroll HR · Security</p>
-          <h1 className="mt-1 text-2xl font-bold text-white flex items-center gap-2">
-            <ShieldAlert className="h-6 w-6" />
-            Fraud Alert Review
-          </h1>
-          <p className="mt-1 text-sm text-red-100">
-            An open <strong>critical</strong> or <strong>high</strong> alert blocks employee creation until cleared.
-            Expand each candidate to compare faces, verify document numbers, and record your decision.
-          </p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-red-200">Payroll HR · Security</p>
+              <h1 className="mt-1 text-2xl font-bold text-white flex items-center gap-2">
+                <ShieldAlert className="h-6 w-6" />
+                Fraud Alert Review
+              </h1>
+              <p className="mt-1 text-sm text-red-100">
+                An open <strong>critical</strong> or <strong>high</strong> alert blocks employee creation until cleared.
+                Expand each candidate to compare faces, verify document numbers, and record your decision.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => { void load(statusFilter, offset); void loadStats(); }}
+              disabled={loading}
+              className="relative z-10 shrink-0 gap-1.5 border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+          </div>
         </div>
 
         {/* ── Summary strip — GET /stats, grouped by status across all alert types ── */}
@@ -175,7 +207,7 @@ export default function NativeFraudAlertReview() {
           </div>
         )}
 
-        {/* ── Status filter ─────────────────────────────────────────────── */}
+        {/* ── Filters ────────────────────────────────────────────────────── */}
         <div className="flex flex-wrap items-center gap-2">
           <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</label>
           <select
@@ -187,12 +219,56 @@ export default function NativeFraudAlertReview() {
               <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
           </select>
+
+          {alertTypeOptions.length > 0 && (
+            <>
+              <label className="ml-1 text-xs font-semibold text-slate-500 uppercase tracking-wide">Type</label>
+              <select
+                value={typeFilter}
+                onChange={e => setTypeFilter(e.target.value)}
+                className="rounded-lg border border-slate-300 text-sm px-2.5 py-1.5 bg-white focus:border-blue-400 focus:outline-none"
+              >
+                <option value="all">All types</option>
+                {alertTypeOptions.map(t => (
+                  <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
+                ))}
+              </select>
+            </>
+          )}
+
+          <div className="relative ml-auto w-full sm:w-64">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search candidate or branch…"
+              className="w-full rounded-lg border border-slate-300 bg-white py-1.5 pl-8 pr-8 text-sm focus:border-blue-400 focus:outline-none"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         </div>
 
         {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 flex items-start gap-2">
             <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
-            {error}
+            <span className="flex-1">{error}</span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => { void load(statusFilter, offset); void loadStats(); }}
+              className="h-7 gap-1 border-red-300 text-xs text-red-700 hover:bg-red-100"
+            >
+              <RefreshCw className="h-3 w-3" /> Retry
+            </Button>
           </div>
         )}
 
@@ -207,6 +283,16 @@ export default function NativeFraudAlertReview() {
               <div>
                 <p className="text-sm font-bold text-emerald-900">Nothing waiting</p>
                 <p className="text-xs text-emerald-700">No onboarding fraud alert is currently open.</p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : !filteredAlerts.length ? (
+          <Card className="border-slate-200 bg-slate-50">
+            <CardContent className="pt-5 pb-5 flex items-center gap-3">
+              <Search className="h-5 w-5 text-slate-400 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-bold text-slate-700">No matches</p>
+                <p className="text-xs text-slate-500">No alert on this page matches your search or type filter.</p>
               </div>
             </CardContent>
           </Card>
@@ -286,7 +372,10 @@ export default function NativeFraudAlertReview() {
             >
               Prev
             </Button>
-            <span className="text-xs text-slate-500">Showing from {offset + 1}</span>
+            <span className="text-xs text-slate-500">
+              Alerts {offset + 1}–{offset + alerts.length}
+              {(search || typeFilter !== "all") && ` (${filteredAlerts.length} match filter)`}
+            </span>
             <Button
               size="sm"
               variant="outline"

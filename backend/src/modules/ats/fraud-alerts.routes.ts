@@ -13,67 +13,104 @@ import { getLatestDigilockerFile } from "../integrations/luckpay/luckpay-status.
 import { getDigilockerFacePhotoBuffer } from "./digilocker-face-photo.js";
 
 const router = Router();
+const PAGE_SIZE = 100; // matches the frontend's PAGE_SIZE in NativeFraudAlertReview.tsx
 
-router.get("/", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr", "payroll_head"), async (req: AuthenticatedRequest, res: Response) => {
-  const status = req.query.status as string || "open";
-  const offset = Math.max(0, parseInt(String(req.query.offset ?? "0"), 10) || 0);
-  const whereClause = status === "all" ? "" : "WHERE fa.status = ?";
-  const params: unknown[] = status === "all" ? [offset] : [status, offset];
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT fa.*, c.full_name AS candidate_name, c.applied_for_branch, c.applied_for_process,
-            mc.full_name AS matched_candidate_name
-       FROM candidate_fraud_alert fa
-       JOIN ats_candidate c ON c.id = fa.candidate_id
-       LEFT JOIN ats_candidate mc ON mc.id = fa.matched_candidate_id
-      ${whereClause}
-      ORDER BY fa.created_at DESC
-      LIMIT 100 OFFSET ?`,
-    params
-  );
-  res.json({ alerts: rows, offset });
-});
+// Every handler below carries payroll_hr AND payroll in its requireRole list.
+// requireAuth resolves roles through getUserRoleKeys() (shared/roleResolver.ts),
+// which runs DASHBOARD_ROLE_ALIASES first and rewrites payroll_hr to payroll
+// before requireRole ever sees it — so a route naming only "payroll_hr" locks
+// out every real Payroll HR holder (same mechanism documented against
+// appointmentLetter.routes.ts). Kept "payroll_hr" too since it is still a
+// distinct RoleKey elsewhere in platform/policy/roles.ts and costs nothing to list.
+const FRAUD_ALERT_ROLES = ["super_admin", "admin", "hr", "payroll", "payroll_hr", "payroll_head"];
 
-router.get("/candidate/:candidateId", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr", "payroll_head"), async (req: AuthenticatedRequest, res: Response) => {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM candidate_fraud_alert WHERE candidate_id = ? ORDER BY created_at DESC`,
-    [req.params.candidateId]
-  );
-  res.json({ alerts: rows });
-});
-
-router.patch("/:alertId/review", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr", "payroll_head"), async (req: AuthenticatedRequest, res: Response) => {
-  // Clearing an alert is what unblocks employee creation
-  // (validateNoOpenFraudAlerts in the creation orchestrator refuses while any
-  // critical or high alert is still open), so the reason is not optional. A
-  // free-text-only trail cannot be counted, and the whole point of reviewing
-  // these is learning which variances are genuine.
-  const { status, notes } = req.body;
-  const validStatuses = ["under_review", "resolved_fraud", "resolved_false_positive", "dismissed"];
-  if (!validStatuses.includes(status)) {
-    return res.status(400).json({ error: "Invalid status" });
+router.get("/", requireAuth, requireRole(...FRAUD_ALERT_ROLES), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const status = req.query.status as string || "open";
+    const offset = Math.max(0, parseInt(String(req.query.offset ?? "0"), 10) || 0);
+    const whereClause = status === "all" ? "" : "WHERE fa.status = ?";
+    const params: unknown[] = status === "all" ? [PAGE_SIZE, offset] : [status, PAGE_SIZE, offset];
+    // db.query, not db.execute — this specific 3-table-JOIN query fails MySQL's
+    // binary prepared-statement protocol with ER_WRONG_ARGUMENTS / errno 1210
+    // regardless of placeholder count or literal-vs-bound LIMIT/OFFSET (confirmed
+    // live against production data); the text protocol below runs the identical
+    // SQL with values escaped client-side and works. This is what actually
+    // crashed the page in production — every call here had no try/catch, so the
+    // uncaught rejection took the whole Node process down, not just this request.
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT fa.*, c.full_name AS candidate_name, c.applied_for_branch, c.applied_for_process,
+              mc.full_name AS matched_candidate_name
+         FROM candidate_fraud_alert fa
+         JOIN ats_candidate c ON c.id = fa.candidate_id
+         LEFT JOIN ats_candidate mc ON mc.id = fa.matched_candidate_id
+        ${whereClause}
+        ORDER BY fa.created_at DESC
+        LIMIT ? OFFSET ?`,
+      params
+    );
+    res.json({ alerts: rows, offset });
+  } catch (err: unknown) {
+    console.error("[fraud-alerts] list failed:", err instanceof Error ? err.message : err);
+    res.status(500).json({ error: "Could not load the alert queue" });
   }
-  if (status !== "under_review" && !String(notes ?? "").trim()) {
-    return res.status(400).json({
-      error: "A reason is required to resolve or dismiss a fraud alert, because doing so allows the employee record to be created.",
-    });
-  }
-  await db.execute(
-    `UPDATE candidate_fraud_alert SET status = ?, review_notes = ?, reviewed_by = ?, reviewed_at = NOW() WHERE id = ?`,
-    [status, notes ?? null, req.authUser?.id ?? null, req.params.alertId]
-  );
-  res.json({ success: true });
 });
 
-router.get("/stats", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr", "payroll_head"), async (_req: AuthenticatedRequest, res: Response) => {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT alert_type, status, COUNT(*) as count FROM candidate_fraud_alert GROUP BY alert_type, status`
-  );
-  res.json({ stats: rows });
+router.get("/candidate/:candidateId", requireAuth, requireRole(...FRAUD_ALERT_ROLES), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM candidate_fraud_alert WHERE candidate_id = ? ORDER BY created_at DESC`,
+      [req.params.candidateId]
+    );
+    res.json({ alerts: rows });
+  } catch (err: unknown) {
+    console.error("[fraud-alerts] candidate lookup failed:", err instanceof Error ? err.message : err);
+    res.status(500).json({ error: "Could not load alerts for this candidate" });
+  }
+});
+
+router.patch("/:alertId/review", requireAuth, requireRole(...FRAUD_ALERT_ROLES), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    // Clearing an alert is what unblocks employee creation
+    // (validateNoOpenFraudAlerts in the creation orchestrator refuses while any
+    // critical or high alert is still open), so the reason is not optional. A
+    // free-text-only trail cannot be counted, and the whole point of reviewing
+    // these is learning which variances are genuine.
+    const { status, notes } = req.body;
+    const validStatuses = ["under_review", "resolved_fraud", "resolved_false_positive", "dismissed"];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ error: "Invalid status" });
+    }
+    if (status !== "under_review" && !String(notes ?? "").trim()) {
+      return res.status(400).json({
+        error: "A reason is required to resolve or dismiss a fraud alert, because doing so allows the employee record to be created.",
+      });
+    }
+    await db.execute(
+      `UPDATE candidate_fraud_alert SET status = ?, review_notes = ?, reviewed_by = ?, reviewed_at = NOW() WHERE id = ?`,
+      [status, notes ?? null, req.authUser?.id ?? null, req.params.alertId]
+    );
+    res.json({ success: true });
+  } catch (err: unknown) {
+    console.error("[fraud-alerts] review update failed:", err instanceof Error ? err.message : err);
+    res.status(500).json({ error: "Could not record this decision" });
+  }
+});
+
+router.get("/stats", requireAuth, requireRole(...FRAUD_ALERT_ROLES), async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT alert_type, status, COUNT(*) as count FROM candidate_fraud_alert GROUP BY alert_type, status`
+    );
+    res.json({ stats: rows });
+  } catch (err: unknown) {
+    console.error("[fraud-alerts] stats failed:", err instanceof Error ? err.message : err);
+    res.status(500).json({ error: "Could not load alert statistics" });
+  }
 });
 
 // Full fraud comparison payload for a single candidate — used in HR Profile Approval
 // and the Fraud Alert Review page to show face grid, name table, and document numbers.
-router.get("/candidate/:candidateId/comparison", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr", "payroll_head"), async (req: AuthenticatedRequest, res: Response) => {
+router.get("/candidate/:candidateId/comparison", requireAuth, requireRole(...FRAUD_ALERT_ROLES), async (req: AuthenticatedRequest, res: Response) => {
   const { candidateId } = req.params;
   try {
 
@@ -262,7 +299,7 @@ router.get("/candidate/:candidateId/comparison", requireAuth, requireRole("super
 // Returns the detected face bounding box for a document image.
 // The frontend uses these coordinates to crop and vertically align faces
 // in the comparison grid regardless of document orientation.
-router.get("/documents/face-detect/:documentId", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr", "payroll_head"), async (req: AuthenticatedRequest, res: Response) => {
+router.get("/documents/face-detect/:documentId", requireAuth, requireRole(...FRAUD_ALERT_ROLES), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { documentId } = req.params;
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -285,7 +322,7 @@ router.get("/documents/face-detect/:documentId", requireAuth, requireRole("super
 // storage root as candidate_onboarding_document, but it never gets a row
 // there (see getLatestDigilockerFile), so it needs its own preview route
 // rather than reusing /documents/preview/:documentId.
-router.get("/documents/digilocker-preview/:candidateId", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr", "payroll_head"), async (req: AuthenticatedRequest, res: Response) => {
+router.get("/documents/digilocker-preview/:candidateId", requireAuth, requireRole(...FRAUD_ALERT_ROLES), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const file = await getLatestDigilockerFile(req.params.candidateId);
     if (!file) return res.status(404).json({ error: "No DigiLocker document on file" });
@@ -307,7 +344,7 @@ router.get("/documents/digilocker-preview/:candidateId", requireAuth, requireRol
 // The KYC download is a PDF far more often than not (see digilocker-kyc-document
 // naming in luckpay.client.ts), which detectFaceBbox cannot read, so this is
 // short-circuited rather than left to fail silently like the generic route above.
-router.get("/documents/digilocker-face-detect/:candidateId", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr", "payroll_head"), async (req: AuthenticatedRequest, res: Response) => {
+router.get("/documents/digilocker-face-detect/:candidateId", requireAuth, requireRole(...FRAUD_ALERT_ROLES), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const file = await getLatestDigilockerFile(req.params.candidateId);
     if (!file || !file.contentType.startsWith("image/")) return res.json({ bbox: null, isPdf: file?.contentType === "application/pdf" });
@@ -325,7 +362,7 @@ router.get("/documents/digilocker-face-detect/:candidateId", requireAuth, requir
 // (candidate_bgv_check.result_json for check_type='digilocker'), independent
 // of the raw KYC document file above — this is the extracted photo, not the
 // downloaded document.
-router.get("/documents/digilocker-face-photo/:candidateId", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr", "payroll_head"), async (req: AuthenticatedRequest, res: Response) => {
+router.get("/documents/digilocker-face-photo/:candidateId", requireAuth, requireRole(...FRAUD_ALERT_ROLES), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const buffer = await getDigilockerFacePhotoBuffer(req.params.candidateId);
     if (!buffer) return res.status(404).json({ error: "No DigiLocker photo on file" });
