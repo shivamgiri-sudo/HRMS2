@@ -488,6 +488,33 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_gs1_email_daily_batch",
   "import_gs1_datakart_daily_batch",
   "import_gs1_approval_audit_batch",
+  // Housing Owner, Pre, Clovia raw-format, Birlanu, Satya, LP Feedback/Onboarding and GNC Chat --
+  // all into db_masmis, all already implemented, but missing from this set left them 501ing on
+  // Process Performance V2 even though bulk-dispatch.ts now has a case for every one of them.
+  "import_owner_sale_batch",
+  "import_owner_cdr_batch",
+  "import_owner_agent_details_batch",
+  "import_pre_sale_batch",
+  "import_pre_cdr_batch",
+  "import_pre_agent_details_batch",
+  "import_cl_apr_batch",
+  "import_cl_chat_batch",
+  "import_cl_dispo_batch",
+  "import_cl_email_raw_batch",
+  "import_cl_feedback_batch",
+  "import_cl_ib_cdr_batch",
+  "import_cl_outbound_batch",
+  "import_cl_quality_batch",
+  "import_cl_rechurn_call_batch",
+  "import_birlanu_sale_batch",
+  "import_birlanu_apr_batch",
+  "import_satya_allocation_batch",
+  "import_satya_cdr_batch",
+  "import_lp_feedback_apr_batch",
+  "import_lp_feedback_cdr_batch",
+  "import_lp_onboarding_apr_batch",
+  "import_lp_onboarding_cdr_batch",
+  "import_gnc_chat_batch",
 ]);
 
 // POST /batches/:id/import â€” dispatch import by rpc_name
@@ -697,7 +724,7 @@ router.delete("/batches/:id", requireRole("admin", "hr", "super_admin", "wfm", "
   if (batch.batch_status === "importing") {
     return res.status(409).json({ success: false, error: "Cannot delete a batch that is currently importing" });
   }
-  await db.query("DELETE FROM upload_batch_row WHERE batch_id = ?", [id]);
+  await db.query("DELETE FROM upload_batch_row WHERE upload_batch_id = ?", [id]);
   await db.query("DELETE FROM upload_batch WHERE id = ?", [id]);
   return res.json({ success: true });
 }));

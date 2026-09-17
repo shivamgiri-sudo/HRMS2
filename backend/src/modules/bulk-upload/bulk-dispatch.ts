@@ -373,5 +373,153 @@ export async function dispatchImport(
     return { success: true, data };
   }
 
+  // Housing Owner, Pre, Clovia raw-format, Birlanu, Satya, LP Feedback/Onboarding and GNC Chat --
+  // all built and wired into KNOWN_IMPORT_RPCS below, but never wired into this dispatcher, so
+  // every one of these 24 types 501'd on Process Performance V2 despite having a real,
+  // already-tested importer sitting right here unreachable.
+  if (rpc_name === "import_owner_sale_batch") {
+    const { importOwnerSaleBatch } = await import("./owner-sale-bulk.service.js");
+    const data = await importOwnerSaleBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_owner_cdr_batch") {
+    const { importOwnerCdrBatch } = await import("./owner-cdr-bulk.service.js");
+    const data = await importOwnerCdrBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_owner_agent_details_batch") {
+    const { importOwnerAgentDetailsBatch } = await import("./owner-agent-details-bulk.service.js");
+    const data = await importOwnerAgentDetailsBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_pre_sale_batch") {
+    const { importPreSaleBatch } = await import("./pre-sale-bulk.service.js");
+    const data = await importPreSaleBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_pre_cdr_batch") {
+    const { importPreCdrBatch } = await import("./pre-cdr-bulk.service.js");
+    const data = await importPreCdrBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_pre_agent_details_batch") {
+    const { importPreAgentDetailsBatch } = await import("./pre-agent-details-bulk.service.js");
+    const data = await importPreAgentDetailsBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_cl_apr_batch") {
+    const { importClAprBatch } = await import("./cl-apr-bulk.service.js");
+    const data = await importClAprBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_cl_chat_batch") {
+    const { importClChatBatch } = await import("./cl-chat-bulk.service.js");
+    const data = await importClChatBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_cl_dispo_batch") {
+    const { importClDispoBatch } = await import("./cl-dispo-bulk.service.js");
+    const data = await importClDispoBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_cl_email_raw_batch") {
+    const { importClEmailRawBatch } = await import("./cl-email-raw-bulk.service.js");
+    const data = await importClEmailRawBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_cl_feedback_batch") {
+    const { importClFeedbackBatch } = await import("./cl-feedback-bulk.service.js");
+    const data = await importClFeedbackBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_cl_ib_cdr_batch") {
+    const { importClIbCdrBatch } = await import("./cl-ib-cdr-bulk.service.js");
+    const data = await importClIbCdrBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_cl_outbound_batch") {
+    const { importClOutboundBatch } = await import("./cl-outbound-bulk.service.js");
+    const data = await importClOutboundBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_cl_quality_batch") {
+    const { importClQualityBatch } = await import("./cl-quality-bulk.service.js");
+    const data = await importClQualityBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_cl_rechurn_call_batch") {
+    const { importClRechurnCallBatch } = await import("./cl-rechurn-call-bulk.service.js");
+    const data = await importClRechurnCallBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_birlanu_sale_batch") {
+    const { importBirlanuSaleBatch } = await import("./birlanu-sale-bulk.service.js");
+    const data = await importBirlanuSaleBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_birlanu_apr_batch") {
+    const { importBirlanuAprBatch } = await import("./birlanu-apr-bulk.service.js");
+    const data = await importBirlanuAprBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_satya_allocation_batch") {
+    const { importSatyaAllocationBatch } = await import("./satya-allocation-bulk.service.js");
+    const data = await importSatyaAllocationBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_satya_cdr_batch") {
+    const { importSatyaCdrBatch } = await import("./satya-cdr-bulk.service.js");
+    const data = await importSatyaCdrBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_feedback_apr_batch") {
+    const { importLpFeedbackAprBatch } = await import("./lp-feedback-apr-bulk.service.js");
+    const data = await importLpFeedbackAprBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_feedback_cdr_batch") {
+    const { importLpFeedbackCdrBatch } = await import("./lp-feedback-cdr-bulk.service.js");
+    const data = await importLpFeedbackCdrBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_onboarding_apr_batch") {
+    const { importLpOnboardingAprBatch } = await import("./lp-onboarding-apr-bulk.service.js");
+    const data = await importLpOnboardingAprBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_lp_onboarding_cdr_batch") {
+    const { importLpOnboardingCdrBatch } = await import("./lp-onboarding-cdr-bulk.service.js");
+    const data = await importLpOnboardingCdrBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_gnc_chat_batch") {
+    const { importGncChatBatch } = await import("./gnc-chat-bulk.service.js");
+    const data = await importGncChatBatch(id, userId);
+    return { success: true, data };
+  }
+
   throw new Error(`Import function '${rpc_name}' for batch ${id} is not yet implemented in the MySQL backend.`);
 }
