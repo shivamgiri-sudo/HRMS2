@@ -186,6 +186,44 @@ paymentVoucherRouter.post(
   }),
 );
 
+// Supporting-document attachment — upload gated to whoever could plausibly be acting on a
+// not-yet-released voucher (same set as withdraw); saveAttachment() itself refuses once
+// released. Download uses VOUCHER_READ_ROLES, same as viewing the voucher itself.
+paymentVoucherRouter.post(
+  "/:id/attachment",
+  requireWriteAccess,
+  requireRole(...VOUCHER_RAISE_ROLES, ...VOUCHER_CEO_ROLES),
+  attachmentUpload.single("file"),
+  h(async (req, res) => {
+    try {
+      if (!req.file) {
+        res.status(400).json({ success: false, error: "A PDF or supported image file is required" });
+        return;
+      }
+      const a = actor(req);
+      const data = await paymentVoucherService.saveAttachment(req.params.id, req.file.path, req.file.originalname, a.id, req.file.mimetype);
+      res.json({ success: true, data });
+    } catch (error) {
+      fail(res, error, "Attachment upload failed");
+    }
+  }),
+);
+
+paymentVoucherRouter.get(
+  "/:id/attachment",
+  requireRole(...VOUCHER_READ_ROLES),
+  h(async (req, res) => {
+    const voucher = await paymentVoucherService.get(req.params.id);
+    const filePath = (voucher as any)?.attachment_path;
+    const fileName = (voucher as any)?.attachment_original_name ?? "payment-voucher-attachment";
+    if (!filePath || !existsSync(filePath)) {
+      res.status(404).json({ success: false, error: "No attachment on this voucher" });
+      return;
+    }
+    res.download(filePath, fileName);
+  }),
+);
+
 paymentVoucherRouter.post(
   "/:id/resubmit",
   requireWriteAccess,
