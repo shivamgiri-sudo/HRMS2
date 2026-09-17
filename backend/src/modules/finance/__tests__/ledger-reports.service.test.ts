@@ -65,8 +65,10 @@ describe("ledgerReportsService.vendorLedger", () => {
     execute.mockResolvedValue([[]]);
     await ledgerReportsService.vendorLedger("vendor-acme", "2026-09-01", "2026-09-30");
     const [sql, params] = execute.mock.calls[0];
-    expect(sql).toMatch(/jel\.account_type = 'vendor'/);
-    expect(params).toEqual(["vendor-acme", "2026-09-01", "2026-09-30"]);
+    // vendorLedger() is now a thin wrapper over the generalized accountLedger("vendor", ...) —
+    // account_type is parameterized, not a literal, so both report drill-downs share one query.
+    expect(sql).toMatch(/jel\.account_type = \?/);
+    expect(params).toEqual(["vendor", "vendor-acme", "2026-09-01", "2026-09-30"]);
   });
 });
 

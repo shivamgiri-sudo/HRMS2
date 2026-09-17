@@ -53,3 +53,29 @@ ledgerReportsRouter.get(
     res.json({ success: true, data: result });
   }),
 );
+
+const ACCOUNT_TYPES = ["bank_account", "vendor", "expense_sub_head", "payable_account"] as const;
+
+// Generic drill-down behind Trial Balance and Head/Subhead Ledger rows (the Drill-Down
+// Mandate) — same query vendor-ledger/:vendorId already ran, generalized to any account type
+// rather than duplicating it under each report.
+ledgerReportsRouter.get(
+  "/account-ledger/:accountType/:accountId",
+  requireRole(...BANK_ACCOUNT_READ_ROLES),
+  h(async (req, res) => {
+    const accountType = String(req.params.accountType);
+    if (!(ACCOUNT_TYPES as readonly string[]).includes(accountType)) {
+      res.status(400).json({ success: false, message: `Unknown account type "${accountType}"` });
+      return;
+    }
+    const from = req.query.from ? String(req.query.from) : undefined;
+    const to = req.query.to ? String(req.query.to) : undefined;
+    const result = await ledgerReportsService.accountLedger(
+      accountType as (typeof ACCOUNT_TYPES)[number],
+      String(req.params.accountId),
+      from,
+      to,
+    );
+    res.json({ success: true, data: result });
+  }),
+);

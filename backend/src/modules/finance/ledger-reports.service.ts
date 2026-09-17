@@ -132,18 +132,24 @@ export const ledgerReportsService = {
   },
 
   /**
-   * One vendor's sub-ledger, chronological, with a running balance — Tally's "Bill-wise
-   * Outstanding" equivalent. Positive running balance = the vendor is owed money (a creditor
-   * balance); negative = the vendor has been paid an advance ahead of what they're owed.
+   * One account's sub-ledger, chronological, with a running balance — Tally's "Bill-wise
+   * Outstanding" equivalent for a vendor, or the general ledger card for any other account
+   * type. Positive running balance = net debit (an expense/asset account, or a vendor who has
+   * been paid an advance ahead of what they're owed); negative = net credit (a vendor who is
+   * owed money — the normal state for Sundry Creditors).
+   *
+   * Generalized from what was a vendor-only query so Trial Balance and Head/Subhead Ledger rows
+   * can drill down into the same underlying entries (the Drill-Down Mandate) without a second,
+   * near-duplicate query — vendorLedger() below is now a thin wrapper over this.
    */
-  async vendorLedger(vendorId: string, from?: string, to?: string) {
-    const conditions = ["jel.account_type = 'vendor'", "jel.account_id = ?", "je.reversed_by_entry_id IS NULL"];
-    const params: unknown[] = [vendorId];
+  async accountLedger(accountType: AccountType, accountId: string, from?: string, to?: string) {
+    const conditions = ["jel.account_type = ?", "jel.account_id = ?", "je.reversed_by_entry_id IS NULL"];
+    const params: unknown[] = [accountType, accountId];
     if (from) { conditions.push("je.entry_date >= ?"); params.push(from); }
     if (to) { conditions.push("je.entry_date <= ?"); params.push(to); }
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT je.entry_date, je.narration, je.source_type, je.source_id,
+      `SELECT je.id AS journal_entry_id, je.entry_date, je.narration, je.source_type, je.source_id,
               jel.debit_amount, jel.credit_amount, jel.narration AS line_narration
          FROM journal_entry_line jel
          JOIN journal_entry je ON je.id = jel.journal_entry_id
@@ -156,6 +162,7 @@ export const ledgerReportsService = {
     const entries = (rows as RowDataPacket[]).map((r) => {
       runningBalance = money(runningBalance + Number(r.debit_amount) - Number(r.credit_amount));
       return {
+        journalEntryId: r.journal_entry_id,
         entryDate: r.entry_date,
         narration: r.line_narration ?? r.narration,
         sourceType: r.source_type,
@@ -167,6 +174,10 @@ export const ledgerReportsService = {
     });
 
     return { entries, closingBalance: runningBalance };
+  },
+
+  async vendorLedger(vendorId: string, from?: string, to?: string) {
+    return ledgerReportsService.accountLedger("vendor", vendorId, from, to);
   },
 
   /**
