@@ -8,6 +8,11 @@
  * Matches exactly the GAS dashboard daily table columns:
  *   Date, Total Tickets, Email Closure, Open/Pending, Reopen, Opening Pending
  *   + Closure % = email_closed / (opening_pending + total_tickets + email_reopen)
+ *
+ * byAnalyst reads from email_ticket_analyst_daily_actual (migration 1806),
+ * populated by molecular-email-sync.service.ts's live sync from the real
+ * upstream ticketing DB — no opening_pending/closure% at analyst grain (see
+ * that migration's own comment for why it isn't decomposed per analyst).
  */
 
 import type { RowDataPacket } from 'mysql2';
@@ -26,6 +31,14 @@ export interface EmailTicketRow {
   closurePct: number;
 }
 
+export interface EmailTicketAnalystRow {
+  analyst: string;
+  ticketsReceived: number;
+  ticketsClosed: number;
+  ticketsReopened: number;
+  ticketsOpenPending: number;
+}
+
 export interface EmailTicketSummary {
   dashboard: EmailDashboard;
   from: string;
@@ -36,6 +49,7 @@ export interface EmailTicketSummary {
   emailReopen: number;
   avgClosurePct: number;
   daily: EmailTicketRow[];
+  byAnalyst: EmailTicketAnalystRow[];
   hasData: boolean;
 }
 
@@ -92,6 +106,44 @@ export async function getEmailTickets(
     ? round(daily.reduce((s, d) => s + d.closurePct, 0) / daily.length, 2)
     : 0;
 
+  const [analystRows] = await db.execute<RowDataPacket[]>(`
+    SELECT
+      analyst_name                  AS analyst,
+      SUM(tickets_received)         AS ticketsReceived,
+      SUM(tickets_closed)           AS ticketsClosed,
+      SUM(tickets_reopened)         AS ticketsReopened,
+      tickets_open_pending          AS ticketsOpenPending,
+      report_date                   AS reportDate
+    FROM email_ticket_analyst_daily_actual
+    WHERE dashboard_label = ?
+      AND report_date >= ? AND report_date <= ?
+    GROUP BY analyst_user_id, analyst_name, tickets_open_pending, report_date
+    ORDER BY report_date DESC
+  `, [dashboard, from, to]);
+
+  // tickets_open_pending is a same-day snapshot (see molecular-email-sync.service.ts), so it
+  // cannot be summed across days like the other three counters — only the latest day per
+  // analyst is meaningful, same convention the day-wise "Open/Pending" total already uses.
+  const byAnalystMap = new Map<string, EmailTicketAnalystRow>();
+  for (const r of analystRows) {
+    const name = String(r.analyst ?? '');
+    const existing = byAnalystMap.get(name);
+    if (existing) {
+      existing.ticketsReceived += n(r.ticketsReceived);
+      existing.ticketsClosed += n(r.ticketsClosed);
+      existing.ticketsReopened += n(r.ticketsReopened);
+    } else {
+      byAnalystMap.set(name, {
+        analyst: name,
+        ticketsReceived: n(r.ticketsReceived),
+        ticketsClosed: n(r.ticketsClosed),
+        ticketsReopened: n(r.ticketsReopened),
+        ticketsOpenPending: n(r.ticketsOpenPending), // first row seen = latest date, ORDER BY report_date DESC
+      });
+    }
+  }
+  const byAnalyst = Array.from(byAnalystMap.values()).sort((a, b) => b.ticketsReceived - a.ticketsReceived);
+
   return {
     dashboard,
     from,
@@ -99,6 +151,7 @@ export async function getEmailTickets(
     ...totals,
     avgClosurePct,
     daily,
+    byAnalyst,
     hasData: daily.length > 0,
   };
 }

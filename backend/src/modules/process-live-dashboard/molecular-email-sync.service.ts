@@ -46,6 +46,18 @@
  * so the literal script's exclusion is a no-op for Molecular and inflates
  * its Email Closure count with every auto-generated message. Fixed here to
  * exclude Molecular's actual sender instead of reproducing that bug.
+ *
+ * Per-analyst breakdown (email_ticket_analyst_daily_actual, migration 1806):
+ * same four counters as the day-wise table, grouped by the real owning
+ * analyst instead of collapsed across everyone. Received/Open-Pending group
+ * by tickets.assigned_to (who currently owns the ticket); Closed groups by
+ * ticket_messages.created_by (who actually sent the closing reply — more
+ * accurate than the ticket's current owner, since a ticket can change hands).
+ * Reopen has no actor column anywhere in this schema (ticket_events only
+ * logs old_value/new_value, never who triggered it), so it is attributed to
+ * the ticket's CURRENT assigned_to, same "no per-person meaning, best
+ * available dimension" tradeoff the day-wise Reopen count already accepts.
+ * opening_pending is intentionally not decomposed per analyst — see 1806.
  */
 
 import type { RowDataPacket } from "mysql2";
@@ -158,6 +170,79 @@ async function fetchDayCounts(
   return counts;
 }
 
+interface AnalystDayCounts {
+  analystName: string;
+  received: number;
+  closed: number;
+  reopened: number;
+  openPending: number;
+}
+
+/** Same four counters as fetchDayCounts, grouped by analyst too (see doc-comment above). */
+async function fetchAnalystDayCounts(
+  source: DashboardSource,
+  fromDate: string,
+  toDate: string,
+): Promise<Map<string, AnalystDayCounts>> {
+  const pool = await getMolecularEmailPool(source.database);
+  const counts = new Map<string, AnalystDayCounts>();
+  const ensure = (day: string, userId: number, name: string): AnalystDayCounts => {
+    const key = `${day}|${userId}`;
+    let c = counts.get(key);
+    if (!c) {
+      c = { analystName: name, received: 0, closed: 0, reopened: 0, openPending: 0 };
+      counts.set(key, c);
+    }
+    return c;
+  };
+
+  const [received] = await pool.execute<RowDataPacket[]>(
+    `SELECT DATE(t.created_at) AS d, t.assigned_to AS uid, u.name AS uname, COUNT(*) AS c
+       FROM tickets t
+       JOIN users u ON u.id = t.assigned_to
+      WHERE DATE(t.created_at) BETWEEN ? AND ?
+      GROUP BY DATE(t.created_at), t.assigned_to, u.name`,
+    [fromDate, toDate],
+  );
+  for (const r of received) ensure(String(r.d), Number(r.uid), String(r.uname)).received = Number(r.c) || 0;
+
+  const [openPending] = await pool.execute<RowDataPacket[]>(
+    `SELECT DATE(t.created_at) AS d, t.assigned_to AS uid, u.name AS uname, COUNT(*) AS c
+       FROM tickets t
+       JOIN users u ON u.id = t.assigned_to
+      WHERE LOWER(t.status) = 'open' AND DATE(t.created_at) BETWEEN ? AND ?
+      GROUP BY DATE(t.created_at), t.assigned_to, u.name`,
+    [fromDate, toDate],
+  );
+  for (const r of openPending) ensure(String(r.d), Number(r.uid), String(r.uname)).openPending = Number(r.c) || 0;
+
+  const [reopened] = await pool.execute<RowDataPacket[]>(
+    `SELECT DATE(e.created_at) AS d, t.assigned_to AS uid, u.name AS uname, COUNT(*) AS c
+       FROM ticket_events e
+       JOIN tickets t ON t.id = e.ticket_id
+       JOIN users u ON u.id = t.assigned_to
+      WHERE DATE(e.created_at) BETWEEN ? AND ?
+      GROUP BY DATE(e.created_at), t.assigned_to, u.name`,
+    [fromDate, toDate],
+  );
+  for (const r of reopened) ensure(String(r.d), Number(r.uid), String(r.uname)).reopened = Number(r.c) || 0;
+
+  const [closed] = await pool.execute<RowDataPacket[]>(
+    `SELECT DATE(m.sent_at) AS d, m.created_by AS uid, u.name AS uname, COUNT(*) AS c
+       FROM ticket_messages m
+       JOIN users u ON u.id = m.created_by
+      WHERE DATE(m.sent_at) BETWEEN ? AND ?
+        AND LOWER(TRIM(m.direction)) LIKE '%outbound%'
+        AND m.from_email IS NOT NULL AND TRIM(m.from_email) <> ''
+        AND LOWER(TRIM(m.from_email)) NOT LIKE ?
+      GROUP BY DATE(m.sent_at), m.created_by, u.name`,
+    [fromDate, toDate, `%${source.excludedSenderLike.toLowerCase()}%`],
+  );
+  for (const r of closed) ensure(String(r.d), Number(r.uid), String(r.uname)).closed = Number(r.c) || 0;
+
+  return counts;
+}
+
 function addDays(dateStr: string, days: number): string {
   const d = new Date(`${dateStr}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -180,9 +265,10 @@ export async function syncEmailDashboard(
     throw new Error('No active "Reginald" process found to attach email ticket rows to');
   }
 
-  const [dayTotals, counts] = await Promise.all([
+  const [dayTotals, counts, analystCounts] = await Promise.all([
     fetchTicketDayTotals(source.database),
     fetchDayCounts(source, fromDate, toDate),
+    fetchAnalystDayCounts(source, fromDate, toDate),
   ]);
 
   // Prefix sum of not-closed tickets created strictly before each day, over
@@ -227,6 +313,29 @@ export async function syncEmailDashboard(
     );
     daysUpserted++;
     d = addDays(d, 1);
+  }
+
+  for (const [key, a] of analystCounts) {
+    const [day, uidStr] = key.split("|");
+    if (day < fromDate || day > toDate) continue;
+    await db.execute(
+      `INSERT INTO email_ticket_analyst_daily_actual
+         (id, process_id, dashboard_label, report_date, analyst_user_id, analyst_name,
+          tickets_received, tickets_closed, tickets_reopened, tickets_open_pending,
+          data_source, source_reference)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live_sync', ?)
+       ON DUPLICATE KEY UPDATE
+          analyst_name          = VALUES(analyst_name),
+          tickets_received      = VALUES(tickets_received),
+          tickets_closed        = VALUES(tickets_closed),
+          tickets_reopened      = VALUES(tickets_reopened),
+          tickets_open_pending  = VALUES(tickets_open_pending)`,
+      [
+        randomUUID(), processId, source.dashboardLabel, day, Number(uidStr), a.analystName,
+        a.received, a.closed, a.reopened, a.openPending,
+        LIVE_SYNC_SOURCE_REFERENCE,
+      ],
+    );
   }
 
   return { dashboardLabel: source.dashboardLabel, daysUpserted };

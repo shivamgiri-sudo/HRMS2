@@ -1063,11 +1063,13 @@ function CartDashboard({ f }: { f: Filters }) {
 
 // ── EMAIL APR DASHBOARD ───────────────────────────────────────────────────────
 type EmailAprAgentRow = { user: string; agentName: string | null; aprCalls: number; netLoginTime: string; talk: string; wait: string; dispo: string; pause: string; lbTime: string; tbTime: string; wbTime: string; totalBreak: string; acht: string; utilization: number };
+type EmailTicketAnalystRow = { analyst: string; ticketsReceived: number; ticketsClosed: number; ticketsReopened: number; ticketsOpenPending: number };
 type EmailTicketData = {
   dashboard: string; from: string; to: string;
   totalTickets: number; emailClosed: number; openPending: number; emailReopen: number;
   avgClosurePct: number;
   daily: { date: string; totalTickets: number; emailClosed: number; openPending: number; emailReopen: number; openingPending: number; closurePct: number }[];
+  byAnalyst: EmailTicketAnalystRow[];
   hasData: boolean;
 };
 
@@ -1464,6 +1466,21 @@ function EmailAprDashboard({ proc, label, campaign, f }: { proc: "molecular-emai
                   { h: "Closure %", k: "closurePct" as const, fmt: (v: unknown) => <span style={{ fontWeight: 900, color: closurePctColor(Number(v)), background: closurePctBg(Number(v)), borderRadius: 6, padding: "2px 7px" }}>{Number(v).toFixed(1)}%</span> },
                 ]} rows={td.daily} />
               </Panel>
+              <div style={{ marginTop: 14 }}>
+                {td.byAnalyst.length === 0 ? (
+                  <InfoBox html="No per-analyst ticket data for this date range yet — it syncs live from the ticketing system (last 2 days on every sync cycle)." />
+                ) : (
+                  <Panel title="Analyst-wise Ticket Breakdown" sub={`${td.byAnalyst.length} analysts`}>
+                    <DataTable<EmailTicketAnalystRow> cols={[
+                      { h: "Analyst", k: "analyst", left: true },
+                      { h: "Email Received", k: "ticketsReceived" },
+                      { h: "Closed", k: "ticketsClosed" },
+                      { h: "Pending", k: "ticketsOpenPending" },
+                      { h: "Reopen", k: "ticketsReopened" },
+                    ]} rows={td.byAnalyst} />
+                  </Panel>
+                )}
+              </div>
             </div>
           );
         })()
