@@ -1067,11 +1067,21 @@ export const grnService = {
           // the accounting event. A resolution failure here (see grn-journal-posting.service.ts)
           // throws and rolls back the whole approval, including the consume() call above,
           // rather than leaving budget consumed with no journal entry behind it.
-          await postGrnApprovalJournalEntry(
-            connection,
-            { ...(grn as any), grn_number: grnNumber ?? grn.grn_number },
-            actorUserId,
-          );
+          //
+          // Owner-confirmed 2026-09-17: grn_type='salary' (a db_bill migration artifact, 39,099
+          // historical rows from 2018-2021, no active ledger head, unreachable from any current
+          // GRN form) is closed historical record and is deliberately never journal-posted —
+          // postGrnApprovalJournalEntry()'s credit-side logic only knows vendor vs imprest, so
+          // letting a salary-type GRN fall through here would wrongly credit Imprest Float. The
+          // real payroll→ledger posting belongs to a separate, purpose-built path (see
+          // salary-voucher.service.ts's Gross-Salary/Payable model), not this generic one.
+          if (grn.grn_type === "vendor" || grn.grn_type === "imprest") {
+            await postGrnApprovalJournalEntry(
+              connection,
+              { ...(grn as any), grn_number: grnNumber ?? grn.grn_number },
+              actorUserId,
+            );
+          }
 
           const [fhUpdateResult] = await connection.execute<ResultSetHeader>(
             `UPDATE grn_request
