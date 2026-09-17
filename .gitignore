@@ -13,6 +13,62 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+
+# Zipped/tarred dist build output left at repo root from a manual deploy --
+# same category as dist/ above, just packaged; not source.
+/dist-*.zip
+/dist-*.tar.gz
+
+# --- Initial public push (2026-09-15): operational docs/scripts, not source ---
+# This directory accumulated months of session-report/audit/deploy markdown at
+# the repo root, several containing real plaintext credentials (test-account
+# passwords, internal server IPs, DB usernames) never meant for a public repo.
+# Excluding by structure rather than hand-vetting hundreds of files: every
+# loose root-level *.md/*.txt/*.sh/*.py/*.ps1/*.bat is a report or ops script,
+# not application source, EXCEPT the standard project docs explicitly kept
+# below. Nested docs (ceo-mcp-package/README.md, mcp-server/README.md, etc.)
+# are unaffected -- these patterns are root-anchored.
+/*.md
+!/README.md
+!/CONTRIBUTING.md
+!/SECURITY.md
+!/RELEASE.md
+/*.txt
+/*.sh
+/*.py
+/*.ps1
+/*.bat
+
+# Session-report/audit/plan directories -- not application source.
+/docs/
+/.superpowers/
+/backend/docs/
+/audit_reports/
+/uat/
+/scripts-uat/
+/tasks/
+/pictures/
+/demo/
+/graphify-out/
+/e2e-test-results/
+
+# AI-tool scratch workspace (PDF-fill experiments for contract/EPF forms) --
+# not application source, and its "filled" previews haven't been vetted for
+# whether they carry real vs. sample employee data. Only one narrow subpath
+# was previously ignored (finance-pr58-worktree); excluding the whole tree.
+/.codex-tmp/
+
+# Loose dev-generated appointment-letter preview PDFs at backend/ root --
+# generated output from testing the feature (one checked: clearly fake/test
+# data, "SHIVAM TEST", letter ID ".../PREVIEW"), not source either way.
+/backend/appt_preview*.pdf
+/backend/UsersADMINDesktopappointment_letter_PREVIEW.pdf
+
+# Loose root-level dashboard screenshots from dev/testing sessions -- same
+# reasoning as /pictures/ above.
+/ceo-dashboard-full.png
+/employee-dashboard-full.png
+/employee-dashboard-test.png
 *.local
 
 # Editor directories and files
@@ -86,3 +142,10 @@ backend/backend-dev-restart.err
 privacy-inventory-findings.json
 **/privacy-inventory-findings.json
 *privacy-findings*.json
+
+# Standalone Google Apps Script reference files (not part of this app's
+# build) -- consolidated-dashboard-email-report.gs has a hardcoded root
+# MySQL password (dialer_db on 122.184.128.90) in its CONFIG block. Kept
+# on disk for reference only; excluded by directory so it can never enter
+# this public repo's history via a broad `git add`.
+/scripts/apps-script/

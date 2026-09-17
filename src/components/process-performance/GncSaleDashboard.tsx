@@ -125,7 +125,7 @@ export function GncSaleDashboard() {
     <div className="space-y-5">
       <DashboardHero
         icon={Sparkles} eyebrow="GNC · Process Performance" title="Sale Performance"
-        tabs={TABS} activeTab={tab} onTabChange={setTab}
+        tabs={TABS} activeTab={tab} onTabChange={(key) => setTab(key as TabKey)}
         gradient="from-emerald-600 via-teal-600 to-emerald-700"
       />
 

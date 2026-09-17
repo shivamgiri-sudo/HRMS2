@@ -118,7 +118,7 @@ export function GncInboundDashboard() {
     <div className="space-y-5">
       <DashboardHero
         icon={PhoneIncoming} eyebrow="GNC · Process Performance" title="Inbound Call Performance"
-        tabs={TABS} activeTab={tab} onTabChange={setTab}
+        tabs={TABS} activeTab={tab} onTabChange={(key) => setTab(key as TabKey)}
         gradient="from-blue-600 via-indigo-600 to-blue-700"
       />
 

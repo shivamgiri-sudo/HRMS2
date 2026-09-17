@@ -521,6 +521,12 @@ export async function dispatchImport(
     return { success: true, data };
   }
 
+  if (rpc_name === "import_neemans_chat_batch") {
+    const { importNeemansChatBatch } = await import("./neemans-chat-bulk.service.js");
+    const data = await importNeemansChatBatch(id, userId);
+    return { success: true, data };
+  }
+
   if (rpc_name === "import_gnc_allocation_masmis_batch") {
     const { importGncAllocationMasmisBatch } = await import("./gnc-allocation-masmis-bulk.service.js");
     const data = await importGncAllocationMasmisBatch(id, userId);

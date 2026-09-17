@@ -515,6 +515,7 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_lp_onboarding_apr_batch",
   "import_lp_onboarding_cdr_batch",
   "import_gnc_chat_batch",
+  "import_neemans_chat_batch",
   "import_gnc_allocation_masmis_batch",
   "import_neemans_sale_raw_masmis_batch",
   "import_neemans_allocation_masmis_batch",
