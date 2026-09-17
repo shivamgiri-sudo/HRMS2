@@ -45,6 +45,7 @@ import { legacySyncWorker } from "./workers/legacy-sync-worker.js";
 import { startOfficialEmailComplianceScheduler } from "./workers/official-email-compliance.worker.js";
 import { startIntegrationScheduler, stopIntegrationScheduler } from "./workers/integration-scheduler.worker.js";
 import { startAprVicidialSyncWorker } from "./workers/apr-vicidial-sync.worker.js";
+import { startMolecularEmailSyncWorker } from "./workers/molecular-email-sync.worker.js";
 import { startKpiDailySyncWorker } from "./workers/kpi-daily-sync.worker.js";
 import { startKpiStudioComputeWorker } from "./workers/kpi-studio-compute.worker.js";
 import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from "./workers/payroll-nightly-recalc.worker.js";
@@ -63,6 +64,7 @@ import { startEmployeeLifecycleWorker } from "./workers/employee-lifecycle.worke
 import { startTatEscalationWorker } from "./workers/tat-escalation.worker.js";
 import { startReportSubscriptionWorker } from "./workers/report-subscription.worker.js";
 import { startLeaveApprovalReminderWorker } from "./workers/leave-approval-reminder.worker.js";
+import { startGrnApprovalReminderWorker } from "./workers/grn-approval-reminder.worker.js";
 import { registerNotificationDeliverer } from "./modules/communication/notification.deliverer.js";
 import { clearAllTimers } from "./workers/worker-utils.js";
 
@@ -303,6 +305,8 @@ function startServer() {
         // 1698_noc_worker_and_release_gate_flag.sql. Registering this one in BOTH files from
         // the start, not as a follow-up fix.
         startLeaveApprovalReminderWorker();
+        // Same dual registration, same reasoning.
+        startGrnApprovalReminderWorker();
         console.log(
           "[schedulers] tenure, communication, attendance, attendance-reconciliation, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, performance-ingestion, business-action-sync, breach-sla, privacy-retention, helpdesk-sla, ats-reminders, employee-lifecycle started",
         );
@@ -310,6 +314,9 @@ function startServer() {
         // Start heavy workers (with distributed lock protection)
         startAprVicidialSyncWorker().catch((error) =>
           console.error("[apr-sync] startup error:", error instanceof Error ? error.message : String(error)),
+        );
+        startMolecularEmailSyncWorker().catch((error) =>
+          console.error("[molecular-email-sync] startup error:", error instanceof Error ? error.message : String(error)),
         );
         startPayrollNightlyRecalcWorker().catch((error) =>
           console.error("[payroll-nightly-recalc] startup error:", error instanceof Error ? error.message : String(error)),

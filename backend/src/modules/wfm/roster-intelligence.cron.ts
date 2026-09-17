@@ -252,20 +252,30 @@ async function runBranchDashboardEmails(): Promise<void> {
   console.log('[roster-intelligence-cron] Starting branch dashboard emails...');
 
   try {
-    // Get all active branches with branch heads
+    // Get all active branches with branch heads.
+    //
+    // BUG FIXED 2026-09-17: this used to look up Branch Heads via
+    // designation_master.designation_name LIKE '%Branch Head%' — a job-title field that
+    // has never contained that string in this org's actual data (the real title is
+    // "BRANCH MANAGER"), so the subquery always matched zero designations and this cron
+    // has emailed exactly zero people since it was written, on every day, not just
+    // yesterday. Branch Head identity lives in branch_head_assignments, the same table
+    // every other Branch-Head-facing feature in this codebase already uses (see
+    // recipient-resolver.ts's `branch_head` selector, it-provisioning.service.ts's
+    // branchHeadUsers()). branch_head_assignments keys on branch_name (not branch_id), and
+    // branch_master has more than one row sharing a name in different casings/statuses
+    // (three "HEAD OFFICE" rows, only one active) — filtering bm.active_status = 1 is
+    // what keeps this to exactly one branch per assignment rather than fanning out.
     const [branches] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT
          bm.id AS branch_id,
          bm.branch_name,
          e.official_email AS head_email,
-         e.full_name AS head_name
-       FROM branch_master bm
-       JOIN employees e ON e.branch_id = bm.id
-       WHERE bm.active_status = 1
-         AND e.designation_id IN (
-           SELECT id FROM designation_master WHERE designation_name LIKE '%Branch Head%'
-         )
-         AND e.active_status = 1
+         COALESCE(NULLIF(TRIM(e.full_name), ''), e.employee_code) AS head_name
+       FROM branch_head_assignments ba
+       JOIN branch_master bm ON bm.branch_name = ba.branch_name AND bm.active_status = 1
+       JOIN employees e ON e.id = ba.branch_head_id AND e.active_status = 1
+       WHERE ba.is_active = 1
          AND e.official_email IS NOT NULL`
     );
 

@@ -22,6 +22,7 @@ import { startDbBillHrSyncWorker, stopDbBillHrSyncWorker } from "./db-bill-hr-sy
 import { startPnlRunningSalaryRefreshWorker, stopPnlRunningSalaryRefreshWorker } from "./pnl-running-salary-refresh.worker.js";
 import { startGstExportAutoWorker, stopGstExportAutoWorker } from "./gst-export-auto.worker.js";
 import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vicidial-sync.worker.js";
+import { startMolecularEmailSyncWorker, stopMolecularEmailSyncWorker } from "./molecular-email-sync.worker.js";
 import { startEsignComplianceWorker, stopEsignComplianceWorker } from "./esign-compliance.worker.js";
 import { startEsignReconciliationWorker, stopEsignReconciliationWorker } from "./esign-reconciliation.worker.js";
 import { legacySyncWorker } from "./legacy-sync-worker.js";
@@ -73,6 +74,7 @@ import { startReportEmailDeliveryWorker, stopReportEmailDeliveryWorker } from ".
 import { startReportStaleRecoveryWorker, stopReportStaleRecoveryWorker } from "./report-stale-recovery.worker.js";
 import { startTatEscalationWorker, stopTatEscalationWorker } from "./tat-escalation.worker.js";
 import { startLeaveApprovalReminderWorker, stopLeaveApprovalReminderWorker } from "./leave-approval-reminder.worker.js";
+import { startGrnApprovalReminderWorker, stopGrnApprovalReminderWorker } from "./grn-approval-reminder.worker.js";
 import { startReportSubscriptionWorker, stopReportSubscriptionWorker } from "./report-subscription.worker.js";
 import { registerNotificationDeliverer } from "../modules/communication/notification.deliverer.js";
 import { startPayrollPrepReminderWorker, stopPayrollPrepReminderWorker } from "./payroll-prep-reminder.worker.js";
@@ -321,6 +323,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: startAprVicidialSyncWorker,
   },
   {
+    name: "molecular-email-sync",
+    start: startMolecularEmailSyncWorker,
+  },
+  {
     name: "esign-compliance",
     start: startEsignComplianceWorker,
   },
@@ -400,6 +406,13 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // worker_config row.
     name: "leave-approval-reminder",
     start: () => { startLeaveApprovalReminderWorker(); return Promise.resolve(); },
+  },
+  {
+    // Owner directive 2026-09-17: GRN approvals had no email at any stage. Registered in
+    // BOTH this file and server.ts from the start, same reasoning as leave-approval-reminder
+    // above.
+    name: "grn-approval-reminder",
+    start: () => { startGrnApprovalReminderWorker(); return Promise.resolve(); },
   },
   {
     // Was registered in NEITHER this file nor server.ts. The worker existed and
@@ -516,6 +529,7 @@ function shutdown(): void {
   stopIntegrationScheduler();
   stopEsignComplianceWorker();
   stopLeaveApprovalReminderWorker();
+  stopGrnApprovalReminderWorker();
   // social-feed exports no stop — its timers are unref'd and die with the process.
   stopMcnmeetCron();
   stopEsignReconciliationWorker();
@@ -547,6 +561,7 @@ function shutdown(): void {
   stopBudgetClosureReminderWorker();
   stopPayrollReadinessRefreshWorker();
   stopAprVicidialSyncWorker();
+  stopMolecularEmailSyncWorker();
   stopITProvisioningLockScheduler();
   stopPayrollWindowClosureScheduler();
   stopBreachSlaCron();

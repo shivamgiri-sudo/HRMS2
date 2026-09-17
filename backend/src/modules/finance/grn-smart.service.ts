@@ -31,6 +31,7 @@ import {
   resolveEligiblePeriods,
 } from "./grn-period-allocation.service.js";
 import { notifyGrnStage, resolveGrnNotifications } from "./grn-notify.js";
+import { notifyGrnAccountsHeadPendingEmail } from "./grn.notifications.js";
 
 export interface SmartAllocationInput {
   /** Required for a budgeted allocation. Omit for an unbudgeted row (the GRN itself must carry
@@ -3012,6 +3013,9 @@ export const grnSmartService = {
       const clearedRole = actorRole.toLowerCase();
       if (clearedRole === "branch_head") {
         await notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, "accounts_head");
+        // Email leg — Branch Head -> Accounts Head only (see grn.notifications.ts's header
+        // for why Accounts Head -> Finance Head is deliberately not wired here).
+        await notifyGrnAccountsHeadPendingEmail(grnId);
       } else if (clearedRole === "accounts_head") {
         await notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, "finance_head");
       }

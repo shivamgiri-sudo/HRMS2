@@ -27,6 +27,7 @@ import {
 import { budgetClosureService } from "../process-pnl/budget-closure.service.js";
 import { refuse } from "../process-pnl/finance-error.js";
 import { notifyGrnStage, resolveGrnNotifications } from "./grn-notify.js";
+import { notifyGrnSubmittedEmail, notifyGrnAccountsHeadPendingEmail } from "./grn.notifications.js";
 import { postGrnApprovalJournalEntry } from "./grn-journal-posting.service.js";
 import { journalService } from "./journal.service.js";
 
@@ -775,6 +776,7 @@ export const grnService = {
       Number(grn.amount_with_tax ?? grn.amount ?? 0) || null,
       "branch_head",
     );
+    await notifyGrnSubmittedEmail(grnId);
     return { success: true, newStatus: "submitted" as const, grnNumber };
   },
 
@@ -1229,6 +1231,11 @@ export const grnService = {
     await resolveGrnNotifications(grnId);
     if (notifyStage) {
       await notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, notifyStage);
+      // Email leg — Branch Head -> Accounts Head only (see grn.notifications.ts's header for
+      // why Accounts Head -> Finance Head is deliberately not wired here).
+      if (notifyStage === "accounts_head") {
+        await notifyGrnAccountsHeadPendingEmail(grnId);
+      }
     }
     // grnNumber is assigned at final approval (number-at-final-approval); the caller surfaces it.
     return { success: true, newStatus: newStatus!, paymentId, grnNumber };

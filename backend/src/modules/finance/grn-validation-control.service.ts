@@ -5,6 +5,7 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { grnSmartService } from "./grn-smart.service.js";
 import { assertGrnTypeSupported } from "./grn-type-support.js";
 import { notifyGrnStage } from "./grn-notify.js";
+import { notifyGrnSubmittedEmail } from "./grn.notifications.js";
 
 const NON_OVERRIDABLE_VALIDATIONS = new Set(["LOB_ATTRIBUTION"]);
 
@@ -328,6 +329,7 @@ export const grnValidationControlService = {
       Number(typeRows[0].amount_with_tax ?? typeRows[0].amount ?? 0) || null,
       "branch_head",
     );
+    await notifyGrnSubmittedEmail(grnId);
     return { success: true, newStatus: "submitted", grnNumber: typeRows[0].grn_number ?? null, validation };
   },
 
