@@ -25,11 +25,21 @@ export const BB_APR_HEADERS = [
   "capping", "attendance_3",
 ] as const;
 
+/** Lowercase, strip everything but letters/digits -- same convention as every other importer
+ * in this module. Needed here because `get()` used to do an exact-string property lookup: the
+ * uploader sends the file's literal header text as keys ("Emp_Name", "Date", ...), not the
+ * lowercase_underscore names this file's single-candidate `get(data, "emp_name")` calls assumed,
+ * so real files failed "emp_name and report_date are both required" despite both columns being
+ * right there in the sheet -- confirmed against the real bb_apr.xlsx header row. */
+function normalizeKey(k: string): string {
+  return k.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
 function get(data: Record<string, unknown>, ...keys: string[]): string {
+  const normalized: Record<string, unknown> = {};
+  for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const k of keys) {
-    if (data[k] !== undefined && data[k] !== null && String(data[k]).trim() !== "") {
-      return String(data[k]).trim();
-    }
+    const v = normalized[normalizeKey(k)];
+    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
   }
   return "";
 }
@@ -44,13 +54,36 @@ function parseNullableInt(v: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Same shape parseBellavitaDateOnly (bb-sale-masmis-bulk.service.ts) already handles for the
+ * sibling Bellavita export -- the real bb_apr.xlsx date column renders as "1-Sep-26"
+ * (D-Mon-YY text, confirmed against the real file), which the ISO/slash-only patterns below
+ * never matched, so every row's report_date silently failed even once the header itself was
+ * found. Excel-serial handled too, in case a differently-formatted column ever comes through
+ * with raw:true. */
 export function parseReportDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
-  if (!v) return null;
+  if (!v || v === "0" || v === "-") return null;
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   if (m) return m[0];
   m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(v);
   if (m) return `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+  m = /^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/.exec(v);
+  if (m) {
+    const months: Record<string, string> = {
+      jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+      jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+    };
+    const mon = months[m[2].toLowerCase()];
+    if (mon) {
+      const year = m[3].length === 2 ? (parseInt(m[3], 10) < 50 ? `20${m[3]}` : `19${m[3]}`) : m[3];
+      return `${year}-${mon}-${m[1].padStart(2, "0")}`;
+    }
+  }
+  const sn = parseFloat(v);
+  if (Number.isFinite(sn) && sn > 20000 && sn < 60000) {
+    const d = new Date((sn - 25569) * 86400 * 1000);
+    return d.toISOString().slice(0, 10);
+  }
   return null;
 }
 
@@ -103,7 +136,9 @@ export async function importBbAprMasmisBatch(
         : ((row.normalized_data ?? {}) as Record<string, unknown>);
 
     const empName = get(data, "emp_name");
-    const reportDate = parseReportDate(get(data, "report_date"));
+    // The real export's date column is headed "Date", not "report_date" -- no normalization
+    // bridges that gap since the words themselves differ, so it needs an explicit alias.
+    const reportDate = parseReportDate(get(data, "report_date", "Date"));
     if (!empName || !reportDate) {
       const msg = `Row ${row.row_no}: "emp_name" and "report_date" are both required`;
       errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
@@ -125,7 +160,7 @@ export async function importBbAprMasmisBatch(
           reportDate,
           empName,
           getOrNull(data, "noiid"),
-          parseNullableInt(get(data, "num_calls_chat")),
+          parseNullableInt(get(data, "num_calls_chat", "No. of Calls/Chat")),
           getOrNull(data, "lob"),
           getOrNull(data, "login_time"),
           getOrNull(data, "wait_time"),
@@ -143,9 +178,9 @@ export async function importBbAprMasmisBatch(
           getOrNull(data, "total_break"),
           getOrNull(data, "actual_login_hrs"),
           getOrNull(data, "downtime"),
-          getOrNull(data, "login_duration"),
-          getOrNull(data, "logout_time"),
-          getOrNull(data, "net_login_hrs"),
+          getOrNull(data, "login_duration", "Login"),
+          getOrNull(data, "logout_time", "Logout"),
+          getOrNull(data, "net_login_hrs", "Net Login Hrs+DN+Briefing"),
           getOrNull(data, "utilization"),
           getOrNull(data, "attendance_1"),
           getOrNull(data, "week_1"),
@@ -156,7 +191,9 @@ export async function importBbAprMasmisBatch(
           getOrNull(data, "tenurity_week"),
           getOrNull(data, "sub_lob"),
           parseNullableInt(get(data, "unique_count")),
-          getOrNull(data, "attendance_2"),
+          // Real header has a typo ("Attendence", not "Attendance") that normalization can't
+          // bridge (the words differ), so it needs its own explicit alias.
+          getOrNull(data, "attendance_2", "Attendence 2"),
           getOrNull(data, "capping"),
           getOrNull(data, "attendance_3"),
           null, // uploaded_by: HRMS user ids are UUIDs, don't fit this int column

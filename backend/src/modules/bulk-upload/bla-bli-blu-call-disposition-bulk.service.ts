@@ -22,14 +22,17 @@ export function cleanText(raw: unknown): string | null {
   return v || null;
 }
 
-/** "DD-Mon-YY HH:MM" (e.g. "08-09-26 18:50") -> "YYYY-MM-DD HH:MM:00". */
+/** "DD-Mon-YY HH:MM" (e.g. "08-09-26 18:50") -> "YYYY-MM-DD HH:MM:00".
+ * Day/month/hour/minute accept 1-2 digits, not just 2: a single-digit day (e.g. "8-9-26 8:50"
+ * for 8 Sep) is exactly the shape that silently broke bb_apr/bb_sale's own date parsers -- same
+ * bug class, fixed here proactively rather than waiting for a real file to hit it. */
 export function parseDateTime(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
-  const m = /^(\d{2})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/.exec(v);
+  const m = /^(\d{1,2})-(\d{1,2})-(\d{2})\s+(\d{1,2}):(\d{1,2})/.exec(v);
   if (m) {
     const year = parseInt(m[3], 10) < 50 ? `20${m[3]}` : `19${m[3]}`;
-    return `${year}-${m[2]}-${m[1]} ${m[4]}:${m[5]}:00`;
+    return `${year}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")} ${m[4].padStart(2, "0")}:${m[5].padStart(2, "0")}:00`;
   }
   return null;
 }

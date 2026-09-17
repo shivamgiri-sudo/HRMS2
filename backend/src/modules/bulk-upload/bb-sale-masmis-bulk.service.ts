@@ -25,11 +25,20 @@ export const BB_SALE_HEADERS = [
   "Pincode Relevent", "RTO Status", "Draft Order", "Sale Source Name", "Shift",
 ] as const;
 
+/** Lowercase, strip everything but letters/digits -- same convention as every other importer
+ * in this module. Needed because `get()` used to do an exact-string property lookup: the
+ * uploader sends the file's literal header text as keys, so a real file's "E-mail ID" or any
+ * casing/spacing variant of an aliased column never matched this file's literal candidate
+ * strings even when the column was right there in the sheet. */
+function normalizeKey(k: string): string {
+  return k.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
 function get(data: Record<string, unknown>, ...keys: string[]): string {
+  const normalized: Record<string, unknown> = {};
+  for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const k of keys) {
-    if (data[k] !== undefined && data[k] !== null && String(data[k]).trim() !== "") {
-      return String(data[k]).trim();
-    }
+    const v = normalized[normalizeKey(k)];
+    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
   }
   return "";
 }
@@ -54,7 +63,11 @@ export function parseBellavitaDateOnly(raw: unknown): string | null {
     const d = new Date((sn - 25569) * 86400 * 1000);
     return d.toISOString().slice(0, 10);
   }
-  const m = /^(\d{2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-(\d{2})$/i.exec(v);
+  // Day is \d{1,2}, not \d{2}: the real file uses single-digit days unpadded ("1-Sep-26" for
+  // the 1st), which the old \d{2}-only pattern silently rejected as "no Date" for every date
+  // in the 1st-9th of any month -- confirmed against the real bb_Sale.xlsx, whose first row is
+  // exactly this case.
+  const m = /^(\d{1,2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-(\d{2})$/i.exec(v);
   if (m) {
     const months: Record<string, string> = {
       Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
@@ -62,7 +75,7 @@ export function parseBellavitaDateOnly(raw: unknown): string | null {
     };
     const monthKey = m[2].charAt(0).toUpperCase() + m[2].slice(1, 3).toLowerCase();
     const year = parseInt(m[3], 10) < 50 ? `20${m[3]}` : `19${m[3]}`;
-    return `${year}-${months[monthKey]}-${m[1]}`;
+    return `${year}-${months[monthKey]}-${m[1].padStart(2, "0")}`;
   }
   return null;
 }

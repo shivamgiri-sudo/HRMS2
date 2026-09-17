@@ -10,11 +10,19 @@ import { db } from "../../db/mysql.js";
 
 export const BVO_REPEAT_CDR_HEADERS = ["PhoneNumber", "CallStatus", "Agent"] as const;
 
+/** Lowercase, strip everything but letters/digits -- same convention as every other importer
+ * in this module. Needed because the uploader sends the file's literal header text as keys, and
+ * an exact-string lookup silently fails on any casing/spacing variant of a real header even
+ * when the column is right there in the sheet (confirmed live for bb_apr/bb_sale). */
+function normalizeKey(k: string): string {
+  return k.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
 function get(data: Record<string, unknown>, ...keys: string[]): string {
+  const normalized: Record<string, unknown> = {};
+  for (const k of Object.keys(data)) normalized[normalizeKey(k)] = data[k];
   for (const k of keys) {
-    if (data[k] !== undefined && data[k] !== null && String(data[k]).trim() !== "") {
-      return String(data[k]).trim();
-    }
+    const v = normalized[normalizeKey(k)];
+    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
   }
   return "";
 }
