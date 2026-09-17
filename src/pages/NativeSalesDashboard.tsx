@@ -13,7 +13,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend, ReferenceLine, ComposedChart, Area, Cell,
+  Tooltip, ResponsiveContainer, Legend, ReferenceLine, ComposedChart, Area, Cell, LabelList,
 } from "recharts";
 import {
   TrendingUp, ShoppingCart, AlertTriangle, DollarSign, Package,
@@ -53,6 +53,10 @@ const fmtRs  = (n: number | null | undefined) => {
 };
 const fmtRsFull = (n: number | null | undefined) =>
   n == null || isNaN(n) ? "—" : `₹${Number(n).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+const fmtDate = (v: unknown) => {
+  const d = new Date(String(v ?? ""));
+  return isNaN(d.getTime()) ? String(v ?? "") : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+};
 
 function currentMonth() {
   const d = new Date();
@@ -749,9 +753,9 @@ export function NeemansDashboard({ month }: { month: string }) {
                   <ResponsiveContainer width="100%" height={220}>
                     <LineChart data={daily.slice(-14)} margin={{ top: 20, right: 10, bottom: 0, left: -20 }}>
                       <CartesianGrid {...GRID_PROPS} />
-                      <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-30} textAnchor="end" height={38} />
+                      <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-30} textAnchor="end" height={38} tickFormatter={fmtDate} />
                       <YAxis tick={AXIS_TICK} unit="%" />
-                      <Tooltip contentStyle={TOOLTIP_STYLE} />
+                      <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate} />
                       <Line type="monotone" dataKey="conversion_pct" name="Conv%" stroke={C_PURP} strokeWidth={2.5} dot={false} activeDot={{ r: 5 }} />
                     </LineChart>
                   </ResponsiveContainer>
@@ -762,10 +766,10 @@ export function NeemansDashboard({ month }: { month: string }) {
                   <ResponsiveContainer width="100%" height={220}>
                     <BarChart data={daily.slice(-14)} margin={{ top: 20, right: 10, bottom: 0, left: -20 }}>
                       <CartesianGrid {...GRID_PROPS} />
-                      <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-30} textAnchor="end" height={38} />
+                      <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-30} textAnchor="end" height={38} tickFormatter={fmtDate} />
                       <YAxis tick={AXIS_TICK} tickFormatter={fmtRs} />
-                      <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any) => [fmtRsFull(v), "Revenue"]} />
-                      <Bar dataKey="revenue" name="Revenue" fill={G} radius={[4, 4, 0, 0]} />
+                      <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate} formatter={(v: any) => [fmtRsFull(v), "Revenue"]} />
+                      <Bar dataKey="revenue" name="Revenue" fill={G} radius={[4, 4, 0, 0]}><LabelList dataKey="revenue" position="top" formatter={fmtRs} style={{ fontSize: 8, fill: "#64748b" }} /></Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </ChartCard>
@@ -775,10 +779,10 @@ export function NeemansDashboard({ month }: { month: string }) {
                   <ResponsiveContainer width="100%" height={220}>
                     <BarChart data={daily.slice(-14)} margin={{ top: 20, right: 10, bottom: 0, left: -20 }}>
                       <CartesianGrid {...GRID_PROPS} />
-                      <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-30} textAnchor="end" height={38} />
+                      <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-30} textAnchor="end" height={38} tickFormatter={fmtDate} />
                       <YAxis tick={AXIS_TICK} allowDecimals={false} />
-                      <Tooltip contentStyle={TOOLTIP_STYLE} />
-                      <Bar dataKey="orders" name="Sales" fill={C_AMB} radius={[4, 4, 0, 0]} />
+                      <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate} />
+                      <Bar dataKey="orders" name="Sales" fill={C_AMB} radius={[4, 4, 0, 0]}><LabelList dataKey="orders" position="top" style={{ fontSize: 8, fill: "#64748b" }} /></Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </ChartCard>
@@ -788,9 +792,9 @@ export function NeemansDashboard({ month }: { month: string }) {
                   <ResponsiveContainer width="100%" height={220}>
                     <LineChart data={cumData} margin={{ top: 10, right: 10, bottom: 0, left: -20 }}>
                       <CartesianGrid {...GRID_PROPS} />
-                      <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-30} textAnchor="end" height={38} />
+                      <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-30} textAnchor="end" height={38} tickFormatter={fmtDate} />
                       <YAxis tick={AXIS_TICK} tickFormatter={fmtRs} />
-                      <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any, n: string) => [fmtRsFull(v), n]} />
+                      <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate} formatter={(v: any, n: string) => [fmtRsFull(v), n]} />
                       <Legend wrapperStyle={{ fontSize: 11 }} />
                       <Line type="monotone" dataKey="cumRev" name="Achievement" stroke={G} strokeWidth={2.5} dot={false} />
                       {cumData[0]?.cumTgt != null && <Line type="monotone" dataKey="cumTgt" name="Target" stroke={C_RED} strokeWidth={1.5} strokeDasharray="5 3" dot={false} />}
@@ -1193,9 +1197,9 @@ export function NeemansDashboard({ month }: { month: string }) {
           <ResponsiveContainer width="100%" height={420}>
             <LineChart data={daily} margin={{ top: 20, right: 20, bottom: 50, left: -10 }}>
               <CartesianGrid {...GRID_PROPS} />
-              <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-40} textAnchor="end" height={60} />
+              <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-40} textAnchor="end" height={60} tickFormatter={fmtDate} />
               <YAxis tick={AXIS_TICK} unit="%" />
-              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate} />
               <Line type="monotone" dataKey="conversion_pct" name="Conv%" stroke={C_PURP} strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 6 }} />
             </LineChart>
           </ResponsiveContainer>
@@ -1206,10 +1210,10 @@ export function NeemansDashboard({ month }: { month: string }) {
           <ResponsiveContainer width="100%" height={420}>
             <BarChart data={daily} margin={{ top: 20, right: 20, bottom: 50, left: -10 }}>
               <CartesianGrid {...GRID_PROPS} />
-              <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-40} textAnchor="end" height={60} />
+              <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-40} textAnchor="end" height={60} tickFormatter={fmtDate} />
               <YAxis tick={AXIS_TICK} tickFormatter={fmtRs} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any) => [fmtRsFull(v), "Revenue"]} />
-              <Bar dataKey="revenue" fill={G} radius={[4, 4, 0, 0]} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate} formatter={(v: any) => [fmtRsFull(v), "Revenue"]} />
+              <Bar dataKey="revenue" fill={G} radius={[4, 4, 0, 0]}><LabelList dataKey="revenue" position="top" formatter={fmtRs} style={{ fontSize: 8, fill: "#64748b" }} /></Bar>
             </BarChart>
           </ResponsiveContainer>
         </ChartModal>
@@ -1219,10 +1223,10 @@ export function NeemansDashboard({ month }: { month: string }) {
           <ResponsiveContainer width="100%" height={420}>
             <BarChart data={daily} margin={{ top: 20, right: 20, bottom: 50, left: -10 }}>
               <CartesianGrid {...GRID_PROPS} />
-              <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-40} textAnchor="end" height={60} />
+              <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-40} textAnchor="end" height={60} tickFormatter={fmtDate} />
               <YAxis tick={AXIS_TICK} allowDecimals={false} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} />
-              <Bar dataKey="orders" name="Sales" fill={C_AMB} radius={[4, 4, 0, 0]} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate} />
+              <Bar dataKey="orders" name="Sales" fill={C_AMB} radius={[4, 4, 0, 0]}><LabelList dataKey="orders" position="top" style={{ fontSize: 8, fill: "#64748b" }} /></Bar>
             </BarChart>
           </ResponsiveContainer>
         </ChartModal>
@@ -1232,9 +1236,9 @@ export function NeemansDashboard({ month }: { month: string }) {
           <ResponsiveContainer width="100%" height={420}>
             <LineChart data={cumData} margin={{ top: 10, right: 20, bottom: 50, left: -10 }}>
               <CartesianGrid {...GRID_PROPS} />
-              <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-40} textAnchor="end" height={60} />
+              <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-40} textAnchor="end" height={60} tickFormatter={fmtDate} />
               <YAxis tick={AXIS_TICK} tickFormatter={fmtRs} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any, n: string) => [fmtRsFull(v), n]} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate} formatter={(v: any, n: string) => [fmtRsFull(v), n]} />
               <Legend />
               <Line type="monotone" dataKey="cumRev" name="Achievement" stroke={G} strokeWidth={2.5} dot={false} />
               {cumData[0]?.cumTgt != null && <Line type="monotone" dataKey="cumTgt" name="Target" stroke={C_RED} strokeWidth={1.5} strokeDasharray="5 3" dot={false} />}
@@ -1700,10 +1704,10 @@ export function BvoDashboard({ month }: { month: string }) {
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={daily} margin={{ top: 20, right: 10, bottom: 0, left: -20 }}>
               <CartesianGrid {...GRID_PROPS} />
-              <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-30} textAnchor="end" height={38} />
+              <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-30} textAnchor="end" height={38} tickFormatter={fmtDate} />
               <YAxis tick={AXIS_TICK} tickFormatter={fmtRs} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any) => [fmtRsFull(v), "Revenue"]} />
-              <Bar dataKey="revenue" name="Revenue" fill={G} radius={[4, 4, 0, 0]} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate} formatter={(v: any) => [fmtRsFull(v), "Revenue"]} />
+              <Bar dataKey="revenue" name="Revenue" fill={G} radius={[4, 4, 0, 0]}><LabelList dataKey="revenue" position="top" formatter={fmtRs} style={{ fontSize: 8, fill: "#64748b" }} /></Bar>
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -1766,10 +1770,10 @@ export function BvoDashboard({ month }: { month: string }) {
           <ResponsiveContainer width="100%" height={420}>
             <BarChart data={daily} margin={{ top: 20, right: 20, bottom: 50, left: -10 }}>
               <CartesianGrid {...GRID_PROPS} />
-              <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-40} textAnchor="end" height={60} />
+              <XAxis dataKey="date" tick={{ ...AXIS_TICK, fontSize: 9 }} angle={-40} textAnchor="end" height={60} tickFormatter={fmtDate} />
               <YAxis tick={AXIS_TICK} tickFormatter={fmtRs} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: any) => [fmtRsFull(v), "Revenue"]} />
-              <Bar dataKey="revenue" fill={G} radius={[4, 4, 0, 0]} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={fmtDate} formatter={(v: any) => [fmtRsFull(v), "Revenue"]} />
+              <Bar dataKey="revenue" fill={G} radius={[4, 4, 0, 0]}><LabelList dataKey="revenue" position="top" formatter={fmtRs} style={{ fontSize: 8, fill: "#64748b" }} /></Bar>
             </BarChart>
           </ResponsiveContainer>
         </ChartModal>

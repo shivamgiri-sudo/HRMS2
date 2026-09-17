@@ -690,7 +690,7 @@ function InboundDashboard({ f }: { f: Filters }) {
                 </ResponsiveContainer>
               </Panel>
               <Panel title="Daily Call Volume">
-                <ResponsiveContainer width="100%" height={200}><BarChart data={dayQ.data}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={fmtD} /><YAxis tick={{ fontSize: 10 }} /><Tooltip /><Bar dataKey="offered" fill="#93c5fd" name="Offered" /><Bar dataKey="handled" fill="#2f6fed" name="Handled" /></BarChart></ResponsiveContainer>
+                <ResponsiveContainer width="100%" height={200}><BarChart data={dayQ.data}><CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" /><XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={fmtD} /><YAxis tick={{ fontSize: 10 }} /><Tooltip labelFormatter={fmtD} /><Bar dataKey="offered" fill="#93c5fd" name="Offered"><LabelList dataKey="offered" position="top" style={{ fontSize: 8, fill: "#64748b" }} /></Bar><Bar dataKey="handled" fill="#2f6fed" name="Handled"><LabelList dataKey="handled" position="top" style={{ fontSize: 8, fill: "#1e40af" }} /></Bar></BarChart></ResponsiveContainer>
               </Panel>
             </div>
             <Panel title="Day-wise Metric Matrix" sub={`${dayQ.data.length} days — click a day for its hourly slots`}>
@@ -1727,7 +1727,7 @@ function GS1Dashboard({ f }: { f: Filters }) {
                       <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                       <XAxis dataKey="date" tick={{ fontSize: 9 }} tickFormatter={fmtD} />
                       <YAxis tick={{ fontSize: 10 }} />
-                      <Tooltip />
+                      <Tooltip labelFormatter={fmtD} />
                       <Bar dataKey="emailTasks" fill="#2f6fed" name="Email Tasks" stackId="a" />
                       <Bar dataKey="dataKartTasks" fill="#10b8d4" name="Data Kart Tasks" stackId="a" radius={[4, 4, 0, 0]} />
                     </BarChart>
