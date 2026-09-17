@@ -10,11 +10,7 @@ import { resolveBankNameVariance } from "./bank-name-corroboration.js";
 import { digilockerVerifiedCheckTypes, type DigilockerEvidence } from "./digilocker-evidence.js";
 import { propagateIdentityVerification } from "../../shared/identityVerificationPropagation.js";
 import { encrypt } from "../../utils/encryption.js";
-
-const hashValue = (value: unknown) => {
-  const normalized = String(value ?? "").trim().toUpperCase();
-  return normalized ? createHash("sha256").update(normalized).digest("hex") : null;
-};
+import { hashPiiForMatch as hashValue } from "../../shared/piiHash.js";
 const maskLast4 = (value: unknown, prefix = "XXXXXX") => {
   const clean = String(value ?? "").replace(/\s/g, "");
   return clean ? `${prefix}${clean.slice(-4)}` : null;

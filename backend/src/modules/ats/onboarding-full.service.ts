@@ -16,6 +16,7 @@ import { encrypt, decrypt } from "../../utils/encryption.js";
 // receive BOTH the legacy AES-CBC shape written below and the canonical AES-GCM shape written by
 // the DPDP backfill; decrypt() rejects the latter as "Invalid encrypted format".
 import { decryptPii } from "../../shared/piiCiphertext.js";
+import { hashPiiForMatch } from "../../shared/piiHash.js";
 import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import { extractFromDocument, crossValidateDocument, checkDuplicates } from "./ocr.service.js";
@@ -1356,7 +1357,7 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
   const incomingPanIsMasked = /^[A-Z0-9]{3}XXXX[A-Z0-9]{2}$/.test(incomingPanRaw);
   const rawPan = incomingPanIsMasked ? "" : incomingPanRaw;
   const panMasked = rawPan ? maskPan(rawPan) : maskPan(input.pan_number_masked);
-  const panHash = rawPan ? hashValue(rawPan) : null;
+  const panHash = rawPan ? hashPiiForMatch(rawPan) : null;
   // Encrypted at rest so PAN verification can actually run. The masked form is not
   // a PAN and the hash is one-way, so neither can be sent to a provider - which is
   // why automatic PAN verification could never fire. Same treatment bank account
@@ -1371,7 +1372,7 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
   const incomingAadhaarIsMasked = /^XXXX-XXXX-\d{4}$/i.test(incomingAadhaarRaw);
   const rawAadhaar = incomingAadhaarIsMasked ? "" : incomingAadhaarRaw.replace(/\D/g, "");
   const aadhaarMasked = rawAadhaar ? maskAadhaar(rawAadhaar) : maskAadhaar(input.aadhaar_number_masked);
-  const aadhaarHash = rawAadhaar ? hashValue(rawAadhaar) : null;
+  const aadhaarHash = rawAadhaar ? hashPiiForMatch(rawAadhaar) : null;
   // candidate_onboarding_profile.aadhaar_number_encrypted DOES NOT EXIST on the live
   // database. Migration 1651_aadhaar_encrypted_storage_candidate_onboarding.sql was
   // written and shipped to the server, but was never added to MIGRATION_MANIFEST, so it
@@ -1659,7 +1660,7 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
           AND account_no_hash = ?
         ORDER BY (verification_status = 'verified') DESC, created_at DESC
         LIMIT 1`,
-      [candidateId, hashValue(submittedAccountNo)]
+      [candidateId, hashPiiForMatch(submittedAccountNo)]
     );
     if (!verifiedRows.length) {
       throw Object.assign(
@@ -1707,7 +1708,7 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
       input.branchName ?? null,
       input.accountHolderName ?? null,
       maskAccount(accountNo),
-      hashValue(accountNo),
+      hashPiiForMatch(accountNo),
       accountNoEncrypted,
       String(input.ifscCode ?? input.bank_ifsc ?? "").trim().toUpperCase() || null,
       input.accountType ?? null,
@@ -1751,14 +1752,14 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
       /^[0-9]{9,18}$/.test(String(accountNo ?? "").replace(/\s+/g, ""))
         ? String(accountNo).replace(/\s+/g, "")
         : null,
-      hashValue(accountNo),
+      hashPiiForMatch(accountNo),
       accountNoEncrypted,
       candidateId,
     ]
   );
 
   // Fraud detection: check for duplicate bank account (non-blocking)
-  const bankHash = hashValue(accountNo);
+  const bankHash = hashPiiForMatch(accountNo);
   if (bankHash) {
     checkDuplicates(candidateId, "bank", bankHash).catch(e => console.error("[Fraud] Bank duplicate check error:", e.message));
   }

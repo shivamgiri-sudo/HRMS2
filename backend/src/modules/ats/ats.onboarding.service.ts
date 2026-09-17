@@ -1,6 +1,7 @@
-import { randomUUID, createHash } from 'crypto';
+import { randomUUID } from 'crypto';
 import { RowDataPacket, PoolConnection } from 'mysql2/promise';
 import { db } from '../../db/mysql.js';
+import { hashPiiForMatch } from '../../shared/piiHash.js';
 import { env } from '../../config/env.js';
 import { hasScopedAccess } from '../../shared/scopeAccess.js';
 import { recordBranchHeadDecision, revertBranchHeadDecision } from './branch-head-approval.record.js';
@@ -24,10 +25,7 @@ import { hasLiveSelfieDocument } from './onboarding-full.service.js';
 
 // ── PII Helpers ───────────────────────────────────────────────────────────────
 
-function hashPii(value: unknown): string | null {
-  if (value == null || value === '') return null;
-  return createHash('sha256').update(String(value)).digest('hex');
-}
+const hashPii = hashPiiForMatch;
 
 function maskAadhaar(value: unknown): string | null {
   if (value == null || value === '') return null;

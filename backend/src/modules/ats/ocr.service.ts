@@ -1,9 +1,10 @@
 import Tesseract from "tesseract.js";
 import path from "path";
-import { createHash, randomUUID } from "crypto";
+import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { extractDobFromText } from "./ageVerification.service.js";
 import { classifyDuplicateIdentity } from "./duplicate-identity.js";
+import { hashPiiForMatch } from "../../shared/piiHash.js";
 
 const AADHAAR_REGEX = /\b(\d{4}\s?\d{4}\s?\d{4})\b/;
 const PAN_REGEX = /\b([A-Z]{3}[PCHFATBLJG][A-Z]\d{4}[A-Z])\b/;
@@ -100,7 +101,19 @@ function extractChequeDetails(text: string, confidence: number): OcrExtractionRe
   let accountNumber: string | null = null;
   if (accountMatches) {
     const candidates = accountMatches.filter(m => m.length >= 9 && m.length <= 18);
-    accountNumber = candidates.length > 0 ? candidates[0] : null;
+    // Indian MICR codes are always exactly 9 digits; account numbers are almost
+    // never that short (typically 10-18). The old rule ("first 9-18 digit run
+    // found anywhere on the page") grabbed the MICR line far more often than the
+    // real account number — confirmed against live fraud-alert data: the
+    // OCR-extracted number was shorter than the candidate's real account number
+    // in the large majority of CHEQUE_ACCOUNT_MISMATCH cases, consistent with
+    // picking up a 9-digit MICR code instead. Prefer a longer, non-MICR-shaped
+    // candidate; fall back to whatever was found if nothing longer exists.
+    const nonMicrShaped = candidates.filter(m => m.length !== 9);
+    const pool = nonMicrShaped.length > 0 ? nonMicrShaped : candidates;
+    accountNumber = pool.length > 0
+      ? pool.reduce((longest, m) => (m.length > longest.length ? m : longest), pool[0])
+      : null;
   }
 
   const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
@@ -136,7 +149,7 @@ export async function crossValidateDocument(
     return { matched: true };
   }
 
-  const hashExtracted = createHash("sha256").update(ocrResult.extractedNumber.trim().toUpperCase()).digest("hex");
+  const hashExtracted = hashPiiForMatch(ocrResult.extractedNumber);
   const normalizedDocType = docType.toLowerCase();
 
   let storedHash: string | null = null;
