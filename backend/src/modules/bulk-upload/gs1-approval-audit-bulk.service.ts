@@ -23,16 +23,21 @@ import { db } from "../../db/mysql.js";
  * Re-uploads of the same audit date are allowed — ON DUPLICATE KEY UPDATE
  * overwrites all mutable columns so corrections land cleanly.
  *
+ * One row per SKU (GTIN), not per person-per-day: a live end-to-end import of the real file
+ * found all 7 real rows share the same auditee+auditor+date (one person's full day of work),
+ * which the original (auditee_name, auditor_name, audit_date)-only key silently collapsed into
+ * a single row. gtin is required in the unique key so each product's audit stays its own row.
+ *
  * Upload type: GS1_APPROVAL_AUDIT
  * Target table: gs1_approval_audit_raw
- * UNIQUE key: (process_id, audit_date, auditee_name, auditor_name)
+ * UNIQUE key: (process_id, audit_date, auditee_name, auditor_name, gtin)
  */
 
 export const GS1_APPROVAL_AUDIT_HEADERS = [
   "Audit Date", "Auditee Name", "Auditor Name", "Audit Result", "Error Category",
   "Error Flag", "GCP Code", "Company Name", "SKU Count",
   "GCP", "Name", "Auditor", "Approve/Reject", "Errors Yes/No",
-  "Date of Completion", "Products count",
+  "Date of Completion", "Products count", "GTIN",
 ] as const;
 
 const AUDIT_RESULT_MAP: Record<string, "PASS" | "FAIL" | "PENDING"> = {
@@ -196,14 +201,17 @@ export async function importGs1ApprovalAuditBatch(
     // since a raw per-product audit row that exists at all audited at least one SKU.
     const skuCountRaw = data["SKU Count"] ?? data["Products count"];
     const skuCount = skuCountRaw !== undefined ? (parseCount(skuCountRaw) || 1) : 0;
+    // Part of the unique key (see doc-comment): without this, every product a person audits
+    // on the same day collapses into one row via ON DUPLICATE KEY UPDATE.
+    const gtin = String(data["GTIN"] ?? "").trim() || null;
 
     try {
       await db.execute(
         `INSERT INTO gs1_approval_audit_raw
            (id, process_id, audit_date, auditee_name, auditor_name,
-            audit_result, error_category, error_flag, gcp_code, company_name, sku_count,
+            audit_result, error_category, error_flag, gcp_code, company_name, gtin, sku_count,
             data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
          ON DUPLICATE KEY UPDATE
             audit_result   = VALUES(audit_result),
             error_category = VALUES(error_category),
@@ -218,6 +226,7 @@ export async function importGs1ApprovalAuditBatch(
           errorFlag,
           gcpCode,
           String(data["Company Name"] ?? "").trim() || null,
+          gtin,
           skuCount,
           batchId,
           importedByUserId,
