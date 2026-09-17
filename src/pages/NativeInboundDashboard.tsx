@@ -29,6 +29,7 @@ interface ProjectSummary {
 interface ConsolidatedPoint { date: string; offered: number; answered: number; sl_pct: number }
 interface ProjectTrend { date: string; offered: number; answered: number; sl_num: number }
 interface HourlyPoint { hour: number; offered: number; answered: number }
+interface LobRow { campaign: string; offered: number; answered: number; answeredPct: number; abandonPct: number; slPct: number; acht: number; uniquePhones: number }
 
 const PROJECT_COLORS: Record<string, string> = {
   GNC: "bg-emerald-500",
@@ -182,6 +183,49 @@ function AllProjectsView({ from, to }: { from: string; to: string }) {
         </ResponsiveContainer>
       </div>
 
+      {/* Analysis — every process ranked side by side on the same metrics */}
+      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+        <p className="mb-1 text-sm font-semibold text-slate-700">Process-wise Analysis</p>
+        <p className="mb-3 text-xs text-slate-400">Every inbound process, ranked by Service Level — same live call-detail data as each process's own dashboard.</p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
+                <th className="py-2 pr-3 font-semibold">#</th>
+                <th className="py-2 pr-3 font-semibold">Process</th>
+                <th className="py-2 pr-3 text-right font-semibold">Offered</th>
+                <th className="py-2 pr-3 text-right font-semibold">Answered</th>
+                <th className="py-2 pr-3 text-right font-semibold">AL%</th>
+                <th className="py-2 pr-3 text-right font-semibold">Abandon%</th>
+                <th className="py-2 pr-3 text-right font-semibold">SL%</th>
+                <th className="py-2 pr-3 text-right font-semibold">ACHT</th>
+                <th className="py-2 pr-0 text-right font-semibold">Avg Wait</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...projects].sort((a, b) => b.sl_pct - a.sl_pct).map((p, i) => (
+                <tr key={p.key} className="cursor-pointer border-b border-slate-50 last:border-0 hover:bg-slate-50" onClick={() => navigate(`/call-master/inbound/${p.key}`)}>
+                  <td className="py-2 pr-3 text-slate-400">{i + 1}</td>
+                  <td className="py-2 pr-3">
+                    <span className={`rounded-lg px-2 py-0.5 text-[11px] font-bold text-white ${PROJECT_COLORS[p.name] ?? "bg-slate-500"}`}>{p.name}</span>
+                  </td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{p.total.toLocaleString()}</td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{p.answered.toLocaleString()}</td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{p.ans_pct.toFixed(1)}%</td>
+                  <td className={`py-2 pr-3 text-right font-semibold ${p.abandon_pct > 10 ? "text-red-600" : "text-slate-600"}`}>{p.abandon_pct.toFixed(1)}%</td>
+                  <td className="py-2 pr-3 text-right"><SLBadge pct={p.sl_pct} /></td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{p.avg_handle}s</td>
+                  <td className="py-2 pr-0 text-right text-slate-600">{p.avg_wait}s</td>
+                </tr>
+              ))}
+              {projects.length === 0 && (
+                <tr><td colSpan={9} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* Project cards grid */}
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Click a project for detailed view</p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -201,20 +245,23 @@ export function ProjectDetailView({ projectKey, from, to }: { projectKey: string
   const [summary, setSummary] = useState<ProjectSummary | null>(null);
   const [trend, setTrend] = useState<ProjectTrend[]>([]);
   const [hourly, setHourly] = useState<HourlyPoint[]>([]);
+  const [lob, setLob] = useState<LobRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     const qs = `startDate=${from}&endDate=${to}`;
     try {
-      const [summRes, trendRes, hourlyRes] = await Promise.all([
+      const [summRes, trendRes, hourlyRes, lobRes] = await Promise.all([
         hrmsApi.get<{ data: ProjectSummary }>(`/api/inbound/project/${projectKey}?${qs}`),
         hrmsApi.get<{ data: ProjectTrend[] }>(`/api/inbound/project/${projectKey}/trend?${qs}`),
         hrmsApi.get<{ data: HourlyPoint[] }>(`/api/inbound/project/${projectKey}/hourly?${qs}`),
+        hrmsApi.get<{ data: LobRow[] }>(`/api/inbound/project/${projectKey}/lob?${qs}`),
       ]);
       setSummary(summRes.data);
       setTrend(trendRes.data ?? []);
       setHourly(hourlyRes.data ?? []);
+      setLob(lobRes.data ?? []);
     } finally { setLoading(false); }
   }, [projectKey, from, to]);
 
@@ -289,6 +336,46 @@ export function ProjectDetailView({ projectKey, from, to }: { projectKey: string
               <Bar dataKey="answered" name="Answered" fill="#10B981" radius={[3,3,0,0]} />
             </BarChart>
           </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* LOB-wise breakdown -- this project's real dialer_db CampaignName
+          values ARE its LOBs (e.g. Bellavita's Luxury/Organic/Complaint/
+          Order/Product sub-brands, GNC's 6 query-type campaigns). */}
+      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+        <p className="mb-3 text-sm font-semibold text-slate-700">LOB-wise Breakdown</p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
+                <th className="py-2 pr-3 font-semibold">LOB / Campaign</th>
+                <th className="py-2 pr-3 text-right font-semibold">Offered</th>
+                <th className="py-2 pr-3 text-right font-semibold">Answered</th>
+                <th className="py-2 pr-3 text-right font-semibold">AL%</th>
+                <th className="py-2 pr-3 text-right font-semibold">Abandon%</th>
+                <th className="py-2 pr-3 text-right font-semibold">SL%</th>
+                <th className="py-2 pr-3 text-right font-semibold">ACHT</th>
+                <th className="py-2 pr-0 text-right font-semibold">Unique Callers</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lob.map((r) => (
+                <tr key={r.campaign} className="border-b border-slate-50 last:border-0">
+                  <td className="py-2 pr-3 font-medium text-slate-700">{r.campaign}</td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{r.offered.toLocaleString()}</td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{r.answered.toLocaleString()}</td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{r.answeredPct}%</td>
+                  <td className={`py-2 pr-3 text-right font-semibold ${r.abandonPct > 10 ? "text-red-600" : "text-slate-600"}`}>{r.abandonPct}%</td>
+                  <td className="py-2 pr-3 text-right"><SLBadge pct={r.slPct} /></td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{r.acht}s</td>
+                  <td className="py-2 pr-0 text-right text-slate-600">{r.uniquePhones.toLocaleString()}</td>
+                </tr>
+              ))}
+              {lob.length === 0 && (
+                <tr><td colSpan={8} className="py-6 text-center text-slate-400">No LOB data for this period.</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>

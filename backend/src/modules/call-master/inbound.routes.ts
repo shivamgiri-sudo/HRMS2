@@ -110,5 +110,29 @@ router.get("/project/:key/hourly", h(async (req, res) => {
     unavailable(res, `GET /project/${req.params.key}/hourly`, err, []);
   }
 }));
+router.get("/project/:key/hourly-by-date", h(async (req, res) => {
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    res.json({ success: true, data: await svc.getProjectHourlyByDate(f, req.params.key) });
+  } catch (err) {
+    unavailable(res, `GET /project/${req.params.key}/hourly-by-date`, err, []);
+  }
+}));
+router.get("/project/:key/lob", h(async (req, res) => {
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    res.json({ success: true, data: await svc.getProjectLobSummary(f, req.params.key) });
+  } catch (err) {
+    unavailable(res, `GET /project/${req.params.key}/lob`, err, []);
+  }
+}));
+router.get("/project/:key/agents", h(async (req, res) => {
+  try {
+    const f = parseFilters(req.query as Record<string, unknown>);
+    res.json({ success: true, data: await svc.getProjectAgentSummary(f, req.params.key) });
+  } catch (err) {
+    unavailable(res, `GET /project/${req.params.key}/agents`, err, []);
+  }
+}));
 
 export { router as inboundRouter };

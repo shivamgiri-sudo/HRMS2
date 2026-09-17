@@ -54,9 +54,18 @@ function parseNullableAmount(raw: string): number | null {
   return Number.isFinite(num) ? num : null;
 }
 
+const MONTH_ABBR: Record<string, string> = {
+  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
+  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+};
+
 /** The real source's date columns are plain Excel serials, per
  * housing-premium-sale-raw-bulk.service.ts's own confirmed finding. Also
- * handles ISO/M-D-Y text defensively, same as owner-sale-bulk.service.ts. */
+ * handles ISO/M-D-Y text defensively, same as owner-sale-bulk.service.ts --
+ * plus D-Mon-YY (e.g. "1-Sep-26"), the format owner-sale-bulk.service.ts's
+ * sibling table was confirmed live to actually receive (all 465 of its
+ * rows had report_date silently NULL until that format was added here too,
+ * since this file was copy-pasted from the same original bug). */
 function parseDate(raw: string): string | null {
   if (!raw) return null;
   if (/^\d+(\.\d+)?$/.test(raw)) {
@@ -67,6 +76,14 @@ function parseDate(raw: string): string | null {
   if (m) return m[0];
   m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(raw);
   if (m) return `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+  m = /^(\d{1,2})-([A-Za-z]{3})-(\d{2}|\d{4})$/.exec(raw);
+  if (m) {
+    const mon = MONTH_ABBR[m[2].toLowerCase()];
+    if (mon) {
+      const year = m[3].length === 2 ? `20${m[3]}` : m[3];
+      return `${year}-${mon}-${m[1].padStart(2, "0")}`;
+    }
+  }
   return null;
 }
 

@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
 
 /**
  * lp_feedback_cdr -- writes into db_masmis.lp_feedback_cdr (sql/1772). Source: LP Feedback CDR.xlsx.
@@ -43,12 +44,20 @@ export async function importLpFeedbackCdrBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const importedRowIds: string[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
-  for (const row of batchRows) {
+  /**
+   * Rows are inserted with up to BULK_ROW_CONCURRENCY in flight at once
+   * (same bounded-concurrency helper the attendance/leave import engines
+   * already use) instead of one at a time -- a 23,513-row batch awaiting a
+   * single INSERT per row serially is what made this import take so long
+   * it got killed mid-run by an unrelated server restart. errors/
+   * importedRowIds are plain array pushes from inside each task, which is
+   * safe: JS never preempts one task's synchronous push with another's.
+   */
+  await mapWithConcurrency(batchRows, BULK_ROW_CONCURRENCY, async (row) => {
     const data =
       typeof row.normalized_data === "string"
         ? JSON.parse(row.normalized_data)
@@ -57,7 +66,7 @@ export async function importLpFeedbackCdrBatch(
     const requiredVal = getByColumn(data, "Call_Number");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "Call_Number" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); return;
     }
 
     try {
@@ -100,13 +109,30 @@ export async function importLpFeedbackCdrBatch(
           uploadedByInt, batchId,
         ] as never[],
       );
-      importedRows++;
+      importedRowIds.push(row.id);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`Row ${row.row_no}: ${msg}`);
       errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
     }
+  });
+
+  const importedRows = importedRowIds.length;
+  const errorRows = errorUpdates.length;
+
+  /**
+   * Marks each successfully-inserted row 'imported' in upload_batch_row.
+   * Without this, readBatchProgress() (batch-job.ts) can never show real
+   * progress -- it counts rows that left 'valid'/'pending' -- and a
+   * re-triggered import after a crash would re-select and re-insert every
+   * already-imported row as a duplicate, since the SELECT above filters on
+   * row_status IN ('valid','pending').
+   */
+  if (importedRowIds.length) {
+    await db.execute(
+      `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${importedRowIds.map(() => "?").join(",")})`,
+      importedRowIds,
+    );
   }
 
   if (importedRows > 0) {
