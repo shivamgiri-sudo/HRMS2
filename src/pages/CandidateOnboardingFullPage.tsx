@@ -175,7 +175,7 @@ export default function CandidateOnboardingFullPage() {
           <div className="flex items-center justify-between mb-3">
             <div>
               <p className="text-sm font-bold text-slate-900">
-                {onb.status?.token.full_name || "Candidate"}
+                {(() => { const n = onb.status?.token.full_name ?? ""; return (n && !n.includes("_") && !(n.length > 24 && !/\s/.test(n))) ? n : "Candidate"; })()}
               </p>
               <p className="text-xs text-slate-500">
                 {[onb.status?.token.branch_name, onb.status?.token.process_name].filter(Boolean).join(" · ")}
