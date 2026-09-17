@@ -1603,7 +1603,7 @@ async function createRelatedEmployeeRecords(
   //
   // INSERT IGNORE: safe to retry — the unique key uq_emp_override_active on
   // (employee_id, override_type, status) prevents a second approved row.
-  if (Boolean(candRow?.pf_opt_out_elected)) {
+  if (candRow?.pf_opt_out_elected) {
     const joiningDate: Date = offer.date_of_joining instanceof Date
       ? offer.date_of_joining
       : new Date(String(offer.date_of_joining));
@@ -1640,7 +1640,7 @@ async function createRelatedEmployeeRecords(
     { flag: offer.esic_opt_out, overrideType: 'esic_opt_out', label: 'ESIC' },
   ];
   for (const { flag, overrideType, label } of offerOptOuts) {
-    if (!Boolean(Number(flag))) continue;
+    if (!Number(flag)) continue;
     const joiningDate: Date = offer.date_of_joining instanceof Date
       ? offer.date_of_joining
       : new Date(String(offer.date_of_joining));
