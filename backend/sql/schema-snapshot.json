@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1173,
-  "columnCount": 17449,
+  "tableCount": 1174,
+  "columnCount": 17473,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -13441,6 +13441,20 @@
       "category",
       "label",
       "active"
+    ],
+    "payroll_ledger_voucher": [
+      "id",
+      "run_id",
+      "branch_id",
+      "company_code",
+      "voucher_no",
+      "period",
+      "total_debit",
+      "total_credit",
+      "journal_entry_id",
+      "posted_by",
+      "posted_at",
+      "created_at"
     ],
     "payroll_new_joiner_holiday_override": [
       "id",
