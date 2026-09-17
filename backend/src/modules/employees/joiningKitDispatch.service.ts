@@ -495,7 +495,7 @@ async function loadKitForRelink(kitId: string): Promise<KitForRelink | null> {
  * been captured. This is the guard that stops that: a resend or reminder only
  * mints a link when the kit's own transaction is not already terminal.
  */
-async function kitEsignSessionIsAlive(kitId: string): Promise<boolean> {
+export async function kitEsignSessionIsAlive(kitId: string): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT status FROM employee_document_esign_transaction
       WHERE kit_id = ? ORDER BY initiated_at DESC LIMIT 1`,
@@ -503,7 +503,12 @@ async function kitEsignSessionIsAlive(kitId: string): Promise<boolean> {
   );
   const status = String((rows as RowDataPacket[])[0]?.status ?? "").toLowerCase();
   if (!status) return true; // no transaction row yet: nothing to have failed
-  return !["failed", "expired", "cancelled", "abandoned_unresolved"].includes(status);
+  // 'failed' is deliberately not treated as dead here — see the matching note on
+  // TERMINAL in esign-reconciliation.worker.ts. Verified live: a transaction Luckpay
+  // reported FAILED was completed by the candidate on the same session two days
+  // later. Excluding it from "dead" keeps resend/reminder links flowing instead of
+  // silently going quiet the moment one status check comes back FAILED.
+  return !["expired", "cancelled", "abandoned_unresolved"].includes(status);
 }
 
 /**
