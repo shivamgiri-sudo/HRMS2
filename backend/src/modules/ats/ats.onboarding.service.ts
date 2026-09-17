@@ -1175,88 +1175,20 @@ export async function saveOffer(
 // ── Branch Head: List Pending Approvals ───────────────────────────────────────
 
 export async function listPendingApprovals(scopeFilter: { sql: string; params: unknown[] }) {
+  // Step 1: main query — no correlated subqueries, just the base columns.
+  // process_name / process_is_designation / payroll_* are resolved below from
+  // three pre-batch queries, reducing N+1 (5 subqueries × N offers) to 3 fixed
+  // round-trips regardless of queue size.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT o.id AS offer_id, o.offered_ctc, o.gross, o.net_in_hand,
             o.emp_type, o.date_of_joining, o.salary_band, o.status AS offer_status,
-            -- Surfaced so the approver can see WHY an out-of-band CTC was let
-            -- through saveOffer()'s band-range check, instead of just the
-            -- number with no context. NULL/0 on every offer raised the normal
-            -- way. See 1702_offer_proposed_exception.sql (not yet applied --
-            -- both columns read as NULL/0 until that migration runs).
             o.is_proposed_exception, o.proposed_exception_reason,
             r.id AS request_id, r.branch_id,
             c.id AS candidate_id, c.candidate_code, c.full_name, c.email, c.mobile,
             c.father_name, c.date_of_birth, c.profile_status,
+            c.applied_for_process,
             b.branch_name,
-            -- Cost centre and process, so the branch head can see WHAT they are
-            -- approving a head against and not just who. The offer already
-            -- carries the cost centre; nothing surfaced it.
-            cc.cost_centre_code, cc.cost_centre_name, cc.client_name,
-            -- Process is not on the offer and not on the cost centre either —
-            -- cost_centre_master.process_id is NULL on every row in production,
-            -- so it cannot be the source. It comes from the candidate, where
-            -- applied_for_process is VARCHAR holding a process_master id on some
-            -- rows and a process name on others; resolve both.
-            -- Scalar subqueries, not joins. Both masters hold duplicate names —
-            -- 'Team Leader' is in designation_master twice, and process_master
-            -- has two 'BSS-OTHERS', two 'C-SAT', two 'CMG -OTHERS' — so a join
-            -- returns the candidate once per duplicate and the branch head sees
-            -- the same person listed twice. A scalar subquery cannot fan out.
-            -- Both tables are ~130 rows, so the OR costs nothing here.
-            (SELECT proc.process_name FROM process_master proc
-              WHERE proc.id = c.applied_for_process OR proc.process_name = c.applied_for_process
-              ORDER BY (proc.id = c.applied_for_process) DESC, proc.process_name
-              LIMIT 1) AS process_name,
-            -- 93 candidates hold a DESIGNATION in applied_for_process rather
-            -- than a process — 'Quality Analyst' (62), 'Team Leader' (26),
-            -- 'Operations' (5). Echoing that as the process is worse than
-            -- showing nothing: it reads as a real mapping and the branch head
-            -- has no way to tell. Flagged so the UI can say what is wrong.
-            EXISTS (SELECT 1 FROM designation_master d
-                     WHERE d.designation_name = c.applied_for_process) AS process_is_designation,
-            -- The raw label, only when it is neither an unresolved id nor a
-            -- designation. Values like 'Housing' and 'GPI' are real campaigns
-            -- that simply are not in process_master, and are worth showing as
-            -- unverified rather than hiding.
-            CASE
-              WHEN c.applied_for_process REGEXP '^[0-9a-f]{8}-[0-9a-f]{4}-' THEN NULL
-              ELSE NULLIF(TRIM(c.applied_for_process), '')
-            END AS process_raw,
-            -- Whether Payroll HR has validated this salary. Employee creation
-            -- requires it (validateSalaryLock), so without this the branch head
-            -- clicks Approve and gets a failure they cannot act on. Surfaced on
-            -- the row so the blocker is visible before the click.
-            -- True when the salary can be established for this offer: either a
-            -- validation row already exists, or the offer carries the figures
-            -- to derive one at approve time. Reporting merely "does a row
-            -- exist" would warn about offers that approve perfectly well.
-            (
-              EXISTS (
-                SELECT 1 FROM ats_payroll_hr_validation pv
-                 WHERE pv.candidate_id = c.id AND pv.validation_status = 'validated'
-              )
-              OR (o.gross IS NOT NULL AND o.date_of_joining IS NOT NULL)
-            ) AS payroll_validated,
-            -- The two dates Payroll HR actually commits to, which are NOT the
-            -- same field as o.date_of_joining above. That column is whatever was
-            -- typed into the Employment Offer form -- in practice the ATS
-            -- walk-in date -- and the UI now labels it as such. These are the
-            -- operative ones: joining_date is day 1 in office and
-            -- salary_start_date is when salary generation begins, both written
-            -- by POST /api/ats/payroll-hr/validate.
-            --
-            -- Scalar subqueries for the reason given above: candidate_id carries
-            -- only INDEX idx_candidate, with no unique constraint, so a join
-            -- would fan the candidate out once per validation row the day a
-            -- second one is written. Ordered so the newest validation wins.
-            (SELECT pv2.joining_date FROM ats_payroll_hr_validation pv2
-              WHERE pv2.candidate_id = c.id
-              ORDER BY pv2.validated_at DESC, pv2.created_at DESC
-              LIMIT 1) AS payroll_joining_date,
-            (SELECT pv3.salary_start_date FROM ats_payroll_hr_validation pv3
-              WHERE pv3.candidate_id = c.id
-              ORDER BY pv3.validated_at DESC, pv3.created_at DESC
-              LIMIT 1) AS payroll_salary_start_date
+            cc.cost_centre_code, cc.cost_centre_name, cc.client_name
      FROM ats_employment_offer o
      JOIN ats_onboarding_request r ON r.id = o.onboarding_request_id
      JOIN ats_candidate c ON c.id = r.candidate_id
@@ -1264,10 +1196,97 @@ export async function listPendingApprovals(scopeFilter: { sql: string; params: u
      LEFT JOIN cost_centre_master cc ON cc.id = o.cost_centre
      WHERE o.status = 'submitted'
        AND (${scopeFilter.sql})
-     ORDER BY o.submitted_at ASC`,
+     ORDER BY o.submitted_at ASC
+     LIMIT 500`,
     scopeFilter.params,
   );
-  return rows;
+
+  if (rows.length === 0) return [];
+
+  // Step 2: process_master (≈130 rows) — load once, build two lookup Maps.
+  // A join would fan out a candidate whenever process_master holds duplicate
+  // names ('BSS-OTHERS' ×2, 'C-SAT' ×2, etc.). Maps resolve both id and name
+  // without fan-out.
+  const [procRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, process_name FROM process_master`,
+  );
+  const procById  = new Map<string, string>();
+  const procByName = new Map<string, string>();
+  for (const p of procRows as any[]) {
+    procById.set(String(p.id), String(p.process_name));
+    if (!procByName.has(String(p.process_name))) {
+      procByName.set(String(p.process_name), String(p.process_name));
+    }
+  }
+
+  // Step 3: designation_master names — for the "applied_for_process is actually
+  // a designation" flag. Load once, store in a Set for O(1) lookup.
+  const [desigRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT designation_name FROM designation_master`,
+  );
+  const desigNames = new Set<string>((desigRows as any[]).map((d) => String(d.designation_name)));
+
+  // Step 4: payroll validations — one query for all candidates in this batch.
+  // Replaces three correlated subqueries (has_validated, joining_date,
+  // salary_start_date) per row. ROW_NUMBER picks the newest validation row;
+  // MAX(CASE WHEN validation_status='validated') checks any row in history.
+  const candidateIds = [...new Set((rows as any[]).map((r) => String(r.candidate_id)))];
+  const pvMap = new Map<string, { hasValidated: boolean; joiningDate: string | null; salaryStartDate: string | null }>();
+  if (candidateIds.length > 0) {
+    const ph = candidateIds.map(() => '?').join(',');
+    const [pvRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         pv.candidate_id,
+         MAX(CASE WHEN pv.validation_status = 'validated' THEN 1 ELSE 0 END) AS has_validated,
+         MAX(CASE WHEN pv.rn = 1 THEN pv.joining_date       ELSE NULL END)   AS latest_joining_date,
+         MAX(CASE WHEN pv.rn = 1 THEN pv.salary_start_date  ELSE NULL END)   AS latest_salary_start_date
+       FROM (
+         SELECT candidate_id, validation_status, joining_date, salary_start_date,
+                ROW_NUMBER() OVER (
+                  PARTITION BY candidate_id
+                  ORDER BY COALESCE(validated_at, created_at) DESC
+                ) AS rn
+         FROM ats_payroll_hr_validation
+         WHERE candidate_id IN (${ph})
+       ) pv
+       GROUP BY pv.candidate_id`,
+      candidateIds,
+    );
+    for (const r of pvRows as any[]) {
+      pvMap.set(String(r.candidate_id), {
+        hasValidated:    Number(r.has_validated) === 1,
+        joiningDate:     (r.latest_joining_date    as string | null) ?? null,
+        salaryStartDate: (r.latest_salary_start_date as string | null) ?? null,
+      });
+    }
+  }
+
+  // Step 5: enrich each row in JS — all lookups are O(1) Map/Set operations.
+  return (rows as any[]).map((row) => {
+    const afp = row.applied_for_process as string | null;
+    const processName = afp
+      ? (procById.get(afp) ?? procByName.get(afp) ?? null)
+      : null;
+    const processIsDesignation = afp ? desigNames.has(afp) : false;
+    const processRaw = afp && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(afp)
+      ? (afp.trim() || null)
+      : null;
+
+    const pv = pvMap.get(String(row.candidate_id));
+    const payrollValidated =
+      (pv?.hasValidated === true) ||
+      (row.gross != null && row.date_of_joining != null);
+
+    return {
+      ...row,
+      process_name:            processName,
+      process_is_designation:  processIsDesignation ? 1 : 0,
+      process_raw:             processRaw,
+      payroll_validated:       payrollValidated ? 1 : 0,
+      payroll_joining_date:    pv?.joiningDate     ?? null,
+      payroll_salary_start_date: pv?.salaryStartDate ?? null,
+    };
+  });
 }
 
 // ── Branch Head: Approve ──────────────────────────────────────────────────────
