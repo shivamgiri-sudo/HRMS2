@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Bellavita's real Agent Productivity Report (APR) -- writes into the
@@ -126,8 +127,12 @@ export async function importBbAprMasmisBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  // Was a plain per-row for-loop -- one INSERT + one status-UPDATE round trip per row, awaited
+  // sequentially. Invisible on a local DB (sub-millisecond round trips), but production's DB is
+  // reached over a real network link, so a 990-row file meant ~2,000 sequential round trips.
+  // Same fix already proven for gnc-sale-masmis-bulk.service.ts: validate everything first, then
+  // hand every row to chunkedMasmisInsert (one INSERT per ~300 rows) in a single pass.
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -141,73 +146,84 @@ export async function importBbAprMasmisBatch(
     const reportDate = parseReportDate(get(data, "report_date", "Date"));
     if (!empName || !reportDate) {
       const msg = `Row ${row.row_no}: "emp_name" and "report_date" are both required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.bb_apr
-           (unique_id, week, report_date, emp_name, noiid, num_calls_chat, lob, login_time,
-            wait_time, talk_time, dispo_time, pause_time, acht, lunch, tea, tea1, washr,
-            team_briefing_aux, net_pause, avg_dispo, total_break, actual_login_hrs, downtime,
-            login_duration, logout_time, net_login_hrs, utilization, attendance_1, week_1, mtd,
-            team_leader, fhd, tenure, tenurity_week, sub_lob, unique_count, attendance_2,
-            capping, attendance_3, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          getOrNull(data, "unique_id"),
-          getOrNull(data, "week"),
-          reportDate,
-          empName,
-          getOrNull(data, "noiid"),
-          parseNullableInt(get(data, "num_calls_chat", "No. of Calls/Chat")),
-          getOrNull(data, "lob"),
-          getOrNull(data, "login_time"),
-          getOrNull(data, "wait_time"),
-          getOrNull(data, "talk_time"),
-          getOrNull(data, "dispo_time"),
-          getOrNull(data, "pause_time"),
-          parseNullableInt(get(data, "acht")),
-          getOrNull(data, "lunch"),
-          getOrNull(data, "tea"),
-          getOrNull(data, "tea1"),
-          getOrNull(data, "washr"),
-          getOrNull(data, "team_briefing_aux"),
-          getOrNull(data, "net_pause"),
-          getOrNull(data, "avg_dispo"),
-          getOrNull(data, "total_break"),
-          getOrNull(data, "actual_login_hrs"),
-          getOrNull(data, "downtime"),
-          getOrNull(data, "login_duration", "Login"),
-          getOrNull(data, "logout_time", "Logout"),
-          getOrNull(data, "net_login_hrs", "Net Login Hrs+DN+Briefing"),
-          getOrNull(data, "utilization"),
-          getOrNull(data, "attendance_1"),
-          getOrNull(data, "week_1"),
-          getOrNull(data, "mtd"),
-          getOrNull(data, "team_leader"),
-          getOrNull(data, "fhd"),
-          parseNullableInt(get(data, "tenure")),
-          getOrNull(data, "tenurity_week"),
-          getOrNull(data, "sub_lob"),
-          parseNullableInt(get(data, "unique_count")),
-          // Real header has a typo ("Attendence", not "Attendance") that normalization can't
-          // bridge (the words differ), so it needs its own explicit alias.
-          getOrNull(data, "attendance_2", "Attendence 2"),
-          getOrNull(data, "capping"),
-          getOrNull(data, "attendance_3"),
-          null, // uploaded_by: HRMS user ids are UUIDs, don't fit this int column
-          batchId,
-        ] as never[],
-      );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        getOrNull(data, "unique_id"),
+        getOrNull(data, "week"),
+        reportDate,
+        empName,
+        getOrNull(data, "noiid"),
+        parseNullableInt(get(data, "num_calls_chat", "No. of Calls/Chat")),
+        getOrNull(data, "lob"),
+        getOrNull(data, "login_time"),
+        getOrNull(data, "wait_time"),
+        getOrNull(data, "talk_time"),
+        getOrNull(data, "dispo_time"),
+        getOrNull(data, "pause_time"),
+        parseNullableInt(get(data, "acht")),
+        getOrNull(data, "lunch"),
+        getOrNull(data, "tea"),
+        getOrNull(data, "tea1"),
+        getOrNull(data, "washr"),
+        getOrNull(data, "team_briefing_aux"),
+        getOrNull(data, "net_pause"),
+        getOrNull(data, "avg_dispo"),
+        getOrNull(data, "total_break"),
+        getOrNull(data, "actual_login_hrs"),
+        getOrNull(data, "downtime"),
+        getOrNull(data, "login_duration", "Login"),
+        getOrNull(data, "logout_time", "Logout"),
+        getOrNull(data, "net_login_hrs", "Net Login Hrs+DN+Briefing"),
+        getOrNull(data, "utilization"),
+        getOrNull(data, "attendance_1"),
+        getOrNull(data, "week_1"),
+        getOrNull(data, "mtd"),
+        getOrNull(data, "team_leader"),
+        getOrNull(data, "fhd"),
+        parseNullableInt(get(data, "tenure")),
+        getOrNull(data, "tenurity_week"),
+        getOrNull(data, "sub_lob"),
+        parseNullableInt(get(data, "unique_count")),
+        // Real header has a typo ("Attendence", not "Attendance") that normalization can't
+        // bridge (the words differ), so it needs its own explicit alias.
+        getOrNull(data, "attendance_2", "Attendence 2"),
+        getOrNull(data, "capping"),
+        getOrNull(data, "attendance_3"),
+        null, // uploaded_by: HRMS user ids are UUIDs, don't fit this int column
+        batchId,
+      ],
+    });
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.bb_apr
+       (unique_id, week, report_date, emp_name, noiid, num_calls_chat, lob, login_time,
+        wait_time, talk_time, dispo_time, pause_time, acht, lunch, tea, tea1, washr,
+        team_briefing_aux, net_pause, avg_dispo, total_break, actual_login_hrs, downtime,
+        login_duration, logout_time, net_login_hrs, utilization, attendance_1, week_1, mtd,
+        team_leader, fhd, tenure, tenurity_week, sub_lob, unique_count, attendance_2,
+        capping, attendance_3, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
+
+  const failedIds = new Set(inserted.errorUpdates.map((u) => u.rowId));
+  const importedIds = toInsert.filter((r) => !failedIds.has(r.rowId)).map((r) => r.rowId);
+  for (let i = 0; i < importedIds.length; i += 1000) {
+    const slice = importedIds.slice(i, i + 1000);
+    await db.execute(
+      `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${slice.map(() => "?").join(",")})`,
+      slice,
+    );
   }
 
   if (importedRows > 0) {

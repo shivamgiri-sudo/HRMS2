@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Bellavita's real "Sale" sheet -- written into the ALREADY-LIVE
@@ -133,8 +134,12 @@ export async function importBbSaleMasmisBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  // Was a plain per-row for-loop -- one INSERT + one status-UPDATE round trip per row, awaited
+  // sequentially. Invisible on a local DB (sub-millisecond round trips), but production's DB is
+  // reached over a real network link, so a 3,000-row file meant ~6,000 sequential round trips.
+  // Same fix already proven for gnc-sale-masmis-bulk.service.ts: validate everything first, then
+  // hand every row to chunkedMasmisInsert (one INSERT per ~300 rows) in a single pass.
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -146,74 +151,91 @@ export async function importBbSaleMasmisBatch(
     const saleDate = parseBellavitaDateOnly(get(data, "Date", "date"));
     if (!orderId || !saleDate) {
       const msg = `Row ${row.row_no}: "Bella Vita Order ID" and "Date" are both required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.bb_sale
-           (week, Date, emp_id, emp_name, tl, t1, t2, FHD, days,
-            phone_number, email_id, payment_status, amount, bella_vita_order_id,
-            campaign, calling_status, discount_code, sale_count,
-            current_status, final_status, Order_DateTime, state, line_item_name,
-            pincode, \`Order Date\`, hrs_24_48, crazy_deal, perfume, size,
-            order_pickup_datetime, rto_initiated_datetime, diff_hour,
-            lob, pincode_relevent, rto_status, draft_order, time_1608,
-            sale_source_name, shift, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          get(data, "Week", "week"),
-          saleDate,
-          get(data, "EMP ID", "emp_id", "emp id"),
-          get(data, "Emp_Name", "emp_name", "emp name"),
-          get(data, "TL", "tl"),
-          get(data, "T1", "t1"),
-          get(data, "T2", "t2"),
-          parseBellavitaDateOnly(get(data, "FHD", "fhd")),
-          parseNullableInt(get(data, "Days", "days")),
-          get(data, "Phone Number", "phone_number", "phone number"),
-          get(data, "E-mail ID", "email id", "email_id"),
-          get(data, "Payment Status", "payment_status"),
-          parseNullableFloat(get(data, "Amount", "amount")),
-          orderId,
-          get(data, "Campaign", "campaign"),
-          get(data, "Calling Status", "calling_status"),
-          get(data, "Discount Code", "discount_code"),
-          parseNullableInt(get(data, "Count", "count")),
-          get(data, "Current Status", "current_status"),
-          get(data, "Final Status", "final_status"),
-          parseBellavitaDateTime(get(data, "Order Date&Time", "order_datetime")) ??
-            parseBellavitaDateTime(get(data, "Order Date", "order_date")),
-          get(data, "State", "state"),
-          get(data, "Line Item Name", "line_item_name"),
-          get(data, "Pincode", "pincode"),
-          parseBellavitaDateOnly(get(data, "Order Date", "order_date")),
-          get(data, "24Hrs&48hrs", "hrs 24-48", "24hrs_48hrs"),
-          get(data, "Crazy Deal", "crazy_deal"),
-          get(data, "Perfume", "perfume"),
-          get(data, "Size", "size"),
-          parseBellavitaDateTime(get(data, "Order Pickup Date&Time", "order pickup date", "order_pickup_datetime")),
-          parseBellavitaDateTime(get(data, "RTO Initiated Date&Time", "rto initiated date", "rto_initiated_datetime")),
-          parseNullableInt(get(data, "Diff Hour", "diff_hour")),
-          get(data, "LOB", "lob"),
-          get(data, "Pincode Relevent", "pincode_relevent"),
-          get(data, "RTO Status", "rto_status"),
-          get(data, "Draft Order", "draft_order"),
-          get(data, "16:08", "Time 1608"),
-          get(data, "Sale Source Name", "sale_source_name"),
-          get(data, "Shift", "shift"),
-          null, // uploaded_by: HRMS user ids are UUIDs, don't fit this int column
-          batchId,
-        ] as never[],
-      );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        get(data, "Week", "week"),
+        saleDate,
+        get(data, "EMP ID", "emp_id", "emp id"),
+        get(data, "Emp_Name", "emp_name", "emp name"),
+        get(data, "TL", "tl"),
+        get(data, "T1", "t1"),
+        get(data, "T2", "t2"),
+        parseBellavitaDateOnly(get(data, "FHD", "fhd")),
+        parseNullableInt(get(data, "Days", "days")),
+        get(data, "Phone Number", "phone_number", "phone number"),
+        get(data, "E-mail ID", "email id", "email_id"),
+        get(data, "Payment Status", "payment_status"),
+        parseNullableFloat(get(data, "Amount", "amount")),
+        orderId,
+        get(data, "Campaign", "campaign"),
+        get(data, "Calling Status", "calling_status"),
+        get(data, "Discount Code", "discount_code"),
+        parseNullableInt(get(data, "Count", "count")),
+        get(data, "Current Status", "current_status"),
+        get(data, "Final Status", "final_status"),
+        parseBellavitaDateTime(get(data, "Order Date&Time", "order_datetime")) ??
+          parseBellavitaDateTime(get(data, "Order Date", "order_date")),
+        get(data, "State", "state"),
+        get(data, "Line Item Name", "line_item_name"),
+        get(data, "Pincode", "pincode"),
+        parseBellavitaDateOnly(get(data, "Order Date", "order_date")),
+        get(data, "24Hrs&48hrs", "hrs 24-48", "24hrs_48hrs"),
+        get(data, "Crazy Deal", "crazy_deal"),
+        get(data, "Perfume", "perfume"),
+        get(data, "Size", "size"),
+        parseBellavitaDateTime(get(data, "Order Pickup Date&Time", "order pickup date", "order_pickup_datetime")),
+        parseBellavitaDateTime(get(data, "RTO Initiated Date&Time", "rto initiated date", "rto_initiated_datetime")),
+        parseNullableInt(get(data, "Diff Hour", "diff_hour")),
+        get(data, "LOB", "lob"),
+        get(data, "Pincode Relevent", "pincode_relevent"),
+        get(data, "RTO Status", "rto_status"),
+        get(data, "Draft Order", "draft_order"),
+        get(data, "16:08", "Time 1608"),
+        get(data, "Sale Source Name", "sale_source_name"),
+        get(data, "Shift", "shift"),
+        null, // uploaded_by: HRMS user ids are UUIDs, don't fit this int column
+        batchId,
+      ],
+    });
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.bb_sale
+       (week, Date, emp_id, emp_name, tl, t1, t2, FHD, days,
+        phone_number, email_id, payment_status, amount, bella_vita_order_id,
+        campaign, calling_status, discount_code, sale_count,
+        current_status, final_status, Order_DateTime, state, line_item_name,
+        pincode, \`Order Date\`, hrs_24_48, crazy_deal, perfume, size,
+        order_pickup_datetime, rto_initiated_datetime, diff_hour,
+        lob, pincode_relevent, rto_status, draft_order, time_1608,
+        sale_source_name, shift, uploaded_by, upload_batch_id)`,
+    // 41 placeholders for 41 columns -- the pre-existing version of this INSERT had only 40,
+    // one short of its own 41-column list (confirmed against the last-committed version before
+    // today's changes), so every bb_sale INSERT has likely been throwing a bind-parameter-count
+    // error since this file was created, independent of the header/date bugs fixed above.
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
+
+  // Mark every successfully-inserted row 'imported' in one bulk UPDATE per 1,000 ids, not one
+  // round trip per row -- the same reason the INSERT itself was just batched above.
+  const failedIds = new Set(inserted.errorUpdates.map((u) => u.rowId));
+  const importedIds = toInsert.filter((r) => !failedIds.has(r.rowId)).map((r) => r.rowId);
+  for (let i = 0; i < importedIds.length; i += 1000) {
+    const slice = importedIds.slice(i, i + 1000);
+    await db.execute(
+      `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${slice.map(() => "?").join(",")})`,
+      slice,
+    );
   }
 
   if (importedRows > 0) {
