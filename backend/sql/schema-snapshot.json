@@ -6427,6 +6427,23 @@
       "created_at",
       "updated_at"
     ],
+    "email_ticket_analyst_daily_actual": [
+      "id",
+      "process_id",
+      "dashboard_label",
+      "report_date",
+      "analyst_user_id",
+      "analyst_name",
+      "tickets_received",
+      "tickets_closed",
+      "tickets_reopened",
+      "tickets_open_pending",
+      "data_source",
+      "source_reference",
+      "created_by",
+      "created_at",
+      "updated_at"
+    ],
     "employee_360_activity_log": [
       "id",
       "employee_id",
