@@ -104,7 +104,22 @@ export async function importProcessManualKpiBatch(
       ORDER BY row_no`,
     [batchId],
   );
-  if (batchRows.length === 0) return { importedRows: 0, errorRows: 0, errors: [] };
+  if (batchRows.length === 0) {
+    const [staged] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n FROM upload_batch_row WHERE upload_batch_id = ?`,
+      [batchId],
+    );
+    if (Number((staged as RowDataPacket[])[0]?.n ?? 0) === 0) {
+      await db.execute(
+        `UPDATE upload_batch SET batch_status = 'validation_failed',
+            error_summary = 'No rows were staged for this batch -- the upload''s row-staging step likely failed or timed out. Re-upload the file.',
+            updated_at = NOW()
+         WHERE id = ?`,
+        [batchId],
+      );
+    }
+    return { importedRows: 0, errorRows: 0, errors: [] };
+  }
 
   // Resolved by code, never created — the same rule process-delivery-bulk.service.ts
   // uses, for the same reason: a row against an unrecognised process is a typo, not
@@ -172,6 +187,7 @@ export async function importProcessManualKpiBatch(
           [randomUUID(), processId, f.field, date, f.value, batchId, importedByUserId],
         );
       }
+      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
       importedRows++;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -190,6 +206,13 @@ export async function importProcessManualKpiBatch(
       [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
     );
   }
+
+  const finalStatus =
+    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
+  await db.execute(
+    `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
+    [finalStatus, importedRows, errorRows, batchId],
+  );
 
   return { importedRows, errorRows, errors };
 }
