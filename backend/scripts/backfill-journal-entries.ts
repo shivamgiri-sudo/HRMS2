@@ -52,6 +52,22 @@ const DO_VOUCHERS = process.argv.includes("--vouchers");
 
 const CONSUMED_GRN_STATUSES = ["pending_accounts_payment", "payment_scheduled", "partially_paid", "paid", "approved"];
 
+/**
+ * postGrnApprovalJournalEntry() defaults entryDate to today — correct for the live approval
+ * path, wrong here: without an explicit override every one of thousands of historical entries
+ * would be stamped with the backfill run's date instead of when the GRN was actually approved,
+ * corrupting the Trial Balance's date view. finance_head_reviewed_at is the exact moment this
+ * function models ("at GRN approval"); bill_date and created_at are fallbacks for the ~30% of
+ * historical rows (legacy db_bill-migrated, before this column existed) that don't have it.
+ */
+function historicalEntryDate(grn: any): string {
+  // Pool is created with dateStrings: true (see main()), so these arrive as plain
+  // "YYYY-MM-DD..." strings already in the server's wall-clock value — a straight slice, no
+  // Date object round-trip that could shift the calendar day via a UTC conversion.
+  const raw: string = grn.finance_head_reviewed_at ?? grn.bill_date ?? grn.created_at;
+  return raw.slice(0, 10);
+}
+
 async function backfillGrns(pool: mysql.Pool) {
   const [grns] = await pool.query<any[]>(
     `SELECT g.* FROM grn_request g
@@ -70,7 +86,7 @@ async function backfillGrns(pool: mysql.Pool) {
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
-      await postGrnApprovalJournalEntry(connection, grn, "backfill-script");
+      await postGrnApprovalJournalEntry(connection, grn, "backfill-script", historicalEntryDate(grn));
       await connection.commit();
       posted++;
       console.log(`  posted GRN ${grn.grn_number ?? grn.id}`);
@@ -215,6 +231,12 @@ async function main() {
   const pool = mysql.createPool({
     host: process.env.DB_HOST, port: Number(process.env.DB_PORT),
     user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
+    // Matches src/db/mysql.ts's own pool config. Without this, DATE/DATETIME columns come back
+    // as JS Date objects in the driver's default (often UTC) interpretation — historicalEntryDate()
+    // below would then silently shift any GRN approved before ~05:30 IST to the previous
+    // calendar day once .toISOString() converts it. Live-caught 2026-09-17 before the backfill
+    // ran, not after.
+    dateStrings: true,
   });
 
   if (!APPLY) console.log("DRY RUN — no writes will be made. Pass --apply to actually post.");

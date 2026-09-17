@@ -82,6 +82,15 @@ export async function postGrnApprovalJournalEntry(
   connection: PoolConnection,
   grn: GrnForJournalPosting,
   actorUserId: string,
+  /**
+   * Defaults to today, correct for the live approval path this function's own name describes.
+   * The Phase 6 backfill (backend/scripts/backfill-journal-entries.ts) is the one other caller,
+   * and MUST pass the GRN's own historical approval date here — leaving this at its default for
+   * a backfill would stamp every one of thousands of historical entries with the backfill run's
+   * date instead of when the money actually moved, corrupting the Trial Balance's date view.
+   * Live-caught 2026-09-17 before the backfill ran, not after.
+   */
+  entryDate: string = new Date().toISOString().slice(0, 10),
 ): Promise<{ journalEntryId: string }> {
   const grossAmount = Number(grn.amount_with_tax || grn.amount);
   const expenseAccountId = await resolveExpenseSubHeadAccountId(connection, grn.head, grn.sub_head);
@@ -97,7 +106,7 @@ export async function postGrnApprovalJournalEntry(
       : { accountType: "payable_account" as const, accountId: await resolveImprestFloatAccountId(connection) };
 
   return journalService.post(connection, {
-    entryDate: new Date().toISOString().slice(0, 10),
+    entryDate,
     narration: `GRN ${grn.grn_number ?? grn.id} approved — ${grn.head} / ${grn.sub_head}`,
     sourceType: "grn",
     sourceId: grn.id,
