@@ -3,6 +3,7 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
+import { financeBranchFilter, type FinanceBranchScope } from "../finance/finance-access-scope.js";
 
 export interface RewardPenaltyEntry {
   id: string;
@@ -42,7 +43,8 @@ export interface RewardPenaltySummary {
 
 export async function listRewardPenalty(
   periodCode: string,
-  costCentreId?: string
+  costCentreId?: string,
+  branchScope?: FinanceBranchScope
 ): Promise<RewardPenaltyEntry[]> {
   if (!periodCode) return [];
   if (!(await tableExists("cost_centre_reward_penalty"))) return [];
@@ -53,13 +55,24 @@ export async function listRewardPenalty(
     where.push("rp.cost_centre_id = ?");
     params.push(costCentreId);
   }
+  // F-01: a branch-bound caller (branch_head/process_manager) must not see other branches'
+  // reward/penalty entries when costCentreId is left off. Global roles resolve to {mode:"all"}
+  // and keep the original unfiltered LEFT JOIN exactly as before — only a branch-bound scope
+  // switches to INNER, so a cost centre this table's own branch column doesn't resolve is
+  // excluded for them, never treated as unrestricted.
+  const isBranchBound = branchScope?.mode === "branches";
+  if (isBranchBound) {
+    const { sql, params: branchParams } = financeBranchFilter(branchScope!, "ccm.branch_id");
+    where.push(sql);
+    params.push(...branchParams);
+  }
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT rp.*,
             ccm.cost_centre_name,
             CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS submitted_by_name
        FROM cost_centre_reward_penalty rp
-       LEFT JOIN cost_centre_master ccm ON ccm.id = rp.cost_centre_id
+       ${isBranchBound ? "INNER" : "LEFT"} JOIN cost_centre_master ccm ON ccm.id = rp.cost_centre_id
        LEFT JOIN employees e ON e.id = rp.submitted_by
       WHERE ${where.join(" AND ")}
       ORDER BY rp.created_at DESC`,
@@ -190,9 +203,22 @@ export async function rejectRewardPenaltyEntry(
   return { ok: true };
 }
 
-export async function getRewardPenaltySummary(periodCode: string): Promise<RewardPenaltySummary[]> {
+export async function getRewardPenaltySummary(
+  periodCode: string,
+  branchScope?: FinanceBranchScope
+): Promise<RewardPenaltySummary[]> {
   if (!periodCode) return [];
   if (!(await tableExists("cost_centre_reward_penalty"))) return [];
+
+  // F-01: same branch-bound-vs-all split as listRewardPenalty above.
+  const isBranchBound = branchScope?.mode === "branches";
+  const where = ["rp.period_code = ?", "rp.approval_status = 'approved'"];
+  const params: unknown[] = [periodCode];
+  if (isBranchBound) {
+    const { sql, params: branchParams } = financeBranchFilter(branchScope!, "ccm.branch_id");
+    where.push(sql);
+    params.push(...branchParams);
+  }
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT rp.cost_centre_id,
@@ -201,11 +227,11 @@ export async function getRewardPenaltySummary(periodCode: string): Promise<Rewar
             SUM(CASE WHEN rp.entry_type = 'penalty' THEN rp.amount_inr ELSE 0 END) AS total_penalties,
             SUM(CASE WHEN rp.entry_type = 'reward' THEN rp.amount_inr ELSE -rp.amount_inr END) AS net_impact
        FROM cost_centre_reward_penalty rp
-       LEFT JOIN cost_centre_master ccm ON ccm.id = rp.cost_centre_id
-      WHERE rp.period_code = ? AND rp.approval_status = 'approved'
+       ${isBranchBound ? "INNER" : "LEFT"} JOIN cost_centre_master ccm ON ccm.id = rp.cost_centre_id
+      WHERE ${where.join(" AND ")}
       GROUP BY rp.cost_centre_id, ccm.cost_centre_name
       ORDER BY net_impact DESC`,
-    [periodCode]
+    params
   );
   return rows as RewardPenaltySummary[];
 }

@@ -49,6 +49,50 @@ describe("BPO revenue calculation", () => {
     expect(result.minimumCommitmentTopUp).toBe(200000);
     expect(result.earnedRevenue).toBe(1000000);
   });
+
+  // F-02: an explicit 0 is a real delivery fact and must not fall back to the next metric in
+  // the chain (previously `productiveHours || billableUnits` treated 0 productive hours as
+  // "not reported" and billed off billableUnits instead).
+  it("does not fall back past an explicit zero delivery", () => {
+    const result = calculateRevenue(
+      [{
+        billingModel: "per_productive_hour",
+        metricKey: "productive_hours",
+        rateAmount: 500,
+      }],
+      [{ metricKey: "productive_hours", plannedUnits: 2200, productiveHours: 0, billableUnits: 1600 }]
+    );
+
+    expect(result.baseRevenue).toBe(0);
+    expect(result.earnedRevenue).toBe(0);
+  });
+
+  it("still falls back to the next metric when the primary one is genuinely unreported", () => {
+    const result = calculateRevenue(
+      [{
+        billingModel: "per_productive_hour",
+        metricKey: "productive_hours",
+        rateAmount: 500,
+      }],
+      [{ metricKey: "productive_hours", plannedUnits: 2200, billableUnits: 1600 }]
+    );
+
+    expect(result.baseRevenue).toBe(800000);
+  });
+
+  it("does not fall back past zero billable seats to mandated seats", () => {
+    const result = calculateRevenue(
+      [{
+        billingModel: "per_seat",
+        metricKey: "billable_seats",
+        rateAmount: 30000,
+        mandatedSeats: 50,
+      }],
+      [{ metricKey: "billable_seats", plannedUnits: 50, billableUnits: 0 }]
+    );
+
+    expect(result.baseRevenue).toBe(0);
+  });
 });
 
 describe("BPO P&L cost waterfall", () => {

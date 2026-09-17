@@ -47,6 +47,13 @@ const financeRoles = ['super_admin','admin','finance','finance_head','accounts_h
 // GRN_REVIEW_ROLES, so they can submit but never approve.
 const grnRoles: string[] = [...financeRoles, 'branch_admin', 'branch_head'];
 const pnlRoles     = ['super_admin','admin','ceo','coo','finance','finance_head','accounts_head','payroll_head'] as const;
+// Process P&L (the operational command centre) and its per-process detail page are the only two
+// pnlRoles-gated routes navConfig.tsx actually links branch_head/process_manager to — the backend
+// PNL_READ_ROLES row-scopes both roles to their own branch/process. Without this, that nav link
+// pointed at a route the guard 403'd, and it never covered configuration/period-close/LOB
+// management, which stay pnlRoles-only (F-10 fix — matches the backend's PNL_GLOBAL_ONLY_ROLES
+// split in process-pnl.routes.ts and the narrower role lists on those three nav items).
+const pnlOperationalRoles = [...pnlRoles, 'branch_head', 'process_manager'] as const;
 const budgetConsolidationRoles = ['super_admin','admin','ceo','coo','finance_head','accounts_head'] as const;
 const costCentreRoles = ['super_admin','admin','finance','finance_head','accounts_head','branch_head','branch_admin'] as const;
 // Must stay identical to the grant in backend/sql/1066_billability_page_access.sql and to
@@ -123,11 +130,11 @@ export const financeRouteElements = (
       {/* Roles here match the grant issued in migration 1064 exactly. If they drift, the page
           either 403s for someone who was granted it, or shows for someone the API will refuse. */}
       <Route path="/finance/billability"             element={<ProtectedRoute roles={billabilityRoles}><Gate pageCode="FINANCE_BILLABILITY_SEAT_COST"><BillabilitySeatCostPage /></Gate></ProtectedRoute>} />
-      <Route path="/finance/process-pnl"             element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PROCESS_PNL"><ProcessPnlPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/process-pnl"             element={<ProtectedRoute roles={pnlOperationalRoles}><Gate pageCode="FINANCE_PROCESS_PNL"><ProcessPnlPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/process-pnl/configuration" element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PNL_CONFIG"><ProcessPnlConfigurationPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/process-pnl/lobs"          element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PNL_LOBS"><ProcessLobManagementPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/process-pnl/period-close"  element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PNL_PERIOD_CLOSE"><PnlPeriodClosePage /></Gate></ProtectedRoute>} />
-      <Route path="/finance/process-pnl/:processId"    element={<ProtectedRoute roles={pnlRoles}><Gate pageCode="FINANCE_PROCESS_PNL"><ProcessPnlDetailPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/process-pnl/:processId"    element={<ProtectedRoute roles={pnlOperationalRoles}><Gate pageCode="FINANCE_PROCESS_PNL"><ProcessPnlDetailPage /></Gate></ProtectedRoute>} />
 
       {/*
         Expenses — RETIRED, redirected to the working reimbursement flow.

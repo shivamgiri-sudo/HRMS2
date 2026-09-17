@@ -274,6 +274,20 @@ export async function assertFinanceRecordBranch(input: {
  */
 const PROCESS_SCOPED_ROLES = new Set(["process_manager"]);
 
+/**
+ * A process's CURRENT branch, for validating an arbitrary caller-supplied process id against
+ * the actor's branch scope (F-01 fix) — the process-level analog of getCostCentreBranchId in
+ * cost-centre-mapping.service.ts. Returns null when the process does not exist or is unmapped;
+ * assertFinanceRecordBranch treats null as a denial, not as unrestricted.
+ */
+export async function getProcessBranchId(processId: string): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT branch_id FROM process_master WHERE id = ? LIMIT 1`,
+    [processId]
+  );
+  return rows[0]?.branch_id ? String(rows[0].branch_id) : null;
+}
+
 async function getUserProcessId(userId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT process_id
