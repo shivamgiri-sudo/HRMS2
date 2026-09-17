@@ -38,7 +38,7 @@ const h =
  * accepted by a CSV import without complaint. A bad value is treated as absent, which falls
  * back to the provisional numbering the UI already warns about.
  */
-function parseSerial(raw: unknown): number | undefined {
+export function parseSerial(raw: unknown): number | undefined {
   const text = String(raw ?? "").trim();
   if (!text) return undefined;
   const value = Number(text);
@@ -49,7 +49,7 @@ function parseSerial(raw: unknown): number | undefined {
 salaryVoucherRouter.use(requireAuth);
 
 /** Filters vouchers to the caller's branch entitlement. */
-async function scopeVouchers(req: AuthenticatedRequest, vouchers: Voucher[]): Promise<Voucher[]> {
+export async function scopeVouchers(req: AuthenticatedRequest, vouchers: Voucher[]): Promise<Voucher[]> {
   const scope = await resolveFinanceBranchScopeSet({
     userId: String(req.authUser?.id ?? ""),
     primaryRole: String(req.authUser?.role ?? ""),

@@ -50,7 +50,7 @@ export type JournalLineInput = {
   narration?: string | null;
 };
 
-export type JournalSourceType = "grn" | "payment_voucher" | "bank_reconciliation_adjustment" | "imprest" | "manual";
+export type JournalSourceType = "grn" | "payment_voucher" | "bank_reconciliation_adjustment" | "imprest" | "manual" | "payroll";
 
 export type PostJournalEntryInput = {
   entryDate: string;

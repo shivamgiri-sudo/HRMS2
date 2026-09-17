@@ -276,6 +276,7 @@ import { bankReconciliationRouter } from "./modules/finance/bank-reconciliation.
 import { ledgerReportsRouter } from "./modules/finance/ledger-reports.routes.js";
 import { bankMasterRouter } from "./modules/finance/bank-master.routes.js";
 import { salaryVoucherRouter } from "./modules/finance/salary-voucher.routes.js";
+import { payrollLedgerPostingRouter } from "./modules/finance/payroll-ledger-posting.routes.js";
 import { legacyReportsRouter } from "./modules/legacy-reports/legacy-reports.routes.js";
 import { costCentreManagementRouter } from "./modules/finance/cost-centre-management.routes.js";
 import { clientPaymentTrackingRouter } from "./modules/finance/client-payment-tracking.routes.js";
@@ -676,6 +677,9 @@ app.use("/api/finance/bank-master", bankMasterRouter);
 // Its own prefix, like imprest: a salary voucher exposes a whole branch payroll, and it must
 // not be reachable through a path that a broader finance router also serves.
 app.use("/api/finance/payroll", salaryVoucherRouter);
+// Same prefix, separate router — payroll-ledger-posting.routes.ts's own header explains why the
+// one WRITE action (post-to-ledger) is deliberately kept out of the read-only salaryVoucherRouter.
+app.use("/api/finance/payroll", payrollLedgerPostingRouter);
 app.use("/api/legacy-reports", legacyReportsRouter);
 app.use("/api/finance/cost-centres", costCentreManagementRouter);
 app.use("/api/finance/client-payments", clientPaymentTrackingRouter);
