@@ -76,6 +76,9 @@ export type GrnForJournalPosting = {
   vendor_id: string | null;
   amount: number | string;
   amount_with_tax: number | string | null;
+  branch_id?: string | null;
+  cost_centre_id?: string | null;
+  process_id?: string | null;
 };
 
 export async function postGrnApprovalJournalEntry(
@@ -111,6 +114,9 @@ export async function postGrnApprovalJournalEntry(
     sourceType: "grn",
     sourceId: grn.id,
     postedBy: actorUserId,
+    branchId: grn.branch_id ?? null,
+    costCentreId: grn.cost_centre_id ?? null,
+    processId: grn.process_id ?? null,
     lines: [
       { accountType: "expense_sub_head", accountId: expenseAccountId, debitAmount: grossAmount },
       { accountType: creditLine.accountType, accountId: creditLine.accountId, creditAmount: grossAmount },
