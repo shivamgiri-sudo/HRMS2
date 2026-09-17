@@ -515,6 +515,17 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_lp_onboarding_apr_batch",
   "import_lp_onboarding_cdr_batch",
   "import_gnc_chat_batch",
+  "import_gnc_allocation_masmis_batch",
+  "import_neemans_sale_raw_masmis_batch",
+  "import_neemans_allocation_masmis_batch",
+  "import_neemans_apr_masmis_batch",
+  "import_aw_out_batch",
+  "import_aw_billing_batch",
+  "import_aw_mandate_batch",
+  "import_aw_inbound_batch",
+  "import_aw_new_cdr_batch",
+  "import_neemans_month_target_batch",
+  "import_neemans_agent_details_batch",
 ]);
 
 // POST /batches/:id/import â€” dispatch import by rpc_name

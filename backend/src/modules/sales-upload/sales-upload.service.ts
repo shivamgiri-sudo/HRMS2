@@ -343,12 +343,12 @@ export async function uploadGncApr(
 // store, customer_name, email, total, created_at, lineitem_name, lineitem_sku,
 // shipping_name, shipping_street, shipping_city, shipping_zip, shipping_phone, emp_id,
 // calling_status, sub_scenarios_1, callback_date, same_day_connect, nc_connect.
-export async function uploadGncAllocation(
-  buffer: Buffer, uploadedBy: string
+// Split into insertGncAllocationRows(rows) + uploadGncAllocation(buffer) so Process Performance
+// V2's bulk-upload importer (gnc-allocation-masmis-bulk.service.ts) shares this exact row-insert
+// logic against db_masmis.gnc_allocation instead of duplicating it as a second writer.
+export async function insertGncAllocationRows(
+  rows: Record<string, unknown>[], uploadedBy: string
 ): Promise<{ rowsInserted: number }> {
-  const wb = XLSX.read(buffer, { type: "buffer" });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null });
   const batchId = uuidv4();
   const monthLabel = currentMonthLabel();
   const validRows: (string | number | null)[][] = [];
@@ -381,6 +381,15 @@ export async function uploadGncAllocation(
   );
   await logUpload("gnc_allocation", monthLabel, validRows.length, uploadedBy, batchId);
   return { rowsInserted: validRows.length };
+}
+
+export async function uploadGncAllocation(
+  buffer: Buffer, uploadedBy: string
+): Promise<{ rowsInserted: number }> {
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null });
+  return insertGncAllocationRows(rows, uploadedBy);
 }
 
 // â”€â”€ Bellavita APR Upload â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1033,12 +1042,12 @@ export async function getNeemansDashboard(month: string): Promise<Record<string,
 // created_at_raw. "date" is stored as the RAW, UNCONVERTED Excel serial number as text
 // (e.g. "46215") in real live data -- that repo's own dashboard casts it back to a date at
 // query time, so a different convention here would silently misalign with existing rows.
-export async function uploadNeemansSaleRaw(
-  buffer: Buffer, uploadedBy: string
+// Split into insertNeemansSaleRawRows(rows) + uploadNeemansSaleRaw(buffer) so Process
+// Performance V2's bulk-upload importer shares this exact row-insert logic instead of
+// duplicating it as a second writer to db_masmis.neemans_sale_raw.
+export async function insertNeemansSaleRawRows(
+  rows: Record<string, unknown>[], uploadedBy: string
 ): Promise<{ rowsInserted: number }> {
-  const wb = XLSX.read(buffer, { type: "buffer" });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null });
   const batchId = uuidv4();
   let count = 0;
   for (const r of rows) {
@@ -1073,14 +1082,20 @@ export async function uploadNeemansSaleRaw(
   return { rowsInserted: count };
 }
 
-// db_masmis.neemans_allocation's real columns: phone, email, customer_name, product_title,
-// amount, type, date, agent, calling_status, sub_scenario1, sub_scenario2, call_id.
-export async function uploadNeemansAllocation(
+export async function uploadNeemansSaleRaw(
   buffer: Buffer, uploadedBy: string
 ): Promise<{ rowsInserted: number }> {
   const wb = XLSX.read(buffer, { type: "buffer" });
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null });
+  return insertNeemansSaleRawRows(rows, uploadedBy);
+}
+
+// db_masmis.neemans_allocation's real columns: phone, email, customer_name, product_title,
+// amount, type, date, agent, calling_status, sub_scenario1, sub_scenario2, call_id.
+export async function insertNeemansAllocationRows(
+  rows: Record<string, unknown>[], uploadedBy: string
+): Promise<{ rowsInserted: number }> {
   const batchId = uuidv4();
   let count = 0;
   const monthLabel = currentMonthLabel();
@@ -1108,17 +1123,23 @@ export async function uploadNeemansAllocation(
   return { rowsInserted: count };
 }
 
-// db_masmis.neemans_apr's real columns: unique_id, week, date, emp_name, emp_id, calls,
-// uca_ob, lob, login_time, parks, park_time, avg_park, parks_per_call, wait, talk, dispo,
-// pause, login_ts, logout_ts, acht, team_briefing, lunch, tea, tea1, washr, total_break,
-// net_login, occu_pct, week_short, mtd, attendance, capping. "date" is text like
-// "01-Jul-2026" in real live data, not a DATE column.
-export async function uploadNeemansApr(
+export async function uploadNeemansAllocation(
   buffer: Buffer, uploadedBy: string
 ): Promise<{ rowsInserted: number }> {
   const wb = XLSX.read(buffer, { type: "buffer" });
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null });
+  return insertNeemansAllocationRows(rows, uploadedBy);
+}
+
+// db_masmis.neemans_apr's real columns: unique_id, week, date, emp_name, emp_id, calls,
+// uca_ob, lob, login_time, parks, park_time, avg_park, parks_per_call, wait, talk, dispo,
+// pause, login_ts, logout_ts, acht, team_briefing, lunch, tea, tea1, washr, total_break,
+// net_login, occu_pct, week_short, mtd, attendance, capping. "date" is text like
+// "01-Jul-2026" in real live data, not a DATE column.
+export async function insertNeemansAprRows(
+  rows: Record<string, unknown>[], uploadedBy: string
+): Promise<{ rowsInserted: number }> {
   const batchId = uuidv4();
   let count = 0;
   for (const r of rows) {
@@ -1155,6 +1176,15 @@ export async function uploadNeemansApr(
   const monthLabel = currentMonthLabel();
   await logUpload("neemans_apr", monthLabel, count, uploadedBy, batchId);
   return { rowsInserted: count };
+}
+
+export async function uploadNeemansApr(
+  buffer: Buffer, uploadedBy: string
+): Promise<{ rowsInserted: number }> {
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null });
+  return insertNeemansAprRows(rows, uploadedBy);
 }
 
 // â”€â”€ AW (Aarohan Wealth) Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1237,10 +1267,12 @@ export async function getAwDashboard(month: string): Promise<Record<string, unkn
 // â”€â”€ AW Upload Functions (write to db_masmis.aw_* tables) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // aw_out: outbound daily agent report â€” 65 varchar columns, key = call_date + agent_id
-export async function uploadAwOut(buffer: Buffer, uploadedBy: string): Promise<{ rowsInserted: number }> {
-  const XLSX = (await import("xlsx")).default;
-  const wb = XLSX.read(buffer, { type: "buffer" });
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: null });
+//
+// Split into insertAwOutRows(rows) + uploadAwOut(buffer) so Process Performance V2's bulk-upload
+// importer (aw-out-bulk.service.ts) can share this exact row-insert logic instead of duplicating
+// it against the same db_masmis.aw_out table -- two independent writers to one table risks
+// duplicate rows and column-mapping drift between them, so there is now exactly one.
+export async function insertAwOutRows(rows: Record<string, unknown>[], uploadedBy: string): Promise<{ rowsInserted: number }> {
   const batchId = uuidv4();
   let count = 0;
   for (const r of rows) {
@@ -1293,11 +1325,15 @@ export async function uploadAwOut(buffer: Buffer, uploadedBy: string): Promise<{
   return { rowsInserted: count };
 }
 
-// aw_billing: daily billing/activity report per agent â€” similar shape to aw_out
-export async function uploadAwBilling(buffer: Buffer, uploadedBy: string): Promise<{ rowsInserted: number }> {
+export async function uploadAwOut(buffer: Buffer, uploadedBy: string): Promise<{ rowsInserted: number }> {
   const XLSX = (await import("xlsx")).default;
   const wb = XLSX.read(buffer, { type: "buffer" });
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: null });
+  return insertAwOutRows(rows, uploadedBy);
+}
+
+// aw_billing: daily billing/activity report per agent â€” similar shape to aw_out
+export async function insertAwBillingRows(rows: Record<string, unknown>[], uploadedBy: string): Promise<{ rowsInserted: number }> {
   const batchId = uuidv4();
   let count = 0;
   for (const r of rows) {
@@ -1338,11 +1374,15 @@ export async function uploadAwBilling(buffer: Buffer, uploadedBy: string): Promi
   return { rowsInserted: count };
 }
 
-// aw_mandate: billing type mandate headcount per month
-export async function uploadAwMandate(buffer: Buffer, uploadedBy: string): Promise<{ rowsInserted: number }> {
+export async function uploadAwBilling(buffer: Buffer, uploadedBy: string): Promise<{ rowsInserted: number }> {
   const XLSX = (await import("xlsx")).default;
   const wb = XLSX.read(buffer, { type: "buffer" });
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: null });
+  return insertAwBillingRows(rows, uploadedBy);
+}
+
+// aw_mandate: billing type mandate headcount per month
+export async function insertAwMandateRows(rows: Record<string, unknown>[], uploadedBy: string): Promise<{ rowsInserted: number }> {
   const batchId = uuidv4();
   let count = 0;
   for (const r of rows) {
@@ -1366,11 +1406,15 @@ export async function uploadAwMandate(buffer: Buffer, uploadedBy: string): Promi
   return { rowsInserted: count };
 }
 
-// aw_inbound: inbound CDR (call_id, agent, disposition, call_date, talk_time, etc.)
-export async function uploadAwInbound(buffer: Buffer, uploadedBy: string): Promise<{ rowsInserted: number }> {
+export async function uploadAwMandate(buffer: Buffer, uploadedBy: string): Promise<{ rowsInserted: number }> {
   const XLSX = (await import("xlsx")).default;
   const wb = XLSX.read(buffer, { type: "buffer" });
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: null });
+  return insertAwMandateRows(rows, uploadedBy);
+}
+
+// aw_inbound: inbound CDR (call_id, agent, disposition, call_date, talk_time, etc.)
+export async function insertAwInboundRows(rows: Record<string, unknown>[], uploadedBy: string): Promise<{ rowsInserted: number }> {
   const batchId = uuidv4();
   let count = 0;
   for (const r of rows) {
@@ -1410,11 +1454,15 @@ export async function uploadAwInbound(buffer: Buffer, uploadedBy: string): Promi
   return { rowsInserted: count };
 }
 
-// aw_new_cdr: outbound CDR (call_id, campaign, agent, disposition, etc.)
-export async function uploadAwNewCdr(buffer: Buffer, uploadedBy: string): Promise<{ rowsInserted: number }> {
+export async function uploadAwInbound(buffer: Buffer, uploadedBy: string): Promise<{ rowsInserted: number }> {
   const XLSX = (await import("xlsx")).default;
   const wb = XLSX.read(buffer, { type: "buffer" });
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: null });
+  return insertAwInboundRows(rows, uploadedBy);
+}
+
+// aw_new_cdr: outbound CDR (call_id, campaign, agent, disposition, etc.)
+export async function insertAwNewCdrRows(rows: Record<string, unknown>[], uploadedBy: string): Promise<{ rowsInserted: number }> {
   const batchId = uuidv4();
   let count = 0;
   for (const r of rows) {
@@ -1455,6 +1503,13 @@ export async function uploadAwNewCdr(buffer: Buffer, uploadedBy: string): Promis
   }
   await logUpload("aw_new_cdr", currentMonthLabel(), count, uploadedBy, batchId);
   return { rowsInserted: count };
+}
+
+export async function uploadAwNewCdr(buffer: Buffer, uploadedBy: string): Promise<{ rowsInserted: number }> {
+  const XLSX = (await import("xlsx")).default;
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: null });
+  return insertAwNewCdrRows(rows, uploadedBy);
 }
 
 // â”€â”€ BVO / Bellavita Repeat Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

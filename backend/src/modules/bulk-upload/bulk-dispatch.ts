@@ -521,5 +521,71 @@ export async function dispatchImport(
     return { success: true, data };
   }
 
+  if (rpc_name === "import_gnc_allocation_masmis_batch") {
+    const { importGncAllocationMasmisBatch } = await import("./gnc-allocation-masmis-bulk.service.js");
+    const data = await importGncAllocationMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_neemans_sale_raw_masmis_batch") {
+    const { importNeemansSaleRawMasmisBatch } = await import("./neemans-sale-raw-masmis-bulk.service.js");
+    const data = await importNeemansSaleRawMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_neemans_allocation_masmis_batch") {
+    const { importNeemansAllocationMasmisBatch } = await import("./neemans-allocation-masmis-bulk.service.js");
+    const data = await importNeemansAllocationMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_neemans_apr_masmis_batch") {
+    const { importNeemansAprMasmisBatch } = await import("./neemans-apr-masmis-bulk.service.js");
+    const data = await importNeemansAprMasmisBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_aw_out_batch") {
+    const { importAwOutBatch } = await import("./aw-out-bulk.service.js");
+    const data = await importAwOutBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_aw_billing_batch") {
+    const { importAwBillingBatch } = await import("./aw-billing-bulk.service.js");
+    const data = await importAwBillingBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_aw_mandate_batch") {
+    const { importAwMandateBatch } = await import("./aw-mandate-bulk.service.js");
+    const data = await importAwMandateBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_aw_inbound_batch") {
+    const { importAwInboundBatch } = await import("./aw-inbound-bulk.service.js");
+    const data = await importAwInboundBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_aw_new_cdr_batch") {
+    const { importAwNewCdrBatch } = await import("./aw-new-cdr-bulk.service.js");
+    const data = await importAwNewCdrBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_neemans_month_target_batch") {
+    const { importNeemansMonthTargetBatch } = await import("./neemans-month-target-bulk.service.js");
+    const data = await importNeemansMonthTargetBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_neemans_agent_details_batch") {
+    const { importNeemansAgentDetailsBatch } = await import("./neemans-agent-details-bulk.service.js");
+    const data = await importNeemansAgentDetailsBatch(id, userId);
+    return { success: true, data };
+  }
+
   throw new Error(`Import function '${rpc_name}' for batch ${id} is not yet implemented in the MySQL backend.`);
 }
