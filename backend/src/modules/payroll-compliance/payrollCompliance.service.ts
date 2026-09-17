@@ -135,15 +135,19 @@ export const payrollComplianceService = {
 
   async replaceLineComponents(runId: string, lineId: string | null, employeeId: string, components: ComponentLine[]) {
     await db.execute("DELETE FROM salary_prep_line_component WHERE run_id = ? AND employee_id = ?", [runId, employeeId]);
+    if (components.length === 0) return;
 
+    const placeholders = components.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+    const values: unknown[] = [];
     for (const c of components) {
-      await db.execute(
-        `INSERT INTO salary_prep_line_component
-          (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [randomUUID(), runId, lineId, employeeId, c.component_code, c.component_name, c.component_type, r2(c.amount), c.source, c.taxable === false ? 0 : 1]
-      );
+      values.push(randomUUID(), runId, lineId, employeeId, c.component_code, c.component_name, c.component_type, r2(c.amount), c.source, c.taxable === false ? 0 : 1);
     }
+    await db.execute(
+      `INSERT INTO salary_prep_line_component
+        (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
+       VALUES ${placeholders}`,
+      values
+    );
   },
 
   async validateRun(runId: string) {
@@ -174,25 +178,30 @@ export const payrollComplianceService = {
       [run.run_month, run.run_month]
     );
 
-    let issues = 0;
+    type IssueRow = [string, string, string | null, string, string, string | null, string, string | null];
+    const issueRows: IssueRow[] = [];
     for (const emp of empRows as any[]) {
       if (!emp.salary_assignment_id) {
-        issues++;
-        await this.addIssue({ runId, employeeId: emp.id, issueCode: "MISSING_SALARY_ASSIGNMENT", issueTitle: "Salary structure not assigned", issueDetail: `${emp.employee_code} has no active salary assignment.`, severity: "blocking", ownerRole: "finance" });
+        issueRows.push([randomUUID(), runId, emp.id, "MISSING_SALARY_ASSIGNMENT", "Salary structure not assigned", `${emp.employee_code} has no active salary assignment.`, "blocking", "finance"]);
       }
       if (!emp.branch_id) {
-        issues++;
-        await this.addIssue({ runId, employeeId: emp.id, issueCode: "MISSING_BRANCH", issueTitle: "Branch missing", issueDetail: `${emp.employee_code} has no branch mapping.`, severity: "critical", ownerRole: "hr" });
+        issueRows.push([randomUUID(), runId, emp.id, "MISSING_BRANCH", "Branch missing", `${emp.employee_code} has no branch mapping.`, "critical", "hr"]);
       }
       if (!emp.bank_id) {
-        issues++;
-        await this.addIssue({ runId, employeeId: emp.id, issueCode: "MISSING_BANK_DETAILS", issueTitle: "Bank details missing", issueDetail: `${emp.employee_code} has no active bank details.`, severity: "blocking", ownerRole: "finance" });
+        issueRows.push([randomUUID(), runId, emp.id, "MISSING_BANK_DETAILS", "Bank details missing", `${emp.employee_code} has no active bank details.`, "blocking", "finance"]);
         // tinyint, not a status string — comparing it to "verified" would mark every
         // employee unverified, which is how a plain rename would have failed here.
       } else if (Number(emp.bank_verified) !== 1) {
-        issues++;
-        await this.addIssue({ runId, employeeId: emp.id, issueCode: "BANK_NOT_VERIFIED", issueTitle: "Bank details not verified", issueDetail: `${emp.employee_code} bank details exist but are not verified.`, severity: "critical", ownerRole: "finance" });
+        issueRows.push([randomUUID(), runId, emp.id, "BANK_NOT_VERIFIED", "Bank details not verified", `${emp.employee_code} bank details exist but are not verified.`, "critical", "finance"]);
       }
+    }
+    const issues = issueRows.length;
+    if (issueRows.length > 0) {
+      const placeholders = issueRows.map(() => "(?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+      await db.execute(
+        `INSERT INTO payroll_compliance_issue (id, run_id, employee_id, issue_code, issue_title, issue_detail, severity, owner_role) VALUES ${placeholders}`,
+        issueRows.flat()
+      );
     }
 
     await db.execute(
@@ -208,36 +217,37 @@ export const payrollComplianceService = {
   },
 
   async upsertComponentSnapshot(employeeId: string, effectiveFrom: string, components: ComponentLine[], actorUserId?: string | null) {
+    if (components.length === 0) return { employee_id: employeeId, effective_from: effectiveFrom, components_saved: 0 };
+
+    const placeholders = components.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)").join(", ");
+    const values: unknown[] = [];
     for (const c of components) {
-      await db.execute(
-        `INSERT INTO payroll_employee_component_snapshot
-          (id, employee_id, effective_from, component_code, component_name, component_type,
-           amount_monthly, taxable, pf_applicable, esic_applicable, is_existing_breakup, locked_status, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)
-         ON DUPLICATE KEY UPDATE
-           component_name = VALUES(component_name),
-           component_type = VALUES(component_type),
-           amount_monthly = VALUES(amount_monthly),
-           taxable = VALUES(taxable),
-           pf_applicable = VALUES(pf_applicable),
-           esic_applicable = VALUES(esic_applicable),
-           locked_status = 1,
-           updated_at = NOW()`,
-        [
-          randomUUID(),
-          employeeId,
-          effectiveFrom,
-          c.component_code,
-          c.component_name,
-          c.component_type,
-          r2(c.amount),
-          c.taxable === false ? 0 : 1,
-          c.pf_applicable ? 1 : 0,
-          c.esic_applicable === false ? 0 : 1,
-          actorUserId ?? null,
-        ]
+      values.push(
+        randomUUID(), employeeId, effectiveFrom,
+        c.component_code, c.component_name, c.component_type,
+        r2(c.amount),
+        c.taxable === false ? 0 : 1,
+        c.pf_applicable ? 1 : 0,
+        c.esic_applicable === false ? 0 : 1,
+        actorUserId ?? null,
       );
     }
+    await db.execute(
+      `INSERT INTO payroll_employee_component_snapshot
+        (id, employee_id, effective_from, component_code, component_name, component_type,
+         amount_monthly, taxable, pf_applicable, esic_applicable, is_existing_breakup, locked_status, created_by)
+       VALUES ${placeholders}
+       ON DUPLICATE KEY UPDATE
+         component_name = VALUES(component_name),
+         component_type = VALUES(component_type),
+         amount_monthly = VALUES(amount_monthly),
+         taxable = VALUES(taxable),
+         pf_applicable = VALUES(pf_applicable),
+         esic_applicable = VALUES(esic_applicable),
+         locked_status = 1,
+         updated_at = NOW()`,
+      values
+    );
     return { employee_id: employeeId, effective_from: effectiveFrom, components_saved: components.length };
   },
 

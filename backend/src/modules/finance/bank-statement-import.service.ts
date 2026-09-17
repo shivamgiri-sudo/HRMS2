@@ -107,11 +107,15 @@ export const bankStatementImportService = {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [importId, bankAccountId, periodId, filename, JSON.stringify(mapping), importedBy, lines.length],
     );
-    for (const line of lines) {
+    if (lines.length > 0) {
+      const placeholders = lines.map(() => "(?, ?, ?, ?, ?, ?, ?)").join(", ");
+      const values: unknown[] = [];
+      for (const line of lines) {
+        values.push(randomUUID(), importId, line.txn_date, line.description, line.reference, line.debit_amount, line.credit_amount);
+      }
       await db.execute<ResultSetHeader>(
-        `INSERT INTO bank_statement_line (id, import_id, txn_date, description, reference, debit_amount, credit_amount)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [randomUUID(), importId, line.txn_date, line.description, line.reference, line.debit_amount, line.credit_amount],
+        `INSERT INTO bank_statement_line (id, import_id, txn_date, description, reference, debit_amount, credit_amount) VALUES ${placeholders}`,
+        values,
       );
     }
     return { importId, rowCount: lines.length };
