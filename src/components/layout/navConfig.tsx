@@ -434,6 +434,10 @@ export const navGroups: NavGroup[] = [
           { label: "Bank Ledger", href: "/finance/bank-ledger", icon: ic(IndianRupee), pageCode: "FINANCE_BANK_LEDGER", description: "Credit/Debit report per account", roles: ["super_admin","finance_head","accounts_head","ceo","admin","finance"] },
           { label: "Bank Reconciliation", href: "/finance/bank-reconciliation", icon: ic(Landmark), pageCode: "FINANCE_BANK_RECONCILIATION", description: "Match statements, post adjustments, close periods", roles: ["super_admin","finance_head","accounts_head","ceo","admin","finance"] },
           { label: "Ledger Heads", href: "/finance/ledger-heads", icon: ic(BookOpen), pageCode: "FINANCE_LEDGER_HEADS", description: "Chart-of-accounts entries for vouchers and adjustments", roles: ["super_admin","finance_head","accounts_head","ceo","admin","finance"] },
+          // Had a route, a page and a FINANCE_LEDGER_REPORTS pageCode/role guard, but no menu
+          // entry here — reachable only by typing the URL. Roles copied verbatim from the
+          // ProtectedRoute guard in finance.routes.tsx to avoid the GRN Management drift above.
+          { label: "Ledger Reports", href: "/finance/ledger-reports", icon: ic(BarChart3), pageCode: "FINANCE_LEDGER_REPORTS", description: "Trial balance, vendor ledger and head/subhead spend", roles: ["super_admin","finance_head","accounts_head","ceo","branch_head","admin","finance"] },
           { label: "Bank Directory", href: "/finance/bank-directory", icon: ic(Building2), pageCode: "FINANCE_BANK_DIRECTORY", description: "Banks offered when adding a company bank account", roles: ["super_admin","finance_head","accounts_head","ceo","admin","finance"] },
           { label: "Vendors", href: "/vendors", icon: ic(Users), roles: ["admin","super_admin","finance","manager"], description: "Vendor master" },
           { label: "Finance Masters", href: "/finance/masters", icon: ic(Settings2), pageCode: "FINANCE_MASTERS", roles: ["super_admin","finance_head","branch_admin"], description: "Expense heads/sub-heads, vendor approval queue and vendor-to-head mapping" },
