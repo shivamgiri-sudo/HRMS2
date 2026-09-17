@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1175,
-  "columnCount": 17451,
+  "tableCount": 1173,
+  "columnCount": 17449,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -1421,7 +1421,8 @@
       "joining_document_completed_at",
       "employee_code",
       "converted_at",
-      "reminder_sent_at"
+      "reminder_sent_at",
+      "updated_at"
     ],
     "ats_onboarding_request": [
       "id",
@@ -2545,6 +2546,7 @@
       "expires_at",
       "verified_at",
       "status",
+      "pre_auth_challenge_id",
       "created_at",
       "updated_at"
     ],
@@ -3453,14 +3455,6 @@
       "active_status",
       "created_at",
       "updated_at"
-    ],
-    "bulk_import_queue": [
-      "id",
-      "batch_id",
-      "rpc_name",
-      "user_id",
-      "queued_at",
-      "claimed_at"
     ],
     "bulk_operation_jobs": [
       "id",
@@ -6167,19 +6161,6 @@
       "magic_bytes_validated",
       "quarantine_reason"
     ],
-    "domestic_billing_approved_hc": [
-      "id",
-      "upload_batch_id",
-      "month",
-      "process",
-      "lob",
-      "approved_headcount",
-      "fte_rate",
-      "planning_rule",
-      "active",
-      "created_by",
-      "created_at"
-    ],
     "dpdp_config": [
       "config_key",
       "config_value",
@@ -7414,10 +7395,7 @@
       "pan_number",
       "work_status",
       "manual_update_by",
-      "manual_update_date",
-      "snapshot_refreshed_at",
-      "salary_effective_date",
-      "joining_month"
+      "manual_update_date"
     ],
     "employee_move_snapshot": [
       "id",
@@ -8498,7 +8476,8 @@
       "admin_actioned_at",
       "exit_confirmed_at",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "absconding_since"
     ],
     "exit_retention_action": [
       "id",
@@ -9332,6 +9311,31 @@
       "active_status",
       "created_at"
     ],
+    "gnc_apr_daily_actual": [
+      "id",
+      "process_id",
+      "uid",
+      "report_date",
+      "user_name",
+      "agent_code",
+      "tl_name",
+      "process_type",
+      "total_calls",
+      "login_seconds",
+      "wait_seconds",
+      "talk_seconds",
+      "dispo_seconds",
+      "pause_seconds",
+      "net_login_seconds",
+      "break_seconds",
+      "acht_seconds",
+      "attendance",
+      "data_source",
+      "upload_batch_id",
+      "created_by",
+      "created_at",
+      "updated_at"
+    ],
     "gamification_badge_master": [
       "badge_id",
       "badge_name",
@@ -9771,6 +9775,9 @@
       "branch_head_reviewed_by",
       "branch_head_reviewed_at",
       "branch_head_review_note",
+      "accounts_head_reviewed_by",
+      "accounts_head_reviewed_at",
+      "accounts_head_review_note",
       "finance_head_reviewed_by",
       "finance_head_reviewed_at",
       "finance_head_review_note",
@@ -9790,9 +9797,6 @@
       "period_allocation_mode",
       "bill_source_id",
       "source_reimbursement_id",
-      "accounts_head_reviewed_by",
-      "accounts_head_reviewed_at",
-      "accounts_head_review_note",
       "reminder_count",
       "last_reminder_at"
     ],
@@ -9822,54 +9826,6 @@
       "overridden_by",
       "override_reason",
       "overridden_at",
-      "created_at"
-    ],
-    "gs1_approval_audit_raw": [
-      "id",
-      "process_id",
-      "upload_batch_id",
-      "audit_date",
-      "auditee_name",
-      "auditor_name",
-      "audit_result",
-      "error_category",
-      "error_flag",
-      "gcp_code",
-      "company_name",
-      "sku_count",
-      "created_by",
-      "created_at"
-    ],
-    "gs1_datakart_daily_actual": [
-      "id",
-      "process_id",
-      "upload_batch_id",
-      "report_date",
-      "analyst_name",
-      "task_date",
-      "task_count",
-      "gtin_count",
-      "within_tat",
-      "tat_minutes",
-      "process_type",
-      "created_by",
-      "created_at"
-    ],
-    "gs1_email_daily_actual": [
-      "id",
-      "process_id",
-      "upload_batch_id",
-      "report_date",
-      "analyst_name",
-      "executive_id",
-      "mail_date",
-      "mail_received",
-      "gtin_processed",
-      "image_count",
-      "sla_within_15min",
-      "data_type",
-      "tat_minutes",
-      "created_by",
       "created_at"
     ],
     "gst_export_batch": [
@@ -11099,27 +11055,6 @@
       "snapshot_json",
       "created_at",
       "updated_at"
-    ],
-    "journal_entry": [
-      "id",
-      "entry_date",
-      "narration",
-      "source_type",
-      "source_id",
-      "posted_by",
-      "posted_at",
-      "reversed_by_entry_id"
-    ],
-    "journal_entry_line": [
-      "id",
-      "journal_entry_id",
-      "line_order",
-      "account_type",
-      "account_id",
-      "debit_amount",
-      "credit_amount",
-      "narration",
-      "created_at"
     ],
     "knowledge_quiz": [
       "id",
@@ -12900,7 +12835,6 @@
       "role_key",
       "fallback_role_key",
       "requires_asset_clearance",
-      "is_mandatory",
       "status",
       "acted_by_user_id",
       "acted_by_employee_id",
@@ -12915,6 +12849,7 @@
       "reminder_count",
       "last_reminder_at",
       "escalated_at",
+      "is_mandatory",
       "created_at",
       "updated_at"
     ],
@@ -14212,26 +14147,6 @@
       "as_of_date",
       "computed_at"
     ],
-    "pnl_seat_billing_line": [
-      "id",
-      "cost_centre_id",
-      "line_label",
-      "line_kind",
-      "rate_monthly",
-      "seats",
-      "monthly_amount",
-      "effective_from",
-      "effective_to",
-      "source",
-      "source_period",
-      "source_bill_id",
-      "notes",
-      "active_status",
-      "created_by",
-      "updated_by",
-      "created_at",
-      "updated_at"
-    ],
     "policy_master": [
       "id",
       "policy_name",
@@ -14306,13 +14221,6 @@
       "rostered_hc",
       "coverage_pct",
       "published_at"
-    ],
-    "portal_sessions": [
-      "id",
-      "portal_user_id",
-      "token_hash",
-      "expires_at",
-      "created_at"
     ],
     "portal_user_permissions": [
       "id",
@@ -16913,36 +16821,6 @@
       "uploaded_at",
       "updated_at"
     ],
-    "salary_slab_master": [
-      "id",
-      "slab_code",
-      "range_from",
-      "range_to",
-      "label",
-      "seq_order",
-      "active_status",
-      "created_at",
-      "updated_at"
-    ],
-    "salary_structure_component": [
-      "id",
-      "structure_id",
-      "component_id",
-      "calc_type",
-      "value",
-      "sequence"
-    ],
-    "salary_structure_master": [
-      "id",
-      "structure_code",
-      "structure_name",
-      "description",
-      "basic_pct",
-      "hra_pct",
-      "active_status",
-      "created_at",
-      "updated_at"
-    ],
     "salary_transfer_batch": [
       "id",
       "run_id",
@@ -16977,9 +16855,9 @@
       "confirmed_at",
       "confirmed_by",
       "payslip_unlocked_at",
+      "open_flag",
       "created_at",
-      "updated_at",
-      "open_flag"
+      "updated_at"
     ],
     "salary_transfer_import": [
       "id",
@@ -16990,6 +16868,36 @@
       "unmatched_count",
       "uploaded_by",
       "uploaded_at"
+    ],
+    "salary_slab_master": [
+      "id",
+      "slab_code",
+      "range_from",
+      "range_to",
+      "label",
+      "seq_order",
+      "active_status",
+      "created_at",
+      "updated_at"
+    ],
+    "salary_structure_component": [
+      "id",
+      "structure_id",
+      "component_id",
+      "calc_type",
+      "value",
+      "sequence"
+    ],
+    "salary_structure_master": [
+      "id",
+      "structure_code",
+      "structure_name",
+      "description",
+      "basic_pct",
+      "hra_pct",
+      "active_status",
+      "created_at",
+      "updated_at"
     ],
     "salary_upload_snapshot": [
       "data_id",
@@ -19396,8 +19304,8 @@
       "resolution_status",
       "resolution_action",
       "resolution_remarks",
-      "resolved_by",
-      "resolved_at"
+      "resolved_at",
+      "resolved_by"
     ],
     "wfm_roster_coverage_matrix": [
       "id",
@@ -19803,6 +19711,96 @@
     "zz_vpt_due_date_backup_20260827": [
       "id",
       "due_date"
+    ],
+    "portal_admin_impersonation_log": [
+      "id",
+      "admin_user_id",
+      "portal_user_id",
+      "client_email",
+      "reason",
+      "created_at"
+    ],
+    "portal_sessions": [
+      "id",
+      "portal_user_id",
+      "token_hash",
+      "expires_at",
+      "created_at",
+      "session_family_id",
+      "token",
+      "user_id",
+      "user_type",
+      "absolute_expires_at"
+    ],
+    "gs1_email_daily_actual": [
+      "id",
+      "process_id",
+      "upload_batch_id",
+      "report_date",
+      "analyst_name",
+      "executive_id",
+      "mail_date",
+      "mail_received",
+      "gtin_processed",
+      "image_count",
+      "sla_within_15min",
+      "data_type",
+      "tat_minutes",
+      "data_source",
+      "source_reference",
+      "created_by",
+      "created_at"
+    ],
+    "gs1_datakart_daily_actual": [
+      "id",
+      "process_id",
+      "upload_batch_id",
+      "report_date",
+      "analyst_name",
+      "task_date",
+      "task_count",
+      "gtin_count",
+      "within_tat",
+      "tat_minutes",
+      "process_type",
+      "data_source",
+      "source_reference",
+      "created_by",
+      "created_at"
+    ],
+    "gs1_approval_audit_raw": [
+      "id",
+      "process_id",
+      "upload_batch_id",
+      "audit_date",
+      "auditee_name",
+      "auditor_name",
+      "audit_result",
+      "error_category",
+      "error_flag",
+      "gcp_code",
+      "company_name",
+      "sku_count",
+      "data_source",
+      "source_reference",
+      "created_by",
+      "created_at"
+    ],
+    "domestic_billing_approved_hc": [
+      "id",
+      "upload_batch_id",
+      "month",
+      "process",
+      "lob",
+      "approved_headcount",
+      "fte_rate",
+      "planning_rule",
+      "active",
+      "data_source",
+      "source_reference",
+      "created_by",
+      "created_at",
+      "updated_at"
     ]
   }
 }
