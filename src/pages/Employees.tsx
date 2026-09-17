@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { format, isWithinInterval, parse } from "date-fns";
+import { format } from "date-fns";
 import { toast } from "sonner";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -333,58 +333,33 @@ const Employees = () => {
     setSelectedEmployeeIds([]);
   }, [debouncedSearch, departmentFilter, processFilter, branchFilter, statusFilter, pageSize, sortKey, sortDirection]);
 
-  const filterByDateRange = (
-    items: Employee[],
-    startDate?: Date,
-    endDate?: Date
-  ) => {
-    if (!startDate && !endDate) return items;
-
-    return items.filter((emp) => {
-      const joinDate = parse(emp.joinDate, "MMM d, yyyy", new Date());
-
-      if (isNaN(joinDate.getTime())) return true;
-
-      if (startDate && endDate) {
-        const endOfDay = new Date(endDate);
-        endOfDay.setHours(23, 59, 59, 999);
-        return isWithinInterval(joinDate, { start: startDate, end: endOfDay });
-      }
-
-      if (startDate) {
-        return joinDate >= startDate;
-      }
-
-      if (endDate) {
-        const endOfDay = new Date(endDate);
-        endOfDay.setHours(23, 59, 59, 999);
-        return joinDate <= endOfDay;
-      }
-
-      return true;
-    });
-  };
-
   // Export used to run against `sortedEmployees` — whichever page happened to be loaded on
   // screen (10 rows by default) — so "export" silently produced a file covering a fraction
   // of what the applied filters actually matched. This fetches every matching page through
   // fetchAllFilteredEmployeeRows, which reuses the same scoped /api/employees endpoint (and
   // therefore the same RBAC/row-scope) the screen itself calls — capped at 5,000 rows so a
   // wide filter can't fire hundreds of requests or hand the browser an unworkable PDF job.
+  //
+  // startDate/endDate now go to the server as query params (employee.service.ts filters on
+  // e.date_of_joining) instead of being applied client-side after the full fetch. Filtering
+  // client-side meant the EXPORT_MAX_ROWS check ran against the count BEFORE the date range
+  // narrowed it — a date range that would only match 20 people could still fail as "too
+  // large" because the other filters alone matched thousands.
   const buildExportDataset = async (startDate?: Date, endDate?: Date): Promise<Employee[]> => {
-    const rows = await fetchAllFilteredEmployeeRows({
+    return fetchAllFilteredEmployeeRows({
       recordStatus,
       status: employmentStatus,
       search: debouncedSearch || undefined,
       departmentId: departmentFilter === "all" ? undefined : departmentFilter,
       processId: processFilter === "all" ? undefined : processFilter,
       branchId: branchFilter === "all" ? undefined : branchFilter,
+      startDate: startDate ? format(startDate, "yyyy-MM-dd") : undefined,
+      endDate: endDate ? format(endDate, "yyyy-MM-dd") : undefined,
       // Same sort the screen is currently showing — pages come back pre-sorted from the
       // server now, so concatenating them in page order is already the correct full order.
       sortBy: sortKey ?? undefined,
       sortOrder: sortDirection ?? undefined,
     });
-    return filterByDateRange(rows, startDate, endDate);
   };
 
   const exportToCSV = async (startDate?: Date, endDate?: Date) => {

@@ -45,6 +45,7 @@ import { logSensitiveAction } from '../../shared/auditLog.js';
 import { sendPayrollHrJoiningDocNotification } from '../ats/ats.email.service.js';
 import { issueCandidatePortalAccess } from '../ats/interview.service.js';
 import { resolveOnboardingDocumentFile } from '../ats/onboardingDocumentPath.js';
+import { promoteCandidateDocumentsToEmployee } from './candidateDocumentPromotion.service.js';
 import { cropFaceForProfilePhoto } from './face-crop.util.js';
 import { normalizeBloodGroup } from './bloodGroup.util.js';
 import { normalizeMaritalStatus } from './maritalStatus.util.js';
@@ -821,6 +822,29 @@ export async function createEmployeeFromCandidate(
         console.warn('[EmployeeOrchestrator] Selfie promotion failed (non-blocking):', selfieErr);
       }
     })();
+
+    // Copy the candidate's other uploaded onboarding documents (Aadhaar,
+    // Address Proof, marksheets, etc.) into employee_documents, the table
+    // the employee Documents tab reads. Without this the tab showed "Not
+    // uploaded" for documents the candidate had genuinely submitted — see
+    // candidateDocumentPromotion.service.ts. Fire-and-forget for the same
+    // reason as the selfie promotion above: must never delay or fail
+    // employee creation itself.
+    promoteCandidateDocumentsToEmployee(employeeId, candidateId, approverId)
+      .then(({ promoted, skippedFileMissing }) => {
+        if (promoted > 0 || skippedFileMissing > 0) {
+          console.log(
+            `[EmployeeOrchestrator] Promoted ${promoted} onboarding document(s) to employee_documents for ${employeeCode}`
+              + (skippedFileMissing > 0 ? ` (${skippedFileMissing} skipped — file missing on disk)` : ''),
+          );
+        }
+      })
+      .catch((docPromoErr: unknown) => {
+        console.error(
+          `[EmployeeOrchestrator] Document promotion failed for ${employeeCode} (non-blocking):`,
+          docPromoErr instanceof Error ? docPromoErr.message : docPromoErr,
+        );
+      });
 
     // RULE 9: Provisioning failure doesn't block creation — fire-and-forget so
     // sequential SMTP sends inside dispatchJoinProvisioningTasks do not hold

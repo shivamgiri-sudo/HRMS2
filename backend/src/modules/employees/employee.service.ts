@@ -299,7 +299,7 @@ export const employeeService = {
   },
 
   async listEmployees(filters: EmployeeFilters & { scopeFilter?: { sql: string; params: unknown[] } }): Promise<PaginatedResult<Employee>> {
-    const { page, limit, status, recordStatus, processId, branchId, departmentId, designationId, search, scopeFilter, includeAnalytics, sortBy, sortOrder } = filters;
+    const { page, limit, status, recordStatus, processId, branchId, departmentId, designationId, search, startDate, endDate, scopeFilter, includeAnalytics, sortBy, sortOrder } = filters;
     const offset = (page - 1) * limit;
 
     // `active_status = 1` used to be hardcoded here, while `recordStatus` was declared in
@@ -326,6 +326,12 @@ export const employeeService = {
     if (branchId)     { filterConds.push("e.branch_id = ?");         filterParams.push(branchId); }
     if (departmentId) { filterConds.push("e.department_id = ?");     filterParams.push(departmentId); }
     if (designationId){ filterConds.push("e.designation_id = ?");    filterParams.push(designationId); }
+    // Joining-date range (Export Employee Directory's Start/End Date). Was never
+    // wired to the backend at all — the frontend filtered client-side AFTER
+    // downloading every row matching the other filters, which also meant the
+    // export-too-large guard was checked against the pre-date-filter count.
+    if (startDate) { filterConds.push("e.date_of_joining >= ?"); filterParams.push(startDate); }
+    if (endDate)   { filterConds.push("e.date_of_joining <= ?"); filterParams.push(endDate); }
     if (search) {
       // PERF (2026-08-18): this used to be a 7-column leading-wildcard LIKE OR-chain —
       // unindexable by any B-tree index, confirmed live against production at 12-22

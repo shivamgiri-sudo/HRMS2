@@ -96,6 +96,10 @@ export interface EmployeeDirectoryFilters {
   departmentId?: string;
   processId?: string;
   branchId?: string;
+  // Joining-date range, "yyyy-MM-dd". Currently only consumed by the export flow
+  // (fetchAllFilteredEmployeeRows) — the on-screen directory page has no date filter.
+  startDate?: string;
+  endDate?: string;
   sortBy?: EmployeeSortKey;
   sortOrder?: "asc" | "desc";
 }
@@ -205,6 +209,8 @@ export async function fetchAllFilteredEmployeeRows(
     if (filters.departmentId) params.set("departmentId", filters.departmentId);
     if (filters.processId) params.set("processId", filters.processId);
     if (filters.branchId) params.set("branchId", filters.branchId);
+    if (filters.startDate) params.set("startDate", filters.startDate);
+    if (filters.endDate) params.set("endDate", filters.endDate);
     if (filters.sortBy) params.set("sortBy", filters.sortBy);
     if (filters.sortOrder) params.set("sortOrder", filters.sortOrder);
     return `/api/employees?${params.toString()}`;
