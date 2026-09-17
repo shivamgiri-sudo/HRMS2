@@ -863,6 +863,35 @@ export const paymentVoucherService = {
     return this.get(id);
   },
 
+  /**
+   * Supporting-document attachment (found 2026-09-17 CEO/CA compliance review — a voucher had
+   * no way to attach an invoice, bank advice, or approval memo at any stage). Same single-slot
+   * shape grn.service.ts's own saveAttachment() uses (re-uploadable until locked) — locked here
+   * once status='released', not status='draft' like a GRN, since payment_voucher has no draft
+   * stage in practice and "money has moved" is this record's equivalent locking event.
+   */
+  async saveAttachment(id: string, filePath: string, originalName: string, actorUserId: string, mimeType?: string) {
+    const [result] = await db.execute<ResultSetHeader>(
+      `UPDATE payment_voucher
+          SET attachment_path = ?, attachment_original_name = ?, attachment_mime = ?,
+              attachment_uploaded_by = ?, attachment_uploaded_at = NOW()
+        WHERE id = ? AND status <> 'released'`,
+      [filePath, originalName, mimeType ?? null, actorUserId, id],
+    );
+    if (result.affectedRows !== 1) {
+      throw new PaymentVoucherError("Attachment can only be added or changed before a voucher is released — once released it is part of the historical record.", 409);
+    }
+    await logSensitiveAction({
+      actor_user_id: actorUserId,
+      action_type: "PAYMENT_VOUCHER_ATTACHMENT_SAVED",
+      module_key: "FINANCE",
+      entity_type: "payment_voucher",
+      entity_id: id,
+      change_summary: { filePath, originalName, mimeType },
+    }).catch(() => undefined);
+    return this.get(id);
+  },
+
   async resubmit(
     id: string,
     actorUserId: string,

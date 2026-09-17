@@ -1,4 +1,7 @@
+import { existsSync, mkdirSync } from "fs";
+import path from "path";
 import { Router } from "express";
+import multer from "multer";
 import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { paymentVoucherService, PaymentVoucherError } from "./payment-voucher.service.js";
@@ -42,6 +45,22 @@ const fail = (res: any, error: unknown, fallback: string) => {
     error: error instanceof Error ? error.message : fallback,
   });
 };
+
+// Mirrors grn.routes.ts's own attachment upload exactly (same size limit, same allowed
+// extensions/mimetypes) — a supporting document is a supporting document regardless of which
+// finance record it hangs off.
+const ATTACHMENT_UPLOAD_DIR = "uploads/payment-voucher-attachments";
+if (!existsSync(ATTACHMENT_UPLOAD_DIR)) mkdirSync(ATTACHMENT_UPLOAD_DIR, { recursive: true });
+const attachmentUpload = multer({
+  dest: ATTACHMENT_UPLOAD_DIR,
+  limits: { fileSize: 30 * 1024 * 1024 },
+  fileFilter(_req, file, callback) {
+    const allowedExtensions = [".pdf", ".jpg", ".jpeg", ".png", ".webp"];
+    const allowedMimeTypes = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+    const extension = path.extname(file.originalname).toLowerCase();
+    callback(null, allowedExtensions.includes(extension) && allowedMimeTypes.includes(file.mimetype));
+  },
+});
 
 paymentVoucherRouter.use(requireAuth);
 
