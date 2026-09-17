@@ -156,6 +156,16 @@ function startServer() {
     // widening the real user-facing gap during any restart. No-op outside PM2 (process.send
     // is undefined when not launched by a process manager), so this is safe in every
     // environment including plain `node dist/src/server.js` and local dev.
+
+    // Disable socket inactivity timeout so long-running requests (payroll, bulk exports)
+    // are never killed mid-flight. Nginx proxy_read_timeout (120s/300s) is the outer
+    // guard; Express itself has no built-in request timeout.
+    httpServer!.setTimeout(0);
+    // Keep connections alive slightly longer than nginx's keepalive_timeout (60s) to
+    // avoid the race where nginx sends a request on a reused connection at the exact
+    // moment Node is closing it (produces a spurious 502).
+    httpServer!.keepAliveTimeout = 65000;
+    httpServer!.headersTimeout   = 66000;
     if (process.send) {
       process.send("ready");
     }

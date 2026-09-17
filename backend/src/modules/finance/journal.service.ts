@@ -59,17 +59,6 @@ export type PostJournalEntryInput = {
   sourceId: string;
   postedBy: string;
   lines: JournalLineInput[];
-  /**
-   * Depth dimension for Ledger Reports (owner directive 2026-09-17) — denormalized from the
-   * source record (e.g. grn_request.branch_id/cost_centre_id/process_id) at post time, not a
-   * join key. A journal entry shares one branch/cost-centre/process context across all its
-   * lines, so this lives on journal_entry rather than journal_entry_line. Optional: a source
-   * that doesn't carry one of these (a manual entry, a voucher spanning multiple cost
-   * centres) leaves it NULL rather than forcing a wrong single value.
-   */
-  branchId?: string | null;
-  costCentreId?: string | null;
-  processId?: string | null;
 };
 
 export const journalService = {
@@ -129,19 +118,9 @@ export const journalService = {
 
     const journalEntryId = randomUUID();
     await connection.execute(
-      `INSERT INTO journal_entry (id, entry_date, narration, source_type, source_id, posted_by, branch_id, cost_centre_id, process_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        journalEntryId,
-        input.entryDate,
-        input.narration,
-        input.sourceType,
-        input.sourceId,
-        input.postedBy,
-        input.branchId ?? null,
-        input.costCentreId ?? null,
-        input.processId ?? null,
-      ],
+      `INSERT INTO journal_entry (id, entry_date, narration, source_type, source_id, posted_by)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [journalEntryId, input.entryDate, input.narration, input.sourceType, input.sourceId, input.postedBy],
     );
 
     for (const line of normalizedLines) {
@@ -172,7 +151,7 @@ export const journalService = {
    */
   async reverse(connection: PoolConnection, journalEntryId: string, postedBy: string, reason: string): Promise<{ reversalEntryId: string }> {
     const [rows] = await connection.execute(
-      `SELECT id, entry_date, narration, source_type, source_id, reversed_by_entry_id, branch_id, cost_centre_id, process_id
+      `SELECT id, entry_date, narration, source_type, source_id, reversed_by_entry_id
          FROM journal_entry WHERE id = ? FOR UPDATE`,
       [journalEntryId],
     );
@@ -192,9 +171,6 @@ export const journalService = {
       sourceType: original.source_type,
       sourceId: original.source_id,
       postedBy,
-      branchId: original.branch_id,
-      costCentreId: original.cost_centre_id,
-      processId: original.process_id,
       lines: (lineRows as any[]).map((l) => ({
         accountType: l.account_type,
         accountId: l.account_id,

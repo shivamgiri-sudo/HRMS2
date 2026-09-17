@@ -591,7 +591,7 @@ function CartOverview({ f }: { f:Filters }) {
   ];
   return (
     <div>
-      <InfoBanner msg="<strong>Note:</strong> This Overview tab shows call volume + APR metrics only (from dialler_db). Sales, Revenue &amp; AOV are on the <strong>Sales</strong> tab, imported from the Live Sales export via Bulk Upload Hub." />
+      <InfoBanner msg="<strong>Note:</strong> Sales, Revenue &amp; AOV data from Google Sheets is not available from dialler_db. Showing call volume + APR metrics only." />
       <div style={{ display:"grid", gridTemplateColumns:"repeat(3,minmax(0,1fr))", gap:10, marginBottom:14 }}>
         {kpis.map((k,i)=><KpiTile key={i} {...k}/>)}
       </div>
@@ -693,12 +693,6 @@ function CartSales({ f }: { f:Filters }) {
   if (error||!data) return <ErrorBanner msg="Failed to load sales data" />;
   const rs = (v:number) => `₹${v.toLocaleString("en-IN",{minimumFractionDigits:0,maximumFractionDigits:0})}`;
   const fmtD = (v:unknown) => { const d=new Date(String(v??"")); return isNaN(d.getTime())?String(v??""):d.toLocaleDateString("en-IN",{day:"2-digit",month:"short"}); };
-  // This dashboard has no upload control of its own — every upload in this system goes
-  // through the general Bulk Upload Hub (REGINALD_ABANDONED_CART_SALES template), which had
-  // no link pointing back here. Sales/revenue data is only as fresh as the last upload there.
-  const uploadBanner =
-    '<a href="/bulk-upload" target="_blank" rel="noopener noreferrer" style="color:#1e6fa8;font-weight:800;text-decoration:underline">Upload the latest Live Sales export →</a> ' +
-    '(Bulk Upload Hub, "Reginald Men — Abandoned Cart Live Sales" template). Sales/Revenue/AOV below reflect only what has been uploaded so far.';
   const kpis = [
     {label:"Total Orders",value:data.orders.toLocaleString(),sub:`${f.from} – ${f.to}`,color:"linear-gradient(135deg,#153f69,#1e6fa8)"},
     {label:"Total Revenue",value:rs(data.revenue),sub:`AOV ${rs(data.aov)}`,color:"linear-gradient(135deg,#047857,#10b981)"},
@@ -708,7 +702,6 @@ function CartSales({ f }: { f:Filters }) {
   ];
   return (
     <div>
-      <InfoBanner msg={uploadBanner} />
       <div style={{ display:"grid", gridTemplateColumns:"repeat(5,minmax(0,1fr))", gap:10, marginBottom:16 }}>
         {kpis.map((k,i)=><KpiTile key={i} {...k}/>)}
       </div>
