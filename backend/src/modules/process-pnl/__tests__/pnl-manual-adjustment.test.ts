@@ -48,7 +48,8 @@ describe("createManualAdjustment", () => {
 
     const result = await createManualAdjustment(
       { processId: "proc-1", periodCode: "2026-07", adjustmentType: "reward", amount: 50000, reason: "test" },
-      "u1"
+      "u1",
+      { primaryRole: "finance_head" }
     );
     expect(result.status).toBe("pending");
 
@@ -76,6 +77,66 @@ describe("createManualAdjustment", () => {
         "u1"
       )
     ).rejects.toMatchObject({ code: "ADJUSTMENT_REASON_REQUIRED" });
+  });
+
+  // F-01: branch_head is a valid ADJUSTMENT_WRITE_ROLES holder but must be confined to their
+  // own branch — previously the branch on the adjustment was taken straight from the submitted
+  // process_id with no check that the actor was entitled to that branch at all.
+  it("refuses a branch_head raising an adjustment for a process outside their own branch", async () => {
+    const { createManualAdjustment } = await import("../pnl-manual-adjustment.service.js");
+    execute.mockImplementation(async (sql: string) => {
+      const q = String(sql);
+      if (q.startsWith("SELECT id, branch_id FROM process_master")) {
+        return [[{ id: "proc-1", branch_id: "branch-OTHER" }], []];
+      }
+      if (q.includes("FROM employees") && q.includes("branch_id")) {
+        return [[{ branch_id: "branch-1" }], []];
+      }
+      return [[], []];
+    });
+
+    await expect(
+      createManualAdjustment(
+        { processId: "proc-1", periodCode: "2026-07", adjustmentType: "reward", amount: 50000, reason: "test" },
+        "branch-head-1",
+        { primaryRole: "branch_head" }
+      )
+    ).rejects.toMatchObject({ code: "ADJUSTMENT_PROCESS_OUT_OF_SCOPE" });
+
+    const insertCall = execute.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO pnl_manual_adjustment"));
+    expect(insertCall, "must not insert when the actor is out of scope").toBeFalsy();
+  });
+
+  it("allows a branch_head to raise an adjustment for their own branch's process", async () => {
+    const { createManualAdjustment } = await import("../pnl-manual-adjustment.service.js");
+    execute.mockImplementation(async (sql: string) => {
+      const q = String(sql);
+      if (q.startsWith("SELECT id, branch_id FROM process_master")) {
+        return [[{ id: "proc-1", branch_id: "branch-1" }], []];
+      }
+      if (q.includes("FROM employees") && q.includes("branch_id")) {
+        return [[{ branch_id: "branch-1" }], []];
+      }
+      if (q.startsWith("INSERT INTO pnl_manual_adjustment")) {
+        return [{ affectedRows: 1 }, []];
+      }
+      if (q.includes("FROM pnl_manual_adjustment a")) {
+        return [[{
+          id: "adj-1", process_id: "proc-1", branch_id: "branch-1", period_code: "2026-07",
+          adjustment_type: "reward", amount: 50000, reason: "test", status: "pending",
+          created_by: "branch-head-1", created_at: new Date().toISOString(), approved_by: null,
+          approved_at: null, rejection_reason: null,
+        }], []];
+      }
+      return [[], []];
+    });
+
+    const result = await createManualAdjustment(
+      { processId: "proc-1", periodCode: "2026-07", adjustmentType: "reward", amount: 50000, reason: "test" },
+      "branch-head-1",
+      { primaryRole: "branch_head" }
+    );
+    expect(result.status).toBe("pending");
   });
 });
 

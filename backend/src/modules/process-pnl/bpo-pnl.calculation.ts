@@ -135,15 +135,26 @@ const n = (value: number | null | undefined) => {
 const pct = (numerator: number, denominator: number): number | null =>
   denominator > 0 ? (numerator / denominator) * 100 : null;
 
+/**
+ * First metric that is actually present (not null/undefined), in fallback priority order.
+ *
+ * F-02: `||` treats an explicit 0 the same as "not reported" and falls through to the next
+ * source — a process that genuinely delivered zero billable units that month would silently
+ * recognize revenue off accepted units or mandated seats instead. A zero delivery is a real
+ * financial fact and must end the fallback chain, not be skipped over it.
+ */
+const firstPresent = (...values: Array<number | null | undefined>): number | undefined =>
+  values.find((value) => value !== null && value !== undefined);
+
 function metricUnits(rule: RevenueRuleInput, delivery: DeliveryMetricInput | undefined): number {
   if (rule.billingModel === "fixed_monthly") return 1;
-  if (rule.billingModel === "per_productive_hour") return n(delivery?.productiveHours || delivery?.billableUnits);
-  if (rule.billingModel === "per_login_hour") return n(delivery?.loginHours || delivery?.billableUnits);
-  if (rule.billingModel === "per_talk_minute") return n(delivery?.talkMinutes || delivery?.billableUnits);
+  if (rule.billingModel === "per_productive_hour") return n(firstPresent(delivery?.productiveHours, delivery?.billableUnits));
+  if (rule.billingModel === "per_login_hour") return n(firstPresent(delivery?.loginHours, delivery?.billableUnits));
+  if (rule.billingModel === "per_talk_minute") return n(firstPresent(delivery?.talkMinutes, delivery?.billableUnits));
   if (rule.billingModel === "per_seat" || rule.billingModel === "per_fte") {
-    return n(delivery?.billableUnits || delivery?.acceptedUnits || rule.mandatedSeats);
+    return n(firstPresent(delivery?.billableUnits, delivery?.acceptedUnits, rule.mandatedSeats));
   }
-  return n(delivery?.billableUnits || delivery?.acceptedUnits || delivery?.deliveredUnits);
+  return n(firstPresent(delivery?.billableUnits, delivery?.acceptedUnits, delivery?.deliveredUnits));
 }
 
 function tieredAmount(units: number, rule: RevenueRuleInput, rateInr: number): number {
