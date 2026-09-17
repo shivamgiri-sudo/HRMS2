@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { ESIGN_STATE_COLORS, esignStatusColor } from "@/lib/esignState";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatISTDate } from "@/lib/utils";
-import { useToast } from "@/hooks/use-toast";
+import { useToast, toast } from "@/hooks/use-toast";
 
 type ChecklistItem = {
   id: string;
@@ -166,8 +166,14 @@ export default function EmployeeJoiningDocumentsPage() {
 
   const progress = useMemo(() => Number(pack?.employee.joining_document_completion_pct ?? 0), [pack]);
 
+  // EPF_DECLARATION (Form 11) and EPF_NOMINATION_FORM2 (Form 2) arrive pre-filled and are
+  // reviewed by the employee on their own track, not through the joining-kit eSign flow —
+  // owner directive: they don't count toward this page's completion tracker (see the
+  // matching COMPLETION_EXCLUDED_DOCUMENT_CODES constant in employeeJoiningDocuments.service.ts).
+  const COMPLETION_EXCLUDED_CODES = new Set(["EPF_DECLARATION", "EPF_NOMINATION_FORM2"]);
+
   const stats = useMemo(() => {
-    const list = pack?.checklist ?? [];
+    const list = (pack?.checklist ?? []).filter(i => !COMPLETION_EXCLUDED_CODES.has(i.document_code));
     const completed = list.filter(i =>
       ["completed", "verified", "signed_verified", "esign_completed", "employee_confirmed"].includes(i.status)
     ).length;
@@ -750,6 +756,8 @@ type KitRecord = {
   id: string; status: string; blocked_reason: string | null;
   document_count: number; total_pages: number;
   sent_at: string | null; completed_at: string | null; items: number;
+  /** Only present on the open ("sent") kit — see joiningKit.routes.ts. */
+  sessionAlive?: boolean;
 };
 
 const KIT_BADGE: Record<string, string> = {
@@ -940,6 +948,23 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
                         <span className="font-medium text-emerald-600">Signed {new Date(k.completed_at).toLocaleString("en-IN")}</span>
                       )}
                       {k.blocked_reason && <span className="text-red-600">{k.blocked_reason}</span>}
+                      {(k.status === "signed" || k.status === "sent") && (
+                        <button
+                          type="button"
+                          title={k.status === "signed" ? "View the complete signed document" : "View the draft sent for signing"}
+                          onClick={async () => {
+                            try {
+                              const blob = await hrmsApi.getBlob(`/api/employees/${employeeId}/joining-kit/${k.id}/file`);
+                              window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
+                            } catch (err: any) {
+                              toast({ title: "Unable to open document", description: err?.message || "This kit has no file yet.", variant: "destructive" });
+                            }
+                          }}
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-600 hover:bg-slate-100"
+                        >
+                          <Eye className="h-3 w-3" /> {k.status === "signed" ? "View signed copy" : "View draft"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -954,27 +979,68 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
                 A kit is already open for this employee — {open.document_count} documents, {open.total_pages} pages
                 {open.sent_at ? `, sent ${new Date(open.sent_at).toLocaleString("en-IN")}` : ""}.
               </p>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <p className="text-xs text-cyan-700">Employee hasn&apos;t received or lost the email?</p>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="min-h-[36px] gap-1.5 border-cyan-400 bg-white text-cyan-700 hover:bg-cyan-50"
-                  onClick={async () => {
-                    if (!window.confirm("Resend the signing link to the employee's email address?")) return;
-                    try {
-                      await hrmsApi.post(`/api/employees/${employeeId}/joining-kit/${open.id}/resend`, {});
-                      toast({ title: "Email resent", description: "A fresh signing link has been sent to the employee." });
-                      void load();
-                    } catch (err: any) {
-                      toast({ title: "Resend failed", description: err?.message || "Unable to resend.", variant: "destructive" });
-                    }
-                  }}
-                >
-                  <Send className="h-3.5 w-3.5" /> Resend email
-                </Button>
-              </div>
+              {open.sessionAlive === false ? (
+                <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
+                  <p className="text-sm font-semibold text-red-800">
+                    This kit&apos;s signing session has expired or been cancelled at the provider.
+                  </p>
+                  <p className="mt-1 text-xs text-red-700">
+                    Resending an email won&apos;t help — the link it points to is dead. Sending a new kit
+                    re-bills the eSign provider and the employee has to sign all documents again from scratch.
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="mt-2 min-h-[36px] gap-1.5 bg-red-600 text-white hover:bg-red-700"
+                    onClick={async () => {
+                      if (!window.confirm(
+                        "This kit's session is dead. Send a brand-new kit? This bills the eSign provider again and the employee will need to sign all documents from scratch."
+                      )) return;
+                      try {
+                        await hrmsApi.post(`/api/employees/${employeeId}/joining-kit/redispatch`, {});
+                        toast({ title: "New kit sent", description: "A fresh signing session has been dispatched to the employee." });
+                        void load();
+                      } catch (err: any) {
+                        toast({ title: "Redispatch failed", description: err?.message || "Unable to send a new kit.", variant: "destructive" });
+                      }
+                    }}
+                  >
+                    <Send className="h-3.5 w-3.5" /> Send a new kit
+                  </Button>
+                </div>
+              ) : (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <p className="text-xs text-cyan-700">Employee hasn&apos;t received or lost the email?</p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="min-h-[36px] gap-1.5 border-cyan-400 bg-white text-cyan-700 hover:bg-cyan-50"
+                    onClick={async () => {
+                      if (!window.confirm("Resend the signing link to the employee's email address?")) return;
+                      try {
+                        // Backend answers 200 even when it declines to resend (e.g. the
+                        // provider session already failed/expired) — `resent` is the real
+                        // outcome, not the HTTP status. A try/catch alone showed "Email
+                        // resent" on every click regardless of whether anything happened.
+                        const response = await hrmsApi.post<{ resent: boolean; message: string }>(
+                          `/api/employees/${employeeId}/joining-kit/${open.id}/resend`, {},
+                        );
+                        if (response.resent) {
+                          toast({ title: "Email resent", description: response.message || "A fresh signing link has been sent to the employee." });
+                        } else {
+                          toast({ title: "Resend not sent", description: response.message || "Unable to resend.", variant: "destructive" });
+                        }
+                        void load();
+                      } catch (err: any) {
+                        toast({ title: "Resend failed", description: err?.message || "Unable to resend.", variant: "destructive" });
+                      }
+                    }}
+                  >
+                    <Send className="h-3.5 w-3.5" /> Resend email
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 

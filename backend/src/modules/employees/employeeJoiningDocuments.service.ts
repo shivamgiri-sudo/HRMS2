@@ -19,6 +19,18 @@ import { buildJoiningDocEsignEmailHtml, buildEpfComplianceReviewEmailHtml } from
 const STORAGE_ROOT = path.resolve(process.cwd(), "private-storage", "employee-joining-documents");
 
 /**
+ * EPF forms arrive pre-filled from statutory data the employee already gave at
+ * onboarding (EPF_DECLARATION = Form 11, EPF_NOMINATION_FORM2 = Form 2) and are
+ * reviewed/confirmed by the employee on their own track, not signed through the
+ * joining-kit Aadhaar eSign flow with the other 6 documents. Owner directive
+ * (2026-09-18): they should not count toward the mandatory joining-document
+ * completion tracker — an employee who has signed every kit document was
+ * showing 75% (6 of 8) instead of 100% (6 of 6) while these two sat at
+ * 'employee_review_pending' for an unrelated, separately-tracked reason.
+ */
+export const COMPLETION_EXCLUDED_DOCUMENT_CODES = ["EPF_DECLARATION", "EPF_NOMINATION_FORM2"] as const;
+
+/**
  * True when a stored joining-document file is readable on THIS machine.
  *
  * storage_path is written absolute, so the recorded value depends on which machine
@@ -473,8 +485,9 @@ export async function recalculateDocumentProgress(employeeId: string) {
         SUM(CASE WHEN mandatory = 1 AND status IN ('verified', 'signed_verified', 'completed', 'esign_completed', 'wet_signed_uploaded') THEN 1 ELSE 0 END) AS mandatory_completed,
         SUM(CASE WHEN status IN ('verified', 'signed_verified', 'completed', 'esign_completed', 'wet_signed_uploaded') THEN 1 ELSE 0 END) AS completed_count
        FROM employee_joining_document_checklist
-      WHERE employee_id = ?`,
-    [employeeId],
+      WHERE employee_id = ?
+        AND document_code NOT IN (${COMPLETION_EXCLUDED_DOCUMENT_CODES.map(() => "?").join(",")})`,
+    [employeeId, ...COMPLETION_EXCLUDED_DOCUMENT_CODES],
   );
   const row = (rows as RowDataPacket[])[0];
   const total = Number(row?.mandatory_count ?? row?.total_count ?? 0);
