@@ -672,3 +672,41 @@ describe("paymentVoucherService.withdraw (2026-09-17 CEO/CA compliance review �
     expect(getConnection).not.toHaveBeenCalled();
   });
 });
+
+describe("paymentVoucherService.saveAttachment (2026-09-17 CEO/CA compliance review — no attachment path existed before this)", () => {
+  it("saves the attachment while the voucher is not yet released", async () => {
+    execute.mockReset();
+    execute.mockResolvedValueOnce([{ affectedRows: 1 }]); // UPDATE ... WHERE status <> 'released'
+    execute.mockImplementation(async (sql: string) => {
+      if (String(sql).includes("finance_action_audit_log")) return [[]];
+      return [[VOUCHER_ROW]];
+    });
+
+    await paymentVoucherService.saveAttachment("pv-1", "uploads/payment-voucher-attachments/abc123", "invoice.pdf", "fh-1", "application/pdf");
+
+    const update = execute.mock.calls[0];
+    expect(String(update[0])).toContain("WHERE id = ? AND status <> 'released'");
+    expect(update[1]).toEqual(["uploads/payment-voucher-attachments/abc123", "invoice.pdf", "application/pdf", "fh-1", "pv-1"]);
+    expect(logSensitiveAction).toHaveBeenCalledWith(
+      expect.objectContaining({ action_type: "PAYMENT_VOUCHER_ATTACHMENT_SAVED", entity_id: "pv-1" }),
+    );
+  });
+
+  it("refuses once the voucher is released — money has moved, the attachment becomes part of the historical record", async () => {
+    execute.mockReset();
+    execute.mockResolvedValueOnce([{ affectedRows: 0 }]); // WHERE status <> 'released' matched nothing
+
+    await expect(
+      paymentVoucherService.saveAttachment("pv-1", "uploads/x", "invoice.pdf", "fh-1"),
+    ).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it("refuses for a voucher id that does not exist", async () => {
+    execute.mockReset();
+    execute.mockResolvedValueOnce([{ affectedRows: 0 }]);
+
+    await expect(
+      paymentVoucherService.saveAttachment("no-such-id", "uploads/x", "invoice.pdf", "fh-1"),
+    ).rejects.toMatchObject({ statusCode: 409 });
+  });
+});

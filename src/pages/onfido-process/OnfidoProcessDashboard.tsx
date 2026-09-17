@@ -165,6 +165,15 @@ interface QualityOverview {
 }
 type QualityDimension = "ims_client_name" | "docupedia_document_name" | "tl_name" | "am_name";
 interface QualityBreakdownRow { label: string; taskCount: number; overallErrorRate: number | null; farRate: number | null; frrRate: number | null }
+interface DocInternalQualityOverview { taskCount: KpiValue; overallErrorRate: KpiValue }
+interface QualityMetricTrendPoint {
+  bucket: string;
+  overallErrorRate: number | null;
+  classificationErrorRate: number | null;
+  extractionErrorRate: number | null;
+  addExtractionErrorRate: number | null;
+  rawExtractionErrorRate: number | null;
+}
 
 interface EscalationOverview {
   totalLines: KpiValue; creLines: KpiValue; crqLines: KpiValue; distinctReports: KpiValue;
@@ -593,6 +602,53 @@ function ScorecardBarChart({ metrics, title, hc }: { metrics: { name: string; va
           </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** Green < 1.0%, orange 1.0-1.5%, red >= 1.5%, muted for zero/no data — the
+ *  reference dashboard's own buildTrendTable() thresholds. */
+function metricCellColor(pct: number | null): string {
+  if (pct === null || pct === 0) return "var(--muted)";
+  return pct >= 1.5 ? "var(--red)" : pct >= 1.0 ? "var(--orange)" : "var(--green)";
+}
+
+/** Metric-rows x time-bucket-columns table — mirrors the reference dashboard's
+ *  buildTrendTable() (Quality page month/week/day-wise trend tables,
+ *  2026-09-17 feedback). Each row is one metric so a reviewer reads a metric's
+ *  trajectory across a whole row instead of hunting one card per bucket. */
+function MetricTrendTable({ title, columns, rows, hc }: {
+  title: string; columns: string[]; rows: { label: string; values: (number | null)[] }[]; hc?: string;
+}) {
+  return (
+    <div className="oc-card" style={{ "--hc": hc ?? "var(--red)" } as React.CSSProperties}>
+      <h3>{title}</h3>
+      {columns.length === 0 ? (
+        <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table className="oc-table">
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", minWidth: 160 }}>Metric</th>
+                {columns.map((c) => <th key={c} className="oc-right">{c}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.label}>
+                  <td style={{ textAlign: "left", fontWeight: 600 }}>{r.label}</td>
+                  {r.values.map((v, i) => (
+                    <td key={columns[i]} className="oc-right" style={{ color: metricCellColor(v), fontWeight: 700 }}>
+                      {v !== null ? `${v}%` : "–"}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -2133,12 +2189,47 @@ function QualityView({
         `/api/onfido-process/records/ONFIDO_DOC_EXTERNAL_AUDIT?from=${range.from}&to=${range.to}${qs}&filterColumn=has_error&filterValue=1&limit=100`
       ),
   });
+  // 2026-09-17 feedback additions — Int Overall Err% (internal DOC audit), POA
+  // Error% and Ext POA% alongside the existing external-audit scorecard.
+  // FAR%/FRR%/Manual FAR%/Manual FRR% are intentionally excluded per explicit
+  // instruction not to add them anywhere on this dashboard.
+  const intOverviewQuery = useQuery({
+    queryKey: ["onfido-process", "quality-int-overview", range, tlFilter, amFilter],
+    queryFn: () => hrmsApi.get<{ data: DocInternalQualityOverview }>(`/api/onfido-process/quality/internal-overview?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const poaOverviewForQualityQuery = useQuery({
+    queryKey: ["onfido-process", "poa-overview-for-quality", range, tlFilter, amFilter],
+    queryFn: () => hrmsApi.get<{ data: PoaOverview }>(`/api/onfido-process/poa/overview?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const poaExternalOverviewForQualityQuery = useQuery({
+    queryKey: ["onfido-process", "poa-external-overview-for-quality", range, tlFilter, amFilter],
+    queryFn: () => hrmsApi.get<{ data: PoaExternalOverview }>(`/api/onfido-process/poa-external/overview?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const metricTrendQuery = useQuery({
+    queryKey: ["onfido-process", "quality-metric-trend", range, tlFilter, amFilter, granularity],
+    queryFn: () => hrmsApi.get<{ data: QualityMetricTrendPoint[] }>(`/api/onfido-process/quality/metric-trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`),
+  });
+  const intTrendForTableQuery = useQuery({
+    queryKey: ["onfido-process", "quality-int-trend-for-table", range, tlFilter, amFilter, granularity],
+    queryFn: () => hrmsApi.get<{ data: QualityTrendPoint[] }>(`/api/onfido-process/quality/internal-trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`),
+  });
+  const poaTrendForTableQuery = useQuery({
+    queryKey: ["onfido-process", "quality-poa-trend-for-table", range, tlFilter, amFilter, granularity],
+    queryFn: () => hrmsApi.get<{ data: QualityTrendPoint[] }>(`/api/onfido-process/poa/quality-trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`),
+  });
+  const poaExtTrendForTableQuery = useQuery({
+    queryKey: ["onfido-process", "quality-poa-ext-trend-for-table", range, tlFilter, amFilter, granularity],
+    queryFn: () => hrmsApi.get<{ data: PoaExternalTrendPoint[] }>(`/api/onfido-process/poa-external/trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`),
+  });
 
   const ov = overviewQuery.data?.data;
   const points = trendQuery.data?.data ?? [];
   const breakdown = breakdownQuery.data?.data ?? [];
   const errors = errorsQuery.data?.data;
   const dimLabel = { ims_client_name: "Client", docupedia_document_name: "Document Type", tl_name: "TL", am_name: "AM" }[dimension];
+  const intOv = intOverviewQuery.data?.data;
+  const poaOv = poaOverviewForQualityQuery.data?.data;
+  const poaExtOv = poaExternalOverviewForQualityQuery.data?.data;
 
   // Build scorecard metrics from the overview KPIs
   const scorecardMetrics = ov ? [
@@ -2147,7 +2238,44 @@ function QualityView({
     { name: "Extraction Error %", value: ov.extractionErrorRate?.value ?? null },
     { name: "Add. Extraction Error %", value: ov.addExtractionErrorRate?.value ?? null },
     { name: "Raw Extraction Error %", value: ov.rawExtractionErrorRate?.value ?? null },
+    { name: "Int Overall Error %", value: intOv?.overallErrorRate?.value ?? null },
+    { name: "POA Error %", value: poaOv?.errorRate?.value ?? null },
+    { name: "Ext POA %", value: poaExtOv?.errorRate?.value ?? null },
   ] : [];
+
+  // Merge the 3 extra trend sources (internal DOC, POA internal, POA external)
+  // into the same bucket set the metric-trend table renders as columns.
+  const metricTrendRows = useMemo(() => {
+    const metricPoints = metricTrendQuery.data?.data ?? [];
+    const intPoints = intTrendForTableQuery.data?.data ?? [];
+    const poaPoints = poaTrendForTableQuery.data?.data ?? [];
+    const poaExtPoints = poaExtTrendForTableQuery.data?.data ?? [];
+    const buckets = [...new Set([
+      ...metricPoints.map((p) => p.bucket), ...intPoints.map((p) => p.bucket),
+      ...poaPoints.map((p) => p.bucket), ...poaExtPoints.map((p) => p.bucket),
+    ])].sort();
+    const byBucket = <T,>(arr: T[], key: (t: T) => string) => new Map(arr.map((t) => [key(t), t]));
+    const metricByBucket = byBucket(metricPoints, (p) => p.bucket);
+    const intByBucket = byBucket(intPoints, (p) => p.bucket);
+    const poaByBucket = byBucket(poaPoints, (p) => p.bucket);
+    const poaExtByBucket = byBucket(poaExtPoints, (p) => p.bucket);
+    const rowDefs: { label: string; getVal: (bucket: string) => number | null }[] = [
+      { label: "Overall Error %", getVal: (b) => metricByBucket.get(b)?.overallErrorRate ?? null },
+      { label: "Classification Error %", getVal: (b) => metricByBucket.get(b)?.classificationErrorRate ?? null },
+      { label: "Extraction Error %", getVal: (b) => metricByBucket.get(b)?.extractionErrorRate ?? null },
+      { label: "Add. Extraction Error %", getVal: (b) => metricByBucket.get(b)?.addExtractionErrorRate ?? null },
+      { label: "Raw Extraction Error %", getVal: (b) => metricByBucket.get(b)?.rawExtractionErrorRate ?? null },
+      { label: "Int Overall Error %", getVal: (b) => intByBucket.get(b)?.errorRate ?? null },
+      { label: "POA Error %", getVal: (b) => poaByBucket.get(b)?.errorRate ?? null },
+      {
+        label: "Ext POA %", getVal: (b) => {
+          const p = poaExtByBucket.get(b);
+          return p && p.taskCount > 0 ? Math.round((p.errorCount / p.taskCount) * 1000) / 10 : null;
+        },
+      },
+    ];
+    return { columns: buckets, rows: rowDefs.map((r) => ({ label: r.label, values: buckets.map(r.getVal) })) };
+  }, [metricTrendQuery.data, intTrendForTableQuery.data, poaTrendForTableQuery.data, poaExtTrendForTableQuery.data]);
 
   return (
     <div className="space-y-4">
@@ -2158,6 +2286,13 @@ function QualityView({
           <KpiPlain kpi={ov.farRate} kc="var(--orange)" />
         </div>
       )}
+      {(intOv || poaOv || poaExtOv) && (
+        <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+          {intOv && <KpiPlain kpi={intOv.overallErrorRate} kc="var(--purple)" />}
+          {poaOv && <KpiPlain kpi={poaOv.errorRate} kc="var(--teal)" />}
+          {poaExtOv && <KpiPlain kpi={poaExtOv.errorRate} kc="var(--orange)" />}
+        </div>
+      )}
 
       {scorecardMetrics.length > 0 && (
         <ScorecardBarChart
@@ -2166,6 +2301,13 @@ function QualityView({
           hc="var(--red)"
         />
       )}
+
+      <MetricTrendTable
+        title={`Quality Metric Trend — ${granularity[0].toUpperCase()}${granularity.slice(1)}-wise`}
+        columns={metricTrendRows.columns}
+        rows={metricTrendRows.rows}
+        hc="var(--purple)"
+      />
 
       <div className="oc-card" style={{ "--hc": "var(--red)" } as React.CSSProperties}>
         <div className="flex flex-wrap items-center justify-between gap-3">

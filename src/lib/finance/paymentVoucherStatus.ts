@@ -71,6 +71,14 @@ export type Voucher = {
   withdrawn_by_name?: string | null;
   withdrawn_at?: string | null;
   withdrawal_reason?: string | null;
+  /** Supporting document (invoice, bank advice, approval memo) — one per voucher, re-uploadable
+   *  until release, then locked. Null when nothing has been attached yet. */
+  attachment_path?: string | null;
+  attachment_original_name?: string | null;
+  attachment_mime?: string | null;
+  attachment_uploaded_by?: string | null;
+  attachment_uploaded_by_name?: string | null;
+  attachment_uploaded_at?: string | null;
   head: string | null;
   sub_head: string | null;
   created_at: string;

@@ -422,6 +422,7 @@ export const paymentVoucherService = {
     const actorNames = await resolveActorNames([
       (row as any).raised_by, (row as any).ceo_approved_by, (row as any).released_by,
       (row as any).accounts_reviewed_by, (row as any).changes_requested_by, (row as any).withdrawn_by,
+      (row as any).attachment_uploaded_by,
       ...approvalEvents.map((e) => e.actor_user_id),
       ...(auditRows as any[]).map((e) => e.actor_user_id),
     ]);
@@ -435,6 +436,7 @@ export const paymentVoucherService = {
       accounts_reviewed_by_name: nameOf((row as any).accounts_reviewed_by),
       changes_requested_by_name: nameOf((row as any).changes_requested_by),
       withdrawn_by_name: nameOf((row as any).withdrawn_by),
+      attachment_uploaded_by_name: nameOf((row as any).attachment_uploaded_by),
       current_bank_balance: currentBankBalance,
       grn_allocations: grnAllocationRows,
       // The raise -> CEO-approve -> release timeline (drill-down mandate's "Approval / workflow

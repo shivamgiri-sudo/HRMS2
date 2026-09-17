@@ -253,6 +253,10 @@ router.get("/quality/internal-trend", requireAuth, requireRole(...VIEWER_ROLES),
   const data = await svc.getDocInternalQualityTrend(readQueryFilters(req), readGranularity(req));
   res.json({ success: true, data });
 }));
+router.get("/quality/internal-overview", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getDocInternalQualityOverview(readQueryFilters(req));
+  res.json({ success: true, data });
+}));
 const QUALITY_DIMENSIONS = new Set(["ims_client_name", "docupedia_document_name", "tl_name", "am_name"]);
 router.get("/quality/breakdown/:dimension", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const dim = req.params.dimension;

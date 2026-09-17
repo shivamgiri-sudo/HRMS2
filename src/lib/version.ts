@@ -1,5 +1,5 @@
 // Current application version - update this when releasing new versions
-export const APP_VERSION = "backup/main-before-origin-merge-20260912-424-ga20009f7-dev";
+export const APP_VERSION = "backup/main-before-origin-merge-20260912-436-gf275fec1-dev";
 
 // Local-only deployment: no external version API
 export const VERSION_API_URL = "";
