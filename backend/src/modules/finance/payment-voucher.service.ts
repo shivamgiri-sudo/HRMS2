@@ -863,13 +863,6 @@ export const paymentVoucherService = {
     return this.get(id);
   },
 
-  /**
-   * Supporting-document attachment (found 2026-09-17 CEO/CA compliance review — a voucher had
-   * no way to attach an invoice, bank advice, or approval memo at any stage). Same single-slot
-   * shape grn.service.ts's own saveAttachment() uses (re-uploadable until locked) — locked here
-   * once status='released', not status='draft' like a GRN, since payment_voucher has no draft
-   * stage in practice and "money has moved" is this record's equivalent locking event.
-   */
   async saveAttachment(id: string, filePath: string, originalName: string, actorUserId: string, mimeType?: string) {
     const [result] = await db.execute<ResultSetHeader>(
       `UPDATE payment_voucher
@@ -891,6 +884,7 @@ export const paymentVoucherService = {
     }).catch(() => undefined);
     return this.get(id);
   },
+
 
   async resubmit(
     id: string,
