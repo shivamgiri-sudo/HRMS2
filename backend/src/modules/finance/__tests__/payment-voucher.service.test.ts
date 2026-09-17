@@ -605,3 +605,70 @@ describe("paymentVoucherService.get — actor names and live balance (2026-09-17
     expect(result!.current_bank_balance).toBe(75000);
   });
 });
+
+describe("paymentVoucherService.withdraw (2026-09-17 CEO/CA compliance review — no cancel path existed before this)", () => {
+  it("lets the raiser withdraw their own voucher while status='raised'", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute
+      .mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "raised", raised_by: "fh-1" }]]) // SELECT FOR UPDATE
+      .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE status='withdrawn'
+      .mockResolvedValueOnce([{}]); // writeVoucherAudit
+
+    await paymentVoucherService.withdraw("pv-1", "fh-1", "finance_head", "Raised against the wrong bank account");
+
+    const update = conn.execute.mock.calls.find(([sql]) => String(sql).includes("SET status = 'withdrawn'"));
+    expect(update![1]).toEqual(["fh-1", "Raised against the wrong bank account", "pv-1", "raised"]);
+    expect(conn.commit).toHaveBeenCalled();
+  });
+
+  it("refuses when someone other than the raiser tries to withdraw a raised voucher", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute.mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "raised", raised_by: "fh-1" }]]);
+
+    await expect(
+      paymentVoucherService.withdraw("pv-1", "someone-else", "finance_head", "Not mine to withdraw"),
+    ).rejects.toMatchObject({ statusCode: 403 });
+    expect(conn.rollback).toHaveBeenCalled();
+  });
+
+  it("lets Finance Head recall a ceo_approved voucher before release", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute
+      .mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "ceo_approved", raised_by: "fh-1", ceo_approved_by: "ceo-1" }]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([{}]);
+
+    await paymentVoucherService.withdraw("pv-1", "fh-2", "finance_head", "Vendor asked us to hold this payment");
+
+    const update = conn.execute.mock.calls.find(([sql]) => String(sql).includes("SET status = 'withdrawn'"));
+    expect(update![1]).toEqual(["fh-2", "Vendor asked us to hold this payment", "pv-1", "ceo_approved"]);
+  });
+
+  it("refuses a recall from someone who is neither release-capable nor the approving CEO", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute.mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "ceo_approved", raised_by: "fh-1", ceo_approved_by: "ceo-1" }]]);
+
+    await expect(
+      paymentVoucherService.withdraw("pv-1", "random-employee", "employee", "I don't like it"),
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it("refuses to withdraw a released voucher — money already moved, only reversal applies", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute.mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "released", raised_by: "fh-1" }]]);
+
+    await expect(
+      paymentVoucherService.withdraw("pv-1", "fh-1", "finance_head", "Too late"),
+    ).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it("requires a reason", async () => {
+    await expect(paymentVoucherService.withdraw("pv-1", "fh-1", "finance_head", "")).rejects.toThrow(/reason/i);
+    expect(getConnection).not.toHaveBeenCalled();
+  });
+});

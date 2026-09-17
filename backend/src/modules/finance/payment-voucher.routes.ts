@@ -148,6 +148,25 @@ paymentVoucherRouter.post(
   }),
 );
 
+// Withdraw/recall — the route gate admits everyone who could plausibly be authorized for
+// EITHER case (raiser withdrawing their own 'raised' voucher, or finance_head/super_admin/ceo
+// recalling a 'ceo_approved' one); withdraw() itself enforces exactly who, tied to the
+// voucher's specific raised_by/ceo_approved_by, not just a role check.
+paymentVoucherRouter.post(
+  "/:id/withdraw",
+  requireWriteAccess,
+  requireRole(...VOUCHER_RAISE_ROLES, ...VOUCHER_CEO_ROLES),
+  h(async (req, res) => {
+    try {
+      const a = actor(req);
+      const data = await paymentVoucherService.withdraw(req.params.id, a.id, a.role, String(req.body?.reason ?? ""));
+      res.json({ success: true, data });
+    } catch (error) {
+      fail(res, error, "Unable to withdraw the payment voucher");
+    }
+  }),
+);
+
 paymentVoucherRouter.post(
   "/:id/resubmit",
   requireWriteAccess,

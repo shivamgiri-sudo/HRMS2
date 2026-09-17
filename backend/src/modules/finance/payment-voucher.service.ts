@@ -421,7 +421,7 @@ export const paymentVoucherService = {
     // every approval_events and audit_log actor_user_id).
     const actorNames = await resolveActorNames([
       (row as any).raised_by, (row as any).ceo_approved_by, (row as any).released_by,
-      (row as any).accounts_reviewed_by, (row as any).changes_requested_by,
+      (row as any).accounts_reviewed_by, (row as any).changes_requested_by, (row as any).withdrawn_by,
       ...approvalEvents.map((e) => e.actor_user_id),
       ...(auditRows as any[]).map((e) => e.actor_user_id),
     ]);
@@ -434,6 +434,7 @@ export const paymentVoucherService = {
       released_by_name: nameOf((row as any).released_by),
       accounts_reviewed_by_name: nameOf((row as any).accounts_reviewed_by),
       changes_requested_by_name: nameOf((row as any).changes_requested_by),
+      withdrawn_by_name: nameOf((row as any).withdrawn_by),
       current_bank_balance: currentBankBalance,
       grn_allocations: grnAllocationRows,
       // The raise -> CEO-approve -> release timeline (drill-down mandate's "Approval / workflow
@@ -757,6 +758,107 @@ export const paymentVoucherService = {
         }).catch(() => undefined);
       }
     }
+
+    return this.get(id);
+  },
+
+  /**
+   * Self-service cancellation (found 2026-09-17 CEO/CA compliance review — a voucher had no
+   * cancel path at all before this: not for the raiser catching their own mistake, not for
+   * anyone stopping an already-approved voucher before it releases). Two distinct callers,
+   * both leading to the same terminal 'withdrawn' status (1799_payment_voucher_withdraw_status.sql)
+   * — kept as one status rather than two because both mean the same thing operationally ("this
+   * payment will not happen, decided before money moved"), just triggered from a different stage:
+   *   - status='raised': only the person who raised it, before the CEO has acted.
+   *   - status='ceo_approved': anyone who could release it (finance_head/super_admin) OR the CEO
+   *     who approved it — recalling is strictly less than releasing, so the same authority that
+   *     can push money out can also decide not to.
+   * Never used on 'released' — once money has moved, the only correction is journalService.
+   * reverse(), a different and much heavier operation than "we changed our mind before paying".
+   */
+  async withdraw(id: string, actorUserId: string, actorRole: string | undefined, reason: string) {
+    if (!reason?.trim()) throw new PaymentVoucherError("A reason is required to withdraw a voucher.");
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[voucher]] = await connection.execute<RowDataPacket[]>(
+        `SELECT * FROM payment_voucher WHERE id = ? FOR UPDATE`,
+        [id],
+      );
+      if (!voucher) throw new PaymentVoucherError("Payment voucher not found", 404);
+      const v = voucher as any;
+
+      if (v.status === "raised") {
+        if (String(v.raised_by) !== String(actorUserId)) {
+          throw new PaymentVoucherError("Only the person who raised this voucher can withdraw it.", 403);
+        }
+      } else if (v.status === "ceo_approved") {
+        const canRecall = ["finance_head", "super_admin"].includes(String(actorRole)) || String(v.ceo_approved_by) === String(actorUserId);
+        if (!canRecall) {
+          throw new PaymentVoucherError("Only Finance Head, or the CEO who approved it, can recall an approved voucher before release.", 403);
+        }
+      } else {
+        throw new PaymentVoucherError(`A voucher can only be withdrawn while raised or awaiting release (current status: ${v.status})`, 409);
+      }
+
+      const [result] = await connection.execute<ResultSetHeader>(
+        `UPDATE payment_voucher
+            SET status = 'withdrawn', withdrawn_by = ?, withdrawn_at = NOW(), withdrawal_reason = ?
+          WHERE id = ? AND status = ?`,
+        [actorUserId, reason.trim(), id, v.status],
+      );
+      if (result.affectedRows !== 1) {
+        throw new PaymentVoucherError("Voucher status changed under you — reload and try again", 409);
+      }
+
+      await recordFinanceApprovalEvent(
+        {
+          entityType: "payment_voucher",
+          entityId: id,
+          action: "withdraw",
+          fromStatus: v.status,
+          toStatus: "withdrawn",
+          decision: "withdraw",
+          actorUserId,
+          actorRole: actorRole ?? "unknown",
+          remarks: reason.trim(),
+        },
+        connection,
+      );
+      await writeVoucherAudit(connection, "PAYMENT_VOUCHER_WITHDRAWN", id, actorUserId, actorRole, { reason: reason.trim(), fromStatus: v.status });
+
+      await connection.commit();
+
+      // Whoever didn't do the withdrawing should hear about it — the raiser if someone else
+      // recalled it, or nobody (silent) if the raiser withdrew their own still-unapproved request,
+      // since there's no one downstream waiting on it yet.
+      if (v.status === "ceo_approved" && String(v.raised_by) !== String(actorUserId)) {
+        await inboxService.createItem({
+          user_id: v.raised_by,
+          type: "payment_voucher_withdrawn",
+          title: `Payment Voucher recalled before release`,
+          description: reason.trim(),
+          entity_type: "payment_voucher",
+          entity_id: id,
+          action_url: "/finance/payment-vouchers",
+          priority: "high",
+        }).catch(() => undefined);
+      }
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+
+    await logSensitiveAction({
+      actor_user_id: actorUserId,
+      actor_role: actorRole,
+      action_type: "PAYMENT_VOUCHER_WITHDRAWN",
+      module_key: "FINANCE",
+      entity_type: "payment_voucher",
+      entity_id: id,
+    }).catch(() => undefined);
 
     return this.get(id);
   },
