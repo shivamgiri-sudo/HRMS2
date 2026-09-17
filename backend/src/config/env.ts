@@ -166,6 +166,13 @@ const envSchema = z.object({
   DIALER_DB_PASSWORD: z.string().default(""),
   DIALER_DB_NAME: z.string().default(""),
 
+  // Reginald ("db_email") / Molecular ("molecular_db_email") ticketing DBs —
+  // same host, same credentials, only the database name differs per dashboard.
+  MOLECULAR_EMAIL_DB_HOST: z.string().default(""),
+  MOLECULAR_EMAIL_DB_PORT: z.coerce.number().default(3306),
+  MOLECULAR_EMAIL_DB_USER: z.string().default(""),
+  MOLECULAR_EMAIL_DB_PASSWORD: z.string().default(""),
+
   BGV_WEBHOOK_SECRET: z.string().optional(),
   BGV_PROVIDER: z.enum(["mock", "infinity_ai", "digio", "befisc_luckpay"]).default("mock"),
   INFINITY_AI_API_URL: z.string().url().default("https://api.infinityai.in"),
