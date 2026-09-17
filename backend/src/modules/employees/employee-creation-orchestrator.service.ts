@@ -941,20 +941,55 @@ export async function createEmployeeFromCandidate(
     // "manual review required" that no system tracked and nobody was assigned.
     void raiseManualReviewWorkItem(employeeId, candidateId, employeeCode, result.warnings);
 
-    // Real-time activation: if joining date is today or past, activate immediately
+    // Real-time activation: if joining date is today or past, activate immediately.
+    //
+    // A transient failure here (pool exhaustion, brief DB hiccup) silently strands
+    // the employee in 'preboarding' until the 12:01 AM cron — invisible to HR and
+    // to the employee whose account never opens. The old catch swallowed the error
+    // entirely. Now we:
+    //   1. Retry once after a short back-off before giving up.
+    //   2. Log the error with employee code so on-call can find it instantly.
+    //   3. Record the failure in the work_item queue so HR sees an action item
+    //      rather than a missing employee.
     if (result.employeeId && offer.date_of_joining) {
+      const tryActivate = () =>
+        activateIfJoiningDateReached(result.employeeId!, offer.date_of_joining, approverId);
+
       try {
-        const activated = await activateIfJoiningDateReached(
-          result.employeeId,
-          offer.date_of_joining,
-          approverId
-        );
+        const activated = await tryActivate();
         if (activated) {
           result.warnings.push('Employee activated immediately - joining date is today');
         }
-      } catch (activationErr) {
-        // Non-blocking - cron will handle it
-        console.warn('[EmployeeOrchestrator] Real-time activation failed, cron will handle:', activationErr);
+      } catch (firstErr) {
+        // Retry once after 2 s — covers transient pool exhaustion during approval bursts.
+        try {
+          await new Promise((r) => setTimeout(r, 2000));
+          const activated = await tryActivate();
+          if (activated) {
+            result.warnings.push('Employee activated immediately (retry) - joining date is today');
+          }
+        } catch (retryErr) {
+          console.error(
+            `[EmployeeOrchestrator] Real-time activation failed for ${result.employeeCode} (${result.employeeId}) after retry — cron will recover at 00:01.`,
+            retryErr instanceof Error ? retryErr.message : retryErr,
+          );
+          // Surface as an HR action item so the stuck employee does not go unnoticed.
+          db.execute(
+            `INSERT INTO work_item
+               (id, item_type, title, description, module_code, entity_type, entity_id,
+                assigned_to_role, priority, status, created_at)
+             VALUES (UUID(), 'EMPLOYEE_ACTIVATION_FAILED',
+               ?, ?, 'employees', 'employee', ?, 'hr', 'high', 'pending', NOW())`,
+            [
+              `Activation failed: ${result.employeeCode}`,
+              `Employee ${result.employeeCode} (${result.employeeId}) could not be activated at joining time. The nightly job will retry at 00:01. If it is still preboarding tomorrow, raise with IT.`,
+              result.employeeId,
+            ],
+          ).catch((e: unknown) =>
+            console.error('[EmployeeOrchestrator] Could not raise activation-failed work item:', e),
+          );
+          result.warnings.push('Real-time activation failed — nightly job will retry at 00:01');
+        }
       }
     }
 
