@@ -24,7 +24,7 @@ import { useHasRole } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
 import {
-  PAYMENT_MODES, buildStages, dateTime, money, type Voucher,
+  PAYMENT_MODES, buildJournalPreview, buildStages, dateTime, money, type Voucher,
 } from "@/lib/finance/paymentVoucherStatus";
 import { ApprovalTrack } from "./VoucherStatusBadge";
 
@@ -54,6 +54,7 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
   const [resubmitBankAccountId, setResubmitBankAccountId] = useState("");
   const [reviewNote, setReviewNote] = useState("");
   const [releaseForm, setReleaseForm] = useState({ paymentMode: "", paymentDate: new Date().toISOString().slice(0, 10), transactionRef: "" });
+  const [withdrawReason, setWithdrawReason] = useState("");
 
   const detailQuery = useQuery({
     queryKey: ["payment-voucher-detail", voucherId],
@@ -114,6 +115,13 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
     onSuccess: () => { toast({ title: "Review recorded" }); invalidate(); setReviewNote(""); },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
+  const withdrawMutation = useMutation({
+    mutationFn: async (id: string) => (await hrmsApi.post(`/api/finance/payment-vouchers/${id}/withdraw`, {
+      reason: withdrawReason.trim(),
+    })).data,
+    onSuccess: () => { toast({ title: "Voucher withdrawn" }); invalidate(); setWithdrawReason(""); },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -158,6 +166,11 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
                     </>
                   )}
                   <dt className="text-slate-500">Bank Account</dt><dd className="font-semibold text-gray-800">{detailQuery.data.bank_account_name}</dd>
+                  <dt className="text-slate-500">Current Bank Balance</dt>
+                  <dd className={detailQuery.data.current_bank_balance != null && detailQuery.data.current_bank_balance < detailQuery.data.amount ? "font-semibold text-rose-600" : "font-mono text-gray-600"}>
+                    {detailQuery.data.current_bank_balance != null ? money(detailQuery.data.current_bank_balance) : "—"}
+                    {detailQuery.data.current_bank_balance != null && detailQuery.data.current_bank_balance < detailQuery.data.amount && " — below this voucher's amount"}
+                  </dd>
                   <dt className="text-slate-500">Ledger Head</dt><dd className="font-semibold text-gray-800">{detailQuery.data.payable_account_name}</dd>
                   <dt className="text-slate-500">Amount</dt><dd className="font-semibold text-gray-800">{money(detailQuery.data.amount)}</dd>
                   <dt className="text-slate-500">Remarks</dt><dd className="text-gray-600">{detailQuery.data.remarks ?? "—"}</dd>
@@ -177,8 +190,37 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
                   {detailQuery.data.status === "rejected" && (
                     <><dt className="text-slate-500">Rejection Reason</dt><dd className="text-rose-600">{detailQuery.data.rejection_reason}</dd></>
                   )}
+                  {detailQuery.data.status === "withdrawn" && (
+                    <>
+                      <dt className="text-slate-500">Withdrawn By</dt><dd className="text-slate-600">{detailQuery.data.withdrawn_by_name ?? "—"}{detailQuery.data.withdrawn_at ? ` — ${dateTime(detailQuery.data.withdrawn_at)}` : ""}</dd>
+                      <dt className="text-slate-500">Reason</dt><dd className="text-slate-600">{detailQuery.data.withdrawal_reason}</dd>
+                    </>
+                  )}
                 </dl>
               </section>
+
+              {(() => {
+                const preview = buildJournalPreview(detailQuery.data);
+                if (!preview || preview.lines.length === 0) return null;
+                return (
+                  <section>
+                    <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
+                      Accounting Impact {preview.approximate && <span className="normal-case font-normal text-slate-400">(estimated — TDS is finalized at release)</span>}
+                    </h3>
+                    <ul className="space-y-1 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                      {preview.lines.map((l, i) => (
+                        <li key={i} className="flex items-center justify-between text-xs">
+                          <span className="text-gray-700">
+                            <span className={l.side === "Dr" ? "font-mono font-bold text-rose-600" : "font-mono font-bold text-emerald-600"}>{l.side}</span>{" "}
+                            {l.label}
+                          </span>
+                          <span className="font-mono font-semibold text-gray-800">{money(l.amount)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                );
+              })()}
 
               {((detailQuery.data.source_type === "vendor_grn" && (detailQuery.data.grn_allocations?.length ?? 0) > 1)
                 || (detailQuery.data.source_type === "vendor_advance_application" && (detailQuery.data.grn_allocations?.length ?? 0) > 0)) && (
@@ -236,6 +278,17 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
                 </section>
               )}
 
+              {detailQuery.data.status === "raised" && String(detailQuery.data.raised_by) === String(user?.id) && (
+                <section className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/50 p-3">
+                  <h3 className="text-xs font-bold uppercase tracking-wide text-slate-600">Withdraw This Voucher</h3>
+                  <p className="text-xs text-slate-500">Raised in error, or no longer needed — pulls it back before the CEO acts on it.</p>
+                  <Textarea placeholder="Reason for withdrawing (required)" value={withdrawReason} onChange={(e) => setWithdrawReason(e.target.value)} rows={2} />
+                  <Button variant="outline" className="cursor-pointer border-slate-300 text-slate-700 hover:bg-slate-100" disabled={!withdrawReason.trim() || withdrawMutation.isPending} onClick={() => withdrawMutation.mutate(detailQuery.data!.id)}>
+                    Withdraw
+                  </Button>
+                </section>
+              )}
+
               {detailQuery.data.status === "changes_requested" && String(detailQuery.data.raised_by) === String(user?.id) && (
                 <section className="space-y-2 rounded-xl border border-orange-100 bg-orange-50/50 p-3">
                   <h3 className="text-xs font-bold uppercase tracking-wide text-orange-700">CEO Requested Changes</h3>
@@ -258,6 +311,11 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
               {detailQuery.data.status === "ceo_approved" && canRelease && (
                 <section className="space-y-2 rounded-xl border border-emerald-100 bg-emerald-50/50 p-3">
                   <h3 className="text-xs font-bold uppercase tracking-wide text-emerald-700">Release Payment</h3>
+                  {detailQuery.data.current_bank_balance != null && detailQuery.data.current_bank_balance < detailQuery.data.amount && (
+                    <p className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5 text-xs font-semibold text-rose-700">
+                      This account's recorded balance ({money(detailQuery.data.current_bank_balance)}) is below this voucher's amount ({money(detailQuery.data.amount)}). Release will be refused if it would overdraw the account.
+                    </p>
+                  )}
                   <div>
                     <Label>Payment Mode</Label>
                     <Select value={releaseForm.paymentMode} onValueChange={(v) => setReleaseForm((f) => ({ ...f, paymentMode: v }))}>
@@ -277,6 +335,17 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
                   </div>
                   <Button className="cursor-pointer bg-emerald-600 hover:bg-emerald-700" disabled={releaseMutation.isPending} onClick={() => releaseMutation.mutate(detailQuery.data!.id)}>
                     Release Payment
+                  </Button>
+                </section>
+              )}
+
+              {detailQuery.data.status === "ceo_approved" && (canRelease || String(detailQuery.data.ceo_approved_by) === String(user?.id)) && (
+                <section className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/50 p-3">
+                  <h3 className="text-xs font-bold uppercase tracking-wide text-slate-600">Recall Before Release</h3>
+                  <p className="text-xs text-slate-500">Decided not to pay this after all — pulls it back before money moves. Money has NOT left the bank yet.</p>
+                  <Textarea placeholder="Reason for recalling (required)" value={withdrawReason} onChange={(e) => setWithdrawReason(e.target.value)} rows={2} />
+                  <Button variant="outline" className="cursor-pointer border-slate-300 text-slate-700 hover:bg-slate-100" disabled={!withdrawReason.trim() || withdrawMutation.isPending} onClick={() => withdrawMutation.mutate(detailQuery.data!.id)}>
+                    Recall
                   </Button>
                 </section>
               )}
@@ -303,6 +372,7 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
                     {(detailQuery.data.audit_log ?? []).map((entry, i) => (
                       <li key={i} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
                         <span className="font-semibold text-gray-700">{entry.action_type}</span>{" "}
+                        {entry.actor_name && <span className="text-gray-600">by {entry.actor_name}</span>}{" "}
                         <span className="text-slate-400">— {dateTime(entry.created_at)}</span>
                       </li>
                     ))}

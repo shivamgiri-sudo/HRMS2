@@ -204,10 +204,22 @@ esiRegDocsRouter.get(
          CONCAT(e.first_name, ' ', COALESCE(e.last_name,'')) AS name,
          COALESCE(b.branch_name, '')                       AS branch,
          e.esic_number,
-         (SELECT COUNT(*) FROM employee_documents ed
-          WHERE ed.employee_id = e.id
-            AND ed.doc_category = 'pan') > 0
-                                                          AS pan_ready,
+         -- PAN is "available" when ANY of three sources has it:
+         -- 1. pan_number directly on employees (direct HR entry)
+         -- 2. employee_documents with doc_category='pan' (uploaded via profile)
+         -- 3. candidate_onboarding_document via ATS bridge (most common path:
+         --    38 of 567 ESI-eligible employees have it here, 0 in source 2)
+         (
+           (e.pan_number IS NOT NULL AND e.pan_number != '')
+           OR (SELECT COUNT(*) FROM employee_documents ed
+               WHERE ed.employee_id = e.id AND ed.doc_category = 'pan') > 0
+           OR EXISTS (
+               SELECT 1 FROM candidate_onboarding_document d
+               JOIN ats_onboarding_bridge ab ON ab.candidate_id = d.candidate_id
+               WHERE ab.employee_id = e.id AND d.deleted_at IS NULL
+                 AND LOWER(d.doc_type) IN ('pan', 'pan card', 'pan_card')
+           )
+         )                                                AS pan_ready,
          (SELECT id FROM employee_documents ed
           WHERE ed.employee_id = e.id
             AND ed.doc_category = 'pan'
@@ -297,7 +309,6 @@ async function generateEsiDeclarationPdf(employeeId: string): Promise<Buffer> {
       return;
     }
 
-    const mask = (acct: string | null) => (acct ? `****${acct.slice(-4)}` : "Not provided");
     const fmtDate = (d: unknown) => {
       if (!d) return "Not provided";
       const parsed = new Date(d as string);
@@ -344,7 +355,7 @@ async function generateEsiDeclarationPdf(employeeId: string): Promise<Buffer> {
 
     section("Bank Details (for ESI benefit disbursal)");
     field("Bank Name", val(row.bank_name));
-    field("Account Number (Masked)", mask(row.account_number ?? null));
+    field("Account Number", val(row.account_number));
     field("IFSC Code", val(row.ifsc_code));
     field("Account Type", val(row.account_type));
 
@@ -649,23 +660,46 @@ esiRegDocsRouter.get(
       params.push(branchId);
     }
 
+    // All ESI Form 1 fields in the same sequence used to fill the ESIC portal,
+    // plus doc-readiness columns so Payroll HR can see at a glance what is missing.
+    // account_number is unmasked: this CSV is a controlled HR export, not a
+    // client-facing document, and ESI registration requires the full account number.
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          e.employee_code,
          CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS name,
-         COALESCE(b.branch_name, '')                       AS branch,
-         e.esic_number,
+         COALESCE(e.father_name, '')                        AS father_name,
+         e.date_of_birth,
+         e.gender,
+         e.marital_status,
+         COALESCE(e.mobile, e.personal_phone, '')           AS mobile,
+         COALESCE(e.address1, e.address_line1, '')          AS address1,
+         COALESCE(e.address2, e.address_line2, '')          AS address2,
+         COALESCE(e.city, '')                               AS city,
+         COALESCE(e.state, '')                              AS state,
+         COALESCE(e.pincode, '')                            AS pincode,
          e.pan_number,
-         -- ESI registration needs the Aadhaar as well as the PAN, and this export never
-         -- carried it. employees.aadhaar_number is the populated source (1,050 of 1,116
-         -- active); employee_statutory_info.aadhaar_id is the fallback for the rows that
-         -- were written through the statutory path instead. Added 2026-09-02.
          COALESCE(NULLIF(e.aadhaar_number, ''), NULLIF(esi.aadhaar_id, '')) AS aadhaar_number,
-         (SELECT ebd.bank_name FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS bank_name,
-         (SELECT ebd.account_number FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS account_number,
-         (SELECT ebd.ifsc_code FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS ifsc_code,
-         (SELECT ebd.account_type FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS account_type,
-         (SELECT COUNT(*) FROM employee_documents ed WHERE ed.employee_id = e.id AND ed.doc_category = 'pan') > 0 AS pan_ready,
+         e.esic_number,
+         COALESCE(b.branch_name, '')                        AS branch,
+         e.uan_number,
+         e.epf_number,
+         COALESCE(e.nominee_name, '')                       AS nominee_name,
+         COALESCE(e.nominee_relation, '')                   AS nominee_relation,
+         (SELECT ebd.bank_name        FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS bank_name,
+         (SELECT ebd.account_number   FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS account_number,
+         (SELECT ebd.ifsc_code        FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS ifsc_code,
+         (SELECT ebd.account_type     FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS account_type,
+         (
+           (e.pan_number IS NOT NULL AND e.pan_number != '')
+           OR (SELECT COUNT(*) FROM employee_documents ed WHERE ed.employee_id = e.id AND ed.doc_category = 'pan') > 0
+           OR EXISTS (
+               SELECT 1 FROM candidate_onboarding_document d
+               JOIN ats_onboarding_bridge ab ON ab.candidate_id = d.candidate_id
+               WHERE ab.employee_id = e.id AND d.deleted_at IS NULL
+                 AND LOWER(d.doc_type) IN ('pan', 'pan card', 'pan_card')
+           )
+         )                                                  AS pan_ready,
          (e.photo_url IS NOT NULL OR e.avatar_url IS NOT NULL) AS photo_ready,
          (SELECT COUNT(*) FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id AND ebd.ifsc_code IS NOT NULL) > 0 AS bank_ready
        FROM employees e
@@ -676,20 +710,49 @@ esiRegDocsRouter.get(
       params
     );
 
-    const mask = (acct: string | null) => (acct ? `****${acct.slice(-4)}` : "");
+    const fmtDate = (d: unknown) => {
+      if (!d) return "";
+      const parsed = new Date(d as string);
+      return Number.isNaN(parsed.getTime()) ? "" : parsed.toLocaleDateString("en-IN");
+    };
+    const q = (s: unknown) => `"${String(s ?? "").replace(/"/g, '""')}"`;
 
-    const header = "Emp Code,Name,Branch,ESIC Number,PAN Number,Aadhaar Number,Bank Name,Account Number (Masked),IFSC Code,Account Type,PAN Ready,Photo Ready,Bank Ready\n";
+    // Column sequence matches ESI Form 1 / ESIC portal registration fields
+    const header = [
+      "Emp Code", "Name", "Father / Husband Name", "Date of Birth", "Gender",
+      "Marital Status", "Mobile", "Address Line 1", "Address Line 2", "City",
+      "State", "Pincode", "PAN Number", "Aadhaar Number", "ESIC Number",
+      "Branch / Establishment", "UAN Number", "EPF Number",
+      "Nominee Name", "Nominee Relation",
+      "Bank Name", "Account Number", "IFSC Code", "Account Type",
+      "PAN Ready", "Photo Ready", "Bank Ready",
+    ].join(",") + "\n";
+
     const csvRows = (rows as RowDataPacket[])
       .map((r) =>
         [
           r.employee_code,
-          `"${(r.name ?? "").replace(/"/g, '""')}"`,
-          `"${(r.branch ?? "").replace(/"/g, '""')}"`,
-          r.esic_number ?? "",
+          q(r.name),
+          q(r.father_name),
+          fmtDate(r.date_of_birth),
+          r.gender ?? "",
+          r.marital_status ?? "",
+          r.mobile ?? "",
+          q(r.address1),
+          q(r.address2),
+          q(r.city),
+          q(r.state),
+          r.pincode ?? "",
           r.pan_number ?? "",
           r.aadhaar_number ?? "",
-          `"${(r.bank_name ?? "").replace(/"/g, '""')}"`,
-          mask(r.account_number ?? null),
+          r.esic_number ?? "",
+          q(r.branch),
+          r.uan_number ?? "",
+          r.epf_number ?? "",
+          q(r.nominee_name),
+          q(r.nominee_relation),
+          q(r.bank_name),
+          r.account_number ?? "",
           r.ifsc_code ?? "",
           r.account_type ?? "",
           r.pan_ready ? "Yes" : "No",

@@ -384,6 +384,12 @@ function mockAdvanceConnection(opts: {
       const row = opts.vendorPaymentTrackingRows?.[vptId] ?? { vendor_id: "vendor-1", due_amount: 3000, tds_deducted_amount: 0, paid_amount: 0 };
       return [[row]];
     }
+    if (text.includes("FROM vendor_payment_tracking") && text.includes("cost_centre_id")) {
+      // Depth-dimension lookup (branch/cost-centre/process) — vendorGrnLines/vendorAdvanceApplicationLines
+      // callers narrow across allocations; returning nulls here means every existing test's
+      // journalLines assertions stay unaffected (the depth fields aren't part of journalLines).
+      return [[{ branch_id: null, cost_centre_id: null, process_id: null }]];
+    }
     if (text.includes("FROM vendor_advance_ledger") && text.includes("balance_after")) {
       return [opts.advanceBalance != null ? [{ balance_after: opts.advanceBalance }] : []];
     }
@@ -551,5 +557,118 @@ describe("paymentVoucherService.release — vendor_advance_application lane", ()
       paymentVoucherService.release("pv-adv-2", "fh-1", "finance_head", { paymentMode: "Cash", paymentDate: "2026-09-10" }),
     ).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining("available advance balance") });
     expect(dispatch).not.toHaveBeenCalled();
+  });
+});
+
+describe("paymentVoucherService.get — actor names and live balance (2026-09-17 CEO/CA compliance review)", () => {
+  it("resolves raised_by/ceo_approved_by/released_by and every timeline actor to a display name, and reads the live ledger balance", async () => {
+    const { listFinanceApprovalEvents } = await import("../../../shared/financeApprovalEvent.js");
+    (listFinanceApprovalEvents as any).mockResolvedValueOnce([
+      { id: "ev-1", action: "approve", actor_user_id: "ceo-1", actor_role: "ceo", created_at: "2026-09-11T10:00:00Z" },
+    ]);
+    execute
+      .mockResolvedValueOnce([[{ ...VOUCHER_ROW, linked_vendor_id: null, released_by: "fh-2" }]]) // main SELECT
+      .mockResolvedValueOnce([[{ action_type: "PAYMENT_VOUCHER_APPROVED", actor_user_id: "ceo-1", actor_role: "ceo", change_summary: null, created_at: "2026-09-11T10:00:00Z" }]]) // audit rows
+      .mockResolvedValueOnce([[]]) // grn allocation rows
+      .mockResolvedValueOnce([[{ running_balance: 42000 }]]) // latest bank_account_ledger_entry
+      .mockResolvedValueOnce([[{ opening_balance: 100000 }]]) // company_bank_account (fetched unconditionally alongside the ledger entry)
+      .mockResolvedValueOnce([[ // resolveActorNames batch lookup
+        { id: "fh-1", name: "Priya Sharma" },
+        { id: "ceo-1", name: "Rakesh Mehta" },
+        { id: "fh-2", name: "Amit Rao" },
+      ]]);
+
+    const result = await paymentVoucherService.get("pv-1");
+
+    expect(result!.raised_by_name).toBe("Priya Sharma");
+    expect(result!.ceo_approved_by_name).toBe("Rakesh Mehta");
+    expect(result!.released_by_name).toBe("Amit Rao");
+    // The live figure comes from the latest ledger entry, NOT company_bank_account.opening_balance
+    // (that column is a stale post-reconciliation seed, not a live balance — see get()'s own comment).
+    expect(result!.current_bank_balance).toBe(42000);
+    expect(result!.approval_events[0].actor_name).toBe("Rakesh Mehta");
+    expect(result!.audit_log[0].actor_name).toBe("Rakesh Mehta");
+  });
+
+  it("falls back to company_bank_account.opening_balance when no ledger entry exists yet", async () => {
+    const { listFinanceApprovalEvents } = await import("../../../shared/financeApprovalEvent.js");
+    (listFinanceApprovalEvents as any).mockResolvedValueOnce([]);
+    execute
+      .mockResolvedValueOnce([[{ ...VOUCHER_ROW, linked_vendor_id: null, released_by: null, ceo_approved_by: null }]])
+      .mockResolvedValueOnce([[]]) // audit rows
+      .mockResolvedValueOnce([[]]) // grn allocation rows
+      .mockResolvedValueOnce([[]]) // no ledger entry yet for this account
+      .mockResolvedValueOnce([[{ opening_balance: 75000 }]]) // company_bank_account
+      .mockResolvedValueOnce([[{ id: "fh-1", name: "Priya Sharma" }]]); // resolveActorNames
+
+    const result = await paymentVoucherService.get("pv-1");
+    expect(result!.current_bank_balance).toBe(75000);
+  });
+});
+
+describe("paymentVoucherService.withdraw (2026-09-17 CEO/CA compliance review — no cancel path existed before this)", () => {
+  it("lets the raiser withdraw their own voucher while status='raised'", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute
+      .mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "raised", raised_by: "fh-1" }]]) // SELECT FOR UPDATE
+      .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE status='withdrawn'
+      .mockResolvedValueOnce([{}]); // writeVoucherAudit
+
+    await paymentVoucherService.withdraw("pv-1", "fh-1", "finance_head", "Raised against the wrong bank account");
+
+    const update = conn.execute.mock.calls.find(([sql]) => String(sql).includes("SET status = 'withdrawn'"));
+    expect(update![1]).toEqual(["fh-1", "Raised against the wrong bank account", "pv-1", "raised"]);
+    expect(conn.commit).toHaveBeenCalled();
+  });
+
+  it("refuses when someone other than the raiser tries to withdraw a raised voucher", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute.mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "raised", raised_by: "fh-1" }]]);
+
+    await expect(
+      paymentVoucherService.withdraw("pv-1", "someone-else", "finance_head", "Not mine to withdraw"),
+    ).rejects.toMatchObject({ statusCode: 403 });
+    expect(conn.rollback).toHaveBeenCalled();
+  });
+
+  it("lets Finance Head recall a ceo_approved voucher before release", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute
+      .mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "ceo_approved", raised_by: "fh-1", ceo_approved_by: "ceo-1" }]])
+      .mockResolvedValueOnce([{ affectedRows: 1 }])
+      .mockResolvedValueOnce([{}]);
+
+    await paymentVoucherService.withdraw("pv-1", "fh-2", "finance_head", "Vendor asked us to hold this payment");
+
+    const update = conn.execute.mock.calls.find(([sql]) => String(sql).includes("SET status = 'withdrawn'"));
+    expect(update![1]).toEqual(["fh-2", "Vendor asked us to hold this payment", "pv-1", "ceo_approved"]);
+  });
+
+  it("refuses a recall from someone who is neither release-capable nor the approving CEO", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute.mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "ceo_approved", raised_by: "fh-1", ceo_approved_by: "ceo-1" }]]);
+
+    await expect(
+      paymentVoucherService.withdraw("pv-1", "random-employee", "employee", "I don't like it"),
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
+
+  it("refuses to withdraw a released voucher — money already moved, only reversal applies", async () => {
+    const conn = mockConnection();
+    getConnection.mockResolvedValueOnce(conn);
+    conn.execute.mockResolvedValueOnce([[{ ...VOUCHER_ROW, status: "released", raised_by: "fh-1" }]]);
+
+    await expect(
+      paymentVoucherService.withdraw("pv-1", "fh-1", "finance_head", "Too late"),
+    ).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it("requires a reason", async () => {
+    await expect(paymentVoucherService.withdraw("pv-1", "fh-1", "finance_head", "")).rejects.toThrow(/reason/i);
+    expect(getConnection).not.toHaveBeenCalled();
   });
 });

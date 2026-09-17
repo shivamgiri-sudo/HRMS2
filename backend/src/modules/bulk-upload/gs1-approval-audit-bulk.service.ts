@@ -9,6 +9,17 @@ import { db } from "../../db/mysql.js";
  * audit outcome (PASS/FAIL/PENDING), the error category if any, whether an
  * error was flagged, the GCP code and company name, and the SKU count reviewed.
  *
+ * Real export ("GS1.xlsx", "Approval" sheet) is a much wider per-SKU QC log (89
+ * columns: product/company/GTIN detail, images, AI validation, human QC fields).
+ * Confirmed live: "Name" is who processed/verified the product, "Auditor" is who did
+ * the final QC pass on that work, "Date of Completion" is populated on every row (a
+ * more reliable audit-date source than "Allocation Date"/"Created at", which are
+ * either constant-per-batch or a distant original-upload timestamp), "Approve/Reject"
+ * is the direct pass/fail call, "Errors Yes/No" is the error flag, "Products count" is
+ * the SKU count for that row (1 in every sampled real row -- one row = one product).
+ * The old imagined "Audit Date/Auditee Name/.../SKU Count" 9-column format is still
+ * tried first, so a hand-built file in that shape keeps working.
+ *
  * Re-uploads of the same audit date are allowed — ON DUPLICATE KEY UPDATE
  * overwrites all mutable columns so corrections land cleanly.
  *
@@ -18,24 +29,23 @@ import { db } from "../../db/mysql.js";
  */
 
 export const GS1_APPROVAL_AUDIT_HEADERS = [
-  "Audit Date",
-  "Auditee Name",
-  "Auditor Name",
-  "Audit Result",
-  "Error Category",
-  "Error Flag",
-  "GCP Code",
-  "Company Name",
-  "SKU Count",
+  "Audit Date", "Auditee Name", "Auditor Name", "Audit Result", "Error Category",
+  "Error Flag", "GCP Code", "Company Name", "SKU Count",
+  "GCP", "Name", "Auditor", "Approve/Reject", "Errors Yes/No",
+  "Date of Completion", "Products count",
 ] as const;
 
 const AUDIT_RESULT_MAP: Record<string, "PASS" | "FAIL" | "PENDING"> = {
   pass: "PASS",
   passed: "PASS",
   ok: "PASS",
+  approve: "PASS",
+  approved: "PASS",
   fail: "FAIL",
   failed: "FAIL",
   error: "FAIL",
+  reject: "FAIL",
+  rejected: "FAIL",
   pending: "PENDING",
   review: "PENDING",
   hold: "PENDING",
@@ -53,6 +63,12 @@ export function parseDate(raw: unknown): string | null {
   m = /^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/.exec(v);
   if (m && MONTHS[m[2].toLowerCase()]) {
     return `${m[3]}-${String(MONTHS[m[2].toLowerCase()]).padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  }
+  // "1-Sep-26" (2-digit year) -- the real Approval export's "Date of Completion" column
+  // (confirmed live), assumed 20xx.
+  m = /^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/.exec(v);
+  if (m && MONTHS[m[2].toLowerCase()]) {
+    return `20${m[3]}-${String(MONTHS[m[2].toLowerCase()]).padStart(2, "0")}-${m[1].padStart(2, "0")}`;
   }
   m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(v);
   if (m) return `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
@@ -134,32 +150,52 @@ export async function importGs1ApprovalAuditBatch(
       continue;
     }
 
-    const auditDate = parseDate(data["Audit Date"]);
+    // "Date of Completion" is the real export's reliable per-row date (confirmed populated
+    // on every real row); "Allocation Date"/"Created at" are batch-constant or a distant
+    // original-upload timestamp, not this audit event's own date.
+    const auditDate = parseDate(data["Audit Date"]) ?? parseDate(data["Date of Completion"]);
     if (!auditDate) {
-      const msg = `Row ${row.row_no}: "Audit Date" is required and could not be parsed`;
+      const msg = `Row ${row.row_no}: an audit date ("Audit Date" or "Date of Completion") is required and could not be parsed`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
       errorRows++;
       continue;
     }
 
-    const auditeeName = String(data["Auditee Name"] ?? "").trim();
+    // "Name" is who processed/verified the product; that is the person whose work this
+    // audit event is auditing.
+    const auditeeName = String(data["Auditee Name"] ?? data["Name"] ?? "").trim();
     if (!auditeeName) {
-      const msg = `Row ${row.row_no}: "Auditee Name" is required`;
+      const msg = `Row ${row.row_no}: an auditee ("Auditee Name" or "Name") is required`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
       errorRows++;
       continue;
     }
 
-    const auditorName = String(data["Auditor Name"] ?? "").trim();
+    // "Auditor" is who did the final QC pass on that work.
+    const auditorName = String(data["Auditor Name"] ?? data["Auditor"] ?? "").trim();
     if (!auditorName) {
-      const msg = `Row ${row.row_no}: "Auditor Name" is required`;
+      const msg = `Row ${row.row_no}: an auditor ("Auditor Name" or "Auditor") is required`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
       errorRows++;
       continue;
     }
+
+    // "Approve/Reject" is the real export's direct pass/fail call.
+    const auditResult = data["Audit Result"] !== undefined
+      ? normalizeAuditResult(data["Audit Result"])
+      : normalizeAuditResult(data["Approve/Reject"]);
+    const errorFlag = data["Error Flag"] !== undefined
+      ? parseErrorFlag(data["Error Flag"])
+      : parseErrorFlag(data["Errors Yes/No"]);
+    const gcpCode = String(data["GCP Code"] ?? data["GCP"] ?? "").trim() || null;
+    // "Products count" is the real export's per-row SKU count (1 on every sampled real
+    // row -- one row = one product); default to 1 rather than 0 when genuinely absent,
+    // since a raw per-product audit row that exists at all audited at least one SKU.
+    const skuCountRaw = data["SKU Count"] ?? data["Products count"];
+    const skuCount = skuCountRaw !== undefined ? (parseCount(skuCountRaw) || 1) : 0;
 
     try {
       await db.execute(
@@ -177,12 +213,12 @@ export async function importGs1ApprovalAuditBatch(
             sku_count      = VALUES(sku_count)`,
         [
           randomUUID(), processId, auditDate, auditeeName, auditorName,
-          normalizeAuditResult(data["Audit Result"]),
+          auditResult,
           String(data["Error Category"] ?? "").trim() || null,
-          parseErrorFlag(data["Error Flag"]),
-          String(data["GCP Code"] ?? "").trim() || null,
+          errorFlag,
+          gcpCode,
           String(data["Company Name"] ?? "").trim() || null,
-          parseCount(data["SKU Count"]),
+          skuCount,
           batchId,
           importedByUserId,
         ] as never[],

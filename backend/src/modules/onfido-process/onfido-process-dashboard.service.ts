@@ -526,6 +526,13 @@ const ALLOWED_FILTER_COLUMNS = new Set([
   "has_error",
 ]);
 
+// onfido_doc_raw has no real task_type column (see DOC_RAW_DIMENSION_EXPR above) — every
+// other table task_type is allowed against stores it as a plain column, so this is the one
+// exception the generic filterColumn WHERE-builder below needs to special-case.
+const FILTER_COLUMN_JSON_OVERRIDE: Record<string, Record<string, string>> = {
+  onfido_doc_raw: { task_type: `JSON_UNQUOTE(JSON_EXTRACT(raw_data, '$."Task Type Short Name"'))` },
+};
+
 export interface RecordListFilters {
   from?: string; to?: string; tlName?: string; amName?: string; search?: string;
   limit?: number; cursor?: number;
@@ -561,10 +568,11 @@ async function queryTableRecords(table: string, extraCondition: string | null, f
     if (!ALLOWED_FILTER_COLUMNS.has(filters.filterColumn)) {
       throw Object.assign(new Error(`Unknown filter column '${filters.filterColumn}'`), { statusCode: 400 });
     }
-    if (filters.filterValue === "(unassigned)") {
-      where.push(`(${filters.filterColumn} IS NULL OR TRIM(${filters.filterColumn}) = '')`);
+    const colExpr = FILTER_COLUMN_JSON_OVERRIDE[table]?.[filters.filterColumn] ?? filters.filterColumn;
+    if (filters.filterValue === "(unassigned)" || filters.filterValue === "Standard Review (untagged)") {
+      where.push(`(${colExpr} IS NULL OR TRIM(${colExpr}) = '')`);
     } else {
-      where.push(`${filters.filterColumn} = ?`); params.push(filters.filterValue);
+      where.push(`${colExpr} = ?`); params.push(filters.filterValue);
     }
   }
   if (filters.search) {
@@ -736,6 +744,55 @@ export async function getQualityTrend(
     const total = Number(r.total ?? 0);
     return { bucket: bucketLabel(r.bucket, granularity), taskCount: total, errorRate: rate1(Number(r.errors ?? 0), total) };
   });
+}
+
+/** Internal-QC counterpart to getQualityTrend (which reads the client-facing
+ *  onfido_doc_external_audit_raw table) — this one reads onfido_doc_quality_raw,
+ *  the DOC queue's own internal audit export, for the Overview page's
+ *  "Month-wise Internal Quality score" card (2026-09-17 dashboard feedback). */
+export async function getDocInternalQualityTrend(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+): Promise<QualityGranularTrendPoint[]> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const pool = await getOnfidoPool();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${bucketExpr("task_complete_date", granularity)} AS bucket,
+            COALESCE(SUM(total_audits),0) AS total, COALESCE(SUM(total_error),0) AS errors
+       FROM onfido_doc_quality_raw WHERE task_complete_date BETWEEN ? AND ? ${clause} GROUP BY bucket ORDER BY bucket`,
+    [f.from, f.to, ...params]
+  );
+  return rows.map((r) => {
+    const total = Number(r.total ?? 0);
+    return { bucket: bucketLabel(r.bucket, granularity), taskCount: total, errorRate: rate1(Number(r.errors ?? 0), total) };
+  });
+}
+
+export interface DocInternalQualityOverview { taskCount: KpiValue; overallErrorRate: KpiValue }
+
+/** Single-range counterpart to getDocInternalQualityTrend — the Quality page's
+ *  "Int Overall Err %" KPI card (2026-09-17 feedback). onfido_doc_quality_raw
+ *  only ever extracted total_audits/total_error (no classification/extraction/
+ *  raw-extraction sub-breakdown columns), so this is the one metric available
+ *  on the internal side, same limitation getDocInternalQualityTrend has. */
+export async function getDocInternalQualityOverview(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+): Promise<DocInternalQualityOverview> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const agg = await scalar<RowDataPacket & { total: number; errors: number }>(
+    `SELECT COALESCE(SUM(total_audits),0) AS total, COALESCE(SUM(total_error),0) AS errors
+       FROM onfido_doc_quality_raw WHERE task_complete_date BETWEEN ? AND ? ${clause}`,
+    [f.from, f.to, ...params]
+  );
+  const total = Number(agg.total ?? 0);
+  const kpi = (key: string, label: string, value: number | null, unit: KpiValue["unit"], note?: string): KpiValue => ({
+    key, label, value, unit, availability: value === null ? "no_data" : "ok", note,
+  });
+  return {
+    taskCount: kpi("int_quality_task_count", "Int Audits", total, "count"),
+    overallErrorRate: kpi("int_quality_overall_err", "Int Overall Err %", rate1(Number(agg.errors ?? 0), total), "percent", `${agg.errors ?? 0} of ${total}`),
+  };
 }
 
 export interface AttritionGranularTrendPoint { bucket: string; attritionCount: number }
@@ -1806,6 +1863,49 @@ export async function getQualityBreakdown(
   });
 }
 
+export interface QualityMetricTrendPoint {
+  bucket: string;
+  overallErrorRate: number | null;
+  classificationErrorRate: number | null;
+  extractionErrorRate: number | null;
+  addExtractionErrorRate: number | null;
+  rawExtractionErrorRate: number | null;
+}
+
+/** Bucketed counterpart to getQualityOverview — the Quality page's month/week/
+ *  day-wise trend table (2026-09-17 feedback), one row per metric across time
+ *  buckets. Each sub-rate uses its own *_total denominator column, same
+ *  "Classification Error% = SUM(Classification Error) / Total Audit" formula
+ *  getOverview's docExtQuality block already uses — not COUNT(*). */
+export async function getQualityMetricTrend(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+): Promise<QualityMetricTrendPoint[]> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const pool = await getOnfidoPool();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${bucketExpr("report_date", granularity)} AS bucket,
+            COUNT(*) AS total, COALESCE(SUM(has_error),0) AS errors,
+            COALESCE(SUM(classification_flag),0) AS classN, COALESCE(SUM(classification_total),0) AS classTotal,
+            COALESCE(SUM(extraction_flag),0) AS extN, COALESCE(SUM(extraction_total),0) AS extTotal,
+            COALESCE(SUM(add_extraction_flag),0) AS addN, COALESCE(SUM(add_extraction_total),0) AS addTotal,
+            COALESCE(SUM(raw_extraction_flag),0) AS rawN, COALESCE(SUM(raw_extraction_total),0) AS rawTotal
+       FROM onfido_doc_external_audit_raw WHERE report_date BETWEEN ? AND ? ${clause} GROUP BY bucket ORDER BY bucket`,
+    [f.from, f.to, ...params]
+  );
+  return rows.map((r) => {
+    const total = Number(r.total ?? 0);
+    return {
+      bucket: bucketLabel(r.bucket, granularity),
+      overallErrorRate: rate1(Number(r.errors ?? 0), total),
+      classificationErrorRate: rate1(Number(r.classN ?? 0), Number(r.classTotal ?? 0)),
+      extractionErrorRate: rate1(Number(r.extN ?? 0), Number(r.extTotal ?? 0)),
+      addExtractionErrorRate: rate1(Number(r.addN ?? 0), Number(r.addTotal ?? 0)),
+      rawExtractionErrorRate: rate1(Number(r.rawN ?? 0), Number(r.rawTotal ?? 0)),
+    };
+  });
+}
+
 // ── Client Escalations (CRE + CRQ combined) ─────────────────────────────────
 //
 // CRE and CRQ are two file formats for the same real thing — a client
@@ -2306,17 +2406,22 @@ export interface GdMcnSlaTrendPoint {
   commitment: number | null; fteDelivered: number | null;
 }
 
-/** Day-wise trend, straight from each day's own Total row. */
-export async function getGdMcnSlaTrend(rawFilters: { from?: string; to?: string }): Promise<GdMcnSlaTrendPoint[]> {
+/** Day-wise trend by default (unchanged callers keep their existing daily chart) —
+ *  granularity is optional so the Overview page's new "Month-wise GD & MCN Trend"
+ *  card can request monthly buckets from the same endpoint instead of a second one. */
+export async function getGdMcnSlaTrend(
+  rawFilters: { from?: string; to?: string }, granularity: TrendGranularity = "daily"
+): Promise<GdMcnSlaTrendPoint[]> {
   const f = readFilters(rawFilters);
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT DATE_FORMAT(slot_date, '%Y-%m-%d') AS bucket, sla_pct, gd_pct, mcn_pct, commitment, fte_delivered
-       FROM ${gdMcnSla} WHERE slot_date BETWEEN ? AND ? AND gmt_slot = 'Total' ORDER BY slot_date`,
+    `SELECT ${bucketExpr("slot_date", granularity)} AS bucket, AVG(sla_pct) AS sla_pct, AVG(gd_pct) AS gd_pct,
+            AVG(mcn_pct) AS mcn_pct, SUM(commitment) AS commitment, SUM(fte_delivered) AS fte_delivered
+       FROM ${gdMcnSla} WHERE slot_date BETWEEN ? AND ? AND gmt_slot = 'Total' GROUP BY bucket ORDER BY bucket`,
     [f.from, f.to]
   );
   return rows.map((r) => ({
-    bucket: r.bucket,
+    bucket: bucketLabel(r.bucket, granularity),
     slaPct: pctToDisplay(r.sla_pct !== null ? Number(r.sla_pct) : null),
     gdPct: pctToDisplay(r.gd_pct !== null ? Number(r.gd_pct) : null),
     mcnPct: pctToDisplay(r.mcn_pct !== null ? Number(r.mcn_pct) : null),
@@ -2404,8 +2509,21 @@ export async function getDocRawTrend(
   }));
 }
 
-export type DocRawDimension = "ims_client_name" | "tl_name" | "am_name";
+export type DocRawDimension = "ims_client_name" | "tl_name" | "am_name" | "task_type";
 export interface DocRawBreakdownRow { label: string; taskCount: number; avgAht: number | null; escalationRate: number | null }
+
+// "Task Type Short Name" isn't pulled into its own column (see onfido-report-configs.ts —
+// only a handful of DOC_RAW_HEADERS are extracted) — it lives in the raw_data JSON blob,
+// so this one dimension reads it via JSON_EXTRACT instead of a bare column name. Added for
+// the 2026-09-17 dashboard feedback: the blended "DOC Avg Handling Time" KPI silently mixes
+// standard review tasks (~110-120s) with the Labelling_Raw-Ext sub-process (~300s) — this
+// breakdown is what makes that visible instead of hiding it in one misleading average.
+const DOC_RAW_DIMENSION_EXPR: Record<DocRawDimension, string> = {
+  ims_client_name: "ims_client_name",
+  tl_name: "tl_name",
+  am_name: "am_name",
+  task_type: `JSON_UNQUOTE(JSON_EXTRACT(raw_data, '$."Task Type Short Name"'))`,
+};
 
 export async function getDocRawBreakdown(
   rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, dimension: DocRawDimension
@@ -2413,12 +2531,14 @@ export async function getDocRawBreakdown(
   const f = readFilters(rawFilters);
   const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
   const pool = await getOnfidoPool();
+  const expr = DOC_RAW_DIMENSION_EXPR[dimension];
+  const unassignedLabel = dimension === "task_type" ? "Standard Review (untagged)" : "(unassigned)";
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT COALESCE(NULLIF(TRIM(${dimension}), ''), '(unassigned)') AS label,
+    `SELECT COALESCE(NULLIF(TRIM(${expr}), ''), ?) AS label,
             COUNT(*) AS total, AVG(manual_processing_time_secs) AS aht, SUM(is_escalated) AS esc
        FROM onfido_doc_raw WHERE report_date BETWEEN ? AND ? ${clause}
        GROUP BY label ORDER BY total DESC LIMIT 50`,
-    [f.from, f.to, ...params]
+    [unassignedLabel, f.from, f.to, ...params]
   );
   return rows.map((r): DocRawBreakdownRow => {
     const total = Number(r.total ?? 0);
@@ -2428,6 +2548,45 @@ export async function getDocRawBreakdown(
       escalationRate: rate1(Number(r.esc ?? 0), total),
     };
   });
+}
+
+export interface DocTaskTypeTrendPoint {
+  bucket: string;
+  byTaskType: Record<string, { taskCount: number; avgAht: number | null }>;
+}
+
+/** Task-type-wise monthly Task/AHT trend for the Overview page (2026-09-17
+ *  feedback items #2/#3) — one query, pivoted by bucket so the frontend can
+ *  read either metric per task type across the same set of buckets. */
+export async function getDocTaskTypeTrend(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+): Promise<DocTaskTypeTrendPoint[]> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const pool = await getOnfidoPool();
+  const bucket = bucketExpr("report_date", granularity);
+  const taskTypeExpr = DOC_RAW_DIMENSION_EXPR.task_type;
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${bucket} AS bucket,
+            COALESCE(NULLIF(TRIM(${taskTypeExpr}), ''), 'Standard Review (untagged)') AS taskType,
+            COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
+       FROM onfido_doc_raw WHERE report_date BETWEEN ? AND ? ${clause}
+       GROUP BY bucket, taskType ORDER BY bucket`,
+    [f.from, f.to, ...params]
+  );
+  const byBucket = new Map<string, Record<string, { taskCount: number; avgAht: number | null }>>();
+  for (const r of rows) {
+    const key = bucketLabel(r.bucket, granularity);
+    const entry = byBucket.get(key) ?? {};
+    entry[String(r.taskType)] = {
+      taskCount: Number(r.n),
+      avgAht: r.aht !== null ? Math.round(Number(r.aht)) : null,
+    };
+    byBucket.set(key, entry);
+  }
+  return [...byBucket.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([bucket, byTaskType]) => ({ bucket, byTaskType }));
 }
 
 // ── POA (onfido_poa_raw + onfido_poa_trial_raw for volume/AHT, ─────────────
@@ -2490,6 +2649,28 @@ export async function getPoaOverview(
     dataComparisonErrorRate: kpi("poa_raw_dc_err", "POA Data Comparison Error Rate", rate1(Number(quality.dcN ?? 0), totalQc), "percent",
       totalQc > 0 ? `${quality.dcN} of ${totalQc} QC(s)` : undefined),
   };
+}
+
+/** POA's own error-rate trend (errN/(errN+noErrN) per bucket, same formula as
+ *  getPoaOverview's errorRate) — the Trends page's "POA Err%" chart
+ *  (2026-09-17 feedback), which the reference dashboard's rTrend() renders as
+ *  its 5th trend line from a plain POA_Error_Pct field. */
+export async function getPoaQualityTrend(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+): Promise<QualityGranularTrendPoint[]> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const pool = await getOnfidoPool();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${bucketExpr("report_completed_date", granularity)} AS bucket,
+            COALESCE(SUM(error_count),0) AS errN, COALESCE(SUM(no_error_count),0) AS noErrN
+       FROM onfido_poa_quality_raw WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY bucket ORDER BY bucket`,
+    [f.from, f.to, ...params]
+  );
+  return rows.map((r) => {
+    const total = Number(r.errN ?? 0) + Number(r.noErrN ?? 0);
+    return { bucket: bucketLabel(r.bucket, granularity), taskCount: total, errorRate: rate1(Number(r.errN ?? 0), total) };
+  });
 }
 
 export interface PoaTrendPoint { bucket: string; taskCount: number }
@@ -2585,6 +2766,180 @@ export async function getPoaBreakdown(
     .slice(0, 50);
 }
 
+export type PoaEntityDimension = "tl_name" | "am_name" | "analyst_email";
+export interface PoaEntityMonthCell { taskCount: number; avgAht: number | null; poaErrPct: number | null; extPoaErrPct: number | null }
+export interface PoaEntityMonthRow { entity: string; byMonth: Record<string, PoaEntityMonthCell> }
+
+/** Entity x month pivot (AM/TL/Analyst Wise POA tables, 2026-09-17 feedback) —
+ *  Task+AHT from POA raw+trial, POA Err% from POA quality, Ext POA% from POA
+ *  External, merged in application code the same way getClientDocTrend and
+ *  getPoaCombinedTrend merge two file formats for one real metric. TL Wise
+ *  drops entities with zero POA task (reference dashboard's own rule); Analyst
+ *  Wise caps at the top 50 by volume (also the reference's own rule). */
+export async function getPoaEntityMonthlyGrid(
+  rawFilters: { from?: string; to?: string }, dimension: PoaEntityDimension
+): Promise<{ months: string[]; rows: PoaEntityMonthRow[] }> {
+  const f = readFilters(rawFilters);
+  const pool = await getOnfidoPool();
+  const monthExpr = bucketExpr("report_completed_date", "monthly");
+  const entityFilter = `${dimension} IS NOT NULL AND TRIM(${dimension}) <> ''`;
+
+  const [rawRows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${dimension} AS entity, ${monthExpr} AS month, COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
+       FROM onfido_poa_raw WHERE report_completed_date BETWEEN ? AND ? AND ${entityFilter} GROUP BY entity, month`,
+    [f.from, f.to]
+  );
+  const [trialRows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${dimension} AS entity, ${monthExpr} AS month, COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
+       FROM onfido_poa_trial_raw WHERE report_completed_date BETWEEN ? AND ? AND ${entityFilter} GROUP BY entity, month`,
+    [f.from, f.to]
+  );
+  const [qualityRows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${dimension} AS entity, ${monthExpr} AS month,
+            COALESCE(SUM(error_count),0) AS errN, COALESCE(SUM(no_error_count),0) AS noErrN
+       FROM onfido_poa_quality_raw WHERE report_completed_date BETWEEN ? AND ? AND ${entityFilter} GROUP BY entity, month`,
+    [f.from, f.to]
+  );
+  const [extRows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${dimension} AS entity, ${monthExpr} AS month, COUNT(*) AS n, COALESCE(SUM(error_flag),0) AS errors
+       FROM onfido_poa_external_raw WHERE report_completed_date BETWEEN ? AND ? AND ${entityFilter} GROUP BY entity, month`,
+    [f.from, f.to]
+  );
+
+  type Acc = { taskN: number; ahtSum: number; errN: number; noErrN: number; extN: number; extErr: number };
+  const grid = new Map<string, Map<string, Acc>>();
+  const monthsSet = new Set<string>();
+  function cell(entity: string, month: string): Acc {
+    monthsSet.add(month);
+    let byMonth = grid.get(entity);
+    if (!byMonth) { byMonth = new Map(); grid.set(entity, byMonth); }
+    let c = byMonth.get(month);
+    if (!c) { c = { taskN: 0, ahtSum: 0, errN: 0, noErrN: 0, extN: 0, extErr: 0 }; byMonth.set(month, c); }
+    return c;
+  }
+  for (const r of [...rawRows, ...trialRows]) {
+    const month = bucketLabel(r.month, "monthly");
+    const c = cell(String(r.entity).trim(), month);
+    const n = Number(r.n ?? 0);
+    const aht = r.aht !== null ? Number(r.aht) : null;
+    c.taskN += n;
+    c.ahtSum += aht !== null ? aht * n : 0;
+  }
+  for (const r of qualityRows) {
+    const month = bucketLabel(r.month, "monthly");
+    const c = cell(String(r.entity).trim(), month);
+    c.errN += Number(r.errN ?? 0);
+    c.noErrN += Number(r.noErrN ?? 0);
+  }
+  for (const r of extRows) {
+    const month = bucketLabel(r.month, "monthly");
+    const c = cell(String(r.entity).trim(), month);
+    c.extN += Number(r.n ?? 0);
+    c.extErr += Number(r.errors ?? 0);
+  }
+
+  const months = [...monthsSet].sort();
+  let rows: PoaEntityMonthRow[] = [...grid.entries()].map(([entity, byMonth]) => {
+    const cells: Record<string, PoaEntityMonthCell> = {};
+    for (const [month, c] of byMonth) {
+      cells[month] = {
+        taskCount: c.taskN,
+        avgAht: c.taskN > 0 ? Math.round(c.ahtSum / c.taskN) : null,
+        poaErrPct: rate1(c.errN, c.errN + c.noErrN),
+        extPoaErrPct: rate1(c.extErr, c.extN),
+      };
+    }
+    return { entity, byMonth: cells };
+  });
+
+  const totalTask = (r: PoaEntityMonthRow) => Object.values(r.byMonth).reduce((s, c) => s + c.taskCount, 0);
+  if (dimension === "tl_name") rows = rows.filter((r) => totalTask(r) > 0);
+  rows.sort((a, b) => totalTask(b) - totalTask(a));
+  if (dimension === "analyst_email") rows = rows.slice(0, 50);
+
+  return { months, rows };
+}
+
+export interface PoaDayRow {
+  date: string; taskCount: number; avgAht: number | null;
+  poaAudits: number; poaErrors: number; poaErrPct: number | null;
+  extPoaAudits: number; extPoaErrors: number; extPoaErrPct: number | null;
+}
+
+/** Day-wise POA detail table (9 columns, 2026-09-17 feedback) — same four-table
+ *  merge as getPoaEntityMonthlyGrid, grouped by calendar day instead of entity. */
+export async function getPoaDayWiseDetail(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+): Promise<PoaDayRow[]> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const pool = await getOnfidoPool();
+  const dayExpr = bucketExpr("report_completed_date", "daily");
+
+  const [rawRows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${dayExpr} AS day, COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
+       FROM onfido_poa_raw WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY day`,
+    [f.from, f.to, ...params]
+  );
+  const [trialRows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${dayExpr} AS day, COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
+       FROM onfido_poa_trial_raw WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY day`,
+    [f.from, f.to, ...params]
+  );
+  const [qualityRows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${dayExpr} AS day, COALESCE(SUM(error_count),0) AS errN, COALESCE(SUM(no_error_count),0) AS noErrN
+       FROM onfido_poa_quality_raw WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY day`,
+    [f.from, f.to, ...params]
+  );
+  const [extRows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${dayExpr} AS day, COUNT(*) AS n, COALESCE(SUM(error_flag),0) AS errors
+       FROM onfido_poa_external_raw WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY day`,
+    [f.from, f.to, ...params]
+  );
+
+  type Acc = { taskN: number; ahtSum: number; errN: number; noErrN: number; extN: number; extErr: number };
+  const byDay = new Map<string, Acc>();
+  function cell(day: string): Acc {
+    let c = byDay.get(day);
+    if (!c) { c = { taskN: 0, ahtSum: 0, errN: 0, noErrN: 0, extN: 0, extErr: 0 }; byDay.set(day, c); }
+    return c;
+  }
+  for (const r of [...rawRows, ...trialRows]) {
+    const day = bucketLabel(r.day, "daily");
+    const c = cell(day);
+    const n = Number(r.n ?? 0);
+    const aht = r.aht !== null ? Number(r.aht) : null;
+    c.taskN += n;
+    c.ahtSum += aht !== null ? aht * n : 0;
+  }
+  for (const r of qualityRows) {
+    const day = bucketLabel(r.day, "daily");
+    const c = cell(day);
+    c.errN += Number(r.errN ?? 0);
+    c.noErrN += Number(r.noErrN ?? 0);
+  }
+  for (const r of extRows) {
+    const day = bucketLabel(r.day, "daily");
+    const c = cell(day);
+    c.extN += Number(r.n ?? 0);
+    c.extErr += Number(r.errors ?? 0);
+  }
+
+  return [...byDay.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, c]) => ({
+      date,
+      taskCount: c.taskN,
+      avgAht: c.taskN > 0 ? Math.round(c.ahtSum / c.taskN) : null,
+      poaAudits: c.errN + c.noErrN,
+      poaErrors: c.errN,
+      poaErrPct: rate1(c.errN, c.errN + c.noErrN),
+      extPoaAudits: c.extN,
+      extPoaErrors: c.extErr,
+      extPoaErrPct: rate1(c.extErr, c.extN),
+    }));
+}
+
 // ── POA Trial (onfido_poa_trial_raw, standalone) ────────────────────────────
 //
 // Unlike the POA tab above (which always combines onfido_poa_raw +
@@ -2640,6 +2995,47 @@ export async function getPoaTrialTrend(
   return rows
     .map((r) => ({ bucket: bucketLabel(r.bucket, granularity), taskCount: Number(r.n) }))
     .sort((a, b) => a.bucket.localeCompare(b.bucket));
+}
+
+export interface PoaCombinedTrendPoint { bucket: string; taskCount: number; avgAht: number | null }
+
+/** POA raw + trial combined, volume-weighted AHT per bucket — the trend-chart
+ *  equivalent of getOverview's poaCombinedAht (same two file formats for the
+ *  same real queue, so a report from either table counts equally, not each
+ *  table's average counting equally regardless of volume). Powers the
+ *  Overview page's "Month-wise POA Performance Task & AHT process" card. */
+export async function getPoaCombinedTrend(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+): Promise<PoaCombinedTrendPoint[]> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const pool = await getOnfidoPool();
+  const expr = bucketExpr("report_completed_date", granularity);
+  const [rawRows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${expr} AS bucket, COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
+       FROM onfido_poa_raw WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY bucket`,
+    [f.from, f.to, ...params]
+  );
+  const [trialRows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${expr} AS bucket, COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
+       FROM onfido_poa_trial_raw WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY bucket`,
+    [f.from, f.to, ...params]
+  );
+  const byBucket = new Map<string, { n: number; sum: number }>();
+  const add = (rows: RowDataPacket[]) => {
+    for (const r of rows) {
+      const key = bucketLabel(r.bucket, granularity);
+      const n = Number(r.n ?? 0);
+      const aht = r.aht !== null ? Number(r.aht) : null;
+      const prev = byBucket.get(key) ?? { n: 0, sum: 0 };
+      byBucket.set(key, { n: prev.n + n, sum: prev.sum + (aht !== null ? aht * n : 0) });
+    }
+  };
+  add(rawRows);
+  add(trialRows);
+  return [...byBucket.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([bucket, v]) => ({ bucket, taskCount: v.n, avgAht: v.n > 0 ? Math.round(v.sum / v.n) : null }));
 }
 
 export type PoaTrialDimension = "tl_name" | "am_name";

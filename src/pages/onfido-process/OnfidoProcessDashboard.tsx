@@ -177,8 +177,9 @@ interface DocRawOverview {
   taskCount: KpiValue; avgAht: KpiValue; avgQueueTime: KpiValue; escalationRate: KpiValue;
 }
 interface DocRawTrendPoint { bucket: string; taskCount: number; avgAht: number | null }
-type DocRawDimension = "ims_client_name" | "tl_name" | "am_name";
+type DocRawDimension = "ims_client_name" | "tl_name" | "am_name" | "task_type";
 interface DocRawBreakdownRow { label: string; taskCount: number; avgAht: number | null; escalationRate: number | null }
+interface DocTaskTypeTrendPoint { bucket: string; byTaskType: Record<string, { taskCount: number; avgAht: number | null }> }
 
 interface PoaOverview {
   taskCount: KpiValue; avgAht: KpiValue; errorRate: KpiValue;
@@ -187,6 +188,14 @@ interface PoaOverview {
 interface PoaTrendPoint { bucket: string; taskCount: number }
 type PoaDimension = "tl_name" | "am_name";
 interface PoaBreakdownRow { label: string; taskCount: number; avgAht: number | null; errorRate: number | null }
+type PoaEntityDimension = "tl_name" | "am_name" | "analyst_email";
+interface PoaEntityMonthCell { taskCount: number; avgAht: number | null; poaErrPct: number | null; extPoaErrPct: number | null }
+interface PoaEntityMonthRow { entity: string; byMonth: Record<string, PoaEntityMonthCell> }
+interface PoaDayRow {
+  date: string; taskCount: number; avgAht: number | null;
+  poaAudits: number; poaErrors: number; poaErrPct: number | null;
+  extPoaAudits: number; extPoaErrors: number; extPoaErrPct: number | null;
+}
 interface PoaTrialOverview { taskCount: KpiValue; avgAht: KpiValue; considerRate: KpiValue }
 interface PoaTrialTrendPoint { bucket: string; taskCount: number }
 type PoaTrialDimension = "tl_name" | "am_name";
@@ -370,6 +379,148 @@ function ChartLegendRow() {
   );
 }
 
+/** Task volume (bars, left axis) + AHT in seconds (line, right axis) over month-wise
+ *  buckets — the Overview page's DOC/POA "Task & AHT process" trend cards
+ *  (2026-09-17 dashboard feedback, items #1/#4). */
+function TaskAhtTrendChart({ points, barLabel, lineLabel, barColor: barC = "var(--blue)", lineColor = "var(--orange)" }: {
+  points: { bucket: string; taskCount: number; avgAht: number | null }[];
+  barLabel: string; lineLabel: string; barColor?: string; lineColor?: string;
+}) {
+  if (points.length === 0) {
+    return <div style={{ padding: "40px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>;
+  }
+  const data = points.map((p) => ({ ...p, avgAht: p.avgAht ?? 0 }));
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <ComposedChart data={data} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
+        <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+        <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+        <YAxis yAxisId="count" tickLine={false} axisLine={false} width={48} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+        <YAxis yAxisId="aht" orientation="right" tickLine={false} axisLine={false} width={48} tick={{ fontSize: 11, fill: lineColor }} tickFormatter={(v: number) => `${v}s`} />
+        <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
+        <Legend verticalAlign="top" align="left" height={28} iconType="square" wrapperStyle={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }} />
+        <Bar yAxisId="count" dataKey="taskCount" name={barLabel} fill={barC} radius={[4, 4, 0, 0]} maxBarSize={44} />
+        <Line yAxisId="aht" type="monotone" dataKey="avgAht" name={lineLabel} stroke={lineColor} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+const TASK_TYPE_COLORS = ["var(--blue)", "var(--teal)", "var(--orange)", "var(--purple)", "var(--red)", "var(--yellow)", "var(--green)"];
+
+/** Pivots the bucket→task-type map into one row per bucket with one field per task
+ *  type, ordered by total volume descending (dominant category's line/legend first). */
+function pivotTaskTypeTrend(points: DocTaskTypeTrendPoint[], metric: "taskCount" | "avgAht") {
+  const taskTypes = new Set<string>();
+  for (const p of points) for (const tt of Object.keys(p.byTaskType)) taskTypes.add(tt);
+  const totals = new Map<string, number>();
+  for (const tt of taskTypes) {
+    let sum = 0;
+    for (const p of points) sum += p.byTaskType[tt]?.taskCount ?? 0;
+    totals.set(tt, sum);
+  }
+  const orderedTypes = [...taskTypes].sort((a, b) => (totals.get(b) ?? 0) - (totals.get(a) ?? 0));
+  const rows = points.map((p) => {
+    const row: Record<string, string | number | null> = { bucket: p.bucket };
+    for (const tt of orderedTypes) row[tt] = p.byTaskType[tt]?.[metric] ?? null;
+    return row;
+  });
+  return { rows, taskTypes: orderedTypes };
+}
+
+/** Task-type-wise monthly Task/AHT trend — the Overview page's items #2/#3
+ *  (2026-09-17 feedback): makes visible, month over month, that Labelling_Raw-Ext
+ *  runs at roughly 3x the AHT of every other DOC task type. */
+function TaskTypeSeriesChart({ points, metric, valueSuffix }: {
+  points: DocTaskTypeTrendPoint[]; metric: "taskCount" | "avgAht"; valueSuffix?: string;
+}) {
+  const { rows, taskTypes } = useMemo(() => pivotTaskTypeTrend(points, metric), [points, metric]);
+  if (rows.length === 0) {
+    return <div style={{ padding: "40px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>;
+  }
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <LineChart data={rows} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
+        <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+        <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+        <YAxis
+          tickLine={false} axisLine={false} width={48} tick={{ fontSize: 11, fill: "var(--muted)" }}
+          tickFormatter={(v: number) => (valueSuffix ? `${v}${valueSuffix}` : String(v))}
+        />
+        <RTooltip content={<DarkTooltip />} />
+        <Legend verticalAlign="top" align="left" height={28} iconType="line" wrapperStyle={{ fontSize: 10, fontWeight: 700, color: "var(--text)" }} />
+        {taskTypes.map((tt, i) => (
+          <Line key={tt} type="monotone" dataKey={tt} name={tt} stroke={TASK_TYPE_COLORS[i % TASK_TYPE_COLORS.length]} strokeWidth={2} dot={{ r: 2 }} connectNulls />
+        ))}
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+/** GD %/MCN %/SLA % over month-wise buckets — Overview page's "Month-wise GD & MCN
+ *  Trend" card (2026-09-17 feedback item #6), reusing the existing gd-mcn-sla/trend
+ *  endpoint at monthly granularity instead of its usual day-wise view. */
+function GdMcnPercentChart({ points }: { points: GdMcnSlaTrendPoint[] }) {
+  if (points.length === 0) {
+    return <div style={{ padding: "40px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>;
+  }
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <LineChart data={points} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
+        <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+        <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+        <YAxis tickLine={false} axisLine={false} width={48} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v}%`} />
+        <RTooltip content={<DarkTooltip />} />
+        <Legend verticalAlign="top" align="left" height={28} iconType="line" wrapperStyle={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }} />
+        <Line type="monotone" dataKey="gdPct" name="GD %" stroke="var(--blue)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+        <Line type="monotone" dataKey="mcnPct" name="MCN %" stroke="var(--teal)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+        <Line type="monotone" dataKey="slaPct" name="SLA %" stroke="var(--orange)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+/** Client escalation (CRE+CRQ) line count per month-wise bucket — Overview page's
+ *  "Month-wise Client Escalation Trend" card (2026-09-17 feedback item #7). */
+function EscalationCountChart({ points }: { points: EscalationTrendPoint[] }) {
+  if (points.length === 0) {
+    return <div style={{ padding: "40px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>;
+  }
+  return (
+    <ResponsiveContainer width="100%" height={240}>
+      <BarChart data={points} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
+        <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+        <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+        <YAxis tickLine={false} axisLine={false} width={44} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+        <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
+        <Bar dataKey="count" name="Escalation Lines" fill="var(--red)" radius={[4, 4, 0, 0]} maxBarSize={44}>
+          <LabelList dataKey="count" position="top" fontSize={10} fill="var(--muted)" />
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+/** Single AHT line (seconds) over daily/weekly/monthly buckets — the Trends
+ *  page's "DOC AHT Trend" card (2026-09-17 feedback). */
+function AhtLineChart({ points }: { points: { bucket: string; avgAht: number | null }[] }) {
+  if (points.length === 0) {
+    return <div style={{ padding: "40px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>;
+  }
+  const data = points.map((p) => ({ ...p, avgAht: p.avgAht ?? 0 }));
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <LineChart data={data} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
+        <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+        <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+        <YAxis tickLine={false} axisLine={false} width={48} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v}s`} />
+        <RTooltip content={<DarkTooltip />} />
+        <Line type="monotone" dataKey="avgAht" name="Avg AHT" stroke="var(--teal)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
 /**
  * Quality scorecard bar chart — mirrors the reference's buildScorecardBar().
  * Bars are threshold-colored: green (< 1%), orange (1–1.5%), red (≥ 1.5%).
@@ -548,39 +699,68 @@ function TrendsView({ range }: { range: { from: string; to: string } }) {
   });
   const points = query.data?.data ?? [];
 
+  // 2026-09-17 feedback: "TRENDS PAGE need all trends monthly weekly daily" — the
+  // reference dashboard's Trends tab (rTrend()) renders 5 charts total; this port
+  // has 4 (Tasks/AHT/Overall Err%/POA Err%) since FAR%/FRR% are excluded per
+  // explicit instruction not to add FAR/FRR/Manual FAR/Manual FRR anywhere.
+  const docAhtQuery = useQuery({
+    queryKey: ["onfido-process", "doc-raw-trend", range, granularity],
+    queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/doc-raw/trend?from=${range.from}&to=${range.to}&granularity=${granularity}`),
+  });
+  const overallErrQuery = useQuery({
+    queryKey: ["onfido-process", "quality-trend", range, granularity],
+    queryFn: () => hrmsApi.get<{ data: QualityTrendPoint[] }>(`/api/onfido-process/quality/trend?from=${range.from}&to=${range.to}&granularity=${granularity}`),
+  });
+  const poaErrQuery = useQuery({
+    queryKey: ["onfido-process", "poa-quality-trend", range, granularity],
+    queryFn: () => hrmsApi.get<{ data: QualityTrendPoint[] }>(`/api/onfido-process/poa/quality-trend?from=${range.from}&to=${range.to}&granularity=${granularity}`),
+  });
+  const docAhtPoints = docAhtQuery.data?.data ?? [];
+  const overallErrPoints = overallErrQuery.data?.data ?? [];
+  const poaErrPoints = poaErrQuery.data?.data ?? [];
+
   return (
-    <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 style={{ marginBottom: 0 }}>Total Tasks Trend</h3>
-        <div className="oc-pillbar">
-          {(["daily", "weekly", "monthly"] as Granularity[]).map((g) => (
-            <button key={g} className={g === granularity ? "oc-pill-btn active" : "oc-pill-btn"} onClick={() => setGranularity(g)}>
-              {g[0].toUpperCase() + g.slice(1)}
-            </button>
-          ))}
+    <div className="space-y-4">
+      <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 style={{ marginBottom: 0 }}>Total Tasks Trend</h3>
+          <div className="oc-pillbar">
+            {(["daily", "weekly", "monthly"] as Granularity[]).map((g) => (
+              <button key={g} className={g === granularity ? "oc-pill-btn active" : "oc-pill-btn"} onClick={() => setGranularity(g)}>
+                {g[0].toUpperCase() + g.slice(1)}
+              </button>
+            ))}
+          </div>
         </div>
+        <div style={{ marginTop: 14 }}>
+          {points.length === 0 ? (
+            <div style={{ padding: "40px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No volume in this range yet.</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={4} barCategoryGap={points.length <= 3 ? "35%" : "20%"}>
+                <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+                <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickMargin={8} />
+                <YAxis tickLine={false} axisLine={false} width={44} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+                <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
+                <Bar dataKey="doc" name="DOC" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                  <LabelList dataKey="doc" position="inside" fill="#fff" fontSize={10} />
+                </Bar>
+                <Bar dataKey="poa" name="POA" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                  <LabelList dataKey="poa" position="inside" fill="#fff" fontSize={10} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+        {points.length > 0 && <ChartLegendRow />}
       </div>
-      <div style={{ marginTop: 14 }}>
-        {points.length === 0 ? (
-          <div style={{ padding: "40px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No volume in this range yet.</div>
-        ) : (
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={4} barCategoryGap={points.length <= 3 ? "35%" : "20%"}>
-              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
-              <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickMargin={8} />
-              <YAxis tickLine={false} axisLine={false} width={44} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-              <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-              <Bar dataKey="doc" name="DOC" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                <LabelList dataKey="doc" position="inside" fill="#fff" fontSize={10} />
-              </Bar>
-              <Bar dataKey="poa" name="POA" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                <LabelList dataKey="poa" position="inside" fill="#fff" fontSize={10} />
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        )}
+
+      <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
+        <h3>DOC AHT Trend</h3>
+        <AhtLineChart points={docAhtPoints} />
       </div>
-      {points.length > 0 && <ChartLegendRow />}
+      <QualityAreaChart points={overallErrPoints} title="DOC Overall Error % Trend" hc="var(--red)" />
+      <QualityAreaChart points={poaErrPoints} title="POA Error % Trend" hc="var(--purple)" />
     </div>
   );
 }
@@ -2319,7 +2499,7 @@ function DocRawView({
   const ov = overviewQuery.data?.data;
   const points = trendQuery.data?.data ?? [];
   const breakdown = breakdownQuery.data?.data ?? [];
-  const dimLabel = { ims_client_name: "Client", tl_name: "TL", am_name: "AM" }[dimension];
+  const dimLabel = { ims_client_name: "Client", tl_name: "TL", am_name: "AM", task_type: "Task Type" }[dimension];
 
   return (
     <div className="space-y-4">
@@ -2366,6 +2546,7 @@ function DocRawView({
             onChange={setDimension}
             options={[
               { key: "ims_client_name", label: "Client Wise" }, { key: "tl_name", label: "TL Wise" }, { key: "am_name", label: "AM Wise" },
+              { key: "task_type", label: "Task Type Wise" },
             ]}
           />
         </div>
@@ -2404,6 +2585,116 @@ function DocRawView({
   );
 }
 
+/** Green < 1.0%, orange 1.0-1.5%, red >= 1.5% — the reference dashboard's own
+ *  POA quality thresholds (peCol/xpCol in buildGroupedTable). */
+function poaCellColor(pct: number | null): string {
+  if (pct === null) return "var(--muted)";
+  return pct >= 1.5 ? "var(--red)" : pct >= 1.0 ? "var(--orange)" : "var(--green)";
+}
+
+/** Entity x month grouped table (AM/TL/Analyst Wise POA tables, 2026-09-17
+ *  feedback) — each month spans 4 sub-columns (Task/AHT/POA Err%/Ext POA%),
+ *  mirroring the reference dashboard's buildGroupedTable(). */
+function PoaEntityMonthTable({ title, months, rows, entityLabel, onRowClick }: {
+  title: string; months: string[]; rows: PoaEntityMonthRow[]; entityLabel: string;
+  onRowClick?: (entity: string) => void;
+}) {
+  return (
+    <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
+      <h3>{title}</h3>
+      {months.length === 0 || rows.length === 0 ? (
+        <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table className="oc-table">
+            <thead>
+              <tr>
+                <th rowSpan={2} style={{ textAlign: "left", position: "sticky", left: 0, background: "var(--card)", zIndex: 2 }}>{entityLabel}</th>
+                {months.map((mo) => (
+                  <th key={mo} colSpan={4} style={{ textAlign: "center", borderLeft: "1px solid var(--border)" }}>{mo}</th>
+                ))}
+              </tr>
+              <tr>
+                {months.map((mo) => (
+                  <Fragment key={mo}>
+                    <th style={{ borderLeft: "1px solid var(--border)", fontSize: 10 }}>Task</th>
+                    <th style={{ fontSize: 10 }}>AHT</th>
+                    <th style={{ fontSize: 10 }}>POA Err%</th>
+                    <th style={{ fontSize: 10 }}>Ext POA%</th>
+                  </Fragment>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.entity} className={onRowClick ? "oc-row-click" : undefined} onClick={() => onRowClick?.(r.entity)}>
+                  <td style={{ textAlign: "left", position: "sticky", left: 0, background: "var(--card)", fontWeight: 600 }}>
+                    {r.entity.split("@")[0]}
+                  </td>
+                  {months.map((mo) => {
+                    const c = r.byMonth[mo];
+                    return (
+                      <Fragment key={mo}>
+                        <td className="oc-right" style={{ borderLeft: "1px solid var(--border)" }}>{c ? c.taskCount.toLocaleString("en-IN") : "–"}</td>
+                        <td className="oc-right">{c?.avgAht != null ? `${c.avgAht}s` : "–"}</td>
+                        <td className="oc-right" style={{ color: poaCellColor(c?.poaErrPct ?? null), fontWeight: 700 }}>
+                          {c?.poaErrPct != null ? `${c.poaErrPct}%` : "–"}
+                        </td>
+                        <td className="oc-right" style={{ color: poaCellColor(c?.extPoaErrPct ?? null), fontWeight: 700 }}>
+                          {c?.extPoaErrPct != null ? `${c.extPoaErrPct}%` : "–"}
+                        </td>
+                      </Fragment>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Day-wise POA detail — 9 columns (2026-09-17 feedback item #5). */
+function PoaDayWiseTable({ rows }: { rows: PoaDayRow[] }) {
+  return (
+    <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
+      <h3>Day-wise POA Detail</h3>
+      {rows.length === 0 ? (
+        <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>
+      ) : (
+        <div style={{ overflowX: "auto", maxHeight: 420 }}>
+          <table className="oc-table">
+            <thead>
+              <tr>
+                <th>Date</th><th className="oc-right">POA Task</th><th className="oc-right">POA AHT</th>
+                <th className="oc-right">POA Audits</th><th className="oc-right">POA Error</th><th className="oc-right">POA Err%</th>
+                <th className="oc-right">Ext POA Audits</th><th className="oc-right">Ext POA Error</th><th className="oc-right">Ext POA%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.date}>
+                  <td>{r.date}</td>
+                  <td className="oc-right">{r.taskCount.toLocaleString("en-IN")}</td>
+                  <td className="oc-right">{r.avgAht != null ? `${r.avgAht}s` : "–"}</td>
+                  <td className="oc-right">{r.poaAudits.toLocaleString("en-IN")}</td>
+                  <td className="oc-right">{r.poaErrors.toLocaleString("en-IN")}</td>
+                  <td className="oc-right" style={{ color: poaCellColor(r.poaErrPct), fontWeight: 700 }}>{r.poaErrPct != null ? `${r.poaErrPct}%` : "–"}</td>
+                  <td className="oc-right">{r.extPoaAudits.toLocaleString("en-IN")}</td>
+                  <td className="oc-right">{r.extPoaErrors.toLocaleString("en-IN")}</td>
+                  <td className="oc-right" style={{ color: poaCellColor(r.extPoaErrPct), fontWeight: 700 }}>{r.extPoaErrPct != null ? `${r.extPoaErrPct}%` : "–"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * POA view — POA Raw + POA Trial for volume/AHT, POA Quality for error
  * rates. Three separate tables with no row-level link between them, merged
@@ -2416,7 +2707,7 @@ function PoaView({
 }: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
   const [dimension, setDimension] = useState<PoaDimension>("tl_name");
   const [granularity, setGranularity] = useState<Granularity>("monthly");
-  const [drilldown, setDrilldown] = useState<{ label: string } | null>(null);
+  const [drilldown, setDrilldown] = useState<{ label: string; column: string } | null>(null);
   const qs = tlAmQS(tlFilter, amFilter);
 
   const overviewQuery = useQuery({
@@ -2431,19 +2722,69 @@ function PoaView({
     queryKey: ["onfido-process", "poa-breakdown", range, dimension, tlFilter, amFilter],
     queryFn: () => hrmsApi.get<{ data: PoaBreakdownRow[] }>(`/api/onfido-process/poa/breakdown/${dimension}?from=${range.from}&to=${range.to}${qs}`),
   });
+  // Month-wise "Task & AHT + Int/Ext Err%" section (2026-09-17 feedback, POA page)
+  // — Ext POA Err% comes from the separate POA External Dashboard table.
+  const poaExternalOverviewQuery = useQuery({
+    queryKey: ["onfido-process", "poa-external-overview-for-poa", range, tlFilter, amFilter],
+    queryFn: () => hrmsApi.get<{ data: PoaExternalOverview }>(`/api/onfido-process/poa-external/overview?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const poaCombinedTrendQuery = useQuery({
+    queryKey: ["onfido-process", "poa-combined-trend", range, tlFilter, amFilter],
+    queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/poa/combined-trend?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const poaQualityTrendQuery = useQuery({
+    queryKey: ["onfido-process", "poa-quality-trend-for-poa", range, tlFilter, amFilter],
+    queryFn: () => hrmsApi.get<{ data: QualityTrendPoint[] }>(`/api/onfido-process/poa/quality-trend?from=${range.from}&to=${range.to}${qs}`),
+  });
+  const poaExternalTrendQuery = useQuery({
+    queryKey: ["onfido-process", "poa-external-trend-for-poa", range, tlFilter, amFilter],
+    queryFn: () => hrmsApi.get<{ data: PoaExternalTrendPoint[] }>(`/api/onfido-process/poa-external/trend?from=${range.from}&to=${range.to}${qs}`),
+  });
+  // Entity x month grouped tables (AM/TL/Analyst Wise) + day-wise detail —
+  // company-wide (no tl/am filter), matching the reference dashboard's own tables.
+  const amGridQuery = useQuery({
+    queryKey: ["onfido-process", "poa-entity-grid-am", range],
+    queryFn: () => hrmsApi.get<{ data: { months: string[]; rows: PoaEntityMonthRow[] } }>(`/api/onfido-process/poa/entity-month-grid/am_name?from=${range.from}&to=${range.to}`),
+  });
+  const tlGridQuery = useQuery({
+    queryKey: ["onfido-process", "poa-entity-grid-tl", range],
+    queryFn: () => hrmsApi.get<{ data: { months: string[]; rows: PoaEntityMonthRow[] } }>(`/api/onfido-process/poa/entity-month-grid/tl_name?from=${range.from}&to=${range.to}`),
+  });
+  const analystGridQuery = useQuery({
+    queryKey: ["onfido-process", "poa-entity-grid-analyst", range],
+    queryFn: () => hrmsApi.get<{ data: { months: string[]; rows: PoaEntityMonthRow[] } }>(`/api/onfido-process/poa/entity-month-grid/analyst_email?from=${range.from}&to=${range.to}`),
+  });
+  const dayDetailQuery = useQuery({
+    queryKey: ["onfido-process", "poa-day-detail", range],
+    queryFn: () => hrmsApi.get<{ data: PoaDayRow[] }>(`/api/onfido-process/poa/day-detail?from=${range.from}&to=${range.to}`),
+  });
 
   const ov = overviewQuery.data?.data;
   const points = trendQuery.data?.data ?? [];
   const breakdown = breakdownQuery.data?.data ?? [];
   const dimLabel = { tl_name: "TL", am_name: "AM" }[dimension];
+  const poaCombinedTrend = poaCombinedTrendQuery.data?.data ?? [];
+  const poaMonthlyErrPct = useMemo(() => {
+    const byBucket = new Map<string, { bucket: string; intErrPct: number | null; extErrPct: number | null }>();
+    for (const r of poaQualityTrendQuery.data?.data ?? []) {
+      byBucket.set(r.bucket, { bucket: r.bucket, intErrPct: r.errorRate, extErrPct: null });
+    }
+    for (const r of poaExternalTrendQuery.data?.data ?? []) {
+      const existing = byBucket.get(r.bucket) ?? { bucket: r.bucket, intErrPct: null, extErrPct: null };
+      existing.extErrPct = r.taskCount > 0 ? Math.round((r.errorCount / r.taskCount) * 1000) / 10 : null;
+      byBucket.set(r.bucket, existing);
+    }
+    return [...byBucket.values()].sort((a, b) => a.bucket.localeCompare(b.bucket));
+  }, [poaQualityTrendQuery.data, poaExternalTrendQuery.data]);
 
   return (
     <div className="space-y-4">
       {ov && (
-        <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+        <div className="kr" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
           <KpiPlain kpi={ov.taskCount} kc="var(--blue)" />
           <KpiPlain kpi={ov.avgAht} kc="var(--teal)" />
           <KpiPlain kpi={ov.errorRate} kc="var(--red)" />
+          {poaExternalOverviewQuery.data?.data && <KpiPlain kpi={poaExternalOverviewQuery.data.data.errorRate} kc="var(--orange)" />}
         </div>
       )}
       {ov && (
@@ -2453,6 +2794,29 @@ function PoaView({
           <KpiPlain kpi={ov.dataComparisonErrorRate} kc="var(--purple)" />
         </div>
       )}
+
+      <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
+        <h3>Month-wise POA Task &amp; AHT (Raw + Trial Combined)</h3>
+        <TaskAhtTrendChart points={poaCombinedTrend} barLabel="POA Tasks" lineLabel="POA Avg AHT" barColor="var(--blue)" lineColor="var(--orange)" />
+      </div>
+      <div className="oc-card" style={{ "--hc": "var(--red)" } as React.CSSProperties}>
+        <h3>Month-wise POA Error % — Internal vs External</h3>
+        {poaMonthlyErrPct.length === 0 ? (
+          <div style={{ padding: "40px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={240}>
+            <LineChart data={poaMonthlyErrPct} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
+              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+              <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+              <YAxis tickLine={false} axisLine={false} width={48} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v}%`} />
+              <RTooltip content={<DarkTooltip />} />
+              <Legend verticalAlign="top" align="left" height={28} iconType="line" wrapperStyle={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }} />
+              <Line type="monotone" dataKey="intErrPct" name="POA Err% (Internal)" stroke="var(--red)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+              <Line type="monotone" dataKey="extErrPct" name="Ext POA Err%" stroke="var(--orange)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </div>
 
       <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2496,7 +2860,7 @@ function PoaView({
             <tbody>
               {breakdown.length === 0 && <tr className="oc-empty-row"><td colSpan={4}>No data</td></tr>}
               {breakdown.map((r) => (
-                <tr key={r.label} className="oc-row-click" onClick={() => setDrilldown({ label: r.label })}>
+                <tr key={r.label} className="oc-row-click" onClick={() => setDrilldown({ label: r.label, column: dimension })}>
                   <td>{r.label}</td>
                   <td className="oc-right">{r.taskCount.toLocaleString("en-IN")}</td>
                   <td className="oc-right">{r.avgAht !== null ? `${r.avgAht}s` : "—"}</td>
@@ -2508,12 +2872,35 @@ function PoaView({
         </div>
       </div>
 
+      <PoaEntityMonthTable
+        title="AM Wise — Month-wise POA Detail"
+        entityLabel="AM"
+        months={amGridQuery.data?.data.months ?? []}
+        rows={amGridQuery.data?.data.rows ?? []}
+        onRowClick={(entity) => setDrilldown({ label: entity, column: "am_name" })}
+      />
+      <PoaEntityMonthTable
+        title="TL Wise — Month-wise POA Detail"
+        entityLabel="TL"
+        months={tlGridQuery.data?.data.months ?? []}
+        rows={tlGridQuery.data?.data.rows ?? []}
+        onRowClick={(entity) => setDrilldown({ label: entity, column: "tl_name" })}
+      />
+      <PoaEntityMonthTable
+        title="Analyst Wise — Month-wise POA Detail (Top 50)"
+        entityLabel="Analyst"
+        months={analystGridQuery.data?.data.months ?? []}
+        rows={analystGridQuery.data?.data.rows ?? []}
+        onRowClick={(entity) => setDrilldown({ label: entity, column: "analyst_email" })}
+      />
+      <PoaDayWiseTable rows={dayDetailQuery.data?.data ?? []} />
+
       {drilldown && (
         <BreakdownDrilldownSheet
           open={!!drilldown}
-          title={`POA Raw — ${dimLabel}`}
+          title={`POA Raw — ${drilldown.column}`}
           tableKey="ONFIDO_POA_RAW"
-          filterColumn={dimension}
+          filterColumn={drilldown.column}
           filterValue={drilldown.label}
           range={range}
           onOpenChange={(v) => { if (!v) setDrilldown(null); }}
@@ -3392,6 +3779,44 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
     queryFn: () => hrmsApi.get<{ data: TableInfo[] }>("/api/onfido-process/tables"),
   });
 
+  // Overview page's month-wise trend cards (2026-09-17 dashboard feedback) — gated to
+  // the overview tab since none of these are needed while another tab is active.
+  const docTaskAhtTrendQuery = useQuery({
+    queryKey: ["onfido-process", "doc-task-aht-trend-monthly", range],
+    queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/doc-raw/trend?from=${range.from}&to=${range.to}`),
+    enabled: view === "overview",
+  });
+  const docTaskTypeTrendQuery = useQuery({
+    queryKey: ["onfido-process", "doc-task-type-trend-monthly", range],
+    queryFn: () => hrmsApi.get<{ data: DocTaskTypeTrendPoint[] }>(`/api/onfido-process/doc-raw/task-type-trend?from=${range.from}&to=${range.to}`),
+    enabled: view === "overview",
+  });
+  const poaCombinedTrendQuery = useQuery({
+    queryKey: ["onfido-process", "poa-combined-trend-monthly", range],
+    queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/poa/combined-trend?from=${range.from}&to=${range.to}`),
+    enabled: view === "overview",
+  });
+  const gdMcnMonthlyTrendQuery = useQuery({
+    queryKey: ["onfido-process", "gd-mcn-trend-monthly", range],
+    queryFn: () => hrmsApi.get<{ data: GdMcnSlaTrendPoint[] }>(`/api/onfido-process/gd-mcn-sla/trend?from=${range.from}&to=${range.to}&granularity=monthly`),
+    enabled: view === "overview",
+  });
+  const clientEscalationTrendQuery = useQuery({
+    queryKey: ["onfido-process", "escalation-trend-monthly", range],
+    queryFn: () => hrmsApi.get<{ data: EscalationTrendPoint[] }>(`/api/onfido-process/escalations/trend?from=${range.from}&to=${range.to}`),
+    enabled: view === "overview",
+  });
+  const internalQualityTrendQuery = useQuery({
+    queryKey: ["onfido-process", "internal-quality-trend-monthly", range],
+    queryFn: () => hrmsApi.get<{ data: QualityTrendPoint[] }>(`/api/onfido-process/quality/internal-trend?from=${range.from}&to=${range.to}`),
+    enabled: view === "overview",
+  });
+  const externalQualityTrendQuery = useQuery({
+    queryKey: ["onfido-process", "external-quality-trend-monthly", range],
+    queryFn: () => hrmsApi.get<{ data: QualityTrendPoint[] }>(`/api/onfido-process/quality/trend?from=${range.from}&to=${range.to}`),
+    enabled: view === "overview",
+  });
+
   const recordsQuery = useQuery({
     queryKey: ["onfido-process", "records", activeTable, range],
     queryFn: () =>
@@ -3404,6 +3829,13 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
   const overview = overviewQuery.data?.data;
   const tlRows = tlQuery.data?.data ?? [];
   const trendPoints = trendQuery.data?.data ?? [];
+  const docTaskAhtTrend = docTaskAhtTrendQuery.data?.data ?? [];
+  const docTaskTypeTrend = docTaskTypeTrendQuery.data?.data ?? [];
+  const poaCombinedTrend = poaCombinedTrendQuery.data?.data ?? [];
+  const gdMcnMonthlyTrend = gdMcnMonthlyTrendQuery.data?.data ?? [];
+  const clientEscalationTrend = clientEscalationTrendQuery.data?.data ?? [];
+  const internalQualityTrend = internalQualityTrendQuery.data?.data ?? [];
+  const externalQualityTrend = externalQualityTrendQuery.data?.data ?? [];
   const tables = tablesQuery.data?.data ?? [];
   const activeTableInfo = useMemo(() => tables.find((t) => t.key === activeTable), [tables, activeTable]);
 
@@ -3529,6 +3961,37 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
             <TrendChart points={trendPoints} />
             {trendPoints.length > 0 && <ChartLegendRow />}
           </div>
+
+          {/* Month-wise trend cards — 2026-09-17 dashboard feedback. Attrition and
+              Shrinkage are intentionally excluded per that session's instruction not
+              to touch Task Skip, ETM or Attrition. */}
+          <SectionHead hc="var(--orange)" title="Month-wise Trends" />
+          <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
+            <h3>Month-wise Performance — DOC Task &amp; AHT</h3>
+            <TaskAhtTrendChart points={docTaskAhtTrend} barLabel="DOC Tasks" lineLabel="DOC Avg AHT" barColor="var(--blue)" lineColor="var(--orange)" />
+          </div>
+          <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
+            <h3>Month-wise Performance — POA Task &amp; AHT</h3>
+            <TaskAhtTrendChart points={poaCombinedTrend} barLabel="POA Tasks" lineLabel="POA Avg AHT" barColor="var(--teal)" lineColor="var(--purple)" />
+          </div>
+          <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
+            <h3>Month-wise Task-Type-Wise Task Performance (DOC)</h3>
+            <TaskTypeSeriesChart points={docTaskTypeTrend} metric="taskCount" />
+          </div>
+          <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
+            <h3>Month-wise Task-Type-Wise AHT Performance (DOC)</h3>
+            <TaskTypeSeriesChart points={docTaskTypeTrend} metric="avgAht" valueSuffix="s" />
+          </div>
+          <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
+            <h3>Month-wise GD &amp; MCN Trend</h3>
+            <GdMcnPercentChart points={gdMcnMonthlyTrend} />
+          </div>
+          <div className="oc-card" style={{ "--hc": "var(--red)" } as React.CSSProperties}>
+            <h3>Month-wise Client Escalation Trend</h3>
+            <EscalationCountChart points={clientEscalationTrend} />
+          </div>
+          <QualityAreaChart points={internalQualityTrend} title="Month-wise Internal Quality Score" hc="var(--orange)" />
+          <QualityAreaChart points={externalQualityTrend} title="Month-wise External Quality Score" hc="var(--red)" />
 
           {/* TL breakdown */}
           <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>

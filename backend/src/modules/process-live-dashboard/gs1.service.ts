@@ -157,7 +157,7 @@ export async function getGs1Email(filters: Filters): Promise<Gs1Email> {
     `SELECT COALESCE(SUM(mail_received),0)           AS tasks,
             COALESCE(SUM(gtin_processed),0)          AS gtin,
             COALESCE(SUM(image_count),0)             AS images,
-            COALESCE(AVG(sla_within_15min)*100, 0)   AS sla15Pct
+            COALESCE(AVG(sla_within_15min), 0)   AS sla15Pct
      FROM gs1_email_daily_actual
      WHERE mail_date BETWEEN ? AND ?`,
     [from, to],
@@ -168,7 +168,7 @@ export async function getGs1Email(filters: Filters): Promise<Gs1Email> {
             COALESCE(SUM(mail_received),0)            AS tasks,
             COALESCE(SUM(gtin_processed),0)           AS gtin,
             COALESCE(SUM(image_count),0)              AS images,
-            COALESCE(AVG(sla_within_15min)*100, 0)    AS sla15Pct
+            COALESCE(AVG(sla_within_15min), 0)    AS sla15Pct
      FROM gs1_email_daily_actual
      WHERE mail_date BETWEEN ? AND ?
      GROUP BY analyst_name
@@ -243,7 +243,7 @@ export async function getGs1DataKart(filters: Filters): Promise<Gs1DataKart> {
   const [totals] = await db.query<RowDataPacket[]>(
     `SELECT COALESCE(SUM(task_count),0)                     AS tasks,
             COALESCE(SUM(gtin_count),0)                     AS gtin,
-            COALESCE(AVG(within_tat)*100, 0)                AS withinTatPct,
+            COALESCE(AVG(within_tat), 0)                AS withinTatPct,
             CASE WHEN COALESCE(SUM(task_count),0) > 0
                  THEN COALESCE(SUM(gtin_count),0) / SUM(task_count)
                  ELSE 0 END                                 AS avgGtinPerTask
@@ -256,7 +256,7 @@ export async function getGs1DataKart(filters: Filters): Promise<Gs1DataKart> {
     `SELECT analyst_name                                        AS analyst,
             COALESCE(SUM(task_count),0)                       AS tasks,
             COALESCE(SUM(gtin_count),0)                       AS gtin,
-            COALESCE(AVG(within_tat)*100, 0)                  AS withinTatPct,
+            COALESCE(AVG(within_tat), 0)                  AS withinTatPct,
             CASE WHEN COALESCE(SUM(task_count),0) > 0
                  THEN COALESCE(SUM(gtin_count),0) / SUM(task_count)
                  ELSE 0 END                                   AS avgGtin
@@ -271,7 +271,7 @@ export async function getGs1DataKart(filters: Filters): Promise<Gs1DataKart> {
     `SELECT DATE_FORMAT(task_date,'%Y-%m-%d')                 AS date,
             COALESCE(SUM(task_count),0)                       AS tasks,
             COALESCE(SUM(gtin_count),0)                       AS gtin,
-            COALESCE(AVG(within_tat)*100, 0)                  AS withinTatPct
+            COALESCE(AVG(within_tat), 0)                  AS withinTatPct
      FROM gs1_datakart_daily_actual
      WHERE task_date BETWEEN ? AND ?
      GROUP BY date

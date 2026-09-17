@@ -5,9 +5,19 @@ import { db } from "../../db/mysql.js";
 /**
  * GS1 India — Email-based GTIN processing daily actuals.
  *
- * Each row represents one analyst's work on a single mail received on a given
- * day: how many GTINs were processed, whether SLA (15-minute target) was met,
- * and the actual TAT in minutes.
+ * gs1_email_daily_actual is one row PER ANALYST PER DAY (its own unique key is
+ * (process_id, report_date, analyst_name, mail_date)). The real export ("GS1.xlsx",
+ * "Email " sheet) is a raw per-TICKET log — 317 rows for ~10 executives across ~2 weeks,
+ * not pre-aggregated. This importer groups the staged raw ticket rows by (WORK Date, Name
+ * of executive) in memory and writes one upserted daily row per group, rather than
+ * requiring the uploader to pre-aggregate outside the system (which is why this pipeline
+ * had zero rows live despite existing since migration 1769 — nobody could produce the
+ * old imagined "Report Date/Analyst Name/Mail Received/..." format from the real tool).
+ *
+ * sla_within_15min stores the PERCENTAGE (0-100) of that day's tickets whose SLA bucket
+ * was "0-15" minutes, not a 0/1 flag — the old single-ticket-per-row design could get away
+ * with a boolean; a day with several tickets needs the real rate. gs1.service.ts's read
+ * side (AVG(sla_within_15min), no further *100) matches this.
  *
  * Upload type: GS1_EMAIL_DAILY
  * Target table: gs1_email_daily_actual
@@ -15,17 +25,12 @@ import { db } from "../../db/mysql.js";
  */
 
 export const GS1_EMAIL_DAILY_HEADERS = [
-  "Report Date",
-  "Analyst Name",
-  "Mail Date",
-  "Mail Received",
-  "GTIN Processed",
-  "Image Count",
-  "SLA Within 15min",
-  "Data Type",
-  "TAT Minutes",
+  "Email Subject", "Sender Name", "Email Received Time", "Work Start Time", "Work End Time",
+  "Mail Date", "WORK Date", "Name of executive", "Type Of Query", "Status", "Ticket", "Type",
+  "Month", "Duration", "SLA", "GTIN", "Image", "Months", "Approval",
 ] as const;
 
+/** Handles "1-Sep-26" (real export's sheet_to_csv-rendered date) and common fallbacks. */
 export function parseDate(raw: unknown): string | null {
   const v = String(raw ?? "").trim();
   if (!v) return null;
@@ -39,6 +44,10 @@ export function parseDate(raw: unknown): string | null {
   if (m && MONTHS[m[2].toLowerCase()]) {
     return `${m[3]}-${String(MONTHS[m[2].toLowerCase()]).padStart(2, "0")}-${m[1].padStart(2, "0")}`;
   }
+  m = /^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/.exec(v);
+  if (m && MONTHS[m[2].toLowerCase()]) {
+    return `20${m[3]}-${String(MONTHS[m[2].toLowerCase()]).padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  }
   m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(v);
   if (m) return `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
   return null;
@@ -51,16 +60,11 @@ export function parseCount(raw: unknown): number {
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
 }
 
-export function parseDecimal(raw: unknown): number {
-  const v = String(raw ?? "").trim().replace(/,/g, "");
-  if (!v) return 0;
-  const n = Number(v);
-  return Number.isFinite(n) && n >= 0 ? n : 0;
-}
-
-export function parseSlaFlag(raw: unknown): number {
-  const v = String(raw ?? "").trim().toUpperCase();
-  return v === "YES" || v === "1" || v === "TRUE" ? 1 : 0;
+/** The real export's "SLA" column holds a bucket label like "0-15 " (trailing space observed
+ * live), not a number -- within-15-minutes is exactly the first bucket. */
+export function isWithin15MinSla(raw: unknown): boolean {
+  const v = String(raw ?? "").trim();
+  return v.startsWith("0-15");
 }
 
 interface BatchRow extends RowDataPacket {
@@ -69,6 +73,16 @@ interface BatchRow extends RowDataPacket {
   normalized_data: string | Record<string, unknown>;
 }
 interface Ref extends RowDataPacket { id: string }
+
+interface DailyGroup {
+  mailDate: string;
+  analystName: string;
+  ticketCount: number;
+  gtinTotal: number;
+  imageTotal: number;
+  slaHits: number;
+  rowNos: number[];
+}
 
 export async function importGs1EmailDailyBatch(
   batchId: string,
@@ -104,84 +118,87 @@ export async function importGs1EmailDailyBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
+  const rowIdsByGroup = new Map<string, string[]>();
+  const groups = new Map<string, DailyGroup>();
   let errorRows = 0;
 
-  for (const row of batchRows) {
-    const data =
-      typeof row.normalized_data === "string"
-        ? JSON.parse(row.normalized_data)
-        : ((row.normalized_data ?? {}) as Record<string, unknown>);
-
-    if (!processId) {
-      const msg = `Row ${row.row_no}: no active GS1 process found in process_master`;
-      errors.push(msg);
+  if (!processId) {
+    const msg = `No active GS1 process found in process_master`;
+    for (const row of batchRows) {
+      errors.push(`Row ${row.row_no}: ${msg}`);
       errorUpdates.push({ rowId: row.id, message: msg });
       errorRows++;
-      continue;
     }
+  } else {
+    for (const row of batchRows) {
+      const data =
+        typeof row.normalized_data === "string"
+          ? JSON.parse(row.normalized_data)
+          : ((row.normalized_data ?? {}) as Record<string, unknown>);
 
-    const reportDate = parseDate(data["Report Date"]);
-    if (!reportDate) {
-      const msg = `Row ${row.row_no}: "Report Date" is required and could not be parsed`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
-      continue;
+      const mailDate = parseDate(data["WORK Date"]) ?? parseDate(data["Mail Date"]);
+      const analystName = String(data["Name of executive"] ?? "").trim();
+      if (!mailDate || !analystName) {
+        const msg = `Row ${row.row_no}: "WORK Date" (or "Mail Date") and "Name of executive" are required`;
+        errors.push(msg);
+        errorUpdates.push({ rowId: row.id, message: msg });
+        errorRows++;
+        continue;
+      }
+
+      const key = `${mailDate}|${analystName}`;
+      const g = groups.get(key) ?? {
+        mailDate, analystName, ticketCount: 0, gtinTotal: 0, imageTotal: 0, slaHits: 0, rowNos: [],
+      };
+      g.ticketCount += 1;
+      g.gtinTotal += parseCount(data["GTIN"]);
+      g.imageTotal += parseCount(data["Image"]);
+      if (isWithin15MinSla(data["SLA"])) g.slaHits += 1;
+      g.rowNos.push(row.row_no);
+      groups.set(key, g);
+      rowIdsByGroup.set(key, [...(rowIdsByGroup.get(key) ?? []), row.id]);
     }
+  }
 
-    const analystName = String(data["Analyst Name"] ?? "").trim();
-    if (!analystName) {
-      const msg = `Row ${row.row_no}: "Analyst Name" is required`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
-      continue;
-    }
+  let importedRows = 0;
+  const importedRowIds: string[] = [];
 
-    const mailDate = parseDate(data["Mail Date"]);
-    if (!mailDate) {
-      const msg = `Row ${row.row_no}: "Mail Date" is required and could not be parsed`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
-      continue;
-    }
-
+  for (const [key, g] of groups) {
+    const slaPct = g.ticketCount > 0 ? Math.round((g.slaHits / g.ticketCount) * 100) : 0;
     try {
       await db.execute(
         `INSERT INTO gs1_email_daily_actual
            (id, process_id, report_date, analyst_name, mail_date, mail_received,
-            gtin_processed, image_count, sla_within_15min, data_type, tat_minutes,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
+            gtin_processed, image_count, sla_within_15min, data_source, source_reference, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
          ON DUPLICATE KEY UPDATE
             mail_received     = VALUES(mail_received),
             gtin_processed    = VALUES(gtin_processed),
             image_count       = VALUES(image_count),
-            sla_within_15min  = VALUES(sla_within_15min),
-            data_type         = VALUES(data_type),
-            tat_minutes       = VALUES(tat_minutes)`,
+            sla_within_15min  = VALUES(sla_within_15min)`,
         [
-          randomUUID(), processId, reportDate, analystName, mailDate,
-          parseCount(data["Mail Received"]),
-          parseCount(data["GTIN Processed"]),
-          parseCount(data["Image Count"]),
-          parseSlaFlag(data["SLA Within 15min"]),
-          String(data["Data Type"] ?? "").trim() || null,
-          parseDecimal(data["TAT Minutes"]),
-          batchId,
-          importedByUserId,
+          randomUUID(), processId, g.mailDate, g.analystName, g.mailDate,
+          g.ticketCount, g.gtinTotal, g.imageTotal, slaPct,
+          batchId, importedByUserId,
         ] as never[],
       );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
+      importedRows += g.ticketCount;
+      importedRowIds.push(...(rowIdsByGroup.get(key) ?? []));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
+      for (const rowId of rowIdsByGroup.get(key) ?? []) {
+        errors.push(`Row group ${g.mailDate}/${g.analystName}: ${msg}`);
+        errorUpdates.push({ rowId, message: msg.slice(0, 500) });
+        errorRows++;
+      }
     }
+  }
+
+  if (importedRowIds.length) {
+    await db.execute(
+      `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${importedRowIds.map(() => "?").join(",")})`,
+      importedRowIds,
+    );
   }
 
   if (errorUpdates.length) {

@@ -37,6 +37,9 @@ export function ApprovalTrack({ stages }: { stages: Stage[] }) {
           <p className="mt-0.5 truncate text-[11px] leading-tight text-slate-500">
             {s.state === "upcoming" ? "Not yet reached" : s.state === "current" ? "Awaiting decision" : (dateTime(s.at) !== "—" ? dateTime(s.at) : (s.state === "rejected" ? "Rejected" : "Done"))}
           </p>
+          {s.who && s.state !== "upcoming" && s.state !== "current" && (
+            <p className="truncate text-[11px] font-medium text-slate-700" title={s.who}>{s.who}</p>
+          )}
         </li>
       ))}
     </ol>

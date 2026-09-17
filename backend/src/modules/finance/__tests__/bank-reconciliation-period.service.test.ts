@@ -62,10 +62,12 @@ describe("bankReconciliationPeriodService.close", () => {
 
   it("closes when the formula balances exactly, locks entries, and carries the balance forward", async () => {
     execute
-      .mockResolvedValueOnce([[{ id: "period-1", bank_account_id: "acct-1", to_date: "2026-09-30", status: "open" }]])
+      .mockResolvedValueOnce([[{ id: "period-1", bank_account_id: "acct-1", from_date: "2026-09-01", to_date: "2026-09-30", status: "open" }]])
       .mockResolvedValueOnce([[{ cnt: 0 }]])
       .mockResolvedValueOnce([[{ running_balance: 95000 }]])
       .mockResolvedValueOnce([[{ total: 0 }]])
+      .mockResolvedValueOnce([[{ net_change: 0 }]]) // bank ledger movement within the period window
+      .mockResolvedValueOnce([[{ net_change: 0 }]]) // journal movement within the period window — agrees (both zero, no real journal data yet)
       .mockResolvedValueOnce([{}]) // UPDATE period
       .mockResolvedValueOnce([{}]) // UPDATE bank_account_ledger_entry
       .mockResolvedValueOnce([{}]); // UPDATE company_bank_account
@@ -78,6 +80,17 @@ describe("bankReconciliationPeriodService.close", () => {
   it("refuses to close a period that isn't open", async () => {
     execute.mockResolvedValueOnce([[{ id: "period-1", bank_account_id: "acct-1", to_date: "2026-09-30", status: "closed" }]]);
     await expect(bankReconciliationPeriodService.close("period-1", 95000, "actor-1")).rejects.toThrow(/not open/i);
+  });
+
+  it("refuses to close when the general ledger disagrees with the bank ledger over the period window", async () => {
+    execute
+      .mockResolvedValueOnce([[{ id: "period-1", bank_account_id: "acct-1", from_date: "2026-09-01", to_date: "2026-09-30", status: "open" }]])
+      .mockResolvedValueOnce([[{ cnt: 0 }]])
+      .mockResolvedValueOnce([[{ running_balance: 95000 }]])
+      .mockResolvedValueOnce([[{ total: 0 }]])
+      .mockResolvedValueOnce([[{ net_change: -5000 }]]) // bank ledger: ₹5000 left the account this period
+      .mockResolvedValueOnce([[{ net_change: -4000 }]]); // journal only recorded ₹4000 leaving — ₹1000 unaccounted for
+    await expect(bankReconciliationPeriodService.close("period-1", 95000, "actor-1")).rejects.toThrow(/general ledger disagrees/i);
   });
 });
 

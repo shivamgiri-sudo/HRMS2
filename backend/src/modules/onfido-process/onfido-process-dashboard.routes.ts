@@ -249,11 +249,19 @@ router.get("/quality/trend", requireAuth, requireRole(...VIEWER_ROLES), h(async 
   const data = await svc.getQualityTrend(readQueryFilters(req), readGranularity(req));
   res.json({ success: true, data });
 }));
+router.get("/quality/internal-trend", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getDocInternalQualityTrend(readQueryFilters(req), readGranularity(req));
+  res.json({ success: true, data });
+}));
 const QUALITY_DIMENSIONS = new Set(["ims_client_name", "docupedia_document_name", "tl_name", "am_name"]);
 router.get("/quality/breakdown/:dimension", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const dim = req.params.dimension;
   if (!QUALITY_DIMENSIONS.has(dim)) return res.status(400).json({ success: false, message: "Unknown dimension" });
   const data = await svc.getQualityBreakdown(readQueryFilters(req), dim as Parameters<typeof svc.getQualityBreakdown>[1]);
+  res.json({ success: true, data });
+}));
+router.get("/quality/metric-trend", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getQualityMetricTrend(readQueryFilters(req), readGranularity(req));
   res.json({ success: true, data });
 }));
 
@@ -347,7 +355,11 @@ router.get("/gd-mcn-sla/overview", requireAuth, requireRole(...VIEWER_ROLES), h(
   res.json({ success: true, data });
 }));
 router.get("/gd-mcn-sla/trend", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
-  const data = await svc.getGdMcnSlaTrend(readQueryFilters(req));
+  // Own default ("daily") rather than the shared readGranularity's "monthly" —
+  // this route's existing callers rely on the day-wise chart it has always returned.
+  const g = (req.query as Record<string, string | undefined>).granularity;
+  const granularity = g === "weekly" || g === "monthly" ? g : "daily";
+  const data = await svc.getGdMcnSlaTrend(readQueryFilters(req), granularity);
   res.json({ success: true, data });
 }));
 router.get("/gd-mcn-sla/slot-breakdown", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
@@ -355,7 +367,7 @@ router.get("/gd-mcn-sla/slot-breakdown", requireAuth, requireRole(...VIEWER_ROLE
   res.json({ success: true, data });
 }));
 
-const DOC_RAW_DIMENSIONS = new Set(["ims_client_name", "tl_name", "am_name"]);
+const DOC_RAW_DIMENSIONS = new Set(["ims_client_name", "tl_name", "am_name", "task_type"]);
 router.get("/doc-raw/overview", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const data = await svc.getDocRawOverview(readQueryFilters(req));
   res.json({ success: true, data });
@@ -370,6 +382,10 @@ router.get("/doc-raw/breakdown/:dimension", requireAuth, requireRole(...VIEWER_R
   const data = await svc.getDocRawBreakdown(readQueryFilters(req), dim as Parameters<typeof svc.getDocRawBreakdown>[1]);
   res.json({ success: true, data });
 }));
+router.get("/doc-raw/task-type-trend", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getDocTaskTypeTrend(readQueryFilters(req), readGranularity(req));
+  res.json({ success: true, data });
+}));
 
 router.get("/poa/overview", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const data = await svc.getPoaOverview(readQueryFilters(req));
@@ -377,6 +393,25 @@ router.get("/poa/overview", requireAuth, requireRole(...VIEWER_ROLES), h(async (
 }));
 router.get("/poa/trend", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const data = await svc.getPoaTrend(readQueryFilters(req), readGranularity(req));
+  res.json({ success: true, data });
+}));
+router.get("/poa/quality-trend", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getPoaQualityTrend(readQueryFilters(req), readGranularity(req));
+  res.json({ success: true, data });
+}));
+router.get("/poa/combined-trend", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getPoaCombinedTrend(readQueryFilters(req), readGranularity(req));
+  res.json({ success: true, data });
+}));
+const POA_ENTITY_DIMENSIONS = new Set(["tl_name", "am_name", "analyst_email"]);
+router.get("/poa/entity-month-grid/:dimension", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const dim = req.params.dimension;
+  if (!POA_ENTITY_DIMENSIONS.has(dim)) return res.status(400).json({ success: false, message: "Unknown dimension" });
+  const data = await svc.getPoaEntityMonthlyGrid(readQueryFilters(req), dim as Parameters<typeof svc.getPoaEntityMonthlyGrid>[1]);
+  res.json({ success: true, data });
+}));
+router.get("/poa/day-detail", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getPoaDayWiseDetail(readQueryFilters(req));
   res.json({ success: true, data });
 }));
 const POA_DIMENSIONS = new Set(["tl_name", "am_name"]);
