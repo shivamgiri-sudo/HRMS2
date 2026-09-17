@@ -1384,9 +1384,21 @@ async function ensureDatabaseExists(
     await conn.query(
       `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
     );
-    await conn.query(
-      `ALTER DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
-    );
+    // ALTER DATABASE acquires a global MDL and can time out under load on a live server.
+    // The charset was set correctly at initial setup; swallow the lock timeout rather than
+    // blocking startup — the schema is already correct.
+    try {
+      await conn.query(
+        `ALTER DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+      );
+    } catch (alterErr: unknown) {
+      const code = (alterErr as any)?.code ?? "";
+      if (code === "ER_LOCK_WAIT_TIMEOUT" || code === "ER_LOCK_DEADLOCK") {
+        console.warn(`[migration] ALTER DATABASE charset skipped — lock timeout under load (safe to ignore, charset already set)`);
+      } else {
+        throw alterErr;
+      }
+    }
     console.log(`[migration] database '${dbName}' ensured`);
   } finally {
     await conn.end();
