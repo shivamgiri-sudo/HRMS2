@@ -245,6 +245,16 @@ import { housingOwnerDashboardRouter } from "./modules/process-performance/housi
 import { gncSaleDashboardRouter } from "./modules/process-performance/gnc-sale-dashboard.routes.js";
 import { neemansCartDashboardRouter } from "./modules/process-performance/neemans-cart-dashboard.routes.js";
 import { kpiScorecardRouter } from "./modules/process-performance/kpi-scorecard.routes.js";
+import { bellavitaCartDashboardRouter } from "./modules/process-performance/bellavita-cart-dashboard.routes.js";
+import { bellavitaChatDashboardRouter } from "./modules/process-performance/bellavita-chat-dashboard.routes.js";
+import { birlanuDashboardRouter } from "./modules/process-performance/birlanu-dashboard.routes.js";
+import { cloviaChannelsDashboardRouter } from "./modules/process-performance/clovia-channels-dashboard.routes.js";
+import { cloviaInboundSnapshotRouter } from "./modules/process-performance/clovia-inbound-snapshot.routes.js";
+import { housingPremiumDashboardRouter } from "./modules/process-performance/housing-premium-dashboard.routes.js";
+import { lpFeedbackDashboardRouter } from "./modules/process-performance/lp-feedback-dashboard.routes.js";
+import { lpOnboardingDashboardRouter } from "./modules/process-performance/lp-onboarding-dashboard.routes.js";
+import { neemansPerformanceDashboardRouter } from "./modules/process-performance/neemans-performance-dashboard.routes.js";
+import { satyaRetailDashboardRouter } from "./modules/process-performance/satya-retail-dashboard.routes.js";
 import { processDataSourceRouter } from "./modules/process-data-source/process-data-source.routes.js";
 import { dashboardBuilderRouter } from "./modules/dashboard-builder/dashboard-builder.routes.js";
 import { processOperationsRouter } from "./modules/process-operations/process-operations.routes.js";
@@ -805,6 +815,20 @@ app.use("/api/process-performance", bellavitaSaleDashboardRouter);
 app.use("/api/process-performance", housingOwnerDashboardRouter);
 app.use("/api/process-performance", gncSaleDashboardRouter);
 app.use("/api/process-performance", neemansCartDashboardRouter);
+// Mounted 2026-09-18 — routers created by commit 9cc56dc1 (Clovia/Birlanu/Neemans dashboard
+// integration) but never actually wired in, so every one of these 10 dashboards called a route
+// that returned 401 (unmatched by Express, not the intended 403/data response). Caught by the
+// route-contract pre-push guard before this reached origin/main.
+app.use("/api/process-performance", bellavitaCartDashboardRouter);
+app.use("/api/process-performance", bellavitaChatDashboardRouter);
+app.use("/api/process-performance", birlanuDashboardRouter);
+app.use("/api/process-performance", cloviaChannelsDashboardRouter);
+app.use("/api/process-performance", cloviaInboundSnapshotRouter);
+app.use("/api/process-performance", housingPremiumDashboardRouter);
+app.use("/api/process-performance", lpFeedbackDashboardRouter);
+app.use("/api/process-performance", lpOnboardingDashboardRouter);
+app.use("/api/process-performance", neemansPerformanceDashboardRouter);
+app.use("/api/process-performance", satyaRetailDashboardRouter);
 app.use("/api/process-kpi-dashboard", kpiScorecardRouter);
 app.use("/api/process-data-source", processDataSourceRouter);
 app.use("/api/dashboard-builder", dashboardBuilderRouter);

@@ -303,3 +303,59 @@ export async function getProjectHourly(filters: InboundFilters, projectKey: stri
   const [rows] = await pool.execute(sql, params);
   return rows;
 }
+
+export type HourlyByDateRow = { date: string; hour: number; offered: number; answered: number; sl_pct: number; acht: number };
+
+/**
+ * Same per-hour breakdown as getProjectHourly, one more GROUP BY dimension (date) so a caller
+ * can build an hour x date heatmap instead of one hour-of-day total across the whole range.
+ * Same Pattern A/B CASE WHEN definitions verbatim from getProjectHourly/runProjectQuery — this
+ * is a grouping change, not a new metric definition. sl_pct/acht computed the same way
+ * getConsolidatedTrend already does (sl_num/answered, rounded to 2dp; ACHT averaged in SQL like
+ * runProjectQuery's daily rows), so this row shape is consistent with every other inbound
+ * response instead of inventing a third convention.
+ */
+export async function getProjectHourlyByDate(filters: InboundFilters, projectKey: string): Promise<HourlyByDateRow[]> {
+  const p = PROJECTS.find((x) => x.key === projectKey);
+  if (!p) throw new Error(`Unknown project key: ${projectKey}`);
+
+  const { startDate, endDate } = filters;
+  const pool = await getDialerPool();
+  const ph   = p.campaigns.map(() => "?").join(",");
+  const params: (string | number)[] = [startDate, endDate, ...p.campaigns];
+
+  let sql: string;
+  if (p.pattern === "A") {
+    sql = `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS date, HOUR(CallDate) AS hour,
+      SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS offered,
+      SUM(CASE WHEN (AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME')
+               OR   (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0) THEN 1 ELSE 0 END) AS answered,
+      SUM(CASE WHEN TIME_TO_SEC(QueueDuration) <= 20 AND DisconnBy != 'HOLDTIME'
+               AND (AgentId != 'VDCL' OR (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0)) THEN 1 ELSE 0 END) AS sl_num,
+      ROUND(AVG(CASE WHEN DisconnBy != 'HOLDTIME' THEN CallDurationSecond END),0) AS acht
+     FROM dialer_db.${p.table}
+     WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
+       AND CampaignName IN (${ph})
+     GROUP BY DATE_FORMAT(CallDate,'%Y-%m-%d'), HOUR(CallDate) ORDER BY date ASC, hour ASC`;
+  } else {
+    sql = `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS date, HOUR(CallDate) AS hour,
+      COUNT(*) AS offered,
+      SUM(CASE WHEN AgentId != 'VDCL' THEN 1 ELSE 0 END) AS answered,
+      SUM(CASE WHEN AgentId != 'VDCL' AND TIME_TO_SEC(QueueDuration) <= 30 THEN 1 ELSE 0 END) AS sl_num,
+      ROUND(AVG(CallDurationSecond),0) AS acht
+     FROM dialer_db.${p.table}
+     WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
+       AND CampaignName IN (${ph})
+     GROUP BY DATE_FORMAT(CallDate,'%Y-%m-%d'), HOUR(CallDate) ORDER BY date ASC, hour ASC`;
+  }
+
+  const [rows] = await pool.execute(sql, params);
+  return (rows as (HourlyByDateRow & { sl_num: number })[]).map((r) => ({
+    date: r.date,
+    hour: Number(r.hour),
+    offered: Number(r.offered),
+    answered: Number(r.answered),
+    sl_pct: r.answered ? Math.round((r.sl_num / r.answered) * 100 * 100) / 100 : 0,
+    acht: Number(r.acht) || 0,
+  }));
+}
