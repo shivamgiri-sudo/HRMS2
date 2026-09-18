@@ -40,8 +40,12 @@ function isUnparsedTrailingBytesError(e: unknown): e is { remaining: number; byt
 }
 
 function parseBerLeadingObject(buf: Buffer): forge.asn1.Asn1 {
+  // node-forge's fromDer accepts either a boolean strict flag or an options object
+  // depending on the installed version; cast to any to stay compatible with both.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const opts = { strict: false } as any;
   try {
-    return forge.asn1.fromDer(forge.util.createBuffer(buf.toString("binary")), { strict: false });
+    return forge.asn1.fromDer(forge.util.createBuffer(buf.toString("binary")), opts);
   } catch (e: unknown) {
     // PDF /Contents is a fixed-size hex placeholder; the real BER-encoded PKCS#7 blob
     // is usually shorter than the reserved space and the rest is zero-padding. forge's
@@ -49,7 +53,7 @@ function parseBerLeadingObject(buf: Buffer): forge.asn1.Asn1 {
     // portion it actually used.
     if (isUnparsedTrailingBytesError(e)) {
       const consumed = e.byteCount - e.remaining;
-      return forge.asn1.fromDer(forge.util.createBuffer(buf.slice(0, consumed).toString("binary")), { strict: false });
+      return forge.asn1.fromDer(forge.util.createBuffer(buf.slice(0, consumed).toString("binary")), opts);
     }
     throw e;
   }
@@ -88,7 +92,8 @@ export function extractEsignCertificateIdentity(pdfBytes: Buffer): EsignCertific
       const der = Buffer.from(hex, "hex");
       const contentInfo = parseBerLeadingObject(der);
       // ContentInfo ::= SEQUENCE { contentType, content [0] EXPLICIT SignedData }
-      const signedData = contentInfo.value?.[1]?.value?.[0];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const signedData = (contentInfo as any).value?.[1]?.value?.[0];
       if (!signedData || !Array.isArray(signedData.value)) continue;
       // SignedData's `certificates [0] IMPLICIT CertificateSet` is the only child tagged
       // context-class (tagClass 128); position varies slightly by encoder.
