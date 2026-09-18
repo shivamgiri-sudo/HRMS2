@@ -489,7 +489,11 @@ export async function createEmployeeFromCandidate(
         offer.emp_type,
         offer.reporting_manager_id ?? null,
         candRow?.annual_income ?? null,
-        candRow?.count_of_dependents ?? null,
+        // SMALLINT max is 32767; a candidate who entered an income-like number
+        // into this field would crash the INSERT without this guard.
+        (typeof candRow?.count_of_dependents === 'number' && candRow.count_of_dependents <= 32767 && candRow.count_of_dependents >= 0)
+          ? candRow.count_of_dependents
+          : null,
       ]
     );
 
