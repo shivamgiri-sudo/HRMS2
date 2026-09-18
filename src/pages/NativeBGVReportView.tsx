@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { Button } from '@/components/ui/button';
-import { Printer, Download } from 'lucide-react';
+import { Printer, Download, MapPin, Send, CheckCircle, XCircle, Clock } from 'lucide-react';
 import { formatISTDate, formatISTTime } from '@/lib/utils';
 import QRCode from 'qrcode';
 import { downloadBGVReportPDF, fetchDigilockerPhotoBase64, qualificationRow } from '@/lib/bgvReportPdfGenerator';
@@ -17,6 +17,18 @@ export default function NativeBGVReportView() {
   // Not every candidate has completed DigiLocker, so this can stay undefined
   // with no error shown — the photo block simply doesn't render.
   const [digilockerPhoto, setDigilockerPhoto] = useState<string | undefined>(undefined);
+  const [addrVerif, setAddrVerif] = useState<any[]>([]);
+  const [addrMeta, setAddrMeta] = useState<{ totalAttempts: number; maxAttempts: number; attemptsLeft: number } | null>(null);
+  const [sendingLink, setSendingLink] = useState(false);
+
+  const loadAddrVerif = useCallback(async () => {
+    if (!candidateId) return;
+    try {
+      const r = await hrmsApi.get<any>(`/api/bgv/address-verification/result/${candidateId}`);
+      setAddrVerif(r.data?.data ?? []);
+      setAddrMeta(r.data?.meta ?? null);
+    } catch { /* non-critical */ }
+  }, [candidateId]);
 
   useEffect(() => {
     if (!candidateId) return;
@@ -39,7 +51,8 @@ export default function NativeBGVReportView() {
     };
     void load();
     void fetchDigilockerPhotoBase64(candidateId).then(setDigilockerPhoto);
-  }, [candidateId]);
+    void loadAddrVerif();
+  }, [candidateId, loadAddrVerif]);
 
   const handlePrint = () => {
     window.print();
@@ -766,10 +779,14 @@ export default function NativeBGVReportView() {
                 </tr>
               </thead>
               <tbody>
-                {scoreRows.map((row) => (
+                {scoreRows.map((row) => {
+                  // Normalize weight to /100 scale so totals always read as /100
+                  const normWeight = row.applicable ? Math.round(row.weight / denominator * 100 * 10) / 10 : 0;
+                  const normEarned = row.applicable ? Math.round(row.earned / denominator * 100 * 10) / 10 : 0;
+                  return (
                   <tr key={row.label} className={`border-b border-slate-200 ${!row.applicable ? 'text-slate-400' : ''}`}>
-                    <td className="py-2 px-3">{row.label}{!row.applicable && <span className="ml-2 text-xs text-slate-400">(N/A — fresher)</span>}</td>
-                    <td className="py-2 px-3 text-center">{row.applicable ? row.weight : '—'}</td>
+                    <td className="py-2 px-3">{row.label}{!row.applicable && <span className="ml-2 text-xs text-slate-400">(N/A)</span>}</td>
+                    <td className="py-2 px-3 text-center">{row.applicable ? normWeight : '—'}</td>
                     <td className="py-2 px-3 text-center">
                       {!row.applicable ? '—' : (
                         <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
@@ -780,17 +797,18 @@ export default function NativeBGVReportView() {
                         }`}>{row.status}</span>
                       )}
                     </td>
-                    <td className={`py-2 px-3 text-center font-semibold ${row.applicable && row.earned === 0 && row.status !== 'not_run' ? 'text-red-600' : row.applicable && row.earned === 0 ? 'text-slate-400' : 'text-emerald-700'}`}>
-                      {row.applicable ? `${row.earned}/${row.weight}` : '—'}
+                    <td className={`py-2 px-3 text-center font-semibold ${row.applicable && normEarned === 0 && row.status !== 'not_run' ? 'text-red-600' : row.applicable && normEarned === 0 ? 'text-slate-400' : 'text-emerald-700'}`}>
+                      {row.applicable ? `${normEarned}/${normWeight}` : '—'}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
                 <tr className="bg-slate-50 font-bold">
                   <td className="py-2 px-3">Total</td>
-                  <td className="py-2 px-3 text-center">{denominator}</td>
+                  <td className="py-2 px-3 text-center">100</td>
                   <td className="py-2 px-3 text-center">—</td>
                   <td className="py-2 px-3 text-center text-slate-800">
-                    {scoreRows.filter(r => r.applicable).reduce((s, r) => s + r.earned, 0)}/{denominator} = {report.bgv_score}%
+                    {report.bgv_score} / 100
                   </td>
                 </tr>
               </tbody>
@@ -799,6 +817,118 @@ export default function NativeBGVReportView() {
             <div className="mb-6">
               <span className="text-base font-bold mr-3">Overall Status:</span>
               <StatusBadge status={report.overall_status} />
+            </div>
+
+            {/* Address Geo-Selfie Verification Panel (screen only — not printed) */}
+            <div className="print:hidden mb-8">
+              <h3 className="text-lg font-bold text-slate-700 mb-3 flex items-center gap-2">
+                <MapPin className="w-5 h-5 text-blue-500" /> Address Verification (Geo-Selfie)
+              </h3>
+
+              {/* Send link */}
+              <div className="mb-4 flex items-center gap-3 flex-wrap">
+                {addrMeta && (
+                  <span className="text-sm text-slate-600">
+                    Attempts used: <strong>{addrMeta.totalAttempts}/{addrMeta.maxAttempts}</strong>
+                    {addrMeta.attemptsLeft > 0
+                      ? <span className="ml-2 text-slate-500">({addrMeta.attemptsLeft} left)</span>
+                      : <span className="ml-2 text-red-600 font-semibold"> — Max reached</span>}
+                  </span>
+                )}
+                <Button
+                  size="sm"
+                  disabled={sendingLink || (addrMeta?.attemptsLeft === 0 && addrMeta?.totalAttempts >= (addrMeta?.maxAttempts ?? 3))}
+                  onClick={async () => {
+                    setSendingLink(true);
+                    try {
+                      const r = await hrmsApi.post<any>('/api/bgv/address-verification/initiate', { candidateId, forceUnblock: addrMeta?.attemptsLeft === 0 });
+                      const link = r.data?.data?.link;
+                      if (link) {
+                        await navigator.clipboard.writeText(link).catch(() => {});
+                        alert(`Link generated and copied to clipboard:\n\n${link}\n\nSend this to the candidate via WhatsApp or SMS.`);
+                      }
+                      await loadAddrVerif();
+                    } catch (e: any) {
+                      alert(e?.response?.data?.message || 'Failed to generate link');
+                    } finally { setSendingLink(false); }
+                  }}
+                  className="flex items-center gap-2"
+                >
+                  <Send className="w-4 h-4" />
+                  {sendingLink ? 'Generating…' : addrMeta?.attemptsLeft === 0 ? 'Force New Link (HR Override)' : 'Generate & Copy Verification Link'}
+                </Button>
+              </div>
+
+              {/* Results */}
+              {addrVerif.length === 0 ? (
+                <p className="text-sm text-slate-400 italic">No address verification requests sent yet.</p>
+              ) : (
+                <div className="space-y-3">
+                  {addrVerif.map((v: any) => (
+                    <div key={v.id} className={`border rounded-xl p-4 text-sm ${v.status === 'verified' ? 'bg-emerald-50 border-emerald-200' : v.status === 'failed' || v.status === 'expired' ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
+                      <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                        <span className="font-semibold">Attempt {v.attempt_number}</span>
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                          v.status === 'verified' ? 'bg-emerald-500 text-white' :
+                          v.status === 'submitted' ? 'bg-blue-500 text-white' :
+                          v.status === 'pending' ? 'bg-amber-400 text-white' :
+                          'bg-red-500 text-white'
+                        }`}>{v.status.toUpperCase()}</span>
+                        {v.auto_verified === 1 && <span className="text-xs text-emerald-600 font-semibold">✓ Auto-verified ≤10m</span>}
+                      </div>
+
+                      {v.submitted_at && (
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600 mb-2">
+                          <span><strong>Submitted:</strong> {formatISTDate(new Date(v.submitted_at))} {formatISTTime(new Date(v.submitted_at))}</span>
+                          {v.gps_distance_m !== null && <span><strong>GPS Distance:</strong> {Number(v.gps_distance_m).toFixed(1)} m from declared address</span>}
+                          {v.gps_latitude && <span><strong>Coordinates:</strong> <a href={`https://maps.google.com/?q=${v.gps_latitude},${v.gps_longitude}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">{Number(v.gps_latitude).toFixed(5)}, {Number(v.gps_longitude).toFixed(5)}</a></span>}
+                          {v.gps_accuracy_m && <span><strong>GPS Accuracy:</strong> ±{Number(v.gps_accuracy_m).toFixed(0)} m</span>}
+                        </div>
+                      )}
+
+                      {/* HR decision controls */}
+                      {v.status === 'submitted' && !v.hr_decision && (
+                        <div className="flex gap-2 mt-2">
+                          <button
+                            onClick={async () => {
+                              await hrmsApi.patch(`/api/bgv/address-verification/decide/${v.id}`, { decision: 'pass', notes: 'HR reviewed and approved' });
+                              await loadAddrVerif();
+                            }}
+                            className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded-lg font-semibold flex items-center gap-1"
+                          >
+                            <CheckCircle className="w-3.5 h-3.5" /> Pass
+                          </button>
+                          <button
+                            onClick={async () => {
+                              const notes = prompt('Reason for failing this attempt?');
+                              if (notes === null) return;
+                              await hrmsApi.patch(`/api/bgv/address-verification/decide/${v.id}`, { decision: 'fail', notes });
+                              await loadAddrVerif();
+                            }}
+                            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-lg font-semibold flex items-center gap-1"
+                          >
+                            <XCircle className="w-3.5 h-3.5" /> Fail
+                          </button>
+                          <button
+                            onClick={async () => {
+                              await hrmsApi.patch(`/api/bgv/address-verification/decide/${v.id}`, { decision: 'review' });
+                              await loadAddrVerif();
+                            }}
+                            className="px-3 py-1 bg-slate-500 hover:bg-slate-600 text-white text-xs rounded-lg font-semibold flex items-center gap-1"
+                          >
+                            <Clock className="w-3.5 h-3.5" /> Need Review
+                          </button>
+                        </div>
+                      )}
+
+                      {v.hr_decision && (
+                        <p className="text-xs text-slate-500 mt-1">HR: {v.hr_decision?.toUpperCase()} by {v.decided_by_name ?? 'HR'} {v.hr_decided_at ? `on ${formatISTDate(new Date(v.hr_decided_at))}` : ''}</p>
+                      )}
+                      {v.hr_notes && <p className="text-xs text-slate-500 italic mt-0.5">"{v.hr_notes}"</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* HR Final Remarks */}
