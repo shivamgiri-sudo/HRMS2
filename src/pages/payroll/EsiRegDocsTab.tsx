@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useMemo, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/sheet";
 import {
   CheckCircle2, XCircle, Download, FileText, Users,
-  AlertTriangle, Search, FileDown, Loader2,
+  AlertTriangle, Search, FileDown, Loader2, Upload, Camera,
 } from "lucide-react";
 
 interface EsiEmployee {
@@ -25,6 +25,8 @@ interface EsiEmployee {
   photo_ready: boolean;
   photo_url: string | null;
   bank_ready: boolean;
+  bank_passbook_ready: boolean;
+  bank_passbook_url: string | null;
 }
 
 interface ListResponse {
@@ -48,20 +50,63 @@ function useEsiList(params: { search: string; branchId: string; page: number }) 
 }
 
 /**
- * `total` is the server's full count, not employees.length.
- *
- * The tile read the loaded PAGE and so announced "ESI Eligible 50" while the
- * footer under the same table said 567 — the list is paginated at 50. On a
- * registration queue that is not a cosmetic disagreement: 50 looks like a
- * morning's work and 567 is the actual backlog.
- *
- * The two readiness tiles stay page-scoped because the API returns readiness
- * only for the rows it sends, and they say so on their labels rather than
- * implying they cover all 567.
+ * Compress an image File to stay within maxBytes using a canvas resize loop.
+ * Starts at quality=0.85, halves quality each attempt until size fits.
+ * If quality alone doesn't cut it, the image dimensions are scaled down 20% per pass.
  */
+async function compressImage(file: File, maxBytes = 100 * 1024): Promise<File> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let width = img.naturalWidth;
+      let height = img.naturalHeight;
+
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d")!;
+      let quality = 0.85;
+      let attempt = 0;
+
+      const tryCompress = () => {
+        canvas.width = width;
+        canvas.height = height;
+        ctx.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) return reject(new Error("Canvas compression failed"));
+            if (blob.size <= maxBytes || attempt >= 12) {
+              const ext = file.name.endsWith(".png") ? ".png" : ".jpg";
+              resolve(new File([blob], `compressed${ext}`, { type: blob.type }));
+            } else {
+              attempt++;
+              if (quality > 0.2) {
+                quality = Math.max(0.2, quality - 0.15);
+              } else {
+                width = Math.floor(width * 0.8);
+                height = Math.floor(height * 0.8);
+                quality = 0.7;
+              }
+              tryCompress();
+            }
+          },
+          "image/jpeg",
+          quality,
+        );
+      };
+      tryCompress();
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Image load failed")); };
+    img.src = url;
+  });
+}
+
 function KpiStrip({ employees, total }: { employees: EsiEmployee[]; total: number }) {
   const onPage = employees.length;
-  const allReady = employees.filter((e) => e.pan_ready && e.photo_ready && e.bank_ready).length;
+  const allReady = employees.filter(
+    (e) => e.pan_ready && e.photo_ready && e.bank_ready && e.bank_passbook_ready
+  ).length;
   const missing = onPage - allReady;
 
   const tiles = [
@@ -143,7 +188,7 @@ function EmployeeTable({
                   aria-label="Select all"
                 />
               </th>
-              {["Emp Code", "Name", "Branch", "ESIC No.", "PAN", "Photo", "Bank", "Actions"].map((h) => (
+              {["Emp Code", "Name", "Branch", "ESIC No.", "PAN", "Photo", "Bank", "Passbook", "Actions"].map((h) => (
                 <th key={h} className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-slate-400">
                   {h}
                 </th>
@@ -153,7 +198,7 @@ function EmployeeTable({
           <tbody>
             {employees.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-slate-400 text-sm">
+                <td colSpan={10} className="px-4 py-8 text-center text-slate-400 text-sm">
                   No ESI-eligible employees pending registration.
                 </td>
               </tr>
@@ -180,6 +225,7 @@ function EmployeeTable({
                 <td className="px-4 py-3"><ReadyChip ready={emp.pan_ready} label="PAN" /></td>
                 <td className="px-4 py-3"><ReadyChip ready={emp.photo_ready} label="Photo" /></td>
                 <td className="px-4 py-3"><ReadyChip ready={emp.bank_ready} label="Bank" /></td>
+                <td className="px-4 py-3"><ReadyChip ready={emp.bank_passbook_ready} label="Passbook" /></td>
                 <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                   <Button
                     size="sm"
@@ -205,19 +251,161 @@ function EmployeeTable({
   );
 }
 
+function ImageUploadBox({
+  label,
+  hint,
+  currentUrl,
+  uploading,
+  onFile,
+}: {
+  label: string;
+  hint: string;
+  currentUrl: string | null | undefined;
+  uploading: boolean;
+  onFile: (file: File) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  return (
+    <div className="border border-slate-200 rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-slate-700">{label}</p>
+        {currentUrl ? (
+          <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded-full">
+            <CheckCircle2 className="w-3 h-3" /> Uploaded
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 text-xs font-bold px-2 py-0.5 rounded-full">
+            <XCircle className="w-3 h-3" /> Missing
+          </span>
+        )}
+      </div>
+
+      {currentUrl && (
+        <div className="relative">
+          <img
+            src={currentUrl}
+            alt={label}
+            className="w-full max-h-40 object-contain rounded-lg border border-slate-100 bg-slate-50"
+          />
+        </div>
+      )}
+
+      <p className="text-xs text-slate-400">{hint}</p>
+      <p className="text-xs text-amber-600 font-medium">Image will be compressed to ≤100 KB before upload.</p>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) onFile(f);
+          e.target.value = "";
+        }}
+      />
+      <Button
+        size="sm"
+        variant="outline"
+        className="w-full gap-2 border-blue-200 text-blue-700 hover:bg-blue-50"
+        disabled={uploading}
+        onClick={() => inputRef.current?.click()}
+      >
+        {uploading ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : currentUrl ? (
+          <Upload className="w-4 h-4" />
+        ) : (
+          <Camera className="w-4 h-4" />
+        )}
+        {uploading ? "Uploading…" : currentUrl ? "Replace" : "Upload"}
+      </Button>
+    </div>
+  );
+}
+
 function EsiDrawer({
-  emp,
+  emp: initialEmp,
   onClose,
   onDownload,
   downloading,
+  onUploaded,
 }: {
   emp: EsiEmployee | null;
   onClose: () => void;
   onDownload: (id: string) => void;
   downloading: string | null;
+  onUploaded: (id: string, patch: Partial<EsiEmployee>) => void;
 }) {
+  const { toast } = useToast();
+  const [emp, setEmp] = useState<EsiEmployee | null>(initialEmp);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [uploadingPassbook, setUploadingPassbook] = useState(false);
+
+  // sync when parent changes (new drawer open)
+  if (initialEmp?.employee_id !== emp?.employee_id) {
+    setEmp(initialEmp);
+  }
+
   if (!emp) return null;
-  const allReady = emp.pan_ready && emp.photo_ready && emp.bank_ready;
+
+  const allReady = emp.pan_ready && emp.photo_ready && emp.bank_ready && emp.bank_passbook_ready;
+
+  async function uploadFile(
+    endpoint: string,
+    file: File,
+    setUploading: (v: boolean) => void,
+    onSuccess: (data: Record<string, string>) => void,
+  ) {
+    setUploading(true);
+    try {
+      const compressed = await compressImage(file, 100 * 1024);
+      const formData = new FormData();
+      formData.append("photo", compressed);
+      const token = getAuthToken();
+      const res = await fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error ?? `HTTP ${res.status}`);
+      onSuccess(json);
+      toast({ title: "Upload successful", description: "Image saved." });
+    } catch (err) {
+      toast({ title: "Upload failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function handlePhotoFile(file: File) {
+    uploadFile(
+      `/api/payroll/esi-reg-docs/${emp!.employee_id}/photo`,
+      file,
+      setUploadingPhoto,
+      (data) => {
+        const patch = { photo_ready: true, photo_url: data.photo_url };
+        setEmp((prev) => prev ? { ...prev, ...patch } : prev);
+        onUploaded(emp!.employee_id, patch);
+      },
+    );
+  }
+
+  function handlePassbookFile(file: File) {
+    uploadFile(
+      `/api/payroll/esi-reg-docs/${emp!.employee_id}/bank-passbook`,
+      file,
+      setUploadingPassbook,
+      (data) => {
+        const patch = { bank_passbook_ready: true, bank_passbook_url: data.bank_passbook_url };
+        setEmp((prev) => prev ? { ...prev, ...patch } : prev);
+        onUploaded(emp!.employee_id, patch);
+      },
+    );
+  }
 
   return (
     <Sheet open={!!emp} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -256,7 +444,6 @@ function EsiDrawer({
             <div className="space-y-2">
               {[
                 { label: "PAN Card", ready: emp.pan_ready, hint: "Upload in employee profile → Documents" },
-                { label: "Employee Photo", ready: emp.photo_ready, hint: "Upload via employee profile" },
                 { label: "Bank Information", ready: emp.bank_ready, hint: "Add bank details in employee profile" },
               ].map((d) => (
                 <div key={d.label} className="flex items-center justify-between py-2 border-b border-slate-50">
@@ -277,6 +464,26 @@ function EsiDrawer({
           </section>
 
           <section>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-3">Upload Photos</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <ImageUploadBox
+                label="Employee Photo"
+                hint="Clear face photo on white/plain background. JPG, PNG or WebP."
+                currentUrl={emp.photo_url}
+                uploading={uploadingPhoto}
+                onFile={handlePhotoFile}
+              />
+              <ImageUploadBox
+                label="Bank Passbook Photo"
+                hint="First page of passbook showing account number, IFSC and holder name. JPG, PNG or WebP."
+                currentUrl={emp.bank_passbook_url}
+                uploading={uploadingPassbook}
+                onFile={handlePassbookFile}
+              />
+            </div>
+          </section>
+
+          <section>
             <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-3">Download Actions</p>
             <div className="flex flex-wrap gap-3">
               <Button
@@ -293,8 +500,8 @@ function EsiDrawer({
               </Button>
             </div>
             <p className="text-xs text-slate-400 mt-2">
-              ZIP includes PAN card, Aadhaar, photo, and a filled ESI Declaration Form (DOB, gender,
-              father's/husband's name, address, nominee &amp; bank details) for ESI portal upload.
+              ZIP includes PAN card, Aadhaar, employee photo, bank passbook, and a filled ESI Declaration Form
+              (DOB, gender, father's/husband's name, address, nominee &amp; bank details) for ESI portal upload.
               Missing documents are noted in manifest.txt inside the ZIP.
             </p>
           </section>
@@ -306,6 +513,7 @@ function EsiDrawer({
 
 export default function EsiRegDocsTab() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [page] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -394,6 +602,24 @@ export default function EsiRegDocsTab() {
     }
   }
 
+  function handleUploaded(employeeId: string, patch: Partial<EsiEmployee>) {
+    queryClient.setQueryData<ListResponse>(
+      ["esi-reg-docs", { search, branchId: "", page }],
+      (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          employees: old.employees.map((e) =>
+            e.employee_id === employeeId ? { ...e, ...patch } : e
+          ),
+        };
+      }
+    );
+    if (drawerEmp?.employee_id === employeeId) {
+      setDrawerEmp((prev) => prev ? { ...prev, ...patch } : prev);
+    }
+  }
+
   return (
     <div className="space-y-4 py-4">
       <div className="rounded-2xl bg-gradient-to-r from-purple-600 to-violet-600 text-white px-6 py-5">
@@ -404,7 +630,7 @@ export default function EsiRegDocsTab() {
           <div>
             <h2 className="text-lg font-bold">ESI Registration Documents</h2>
             <p className="text-sm text-purple-100 mt-0.5">
-              Download PAN Card, Aadhaar, Photo &amp; a filled ESI Declaration Form for ESI portal registration.
+              Upload employee photo &amp; bank passbook, then download the ESI pack for portal registration.
             </p>
           </div>
         </div>
@@ -467,6 +693,7 @@ export default function EsiRegDocsTab() {
         onClose={() => setDrawerEmp(null)}
         onDownload={downloadSingle}
         downloading={downloading}
+        onUploaded={handleUploaded}
       />
     </div>
   );

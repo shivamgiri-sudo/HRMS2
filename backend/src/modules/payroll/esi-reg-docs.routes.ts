@@ -5,6 +5,8 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import path from "path";
 import fs from "fs";
+import { randomUUID } from "crypto";
+import multer from "multer";
 import PDFDocument from "pdfkit";
 import { ZipArchive } from "archiver";
 import type { Archiver as ArchiverInstance } from "archiver";
@@ -38,6 +40,25 @@ const UPLOADS_ROOT = path.resolve(
   new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"),
   "../../../../uploads"
 );
+
+const ESI_DOCS_DIR = path.join(UPLOADS_ROOT, "esi-docs");
+fs.mkdirSync(ESI_DOCS_DIR, { recursive: true });
+
+const esiDocUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, ESI_DOCS_DIR),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
+      cb(null, `${randomUUID()}${ext}`);
+    },
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB — client compresses to ≤100 KB before sending
+  fileFilter: (_req, file, cb) => {
+    const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
+    if (allowed.has(file.mimetype)) return cb(null, true);
+    return cb(new Error("Only JPG, PNG or WebP images are allowed"));
+  },
+});
 
 export const esiRegDocsRouter = Router();
 esiRegDocsRouter.use(requireAuth);
@@ -233,7 +254,11 @@ esiRegDocsRouter.get(
          (SELECT COUNT(*) FROM employee_bank_detail ebd
           WHERE ebd.employee_id = e.id
             AND ebd.ifsc_code IS NOT NULL AND ebd.ifsc_code != '') > 0
-                                                          AS bank_ready
+                                                          AS bank_ready,
+         (SELECT file_url FROM employee_documents ed
+          WHERE ed.employee_id = e.id
+            AND ed.doc_category = 'bank' AND ed.doc_type = 'bank_passbook'
+          ORDER BY ed.created_at DESC LIMIT 1)            AS bank_passbook_url
        FROM employees e
        LEFT JOIN employee_statutory_info esi ON esi.employee_id = e.id
        LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -248,9 +273,102 @@ esiRegDocsRouter.get(
       pan_ready: !!r.pan_ready,
       photo_ready: !!r.photo_ready,
       bank_ready: !!r.bank_ready,
+      bank_passbook_ready: !!r.bank_passbook_url,
     }));
 
     return res.json({ employees, total: Number(total), page, limit });
+  })
+);
+
+// ── Photo upload (ESI section) ────────────────────────────────────────────────
+// Reuses the employee-photos store so the existing photo_url / avatar_url chain
+// (ID card, dashboards, ZIP pack) picks it up automatically.
+esiRegDocsRouter.post(
+  "/:id/photo",
+  requireRole(...ESI_ROLES),
+  (req: Request, res: Response, next: NextFunction) => {
+    esiDocUpload.single("photo")(req, res, (err: unknown) => {
+      if (err instanceof multer.MulterError) {
+        return res.status(400).json({ success: false, error: err.message });
+      }
+      if (err) return res.status(400).json({ success: false, error: String(err) });
+      return next();
+    });
+  },
+  h(async (req: Request, res: Response) => {
+    const employeeId = String(req.params.id ?? "").trim();
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (!file) return res.status(400).json({ success: false, error: "No image uploaded" });
+
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM employees WHERE id = ? LIMIT 1",
+      [employeeId],
+    );
+    if (!empRows.length) {
+      fs.unlinkSync(file.path);
+      return res.status(404).json({ success: false, error: "Employee not found" });
+    }
+
+    const photosDir = path.join(UPLOADS_ROOT, "employee-photos");
+    fs.mkdirSync(photosDir, { recursive: true });
+    const ext = path.extname(file.filename).toLowerCase() || ".jpg";
+    const finalName = `${employeeId}${ext}`;
+    const finalPath = path.join(photosDir, finalName);
+
+    for (const oldExt of [".jpg", ".jpeg", ".png", ".webp"]) {
+      const old = path.join(photosDir, `${employeeId}${oldExt}`);
+      if (old !== file.path && old !== finalPath && fs.existsSync(old)) fs.unlinkSync(old);
+    }
+    fs.renameSync(file.path, finalPath);
+
+    const fileUrl = `/api/files/employee-photos/${finalName}`;
+    await db.execute(
+      "UPDATE employees SET photo_url = ?, avatar_url = ?, updated_at = NOW() WHERE id = ?",
+      [fileUrl, fileUrl, employeeId],
+    );
+    return res.json({ success: true, photo_url: fileUrl });
+  })
+);
+
+// ── Bank passbook upload ───────────────────────────────────────────────────────
+// Stored in employee_documents with doc_category='bank', doc_type='bank_passbook'.
+// The ESI ZIP pack already includes this file once bank_passbook_url is set.
+esiRegDocsRouter.post(
+  "/:id/bank-passbook",
+  requireRole(...ESI_ROLES),
+  (req: Request, res: Response, next: NextFunction) => {
+    esiDocUpload.single("photo")(req, res, (err: unknown) => {
+      if (err instanceof multer.MulterError) {
+        return res.status(400).json({ success: false, error: err.message });
+      }
+      if (err) return res.status(400).json({ success: false, error: String(err) });
+      return next();
+    });
+  },
+  h(async (req: Request, res: Response) => {
+    const employeeId = String(req.params.id ?? "").trim();
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (!file) return res.status(400).json({ success: false, error: "No image uploaded" });
+
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM employees WHERE id = ? LIMIT 1",
+      [employeeId],
+    );
+    if (!empRows.length) {
+      fs.unlinkSync(file.path);
+      return res.status(404).json({ success: false, error: "Employee not found" });
+    }
+
+    const fileUrl = `/api/files/esi-docs/${file.filename}`;
+    const actorId = (req as any).authUser?.id ?? null;
+
+    await db.execute(
+      `INSERT INTO employee_documents
+         (id, employee_id, doc_type, doc_category, doc_name, file_url, uploaded_by, created_at)
+       VALUES (?, ?, 'bank_passbook', 'bank', 'Bank Passbook', ?, ?, NOW())`,
+      [randomUUID(), employeeId, fileUrl, actorId],
+    );
+    return res.json({ success: true, bank_passbook_url: fileUrl });
   })
 );
 
@@ -411,13 +529,13 @@ async function appendEsiPack(
   // and 2 point at a different server's absolute filesystem path. It stays
   // first in the chain because it is the correct source for anything uploaded
   // through THIS app's own document flow, present or future.
-  const byCategory = async (category: string): Promise<string | null> => {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT file_url FROM employee_documents
-        WHERE employee_id = ? AND doc_category = ?
-        ORDER BY created_at DESC LIMIT 1`,
-      [emp.id, category],
-    ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const byCategory = async (category: string, docType?: string): Promise<string | null> => {
+    const sql = docType
+      ? `SELECT file_url FROM employee_documents WHERE employee_id = ? AND doc_category = ? AND doc_type = ? ORDER BY created_at DESC LIMIT 1`
+      : `SELECT file_url FROM employee_documents WHERE employee_id = ? AND doc_category = ? ORDER BY created_at DESC LIMIT 1`;
+    const params = docType ? [emp.id, category, docType] : [emp.id, category];
+    const [rows] = await db.execute<RowDataPacket[]>(sql, params)
+      .catch(() => [[]] as unknown as [RowDataPacket[]]);
     return urlToLocalPath((rows as RowDataPacket[])[0]?.file_url ?? null);
   };
 
@@ -469,6 +587,7 @@ async function appendEsiPack(
       note: "Aadhaar / identity proof not available",
     },
     { label: "Photo", localPath: urlToLocalPath(emp.photo_url ?? emp.avatar_url ?? null), note: "Employee photo not available" },
+    { label: "Bank_Passbook", localPath: await byCategory("bank", "bank_passbook"), note: "Bank passbook photo not uploaded" },
   ];
 
   for (const d of docs) {
