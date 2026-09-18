@@ -40,8 +40,48 @@ function readLock(): {
   return JSON.parse(fs.readFileSync(LOCK_PATH, "utf8"));
 }
 
-const sqlFiles = () =>
+/**
+ * .sql files directly in sql/, flat.
+ *
+ * This is the set the "no new migration file is left out of the manifest" check uses, and it stays
+ * FLAT deliberately. That check is grandfathered against a lock file (knownUnlisted) that was
+ * itself built from a flat listing, so widening it to subdirectories reports all 63 files under
+ * sql/migrations/ and sql/verify/ as brand-new orphans at once — none of which is a new migration
+ * anyone forgot. See sqlFilesIncludingSubdirs below for the set that does need subdirectories.
+ */
+const sqlFiles = (): string[] =>
   fs.readdirSync(path.join(ROOT, "sql")).filter((f) => /\.sql$/.test(f));
+
+/**
+ * Every .sql under sql/ including one level of subdirectory, named exactly as the manifest names
+ * it (forward slashes relative to sql/).
+ *
+ * Used ONLY by the "every manifest entry has a file" check. That check was previously flat and so
+ * was blind to subdirectory entries the runner genuinely supports: the manifest lists
+ * `migrations/0060_portal_admin_impersonation_log.sql`, that file exists, and it has applied
+ * successfully against the live database — yet the guard reported it as dangling and failed. A
+ * guard that cries wolf about a correct entry is worse than no guard, because a suite that is
+ * normally red stops being read.
+ *
+ * Forward slashes are forced rather than using path.join, which yields backslashes on Windows and
+ * would miss every Set lookup against the manifest's own spelling.
+ */
+const sqlFilesIncludingSubdirs = (): string[] => {
+  const root = path.join(ROOT, "sql");
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (entry.isFile() && /\.sql$/.test(entry.name)) {
+      out.push(entry.name);
+      continue;
+    }
+    if (entry.isDirectory()) {
+      for (const nested of fs.readdirSync(path.join(root, entry.name), { withFileTypes: true })) {
+        if (nested.isFile() && /\.sql$/.test(nested.name)) out.push(`${entry.name}/${nested.name}`);
+      }
+    }
+  }
+  return out;
+};
 
 describe("migration manifest — removals", () => {
   it("no released entry has been removed without an approved deletion", () => {
@@ -97,7 +137,7 @@ describe("migration manifest — files and entries agree", () => {
   it("every manifest entry has a file", () => {
     // A dangling entry aborts the run at that point on a fresh database, so
     // everything after it never applies either.
-    const files = new Set(sqlFiles());
+    const files = new Set(sqlFilesIncludingSubdirs());
     const known = new Set(readLock().knownDangling);
     const dangling = readManifest().filter((m) => !files.has(m) && !known.has(m));
 

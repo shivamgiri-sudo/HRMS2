@@ -182,7 +182,12 @@ class ProviderFactory {
           process.env.META_WA_ACCESS_TOKEN ?? '',
           process.env.META_WA_PHONE_NUMBER_ID ?? '',
         );
-      if (type === 'local-whatsapp-tool') return new LocalWhatsAppProvider();
+      // Accepts 'local' as well as 'local-whatsapp-tool'. Only the long form was matched here,
+      // but .env.example documents the value as `WHATSAPP_PROVIDER=local` — so following the
+      // documentation silently selected Twilio instead, with no error anywhere. The DB-config
+      // path above uses provider_type, which is separately populated, so the mismatch was
+      // invisible on any environment that configures WhatsApp through the settings UI.
+      if (type === 'local' || type === 'local-whatsapp-tool') return new LocalWhatsAppProvider();
       return new TwilioWhatsAppProvider();
     }
 

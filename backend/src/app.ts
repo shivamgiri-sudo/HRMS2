@@ -211,6 +211,7 @@ import { performanceIntelligenceRouter } from "./modules/performance-intelligenc
 import { kpiMasterRouter } from "./modules/kpi/kpi-master.routes.js";
 import { kpiStudioRouter } from "./modules/kpi/kpi-studio.routes.js";
 import { jobRequisitionRouter } from "./modules/job-requisition/job-requisition.routes.js";
+import { metaCampaignRouter } from "./modules/meta-campaign/meta-campaign.routes.js";
 import taskRouter from "./modules/tasks/task.routes.js";
 import { payrollMastersRouter } from "./modules/payroll-masters/payrollMasters.routes.js";
 import {
@@ -522,6 +523,13 @@ app.use("/api/kpi", kpiRouter);
 app.use("/api/portal", portalRouter);
 app.use("/api/portal/admin", portalAdminRouter);
 app.use("/api/job-requisition", jobRequisitionRouter);
+// META campaign automation. NOTE: two routes inside are intentionally unauthenticated —
+// POST/GET /api/meta/webhooks (called by META's servers) and POST /api/meta/voice-callback
+// (called by the voice bot). Neither can present a session. They are gated on
+// META_LEAD_VERIFY_TOKEN, an X-Hub-Signature-256 HMAC over the raw body using META_APP_SECRET,
+// and VOICEBOT_CALLBACK_TOKEN respectively, and each REFUSES the request when its secret is
+// unset rather than falling open. Every other route in the router is requireAuth + requireRole.
+app.use("/api/meta", metaCampaignRouter);
 app.use("/api/ats", atsFormConfigRouter);
 // Unauthenticated by design so a walk-in can self-register. Rate limiting is
 // applied per-verb inside registrationEnhancedRouter (POST submissions only) so

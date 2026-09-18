@@ -48,6 +48,18 @@ export interface JobRequisition {
   requested_by_name: string | null;
   owner_recruiter_id: string | null;
   preferred_sources: string[] | null;
+  /**
+   * META campaign targeting (migration 1810).
+   *
+   * The age band is dual-purpose and that is worth knowing before changing it: it drives META
+   * audience targeting AND it is the criterion lead-screener.service.ts screens incoming Lead Gen
+   * leads against. A null band means age is NOT screened, not that all ages fail.
+   */
+  bmi_assessment_url: string | null;
+  meta_target_age_min: number | null;
+  meta_target_age_max: number | null;
+  meta_target_locations: string[] | null;
+  meta_target_radius_km: number | null;
   internal_posting: boolean;
   active_status: boolean;
   closed_at: string | null;
@@ -94,6 +106,12 @@ export interface CreateRequisitionInput {
   business_justification?: string;
   preferred_sources?: string[];
   internal_posting?: boolean;
+  // META campaign targeting (migration 1810) — see JobRequisition above for why the age band matters.
+  bmi_assessment_url?: string | null;
+  meta_target_age_min?: number | null;
+  meta_target_age_max?: number | null;
+  meta_target_locations?: string[] | null;
+  meta_target_radius_km?: number | null;
 }
 
 export interface UpdateRequisitionInput extends Partial<CreateRequisitionInput> {
