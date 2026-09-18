@@ -178,3 +178,110 @@ export async function changeSalary(params: {
 
   return getEmployeeSalaryProfile(employeeId);
 }
+
+// ─── Salary Trend Grid ───────────────────────────────────────────────────────
+// Returns month-by-month salary (basic/gross/ctc/net) for every active employee
+// matching the supplied filters, covering all 12 months of the requested
+// financial year.  Derives which salary was in force each month-end by picking
+// the latest effective_date that falls on or before the last day of the month.
+
+interface MonthSlot { year: number; month: number; label: string; }
+
+function fyMonths(fy: string): MonthSlot[] {
+  const startYear = parseInt(fy.split('-')[0], 10);
+  if (isNaN(startYear)) throw httpError("fy must be in YYYY-YY format (e.g. 2025-26).", 400, "INVALID_FY");
+  const slots: MonthSlot[] = [];
+  const LABELS = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar'];
+  for (let i = 0; i < 12; i++) {
+    const month = i < 9 ? i + 4 : i - 8;
+    const year  = i < 9 ? startYear : startYear + 1;
+    slots.push({ year, month, label: `${LABELS[i]}-${String(i < 9 ? startYear : startYear + 1).slice(2)}` });
+  }
+  return slots;
+}
+
+function lastDayStr(year: number, month: number): string {
+  const d = new Date(year, month, 0);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function toDateStr(v: unknown): string {
+  if (v instanceof Date) return v.toISOString().split('T')[0];
+  return String(v).split('T')[0];
+}
+
+export async function getSalaryTrend(params: {
+  branchId?: string;
+  fy: string;
+  costCentreId?: string;
+  employeeCode?: string;
+}) {
+  const months = fyMonths(params.fy);
+
+  const where: string[] = ['e.active_status = 1'];
+  const args: unknown[] = [];
+  if (params.branchId)     { where.push('e.branch_id = ?');      args.push(params.branchId); }
+  if (params.costCentreId) { where.push('e.cost_centre_id = ?'); args.push(params.costCentreId); }
+  if (params.employeeCode) { where.push('e.employee_code = ?');  args.push(params.employeeCode); }
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code, e.full_name,
+            b.branch_name, cc.cost_centre_name
+       FROM employees e
+       LEFT JOIN branch_master b  ON b.id  = e.branch_id
+       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY e.employee_code
+      LIMIT 500`,
+    args
+  );
+  if (!empRows.length) return { months, employees: [] };
+
+  const ids = empRows.map((r) => r.id as string);
+  const [scaRows] = await db.execute<RowDataPacket[]>(
+    `SELECT employee_id, effective_date, basic, hra, conveyance, gross,
+            pf_applicable, esi_applicable,
+            COALESCE(ctc, gross + COALESCE(employer_pf,0) + COALESCE(employer_esi,0)) AS ctc,
+            COALESCE(net_estimate, gross - COALESCE(pf_employee,0) - COALESCE(esic_employee,0)) AS net_in_hand
+       FROM salary_component_assignments
+      WHERE employee_id IN (${ids.map(() => '?').join(',')})
+      ORDER BY employee_id, effective_date ASC`,
+    ids
+  );
+
+  const byEmp = new Map<string, RowDataPacket[]>();
+  for (const row of scaRows) {
+    if (!byEmp.has(row.employee_id as string)) byEmp.set(row.employee_id as string, []);
+    byEmp.get(row.employee_id as string)!.push(row);
+  }
+
+  const employees = empRows.map((emp) => {
+    const assignments = byEmp.get(emp.id as string) ?? [];
+    const monthly = months.map(({ year, month }, idx) => {
+      const ceiling = lastDayStr(year, month);
+      let active: RowDataPacket | null = null;
+      for (const a of assignments) {
+        if (toDateStr(a.effective_date) <= ceiling) active = a;
+      }
+      if (!active) return null;
+      const effStr = toDateStr(active.effective_date);
+      const [ey, em] = effStr.split('-').map(Number);
+      const changed = ey === year && em === month && idx > 0; // first month with data is not "changed"
+      return {
+        basic:        active.basic as number,
+        hra:          active.hra as number,
+        conveyance:   active.conveyance as number,
+        gross:        active.gross as number,
+        ctc:          active.ctc as number,
+        net_in_hand:  active.net_in_hand as number,
+        pf:           active.pf_applicable ? 'Y' : 'N',
+        esi:          active.esi_applicable ? 'Y' : 'N',
+        effective_date: effStr,
+        changed,
+      };
+    });
+    return { id: emp.id, employee_code: emp.employee_code, full_name: emp.full_name, branch_name: emp.branch_name, cost_centre_name: emp.cost_centre_name, monthly };
+  });
+
+  return { months, employees };
+}
