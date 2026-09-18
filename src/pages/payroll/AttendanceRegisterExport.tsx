@@ -32,7 +32,7 @@ interface AttRow {
   weekoff_count?: number;
   sal_days?: number;
   total?: number;
-  [key: string]: unknown;
+  [key: string]: unknown; // day_N and day_N_reg fields
 }
 interface BranchRow   { id: string; branch_name: string; }
 interface CcRow       { id: string; cost_centre_name: string; process_name?: string; }
@@ -75,19 +75,19 @@ function dayLabel(yyyymm: string, day: number): { date: string; dow: string } {
 
 // Status colour map — matches I-Spark codes exactly
 const STATUS_CLS: Record<string, string> = {
-  P:   'bg-green-100  text-green-800  font-bold',
-  A:   'bg-red-100    text-red-700    font-semibold',
-  HD:  'bg-amber-100  text-amber-800  font-semibold',
-  L:   'bg-blue-100   text-blue-700   font-semibold',
-  H:   'bg-slate-100  text-slate-500',
-  OD:  'bg-purple-100 text-purple-700 font-semibold',
-  AP:  'bg-sky-100    text-sky-700',
-  HDP: 'bg-orange-100 text-orange-700 font-semibold',
-  WO:  'bg-slate-50   text-slate-400',
+  P:   'bg-green-100  text-green-900  font-bold',
+  A:   'bg-red-100    text-red-800    font-semibold',
+  HD:  'bg-amber-100  text-amber-900  font-semibold',
+  L:   'bg-blue-100   text-blue-800   font-semibold',
+  H:   'bg-slate-200  text-slate-700',
+  OD:  'bg-purple-100 text-purple-900 font-semibold',
+  AP:  'bg-sky-100    text-sky-800',
+  HDP: 'bg-orange-100 text-orange-900 font-semibold',
+  WO:  'bg-slate-100  text-slate-600',
 };
 
 function statusCls(code: string): string {
-  return STATUS_CLS[code?.toUpperCase()] ?? 'text-slate-300';
+  return STATUS_CLS[code?.toUpperCase()] ?? 'text-slate-400';
 }
 
 function num(v: unknown): number {
@@ -143,8 +143,14 @@ export default function AttendanceRegisterExport() {
       const p = new URLSearchParams({ month, limit: '1000' });
       if (branchId !== 'all')     p.set('branchId',     branchId);
       if (costCentreId !== 'all') p.set('costCentreId', costCentreId);
-      if (empCode.trim())         p.set('employeeCode', empCode.trim());
-      return hrmsApi.get<{data:AttRow[]}>(`/api/reporting/suite/attendance-register-monthly?${p}`).then(r => r.data ?? []);
+      if (empCode.trim()) {
+        // If the value looks like an employee code (alphanumeric, no spaces), search by code;
+        // otherwise treat it as a name search.
+        const v = empCode.trim();
+        if (/^[A-Za-z0-9]+$/.test(v)) p.set('employeeCode', v);
+        else                           p.set('employeeName',  v);
+      }
+      return hrmsApi.get<{data:AttRow[]}>(`/api/reports/suite/attendance-register-monthly?${p}`).then(r => r.data ?? []);
     },
     staleTime: 0,
   });
@@ -182,7 +188,11 @@ export default function AttendanceRegisterExport() {
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
             <div className="space-y-1">
               <Label className="text-xs font-medium text-slate-600">Month</Label>
-              <Select value={month} onValueChange={setMonth}>
+              <Select value={month} onValueChange={v => {
+                setMonth(v);
+                // Auto-refresh if a query was already running
+                if (queryKey !== null) setQueryKey(`${v}|${branchId}|${costCentreId}|${empCode}`);
+              }}>
                 <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {monthOptions().map(o => (
@@ -219,9 +229,9 @@ export default function AttendanceRegisterExport() {
             </div>
 
             <div className="space-y-1">
-              <Label className="text-xs font-medium text-slate-600">Emp Code</Label>
+              <Label className="text-xs font-medium text-slate-600">Emp Code / Name</Label>
               <Input
-                className="h-9 text-sm" placeholder="e.g. MAS56873"
+                className="h-9 text-sm" placeholder="Code or name"
                 value={empCode} onChange={e => setEmpCode(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleShow()}
               />
@@ -258,6 +268,10 @@ export default function AttendanceRegisterExport() {
                 {label}
               </span>
             ))}
+            <span className="flex items-center gap-1">
+              <span className="inline-flex items-center justify-center w-5 h-4 rounded text-[10px] bg-green-100 text-green-900 font-bold ring-1 ring-inset ring-orange-500">P</span>
+              Regularized
+            </span>
             <span className="ml-auto font-medium text-slate-700">{rows.length} employee{rows.length !== 1 ? 's' : ''} · {monthLabel}</span>
           </div>
         )}
@@ -276,12 +290,11 @@ export default function AttendanceRegisterExport() {
                   <th rowSpan={2} className="px-2 py-1 text-left whitespace-nowrap min-w-[120px] border-r border-slate-600">Cost Centre</th>
                   <th rowSpan={2} className="px-2 py-1 text-left whitespace-nowrap min-w-[110px] border-r border-slate-600">Process</th>
                   <th rowSpan={2} className="px-2 py-1 text-left whitespace-nowrap min-w-[70px] border-r border-slate-600">Desig.</th>
-                  <th rowSpan={2} className="px-2 py-1 text-center whitespace-nowrap min-w-[48px] border-r border-slate-600">Bill</th>
                   <th colSpan={nd} className="px-2 py-1 text-center border-l border-slate-600 bg-slate-700">{monthLabel} — Day wise</th>
                   <th colSpan={9} className="px-2 py-1 text-center bg-teal-700">Summary</th>
                 </tr>
                 {/* Row 2: day numbers + summary labels */}
-                <tr className="bg-slate-700 text-slate-200">
+                <tr className="bg-slate-700 text-white">
                   {days.map(d => {
                     const { date, dow } = dayLabel(month, d);
                     const isSun = dow === 'Sun';
@@ -289,7 +302,7 @@ export default function AttendanceRegisterExport() {
                     return (
                       <th key={d} className={`px-0 py-0 text-center border-l border-slate-600 min-w-[28px] ${isSun||isSat ? 'bg-slate-600' : ''}`}>
                         <div className="text-[10px] font-bold leading-tight px-1">{String(d).padStart(2,'0')}</div>
-                        <div className={`text-[8px] leading-tight px-1 ${isSun ? 'text-red-300' : isSat ? 'text-sky-300' : 'text-slate-400'}`}>{dow}</div>
+                        <div className={`text-[8px] leading-tight px-1 ${isSun ? 'text-red-300' : isSat ? 'text-sky-300' : 'text-slate-200'}`}>{dow}</div>
                       </th>
                     );
                   })}
@@ -308,13 +321,9 @@ export default function AttendanceRegisterExport() {
                     <td className="px-2 py-1 whitespace-nowrap text-slate-600 border-r border-slate-100 max-w-[140px] truncate">{row.cost_center ?? '—'}</td>
                     <td className="px-2 py-1 whitespace-nowrap text-slate-600 border-r border-slate-100 max-w-[130px] truncate">{row.process_name ?? '—'}</td>
                     <td className="px-2 py-1 whitespace-nowrap text-slate-500 text-[10px] border-r border-slate-100">{row.designation ?? '—'}</td>
-                    <td className="px-1 py-1 text-center border-r border-slate-100">
-                      <span className={`text-[9px] font-semibold ${row.billable === 'Yes' ? 'text-green-600' : 'text-slate-400'}`}>
-                        {row.billable === 'Yes' ? 'Y' : 'N'}
-                      </span>
-                    </td>
                     {days.map(d => {
                       const code = String(row[`day_${d}`] ?? '').trim();
+                      const isReg = Boolean(row[`day_${d}_reg`]);
                       const { dow } = dayLabel(month, d);
                       const isSun = dow === 'Sun';
                       const isSat = dow === 'Sat';
@@ -322,13 +331,14 @@ export default function AttendanceRegisterExport() {
                         <td
                           key={d}
                           className={`px-0 py-0 text-center border-l border-slate-100 ${isSun||isSat ? 'bg-slate-50' : ''}`}
+                          title={isReg ? 'Regularized' : undefined}
                         >
                           {code ? (
-                            <span className={`inline-flex items-center justify-center w-full h-6 text-[10px] ${statusCls(code)}`}>
+                            <span className={`inline-flex items-center justify-center w-full h-6 text-[10px] ${statusCls(code)} ${isReg ? 'ring-1 ring-inset ring-orange-500' : ''}`}>
                               {code}
                             </span>
                           ) : (
-                            <span className="inline-flex items-center justify-center w-full h-6 text-slate-200">·</span>
+                            <span className="inline-flex items-center justify-center w-full h-6 text-slate-300">·</span>
                           )}
                         </td>
                       );

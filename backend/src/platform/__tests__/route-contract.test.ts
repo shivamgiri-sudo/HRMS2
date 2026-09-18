@@ -170,8 +170,8 @@ const KNOWN_GAPS: Record<string, string> = {
   // concrete call path against a parameterised :code segment — it surfaces as an orphan even
   // though the route resolves correctly at runtime. No backend work needed; remove if the
   // route scanner gains wildcard-match capability.
-  "GET /api/reporting/suite/attendance-register-monthly":
-    "Resolved at runtime by the dynamic GET /api/reporting/suite/:code route in reporting.routes.ts. The static scanner cannot match a concrete code against a :param segment. AttendanceRegisterExport.tsx calls this path for the attendance day-grid export.",
+  "GET /api/reports/suite/attendance-register-monthly":
+    "Resolved at runtime by the dynamic GET /api/reports/suite/:code route (reportSuiteRouter mounted at /api/reports/suite in reporting.routes.ts). The static scanner cannot match a concrete code string against a :param segment. AttendanceRegisterExport.tsx calls this path for the attendance day-grid export.",
 
 };
 

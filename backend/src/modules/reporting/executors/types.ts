@@ -20,6 +20,7 @@ export interface ExecFilters {
   designationId?: string;
   managerId?: string;
   employeeCode?: string;
+  employeeName?: string;
   from?: string;
   to?: string;
   month?: string;
@@ -330,8 +331,12 @@ export function appendFilterConditions(
     params.push(String(filters.managerId), String(filters.managerId));
   }
   if (filters.employeeCode) {
-    clauses.push(`${alias}.employee_code = ?`);
+    clauses.push(`UPPER(${alias}.employee_code) = UPPER(?)`);
     params.push(String(filters.employeeCode));
+  }
+  if (filters.employeeName) {
+    clauses.push(`CONCAT(${alias}.first_name, ' ', COALESCE(${alias}.last_name, '')) LIKE ?`);
+    params.push(`%${String(filters.employeeName)}%`);
   }
 }
 
