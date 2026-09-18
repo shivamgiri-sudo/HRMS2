@@ -173,14 +173,6 @@ const KNOWN_GAPS: Record<string, string> = {
   "GET /api/reporting/suite/attendance-register-monthly":
     "Resolved at runtime by the dynamic GET /api/reporting/suite/:code route in reporting.routes.ts. The static scanner cannot match a concrete code against a :param segment. AttendanceRegisterExport.tsx calls this path for the attendance day-grid export.",
 
-  // ── Portal client-user login generation — added 2026-09-18 ────────────────────────────
-  // Pre-existing gap unrelated to the Attendance Register or Salary Trend changes. The route
-  // POST /api/portal/internal/client-users/:p/generate-login is mounted in portal.routes.ts
-  // but the static scanner resolves the :p segment differently from the call-site literal.
-  // Verify and remove once the route-scanner handles parameterised portal paths correctly.
-  "POST /api/portal/internal/client-users/:p/generate-login":
-    "Pre-existing scanner gap: portal.routes.ts mounts this route under /api/portal/internal/client-users/:clientUserId/generate-login. The call-site uses the literal :p placeholder and the scanner cannot match it. No missing backend; remove once scanner handles param aliases.",
-
 };
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {
