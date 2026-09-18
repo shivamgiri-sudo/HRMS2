@@ -76,6 +76,8 @@ export interface PayrollRecord {
   lwpDeduction?: number;
   advanceRecovery?: number;
   otherDeductions?: number;
+  professionalTax?: number;
+  loanDeduction?: number;
 }
 
 const MONTH_NAMES = [
@@ -160,6 +162,8 @@ const mapPayrollRecord = (row: any): PayrollRecord => {
     lwpDeduction:         row.lwp_deduction         !== undefined ? Number(row.lwp_deduction)         : undefined,
     advanceRecovery:      row.advance_recovery      !== undefined ? Number(row.advance_recovery)      : undefined,
     otherDeductions:      row.other_deductions      !== undefined ? Number(row.other_deductions)      : undefined,
+    professionalTax:      row.professional_tax      !== undefined ? Number(row.professional_tax)      : undefined,
+    loanDeduction:        row.loan_deduction        !== undefined ? Number(row.loan_deduction)        : undefined,
   };
 };
 
