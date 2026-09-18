@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { PoaExternalPage, PoaInternalPage, PoaTrailPage, type PoaDrill } from "./PoaPagesViews";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import {
   AlertTriangle, ArrowLeft, CalendarRange, Database, FileBarChart2, FileSearch, FileText, FlaskConical, Gauge, LayoutGrid, Layers3,
@@ -63,7 +64,6 @@ interface TlBreakdownRow {
   extractionRate: number | null;
 }
 
-interface TrendPoint { month: string; doc: number; poa: number }
 
 interface TableInfo { key: string; table: string; name: string; description: string }
 
@@ -228,6 +228,14 @@ interface GdMcnSlaOverview {
 interface GdMcnSlaTrendPoint {
   bucket: string; slaPct: number | null; gdPct: number | null; mcnPct: number | null;
   commitment: number | null; fteDelivered: number | null;
+  docAht?: number | null; poaAht?: number | null;
+}
+/** One row of the client's "GD / MCN / SLA / APS Performance" sheet — percentages are ratios (0.93 = 93%). */
+interface GdMcnSlaDetailRow {
+  date: string; gmt: string; ist: string;
+  gdPct: number | null; mcnPct: number | null; deficit: number | null; slaPct: number | null;
+  docAht: number | null; poaAht: number | null; commitment: number | null; fteDelivered: number | null;
+  apsPct: number | null; occupancyPct: number | null; availPct: number | null; isTotal: boolean;
 }
 interface GdMcnSlaSlotRow { slot: string; slaPct: number | null; gdPct: number | null; mcnPct: number | null; occupancyPct: number | null }
 
@@ -344,37 +352,6 @@ function DarkTooltip({ active, payload, label }: { active?: boolean; payload?: {
   );
 }
 
-/**
- * Monthly volume trend, DOC vs POA — rendered as grouped bars, not a line:
- * with only a handful of monthly buckets (often 1-3 in a filtered range) a
- * line/area implies a continuous trend that isn't there and renders as an
- * orphaned floating point. Bars stay legible at any point count.
- */
-function TrendChart({ points }: { points: TrendPoint[] }) {
-  if (points.length === 0) {
-    return <div style={{ padding: "40px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No volume in this range yet.</div>;
-  }
-  return (
-    <ResponsiveContainer width="100%" height={260}>
-      <BarChart data={points} margin={{ top: 32, right: 12, left: 0, bottom: 0 }}
-        barGap={4} barCategoryGap={points.length <= 3 ? "35%" : "20%"}>
-        <CartesianGrid vertical={false} stroke="rgba(42,58,82,0.25)" strokeDasharray="3 3" />
-        <XAxis dataKey="month" tickLine={false} axisLine={false}
-          tick={{ fontSize: 12, fill: "var(--muted)" }} tickMargin={8} angle={-20} textAnchor="end" />
-        <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false}
-          tick={{ fontSize: 12, fill: "var(--muted)" }} />
-        <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-        <Bar dataKey="doc" name="DOC" fill="var(--blue)" fillOpacity={0.85} radius={[6, 6, 0, 0]} maxBarSize={48}>
-          <LabelList dataKey="doc" position="top" fill="var(--blue)" fontSize={13} fontWeight={700} />
-        </Bar>
-        <Bar dataKey="poa" name="POA" fill="var(--teal)" fillOpacity={0.85} radius={[6, 6, 0, 0]} maxBarSize={48}>
-          <LabelList dataKey="poa" position="top" fill="var(--teal)" fontSize={13} fontWeight={700} />
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
-  );
-}
-
 function ChartLegendRow() {
   return (
     <div style={{ display: "flex", gap: 16, marginTop: 8, fontSize: 12, color: "var(--muted-strong)" }}>
@@ -408,8 +385,14 @@ function TaskAhtTrendChart({ points, barLabel, lineLabel, barColor: barC = "var(
         <YAxis yAxisId="aht" orientation="right" tickLine={false} axisLine={false} width={48} tick={{ fontSize: 11, fill: lineColor }} tickFormatter={(v: number) => `${v}s`} />
         <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
         <Legend verticalAlign="top" align="left" height={28} iconType="square" wrapperStyle={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }} />
-        <Bar yAxisId="count" dataKey="taskCount" name={barLabel} fill={barC} radius={[4, 4, 0, 0]} maxBarSize={44} />
-        <Line yAxisId="aht" type="monotone" dataKey="avgAht" name={lineLabel} stroke={lineColor} strokeWidth={2} dot={{ r: 3 }} connectNulls />
+        <Bar yAxisId="count" dataKey="taskCount" name={barLabel} fill={barC} radius={[4, 4, 0, 0]} maxBarSize={44}>
+          <LabelList dataKey="taskCount" position="top" fontSize={10} fontWeight={700} fill="var(--muted-strong)"
+            formatter={(v: number) => v.toLocaleString("en-IN")} />
+        </Bar>
+        <Line yAxisId="aht" type="monotone" dataKey="avgAht" name={lineLabel} stroke={lineColor} strokeWidth={2} dot={{ r: 3 }} connectNulls>
+          <LabelList dataKey="avgAht" position="top" offset={10} fontSize={10} fontWeight={700} fill={lineColor}
+            formatter={(v: number) => `${v}s`} />
+        </Line>
       </ComposedChart>
     </ResponsiveContainer>
   );
@@ -437,9 +420,20 @@ function pivotTaskTypeTrend(points: DocTaskTypeTrendPoint[], metric: "taskCount"
   return { rows, taskTypes: orderedTypes };
 }
 
-/** Task-type-wise monthly Task/AHT trend — the Overview page's items #2/#3
- *  (2026-09-17 feedback): makes visible, month over month, that Labelling_Raw-Ext
- *  runs at roughly 3x the AHT of every other DOC task type. */
+/** "process_labelling_document_raw_extraction" -> "Labelling Document Raw Extraction". */
+function prettyTaskType(raw: string): string {
+  return raw
+    .replace(/^process_/i, "")
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+/** Task-type-wise monthly Task/AHT chart — Overview items #2/#3 (2026-09-17 feedback, refined
+ *  2026-09-18): Task volume renders as labelled grouped bars, AHT as labelled lines whose
+ *  value labels alternate above/below and step outward per series so the numbers of nearby
+ *  lines do not sit on top of each other. */
 function TaskTypeSeriesChart({ points, metric, valueSuffix }: {
   points: DocTaskTypeTrendPoint[]; metric: "taskCount" | "avgAht"; valueSuffix?: string;
 }) {
@@ -447,20 +441,48 @@ function TaskTypeSeriesChart({ points, metric, valueSuffix }: {
   if (rows.length === 0) {
     return <div style={{ padding: "40px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>;
   }
+  const fmt = (v: number) => (metric === "taskCount" ? v.toLocaleString("en-IN") : `${v}${valueSuffix ?? ""}`);
+  const axis = (
+    <>
+      <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+      <YAxis tickLine={false} axisLine={false} width={52} tick={{ fontSize: 11, fill: "var(--muted)" }}
+        tickFormatter={(v: number) => fmt(v)} />
+      <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
+      <Legend verticalAlign="top" align="left" height={40} iconType="square" wrapperStyle={{ fontSize: 10, fontWeight: 700, color: "var(--text)" }} />
+    </>
+  );
+  if (metric === "taskCount") {
+    return (
+      <ResponsiveContainer width="100%" height={320}>
+        <BarChart data={rows} margin={{ top: 28, right: 16, left: 0, bottom: 0 }} barGap={3} barCategoryGap="18%">
+          {axis}
+          {taskTypes.map((tt, i) => {
+            const color = TASK_TYPE_COLORS[i % TASK_TYPE_COLORS.length];
+            return (
+              <Bar key={tt} dataKey={tt} name={prettyTaskType(tt)} fill={color} radius={[3, 3, 0, 0]} maxBarSize={30}>
+                <LabelList dataKey={tt} position="top" fontSize={9} fontWeight={700} fill={color}
+                  formatter={(v: number | null) => (v == null ? "" : fmt(v))} />
+              </Bar>
+            );
+          })}
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  }
   return (
-    <ResponsiveContainer width="100%" height={260}>
-      <LineChart data={rows} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
-        <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
-        <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-        <YAxis
-          tickLine={false} axisLine={false} width={48} tick={{ fontSize: 11, fill: "var(--muted)" }}
-          tickFormatter={(v: number) => (valueSuffix ? `${v}${valueSuffix}` : String(v))}
-        />
-        <RTooltip content={<DarkTooltip />} />
-        <Legend verticalAlign="top" align="left" height={28} iconType="line" wrapperStyle={{ fontSize: 10, fontWeight: 700, color: "var(--text)" }} />
-        {taskTypes.map((tt, i) => (
-          <Line key={tt} type="monotone" dataKey={tt} name={tt} stroke={TASK_TYPE_COLORS[i % TASK_TYPE_COLORS.length]} strokeWidth={2} dot={{ r: 2 }} connectNulls />
-        ))}
+    <ResponsiveContainer width="100%" height={360}>
+      <LineChart data={rows} margin={{ top: 32, right: 24, left: 0, bottom: 8 }}>
+        {axis}
+        {taskTypes.map((tt, i) => {
+          const color = TASK_TYPE_COLORS[i % TASK_TYPE_COLORS.length];
+          const above = i % 2 === 0;
+          return (
+            <Line key={tt} type="monotone" dataKey={tt} name={prettyTaskType(tt)} stroke={color} strokeWidth={2} dot={{ r: 3 }} connectNulls>
+              <LabelList dataKey={tt} position={above ? "top" : "bottom"} offset={8 + Math.floor(i / 2) * 12} fontSize={9} fontWeight={700} fill={color}
+                formatter={(v: number | null) => (v == null ? "" : fmt(v))} />
+            </Line>
+          );
+        })}
       </LineChart>
     </ResponsiveContainer>
   );
@@ -481,9 +503,15 @@ function GdMcnPercentChart({ points }: { points: GdMcnSlaTrendPoint[] }) {
         <YAxis tickLine={false} axisLine={false} width={48} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v}%`} />
         <RTooltip content={<DarkTooltip />} />
         <Legend verticalAlign="top" align="left" height={28} iconType="line" wrapperStyle={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }} />
-        <Line type="monotone" dataKey="gdPct" name="GD %" stroke="var(--blue)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
-        <Line type="monotone" dataKey="mcnPct" name="MCN %" stroke="var(--teal)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
-        <Line type="monotone" dataKey="slaPct" name="SLA %" stroke="var(--orange)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+        <Line type="monotone" dataKey="gdPct" name="GD %" stroke="var(--blue)" strokeWidth={2} dot={{ r: 3 }} connectNulls>
+          <LabelList dataKey="gdPct" position="top" fontSize={10} fontWeight={700} fill="var(--blue)" formatter={(v: number) => `${v}%`} />
+        </Line>
+        <Line type="monotone" dataKey="mcnPct" name="MCN %" stroke="var(--teal)" strokeWidth={2} dot={{ r: 3 }} connectNulls>
+          <LabelList dataKey="mcnPct" position="bottom" fontSize={10} fontWeight={700} fill="var(--teal)" formatter={(v: number) => `${v}%`} />
+        </Line>
+        <Line type="monotone" dataKey="slaPct" name="SLA %" stroke="var(--orange)" strokeWidth={2} dot={{ r: 3 }} connectNulls>
+          <LabelList dataKey="slaPct" position="top" offset={12} fontSize={10} fontWeight={700} fill="var(--orange)" formatter={(v: number) => `${v}%`} />
+        </Line>
       </LineChart>
     </ResponsiveContainer>
   );
@@ -500,7 +528,6 @@ function EscalationCountChart({ points }: { points: EscalationTrendPoint[] }) {
   return (
     <ResponsiveContainer width="100%" height={240}>
       <BarChart data={points} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
-        <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
         <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
         <YAxis tickLine={false} axisLine={false} width={44} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
         <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
@@ -530,7 +557,9 @@ function AhtLineChart({ points }: { points: { bucket: string; avgAht: number | n
         <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
         <YAxis tickLine={false} axisLine={false} width={48} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v}s`} />
         <RTooltip content={<DarkTooltip />} />
-        <Line type="monotone" dataKey="avgAht" name="Avg AHT" stroke="var(--teal)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+        <Line type="monotone" dataKey="avgAht" name="Avg AHT" stroke="var(--teal)" strokeWidth={2} dot={{ r: 3 }} connectNulls>
+          <LabelList dataKey="avgAht" position="top" fontSize={10} fontWeight={700} fill="var(--teal)" formatter={(v: number) => `${v}s`} />
+        </Line>
       </LineChart>
     </ResponsiveContainer>
   );
@@ -679,7 +708,6 @@ function QualityAreaChart({ points, title, hc }: { points: { bucket: string; tas
               <stop offset="100%" stopColor="var(--red)" stopOpacity={0.02} />
             </linearGradient>
           </defs>
-          <CartesianGrid vertical={false} stroke="rgba(42,58,82,0.25)" strokeDasharray="3 3" />
           <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
           <YAxis tickLine={false} axisLine={false} width={44} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
           <RTooltip content={<DarkTooltip />} />
@@ -2158,6 +2186,8 @@ function TaskSkipView({
   );
 }
 
+type QualityScope = "all" | "internal" | "external";
+
 /**
  * Quality Breakdown view — real onfido_doc_external_audit_raw data (17,179
  * rows / 340 clients / 732 document types), the richest per-task DOC table
@@ -2168,8 +2198,11 @@ function QualityView({
 }: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
   const [dimension, setDimension] = useState<QualityDimension>("ims_client_name");
   const [granularity, setGranularity] = useState<Granularity>("monthly");
+  const [scope, setScope] = useState<QualityScope>("all");
   const [drilldown, setDrilldown] = useState<{ label: string } | null>(null);
   const qs = tlAmQS(tlFilter, amFilter);
+  const showInternal = scope !== "external";
+  const showExternal = scope !== "internal";
 
   const overviewQuery = useQuery({
     queryKey: ["onfido-process", "quality-overview", range, tlFilter, amFilter],
@@ -2237,16 +2270,16 @@ function QualityView({
   const poaExtOv = poaExternalOverviewForQualityQuery.data?.data;
 
   // Build scorecard metrics from the overview KPIs
-  const scorecardMetrics = ov ? [
-    { name: "Overall Error %", value: ov.overallErrorRate?.value ?? null },
-    { name: "Classification Error %", value: ov.classificationErrorRate?.value ?? null },
-    { name: "Extraction Error %", value: ov.extractionErrorRate?.value ?? null },
-    { name: "Add. Extraction Error %", value: ov.addExtractionErrorRate?.value ?? null },
-    { name: "Raw Extraction Error %", value: ov.rawExtractionErrorRate?.value ?? null },
-    { name: "Int Overall Error %", value: intOv?.overallErrorRate?.value ?? null },
-    { name: "POA Error %", value: poaOv?.errorRate?.value ?? null },
-    { name: "Ext POA %", value: poaExtOv?.errorRate?.value ?? null },
-  ] : [];
+  const scorecardMetrics = ov ? ([
+    { name: "Overall Error %", value: ov.overallErrorRate?.value ?? null, external: true },
+    { name: "Classification Error %", value: ov.classificationErrorRate?.value ?? null, external: true },
+    { name: "Extraction Error %", value: ov.extractionErrorRate?.value ?? null, external: true },
+    { name: "Add. Extraction Error %", value: ov.addExtractionErrorRate?.value ?? null, external: true },
+    { name: "Raw Extraction Error %", value: ov.rawExtractionErrorRate?.value ?? null, external: true },
+    { name: "Int Overall Error %", value: intOv?.overallErrorRate?.value ?? null, external: false },
+    { name: "POA Error %", value: poaOv?.errorRate?.value ?? null, external: false },
+    { name: "Ext POA %", value: poaExtOv?.errorRate?.value ?? null, external: true },
+  ] as const).filter((m) => (m.external ? showExternal : showInternal)).map(({ name, value }) => ({ name, value })) : [];
 
   // Merge the 3 extra trend sources (internal DOC, POA internal, POA external)
   // into the same bucket set the metric-trend table renders as columns.
@@ -2264,38 +2297,48 @@ function QualityView({
     const intByBucket = byBucket(intPoints, (p) => p.bucket);
     const poaByBucket = byBucket(poaPoints, (p) => p.bucket);
     const poaExtByBucket = byBucket(poaExtPoints, (p) => p.bucket);
-    const rowDefs: { label: string; getVal: (bucket: string) => number | null }[] = [
-      { label: "Overall Error %", getVal: (b) => metricByBucket.get(b)?.overallErrorRate ?? null },
-      { label: "Classification Error %", getVal: (b) => metricByBucket.get(b)?.classificationErrorRate ?? null },
-      { label: "Extraction Error %", getVal: (b) => metricByBucket.get(b)?.extractionErrorRate ?? null },
-      { label: "Add. Extraction Error %", getVal: (b) => metricByBucket.get(b)?.addExtractionErrorRate ?? null },
-      { label: "Raw Extraction Error %", getVal: (b) => metricByBucket.get(b)?.rawExtractionErrorRate ?? null },
-      { label: "Int Overall Error %", getVal: (b) => intByBucket.get(b)?.errorRate ?? null },
-      { label: "POA Error %", getVal: (b) => poaByBucket.get(b)?.errorRate ?? null },
+    const rowDefs: { label: string; external: boolean; getVal: (bucket: string) => number | null }[] = [
+      { label: "Overall Error %", external: true, getVal: (b) => metricByBucket.get(b)?.overallErrorRate ?? null },
+      { label: "Classification Error %", external: true, getVal: (b) => metricByBucket.get(b)?.classificationErrorRate ?? null },
+      { label: "Extraction Error %", external: true, getVal: (b) => metricByBucket.get(b)?.extractionErrorRate ?? null },
+      { label: "Add. Extraction Error %", external: true, getVal: (b) => metricByBucket.get(b)?.addExtractionErrorRate ?? null },
+      { label: "Raw Extraction Error %", external: true, getVal: (b) => metricByBucket.get(b)?.rawExtractionErrorRate ?? null },
+      { label: "Int Overall Error %", external: false, getVal: (b) => intByBucket.get(b)?.errorRate ?? null },
+      { label: "POA Error %", external: false, getVal: (b) => poaByBucket.get(b)?.errorRate ?? null },
       {
-        label: "Ext POA %", getVal: (b) => {
+        label: "Ext POA %", external: true, getVal: (b) => {
           const p = poaExtByBucket.get(b);
           return p && p.taskCount > 0 ? Math.round((p.errorCount / p.taskCount) * 1000) / 10 : null;
         },
       },
     ];
-    return { columns: buckets, rows: rowDefs.map((r) => ({ label: r.label, values: buckets.map(r.getVal) })) };
-  }, [metricTrendQuery.data, intTrendForTableQuery.data, poaTrendForTableQuery.data, poaExtTrendForTableQuery.data]);
+    const visible = rowDefs.filter((r) => (r.external ? showExternal : showInternal));
+    return { columns: buckets, rows: visible.map((r) => ({ label: r.label, values: buckets.map(r.getVal) })) };
+  }, [metricTrendQuery.data, intTrendForTableQuery.data, poaTrendForTableQuery.data, poaExtTrendForTableQuery.data, showInternal, showExternal]);
+  // Error Rate Trend chart follows the slicer: internal DOC audits vs the external audit table.
+  const errorTrendPoints = scope === "internal" ? (intTrendForTableQuery.data?.data ?? []) : points;
 
   return (
     <div className="space-y-4">
-      {ov && (
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="oc-eyebrow">Dashboard</span>
+        <PillGroup
+          value={scope} onChange={setScope}
+          options={[{ key: "all", label: "All" }, { key: "internal", label: "Internal Quality" }, { key: "external", label: "External Quality" }]}
+        />
+      </div>
+      {ov && showExternal && (
         <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
           <KpiPlain kpi={ov.taskCount} kc="var(--blue)" />
           <KpiPlain kpi={ov.overallErrorRate} kc="var(--red)" />
           <KpiPlain kpi={ov.farRate} kc="var(--orange)" />
         </div>
       )}
-      {(intOv || poaOv || poaExtOv) && (
-        <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
-          {intOv && <KpiPlain kpi={intOv.overallErrorRate} kc="var(--purple)" />}
-          {poaOv && <KpiPlain kpi={poaOv.errorRate} kc="var(--teal)" />}
-          {poaExtOv && <KpiPlain kpi={poaExtOv.errorRate} kc="var(--orange)" />}
+      {((showInternal && (intOv || poaOv)) || (showExternal && poaExtOv)) && (
+        <div className="kr" style={{ gridTemplateColumns: `repeat(${(showInternal ? (intOv ? 1 : 0) + (poaOv ? 1 : 0) : 0) + (showExternal && poaExtOv ? 1 : 0)}, 1fr)` }}>
+          {showInternal && intOv && <KpiPlain kpi={intOv.overallErrorRate} kc="var(--purple)" />}
+          {showInternal && poaOv && <KpiPlain kpi={poaOv.errorRate} kc="var(--teal)" />}
+          {showExternal && poaExtOv && <KpiPlain kpi={poaExtOv.errorRate} kc="var(--orange)" />}
         </div>
       )}
 
@@ -2322,12 +2365,12 @@ function QualityView({
             options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
           />
         </div>
-        <div className="oc-card-sub">Errors ÷ tasks audited per bucket.</div>
-        {points.length === 0 ? (
+        <div className="oc-card-sub">Errors ÷ tasks audited per bucket{scope === "internal" ? " — internal DOC audits" : scope === "external" ? " — external audits" : ""}.</div>
+        {errorTrendPoints.length === 0 ? (
           <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>
         ) : (
           <ResponsiveContainer width="100%" height={240}>
-            <AreaChart data={points.map((p) => ({ ...p, errorRate: p.errorRate ?? 0 }))} margin={{ top: 28, right: 40, left: 0, bottom: 0 }}>
+            <AreaChart data={errorTrendPoints.map((p) => ({ ...p, errorRate: p.errorRate ?? 0 }))} margin={{ top: 28, right: 40, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="qTrendGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="var(--red)" stopOpacity={0.18} />
@@ -2352,6 +2395,7 @@ function QualityView({
         )}
       </div>
 
+      {showExternal && (
       <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 style={{ marginBottom: 0 }}>Breakdown</h3>
@@ -2381,7 +2425,9 @@ function QualityView({
           </table>
         </div>
       </div>
+      )}
 
+      {showExternal && (
       <div className="oc-card" style={{ "--hc": "var(--red)" } as React.CSSProperties}>
         <h3>Errors Only</h3>
         <div className="oc-card-sub">Every failed audit as its own record — not an aggregate. Click a row for its full detail.</div>
@@ -2413,6 +2459,7 @@ function QualityView({
           </div>
         )}
       </div>
+      )}
 
       {drilldown && (
         <BreakdownDrilldownSheet
@@ -2430,6 +2477,8 @@ function QualityView({
   );
 }
 
+type EscalationSourceSlicer = "ALL" | "CRE" | "CRQ";
+
 /**
  * Client Escalations view — CRE and CRQ are two file formats for the same
  * real thing (a client reporting an error back on a DOC report): CRE is the
@@ -2443,8 +2492,10 @@ function EscalationsView({
 }: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
   const [dimension, setDimension] = useState<EscalationDimension>("ims_client_name");
   const [granularity, setGranularity] = useState<Granularity>("monthly");
+  const [source, setSource] = useState<EscalationSourceSlicer>("ALL");
   const [drilldown, setDrilldown] = useState<{ label: string } | null>(null);
   const qs = tlAmQS(tlFilter, amFilter);
+  const sourceQS = source === "ALL" ? "" : `&source=${source}`;
 
   const overviewQuery = useQuery({
     queryKey: ["onfido-process", "escalation-overview", range, tlFilter, amFilter],
@@ -2455,8 +2506,8 @@ function EscalationsView({
     queryFn: () => hrmsApi.get<{ data: EscalationTrendPoint[] }>(`/api/onfido-process/escalations/trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`),
   });
   const breakdownQuery = useQuery({
-    queryKey: ["onfido-process", "escalation-breakdown", range, dimension, tlFilter, amFilter],
-    queryFn: () => hrmsApi.get<{ data: EscalationBreakdownRow[] }>(`/api/onfido-process/escalations/breakdown/${dimension}?from=${range.from}&to=${range.to}${qs}`),
+    queryKey: ["onfido-process", "escalation-breakdown", range, dimension, tlFilter, amFilter, source],
+    queryFn: () => hrmsApi.get<{ data: EscalationBreakdownRow[] }>(`/api/onfido-process/escalations/breakdown/${dimension}?from=${range.from}&to=${range.to}${qs}${sourceQS}`),
   });
 
   const ov = overviewQuery.data?.data;
@@ -2466,7 +2517,14 @@ function EscalationsView({
 
   return (
     <div className="space-y-4">
-      {ov && (
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="oc-eyebrow">Queue</span>
+        <PillGroup
+          value={source} onChange={setSource}
+          options={[{ key: "ALL", label: "CRE + CRQ" }, { key: "CRE", label: "CRE" }, { key: "CRQ", label: "CRQ" }]}
+        />
+      </div>
+      {ov && source === "ALL" && (
         <div className="kr" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
           <KpiPlain kpi={ov.totalLines} kc="var(--red)" />
           <KpiPlain kpi={ov.creLines} kc="var(--orange)" />
@@ -2474,10 +2532,15 @@ function EscalationsView({
           <KpiPlain kpi={ov.distinctReports} kc="var(--purple)" />
         </div>
       )}
+      {ov && source !== "ALL" && (
+        <div className="kr" style={{ gridTemplateColumns: "repeat(1, 1fr)" }}>
+          <KpiPlain kpi={source === "CRE" ? ov.creLines : ov.crqLines} kc="var(--orange)" />
+        </div>
+      )}
 
       <div className="oc-card" style={{ "--hc": "var(--red)" } as React.CSSProperties}>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 style={{ marginBottom: 0 }}>Client Escalation Trend</h3>
+          <h3 style={{ marginBottom: 0 }}>Client Escalation Trend{source === "ALL" ? "" : ` — ${source}`}</h3>
           <PillGroup
             value={granularity} onChange={setGranularity}
             options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
@@ -2489,17 +2552,20 @@ function EscalationsView({
         ) : (
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
               <Legend wrapperStyle={{ fontSize: 11, color: "var(--muted)" }} />
-              <Bar dataKey="creCount" name="CRE" fill="var(--red)" radius={[4, 4, 0, 0]}>
-                <LabelList dataKey="creCount" position="top" fontSize={10} fill="var(--muted)" />
-              </Bar>
-              <Bar dataKey="crqCount" name="CRQ" fill="var(--teal)" radius={[4, 4, 0, 0]}>
-                <LabelList dataKey="crqCount" position="top" fontSize={10} fill="var(--muted)" />
-              </Bar>
+              {source !== "CRQ" && (
+                <Bar dataKey="creCount" name="CRE" fill="var(--red)" radius={[4, 4, 0, 0]}>
+                  <LabelList dataKey="creCount" position="top" fontSize={10} fill="var(--muted)" />
+                </Bar>
+              )}
+              {source !== "CRE" && (
+                <Bar dataKey="crqCount" name="CRQ" fill="var(--teal)" radius={[4, 4, 0, 0]}>
+                  <LabelList dataKey="crqCount" position="top" fontSize={10} fill="var(--muted)" />
+                </Bar>
+              )}
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -2543,6 +2609,7 @@ function EscalationsView({
           range={range}
           tlFilter={tlFilter}
           amFilter={amFilter}
+          source={source}
           onOpenChange={(v) => { if (!v) setDrilldown(null); }}
           onOpenRecord={onOpenRecord}
         />
@@ -2560,18 +2627,18 @@ function EscalationsView({
  * same shared RecordDrawer via onOpenRecord — no new detail endpoint needed.
  */
 function EscalationDrilldownSheet({
-  open, title, dimension, filterValue, range, tlFilter, amFilter, onOpenChange, onOpenRecord,
+  open, title, dimension, filterValue, range, tlFilter, amFilter, source, onOpenChange, onOpenRecord,
 }: {
   open: boolean; title: string; dimension: EscalationDimension; filterValue: string;
-  range: { from: string; to: string }; tlFilter: string; amFilter: string;
+  range: { from: string; to: string }; tlFilter: string; amFilter: string; source: EscalationSourceSlicer;
   onOpenChange: (v: boolean) => void; onOpenRecord: (record: RawRecord, table: string) => void;
 }) {
   const qs = tlAmQS(tlFilter, amFilter);
   const recordsQuery = useQuery({
-    queryKey: ["onfido-process", "escalation-records", dimension, filterValue, range, tlFilter, amFilter],
+    queryKey: ["onfido-process", "escalation-records", dimension, filterValue, range, tlFilter, amFilter, source],
     queryFn: () =>
       hrmsApi.get<{ data: { rows: (RawRecord & { escalation_source: "CRE" | "CRQ" })[]; total: number } }>(
-        `/api/onfido-process/escalations/records/${dimension}?from=${range.from}&to=${range.to}${qs}&value=${encodeURIComponent(filterValue)}&limit=100`
+        `/api/onfido-process/escalations/records/${dimension}?from=${range.from}&to=${range.to}${qs}&value=${encodeURIComponent(filterValue)}&limit=100${source === "ALL" ? "" : `&source=${source}`}`
       ),
     enabled: open,
   });
@@ -2870,7 +2937,47 @@ function PoaCombinedView(props: {
         onChange={setSubView}
         options={[{ key: "internal", label: "POA (Internal)" }, { key: "external", label: "POA External" }]}
       />
-      {subView === "internal" ? <PoaView {...props} /> : <PoaExternalView {...props} />}
+      {subView === "internal"
+        ? <PoaFormatPage kind="internal" {...props} legacy={<PoaView {...props} />} legacyTitle="Month-wise trends & previous POA layout" legacyOpen />
+        : <PoaFormatPage kind="external" {...props} legacy={<PoaExternalView {...props} />} legacyTitle="Previous POA External layout" />}
+    </div>
+  );
+}
+
+/** POA Internal / External / Trail pages in the reference "Central Dashboard" format (2026-09-18
+ *  feedback: "I need the same"). The earlier layout is kept underneath, not deleted, so nothing
+ *  that was reachable before disappears. */
+function PoaFormatPage({
+  kind, range, tlFilter, amFilter, onOpenRecord, legacy, legacyTitle, legacyOpen,
+}: {
+  kind: "internal" | "external" | "trail";
+  range: { from: string; to: string }; tlFilter: string; amFilter: string;
+  onOpenRecord: (r: RawRecord, table: string) => void;
+  legacy: React.ReactNode; legacyTitle: string; legacyOpen?: boolean;
+}) {
+  const [drill, setDrill] = useState<PoaDrill | null>(null);
+  const pageProps = { range, tlFilter, amFilter, onDrill: setDrill };
+  return (
+    <div className="space-y-4">
+      {kind === "internal" && <PoaInternalPage {...pageProps} />}
+      {kind === "external" && <PoaExternalPage {...pageProps} />}
+      {kind === "trail" && <PoaTrailPage {...pageProps} />}
+      {drill && (
+        <BreakdownDrilldownSheet
+          open={!!drill}
+          title={drill.title}
+          tableKey={drill.table}
+          filterColumn={drill.filterColumn}
+          filterValue={drill.filterValue}
+          range={range}
+          onOpenChange={(v) => { if (!v) setDrill(null); }}
+          onOpenRecord={onOpenRecord}
+        />
+      )}
+      <details className="oc-card" open={legacyOpen} style={{ "--hc": "var(--muted)" } as React.CSSProperties}>
+        <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: 13 }}>{legacyTitle}</summary>
+        <div className="space-y-4" style={{ marginTop: 12 }}>{legacy}</div>
+      </details>
     </div>
   );
 }
@@ -2969,7 +3076,7 @@ function PoaView({
       )}
 
       <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
-        <h3>Month-wise POA Task &amp; AHT (Raw + Trial Combined)</h3>
+        <h3>Month-wise POA Task &amp; AHT</h3>
         <TaskAhtTrendChart points={poaCombinedTrend} barLabel="POA Tasks" lineLabel="POA Avg AHT" barColor="var(--blue)" lineColor="var(--orange)" />
       </div>
       <div className="oc-card" style={{ "--hc": "var(--red)" } as React.CSSProperties}>
@@ -2984,8 +3091,12 @@ function PoaView({
               <YAxis tickLine={false} axisLine={false} width={48} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v}%`} />
               <RTooltip content={<DarkTooltip />} />
               <Legend verticalAlign="top" align="left" height={28} iconType="line" wrapperStyle={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }} />
-              <Line type="monotone" dataKey="intErrPct" name="POA Err% (Internal)" stroke="var(--red)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
-              <Line type="monotone" dataKey="extErrPct" name="Ext POA Err%" stroke="var(--orange)" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+              <Line type="monotone" dataKey="intErrPct" name="POA Err% (Internal)" stroke="var(--red)" strokeWidth={2} dot={{ r: 3 }} connectNulls>
+                <LabelList dataKey="intErrPct" position="top" fontSize={10} fontWeight={700} fill="var(--red)" formatter={(v: number | null) => (v == null ? "" : `${v}%`)} />
+              </Line>
+              <Line type="monotone" dataKey="extErrPct" name="Ext POA Err%" stroke="var(--orange)" strokeWidth={2} dot={{ r: 3 }} connectNulls>
+                <LabelList dataKey="extErrPct" position="bottom" fontSize={10} fontWeight={700} fill="var(--orange)" formatter={(v: number | null) => (v == null ? "" : `${v}%`)} />
+              </Line>
             </LineChart>
           </ResponsiveContainer>
         )}
@@ -3200,117 +3311,50 @@ function PoaTrialView({
  * request can actually mean given DOC's own per-row task-type field is blank
  * on 99.9% of rows (see the backend's getClientDocBreakdown comment).
  */
+type ClientDocQueue = "DOC" | "POA";
+type ClientDocGroupBy = "document" | "client";
+interface ClientDocSeriesPoint { bucket: string; taskCount: number; avgAht: number | null }
+interface ClientDocRankingRow { label: string; taskCount: number; avgAht: number | null }
+interface ClientDocOptions { taskTypes: string[]; clients: string[]; documents: string[] }
+interface ClientDocDrill { queue: ClientDocQueue; clientName?: string; documentName?: string; taskType?: string }
+
 function ClientDocView({
   range, tlFilter, amFilter, onOpenRecord,
 }: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
-  const [granularity, setGranularity] = useState<"monthly" | "weekly">("monthly");
-  const [documentName, setDocumentName] = useState<string>("");
-  const [drilldown, setDrilldown] = useState<{ clientName: string; task: "DOC" | "POA" } | null>(null);
+  const [queue, setQueue] = useState<ClientDocQueue>("DOC");
+  const [drilldown, setDrilldown] = useState<ClientDocDrill | null>(null);
   const qs = tlAmQS(tlFilter, amFilter);
-  const docQS = documentName ? `&documentName=${encodeURIComponent(documentName)}` : "";
 
   const optionsQuery = useQuery({
-    queryKey: ["onfido-process", "clientdoc-document-options"],
-    queryFn: () => hrmsApi.get<{ data: string[] }>(`/api/onfido-process/client-doc/document-options`),
+    queryKey: ["onfido-process", "clientdoc-options", range, queue],
+    queryFn: () => hrmsApi.get<{ data: ClientDocOptions }>(`/api/onfido-process/client-doc/options?from=${range.from}&to=${range.to}&queue=${queue}`),
     staleTime: 5 * 60_000,
   });
-  const overviewQuery = useQuery({
-    queryKey: ["onfido-process", "clientdoc-overview", range, tlFilter, amFilter, documentName],
-    queryFn: () => hrmsApi.get<{ data: ClientDocOverview }>(`/api/onfido-process/client-doc/overview?from=${range.from}&to=${range.to}${qs}${docQS}`),
-  });
-  const trendQuery = useQuery({
-    queryKey: ["onfido-process", "clientdoc-trend", range, tlFilter, amFilter, documentName, granularity],
-    queryFn: () => hrmsApi.get<{ data: ClientDocTrendPoint[] }>(`/api/onfido-process/client-doc/trend?from=${range.from}&to=${range.to}${qs}${docQS}&granularity=${granularity}`),
-  });
-  const breakdownQuery = useQuery({
-    queryKey: ["onfido-process", "clientdoc-breakdown", range, tlFilter, amFilter, documentName],
-    queryFn: () => hrmsApi.get<{ data: ClientDocBreakdownRow[] }>(`/api/onfido-process/client-doc/breakdown?from=${range.from}&to=${range.to}${qs}${docQS}`),
-  });
-
-  const documentOptions = optionsQuery.data?.data ?? [];
-  const ov = overviewQuery.data?.data;
-  const points = trendQuery.data?.data ?? [];
-  const breakdown = breakdownQuery.data?.data ?? [];
+  const options = optionsQuery.data?.data ?? { taskTypes: [], clients: [], documents: [] };
 
   return (
     <div className="space-y-4">
-      <div className="oc-filterbar">
-        <div className="oc-field">
-          <label>Document Name</label>
-          <select className="oc-select" value={documentName} onChange={(e) => setDocumentName(e.target.value)}>
-            <option value="">All documents</option>
-            {documentOptions.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
-        </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="oc-eyebrow">Queue</span>
+        <PillGroup value={queue} onChange={setQueue} options={[{ key: "DOC", label: "DOC Check" }, { key: "POA", label: "POA" }]} />
       </div>
 
-      {ov && (
-        <div className="kr" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
-          <KpiPlain kpi={ov.totalTasks} kc="var(--blue)" />
-          <KpiPlain kpi={ov.docTasks} kc="var(--teal)" />
-          <KpiPlain kpi={ov.poaTasks} kc="var(--orange)" />
-          <KpiPlain kpi={ov.avgAht} kc="var(--purple)" />
-        </div>
-      )}
-
-      <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 style={{ marginBottom: 0 }}>DOC + POA Volume Trend</h3>
-          <PillGroup
-            value={granularity} onChange={setGranularity}
-            options={[{ key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
-          />
-        </div>
-        <div className="oc-card-sub">
-          {documentName ? `Filtered to "${documentName}".` : "All documents."} DOC and POA task counts per bucket.
-        </div>
-        {points.length === 0 ? (
-          <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>
-        ) : (
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
-              <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-              <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-              <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-              <Bar dataKey="doc" name="DOC" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                <LabelList dataKey="doc" position="inside" fill="#fff" fontSize={10} />
-              </Bar>
-              <Bar dataKey="poa" name="POA" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                <LabelList dataKey="poa" position="inside" fill="#fff" fontSize={10} />
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
-        <h3>Client &amp; Document Report</h3>
-        <div className="oc-card-sub">Client Name / Task / AHT, as requested. Top 200 by volume — click a row for the underlying reports.</div>
-        <div style={{ overflowX: "auto" }}>
-          <table className="oc-table">
-            <thead><tr><th>Client Name</th><th>Task</th><th className="oc-right">Volume</th><th className="oc-right">AHT</th></tr></thead>
-            <tbody>
-              {breakdown.length === 0 && <tr className="oc-empty-row"><td colSpan={4}>No data</td></tr>}
-              {breakdown.map((r) => (
-                <tr key={`${r.clientName}-${r.task}`} className="oc-row-click" onClick={() => setDrilldown({ clientName: r.clientName, task: r.task })}>
-                  <td>{r.clientName}</td>
-                  <td><span className="oc-badge">{r.task}</span></td>
-                  <td className="oc-right">{r.taskCount.toLocaleString("en-IN")}</td>
-                  <td className="oc-right">{r.aht !== null ? `${r.aht}s` : "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <ClientDocSection
+        key={`document-${queue}`} groupBy="document" queue={queue} range={range} qs={qs} options={options}
+        onDrill={(d) => setDrilldown(d)}
+      />
+      <ClientDocSection
+        key={`client-${queue}`} groupBy="client" queue={queue} range={range} qs={qs} options={options}
+        onDrill={(d) => setDrilldown(d)}
+      />
 
       {drilldown && (
         <ClientDocDrilldownSheet
           open={!!drilldown}
           clientName={drilldown.clientName}
-          task={drilldown.task}
-          documentName={documentName}
+          task={drilldown.queue}
+          documentName={drilldown.documentName ?? ""}
+          taskType={drilldown.taskType}
           range={range}
           tlFilter={tlFilter}
           amFilter={amFilter}
@@ -3318,6 +3362,100 @@ function ClientDocView({
           onOpenRecord={onOpenRecord}
         />
       )}
+    </div>
+  );
+}
+
+/** One "Document-wise" or "Client-wise" block: pick a document/client and (DOC only) a task type,
+ *  choose Monthly/Weekly, see Task volume (bars) and AHT (line) with data labels, plus a ranking. */
+function ClientDocSection({
+  groupBy, queue, range, qs, options, onDrill,
+}: {
+  groupBy: ClientDocGroupBy; queue: ClientDocQueue; range: { from: string; to: string }; qs: string;
+  options: ClientDocOptions; onDrill: (d: ClientDocDrill) => void;
+}) {
+  const [value, setValue] = useState("");
+  const [taskType, setTaskType] = useState("");
+  const [granularity, setGranularity] = useState<"monthly" | "weekly">("monthly");
+  const isDoc = groupBy === "document";
+  const noun = isDoc ? "Document" : "Client";
+  const choices = isDoc ? options.documents : options.clients;
+  const filterQS = `&queue=${queue}&groupBy=${groupBy}${value ? `&value=${encodeURIComponent(value)}` : ""}${taskType ? `&taskType=${encodeURIComponent(taskType)}` : ""}`;
+
+  const seriesQuery = useQuery({
+    queryKey: ["onfido-process", "clientdoc-series", range, qs, queue, groupBy, value, taskType, granularity],
+    queryFn: () => hrmsApi.get<{ data: ClientDocSeriesPoint[] }>(`/api/onfido-process/client-doc/series?from=${range.from}&to=${range.to}${qs}${filterQS}&granularity=${granularity}`),
+  });
+  const rankingQuery = useQuery({
+    queryKey: ["onfido-process", "clientdoc-ranking", range, qs, queue, groupBy, taskType],
+    queryFn: () => hrmsApi.get<{ data: ClientDocRankingRow[] }>(`/api/onfido-process/client-doc/ranking?from=${range.from}&to=${range.to}${qs}&queue=${queue}&groupBy=${groupBy}${taskType ? `&taskType=${encodeURIComponent(taskType)}` : ""}`),
+  });
+  const points = seriesQuery.data?.data ?? [];
+  const ranking = rankingQuery.data?.data ?? [];
+  const hc = isDoc ? "var(--blue)" : "var(--teal)";
+  const scopeText = [value || `All ${noun.toLowerCase()}s`, taskType ? prettyTaskType(taskType) : null].filter(Boolean).join(" · ");
+
+  return (
+    <div className="oc-card" style={{ "--hc": hc } as React.CSSProperties}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 style={{ marginBottom: 0 }}>{noun}-wise Task &amp; AHT — {queue === "DOC" ? "DOC Check" : "POA"}</h3>
+        <PillGroup
+          value={granularity} onChange={setGranularity}
+          options={[{ key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
+        />
+      </div>
+      <div className="oc-filterbar" style={{ marginTop: 8 }}>
+        <div className="oc-field">
+          <label>{noun} Name</label>
+          <select className="oc-select" style={{ minWidth: 220 }} value={value} onChange={(e) => setValue(e.target.value)}>
+            <option value="">All {noun.toLowerCase()}s</option>
+            {choices.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        {queue === "DOC" && (
+          <div className="oc-field">
+            <label>Task Type</label>
+            <select className="oc-select" style={{ minWidth: 220 }} value={taskType} onChange={(e) => setTaskType(e.target.value)}>
+              <option value="">All task types</option>
+              {options.taskTypes.map((t) => <option key={t} value={t}>{prettyTaskType(t)}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
+      <div className="oc-card-sub">{scopeText} · {range.from} to {range.to}</div>
+
+      {points.length === 0 ? (
+        <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>
+          {seriesQuery.isLoading ? "Loading…" : "No data in this range."}
+        </div>
+      ) : (
+        <TaskAhtTrendChart points={points} barLabel={`${queue} Tasks`} lineLabel={`${queue} Avg AHT`} barColor={hc} lineColor="var(--orange)" />
+      )}
+
+      <div style={{ overflowX: "auto", maxHeight: 420, marginTop: 8 }}>
+        <table className="oc-table">
+          <thead><tr><th>{noun} Name</th><th className="oc-right">Tasks</th><th className="oc-right">Avg AHT</th></tr></thead>
+          <tbody>
+            {ranking.length === 0 && <tr className="oc-empty-row"><td colSpan={3}>{rankingQuery.isLoading ? "Loading…" : "No data"}</td></tr>}
+            {ranking.map((r) => (
+              <tr
+                key={r.label} className="oc-row-click"
+                onClick={() => {
+                  if (isDoc && r.label === "(unspecified)") return; // no document name to filter records by
+                  onDrill(isDoc
+                    ? { queue, documentName: r.label, taskType: taskType || undefined }
+                    : { queue, clientName: r.label, taskType: taskType || undefined });
+                }}
+              >
+                <td>{r.label}</td>
+                <td className="oc-right">{r.taskCount.toLocaleString("en-IN")}</td>
+                <td className="oc-right">{r.avgAht !== null ? `${r.avgAht}s` : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="oc-card-sub" style={{ marginTop: 6 }}>Top 200 by volume. Click a row for the underlying reports.</div>
     </div>
   );
 }
@@ -3331,19 +3469,19 @@ function ClientDocView({
  * RecordDrawer via onOpenRecord with no extra mapping step.
  */
 function ClientDocDrilldownSheet({
-  open, clientName, task, documentName, range, tlFilter, amFilter, onOpenChange, onOpenRecord,
+  open, clientName, task, documentName, taskType, range, tlFilter, amFilter, onOpenChange, onOpenRecord,
 }: {
-  open: boolean; clientName: string; task: "DOC" | "POA"; documentName: string;
+  open: boolean; clientName?: string; task: "DOC" | "POA"; documentName: string; taskType?: string;
   range: { from: string; to: string }; tlFilter: string; amFilter: string;
   onOpenChange: (v: boolean) => void; onOpenRecord: (record: RawRecord, table: string) => void;
 }) {
   const qs = tlAmQS(tlFilter, amFilter);
   const docQS = documentName ? `&documentName=${encodeURIComponent(documentName)}` : "";
   const recordsQuery = useQuery({
-    queryKey: ["onfido-process", "clientdoc-records", clientName, task, documentName, range, tlFilter, amFilter],
+    queryKey: ["onfido-process", "clientdoc-records", clientName, task, documentName, taskType, range, tlFilter, amFilter],
     queryFn: () =>
       hrmsApi.get<{ data: { rows: ClientDocRecordRow[]; total: number } }>(
-        `/api/onfido-process/client-doc/records?from=${range.from}&to=${range.to}${qs}${docQS}&clientName=${encodeURIComponent(clientName)}&task=${task}&limit=100`
+        `/api/onfido-process/client-doc/records?from=${range.from}&to=${range.to}${qs}${docQS}${clientName !== undefined ? `&clientName=${encodeURIComponent(clientName)}` : ""}${taskType ? `&taskType=${encodeURIComponent(taskType)}` : ""}&task=${task}&limit=100`
       ),
     enabled: open,
   });
@@ -3354,10 +3492,10 @@ function ClientDocDrilldownSheet({
       <SheetContent className="onfido-central-theme oc-sheet w-full overflow-y-auto sm:max-w-2xl">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2 !text-[color:var(--text)]">
-            <FileBarChart2 className="h-4 w-4" style={{ color: "var(--muted)" }} /> {clientName} — {task}
+            <FileBarChart2 className="h-4 w-4" style={{ color: "var(--muted)" }} /> {clientName ?? documentName} — {task}
           </SheetTitle>
           <SheetDescription className="!text-[color:var(--muted)]">
-            {documentName ? `Document: ${documentName}` : "All documents"}
+            {documentName ? `Document: ${documentName}` : "All documents"}{taskType ? ` · Task type: ${prettyTaskType(taskType)}` : ""}
           </SheetDescription>
         </SheetHeader>
         <div className="mt-4">
@@ -3516,6 +3654,53 @@ function PoaExternalView({
   );
 }
 
+const fmtPctRatio = (v: number | null, dp = 1) => (v === null ? "—" : `${(v * 100).toFixed(dp)}%`);
+const fmtNum2 = (v: number | null) => (v === null ? "—" : v.toFixed(2));
+const fmtIsoDay = (iso: string) => {
+  const [y, m, d] = iso.split("-");
+  const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(m) - 1];
+  return mon ? `${d}-${mon}-${y.slice(2)}` : iso;
+};
+
+/** The client's GD/MCN/SLA/APS sheet as a table: one row per hourly slot plus a highlighted Total row per day. */
+function GdMcnDetailTable({ rows, loading, onSelect }: { rows: GdMcnSlaDetailRow[]; loading: boolean; onSelect: (slot: string) => void }) {
+  return (
+    <div style={{ overflow: "auto", maxHeight: 560 }}>
+      <table className="oc-table">
+        <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
+          <tr>
+            <th>GMT</th><th>IST</th><th>Date</th>
+            <th className="oc-right">GD%</th><th className="oc-right">MCN%</th><th className="oc-right">Deficit</th><th className="oc-right">SLA%</th>
+            <th className="oc-right">Doc AHT</th><th className="oc-right">POA AHT</th>
+            <th className="oc-right">Commitment</th><th className="oc-right">FTE Delivered</th>
+            <th className="oc-right">APS%</th><th className="oc-right">Occupancy%</th><th className="oc-right">Avail%</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 && <tr className="oc-empty-row"><td colSpan={14}>{loading ? "Loading…" : "No data in this range"}</td></tr>}
+          {rows.map((r, i) => (
+            <tr key={`${r.date}-${r.gmt}-${i}`} className="oc-row-click" onClick={() => onSelect(r.gmt)}
+              style={r.isTotal ? { fontWeight: 800, background: "rgba(148,163,184,0.12)" } : undefined}>
+              <td>{r.gmt}</td><td>{r.ist}</td><td>{fmtIsoDay(r.date)}</td>
+              <td className="oc-right">{fmtPctRatio(r.gdPct)}</td>
+              <td className="oc-right">{fmtPctRatio(r.mcnPct, 2)}</td>
+              <td className="oc-right">{fmtPctRatio(r.deficit)}</td>
+              <td className="oc-right">{fmtPctRatio(r.slaPct)}</td>
+              <td className="oc-right">{fmtNum2(r.docAht)}</td>
+              <td className="oc-right">{fmtNum2(r.poaAht)}</td>
+              <td className="oc-right">{r.commitment ?? "—"}</td>
+              <td className="oc-right">{r.fteDelivered ?? "—"}</td>
+              <td className="oc-right">{fmtPctRatio(r.apsPct, 0)}</td>
+              <td className="oc-right">{fmtPctRatio(r.occupancyPct, 2)}</td>
+              <td className="oc-right">{fmtPctRatio(r.availPct, 2)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 /**
  * Item #8 of the 2026-09-12 client feedback: "GD MCN SLA APS Day and slot
  * wise performance. (Required New Format)" — a genuinely different data
@@ -3542,10 +3727,16 @@ function GdMcnSlaView({
     queryKey: ["onfido-process", "gd-mcn-sla-slot-breakdown", range],
     queryFn: () => hrmsApi.get<{ data: GdMcnSlaSlotRow[] }>(`/api/onfido-process/gd-mcn-sla/slot-breakdown?from=${range.from}&to=${range.to}`),
   });
+  const detailQuery = useQuery({
+    queryKey: ["onfido-process", "gd-mcn-sla-detail", range],
+    queryFn: () => hrmsApi.get<{ data: GdMcnSlaDetailRow[] }>(`/api/onfido-process/gd-mcn-sla/detail?from=${range.from}&to=${range.to}`),
+  });
 
   const ov = overviewQuery.data?.data;
   const points = trendQuery.data?.data ?? [];
   const slots = slotQuery.data?.data ?? [];
+  const detailRows = detailQuery.data?.data ?? [];
+  const ahtPoints = points.filter((p) => p.docAht != null || p.poaAht != null);
 
   return (
     <div className="space-y-4">
@@ -3583,6 +3774,33 @@ function GdMcnSlaView({
             </BarChart>
           </ResponsiveContainer>
         )}
+      </div>
+
+      {ahtPoints.length > 0 && (
+        <div className="oc-card" style={{ "--hc": "var(--orange)" } as React.CSSProperties}>
+          <h3>Day-Wise Doc AHT &amp; POA AHT</h3>
+          <div className="oc-card-sub">Average handling time (seconds) per day, from each day's Total row.</div>
+          <ResponsiveContainer width="100%" height={240}>
+            <LineChart data={ahtPoints} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
+              <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+              <YAxis tickLine={false} axisLine={false} width={48} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v}s`} />
+              <RTooltip content={<DarkTooltip />} />
+              <Legend verticalAlign="top" align="left" height={28} iconType="line" wrapperStyle={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }} />
+              <Line type="monotone" dataKey="docAht" name="Doc AHT" stroke="var(--blue)" strokeWidth={2} dot={{ r: 3 }} connectNulls>
+                <LabelList dataKey="docAht" position="bottom" fontSize={10} fontWeight={700} fill="var(--blue)" formatter={(v: number | null) => (v == null ? "" : `${v}s`)} />
+              </Line>
+              <Line type="monotone" dataKey="poaAht" name="POA AHT" stroke="var(--teal)" strokeWidth={2} dot={{ r: 3 }} connectNulls>
+                <LabelList dataKey="poaAht" position="top" fontSize={10} fontWeight={700} fill="var(--teal)" formatter={(v: number | null) => (v == null ? "" : `${v}s`)} />
+              </Line>
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
+        <h3>GD / MCN / SLA / APS Performance</h3>
+        <div className="oc-card-sub">Hourly slots with each day's Total row, exactly as in the uploaded sheet. Click a row for its raw record(s).</div>
+        <GdMcnDetailTable rows={detailRows} loading={detailQuery.isLoading} onSelect={(slot) => setDrilldown({ slot })} />
       </div>
 
       <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
@@ -3939,14 +4157,6 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
       ),
   });
 
-  const trendQuery = useQuery({
-    queryKey: ["onfido-process", "monthly-trend", range],
-    queryFn: () =>
-      hrmsApi.get<{ data: TrendPoint[] }>(
-        `/api/onfido-process/monthly-trend?from=${range.from}&to=${range.to}`
-      ),
-  });
-
   const tablesQuery = useQuery({
     queryKey: ["onfido-process", "tables"],
     queryFn: () => hrmsApi.get<{ data: TableInfo[] }>("/api/onfido-process/tables"),
@@ -4001,7 +4211,6 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
 
   const overview = overviewQuery.data?.data;
   const tlRows = tlQuery.data?.data ?? [];
-  const trendPoints = trendQuery.data?.data ?? [];
   const docTaskAhtTrend = docTaskAhtTrendQuery.data?.data ?? [];
   const docTaskTypeTrend = docTaskTypeTrendQuery.data?.data ?? [];
   const poaCombinedTrend = poaCombinedTrendQuery.data?.data ?? [];
@@ -4086,7 +4295,13 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
           {view === "escalations" && <EscalationsView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "docraw" && <DocRawView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "poa" && <PoaCombinedView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
-          {view === "poatrial" && <PoaTrialView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
+          {view === "poatrial" && (
+            <PoaFormatPage
+              kind="trail" range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord}
+              legacy={<PoaTrialView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
+              legacyTitle="Previous POA Trial layout"
+            />
+          )}
           {view === "clientdoc" && <ClientDocView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "gdmcnsla" && <GdMcnSlaView range={range} onOpenRecord={openRecord} />}
           {view === "live" && <LiveView />}
@@ -4125,13 +4340,6 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
                 </>
               )}
             </div>
-          </div>
-
-          {/* Trend */}
-          <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
-            <h3>Monthly Volume Trend</h3>
-            <TrendChart points={trendPoints} />
-            {trendPoints.length > 0 && <ChartLegendRow />}
           </div>
 
           {/* Month-wise trend cards — 2026-09-17 dashboard feedback. Attrition and
@@ -4179,15 +4387,13 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
                     <th className="oc-right">Escalations</th>
                     <th className="oc-right">Audit Error %</th>
                     <th className="oc-right">Client Esc. Lines</th>
-                    <th className="oc-right">Manual FAR %</th>
-                    <th className="oc-right">Manual FRR %</th>
                     <th className="oc-right">Class. Error %</th>
                     <th className="oc-right">Ext. Error %</th>
                   </tr>
                 </thead>
                 <tbody>
                   {tlRows.length === 0 && (
-                    <tr className="oc-empty-row"><td colSpan={10}>No data</td></tr>
+                    <tr className="oc-empty-row"><td colSpan={8}>No data</td></tr>
                   )}
                   {tlRows.map((row) => (
                     <tr
@@ -4204,8 +4410,6 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
                       <td className="oc-right">{row.docEscalations}</td>
                       <td className="oc-right">{row.docAuditErrorRate !== null ? `${row.docAuditErrorRate}%` : "—"}</td>
                       <td className="oc-right">{row.escalationLines}</td>
-                      <td className="oc-right">{row.manualFarRate !== null ? `${row.manualFarRate}%` : "—"}</td>
-                      <td className="oc-right">{row.manualFrrRate !== null ? `${row.manualFrrRate}%` : "—"}</td>
                       <td className="oc-right">{row.classificationRate !== null ? `${row.classificationRate}%` : "—"}</td>
                       <td className="oc-right">{row.extractionRate !== null ? `${row.extractionRate}%` : "—"}</td>
                     </tr>

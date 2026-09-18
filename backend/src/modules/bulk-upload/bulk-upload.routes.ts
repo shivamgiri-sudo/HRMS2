@@ -10,6 +10,7 @@ import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { loadRowsWithLiveStatus, reconcileStuckRows } from "./bulk-approval.service.js";
 import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
 import { dispatchImport, assertGatedUploader, assertDepartmentStructureUploader } from "./bulk-dispatch.js";
+import { ONFIDO_REPORT_CONFIGS } from "./onfido-report-configs.js";
 
 /**
  * A batch left in 'importing' for longer than this is assumed to be from an API that
@@ -26,12 +27,34 @@ interface UploadBatchRow extends RowDataPacket {
 }
 router.use(requireAuth);
 
+/**
+ * A few Onfido templates are served from onfido-report-configs.ts rather than the
+ * upload_template_master snapshot (see OnfidoReportConfig.templateFromConfig): the DB
+ * row was written once by setup-onfido-reports.ts and went stale the moment a source
+ * file's headers changed, which blocked every real upload at the Hub's header check.
+ */
+const CONFIG_TEMPLATE_BY_CODE = new Map(
+  ONFIDO_REPORT_CONFIGS.filter((c) => c.templateFromConfig).map((c) => [c.uploadTypeCode, c])
+);
+
+function withConfigTemplate(row: RowDataPacket): RowDataPacket {
+  const cfg = CONFIG_TEMPLATE_BY_CODE.get(String(row.upload_type_code));
+  if (!cfg) return row;
+  const existingRules = row.validation_rules && typeof row.validation_rules === "object" ? row.validation_rules : {};
+  return {
+    ...row,
+    required_columns: [],
+    optional_columns: cfg.headers,
+    validation_rules: { ...existingRules, header_aliases: cfg.headerAliases ?? {} },
+  } as RowDataPacket;
+}
+
 router.get("/templates", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM upload_template_master WHERE active_status = 1 ORDER BY upload_type_code ASC"
     );
-    res.json({ success: true, data: rows });
+    res.json({ success: true, data: rows.map(withConfigTemplate) });
   } catch (err: unknown) {
     // Table may not exist yet â€” return empty array gracefully
     if (typeof err === "object" && err !== null) {

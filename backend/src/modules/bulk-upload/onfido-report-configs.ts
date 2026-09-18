@@ -21,7 +21,10 @@ export type OnfidoFieldExtract = {
   /** Exact source header this is read from (must match a header in `headers`). */
   header: string;
   /** How to coerce the raw string value before insert. */
-  type: "string" | "date" | "int" | "float" | "bool_yes_no";
+  type: "string" | "date" | "int" | "float" | "ratio" | "bool_yes_no";
+  /** Other spellings of this header seen in real files (e.g. a typo the source system
+   *  emits in some releases and not others) — read when `header` itself is absent. */
+  aliases?: string[];
 };
 
 export type OnfidoReportConfig = {
@@ -49,6 +52,18 @@ export type OnfidoReportConfig = {
    */
   dedupHeaders?: string[];
   extract: OnfidoFieldExtract[];
+  /**
+   * When true, GET /api/bulk-upload/templates serves this config's `headers` (and
+   * `headerAliases`) instead of whatever upload_template_master last had written
+   * by setup-onfido-reports.ts. That row is a snapshot of an old config: a header
+   * that changed since (a trailing space trimmed, a column added) made every real
+   * upload fail the Hub's header check until someone re-ran the setup script
+   * against the live database. Serving the config directly removes that step.
+   */
+  templateFromConfig?: boolean;
+  /** Canonical header -> other spellings the Hub should accept for it (see
+   *  OnfidoFieldExtract.aliases; the Hub's header check reads this too). */
+  headerAliases?: Record<string, string[]>;
 };
 
 const DOC_RAW_HEADERS = [
@@ -161,15 +176,16 @@ const POA_TRIAL_HEADERS = [
 // format, real headers read directly from the owner's attachment
 // ("POA External Dashboard Aug'26.xlsx", Raw Data sheet, 16,560 rows). No
 // prior dashboard covered this data — the existing External Quality dashboard
-// (onfido_doc_external_audit_raw) is DOC-only. " Yes/NO" carries a genuine
-// leading space in the source file — verified against the real header row,
-// not a typo here.
+// (onfido_doc_external_audit_raw) is DOC-only. The Yes/No column is "Yes/NO";
+// the 2026-09-12 release of the file had a leading space (" Yes/NO") and the
+// 2026-09-18 one does not — the Hub trims every header it reads, so a space kept
+// here made every row of the new file fail with "Unknown column: Yes/NO".
 const POA_EXTERNAL_HEADERS = [
   "Report Completed Month", "Report Completed Week", "Report Completed Date", "Report UUID",
   "Report ID", "IMS report URL", "IMS Client Name", "Document Type Full Name",
   "Proof of Address Document Type", "Proof of Address Issuing Country", "Report Result",
   "Proof of Address Task Analyst Email", "Proof of Address Task Organisation",
-  "Proof of Address Task Manual Processing Time In Sec", " Yes/NO", "Reason", "2nd level",
+  "Proof of Address Task Manual Processing Time In Sec", "Yes/NO", "Reason", "2nd level",
   "Comments", "English/Non-English", "Issuer Name (As per QCer)", "Issuer Name (As per analyst)",
   "Error Yes", "Audit", "Dispute Status", "TL", "AM", "QA Name", "AON", "Location",
 ];
@@ -369,6 +385,8 @@ export const ONFIDO_REPORT_CONFIGS: OnfidoReportConfig[] = [
     headers: POA_EXTERNAL_HEADERS,
     dedupHeader: "IMS report URL",
     dedupColumn: "ims_report_url",
+    templateFromConfig: true,
+    headerAliases: { "Yes/NO": [" Yes/NO", "Yes/No"] },
     extract: [
       { column: "ims_report_url", header: "IMS report URL", type: "string" },
       { column: "report_uuid", header: "Report UUID", type: "string" },
@@ -382,11 +400,11 @@ export const ONFIDO_REPORT_CONFIGS: OnfidoReportConfig[] = [
       { column: "analyst_email", header: "Proof of Address Task Analyst Email", type: "string" },
       { column: "task_organisation", header: "Proof of Address Task Organisation", type: "string" },
       { column: "manual_processing_time_secs", header: "Proof of Address Task Manual Processing Time In Sec", type: "int" },
-      // " Yes/NO" (leading space, real header) and "Error Yes" are the same
-      // signal in two forms — text Yes/No and a 0/1 flag — kept as separate
-      // columns for fidelity, the same way other Onfido tables keep both a
-      // text result and its numeric flag side by side.
-      { column: "error_yes_no", header: " Yes/NO", type: "string" },
+      // "Yes/NO" and "Error Yes" are the same signal in two forms — text
+      // Yes/No and a 0/1 flag — kept as separate columns for fidelity, the same
+      // way other Onfido tables keep both a text result and its numeric flag
+      // side by side.
+      { column: "error_yes_no", header: "Yes/NO", type: "string", aliases: [" Yes/NO", "Yes/No"] },
       { column: "error_flag", header: "Error Yes", type: "int" },
       { column: "reason", header: "Reason", type: "string" },
       { column: "second_level", header: "2nd level", type: "string" },
@@ -679,9 +697,14 @@ ONFIDO_REPORT_CONFIGS.push(ONFIDO_TASK_SKIP_CONFIG);
 // " Avail% " keep the real header spelling/whitespace (typo + trailing/
 // leading space) exactly as they appear in the source file — must match
 // verbatim for extraction to find them.
+// Headers are stored trimmed: the Hub trims every header it reads from the file, so
+// the "Occopancy% " / " Avail% " spellings (stray spaces, and "Occopancy" is the source
+// system's own typo of "Occupancy") this list used to carry could never match, and
+// every row was rejected with "Unknown column: Occopancy%; Unknown column: Avail%".
+// "Doc AHT" / "POA AHT" are new in the 17-Sep-26 release of the file.
 const GD_MCN_SLA_HEADERS = [
-  "GMT", "IST", "Date", "GD%", "MCN%", "Deficit", "SLA%", "Commitment",
-  "FTE Delivered", "APS%", "Occopancy% ", " Avail% ",
+  "GMT", "IST", "Date", "GD%", "MCN%", "Deficit", "SLA%", "Doc AHT", "POA AHT",
+  "Commitment", "FTE Delivered", "APS%", "Occopancy%", "Avail%",
 ];
 
 const AGENT_DAILY_HEADERS = [
@@ -740,6 +763,8 @@ export const ONFIDO_GD_MCN_SLA_CONFIG: OnfidoReportConfig = {
   table: "onfido_gd_mcn_sla_raw",
   description: "Global Delivery / MAS Callnet day-and-slot-wise SLA/staffing performance export (item #8 of the 2026-09-12 feedback).",
   headers: GD_MCN_SLA_HEADERS,
+  templateFromConfig: true,
+  headerAliases: { "Occopancy%": ["Occupancy%", "Occopancy% "], "Avail%": [" Avail% ", "Availability%"] },
   // No per-row URL/ID in this file — it is an hourly staffing-SLA fact table,
   // not a per-task export. The natural identity is Date + GMT slot (24 hourly
   // rows per day, plus one "Total" daily-summary row whose GMT value is
@@ -751,15 +776,17 @@ export const ONFIDO_GD_MCN_SLA_CONFIG: OnfidoReportConfig = {
     { column: "slot_date", header: "Date", type: "date" },
     { column: "gmt_slot", header: "GMT", type: "string" },
     { column: "ist_slot", header: "IST", type: "string" },
-    { column: "gd_pct", header: "GD%", type: "float" },
-    { column: "mcn_pct", header: "MCN%", type: "float" },
-    { column: "deficit", header: "Deficit", type: "float" },
-    { column: "sla_pct", header: "SLA%", type: "float" },
+    { column: "gd_pct", header: "GD%", type: "ratio" },
+    { column: "mcn_pct", header: "MCN%", type: "ratio" },
+    { column: "deficit", header: "Deficit", type: "ratio" },
+    { column: "sla_pct", header: "SLA%", type: "ratio" },
+    { column: "doc_aht", header: "Doc AHT", type: "float" },
+    { column: "poa_aht", header: "POA AHT", type: "float" },
     { column: "commitment", header: "Commitment", type: "float" },
     { column: "fte_delivered", header: "FTE Delivered", type: "float" },
-    { column: "aps_pct", header: "APS%", type: "float" },
-    { column: "occupancy_pct", header: "Occopancy% ", type: "float" },
-    { column: "avail_pct", header: " Avail% ", type: "float" },
+    { column: "aps_pct", header: "APS%", type: "ratio" },
+    { column: "occupancy_pct", header: "Occopancy%", type: "ratio", aliases: ["Occupancy%", "Occopancy% "] },
+    { column: "avail_pct", header: "Avail%", type: "ratio", aliases: [" Avail% ", "Availability%"] },
   ],
 };
 ONFIDO_REPORT_CONFIGS.push(ONFIDO_GD_MCN_SLA_CONFIG);

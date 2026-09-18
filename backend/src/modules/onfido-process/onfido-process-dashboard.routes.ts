@@ -2,6 +2,9 @@ import { Router, type NextFunction, type Response } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./onfido-process-dashboard.service.js";
+import * as clientDocSeries from "./onfido-client-doc-series.service.js";
+import { onfidoResponseCache } from "./onfido-response-cache.js";
+import { mountPoaPageRoutes } from "./onfido-poa-pages.routes.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { readableProcessIds } from "../process-operations/process-operations.service.js";
@@ -45,6 +48,8 @@ async function requireOnfidoScope(req: AuthenticatedRequest, res: Response, next
   }
 }
 router.use(requireAuth, requireOnfidoScope);
+// Same numbers are re-requested on every tab switch and each takes seconds on the multi-GB tables.
+router.use(onfidoResponseCache);
 
 function readQueryFilters(req: AuthenticatedRequest) {
   const q = req.query as Record<string, string | undefined>;
@@ -128,6 +133,9 @@ router.get("/metric-records/:metric", requireAuth, requireRole(...VIEWER_ROLES),
   });
   res.json({ success: true, data });
 }));
+
+// POA Internal / External / Trail pages in the reference dashboard format (2026-09-18).
+mountPoaPageRoutes(router, [requireAuth, requireRole(...VIEWER_ROLES)]);
 
 // Literal routes above are declared before the :table wildcard routes below —
 // otherwise Express would try to match "overview"/"tl-breakdown"/etc as a table key.
@@ -277,11 +285,16 @@ router.get("/escalations/trend", requireAuth, requireRole(...VIEWER_ROLES), h(as
   const data = await svc.getEscalationTrend(readQueryFilters(req), readGranularity(req));
   res.json({ success: true, data });
 }));
+/** Optional ?source=CRE|CRQ slicer; anything else means both queues. */
+function readEscalationSource(req: AuthenticatedRequest): svc.EscalationSource | undefined {
+  const v = String((req.query as Record<string, unknown>).source ?? "").toUpperCase();
+  return v === "CRE" || v === "CRQ" ? v : undefined;
+}
 const ESCALATION_DIMENSIONS = new Set(["ims_client_name", "error_category", "tl_name", "am_name"]);
 router.get("/escalations/breakdown/:dimension", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const dim = req.params.dimension;
   if (!ESCALATION_DIMENSIONS.has(dim)) return res.status(400).json({ success: false, message: "Unknown dimension" });
-  const data = await svc.getEscalationBreakdown(readQueryFilters(req), dim as Parameters<typeof svc.getEscalationBreakdown>[1]);
+  const data = await svc.getEscalationBreakdown(readQueryFilters(req), dim as Parameters<typeof svc.getEscalationBreakdown>[1], readEscalationSource(req));
   res.json({ success: true, data });
 }));
 router.get("/escalations/records/:dimension", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
@@ -291,7 +304,8 @@ router.get("/escalations/records/:dimension", requireAuth, requireRole(...VIEWER
   if (q.value === undefined) return res.status(400).json({ success: false, message: "value is required" });
   const data = await svc.getEscalationRecords(
     readQueryFilters(req), dim as Parameters<typeof svc.getEscalationBreakdown>[1], q.value,
-    q.limit ? Number(q.limit) : undefined
+    q.limit ? Number(q.limit) : undefined,
+    readEscalationSource(req)
   );
   res.json({ success: true, data });
 }));
@@ -323,13 +337,47 @@ router.get("/client-doc/document-options", requireAuth, requireRole(...VIEWER_RO
 }));
 router.get("/client-doc/records", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const q = req.query as Record<string, string | undefined>;
-  if (q.clientName === undefined || (q.task !== "DOC" && q.task !== "POA")) {
-    return res.status(400).json({ success: false, message: "clientName and task ('DOC'|'POA') are required" });
+  if (q.task !== "DOC" && q.task !== "POA") {
+    return res.status(400).json({ success: false, message: "task ('DOC'|'POA') is required" });
+  }
+  if (q.clientName === undefined && !q.documentName) {
+    return res.status(400).json({ success: false, message: "clientName or documentName is required" });
   }
   const data = await svc.getClientDocRecords(
-    readClientDocFilters(req), q.clientName, q.task, q.limit ? Number(q.limit) : undefined
+    readClientDocFilters(req), q.clientName, q.task, q.limit ? Number(q.limit) : undefined, q.taskType || undefined
   );
   res.json({ success: true, data });
+}));
+
+// Client & Document Report page redesign (2026-09-18): DOC/POA slicer, Task Type dropdown, and a
+// Document-wise / Client-wise Task+AHT series and ranking. Additive — the endpoints above are unchanged.
+function readClientDocSeriesFilters(req: AuthenticatedRequest): clientDocSeries.ClientDocSeriesFilters {
+  const q = req.query as Record<string, string | undefined>;
+  return {
+    from: q.from, to: q.to, tlName: q.tlName, amName: q.amName,
+    queue: q.queue === "POA" ? "POA" : "DOC",
+    groupBy: q.groupBy === "client" ? "client" : "document",
+    value: q.value || undefined,
+    taskType: q.taskType || undefined,
+  };
+}
+router.get("/client-doc/series", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const granularity = (req.query as Record<string, string | undefined>).granularity === "weekly" ? "weekly" : "monthly";
+  const data = await clientDocSeries.getClientDocSeries(readClientDocSeriesFilters(req), granularity);
+  res.json({ success: true, data });
+}));
+router.get("/client-doc/ranking", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await clientDocSeries.getClientDocRanking(readClientDocSeriesFilters(req));
+  res.json({ success: true, data });
+}));
+router.get("/client-doc/options", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const f = readClientDocSeriesFilters(req);
+  const [taskTypes, clients, documents] = await Promise.all([
+    clientDocSeries.getClientDocTaskTypeOptions(f),
+    clientDocSeries.getClientDocClientOptions(f),
+    clientDocSeries.getClientDocDocumentOptionsForQueue(f),
+  ]);
+  res.json({ success: true, data: { taskTypes, clients, documents } });
 }));
 
 // Item #7: POA External Dashboard (new format, onfido_poa_external_raw). Row
@@ -368,6 +416,10 @@ router.get("/gd-mcn-sla/trend", requireAuth, requireRole(...VIEWER_ROLES), h(asy
 }));
 router.get("/gd-mcn-sla/slot-breakdown", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const data = await svc.getGdMcnSlaSlotBreakdown(readQueryFilters(req));
+  res.json({ success: true, data });
+}));
+router.get("/gd-mcn-sla/detail", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getGdMcnSlaDetail(readQueryFilters(req));
   res.json({ success: true, data });
 }));
 

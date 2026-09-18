@@ -381,6 +381,27 @@ function getTemplateHeaders(template: UploadTemplate) {
   return headers;
 }
 
+/** Whitespace- and case-insensitive header identity, so " Avail% " / "Yes/No" vs "Yes/NO"
+ *  never blocks an upload over a difference that carries no meaning. */
+function headerKey(value: string) {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/** Alternate spellings a template accepts for one of its headers (server-supplied in
+ *  validation_rules.header_aliases; e.g. the source system's own "Occopancy%" typo).
+ *  Returns normalized alias -> normalized canonical header. */
+function getHeaderAliasMap(template: UploadTemplate): Map<string, string> {
+  const map = new Map<string, string>();
+  const raw = (template.validation_rules as { header_aliases?: unknown } | null | undefined)?.header_aliases;
+  if (raw && typeof raw === "object") {
+    for (const [canonical, aliases] of Object.entries(raw as Record<string, unknown>)) {
+      if (!Array.isArray(aliases)) continue;
+      for (const alias of aliases) map.set(headerKey(String(alias)), headerKey(canonical));
+    }
+  }
+  return map;
+}
+
 /**
  * Drops only TRAILING blank entries (a genuinely blank header/value in the middle stays,
  * since that is a real structural problem worth surfacing). Excel's used-range can declare
@@ -498,18 +519,23 @@ function buildCsvHealth(
   parsed: CsvParseResult
 ): CsvHealth {
   const expectedHeaders = getTemplateHeaders(template);
-  const uploadedHeaderSet = new Set(parsed.headers);
-  const expectedHeaderSet = new Set(expectedHeaders);
+  const aliasMap = getHeaderAliasMap(template);
+  const canonicalKey = (header: string) => {
+    const key = headerKey(header);
+    return aliasMap.get(key) ?? key;
+  };
+  const uploadedKeySet = new Set(parsed.headers.map(canonicalKey));
+  const expectedKeySet = new Set(expectedHeaders.map(headerKey));
 
   const missingHeaders = expectedHeaders.filter(
-    (header) => !uploadedHeaderSet.has(header)
+    (header) => !uploadedKeySet.has(headerKey(header))
   );
   const unknownHeaders = parsed.headers.filter(
-    (header) => header && !expectedHeaderSet.has(header)
+    (header) => header && !expectedKeySet.has(canonicalKey(header))
   );
   const wrongOrder =
     expectedHeaders.length === parsed.headers.length &&
-    expectedHeaders.some((header, index) => header !== parsed.headers[index]);
+    expectedHeaders.some((header, index) => headerKey(header) !== canonicalKey(parsed.headers[index]));
 
   return {
     headers: parsed.headers,
@@ -1643,9 +1669,11 @@ export default function BulkUploadHub() {
     // real "Audit Data" sheet LAST, after six person-specific pivot/scratch tabs
     // ("Extraction Only", "AM TL Wise", "Rohit Only", ...) — blindly reading
     // SheetNames[0] would have staged one of those instead.
+    const aliasMap = template ? getHeaderAliasMap(template) : new Map<string, string>();
+    const canonicalKey = (c: string) => aliasMap.get(headerKey(c)) ?? headerKey(c);
     const expected = new Set([
       ...(template?.required_columns || []), ...(template?.optional_columns || []),
-    ].map((c) => c.trim()));
+    ].map((c) => headerKey(c)));
     let bestSheetName = workbook.SheetNames[0]!;
     let bestScore = -1;
     // Tie-break on fewest extra/unknown columns, not just first-sheet-wins: two
@@ -1664,8 +1692,8 @@ export default function BulkUploadHub() {
         const firstRow = XLSX.utils.sheet_to_json(sheet, { header: 1, range: 0 })[0] as unknown[] | undefined;
         if (!firstRow) continue;
         const headerCells = firstRow.map((cell) => String(cell ?? "").trim()).filter((c) => c !== "");
-        const score = headerCells.filter((c) => expected.has(c)).length;
-        const extra = headerCells.filter((c) => !expected.has(c)).length;
+        const score = headerCells.filter((c) => expected.has(canonicalKey(c))).length;
+        const extra = headerCells.filter((c) => !expected.has(canonicalKey(c))).length;
         if (score > bestScore || (score === bestScore && extra < bestExtra)) {
           bestScore = score;
           bestExtra = extra;

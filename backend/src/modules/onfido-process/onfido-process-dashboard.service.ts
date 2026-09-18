@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { getOnfidoPool } from "../../db/onfidoDb.js";
 import { ONFIDO_REPORT_CONFIGS } from "../bulk-upload/onfido-report-configs.js";
+import { ensureOnfidoTableColumns } from "../bulk-upload/onfido-schema-sync.js";
 
 /**
  * Onfido process KPI/Quality/Operations dashboard.
@@ -53,6 +54,37 @@ function readFilters(raw: { from?: string; to?: string; tlName?: string }): Perf
 
 export { readFilters };
 
+// ── DOC AHT rule (2026-09-18 owner feedback) ─────────────────────────────────
+//
+// "Doc AHT — we don't consider task type process_labelling_document_raw_extraction.
+// Excluding that task type, every place should show the average AHT." Verified against
+// the client's own GD/MCN/SLA sheet, whose per-day "Doc AHT" is exactly this average:
+// 1-Sep-26 = 111.50s here with the labelling type excluded, 124.60s with it included.
+//
+// The task type lives in the row's raw_data ("Task Information Task Type Old"); the
+// older "Task Type Short Name" key is blank on ~99% of rows and cannot carry it.
+export const DOC_TASK_TYPE_EXPR = `JSON_UNQUOTE(JSON_EXTRACT(raw_data, '$."Task Information Task Type Old"'))`;
+/** The task type as a label: the Old key first, the Short Name key (populated on a
+ *  small tail of rows) as a fallback, NULL when both are blank. */
+export const DOC_TASK_TYPE_LABEL_EXPR =
+  `COALESCE(NULLIF(TRIM(${DOC_TASK_TYPE_EXPR}), ''), NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(raw_data, '$."Task Type Short Name"'))), ''))`;
+const DOC_AHT_EXCLUDED_TASK_TYPE = "process_labelling_document_raw_extraction";
+/** WHERE fragment matching the DOC rows that count toward AHT. */
+export const DOC_AHT_ROW_FILTER = `COALESCE(${DOC_TASK_TYPE_EXPR}, '') <> '${DOC_AHT_EXCLUDED_TASK_TYPE}'`;
+/** Drop-in replacement for AVG(manual_processing_time_secs) on onfido_doc_raw. */
+export const DOC_AHT_AVG = `AVG(CASE WHEN ${DOC_AHT_ROW_FILTER} THEN manual_processing_time_secs END)`;
+
+// ── POA figures are POA-raw only (2026-09-18 owner feedback) ─────────────────
+//
+// The Overview/POA pages used to fold onfido_poa_trial_raw (a separate trial-queue
+// export, ~124 reports) into POA volume, AHT and the trends ("Raw + Trial Combined").
+// The owner asked for POA alone — trial reports have their own POA Trial tab — and the
+// client's own GD/MCN/SLA sheet reproduces the POA-raw-only per-day AHT exactly
+// (2-Sep-26: 191.32s both). Every query that merged the trial table now reads this
+// always-empty source instead, so the merge code stays in place and is one constant
+// to flip back. The standalone POA Trial tab queries the real table and is unaffected.
+const POA_TRIAL_MERGE_SOURCE = "(SELECT * FROM onfido_poa_trial_raw WHERE 1 = 0) AS poa_trial_not_counted";
+
 /**
  * mysql2 returns SUM()/COUNT()-on-BIGINT-column results as STRINGS, not numbers (the
  * driver's default so a value beyond Number.MAX_SAFE_INTEGER doesn't silently lose
@@ -96,7 +128,7 @@ export async function getOverview(rawFilters: { from?: string; to?: string; tlNa
   const filterParams = [...tlParam, ...amParam];
 
   const docVolume = await scalar<RowDataPacket & { n: number; aht: number | null; esc: number }>(
-    `SELECT COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht, SUM(is_escalated) AS esc
+    `SELECT COUNT(*) AS n, ${DOC_AHT_AVG} AS aht, SUM(is_escalated) AS esc
        FROM onfido_doc_raw WHERE report_date BETWEEN ? AND ? ${filterClause}`,
     [f.from, f.to, ...filterParams]
   );
@@ -148,7 +180,7 @@ export async function getOverview(rawFilters: { from?: string; to?: string; tlNa
   );
   const poaTrial = await scalar<RowDataPacket & { n: number; aht: number | null }>(
     `SELECT COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
-       FROM onfido_poa_trial_raw WHERE report_completed_date BETWEEN ? AND ? ${filterClause}`,
+       FROM ${POA_TRIAL_MERGE_SOURCE} WHERE report_completed_date BETWEEN ? AND ? ${filterClause}`,
     [f.from, f.to, ...filterParams]
   );
   // Volume-weighted combine, not an average-of-averages: onfido_poa_raw and
@@ -279,7 +311,7 @@ export async function getTlBreakdown(rawFilters: { from?: string; to?: string })
 
   const [docRows] = await pool.query<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(tl_name), ''), '(unassigned)') AS tl_name,
-            COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht, SUM(is_escalated) AS esc
+            COUNT(*) AS n, ${DOC_AHT_AVG} AS aht, SUM(is_escalated) AS esc
        FROM onfido_doc_raw WHERE report_date BETWEEN ? AND ?
        GROUP BY tl_name`,
     [f.from, f.to]
@@ -386,6 +418,7 @@ interface MetricDef {
   dateColumn: string;
   kind: "count" | "avg" | "rate";
   column?: string;          // for kind: "avg"
+  avgExpr?: string;         // for kind: "avg" — overrides AVG(column) (e.g. DOC's task-type exclusion)
   numeratorExpr?: string;   // for kind: "rate"
   denominatorExpr?: string; // for kind: "rate"
   recordFilter?: string;    // WHERE fragment narrowing level-3 records to what this metric counts
@@ -395,7 +428,7 @@ const METRIC_DEFS: Record<string, MetricDef> = {
   doc_volume: { key: "doc_volume", table: "onfido_doc_raw", dateColumn: "report_date", kind: "count" },
   doc_aht: {
     key: "doc_aht", table: "onfido_doc_raw", dateColumn: "report_date", kind: "avg",
-    column: "manual_processing_time_secs",
+    column: "manual_processing_time_secs", avgExpr: DOC_AHT_AVG, recordFilter: DOC_AHT_ROW_FILTER,
   },
   doc_escalation_rate: {
     key: "doc_escalation_rate", table: "onfido_doc_raw", dateColumn: "report_date", kind: "rate",
@@ -468,7 +501,7 @@ export async function getMetricTlBreakdown(metricKey: string, rawFilters: { from
 
   const selectExpr =
     def.kind === "count" ? "COUNT(*) AS value" :
-    def.kind === "avg" ? `AVG(${def.column}) AS value` :
+    def.kind === "avg" ? `${def.avgExpr ?? `AVG(${def.column})`} AS value` :
     `${def.numeratorExpr} AS n, ${def.denominatorExpr} AS d`;
 
   const [rows] = await pool.query<RowDataPacket[]>(
@@ -530,7 +563,7 @@ const ALLOWED_FILTER_COLUMNS = new Set([
 // other table task_type is allowed against stores it as a plain column, so this is the one
 // exception the generic filterColumn WHERE-builder below needs to special-case.
 const FILTER_COLUMN_JSON_OVERRIDE: Record<string, Record<string, string>> = {
-  onfido_doc_raw: { task_type: `JSON_UNQUOTE(JSON_EXTRACT(raw_data, '$."Task Type Short Name"'))` },
+  onfido_doc_raw: { task_type: DOC_TASK_TYPE_LABEL_EXPR },
 };
 
 export interface RecordListFilters {
@@ -632,12 +665,12 @@ function dateBucketToIso(d: unknown): string {
 }
 
 /** Same daily/weekly/monthly bucket expression every trend function below uses. */
-function bucketExpr(dateCol: string, granularity: TrendGranularity): string {
+export function bucketExpr(dateCol: string, granularity: TrendGranularity): string {
   return granularity === "daily" ? `DATE(${dateCol})`
     : granularity === "weekly" ? `DATE_SUB(${dateCol}, INTERVAL WEEKDAY(${dateCol}) DAY)`
     : `DATE_FORMAT(${dateCol}, '%Y-%m-01')`;
 }
-function bucketLabel(d: unknown, granularity: TrendGranularity): string {
+export function bucketLabel(d: unknown, granularity: TrendGranularity): string {
   const iso = dateBucketToIso(d);
   return granularity === "monthly" ? iso.slice(0, 7) : iso;
 }
@@ -1142,7 +1175,7 @@ function aonDisplayLabel(raw: string): string | null {
  * just the Overview tab. Every one of these tables really does carry both
  * tl_name and am_name columns, so this is safe to reuse unconditionally.
  */
-function tlAmFilter(tlName?: string, amName?: string): { clause: string; params: string[] } {
+export function tlAmFilter(tlName?: string, amName?: string): { clause: string; params: string[] } {
   const parts: string[] = [];
   const params: string[] = [];
   if (tlName) { parts.push("tl_name = ?"); params.push(tlName); }
@@ -2003,8 +2036,12 @@ export type EscalationDimension = "ims_client_name" | "error_category" | "tl_nam
 
 export interface EscalationBreakdownRow { label: string; count: number; }
 
+/** Optional slicer on the Client Escalations page: only CRE or only CRQ. Absent = both (unchanged). */
+export type EscalationSource = "CRE" | "CRQ";
+
 export async function getEscalationBreakdown(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, dimension: EscalationDimension
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, dimension: EscalationDimension,
+  source?: EscalationSource
 ): Promise<EscalationBreakdownRow[]> {
   const f = readFilters(rawFilters);
   const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
@@ -2012,10 +2049,11 @@ export async function getEscalationBreakdown(
   const side = (table: string) =>
     `SELECT COALESCE(NULLIF(TRIM(${dimension}), ''), '(unassigned)') AS label, COUNT(*) AS cnt
        FROM ${table} WHERE qc_updated_date BETWEEN ? AND ? ${clause} GROUP BY label`;
+  const tables = source === "CRE" ? [escCre] : source === "CRQ" ? [escCrq] : [escCre, escCrq];
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT label, SUM(cnt) AS total FROM (${side(escCre)} UNION ALL ${side(escCrq)}) t
+    `SELECT label, SUM(cnt) AS total FROM (${tables.map(side).join(" UNION ALL ")}) t
       GROUP BY label ORDER BY total DESC LIMIT 50`,
-    [f.from, f.to, ...params, f.from, f.to, ...params]
+    tables.flatMap(() => [f.from, f.to, ...params])
   );
   return rows.map((r) => ({ label: r.label, count: Number(r.total ?? 0) }));
 }
@@ -2035,7 +2073,8 @@ export async function getEscalationRecords(
   rawFilters: { from?: string; to?: string; tlName?: string; amName?: string },
   dimension: EscalationDimension,
   value: string,
-  limit = 50
+  limit = 50,
+  source?: EscalationSource
 ): Promise<{ rows: EscalationRecordRow[]; total: number }> {
   const f = readFilters(rawFilters);
   const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
@@ -2043,31 +2082,33 @@ export async function getEscalationRecords(
   const dimCond = value === "(unassigned)" ? `(${dimension} IS NULL OR TRIM(${dimension}) = '')` : `${dimension} = ?`;
   const valParams = value === "(unassigned)" ? [] : [value];
 
-  const [creRows] = await pool.query<RowDataPacket[]>(
+  const wantCre = source !== "CRQ";
+  const wantCrq = source !== "CRE";
+  const [creRows] = wantCre ? await pool.query<RowDataPacket[]>(
     `SELECT *, 'CRE' AS escalation_source FROM ${escCre}
       WHERE qc_updated_date BETWEEN ? AND ? ${clause} AND ${dimCond}
       ORDER BY qc_updated_date DESC LIMIT ?`,
     [f.from, f.to, ...params, ...valParams, limit]
-  );
-  const [crqRows] = await pool.query<RowDataPacket[]>(
+  ) : [[] as RowDataPacket[]];
+  const [crqRows] = wantCrq ? await pool.query<RowDataPacket[]>(
     `SELECT *, 'CRQ' AS escalation_source FROM ${escCrq}
       WHERE qc_updated_date BETWEEN ? AND ? ${clause} AND ${dimCond}
       ORDER BY qc_updated_date DESC LIMIT ?`,
     [f.from, f.to, ...params, ...valParams, limit]
-  );
+  ) : [[] as RowDataPacket[]];
   const rows = [...creRows, ...crqRows]
     .sort((a, b) => new Date(b.qc_updated_date as string).getTime() - new Date(a.qc_updated_date as string).getTime())
     .slice(0, limit) as EscalationRecordRow[];
 
-  const [[creCount]] = await pool.query<(RowDataPacket & { n: number })[]>(
-    `SELECT COUNT(*) AS n FROM ${escCre} WHERE qc_updated_date BETWEEN ? AND ? ${clause} AND ${dimCond}`,
-    [f.from, f.to, ...params, ...valParams]
-  );
-  const [[crqCount]] = await pool.query<(RowDataPacket & { n: number })[]>(
-    `SELECT COUNT(*) AS n FROM ${escCrq} WHERE qc_updated_date BETWEEN ? AND ? ${clause} AND ${dimCond}`,
-    [f.from, f.to, ...params, ...valParams]
-  );
-  return { rows, total: Number(creCount.n) + Number(crqCount.n) };
+  const countOf = async (table: string): Promise<number> => {
+    const [[row]] = await pool.query<(RowDataPacket & { n: number })[]>(
+      `SELECT COUNT(*) AS n FROM ${table} WHERE qc_updated_date BETWEEN ? AND ? ${clause} AND ${dimCond}`,
+      [f.from, f.to, ...params, ...valParams]
+    );
+    return Number(row.n);
+  };
+  const total = (wantCre ? await countOf(escCre) : 0) + (wantCrq ? await countOf(escCrq) : 0);
+  return { rows, total };
 }
 
 // ── Client & Document Report (item #6 of the 2026-09-12 feedback: "DOC Check
@@ -2114,7 +2155,7 @@ export async function getClientDocOverview(
   const { clause: tlClause, params: tlParams } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
   const { clause: docClause, params: docParams } = documentNameFilter(rawFilters.documentName);
   const doc = await scalar<RowDataPacket & { n: number; aht: number | null; clients: number }>(
-    `SELECT COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht, COUNT(DISTINCT ims_client_name) AS clients
+    `SELECT COUNT(*) AS n, ${DOC_AHT_AVG} AS aht, COUNT(DISTINCT ims_client_name) AS clients
        FROM ${cdDoc} WHERE report_date BETWEEN ? AND ? ${tlClause} ${docClause}`,
     [f.from, f.to, ...tlParams, ...docParams]
   );
@@ -2187,7 +2228,7 @@ export async function getClientDocBreakdown(
   const pool = await getOnfidoPool();
   const [docRows] = await pool.query<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(ims_client_name), ''), '(unassigned)') AS client_name,
-            COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
+            COUNT(*) AS n, ${DOC_AHT_AVG} AS aht
        FROM ${cdDoc} WHERE report_date BETWEEN ? AND ? ${tlClause} ${docClause} GROUP BY client_name`,
     [f.from, f.to, ...tlParams, ...docParams]
   );
@@ -2232,30 +2273,35 @@ export interface ClientDocRecordRow extends RowDataPacket { source_table: "ONFID
  *  generic /records/:table/:id detail route with no extra mapping step. */
 export async function getClientDocRecords(
   rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; documentName?: string },
-  clientName: string,
+  clientName: string | undefined,
   task: "DOC" | "POA",
-  limit = 50
+  limit = 50,
+  taskType?: string
 ): Promise<{ rows: ClientDocRecordRow[]; total: number }> {
   const f = readFilters(rawFilters);
   const { clause: tlClause, params: tlParams } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
   const { clause: docClause, params: docParams } = documentNameFilter(rawFilters.documentName);
   const pool = await getOnfidoPool();
-  const clientCond = clientName === "(unassigned)"
-    ? "(ims_client_name IS NULL OR TRIM(ims_client_name) = '')" : "ims_client_name = ?";
-  const clientParams = clientName === "(unassigned)" ? [] : [clientName];
+  // clientName omitted = every client (the Document-wise ranking drills into a document, not a client).
+  const clientCond = clientName === undefined ? "1 = 1"
+    : clientName === "(unassigned)" ? "(ims_client_name IS NULL OR TRIM(ims_client_name) = '')" : "ims_client_name = ?";
+  const clientParams = clientName === undefined || clientName === "(unassigned)" ? [] : [clientName];
+  // Task type is a DOC-only field (raw_data); ignored for POA.
+  const taskTypeCond = task === "DOC" && taskType ? `AND ${DOC_TASK_TYPE_LABEL_EXPR} = ?` : "";
+  const taskTypeParams = task === "DOC" && taskType ? [taskType] : [];
 
   const table = task === "DOC" ? cdDoc : cdPoa;
   const dateCol = task === "DOC" ? "report_date" : "report_completed_date";
   const sourceTable = task === "DOC" ? "ONFIDO_DOC_RAW" : "ONFIDO_POA_RAW";
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT *, '${sourceTable}' AS source_table FROM ${table}
-      WHERE ${dateCol} BETWEEN ? AND ? ${tlClause} ${docClause} AND ${clientCond}
+      WHERE ${dateCol} BETWEEN ? AND ? ${tlClause} ${docClause} AND ${clientCond} ${taskTypeCond}
       ORDER BY ${dateCol} DESC LIMIT ?`,
-    [f.from, f.to, ...tlParams, ...docParams, ...clientParams, limit]
+    [f.from, f.to, ...tlParams, ...docParams, ...clientParams, ...taskTypeParams, limit]
   );
   const [[countRow]] = await pool.query<(RowDataPacket & { n: number })[]>(
-    `SELECT COUNT(*) AS n FROM ${table} WHERE ${dateCol} BETWEEN ? AND ? ${tlClause} ${docClause} AND ${clientCond}`,
-    [f.from, f.to, ...tlParams, ...docParams, ...clientParams]
+    `SELECT COUNT(*) AS n FROM ${table} WHERE ${dateCol} BETWEEN ? AND ? ${tlClause} ${docClause} AND ${clientCond} ${taskTypeCond}`,
+    [f.from, f.to, ...tlParams, ...docParams, ...clientParams, ...taskTypeParams]
   );
   return { rows: rows as ClientDocRecordRow[], total: Number(countRow.n) };
 }
@@ -2386,6 +2432,7 @@ export async function getGdMcnSlaOverview(
   rawFilters: { from?: string; to?: string }
 ): Promise<GdMcnSlaOverview> {
   const f = readFilters(rawFilters);
+  await ensureOnfidoTableColumns(gdMcnSla);
   const agg = await scalar<RowDataPacket & {
     sla: number | null; gd: number | null; mcn: number | null; occ: number | null; avail: number | null;
   }>(
@@ -2409,6 +2456,7 @@ export async function getGdMcnSlaOverview(
 export interface GdMcnSlaTrendPoint {
   bucket: string; slaPct: number | null; gdPct: number | null; mcnPct: number | null;
   commitment: number | null; fteDelivered: number | null;
+  docAht: number | null; poaAht: number | null;
 }
 
 /** Day-wise trend by default (unchanged callers keep their existing daily chart) —
@@ -2418,10 +2466,12 @@ export async function getGdMcnSlaTrend(
   rawFilters: { from?: string; to?: string }, granularity: TrendGranularity = "daily"
 ): Promise<GdMcnSlaTrendPoint[]> {
   const f = readFilters(rawFilters);
+  await ensureOnfidoTableColumns(gdMcnSla);
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT ${bucketExpr("slot_date", granularity)} AS bucket, AVG(sla_pct) AS sla_pct, AVG(gd_pct) AS gd_pct,
-            AVG(mcn_pct) AS mcn_pct, SUM(commitment) AS commitment, SUM(fte_delivered) AS fte_delivered
+            AVG(mcn_pct) AS mcn_pct, SUM(commitment) AS commitment, SUM(fte_delivered) AS fte_delivered,
+            AVG(doc_aht) AS doc_aht, AVG(poa_aht) AS poa_aht
        FROM ${gdMcnSla} WHERE slot_date BETWEEN ? AND ? AND gmt_slot = 'Total' GROUP BY bucket ORDER BY bucket`,
     [f.from, f.to]
   );
@@ -2432,6 +2482,8 @@ export async function getGdMcnSlaTrend(
     mcnPct: pctToDisplay(r.mcn_pct !== null ? Number(r.mcn_pct) : null),
     commitment: r.commitment !== null ? Math.round(Number(r.commitment) * 10) / 10 : null,
     fteDelivered: r.fte_delivered !== null ? Math.round(Number(r.fte_delivered) * 10) / 10 : null,
+    docAht: r.doc_aht !== null ? Math.round(Number(r.doc_aht) * 100) / 100 : null,
+    poaAht: r.poa_aht !== null ? Math.round(Number(r.poa_aht) * 100) / 100 : null,
   }));
 }
 
@@ -2462,6 +2514,43 @@ export async function getGdMcnSlaSlotBreakdown(
   }));
 }
 
+export interface GdMcnSlaDetailRow {
+  date: string; gmt: string; ist: string;
+  gdPct: number | null; mcnPct: number | null; deficit: number | null; slaPct: number | null;
+  docAht: number | null; poaAht: number | null; commitment: number | null; fteDelivered: number | null;
+  apsPct: number | null; occupancyPct: number | null; availPct: number | null;
+  isTotal: boolean;
+}
+
+/** The full "GD / MCN / SLA / APS Performance" table exactly as the client's sheet lays
+ *  it out: one row per day x hourly slot, followed by that day's own Total row, in the
+ *  file's own order. Ratios (GD%, SLA%, ...) are returned as stored — the UI formats
+ *  them to the sheet's own precision per column. */
+export async function getGdMcnSlaDetail(
+  rawFilters: { from?: string; to?: string }
+): Promise<GdMcnSlaDetailRow[]> {
+  const f = readFilters(rawFilters);
+  await ensureOnfidoTableColumns(gdMcnSla);
+  const pool = await getOnfidoPool();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT slot_date, gmt_slot, ist_slot, gd_pct, mcn_pct, deficit, sla_pct, doc_aht, poa_aht,
+            commitment, fte_delivered, aps_pct, occupancy_pct, avail_pct
+       FROM ${gdMcnSla} WHERE slot_date BETWEEN ? AND ?
+      ORDER BY slot_date, source_row_no LIMIT 5000`,
+    [f.from, f.to]
+  );
+  const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+  return rows.map((r): GdMcnSlaDetailRow => ({
+    date: dateBucketToIso(r.slot_date),
+    gmt: String(r.gmt_slot ?? ""),
+    ist: String(r.ist_slot ?? ""),
+    gdPct: num(r.gd_pct), mcnPct: num(r.mcn_pct), deficit: num(r.deficit), slaPct: num(r.sla_pct),
+    docAht: num(r.doc_aht), poaAht: num(r.poa_aht), commitment: num(r.commitment), fteDelivered: num(r.fte_delivered),
+    apsPct: num(r.aps_pct), occupancyPct: num(r.occupancy_pct), availPct: num(r.avail_pct),
+    isTotal: String(r.gmt_slot ?? "").trim().toLowerCase() === "total",
+  }));
+}
+
 // ── DOC Raw (per-task volume/AHT, onfido_doc_raw) ───────────────────────────
 //
 // Distinct from onfido_doc_external_audit_raw (which only ever carries
@@ -2479,7 +2568,7 @@ export async function getDocRawOverview(
   const f = readFilters(rawFilters);
   const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
   const agg = await scalar<RowDataPacket & { n: number; aht: number | null; queue: number | null; esc: number }>(
-    `SELECT COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht, AVG(queue_time_secs) AS queue, SUM(is_escalated) AS esc
+    `SELECT COUNT(*) AS n, ${DOC_AHT_AVG} AS aht, AVG(queue_time_secs) AS queue, SUM(is_escalated) AS esc
        FROM onfido_doc_raw WHERE report_date BETWEEN ? AND ? ${clause}`,
     [f.from, f.to, ...params]
   );
@@ -2504,7 +2593,7 @@ export async function getDocRawTrend(
   const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT ${bucketExpr("report_date", granularity)} AS bucket, COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
+    `SELECT ${bucketExpr("report_date", granularity)} AS bucket, COUNT(*) AS n, ${DOC_AHT_AVG} AS aht
        FROM onfido_doc_raw WHERE report_date BETWEEN ? AND ? ${clause} GROUP BY bucket ORDER BY bucket`,
     [f.from, f.to, ...params]
   );
@@ -2527,7 +2616,7 @@ const DOC_RAW_DIMENSION_EXPR: Record<DocRawDimension, string> = {
   ims_client_name: "ims_client_name",
   tl_name: "tl_name",
   am_name: "am_name",
-  task_type: `JSON_UNQUOTE(JSON_EXTRACT(raw_data, '$."Task Type Short Name"'))`,
+  task_type: DOC_TASK_TYPE_LABEL_EXPR,
 };
 
 export async function getDocRawBreakdown(
@@ -2540,7 +2629,7 @@ export async function getDocRawBreakdown(
   const unassignedLabel = dimension === "task_type" ? "Standard Review (untagged)" : "(unassigned)";
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(${expr}), ''), ?) AS label,
-            COUNT(*) AS total, AVG(manual_processing_time_secs) AS aht, SUM(is_escalated) AS esc
+            COUNT(*) AS total, ${dimension === "task_type" ? "AVG(manual_processing_time_secs)" : DOC_AHT_AVG} AS aht, SUM(is_escalated) AS esc
        FROM onfido_doc_raw WHERE report_date BETWEEN ? AND ? ${clause}
        GROUP BY label ORDER BY total DESC LIMIT 50`,
     [unassignedLabel, f.from, f.to, ...params]
@@ -2621,7 +2710,7 @@ export async function getPoaOverview(
   );
   const trial = await scalar<RowDataPacket & { n: number; aht: number | null }>(
     `SELECT COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
-       FROM onfido_poa_trial_raw WHERE report_completed_date BETWEEN ? AND ? ${clause}`,
+       FROM ${POA_TRIAL_MERGE_SOURCE} WHERE report_completed_date BETWEEN ? AND ? ${clause}`,
     [f.from, f.to, ...params]
   );
   const poaAhtWeightedSum = (raw.aht !== null ? raw.aht * raw.n : 0) + (trial.aht !== null ? trial.aht * trial.n : 0);
@@ -2696,7 +2785,7 @@ export async function getPoaTrend(
     [f.from, f.to, ...params]
   );
   const [trialRows] = await pool.query<RowDataPacket[]>(
-    `SELECT ${expr} AS bucket, COUNT(*) AS n FROM onfido_poa_trial_raw
+    `SELECT ${expr} AS bucket, COUNT(*) AS n FROM ${POA_TRIAL_MERGE_SOURCE}
       WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY bucket`,
     [f.from, f.to, ...params]
   );
@@ -2726,7 +2815,7 @@ export async function getPoaBreakdown(
     [f.from, f.to, ...params]
   );
   const [trialRows] = await pool.query<RowDataPacket[]>(
-    `SELECT ${label} AS label, COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht FROM onfido_poa_trial_raw
+    `SELECT ${label} AS label, COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht FROM ${POA_TRIAL_MERGE_SOURCE}
       WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY label`,
     [f.from, f.to, ...params]
   );
@@ -2796,7 +2885,7 @@ export async function getPoaEntityMonthlyGrid(
   );
   const [trialRows] = await pool.query<RowDataPacket[]>(
     `SELECT ${dimension} AS entity, ${monthExpr} AS month, COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
-       FROM onfido_poa_trial_raw WHERE report_completed_date BETWEEN ? AND ? AND ${entityFilter} GROUP BY entity, month`,
+       FROM ${POA_TRIAL_MERGE_SOURCE} WHERE report_completed_date BETWEEN ? AND ? AND ${entityFilter} GROUP BY entity, month`,
     [f.from, f.to]
   );
   const [qualityRows] = await pool.query<RowDataPacket[]>(
@@ -2888,7 +2977,7 @@ export async function getPoaDayWiseDetail(
   );
   const [trialRows] = await pool.query<RowDataPacket[]>(
     `SELECT ${dayExpr} AS day, COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
-       FROM onfido_poa_trial_raw WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY day`,
+       FROM ${POA_TRIAL_MERGE_SOURCE} WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY day`,
     [f.from, f.to, ...params]
   );
   const [qualityRows] = await pool.query<RowDataPacket[]>(
@@ -3023,7 +3112,7 @@ export async function getPoaCombinedTrend(
   );
   const [trialRows] = await pool.query<RowDataPacket[]>(
     `SELECT ${expr} AS bucket, COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
-       FROM onfido_poa_trial_raw WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY bucket`,
+       FROM ${POA_TRIAL_MERGE_SOURCE} WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY bucket`,
     [f.from, f.to, ...params]
   );
   const byBucket = new Map<string, { n: number; sum: number }>();
@@ -3098,7 +3187,7 @@ export async function getLiveOverview(): Promise<LiveOverview> {
   const today = todayIso();
   const monthStart = monthStartIso();
   const doc = await scalar<RowDataPacket & { n: number; aht: number | null }>(
-    `SELECT COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht FROM onfido_doc_raw WHERE report_date = ?`,
+    `SELECT COUNT(*) AS n, ${DOC_AHT_AVG} AS aht FROM onfido_doc_raw WHERE report_date = ?`,
     [today]
   );
   const docAudit = await scalar<RowDataPacket & { n: number; errN: number }>(
@@ -3132,7 +3221,7 @@ export async function getLiveDocBreakdown(dimension: LiveDimension): Promise<Liv
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(${dimension}), ''), '(unassigned)') AS label,
-            COUNT(*) AS total, AVG(manual_processing_time_secs) AS aht
+            COUNT(*) AS total, ${DOC_AHT_AVG} AS aht
        FROM onfido_doc_raw WHERE report_date = ?
        GROUP BY label ORDER BY total DESC LIMIT 20`,
     [today]
