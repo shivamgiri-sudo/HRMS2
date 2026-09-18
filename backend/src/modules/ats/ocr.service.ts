@@ -10,6 +10,11 @@ const AADHAAR_REGEX = /\b(\d{4}\s?\d{4}\s?\d{4})\b/;
 const PAN_REGEX = /\b([A-Z]{3}[PCHFATBLJG][A-Z]\d{4}[A-Z])\b/;
 const ACCOUNT_REGEX = /\b(\d{9,18})\b/g;
 const IFSC_REGEX = /\b([A-Z]{4}0[A-Z0-9]{6})\b/;
+const ACCOUNT_LABEL_LINE_REGEX = /A\/?C\.?\s*(NO|NUM|NUMBER)\b|ACCOUNT\s*(NO|NUM|NUMBER)\b|ACC\.?\s*NO\b/i;
+const ACCOUNT_LABEL_WORD_REGEX = /^(A\/?C\.?|ACCOUNT|ACC\.?|NO\.?:?|NUM\.?:?|NUMBER:?)$/i;
+// A line naming any of these is a different field than the account number, even
+// when it also happens to contain label-shaped text — never treat it as the anchor.
+const EXCLUDE_LABEL_LINE_REGEX = /MICR|IFSC|CHEQUE\s*NO|MOBILE|PHONE|CUSTOMER\s*ID/i;
 
 export interface OcrExtractionResult {
   rawText: string;
@@ -34,6 +39,9 @@ export async function extractFromDocument(filePath: string, docType: string): Pr
     return { rawText: "", extractedNumber: null, extractedName: null, extractedDob: null, confidence: 0, documentType: "other" };
   }
 
+  const normalizedDocType = docType.toLowerCase();
+  const isCheque = normalizedDocType.includes("cheque") || normalizedDocType.includes("passbook") || normalizedDocType.includes("bank");
+
   // errorHandler is mandatory here, not cosmetic. When tesseract.js cannot decode
   // an image its worker callback rejects the promise AND, when no errorHandler was
   // supplied, also runs `throw Error(data)` (createWorker.js:210-218). That throw
@@ -41,21 +49,32 @@ export async function extractFromDocument(filePath: string, docType: string): Pr
   // see it — it surfaces as an uncaughtException and kills the backend process.
   // One candidate uploading an unreadable Aadhaar photo took the whole API down,
   // and the severed connection is what the browser reports as "Failed to fetch".
-  const { data } = await Tesseract.recognize(filePath, "eng", {
+  //
+  // Cheque/passbook documents ask for `blocks: true` on top of the default
+  // `text: true` — the extra hierarchical block/paragraph/line/word structure
+  // (each word with its own bounding box) is what lets extractChequeDetails find
+  // the account number by its printed label instead of guessing from a bare
+  // digit-run regex over the whole page. Aadhaar/PAN extraction doesn't need it.
+  const worker = await Tesseract.createWorker("eng", 1, {
     logger: () => {},
     errorHandler: () => {},
   });
+  let data: Tesseract.Page;
+  try {
+    ({ data } = await worker.recognize(filePath, {}, { text: true, blocks: isCheque }));
+  } finally {
+    await worker.terminate();
+  }
 
   const text = data.text;
   const confidence = data.confidence;
-  const normalizedDocType = docType.toLowerCase();
 
   if (normalizedDocType.includes("aadhaar") || normalizedDocType.includes("aadhar")) {
     return extractAadhaarDetails(text, confidence);
   } else if (normalizedDocType.includes("pan")) {
     return extractPanDetails(text, confidence);
-  } else if (normalizedDocType.includes("cheque") || normalizedDocType.includes("passbook") || normalizedDocType.includes("bank")) {
-    return extractChequeDetails(text, confidence);
+  } else if (isCheque) {
+    return extractChequeDetails(text, confidence, data.blocks);
   }
 
   return { rawText: text, extractedNumber: null, extractedName: null, extractedDob: extractDobFromText(text), confidence, documentType: "other" };
@@ -94,26 +113,81 @@ function extractPanDetails(text: string, confidence: number): OcrExtractionResul
   return { rawText: text, extractedNumber: number, extractedName: name, extractedDob: extractDobFromText(text), confidence, documentType: "pan" };
 }
 
-function extractChequeDetails(text: string, confidence: number): OcrExtractionResult {
-  const ifscMatch = text.toUpperCase().match(IFSC_REGEX);
-  const accountMatches = text.match(ACCOUNT_REGEX);
+/** Word-level OCR data flattened out of tesseract's block/paragraph/line hierarchy. */
+type OcrLine = { text: string; words: { text: string }[] };
 
-  let accountNumber: string | null = null;
-  if (accountMatches) {
-    const candidates = accountMatches.filter(m => m.length >= 9 && m.length <= 18);
-    // Indian MICR codes are always exactly 9 digits; account numbers are almost
-    // never that short (typically 10-18). The old rule ("first 9-18 digit run
-    // found anywhere on the page") grabbed the MICR line far more often than the
-    // real account number — confirmed against live fraud-alert data: the
-    // OCR-extracted number was shorter than the candidate's real account number
-    // in the large majority of CHEQUE_ACCOUNT_MISMATCH cases, consistent with
-    // picking up a 9-digit MICR code instead. Prefer a longer, non-MICR-shaped
-    // candidate; fall back to whatever was found if nothing longer exists.
-    const nonMicrShaped = candidates.filter(m => m.length !== 9);
-    const pool = nonMicrShaped.length > 0 ? nonMicrShaped : candidates;
-    accountNumber = pool.length > 0
-      ? pool.reduce((longest, m) => (m.length > longest.length ? m : longest), pool[0])
-      : null;
+function flattenLines(blocks: Tesseract.Block[] | null | undefined): OcrLine[] {
+  const lines: OcrLine[] = [];
+  for (const block of blocks ?? []) {
+    for (const paragraph of block.paragraphs ?? []) {
+      for (const line of paragraph.lines ?? []) {
+        lines.push({ text: line.text ?? "", words: (line.words ?? []).map(w => ({ text: w.text ?? "" })) });
+      }
+    }
+  }
+  return lines;
+}
+
+/**
+ * Finds the account number by its printed label ("A/C No", "Account Number", …)
+ * instead of guessing from the first digit-shaped string anywhere on the page.
+ * Looks for a sufficiently long digit word right after the label on the same
+ * line, falling back to the next line down (common two-line layout: label on
+ * one line, value on the next). Never anchors on a line that also names a
+ * different field (MICR, IFSC, cheque number, phone) — those often share
+ * label-shaped text and would otherwise steal the match.
+ */
+function findLabeledAccountNumber(lines: OcrLine[]): string | null {
+  const firstDigitWord = (words: { text: string }[]): string | null => {
+    for (const w of words) {
+      const digitsOnly = w.text.replace(/[^0-9]/g, "");
+      if (digitsOnly.length >= 9 && digitsOnly.length <= 18) return digitsOnly;
+    }
+    return null;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!ACCOUNT_LABEL_LINE_REGEX.test(line.text) || EXCLUDE_LABEL_LINE_REGEX.test(line.text)) continue;
+
+    const labelWordIndex = line.words.findIndex(w => ACCOUNT_LABEL_WORD_REGEX.test(w.text.trim()));
+    const sameLineHit = firstDigitWord(line.words.slice(labelWordIndex >= 0 ? labelWordIndex + 1 : 0));
+    if (sameLineHit) return sameLineHit;
+
+    const nextLine = lines[i + 1];
+    if (nextLine && !EXCLUDE_LABEL_LINE_REGEX.test(nextLine.text)) {
+      const nextLineHit = firstDigitWord(nextLine.words);
+      if (nextLineHit) return nextLineHit;
+    }
+  }
+  return null;
+}
+
+function extractChequeDetails(text: string, confidence: number, blocks?: Tesseract.Block[] | null): OcrExtractionResult {
+  const ifscMatch = text.toUpperCase().match(IFSC_REGEX);
+
+  let accountNumber: string | null = blocks ? findLabeledAccountNumber(flattenLines(blocks)) : null;
+
+  if (!accountNumber) {
+    const accountMatches = text.match(ACCOUNT_REGEX);
+    if (accountMatches) {
+      const candidates = accountMatches.filter(m => m.length >= 9 && m.length <= 18);
+      // Indian MICR codes are always exactly 9 digits; account numbers are almost
+      // never that short (typically 10-18). The old rule ("first 9-18 digit run
+      // found anywhere on the page") grabbed the MICR line far more often than the
+      // real account number — confirmed against live fraud-alert data: the
+      // OCR-extracted number was shorter than the candidate's real account number
+      // in the large majority of CHEQUE_ACCOUNT_MISMATCH cases, consistent with
+      // picking up a 9-digit MICR code instead. This whole block is only a
+      // fallback for when the label-anchored lookup above finds nothing — prefer
+      // a longer, non-MICR-shaped candidate; fall back to whatever was found if
+      // nothing longer exists.
+      const nonMicrShaped = candidates.filter(m => m.length !== 9);
+      const pool = nonMicrShaped.length > 0 ? nonMicrShaped : candidates;
+      accountNumber = pool.length > 0
+        ? pool.reduce((longest, m) => (m.length > longest.length ? m : longest), pool[0])
+        : null;
+    }
   }
 
   const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
