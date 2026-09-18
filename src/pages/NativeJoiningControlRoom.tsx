@@ -461,6 +461,11 @@ export default function NativeJoiningControlRoom() {
 
   const saveDates = async () => {
     if (!selectedId) return;
+    const joiningDate = detail?.offer?.date_of_joining;
+    if (dateForm.salary_start_date && joiningDate && dateForm.salary_start_date < joiningDate) {
+      setError(`Salary start date (${dateForm.salary_start_date}) cannot be before joining date (${joiningDate}).`);
+      return;
+    }
     setBusy(true);
     setMessage("");
     setError("");
@@ -980,10 +985,18 @@ export default function NativeJoiningControlRoom() {
                         <Label htmlFor="salary_start_date" className="text-xs font-medium text-slate-600">
                           Salary Start Date
                         </Label>
-                        <TextInput form={dateForm} setForm={setDateForm} name="salary_start_date" type="date" />
-                        <p className="text-[11px] text-slate-400">
-                          Date salary generation begins. Defaults to joining date if left blank.
-                        </p>
+                        <input
+                          type="date"
+                          className={`h-10 rounded border px-3 text-sm${dateForm.salary_start_date && detail?.offer?.date_of_joining && dateForm.salary_start_date < detail.offer.date_of_joining ? ' border-red-500 bg-red-50' : ' border-slate-300'}`}
+                          value={dateForm.salary_start_date ?? ""}
+                          min={detail?.offer?.date_of_joining || undefined}
+                          onChange={(e) => setDateForm({ ...dateForm, salary_start_date: e.target.value })}
+                        />
+                        {dateForm.salary_start_date && detail?.offer?.date_of_joining && dateForm.salary_start_date < detail.offer.date_of_joining ? (
+                          <p className="text-[11px] text-red-600">Cannot be before joining date ({detail.offer.date_of_joining}).</p>
+                        ) : (
+                          <p className="text-[11px] text-slate-400">Date salary generation begins. Defaults to joining date if left blank.</p>
+                        )}
                       </div>
                       <Field label="Attendance Effective From">
                         <TextInput form={dateForm} setForm={setDateForm} name="attendance_effective_from" type="date" />

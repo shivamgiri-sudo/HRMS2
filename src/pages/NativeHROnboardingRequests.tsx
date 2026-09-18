@@ -1066,6 +1066,9 @@ export default function NativeHROnboardingRequests() {
     const errors: Record<string, string> = {};
     const isProposed = offerTab === 'proposed';
     if (!offer.date_of_joining) errors.date_of_joining = 'Date of joining is required.';
+    if (offer.date_of_salary && offer.date_of_joining && offer.date_of_salary < offer.date_of_joining) {
+      errors.date_of_salary = `Salary start date cannot be before date of joining (${offer.date_of_joining}).`;
+    }
     if (!offer.department_id) errors.department_id = 'Department is required.';
     if (!offer.designation_id) errors.designation_id = 'Designation is required.';
     if (!offer.cost_centre) errors.cost_centre = 'Cost centre is required.';
@@ -2456,8 +2459,14 @@ export default function NativeHROnboardingRequests() {
                     <Field label="Date of Joining" required error={formFieldErrors.date_of_joining}>
                       <input type="date" className={SEL} value={offer.date_of_joining} onChange={(e) => setF('date_of_joining', e.target.value)} />
                     </Field>
-                    <Field label="Salary Start Date">
-                      <input type="date" className={SEL} value={offer.date_of_salary} onChange={(e) => setF('date_of_salary', e.target.value)} />
+                    <Field label="Salary Start Date" error={formFieldErrors.date_of_salary}>
+                      <input
+                        type="date"
+                        className={`${SEL}${offer.date_of_salary && offer.date_of_joining && offer.date_of_salary < offer.date_of_joining ? ' border-red-500 bg-red-50' : ''}`}
+                        value={offer.date_of_salary}
+                        min={offer.date_of_joining || undefined}
+                        onChange={(e) => setF('date_of_salary', e.target.value)}
+                      />
                     </Field>
                     <Field label="Employment Type">
                       <select className={SEL} value={offer.emp_type} onChange={(e) => setF('emp_type', e.target.value)}>
