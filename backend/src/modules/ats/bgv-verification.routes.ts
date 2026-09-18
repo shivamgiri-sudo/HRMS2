@@ -668,14 +668,17 @@ router.get("/report/full", requireAuth, requireRole("admin", "hr", "branch_hr", 
   if (!candidateId) return res.status(400).json({ success: false, message: "candidateId required" });
   await requireBgvCandidateScope(req, candidateId);
 
-  // Always sync check results → report columns and recompute score before
-  // returning. This ensures pan_status / overall_status / name_match columns
-  // are never stale when the report is opened, even if the fire-and-forget sync
-  // that runs after each check update failed silently.
-  await Promise.all([
-    syncBgvChecksToReport(candidateId).catch((err: unknown) => console.error("[BGV] pre-report sync failed for", candidateId, err)),
-    computeAndSaveScore(candidateId).catch((err: unknown) => console.error("[BGV] pre-report score failed for", candidateId, err)),
-  ]);
+  // Kick off sync+score recompute in the background so the endpoint returns
+  // immediately from current DB state. The fire-and-forget was already the
+  // pattern everywhere else (createOrUpdateCheck, the sync route); awaiting it
+  // here was adding 200–800 ms to every report page open and every PDF download
+  // for no observable benefit — the score is recomputed on every check write
+  // already, so the data is current unless a background job silently failed, in
+  // which case the user can hit Refresh once.
+  setImmediate(() => {
+    void syncBgvChecksToReport(candidateId).catch((err: unknown) => console.error("[BGV] bg sync failed for", candidateId, err));
+    void computeAndSaveScore(candidateId).catch((err: unknown) => console.error("[BGV] bg score failed for", candidateId, err));
+  });
 
   // Fetch all data in parallel
   const [

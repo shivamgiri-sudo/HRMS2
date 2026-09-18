@@ -825,7 +825,36 @@
     "1784_leave_approval_overdue_reminder.sql",
     "1785_leave_exit_cc_wfm_payroll_not_hr.sql",
     "1786_cost_centre_process_mapping_backfill.sql",
-    "1787_pnl_employee_cost_centre_override.sql"
+    "1787_pnl_employee_cost_centre_override.sql",
+    "1789_journal_entry.sql",
+    "1790_grn_budget_line_ledger_head_alignment.sql",
+    "1791_historical_grn_ledger_head_alignment.sql",
+    "1792_finance_ledger_reports_page_access.sql",
+    "1793_grn_approval_email_notifications.sql",
+    "1794_historical_imprest_grn_ledger_head_alignment.sql",
+    "1795_performance_indexes.sql",
+    "1796_reginald_live_sales_shopify_columns.sql",
+    "1797_reginald_live_sales_optional_columns_fix.sql",
+    "1798_journal_entry_branch_cost_centre_process.sql",
+    "1799_payment_voucher_withdraw_status.sql",
+    "1800_gs1_daily_actual_missing_columns.sql",
+    "1801_payment_voucher_attachment.sql",
+    "1802_gs1_template_real_format.sql",
+    "1803_payroll_ledger_voucher.sql",
+    "1804_gs1_approval_audit_missing_columns.sql",
+    "1805_gs1_approval_audit_per_sku_key.sql",
+    "1806_email_ticket_analyst_daily_actual.sql",
+    "1807_esign_signer_identity_check.sql",
+    "migrations/0060_portal_admin_impersonation_log.sql",
+    "1808_portal_admin_impersonation_log_uuid_fix.sql",
+    "1809_meta_campaign_tables.sql",
+    "1810_job_requisition_meta_fields.sql",
+    "1811_marketing_team_email_setting.sql",
+    "1812_meta_campaign_page_access.sql",
+    "1813_employees_aadhaar_number_candidate_id.sql",
+    "1814_client_portal_password_login.sql",
+    "1815_meta_integration_config.sql",
+    "1816_marketing_brief_recipients_update.sql"
   ],
   "approvedDeletions": [
     {
@@ -875,7 +904,8 @@
     "migrations/1611_employee_salary_change_log.sql",
     "migrations/1612_fix_festival_calendar_2026_rakhi_bhaidooj.sql",
     "migrations/1613_add_missing_festival_calendar_2026_entries.sql",
-    "migrations/440_salary_date_revision_requests.sql"
+    "migrations/440_salary_date_revision_requests.sql",
+    "migrations/0060_portal_admin_impersonation_log.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
@@ -984,6 +1014,7 @@
     "1653_insert_hrms_employees_to_dbbill.sql",
     "175_clean_department_master.sql",
     "1767_onfido_external_audit_add_total_columns.sql",
+    "1788_gnc_sale_order_id_unique.sql",
     "204_personal_contact_fields.sql",
     "205_branch_alias_examples.sql",
     "206_ats_recruiter_contact_details.sql",
@@ -1061,7 +1092,6 @@
     "review_only_cleanup_test_demo_hrms2.sql",
     "revoke_salary_revision_employee_grant.sql",
     "setup-dialer-kpi-metrics.sql",
-    "verify_ats_fix.sql",
-    "1788_gnc_sale_order_id_unique.sql"
+    "verify_ats_fix.sql"
   ]
 }

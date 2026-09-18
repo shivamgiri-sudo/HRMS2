@@ -283,54 +283,66 @@ export async function listJoiningControlRoomQueue(search = "") {
 }
 
 export async function getJoiningControlRoomCandidate(candidateId: string) {
-  const summary = await candidateSnapshot(candidateId);
+  // Round 1: snapshot + all queries that only need candidateId run in parallel.
+  // Previously these ran sequentially (15 round trips); batching them saves
+  // ~200–400 ms of MySQL RTT on every candidate click.
+  const [
+    summary,
+    [profile],
+    [bank],
+    [qualifications],
+    [experience],
+    [payroll],
+    [salaryProposal],
+    [salarySteps],
+    [jclr],
+    [statutory],
+    [dpdp],
+    [withdrawals],
+    [bridge],
+    [offerRows],
+    [provTasks],
+  ] = await Promise.all([
+    candidateSnapshot(candidateId),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM ats_payroll_hr_validation WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM salary_exception_proposal WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM salary_proposal_approval_step WHERE candidate_id = ? ORDER BY FIELD(approval_level, 'bm','operations','payroll','finance')`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM jclr_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM statutory_declaration WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM dpdp_consent_register WHERE candidate_id = ? ORDER BY purpose_code`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM dpdp_consent_withdrawal WHERE requester_id = ? AND requester_type = 'candidate' ORDER BY created_at DESC`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT ob.*, e.employee_code, e.official_email FROM ats_onboarding_bridge ob LEFT JOIN employees e ON e.id = ob.employee_id WHERE ob.candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(
+      `SELECT o.*,
+              d.dept_name AS department_name, des.designation_name, cc.cost_centre_name,
+              CONCAT(m.first_name, ' ', m.last_name) AS manager_name
+         FROM ats_employment_offer o
+         LEFT JOIN department_master d ON d.id = o.department_id
+         LEFT JOIN designation_master des ON des.id = o.designation_id
+         LEFT JOIN cost_centre_master cc ON cc.id = o.cost_centre
+         LEFT JOIN employees m ON m.id = o.reporting_manager_id
+        WHERE o.candidate_id = ?
+        ORDER BY o.created_at DESC
+        LIMIT 1`,
+      [candidateId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT r.task_code, r.status, r.assigned_user_id AS assigned_to,
+              r.actioned_at AS completed_at, r.sla_due_at AS sla_due,
+              CONCAT(e.first_name, ' ', e.last_name) AS assigned_to_name
+         FROM it_provisioning_request r
+         LEFT JOIN employees e ON e.id = r.assigned_user_id
+        WHERE r.employee_id = (SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1)
+        ORDER BY FIELD(r.task_code, 'WFM_PROCESS_ALIGNMENT', 'IT_EMAIL_DOMAIN_ASSET', 'ADMIN_BIOMETRIC_ID_CARD', 'APPOINTMENT_LETTER_ESIGN')`,
+      [candidateId],
+    ),
+  ]);
+
   if (!summary) throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
-
-  const [profile] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [bank] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [qualifications] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]);
-  const [experience] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]);
-  const [payroll] = await db.execute<RowDataPacket[]>(`SELECT * FROM ats_payroll_hr_validation WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [salaryProposal] = await db.execute<RowDataPacket[]>(`SELECT * FROM salary_exception_proposal WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [salarySteps] = await db.execute<RowDataPacket[]>(`SELECT * FROM salary_proposal_approval_step WHERE candidate_id = ? ORDER BY FIELD(approval_level, 'bm','operations','payroll','finance')`, [candidateId]);
-  const [jclr] = await db.execute<RowDataPacket[]>(`SELECT * FROM jclr_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [statutory] = await db.execute<RowDataPacket[]>(`SELECT * FROM statutory_declaration WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [dpdp] = await db.execute<RowDataPacket[]>(`SELECT * FROM dpdp_consent_register WHERE candidate_id = ? ORDER BY purpose_code`, [candidateId]);
-  const [withdrawals] = await db.execute<RowDataPacket[]>(`SELECT * FROM dpdp_consent_withdrawal WHERE requester_id = ? AND requester_type = 'candidate' ORDER BY created_at DESC`, [candidateId]);
-  const [bridge] = await db.execute<RowDataPacket[]>(`SELECT ob.*, e.employee_code, e.official_email FROM ats_onboarding_bridge ob LEFT JOIN employees e ON e.id = ob.employee_id WHERE ob.candidate_id = ? LIMIT 1`, [candidateId]);
-
-  // Fetch employment offer (salary source of truth set in onboarding-requests)
-  const [offerRows] = await db.execute<RowDataPacket[]>(
-    `SELECT o.*,
-            d.dept_name AS department_name, des.designation_name, cc.cost_centre_name,
-            CONCAT(m.first_name, ' ', m.last_name) AS manager_name
-       FROM ats_employment_offer o
-       LEFT JOIN department_master d ON d.id = o.department_id
-       LEFT JOIN designation_master des ON des.id = o.designation_id
-       LEFT JOIN cost_centre_master cc ON cc.id = o.cost_centre
-       LEFT JOIN employees m ON m.id = o.reporting_manager_id
-      WHERE o.candidate_id = ?
-      ORDER BY o.created_at DESC
-      LIMIT 1`,
-    [candidateId],
-  );
-
-  // Fetch provisioning task statuses
-  const [provTasks] = await db.execute<RowDataPacket[]>(
-    // Four columns here named things it_provisioning_request does not have, so the whole
-    // provisioning panel of the joining control room threw and showed no tasks:
-    // assigned_to -> assigned_user_id, completed_at -> actioned_at, sla_due -> sla_due_at,
-    // and candidate_id, which has no equivalent at all. The table links to a candidate only
-    // through ats_onboarding_bridge, so that subquery is the only real predicate.
-    `SELECT r.task_code, r.status, r.assigned_user_id AS assigned_to,
-            r.actioned_at AS completed_at, r.sla_due_at AS sla_due,
-            CONCAT(e.first_name, ' ', e.last_name) AS assigned_to_name
-       FROM it_provisioning_request r
-       LEFT JOIN employees e ON e.id = r.assigned_user_id
-      WHERE r.employee_id = (SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1)
-      ORDER BY FIELD(r.task_code, 'WFM_PROCESS_ALIGNMENT', 'IT_EMAIL_DOMAIN_ASSET', 'ADMIN_BIOMETRIC_ID_CARD', 'APPOINTMENT_LETTER_ESIGN')`,
-    [candidateId],
-  );
 
   // Joining-document e-sign checklist.
   //

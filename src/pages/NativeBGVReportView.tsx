@@ -25,10 +25,10 @@ export default function NativeBGVReportView() {
         const res = await hrmsApi.get<any>(`/api/ats/bgv/report/full?candidateId=${candidateId}`);
         setData(res.data);
 
-        // Generate QR code
+        // Generate QR code pointing to this report's URL so scanning opens it in a browser.
         if (res.data?.report) {
-          const qrData = `BGV-${res.data.report.candidate_id}-${res.data.report.completed_at || new Date().toISOString()}`;
-          const qr = await QRCode.toDataURL(qrData, { width: 200, margin: 1 });
+          const reportUrl = `${window.location.origin}/bgv-report-view/${res.data.report.candidate_id}`;
+          const qr = await QRCode.toDataURL(reportUrl, { width: 200, margin: 1 });
           setQrCodeUrl(qr);
         }
       } catch (e: any) {
@@ -80,6 +80,83 @@ export default function NativeBGVReportView() {
 
   const reportDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const reportId = `BGV-${report.candidate_code}-${reportDate}`;
+
+  // Build per-category best status from API checks (same normalization as the backend).
+  // Falls back to the manual *_status field on the report for categories with no API check.
+  const checkNorm: Record<string, string> = {
+    aadhaar_offline: 'aadhaar', address_doc: 'address',
+    education_doc: 'education', court: 'criminal', experience: 'employment',
+  };
+  const precedence: Record<string, number> = { verified: 4, waived: 3, manual_review: 2, mismatch: 1, failed: 1, partial: 1 };
+  const bestCheckStatus = new Map<string, string>();
+  for (const c of bgvChecks as any[]) {
+    const norm = checkNorm[c.check_type] ?? c.check_type;
+    const inc = precedence[c.status] ?? 0;
+    const ex = precedence[bestCheckStatus.get(norm) ?? ''] ?? -1;
+    if (inc > ex) bestCheckStatus.set(norm, c.status);
+  }
+  // Fold in manual statuses for categories not covered by an API check
+  const manualMap: Record<string, string | undefined> = {
+    aadhaar: report.aadhaar_status, pan: report.pan_status, bank: report.bank_status,
+    education: report.education_status, employment: report.employment_status,
+    address: report.address_status, criminal: report.criminal_status,
+  };
+  for (const [cat, val] of Object.entries(manualMap)) {
+    if (bestCheckStatus.has(cat)) continue;
+    if (val === 'passed') bestCheckStatus.set(cat, 'verified');
+    else if (val === 'failed') bestCheckStatus.set(cat, 'failed');
+    else if (val === 'partial') bestCheckStatus.set(cat, 'partial');
+  }
+  const digilockerClear = bestCheckStatus.get('digilocker') === 'verified' || bestCheckStatus.get('digilocker') === 'waived';
+  const isClearCat = (t: string) => { const s = bestCheckStatus.get(t); return s === 'verified' || s === 'waived'; };
+  const isHalfCat = (t: string) => bestCheckStatus.get(t) === 'partial';
+
+  // Derive denominator and inclusion flags from offer/experience data
+  const expYears = parseFloat(String(experience?.experience_year ?? '0'));
+  const expText = String(experience?.working_experience ?? '').toLowerCase();
+  const isFresherDerived = !expYears && (!expText || expText === 'fresher' || expText === 'no' || expText === '0');
+  const includeEmployment = !isFresherDerived;
+  const denominator = 80 + (includeEmployment ? 10 : 0);
+
+  type ScoreRow = { label: string; weight: number; earned: number; status: string; applicable: boolean };
+  const scoreRows: ScoreRow[] = [
+    {
+      label: 'Aadhaar / Identity', weight: 25,
+      earned: digilockerClear || isClearCat('aadhaar') ? 25 : isHalfCat('aadhaar') ? 12.5 : 0,
+      status: digilockerClear ? 'verified (DigiLocker)' : (bestCheckStatus.get('aadhaar') ?? 'not_run'),
+      applicable: true,
+    },
+    {
+      label: 'PAN', weight: 20,
+      earned: digilockerClear || isClearCat('pan') ? 20 : isHalfCat('pan') ? 10 : 0,
+      status: digilockerClear ? 'verified (DigiLocker)' : (bestCheckStatus.get('pan') ?? 'not_run'),
+      applicable: true,
+    },
+    {
+      label: 'Bank Account', weight: 15,
+      earned: isClearCat('bank') ? 15 : isHalfCat('bank') ? 7.5 : 0,
+      status: bestCheckStatus.get('bank') ?? 'not_run',
+      applicable: true,
+    },
+    {
+      label: 'Education', weight: 10,
+      earned: isClearCat('education') ? 10 : isHalfCat('education') ? 5 : 0,
+      status: bestCheckStatus.get('education') ?? 'not_run',
+      applicable: true,
+    },
+    {
+      label: 'Address', weight: 10,
+      earned: isClearCat('address') ? 10 : isHalfCat('address') ? 5 : 0,
+      status: bestCheckStatus.get('address') ?? 'not_run',
+      applicable: true,
+    },
+    {
+      label: 'Employment / Experience', weight: 10,
+      earned: isClearCat('employment') ? 10 : isHalfCat('employment') ? 5 : 0,
+      status: bestCheckStatus.get('employment') ?? 'not_run',
+      applicable: includeEmployment,
+    },
+  ];
 
   const safeText = (value: any) => value || '-';
   const boolText = (value: any) => (value ? 'Yes' : 'No');
@@ -651,9 +728,51 @@ export default function NativeBGVReportView() {
 
             {/* BGV Score Card */}
             <h3 className="text-lg font-bold text-slate-700 mb-3">BGV Score</h3>
-            <div className={`p-6 rounded-lg mb-6 ${report.bgv_score >= 80 ? 'bg-emerald-500' : report.bgv_score >= 60 ? 'bg-amber-500' : 'bg-red-500'}`}>
+            <div className={`p-6 rounded-lg mb-4 ${report.bgv_score >= 80 ? 'bg-emerald-500' : report.bgv_score >= 60 ? 'bg-amber-500' : 'bg-red-500'}`}>
               <p className="text-4xl font-bold text-white text-center">{report.bgv_score} / 100</p>
             </div>
+
+            {/* Score breakdown — shows exactly which categories contributed and which are pending */}
+            <h3 className="text-base font-bold text-slate-700 mb-2">Score Breakdown</h3>
+            <table className="w-full text-sm border-collapse border border-slate-300 mb-6">
+              <thead>
+                <tr className="bg-slate-100">
+                  <th className="py-2 px-3 text-left border-b border-slate-300">Category</th>
+                  <th className="py-2 px-3 text-center border-b border-slate-300">Weight</th>
+                  <th className="py-2 px-3 text-center border-b border-slate-300">Status</th>
+                  <th className="py-2 px-3 text-center border-b border-slate-300">Points</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scoreRows.map((row) => (
+                  <tr key={row.label} className={`border-b border-slate-200 ${!row.applicable ? 'text-slate-400' : ''}`}>
+                    <td className="py-2 px-3">{row.label}{!row.applicable && <span className="ml-2 text-xs text-slate-400">(N/A — fresher)</span>}</td>
+                    <td className="py-2 px-3 text-center">{row.applicable ? row.weight : '—'}</td>
+                    <td className="py-2 px-3 text-center">
+                      {!row.applicable ? '—' : (
+                        <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                          row.status.startsWith('verified') || row.status === 'waived' ? 'bg-emerald-100 text-emerald-800' :
+                          row.status === 'partial' ? 'bg-amber-100 text-amber-800' :
+                          row.status === 'not_run' ? 'bg-slate-100 text-slate-600' :
+                          'bg-red-100 text-red-800'
+                        }`}>{row.status}</span>
+                      )}
+                    </td>
+                    <td className={`py-2 px-3 text-center font-semibold ${row.applicable && row.earned === 0 && row.status !== 'not_run' ? 'text-red-600' : row.applicable && row.earned === 0 ? 'text-slate-400' : 'text-emerald-700'}`}>
+                      {row.applicable ? `${row.earned}/${row.weight}` : '—'}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="bg-slate-50 font-bold">
+                  <td className="py-2 px-3">Total</td>
+                  <td className="py-2 px-3 text-center">{denominator}</td>
+                  <td className="py-2 px-3 text-center">—</td>
+                  <td className="py-2 px-3 text-center text-slate-800">
+                    {scoreRows.filter(r => r.applicable).reduce((s, r) => s + r.earned, 0)}/{denominator} = {report.bgv_score}%
+                  </td>
+                </tr>
+              </tbody>
+            </table>
 
             <div className="mb-6">
               <span className="text-base font-bold mr-3">Overall Status:</span>
