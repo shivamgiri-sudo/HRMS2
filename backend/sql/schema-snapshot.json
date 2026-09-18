@@ -4834,7 +4834,9 @@
       "is_shared_account",
       "shared_account_reason",
       "shared_flagged_by",
-      "shared_flagged_at"
+      "shared_flagged_at",
+      "login_id",
+      "must_change_password"
     ],
     "clovia_chat_daily_actual": [
       "id",
@@ -11038,7 +11040,12 @@
       "handover_status",
       "handover_at",
       "handover_by",
-      "handover_notes"
+      "handover_notes",
+      "bmi_assessment_url",
+      "meta_target_age_min",
+      "meta_target_age_max",
+      "meta_target_locations",
+      "meta_target_radius_km"
     ],
     "job_requisition_approval_log": [
       "id",
