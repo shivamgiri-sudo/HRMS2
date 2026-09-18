@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import {
-  AlertTriangle, ArrowLeft, CalendarRange, Database, FileBarChart2, FileSearch, FileText, FlaskConical, Gauge, Globe, LayoutGrid, Layers3,
+  AlertTriangle, ArrowLeft, CalendarRange, Database, FileBarChart2, FileSearch, FileText, FlaskConical, Gauge, LayoutGrid, Layers3,
   MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, Users2,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -178,7 +178,7 @@ interface QualityMetricTrendPoint {
 interface EscalationOverview {
   totalLines: KpiValue; creLines: KpiValue; crqLines: KpiValue; distinctReports: KpiValue;
 }
-interface EscalationTrendPoint { bucket: string; count: number }
+interface EscalationTrendPoint { bucket: string; count: number; creCount: number; crqCount: number }
 type EscalationDimension = "ims_client_name" | "error_category" | "tl_name" | "am_name";
 interface EscalationBreakdownRow { label: string; count: number }
 
@@ -489,8 +489,10 @@ function GdMcnPercentChart({ points }: { points: GdMcnSlaTrendPoint[] }) {
   );
 }
 
-/** Client escalation (CRE+CRQ) line count per month-wise bucket — Overview page's
- *  "Month-wise Client Escalation Trend" card (2026-09-17 feedback item #7). */
+/** Client escalation (CRE vs CRQ) line count per month-wise bucket, as two side-by-side bars
+ *  so each trend reads on its own instead of hiding inside one combined total — Overview page's
+ *  "Month-wise Client Escalation Trend" card (2026-09-17 feedback item #7; split into CRE/CRQ
+ *  per 2026-09-18 feedback since the combined bar was masking which queue drove a spike). */
 function EscalationCountChart({ points }: { points: EscalationTrendPoint[] }) {
   if (points.length === 0) {
     return <div style={{ padding: "40px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>;
@@ -502,8 +504,12 @@ function EscalationCountChart({ points }: { points: EscalationTrendPoint[] }) {
         <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
         <YAxis tickLine={false} axisLine={false} width={44} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
         <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-        <Bar dataKey="count" name="Escalation Lines" fill="var(--red)" radius={[4, 4, 0, 0]} maxBarSize={44}>
-          <LabelList dataKey="count" position="top" fontSize={10} fill="var(--muted)" />
+        <Legend wrapperStyle={{ fontSize: 11, color: "var(--muted)" }} />
+        <Bar dataKey="creCount" name="CRE" fill="var(--red)" radius={[4, 4, 0, 0]} maxBarSize={28}>
+          <LabelList dataKey="creCount" position="top" fontSize={10} fill="var(--muted)" />
+        </Bar>
+        <Bar dataKey="crqCount" name="CRQ" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={28}>
+          <LabelList dataKey="crqCount" position="top" fontSize={10} fill="var(--muted)" />
         </Bar>
       </BarChart>
     </ResponsiveContainer>
@@ -711,10 +717,9 @@ const VIEW_TABS: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
   { key: "taskskip", label: "Task Skip", icon: SkipForward },
   { key: "escalations", label: "Client Escalations", icon: MessageSquareWarning },
   { key: "docraw", label: "DOC Raw", icon: Database },
-  { key: "poa", label: "POA", icon: FileText },
+  { key: "poa", label: "POA (Internal/External)", icon: FileText },
   { key: "poatrial", label: "POA Trial", icon: FlaskConical },
   { key: "clientdoc", label: "Client & Document Report", icon: FileBarChart2 },
-  { key: "poaexternal", label: "POA External", icon: Globe },
   { key: "gdmcnsla", label: "GD MCN SLA APS", icon: Gauge },
   { key: "live", label: "Live", icon: Radio },
 ];
@@ -2478,7 +2483,7 @@ function EscalationsView({
             options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
           />
         </div>
-        <div className="oc-card-sub">CRE + CRQ client-reported error lines per bucket — a real count, both formats combined.</div>
+        <div className="oc-card-sub">CRE vs CRQ client-reported error lines per bucket, shown separately so a spike in one queue doesn't hide inside the other.</div>
         {points.length === 0 ? (
           <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>
         ) : (
@@ -2488,8 +2493,12 @@ function EscalationsView({
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-              <Bar dataKey="count" name="Escalation Lines" fill="var(--red)" radius={[4, 4, 0, 0]}>
-                <LabelList dataKey="count" position="top" fontSize={10} fill="var(--muted)" />
+              <Legend wrapperStyle={{ fontSize: 11, color: "var(--muted)" }} />
+              <Bar dataKey="creCount" name="CRE" fill="var(--red)" radius={[4, 4, 0, 0]}>
+                <LabelList dataKey="creCount" position="top" fontSize={10} fill="var(--muted)" />
+              </Bar>
+              <Bar dataKey="crqCount" name="CRQ" fill="var(--teal)" radius={[4, 4, 0, 0]}>
+                <LabelList dataKey="crqCount" position="top" fontSize={10} fill="var(--muted)" />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -2844,6 +2853,28 @@ function PoaDayWiseTable({ rows }: { rows: PoaDayRow[] }) {
  * comment on getPoaBreakdown) — so the breakdown drill-down opens the POA
  * Raw records specifically (the volume source), not a blended view.
  */
+type PoaSubView = "internal" | "external";
+
+/** Combines the POA (internal raw data) and POA External Dashboard views into one tab with a
+ *  slicer to switch between them (2026-09-18 feedback) -- they were two separate top-level tabs
+ *  covering the same POA queue from two different data sources, which made it easy to miss that
+ *  the "other" POA view existed at all. */
+function PoaCombinedView(props: {
+  range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void;
+}) {
+  const [subView, setSubView] = useState<PoaSubView>("internal");
+  return (
+    <div className="space-y-4">
+      <PillGroup
+        value={subView}
+        onChange={setSubView}
+        options={[{ key: "internal", label: "POA (Internal)" }, { key: "external", label: "POA External" }]}
+      />
+      {subView === "internal" ? <PoaView {...props} /> : <PoaExternalView {...props} />}
+    </div>
+  );
+}
+
 function PoaView({
   range, tlFilter, amFilter, onOpenRecord,
 }: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
@@ -4054,10 +4085,9 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
           {view === "taskskip" && <TaskSkipView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "escalations" && <EscalationsView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "docraw" && <DocRawView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
-          {view === "poa" && <PoaView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
+          {view === "poa" && <PoaCombinedView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "poatrial" && <PoaTrialView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "clientdoc" && <ClientDocView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
-          {view === "poaexternal" && <PoaExternalView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "gdmcnsla" && <GdMcnSlaView range={range} onOpenRecord={openRecord} />}
           {view === "live" && <LiveView />}
 

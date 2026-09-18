@@ -1966,7 +1966,7 @@ export async function getEscalationOverview(
   };
 }
 
-export interface EscalationTrendPoint { bucket: string; count: number; }
+export interface EscalationTrendPoint { bucket: string; count: number; creCount: number; crqCount: number; }
 
 export async function getEscalationTrend(
   rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
@@ -1985,13 +1985,18 @@ export async function getEscalationTrend(
       WHERE qc_updated_date BETWEEN ? AND ? ${clause} GROUP BY bucket`,
     [f.from, f.to, ...params]
   );
-  const byBucket = new Map<string, number>();
-  for (const r of creRows) byBucket.set(bucketLabel(r.bucket, granularity), Number(r.n));
+  const byBucket = new Map<string, { creCount: number; crqCount: number }>();
+  for (const r of creRows) {
+    const key = bucketLabel(r.bucket, granularity);
+    byBucket.set(key, { creCount: Number(r.n), crqCount: byBucket.get(key)?.crqCount ?? 0 });
+  }
   for (const r of crqRows) {
     const key = bucketLabel(r.bucket, granularity);
-    byBucket.set(key, (byBucket.get(key) ?? 0) + Number(r.n));
+    byBucket.set(key, { creCount: byBucket.get(key)?.creCount ?? 0, crqCount: Number(r.n) });
   }
-  return [...byBucket.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([bucket, count]) => ({ bucket, count }));
+  return [...byBucket.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([bucket, { creCount, crqCount }]) => ({ bucket, creCount, crqCount, count: creCount + crqCount }));
 }
 
 export type EscalationDimension = "ims_client_name" | "error_category" | "tl_name" | "am_name";
