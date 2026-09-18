@@ -15,7 +15,7 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) =>
   (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
 
 const MAX_ATTEMPTS = 3;
-const GPS_PASS_THRESHOLD_M = 10;
+const GPS_PASS_THRESHOLD_M = 50;
 const EXPIRY_HOURS = 72;
 
 const SELFIE_DIR = path.resolve("uploads/bgv-selfies");
