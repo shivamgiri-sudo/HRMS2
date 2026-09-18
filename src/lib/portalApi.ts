@@ -137,8 +137,12 @@ export const portalApi = {
     const q = new URLSearchParams(params as Record<string, string>).toString();
     return portalRequest<{ data: any[] }>("GET", `/api/portal/processes/${processId}/action-plans${q ? `?${q}` : ""}`);
   },
-  getGovernance: (processId: string, period?: string) =>
-    portalRequest<{ data: any[] }>("GET", `/api/portal/processes/${processId}/governance${period ? `?period=${period}` : ""}`),
+  getOperations: (processId: string, period?: string) =>
+    portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/operations${period ? `?period=${period}` : ""}`),
+  getQuality: (processId: string, period?: string) =>
+    portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/quality${period ? `?period=${period}` : ""}`),
+  getWorkforce: (processId: string) =>
+    portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/workforce`),
   getAttrition: (processId: string, period?: string) =>
     portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/attrition${period ? `?period=${period}` : ""}`),
   getCommentary: (processId: string, period?: string) =>

@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { formatISTDate } from "@/lib/utils";
 
-const TABS = ["Performance", "Glide Paths", "Action Plans", "Governance", "Attrition", "Commentary"] as const;
+const TABS = ["Performance", "Operations", "Quality", "Workforce", "Glide Paths", "Action Plans", "Attrition", "Commentary"] as const;
 type Tab = typeof TABS[number];
 
 function currentPeriod() {
@@ -47,7 +47,9 @@ export default function PortalProcessDashboard() {
   const kpis = useQuery({ queryKey: ["portal-kpis", id, period], queryFn: () => portalApi.getKpis(id!, period), enabled: tab === "Performance" });
   const glide = useQuery({ queryKey: ["portal-glide", id, period], queryFn: () => portalApi.getGlidePaths(id!, period), enabled: tab === "Glide Paths" });
   const actions = useQuery({ queryKey: ["portal-actions", id], queryFn: () => portalApi.getActionPlans(id!), enabled: tab === "Action Plans" });
-  const governance = useQuery({ queryKey: ["portal-gov", id, period], queryFn: () => portalApi.getGovernance(id!, period), enabled: tab === "Governance" });
+  const operations = useQuery({ queryKey: ["portal-operations", id], queryFn: () => portalApi.getOperations(id!), enabled: tab === "Operations" });
+  const quality = useQuery({ queryKey: ["portal-quality", id], queryFn: () => portalApi.getQuality(id!), enabled: tab === "Quality" });
+  const workforce = useQuery({ queryKey: ["portal-workforce", id], queryFn: () => portalApi.getWorkforce(id!), enabled: tab === "Workforce" });
   const attrition = useQuery({ queryKey: ["portal-attrition", id, period], queryFn: () => portalApi.getAttrition(id!, period), enabled: tab === "Attrition" });
   const commentary = useQuery({ queryKey: ["portal-commentary", id, period], queryFn: () => portalApi.getCommentary(id!, period), enabled: tab === "Commentary" });
 
@@ -70,7 +72,7 @@ export default function PortalProcessDashboard() {
 
       {/* TOP HEADER COMMAND BAR */}
       <header className="sticky top-0 bg-slate-900/80 backdrop-blur-xl border-b border-slate-800/80 z-40">
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+        <div className="max-w-[1600px] mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-blue-600 text-white font-bold shadow-md shadow-blue-900/50">
               M
@@ -120,7 +122,7 @@ export default function PortalProcessDashboard() {
 
       {/* DASHBOARD TITLE BLOCK */}
       <div className="bg-slate-900/30 border-b border-slate-800/30 py-6">
-        <div className="max-w-6xl mx-auto px-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="max-w-[1600px] mx-auto px-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
               <Briefcase className="w-4 h-4 text-blue-400" />
@@ -162,7 +164,7 @@ export default function PortalProcessDashboard() {
 
       {/* TAB SLIDER MENU */}
       <div className="bg-slate-900/20 border-b border-slate-800/50 sticky top-16 z-30 backdrop-blur-md">
-        <div className="max-w-6xl mx-auto px-6">
+        <div className="max-w-[1600px] mx-auto px-6">
           <div role="tablist" aria-label="Dashboard tabs" className="flex gap-1 overflow-x-auto no-scrollbar py-2">
             {TABS.map(t => {
               const isActive = tab === t;
@@ -177,9 +179,11 @@ export default function PortalProcessDashboard() {
                   }`}
                 >
                   {t === "Performance" && <Activity className="w-3.5 h-3.5" />}
+                  {t === "Operations" && <Gauge className="w-3.5 h-3.5" />}
+                  {t === "Quality" && <Shield className="w-3.5 h-3.5" />}
+                  {t === "Workforce" && <Briefcase className="w-3.5 h-3.5" />}
                   {t === "Glide Paths" && <TrendingUp className="w-3.5 h-3.5" />}
                   {t === "Action Plans" && <ClipboardList className="w-3.5 h-3.5" />}
-                  {t === "Governance" && <Shield className="w-3.5 h-3.5" />}
                   {t === "Attrition" && <Users className="w-3.5 h-3.5" />}
                   {t === "Commentary" && <MessageSquare className="w-3.5 h-3.5" />}
                   {t}
@@ -191,7 +195,7 @@ export default function PortalProcessDashboard() {
       </div>
 
       {/* PORTLET CONTAINER MODULE */}
-      <main className="max-w-6xl mx-auto px-6 py-8">
+      <main className="max-w-[1600px] mx-auto px-6 py-8">
         {tab === "Performance" && (
           kpis.isLoading ? (
             <div className="py-20 flex items-center justify-center">
@@ -237,8 +241,16 @@ export default function PortalProcessDashboard() {
           <ActionPlansTab data={actions.data?.data ?? []} loading={actions.isLoading} />
         )}
 
-        {tab === "Governance" && (
-          <GovernanceTab data={governance.data?.data ?? []} loading={governance.isLoading} />
+        {tab === "Operations" && (
+          <OperationsQualityTab data={operations.data?.data} loading={operations.isLoading} emptyLabel="operations" />
+        )}
+
+        {tab === "Quality" && (
+          <OperationsQualityTab data={quality.data?.data} loading={quality.isLoading} emptyLabel="quality" />
+        )}
+
+        {tab === "Workforce" && (
+          <WorkforceTab data={workforce.data?.data} loading={workforce.isLoading} />
         )}
 
         {tab === "Attrition" && (
@@ -305,6 +317,77 @@ function PerformanceKpiStrip({ scorecards }: { scorecards: any[] }) {
   ];
 
   return <PortalKpiStrip items={items} />;
+}
+
+// ----------------------------------------------------
+// 👔 WORKFORCE TAB — headcount vs. sanctioned mandate + hiring pipeline, from
+// process-operations.service.ts's getProcessBusinessHealthForPortal(). Deliberately
+// does NOT include revenue/GRN/agent-salary/EBIT/Op% -- that internal cost and
+// profitability data is stripped server-side before this ever reaches the client
+// portal (see portal.controller.ts's getWorkforce), so there is nothing to hide here.
+// ----------------------------------------------------
+function WorkforceTab({ data, loading }: { data: any; loading: boolean }) {
+  if (loading) {
+    return (
+      <div className="py-20 flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-8 text-center">
+        <Briefcase className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+        <p className="font-bold text-slate-200">No Workforce Data</p>
+        <p className="text-slate-500 text-xs mt-1">Workforce figures are not available for this process yet.</p>
+      </div>
+    );
+  }
+
+  const hc = data.headcount;
+  const hiring = data.hiring;
+  const hasMandate = hc?.mandatedHc != null;
+  const capacityPct = hasMandate ? Math.round((hc.activeHc / hc.mandatedHc) * 100) : null;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-5 shadow-lg">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Active Headcount</p>
+          <p className="text-3xl font-extrabold text-blue-400">{hc.activeHc}</p>
+          <p className="text-[10px] text-slate-400 font-medium mt-1">
+            {hasMandate ? `${capacityPct}% of sanctioned (${hc.mandatedHc})` : "No mandate configured"}
+          </p>
+        </div>
+        <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-5 shadow-lg">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Shortfall</p>
+          <p className={`text-3xl font-extrabold ${hc.shortfall ? "text-rose-400" : "text-emerald-400"}`}>
+            {hc.shortfall ?? "—"}
+          </p>
+          <p className="text-[10px] text-slate-400 font-medium mt-1">Below sanctioned mandate</p>
+        </div>
+        <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-5 shadow-lg">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Open Positions</p>
+          <p className="text-3xl font-extrabold text-amber-400">{hiring?.openPositions ?? "—"}</p>
+          <p className="text-[10px] text-slate-400 font-medium mt-1">
+            Across {hiring?.openRequisitions ?? 0} open requisition{hiring?.openRequisitions === 1 ? "" : "s"}
+          </p>
+        </div>
+        <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-5 shadow-lg">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Candidates in Pipeline</p>
+          <p className="text-3xl font-extrabold text-cyan-400">{hiring?.candidatesInPipeline ?? "—"}</p>
+          <p className="text-[10px] text-slate-400 font-medium mt-1">{hiring?.hiredCount ?? 0} hired to date via requisitions</p>
+        </div>
+      </div>
+
+      {hc?.reason && (
+        <div className="bg-slate-900/40 border border-slate-800/60 rounded-lg px-4 py-3 text-xs text-slate-400">
+          {hc.reason}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ----------------------------------------------------
@@ -416,9 +499,21 @@ function ActionPlansTab({ data, loading }: { data: any[]; loading: boolean }) {
 }
 
 // ----------------------------------------------------
-// 🛡 GOVERNANCE TAB VIEW COMPONENT
+// 📈 OPERATIONS / QUALITY TAB — real process_metric_actual sections from
+// process-operations.service.ts's getProcessOperationsForPortal(), the exact same
+// engine that backs the internal-staff ProcessOperationsPage.tsx. A metric with no
+// reading renders "—", never a fabricated 0 or 100%; a section with no metrics at all
+// for this process is simply omitted upstream (already filtered server-side).
 // ----------------------------------------------------
-function GovernanceTab({ data, loading }: { data: any[]; loading: boolean }) {
+function OperationsQualityTab({
+  data,
+  loading,
+  emptyLabel,
+}: {
+  data: { sections: Array<{ key: string; title: string; blurb: string | null; metrics: any[] }> } | null | undefined;
+  loading: boolean;
+  emptyLabel: string;
+}) {
   if (loading) {
     return (
       <div className="py-20 flex items-center justify-center">
@@ -427,103 +522,71 @@ function GovernanceTab({ data, loading }: { data: any[]; loading: boolean }) {
     );
   }
 
-  const LEVELS = ["analyst", "tl", "process_manager", "branch_head"] as const;
-  
-  const LEVEL_TITLE: Record<string, string> = {
-    analyst: "Analyst Audits",
-    tl: "Team Leader Walkthroughs",
-    process_manager: "Process Manager Calibrations",
-    branch_head: "Branch Head Operational Reviews"
-  };
+  const sections = data?.sections ?? [];
+  const hasAnyMetrics = sections.some((s) => s.metrics.length > 0);
 
-  const RAG_BAR_COLOR = {
-    green: "bg-emerald-500",
-    amber: "bg-amber-500",
-    red: "bg-rose-500",
-    no_data: "bg-slate-600"
-  };
+  if (!hasAnyMetrics) {
+    return (
+      <div className="bg-slate-900/50 rounded-xl border border-slate-800 p-8 text-center">
+        <Gauge className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+        <p className="font-bold text-slate-200">No {emptyLabel} data yet</p>
+        <p className="text-slate-500 text-xs mt-1">
+          No {emptyLabel} metrics have landed for this process yet. This tab will populate automatically once a real reading arrives — nothing here is fabricated.
+        </p>
+      </div>
+    );
+  }
 
-  const RAG_TEXT_COLOR = {
-    green: "text-emerald-400",
-    amber: "text-amber-400",
-    red: "text-rose-400",
-    no_data: "text-slate-400"
-  };
-
-  const byLevel = LEVELS.reduce((acc, l) => {
-    acc[l] = data.filter((a: any) => a.level === l);
-    return acc;
-  }, {} as Record<string, any[]>);
+  function formatValue(m: any): string {
+    if (m.value == null) return "—";
+    const unit = (m.unit ?? "").toLowerCase();
+    if (unit.startsWith("percent")) return `${m.value.toFixed(1)}%`;
+    if (unit === "seconds") return `${Math.round(m.value)}s`;
+    if (unit === "currency") return `₹${Math.round(m.value).toLocaleString("en-IN")}`;
+    return `${m.value}`;
+  }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-      {LEVELS.map(level => {
-        const activities = byLevel[level];
-        // No activities configured at all is not the same claim as "0% done" --
-        // that used to compute overall=0 -> rag="red" -> "Critical" for every
-        // process on the platform that has no governance_activity_master rows
-        // matched to it yet, indistinguishable from a process actively failing
-        // its scheduled audits.
-        const hasActivities = activities.length > 0;
-        const overall = hasActivities
-          ? Math.round(activities.reduce((s: number, a: any) => s + a.completion_pct, 0) / activities.length)
-          : null;
-
-        const rag: keyof typeof RAG_TEXT_COLOR = !hasActivities ? "no_data" : overall! >= 90 ? "green" : overall! >= 75 ? "amber" : "red";
-
-        return (
-          <div key={level} className="bg-slate-900/60 border border-slate-800/80 rounded-xl overflow-hidden shadow-lg flex flex-col justify-between">
-            <div>
-              <div className="px-5 py-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center">
-                <p className="text-xs font-extrabold uppercase tracking-wider text-slate-400">
-                  {LEVEL_TITLE[level].split(" ")[0]} Check
-                </p>
-                <span className={`text-sm font-extrabold ${RAG_TEXT_COLOR[rag]}`}>
-                  {overall == null ? "—" : `${overall}%`}
-                </span>
-              </div>
-
-              <div className="p-4 space-y-4">
-                {activities.map((a: any) => (
-                  <div key={a.activity_id} className="space-y-1.5">
-                    <div className="flex justify-between items-start">
-                      <p className="text-xs font-semibold text-slate-200 line-clamp-1">{a.activity_name}</p>
-                      <span className={`text-[10px] font-bold ${RAG_TEXT_COLOR[a.rag as keyof typeof RAG_TEXT_COLOR]}`}>
-                        {a.completion_pct}%
-                      </span>
-                    </div>
-
-                    <div className="h-1.5 bg-slate-950 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full ${RAG_BAR_COLOR[a.rag as keyof typeof RAG_BAR_COLOR]}`}
-                        style={{ width: `${Math.min(a.completion_pct, 100)}%` }}
-                      />
-                    </div>
-                    
-                    <div className="flex items-center justify-between text-[9px] text-slate-500">
-                      <span>Cycle Target: {a.required_count}</span>
-                      <span className="font-mono">Completed: {a.completed_count}</span>
-                    </div>
-                  </div>
-                ))}
-
-                {activities.length === 0 && (
-                  <p className="text-xs text-slate-500 text-center py-6">No audits scheduled.</p>
-                )}
-              </div>
-            </div>
-
-            <div className="p-4 bg-slate-950/20 border-t border-slate-800/40">
-              <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                <span>Overall Status</span>
-                <span className={RAG_TEXT_COLOR[rag]}>
-                  {rag === "green" ? "Exceeding" : rag === "amber" ? "Warning" : rag === "red" ? "Critical" : "Not Scheduled"}
-                </span>
-              </div>
-            </div>
+    <div className="space-y-8">
+      {sections.map((section) => (
+        <div key={section.key}>
+          <div className="mb-3">
+            <h3 className="text-sm font-bold text-white">{section.title}</h3>
+            {section.blurb && <p className="text-xs text-slate-500 mt-0.5">{section.blurb}</p>}
           </div>
-        );
-      })}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {section.metrics.map((m: any) => {
+              const stale = m.staleDays != null && m.staleDays > 3;
+              return (
+                <div
+                  key={m.metricKey}
+                  className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-4 shadow-lg"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">
+                      {m.label}
+                    </p>
+                    {m.provisional && (
+                      <span className="text-[9px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded-full flex-shrink-0">
+                        Today
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-2xl font-extrabold text-white tabular-nums">{formatValue(m)}</p>
+                  <div className="flex items-center justify-between mt-2 text-[10px] text-slate-500">
+                    <span>{m.targetValue != null ? `Target: ${m.targetValue}${(m.unit ?? "").startsWith("percent") ? "%" : ""}` : "No target set"}</span>
+                    {m.latestDate && (
+                      <span className={stale ? "text-amber-400 font-semibold" : ""}>
+                        {stale ? `${m.staleDays}d stale` : "Current"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

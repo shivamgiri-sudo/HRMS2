@@ -627,24 +627,21 @@ export async function employeeMasterLive(
            addr_perm.state         AS permanent_state,
            addr_perm.pincode       AS permanent_pincode,
            lm.document_done,
-           -- Salary Start Date: sca.effective_date first (the row the Payroll Head's own
-           -- review screen writes -- see payroll-head-review.service.ts), esa.effective_from
-           -- as the broader-coverage fallback for employees assigned before that flow existed.
-           DATE_FORMAT(COALESCE(sca.effective_date, esa.effective_from), '%d-%b-%Y') AS salary_effective_date,
+           -- Salary Start Date: employees.salary_start_date is the authoritative field —
+           -- every write path (Payroll HR validation, Payroll Head approval, direct revision
+           -- via updateSalaryStartDate) calls syncSalaryStartDateEverywhere() which keeps it
+           -- current. sca.effective_date / esa.effective_from are fallbacks for employees
+           -- created before that sync existed.
+           DATE_FORMAT(COALESCE(e.salary_start_date, sca.effective_date, esa.effective_from), '%d-%b-%Y') AS salary_effective_date,
            esa.ctc_annual           AS ctc_annual,
            ssm.structure_name       AS salary_structure_name,
-           -- Gross/CTC/NetInHand: salary_component_assignments (sca) is the table the Payroll
-           -- Head's final-salary review actually writes to (payroll-head-review.service.ts,
-           -- and the same source payrollCalculate.service.ts/running-salary.service.ts pay
-           -- from) -- monthly figures, *12 to match this report's annual convention. Falls
-           -- back to employee_salary_assignment.ctc_annual (kept in sync with sca, wider
-           -- coverage) for CTC, then to employee_salary_snapshot -- the mostly-empty, never-
-           -- updated-after-hire onboarding mirror this report used to read exclusively, which
-           -- is why a Payroll Head's post-hire revision (e.g. MAS63459, reviewed 2026-09-02)
-           -- never showed up here.
-           COALESCE(sca.gross * 12, ess.gross, e.gross_salary) AS gross,
-           COALESCE(sca.ctc * 12, esa.ctc_annual, ess.ctc_offered, ess.offered_ctc) AS ctc_offered,
-           COALESCE(sca.net_estimate * 12, ess.net_in_hand, e.net_inhand) AS net_in_hand,
+           -- Gross/CTC/NetInHand: reported as MONTHLY figures.
+           -- sca.gross/ctc/net_estimate are already monthly (written by payroll-head-review).
+           -- Fallbacks (ess.*, esa.ctc_annual, e.gross_salary/net_inhand) are annual — divided
+           -- by 12 to keep the same unit across all sources.
+           COALESCE(sca.gross, ROUND(ess.gross / 12, 2), ROUND(e.gross_salary / 12, 2)) AS gross,
+           COALESCE(sca.ctc, ROUND(esa.ctc_annual / 12, 2), ROUND(ess.ctc_offered / 12, 2), ROUND(ess.offered_ctc / 12, 2)) AS ctc_offered,
+           COALESCE(sca.net_estimate, ROUND(ess.net_in_hand / 12, 2), ROUND(e.net_inhand / 12, 2)) AS net_in_hand,
            bd.bank_name             AS bank_name,
            bd.bank_branch           AS bank_branch,
            bd.ifsc_code             AS ifsc_code,

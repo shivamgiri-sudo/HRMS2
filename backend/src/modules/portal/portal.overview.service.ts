@@ -176,10 +176,20 @@ export const portalOverviewService = {
       from: `${sixMonthsBackDate.getFullYear()}-${String(sixMonthsBackDate.getMonth() + 1).padStart(2, "0")}-01`,
       to: `${currentPeriod}-${String(lastDayOfMonth).padStart(2, "0")}`,
     };
-    for (const processId of processMap.keys()) {
-      const rows = await getKpiScorecardsForProcessId(processId, sixMonthWindow).catch(() => null);
+    // Fetched in parallel rather than one process at a time -- each call does several DB
+    // round trips (kpi_daily_actual, process_metric_actual, and for some registry entries a
+    // dialer_db CDR lookup on a remote host), so a sequential loop scaled the whole
+    // overview's latency linearly with process count. A client with 5 processes was paying
+    // 5x the per-process round-trip cost serially; Promise.all collapses that to the cost
+    // of the slowest single process instead.
+    const processIdList = Array.from(processMap.keys());
+    const scorecardResults = await Promise.all(
+      processIdList.map((processId) => getKpiScorecardsForProcessId(processId, sixMonthWindow).catch(() => null))
+    );
+    for (let i = 0; i < processIdList.length; i++) {
+      const rows = scorecardResults[i];
       if (!rows) continue;
-      const card = processMap.get(processId)!;
+      const card = processMap.get(processIdList[i])!;
       for (const r of rows) {
         if (r.availability !== "ok") continue; // no real reading -- must not move the card
         const rag = mapScorecardRag(r.rag);

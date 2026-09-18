@@ -2639,6 +2639,13 @@ export async function syncOnboardingStatus(
     payroll_hr_approved: "submitted",
     employee_created: "submitted",
     onboarded: "submitted",
+    // candidate_onboarding_profile.profile_status is a narrower ENUM than
+    // ats_onboarding_request.status (migration 345 extended the latter to add
+    // hr_pushback but never touched this column) — it has no 'hr_pushback'
+    // value, only 'hr_review'. Writing 'hr_pushback' here throws "Data
+    // truncated for column 'profile_status'" and masks as a 500 on every
+    // HR Push Back click (reference 925c8df7).
+    hr_pushback: "hr_review",
   };
   const mappedProfileStatus = profileStatusMap[profileStatus] ?? profileStatus;
   const safeProfileStatus = profileAllowed.has(mappedProfileStatus) ? mappedProfileStatus : "submitted";

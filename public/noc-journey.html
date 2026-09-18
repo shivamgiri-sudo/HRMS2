@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Exit & NOC Clearance — Complete Journey</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#f0f2ff;color:#1e293b;padding:40px 20px 80px;min-height:100vh;}
+.container{max-width:1320px;margin:0 auto;}
+
+/* ── Print ── */
+@media print{
+  body{background:#fff!important;padding:8mm 10mm;}
+  .pdf-btn{display:none!important;}
+  .page-break{page-break-before:always;}
+  .sec-hdr,.card,.tier-box,.par-wrap{page-break-inside:avoid;}
+}
+
+/* ═══ PAGE HEADER ═══ */
+.page-hdr{
+  text-align:center;margin-bottom:44px;
+  background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 30%,#ec4899 60%,#f59e0b 100%);
+  border-radius:24px;padding:44px 32px 40px;color:#fff;
+  box-shadow:0 20px 60px rgba(99,102,241,.4);
+  position:relative;overflow:hidden;
+}
+.page-hdr::before{
+  content:'';position:absolute;inset:0;
+  background:radial-gradient(circle at 20% 50%,rgba(255,255,255,.12) 0%,transparent 60%),
+             radial-gradient(circle at 80% 20%,rgba(255,255,255,.1) 0%,transparent 50%);
+}
+.page-hdr h1{font-size:36px;font-weight:900;letter-spacing:-.5px;position:relative;text-shadow:0 2px 12px rgba(0,0,0,.2);}
+.page-hdr p{font-size:14px;opacity:.85;margin-top:8px;position:relative;}
+.badge-row{display:flex;justify-content:center;gap:8px;margin-top:20px;flex-wrap:wrap;position:relative;}
+.badge{padding:5px 14px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;border:1.5px solid rgba(255,255,255,.5);background:rgba(255,255,255,.18);color:#fff;backdrop-filter:blur(4px);}
+
+/* ── PDF button ── */
+.pdf-btn{display:flex;align-items:center;gap:8px;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;border:none;border-radius:12px;padding:11px 24px;font-size:13px;font-weight:800;cursor:pointer;box-shadow:0 6px 20px rgba(99,102,241,.45);transition:transform .15s,box-shadow .15s;margin-bottom:32px;margin-left:auto;}
+.pdf-btn:hover{transform:translateY(-2px);box-shadow:0 10px 28px rgba(99,102,241,.5);}
+
+/* ═══ SECTION HEADERS ═══ */
+.sec-hdr{
+  display:flex;align-items:center;gap:14px;margin-bottom:20px;margin-top:4px;
+  padding:16px 22px;border-radius:16px;color:#fff;
+  box-shadow:0 6px 24px rgba(0,0,0,.15);
+}
+.sec-hdr-icon{width:42px;height:42px;background:rgba(255,255,255,.2);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;}
+.sec-hdr-title{font-size:16px;font-weight:800;letter-spacing:-.2px;}
+.sec-hdr-sub{font-size:11px;opacity:.8;margin-top:2px;}
+
+.sh-teal    {background:linear-gradient(135deg,#0891b2,#06b6d4,#67e8f9);text-shadow:0 1px 6px rgba(0,0,0,.2);}
+.sh-violet  {background:linear-gradient(135deg,#7c3aed,#8b5cf6,#a78bfa);text-shadow:0 1px 6px rgba(0,0,0,.2);}
+.sh-orange  {background:linear-gradient(135deg,#ea580c,#f97316,#fb923c);text-shadow:0 1px 6px rgba(0,0,0,.2);}
+.sh-indigo  {background:linear-gradient(135deg,#4338ca,#6366f1,#818cf8);text-shadow:0 1px 6px rgba(0,0,0,.2);}
+.sh-green   {background:linear-gradient(135deg,#15803d,#22c55e,#86efac);text-shadow:0 1px 6px rgba(0,0,0,.2);}
+.sh-pink    {background:linear-gradient(135deg,#be185d,#ec4899,#f9a8d4);text-shadow:0 1px 6px rgba(0,0,0,.2);}
+.sh-blue    {background:linear-gradient(135deg,#1d4ed8,#3b82f6,#93c5fd);text-shadow:0 1px 6px rgba(0,0,0,.2);}
+.sh-rainbow {background:linear-gradient(135deg,#6366f1,#ec4899,#f59e0b);text-shadow:0 1px 6px rgba(0,0,0,.2);}
+
+/* ═══ CARDS ═══ */
+.card{background:#fff;border-radius:16px;padding:20px;box-shadow:0 2px 16px rgba(0,0,0,.07);border:1px solid rgba(0,0,0,.05);}
+.card-violet{background:linear-gradient(135deg,#f5f3ff,#ede9fe);border:1px solid #c4b5fd;}
+.card-red   {background:linear-gradient(135deg,#fff1f2,#ffe4e6);border:1px solid #fca5a5;}
+.card-teal  {background:linear-gradient(135deg,#ecfeff,#cffafe);border:1px solid #67e8f9;}
+.card-orange{background:linear-gradient(135deg,#fff7ed,#ffedd5);border:1px solid #fdba74;}
+.card-pink  {background:linear-gradient(135deg,#fdf2f8,#fce7f3);border:1px solid #f9a8d4;}
+.card-green {background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1px solid #86efac;}
+.card-blue  {background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1px solid #93c5fd;}
+.card-indigo{background:linear-gradient(135deg,#eef2ff,#e0e7ff);border:1px solid #a5b4fc;}
+.card-amber {background:linear-gradient(135deg,#fffbeb,#fef3c7);border:1px solid #fde68a;}
+.card-yellow{background:linear-gradient(135deg,#fefce8,#fef9c3);border:1px solid #fde047;}
+
+/* ═══ INITIATOR CARDS ═══ */
+.initiator-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px;}
+.init-card{border-radius:18px;padding:22px;position:relative;overflow:hidden;}
+.init-emp  {background:linear-gradient(135deg,#eef2ff,#e0e7ff,#c7d2fe);border:2px solid #818cf8;}
+.init-mgr  {background:linear-gradient(135deg,#fdf4ff,#fae8ff,#e9d5ff);border:2px solid #c084fc;}
+.init-hr   {background:linear-gradient(135deg,#fdf2f8,#fce7f3,#fbcfe8);border:2px solid #f472b6;}
+.init-icon {width:48px;height:48px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;margin-bottom:12px;box-shadow:0 4px 12px rgba(0,0,0,.1);}
+.init-emp .init-icon {background:linear-gradient(135deg,#6366f1,#818cf8);}
+.init-mgr .init-icon {background:linear-gradient(135deg,#9333ea,#c084fc);}
+.init-hr  .init-icon {background:linear-gradient(135deg,#db2777,#f472b6);}
+.init-title{font-size:15px;font-weight:800;margin-bottom:4px;}
+.init-emp  .init-title{color:#3730a3;}
+.init-mgr  .init-title{color:#6b21a8;}
+.init-hr   .init-title{color:#9d174d;}
+.init-sub{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;opacity:.55;margin-bottom:10px;}
+.init-body{font-size:11px;color:#475569;line-height:1.65;}
+.init-tag{display:inline-block;margin-top:10px;font-size:10px;font-weight:800;padding:4px 12px;border-radius:999px;text-transform:uppercase;letter-spacing:.05em;}
+.init-emp  .init-tag{background:#6366f1;color:#fff;}
+.init-mgr  .init-tag{background:#9333ea;color:#fff;}
+.init-hr   .init-tag{background:#db2777;color:#fff;}
+
+/* ═══ PILLS ═══ */
+.pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+.pill{font-size:10px;font-weight:700;padding:3px 10px;border-radius:999px;}
+.pv {background:#7c3aed;color:#fff;}
+.pg {background:#16a34a;color:#fff;}
+.pa {background:#ea580c;color:#fff;}
+.pr {background:#dc2626;color:#fff;}
+.ps {background:#64748b;color:#fff;}
+.pb {background:#2563eb;color:#fff;}
+.pt {background:#0891b2;color:#fff;}
+.pp {background:#db2777;color:#fff;}
+.py {background:#ca8a04;color:#fff;}
+
+/* ═══ FLOW TRACK (Section 1) ═══ */
+.track-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:20px;}
+.track-hdr{border-radius:14px 14px 0 0;padding:16px 20px;display:flex;align-items:center;gap:12px;color:#fff;}
+.th-v{background:linear-gradient(135deg,#7c3aed,#a855f7);}
+.th-i{background:linear-gradient(135deg,#dc2626,#f87171);}
+.track-step{padding:16px 18px;border-left:1px solid;border-right:1px solid;border-bottom:1px solid;}
+.track-step:last-child{border-radius:0 0 14px 14px;}
+.ts-v{background:#faf5ff;border-color:#d8b4fe;}
+.ts-i{background:#fff1f2;border-color:#fca5a5;}
+.step-num{width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;flex-shrink:0;margin-right:10px;}
+.sn-v{background:linear-gradient(135deg,#7c3aed,#a855f7);}
+.sn-i{background:linear-gradient(135deg,#dc2626,#f87171);}
+.step-title{font-size:13px;font-weight:800;margin-bottom:5px;}
+.st-v{color:#5b21b6;}
+.st-i{color:#991b1b;}
+.step-body{font-size:11px;color:#475569;line-height:1.6;}
+.step-body strong{color:#1e293b;}
+.step-hrow{display:flex;align-items:center;margin-bottom:6px;}
+
+/* ═══ MERGE BAR ═══ */
+.merge-bar{
+  background:linear-gradient(135deg,#6366f1,#8b5cf6,#ec4899);
+  border-radius:16px;padding:20px 26px;
+  display:flex;align-items:center;gap:16px;
+  margin:20px 0;color:#fff;
+  box-shadow:0 8px 28px rgba(99,102,241,.35);
+}
+.merge-icon{width:48px;height:48px;background:rgba(255,255,255,.2);border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;}
+.merge-title{font-size:14px;font-weight:800;}
+.merge-sub{font-size:11px;opacity:.85;margin-top:3px;}
+
+/* ═══ CLEARANCE TASKS ═══ */
+.ct-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px;}
+.ct-card{border-radius:12px;padding:12px 14px;display:flex;align-items:flex-start;gap:10px;}
+.ct-mgr  {background:linear-gradient(135deg,#f5f3ff,#ede9fe);border:1.5px solid #c4b5fd;}
+.ct-hr   {background:linear-gradient(135deg,#fdf2f8,#fce7f3);border:1.5px solid #f9a8d4;}
+.ct-ast  {background:linear-gradient(135deg,#fffbeb,#fef3c7);border:1.5px solid #fde68a;}
+.ct-it   {background:linear-gradient(135deg,#eff6ff,#dbeafe);border:1.5px solid #93c5fd;}
+.ct-wfm  {background:linear-gradient(135deg,#f0fdfa,#ccfbf1);border:1.5px solid #5eead4;}
+.ct-pay  {background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1.5px solid #86efac;}
+.ct-lms  {background:linear-gradient(135deg,#fdf4ff,#fae8ff);border:1.5px solid #e9d5ff;}
+.ct-cmp  {background:linear-gradient(135deg,#fff1f2,#ffe4e6);border:1.5px solid #fca5a5;}
+.ct-dot{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;}
+.ctd-mgr{background:#7c3aed;} .ctd-hr{background:#db2777;} .ctd-ast{background:#ca8a04;}
+.ctd-it{background:#1d4ed8;}  .ctd-wfm{background:#0891b2;}.ctd-pay{background:#16a34a;}
+.ctd-lms{background:#9333ea;} .ctd-cmp{background:#dc2626;}
+.ct-name{font-size:12px;font-weight:700;color:#1e293b;}
+.ct-role{font-size:10px;color:#64748b;margin-top:2px;}
+
+/* ═══ NOC CHAIN ═══ */
+.noc-wrap{background:linear-gradient(135deg,#1e1b4b,#2e1065);border-radius:18px;overflow:hidden;box-shadow:0 12px 40px rgba(99,102,241,.3);}
+.noc-title{padding:22px 26px;background:linear-gradient(135deg,rgba(99,102,241,.3),rgba(139,92,246,.2));border-bottom:1px solid rgba(255,255,255,.1);display:flex;align-items:center;gap:14px;}
+.noc-body{padding:24px 22px;}
+.tier-row{display:flex;align-items:stretch;margin-bottom:12px;}
+.tier-num-col{width:44px;display:flex;flex-direction:column;align-items:center;flex-shrink:0;}
+.tier-num{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;flex-shrink:0;}
+.tn1{background:linear-gradient(135deg,#6366f1,#818cf8);color:#fff;box-shadow:0 3px 10px rgba(99,102,241,.5);}
+.tn2{background:linear-gradient(135deg,#8b5cf6,#a78bfa);color:#fff;box-shadow:0 3px 10px rgba(139,92,246,.5);}
+.tn3{background:linear-gradient(135deg,#ec4899,#f9a8d4);color:#fff;box-shadow:0 3px 10px rgba(236,72,153,.4);}
+.tn4{background:linear-gradient(135deg,#f59e0b,#fde68a);color:#1e293b;box-shadow:0 3px 10px rgba(245,158,11,.4);}
+.tn5{background:linear-gradient(135deg,#22c55e,#86efac);color:#1e293b;box-shadow:0 3px 10px rgba(34,197,94,.4);}
+.tier-line{width:3px;flex:1;min-height:14px;margin:3px auto;border-radius:2px;background:linear-gradient(180deg,rgba(255,255,255,.15),rgba(255,255,255,.05));}
+.tier-card{flex:1;margin-left:12px;padding:12px 16px;border-radius:12px;display:flex;align-items:flex-start;justify-content:space-between;gap:8px;}
+.tc1{background:rgba(99,102,241,.15);border:1px solid rgba(99,102,241,.3);}
+.tc2{background:rgba(139,92,246,.15);border:1px solid rgba(139,92,246,.3);}
+.tc3{background:rgba(236,72,153,.12);border:1px solid rgba(236,72,153,.3);}
+.tc4{background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.3);}
+.tier-role{font-size:13px;font-weight:800;color:#fff;}
+.tier-note{font-size:11px;color:rgba(255,255,255,.55);margin-top:3px;}
+.tier-tag{font-size:9px;font-weight:800;padding:3px 9px;border-radius:999px;flex-shrink:0;color:#fff;letter-spacing:.05em;text-transform:uppercase;}
+.tt1{background:#6366f1;} .tt2{background:#8b5cf6;} .tt3{background:#ec4899;} .tt4{background:#f59e0b;color:#1e293b;} .tt5{background:#22c55e;color:#1e293b;}
+
+/* Parallel block */
+.par-wrap{margin-left:56px;background:rgba(255,255,255,.06);border:1px dashed rgba(255,255,255,.2);border-radius:14px;padding:14px 16px;}
+.par-label{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.12em;color:rgba(255,255,255,.45);margin-bottom:12px;}
+.par-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.par-card{border-radius:10px;padding:10px 13px;display:flex;align-items:center;gap:10px;}
+.pc1{background:linear-gradient(135deg,rgba(59,130,246,.25),rgba(59,130,246,.15));border:1px solid rgba(59,130,246,.4);}
+.pc2{background:linear-gradient(135deg,rgba(16,185,129,.2),rgba(16,185,129,.12));border:1px solid rgba(16,185,129,.4);}
+.pc3{background:linear-gradient(135deg,rgba(168,85,247,.2),rgba(168,85,247,.12));border:1px solid rgba(168,85,247,.4);}
+.pc4{background:linear-gradient(135deg,rgba(245,158,11,.18),rgba(245,158,11,.1));border:1px solid rgba(245,158,11,.45);}
+.p-circle{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0;color:#fff;}
+.pcr1{background:#3b82f6;} .pcr2{background:#10b981;} .pcr3{background:#a855f7;} .pcr4{background:#f59e0b;color:#1e293b;}
+.p-role{font-size:12px;font-weight:700;color:#fff;}
+.p-sub{font-size:10px;color:rgba(255,255,255,.5);margin-top:1px;}
+
+/* ═══ GATE BOXES ═══ */
+.gate-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px;}
+.gate-box{border-radius:14px;padding:18px;text-align:center;}
+.gb1{background:linear-gradient(135deg,#fef3c7,#fde68a);border:2px solid #f59e0b;}
+.gb2{background:linear-gradient(135deg,#dbeafe,#bfdbfe);border:2px solid #3b82f6;}
+.gb3{background:linear-gradient(135deg,#dcfce7,#bbf7d0);border:2px solid #22c55e;}
+.gate-icon{font-size:28px;margin-bottom:8px;}
+.gate-title{font-size:13px;font-weight:800;color:#1e293b;margin-bottom:4px;}
+.gate-body{font-size:11px;color:#475569;line-height:1.55;}
+
+/* ═══ OUTCOME CARDS ═══ */
+.outcome-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+.oc{border-radius:16px;padding:22px 18px;text-align:center;color:#fff;box-shadow:0 6px 20px rgba(0,0,0,.15);}
+.oc1{background:linear-gradient(135deg,#059669,#10b981,#34d399);}
+.oc2{background:linear-gradient(135deg,#7c3aed,#a855f7,#c084fc);}
+.oc3{background:linear-gradient(135deg,#1d4ed8,#3b82f6,#60a5fa);}
+.oc-icon{font-size:30px;margin-bottom:10px;}
+.oc-title{font-size:14px;font-weight:800;margin-bottom:4px;}
+.oc-body{font-size:11px;opacity:.85;line-height:1.55;}
+
+/* ═══ AUTOMATION CARDS ═══ */
+.auto-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;}
+.auto-card{border-radius:16px;padding:20px;display:flex;gap:14px;color:#fff;box-shadow:0 4px 16px rgba(0,0,0,.12);}
+.ac1{background:linear-gradient(135deg,#0891b2,#06b6d4);}
+.ac2{background:linear-gradient(135deg,#7c3aed,#a855f7);}
+.ac3{background:linear-gradient(135deg,#ea580c,#f97316);}
+.ac4{background:linear-gradient(135deg,#059669,#10b981);}
+.auto-icon{font-size:24px;flex-shrink:0;}
+.auto-title{font-size:13px;font-weight:800;margin-bottom:4px;}
+.auto-body{font-size:11px;opacity:.85;line-height:1.55;}
+
+/* ═══ STATUS STRIPS ═══ */
+.status-strip{display:flex;flex-wrap:wrap;border-radius:14px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.08);margin-bottom:14px;}
+.ss-cell{flex:1;min-width:120px;padding:14px 16px;}
+.ss-key{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px;}
+.ss-val{font-size:11px;color:#475569;line-height:1.5;}
+.ss1{background:#f5f3ff;}.ss1 .ss-key{color:#6d28d9;}
+.ss2{background:#fdf4ff;}.ss2 .ss-key{color:#9333ea;}
+.ss3{background:#f0fdf4;}.ss3 .ss-key{color:#16a34a;}
+.ss4{background:#ecfeff;}.ss4 .ss-key{color:#0891b2;}
+.ss5{background:#fff7ed;}.ss5 .ss-key{color:#ea580c;}
+.ss6{background:#fdf4ff;}.ss6 .ss-key{color:#9333ea;}
+.ss7{background:#f0fdf4;}.ss7 .ss-key{color:#16a34a;}
+.ss8{background:#fff1f2;}.ss8 .ss-key{color:#dc2626;}
+.nss1{background:#eef2ff;}.nss1 .ss-key{color:#4338ca;}
+.nss2{background:#fefce8;}.nss2 .ss-key{color:#ca8a04;}
+.nss3{background:#eff6ff;}.nss3 .ss-key{color:#1d4ed8;}
+.nss4{background:#fff1f2;}.nss4 .ss-key{color:#dc2626;}
+.nss5{background:#f0fdf4;}.nss5 .ss-key{color:#15803d;}
+
+/* ═══ VISIBILITY PANEL ═══ */
+.vis-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.vis-item{display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid rgba(0,0,0,.05);}
+.vis-item:last-child{border-bottom:none;}
+.vi-icon{font-size:14px;flex-shrink:0;margin-top:1px;}
+.vi-text{font-size:11px;color:#475569;line-height:1.55;}
+.vi-text strong{color:#1e293b;}
+
+/* FSM path strip */
+.fsm-strip{background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border:1.5px solid #7dd3fc;border-radius:14px;padding:16px 20px;}
+.fsm-title{font-size:12px;font-weight:800;color:#0369a1;margin-bottom:12px;}
+.fsm-flow{display:flex;align-items:center;flex-wrap:wrap;gap:4px;font-size:11px;}
+.fsm-node{background:#fff;border:1.5px solid;border-radius:8px;padding:5px 11px;font-weight:700;}
+.fn-sub{border-color:#a5b4fc;color:#4338ca;}
+.fn-mgr{border-color:#c084fc;color:#7e22ce;}
+.fn-acc{border-color:#86efac;color:#15803d;}
+.fn-ns{border-color:#7dd3fc;color:#0369a1;}
+.fn-cp{border-color:#fdba74;color:#c2410c;}
+.fn-fp{border-color:#d8b4fe;color:#7c3aed;}
+.fn-ex{border-color:#6ee7b7;color:#065f46;}
+.fsm-arr{color:#94a3b8;font-size:13px;padding:0 2px;}
+.fsm-note{font-size:10px;color:#64748b;margin-top:8px;}
+
+/* section divider */
+.sec-div{display:flex;align-items:center;gap:16px;margin:30px 0 24px;}
+.sec-div::before,.sec-div::after{content:'';flex:1;height:2px;background:linear-gradient(90deg,transparent,#e2e8f0,transparent);}
+.sec-div-icon{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#8b5cf6);display:flex;align-items:center;justify-content:center;font-size:16px;color:#fff;flex-shrink:0;box-shadow:0 3px 10px rgba(99,102,241,.4);}
+
+.callout{border-radius:12px;padding:14px 18px;display:flex;gap:12px;align-items:flex-start;}
+.co-amber{background:#fffbeb;border:1.5px solid #fde68a;}
+.co-red  {background:#fff1f2;border:1.5px solid #fca5a5;}
+.co-green{background:#f0fdf4;border:1.5px solid #86efac;}
+.co-blue {background:#eff6ff;border:1.5px solid #93c5fd;}
+.co-icon{font-size:18px;flex-shrink:0;}
+.co-title{font-size:12px;font-weight:800;margin-bottom:3px;}
+.ct-amber{color:#92400e;} .ct-red{color:#991b1b;} .ct-green{color:#166534;} .ct-blue{color:#1e40af;}
+.co-body{font-size:11px;color:#475569;line-height:1.6;}
+
+.footer{margin-top:52px;text-align:center;font-size:11px;color:#94a3b8;border-top:2px solid #e2e8f0;padding-top:20px;}
+
+@media(max-width:900px){
+  .initiator-grid,.track-grid,.ct-grid,.par-grid,.gate-grid,.outcome-grid,.auto-grid,.vis-grid{grid-template-columns:1fr;}
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- ══ PAGE HEADER ══ -->
+<div class="page-hdr">
+  <h1>🏢 Exit &amp; NOC Clearance — Complete Journey</h1>
+  <p>From resignation to certificate · Voluntary &amp; Involuntary · All gates · Every automation · Source-verified 2026-09-14</p>
+  <div class="badge-row">
+    <span class="badge">Exit FSM: 11 States</span>
+    <span class="badge">9 Clearance Tasks</span>
+    <span class="badge">8-Signatory NOC Chain</span>
+    <span class="badge">LWD Auto-trigger 8 AM</span>
+    <span class="badge">3 Exit Gates</span>
+    <span class="badge">Objection ≠ Rejection</span>
+  </div>
+</div>
+
+<button class="pdf-btn" onclick="window.print()">⬇ Download PDF</button>
+
+<!-- ══ SECTION 0: WHO RAISES IT ══ -->
+<div class="sec-hdr sh-teal">
+  <div class="sec-hdr-icon">🙋</div>
+  <div><div class="sec-hdr-title">Section 0 — Who Can Raise a Resignation &amp; What Each Party Sees</div><div class="sec-hdr-sub">Three initiators · Same FSM flow · Employee always sees it · Withdrawal rules enforced server-side</div></div>
+</div>
+
+<div class="initiator-grid">
+
+  <div class="init-card init-emp">
+    <div class="init-icon">👤</div>
+    <div class="init-title">Employee — Self Service</div>
+    <div class="init-sub">HRMS Portal / My Resignation</div>
+    <div class="init-body">Opens <strong>/exit/resignation</strong> in their portal. Fills reason, notice date, F&amp;F preference. Server <strong>forcibly overwrites</strong> the <code>employeeId</code> body field with their own ID — they <strong>cannot raise for anyone else</strong> even by manipulating the request body. Completely safe.</div>
+    <div class="pills"><span class="pill pv">initiated_by = 'employee'</span><span class="pill pg">Own record only</span></div>
+  </div>
+
+  <div class="init-card init-mgr">
+    <div class="init-icon">🧑‍💼</div>
+    <div class="init-title">Manager — On Behalf</div>
+    <div class="init-sub">Exit Command Center</div>
+    <div class="init-body">Manager with <code>manager</code> role can raise an exit for any team member by supplying their <code>employeeId</code>. Server sets <code>initiated_by = 'manager'</code> from the caller's role — body cannot override. Can cover absences, forced exits, or resignation capture during appraisals.</div>
+    <div class="pills"><span class="pill pv">initiated_by = 'manager'</span><span class="pill pa">Any team member</span></div>
+  </div>
+
+  <div class="init-card init-hr">
+    <div class="init-icon">👩‍💼</div>
+    <div class="init-title">HR / Admin — Involuntary</div>
+    <div class="init-sub">Exit Command Center</div>
+    <div class="init-body">HR handles involuntary exits — absconding, abandonment, termination. Sets <code>exit_type = 'absconding'</code>, records <code>absconding_since</code> (the last day employee actually worked). Server sets <code>initiated_by = 'hr'</code> from role. LWD = absconding_since directly — no grace days.</div>
+    <div class="pills"><span class="pill pp">initiated_by = 'hr'</span><span class="pill pr">Any employee</span></div>
+  </div>
+
+</div>
+
+<!-- Employee visibility panel -->
+<div class="card" style="margin-bottom:18px;">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+    <div style="width:42px;height:42px;background:linear-gradient(135deg,#0891b2,#06b6d4);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">👁️</div>
+    <div>
+      <div style="font-size:15px;font-weight:800;color:#1e293b;">Employee Always Sees Their Resignation — Regardless of Who Raised It</div>
+      <div style="font-size:11px;color:#64748b;margin-top:2px;"><code>GET /api/exit/resignation/my</code> → <code>WHERE employee_id = logged-in user's employee id</code> — returns ALL records on their account</div>
+    </div>
+  </div>
+  <div class="vis-grid">
+    <div>
+      <div style="font-size:10px;font-weight:800;color:#0891b2;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #bae6fd;">✅ What Employee Sees</div>
+      <div class="vis-item"><div class="vi-icon">📊</div><div class="vi-text">Current status with full timeline (<strong>submitted → manager_review → accepted…</strong>)</div></div>
+      <div class="vis-item"><div class="vi-icon">🏷️</div><div class="vi-text">Who raised it — <code>initiated_by</code> field shows <strong>'employee'</strong> / <strong>'manager'</strong> / <strong>'hr'</strong></div></div>
+      <div class="vis-item"><div class="vi-icon">📅</div><div class="vi-text">Confirmed last working day once set by HR</div></div>
+      <div class="vis-item"><div class="vi-icon">🤝</div><div class="vi-text">Retention offers from HR — can respond: accept / decline with remarks</div></div>
+      <div class="vis-item"><div class="vi-icon">🕵️</div><div class="vi-text">Full audit trail — every status change with actor name and timestamp</div></div>
+    </div>
+    <div>
+      <div style="font-size:10px;font-weight:800;color:#dc2626;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #fca5a5;">⚡ What Employee Can / Cannot Do</div>
+      <div class="vis-item"><div class="vi-icon">✅</div><div class="vi-text"><strong>Withdraw</strong> their own resignation — ONLY while status = <code>submitted</code>. Backend checks employee_id + status gate.</div></div>
+      <div class="vis-item"><div class="vi-icon">✅</div><div class="vi-text"><strong>Respond to retention offers</strong> — accept or decline with remarks, visible to HR and manager.</div></div>
+      <div class="vis-item"><div class="vi-icon">🚫</div><div class="vi-text"><strong>Cannot withdraw</strong> HR-raised absconding/involuntary exit — only HR/Admin can revoke it.</div></div>
+      <div class="vis-item"><div class="vi-icon">🚫</div><div class="vi-text"><strong>Cannot withdraw</strong> after manager accepts — locked for employee once past <code>submitted</code> status.</div></div>
+      <div class="vis-item"><div class="vi-icon">🚫</div><div class="vi-text"><strong>Cannot bypass</strong> clearance tasks, skip NOC chain, or approve their own F&amp;F.</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- FSM flow strip -->
+<div class="fsm-strip" style="margin-bottom:24px;">
+  <div class="fsm-title">✅ Same FSM flow regardless of who raises the resignation</div>
+  <div class="fsm-flow">
+    <span class="fsm-node fn-sub">submitted</span><span class="fsm-arr">→</span>
+    <span class="fsm-node fn-mgr">manager_review</span><span class="fsm-arr">→</span>
+    <span class="fsm-node fn-acc">accepted</span><span class="fsm-arr">→</span>
+    <span class="fsm-node fn-ns">notice_serving *</span><span class="fsm-arr">→</span>
+    <span class="fsm-node fn-cp">clearance_pending</span><span class="fsm-arr">→</span>
+    <span class="fsm-node fn-fp">fnf_pending</span><span class="fsm-arr">→</span>
+    <span class="fsm-node fn-ex">closed / exited</span>
+  </div>
+  <div class="fsm-note">* notice_serving is skipped for absconding/involuntary exits — goes directly from accepted → clearance_pending</div>
+</div>
+
+<div class="sec-div"><div class="sec-div-icon">▼</div></div>
+
+<!-- ══ SECTION 1: TWO TRACKS ══ -->
+<div class="sec-hdr sh-violet">
+  <div class="sec-hdr-icon">🔀</div>
+  <div><div class="sec-hdr-title">Section 1 — Exit Initiation (Paths Diverge)</div><div class="sec-hdr-sub">Voluntary resignation vs Involuntary / Absconding — each track's unique steps</div></div>
+</div>
+
+<div class="track-grid">
+  <!-- VOLUNTARY -->
+  <div>
+    <div class="track-hdr th-v">
+      <span style="font-size:22px;">✋</span>
+      <div><div style="font-size:14px;font-weight:800;">Voluntary Resignation</div><div style="font-size:10px;opacity:.8;">exit_type = voluntary</div></div>
+    </div>
+    <div class="track-step ts-v">
+      <div class="step-hrow"><span class="step-num sn-v">1</span><div class="step-title st-v">Employee Submits Resignation</div></div>
+      <div class="step-body">Via HRMS portal. Fills reason, notice date, F&amp;F preference. Status: <strong>draft → submitted</strong>.</div>
+      <div class="pills"><span class="pill pv">Employee-initiated</span></div>
+    </div>
+    <div class="track-step ts-v">
+      <div class="step-hrow"><span class="step-num sn-v">2</span><div class="step-title st-v">Manager Reviews (Cannot Reject)</div></div>
+      <div class="step-body">Status: <strong>submitted → manager_review</strong>. Manager <strong>cannot reject</strong> (ruling 2026-09-12 — only employee may withdraw). Manager may record an <strong>Objection</strong> with a mandatory reason — resignation stays active and notice period continues unchanged.</div>
+      <div class="pills"><span class="pill pg">→ accepted</span><span class="pill pa">Objection (non-blocking)</span><span class="pill ps">Only employee → withdrawn</span></div>
+    </div>
+    <div class="track-step ts-v">
+      <div class="step-hrow"><span class="step-num sn-v">3</span><div class="step-title st-v">Notice Period</div></div>
+      <div class="step-body">Status: <strong>accepted → notice_serving</strong>. Default 30 days (policy config), manager can override. HR confirms <code>last_working_day_confirmed</code> in system.</div>
+      <div class="pills"><span class="pill pt">Default: 30 days</span><span class="pill pv">Manager override allowed</span></div>
+    </div>
+    <div class="track-step ts-v">
+      <div class="step-hrow"><span class="step-num sn-v">4</span><div class="step-title st-v">Clearance Phase Begins</div></div>
+      <div class="step-body">Status: <strong>notice_serving → clearance_pending</strong>. 9 clearance tasks auto-created on acceptance. All must be cleared or waived before F&amp;F.</div>
+      <div class="pills"><span class="pill pb">9 tasks auto-created</span></div>
+    </div>
+    <div class="track-step ts-v">
+      <div class="step-hrow"><span class="step-num sn-v">5</span><div class="step-title st-v">F&amp;F Calculated &amp; Approved</div></div>
+      <div class="step-body">Status: <strong>clearance_pending → fnf_pending</strong>. F&amp;F calculation reviewed and approved. Must NOT be provisional (<code>is_ff_provisional = 0</code>).</div>
+      <div class="pills"><span class="pill pg">→ fnf approved</span><span class="pill pr">Provisional = BLOCKED</span></div>
+    </div>
+    <div class="track-step ts-v" style="border-radius:0 0 14px 14px;">
+      <div class="step-hrow"><span class="step-num sn-v">6</span><div class="step-title st-v">LWD → NOC Auto-triggered</div></div>
+      <div class="step-body">At 8 AM on LWD, system auto-creates NOC case and emails invite link. Employee fills self-declaration. NOC is a <strong>hard gate on "exited"</strong>.</div>
+      <div class="pills"><span class="pill pg">Employee fills form via link</span><span class="pill pv">NOC gates exited status</span></div>
+    </div>
+  </div>
+
+  <!-- INVOLUNTARY -->
+  <div>
+    <div class="track-hdr th-i">
+      <span style="font-size:22px;">🚨</span>
+      <div><div style="font-size:14px;font-weight:800;">Involuntary / Absconding</div><div style="font-size:10px;opacity:.8;">exit_type = absconding / abandonment</div></div>
+    </div>
+    <div class="track-step ts-i">
+      <div class="step-hrow"><span class="step-num sn-i">1</span><div class="step-title st-i">HR Creates Exit Record</div></div>
+      <div class="step-body">HR raises exit with <strong>exit_type = absconding / abandonment</strong>. Records <code>absconding_since</code> — last date employee actually worked. No employee consent required.</div>
+      <div class="pills"><span class="pill pr">HR-initiated</span><span class="pill pa">No employee consent</span></div>
+    </div>
+    <div class="track-step ts-i">
+      <div class="step-hrow"><span class="step-num sn-i">2</span><div class="step-title st-i">LWD = absconding_since (Direct)</div></div>
+      <div class="step-body"><strong>Fixed 2026-09-12</strong> — was LWD = absconding_since + 7 grace days (overpayment bug). Now LWD = exact last day worked. No notice period. Status: <strong>accepted → clearance_pending</strong> (notice_serving skipped).</div>
+      <div class="pills"><span class="pill pr">No notice period</span><span class="pill pa">LWD = last seen date</span></div>
+    </div>
+    <div class="track-step ts-i">
+      <div class="step-hrow"><span class="step-num sn-i">3</span><div class="step-title st-i">Resignation Not Revoked</div></div>
+      <div class="step-body">If employee returns with explanation, HR sets status = <strong>revoked</strong>. NOC trigger <strong>permanently skips</strong> this record. <em>rejected</em> is a legacy-only status (11 old rows, no new transitions).</div>
+      <div class="pills"><span class="pill pg">Proceeding → clearance_pending</span><span class="pill ps">Revoked → NOC skipped</span></div>
+    </div>
+    <div class="track-step ts-i">
+      <div class="step-hrow"><span class="step-num sn-i">4</span><div class="step-title st-i">Clearance Phase (with Waivers)</div></div>
+      <div class="step-body">Same 9 clearance tasks created. IT and Admin <strong>waive</strong> assets instead of marking returned. Waivers satisfy the Finance gate exactly like physical returns.</div>
+      <div class="pills"><span class="pill pr">Assets waived, not returned</span><span class="pill pb">9 tasks created</span></div>
+    </div>
+    <div class="track-step ts-i">
+      <div class="step-hrow"><span class="step-num sn-i">5</span><div class="step-title st-i">F&amp;F with Deductions</div></div>
+      <div class="step-body">F&amp;F calculation includes notice period recovery, asset deductions, outstanding loans/advances. Must be approved (not provisional) before proceeding.</div>
+      <div class="pills"><span class="pill pa">Notice recovery deducted</span><span class="pill pr">Asset deductions possible</span></div>
+    </div>
+    <div class="track-step ts-i" style="border-radius:0 0 14px 14px;">
+      <div class="step-hrow"><span class="step-num sn-i">6</span><div class="step-title st-i">LWD → NOC Auto-triggered</div></div>
+      <div class="step-body">Same 8 AM trigger. Since employee is absent, HR uses <strong>"Record on behalf"</strong> — fills mandatory resignation date, optional reason, F&amp;F route. Chain unlocks immediately.</div>
+      <div class="pills"><span class="pill pr">HR records on behalf</span><span class="pill pa">Resignation date mandatory</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- Merge bar -->
+<div class="merge-bar">
+  <div class="merge-icon">⚡</div>
+  <div>
+    <div class="merge-title">Both paths converge: NOC case auto-opens on LWD · NOC is a hard gate on reaching "exited"</div>
+    <div class="merge-sub">8 AM daily sweep · Scans exits where LWD ≤ today · Status NOT IN terminal list · No existing NOC case · 7-day lookback for outages · openCase() is idempotent</div>
+  </div>
+  <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0;">
+    <span class="pill" style="background:rgba(255,255,255,.25);color:#fff;">revoked → skipped</span>
+    <span class="pill" style="background:rgba(255,255,255,.25);color:#fff;">withdrawn → skipped</span>
+    <span class="pill" style="background:rgba(255,255,255,.25);color:#fff;">exited → skipped</span>
+  </div>
+</div>
+
+<div class="sec-div"><div class="sec-div-icon">▼</div></div>
+
+<!-- ══ SECTION 2: 9 CLEARANCE TASKS ══ -->
+<div class="sec-hdr sh-orange">
+  <div class="sec-hdr-icon">📋</div>
+  <div><div class="sec-hdr-title">Section 2 — 9 Clearance Tasks (Auto-Created on Acceptance)</div><div class="sec-hdr-sub">All must reach "cleared" or "waived" before employee moves to fnf_pending · Due date: 3 days from acceptance</div></div>
+</div>
+
+<div class="ct-grid">
+  <div class="ct-card ct-mgr"><div class="ct-dot ctd-mgr">🤝</div><div><div class="ct-name">Manager Handover</div><div class="ct-role">KT, pending work, client dependency, system access · Owner: manager</div></div></div>
+  <div class="ct-card ct-hr"><div class="ct-dot ctd-hr">👩‍💼</div><div><div class="ct-name">HR Exit Interview</div><div class="ct-role">Resignation acceptance, exit reason, interview completion · Owner: hr</div></div></div>
+  <div class="ct-card ct-ast"><div class="ct-dot ctd-ast">📦</div><div><div class="ct-name">Asset Recovery</div><div class="ct-role">Laptop, headset, ID card, access card, SIM, company property · Owner: admin</div></div></div>
+  <div class="ct-card ct-it"><div class="ct-dot ctd-it">💻</div><div><div class="ct-name">IT Access Closure</div><div class="ct-role">Email, VPN, client tools, internal apps deactivated post-LWD · Owner: admin</div></div></div>
+  <div class="ct-card ct-wfm"><div class="ct-dot ctd-wfm">📅</div><div><div class="ct-name">Roster Deactivation</div><div class="ct-role">Remove future roster assignments, stop WFM scheduling · Owner: wfm</div></div></div>
+  <div class="ct-card ct-wfm"><div class="ct-dot ctd-wfm">🖥️</div><div><div class="ct-name">Client ID Deactivation</div><div class="ct-role">Deactivate client system login, attach confirmation screenshot · Owner: wfm</div></div></div>
+  <div class="ct-card ct-pay"><div class="ct-dot ctd-pay">💰</div><div><div class="ct-name">Payroll Hold &amp; F&amp;F</div><div class="ct-role">Salary hold, advances, notice recovery, leave encashment · Owner: payroll</div></div></div>
+  <div class="ct-card ct-lms"><div class="ct-dot ctd-lms">🎓</div><div><div class="ct-name">LMS &amp; Cert Closure</div><div class="ct-role">Archive LMS status and training/certification records · Owner: trainer</div></div></div>
+  <div class="ct-card ct-cmp"><div class="ct-dot ctd-cmp">⚖️</div><div><div class="ct-name">Compliance &amp; NDA</div><div class="ct-role">NDA/client confidentiality reminders, DPDP exit notice · Owner: hr</div></div></div>
+</div>
+
+<div class="callout co-amber" style="margin-top:14px;">
+  <div class="co-icon">⚠️</div>
+  <div><div class="co-title ct-amber">Clearance Gate</div><div class="co-body">System checks <code>exit_clearance_task</code> — if ANY task is NOT 'cleared' or 'waived', the transition to <em>fnf_pending</em> is blocked. For absconding cases, all asset and IT tasks are typically waived with reason. Attachment upload supported on all tasks (e.g. Client ID deactivation screenshot).</div></div>
+</div>
+
+<div class="sec-div"><div class="sec-div-icon">▼</div></div>
+
+<!-- ══ SECTION 3: NOC CHAIN ══ -->
+<div class="sec-hdr sh-indigo">
+  <div class="sec-hdr-icon">🔐</div>
+  <div><div class="sec-hdr-title">Section 3 — NOC 8-Signatory Clearance Chain</div><div class="sec-hdr-sub">Sequential Tiers 1–4 → Parallel Tier 5 (all 4 simultaneously) · Finance is asset-gated · 48h SLA per tier</div></div>
+</div>
+
+<div class="noc-wrap">
+  <div class="noc-title">
+    <div style="width:44px;height:44px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">🔐</div>
+    <div>
+      <div style="font-size:15px;font-weight:800;color:#fff;">8-Signatory Digital NOC Certificate</div>
+      <div style="font-size:11px;color:rgba(255,255,255,.5);margin-top:2px;">Precondition: noc_case.status must be employee_submitted (employee fills form, or HR uses "Record on behalf" for absconding)</div>
+    </div>
+  </div>
+  <div class="noc-body">
+    <div style="background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);border-radius:10px;padding:10px 16px;margin-bottom:18px;font-size:11px;color:#86efac;display:flex;gap:8px;align-items:center;">
+      <span style="font-size:16px;">✅</span>
+      <span>Until the employee form is submitted, all 8 stages show "Waiting for employee form". The form can be filled by the employee via invite link, or by HR using "Record on behalf" for absconding employees.</span>
+    </div>
+    <div class="tier-row">
+      <div class="tier-num-col"><div class="tier-num tn1">1</div><div class="tier-line"></div></div>
+      <div class="tier-card tc1"><div><div class="tier-role">👤 Team Leader <span style="font-size:11px;opacity:.5;font-weight:400;">— Tier 1</span></div><div class="tier-note">Confirms exit acknowledged · KT done · No pending critical tasks · First to act · Unlocks Tier 2</div></div><span class="tier-tag tt1">Sequential · 48h SLA</span></div>
+    </div>
+    <div class="tier-row">
+      <div class="tier-num-col"><div class="tier-num tn2">2</div><div class="tier-line"></div></div>
+      <div class="tier-card tc2"><div><div class="tier-role">🧑‍💼 Process Manager <span style="font-size:11px;opacity:.5;font-weight:400;">— Tier 2</span></div><div class="tier-note">Process handover complete · No open client escalations · KT sign-off confirmed · Unlocks Tier 3</div></div><span class="tier-tag tt2">Sequential · 48h SLA</span></div>
+    </div>
+    <div class="tier-row">
+      <div class="tier-num-col"><div class="tier-num tn3">3</div><div class="tier-line"></div></div>
+      <div class="tier-card tc3"><div><div class="tier-role">🏢 Branch Manager <span style="font-size:11px;opacity:.5;font-weight:400;">— Tier 3</span></div><div class="tier-note">Branch clearance · No NDA concerns · No disciplinary flags · Unlocks Tier 4</div></div><span class="tier-tag tt3">Sequential · 48h SLA</span></div>
+    </div>
+    <div class="tier-row" style="margin-bottom:6px;">
+      <div class="tier-num-col"><div class="tier-num tn4">4</div><div class="tier-line"></div></div>
+      <div class="tier-card tc4"><div><div class="tier-role">👩‍💼 HR <span style="font-size:11px;opacity:.5;font-weight:400;">— Tier 4 (HR Gate)</span></div><div class="tier-note">Documents confirmed · Leave balance settled · Experience letter ready · <strong style="color:#fde68a;">Accepting HR unlocks all 4 Tier-5 departments simultaneously</strong></div></div><span class="tier-tag tt4">HR Gate · 48h SLA</span></div>
+    </div>
+    <div class="par-wrap">
+      <div class="par-label">⚡ Tier 5 — All 4 unlock simultaneously when HR (Tier 4) signs</div>
+      <div class="par-grid">
+        <div class="par-card pc1"><div class="p-circle pcr1">5</div><div><div class="p-role">💻 IT Department</div><div class="p-sub">System access, email, VPN revoked</div></div></div>
+        <div class="par-card pc2"><div class="p-circle pcr2">6</div><div><div class="p-role">🗂️ Admin / MIS</div><div class="p-sub">ID card, biometric, locker cleared</div></div></div>
+        <div class="par-card pc3"><div class="p-circle pcr3">7</div><div><div class="p-role">📒 Accounts</div><div class="p-sub">Advances, loans, petty cash settled</div></div></div>
+        <div class="par-card pc4"><div class="p-circle pcr4">8</div><div><div class="p-role">💰 Finance</div><div class="p-sub" style="color:#fde68a;"><strong>⚠ Asset-gated</strong> — all REQUIRED assets must be returned or waived first</div></div></div>
+      </div>
+      <div class="callout co-amber" style="margin-top:12px;">
+        <div class="co-icon">🏷️</div>
+        <div><div class="co-title ct-amber">Finance Asset Gate</div><div class="co-body">Every item with <code>is_mandatory_for_finance = 1</code> must have <code>status = 'returned'</code> OR <code>waived_at IS NOT NULL</code>. Finance Accept button is disabled in UI while gate is open. SLA reminder worker also excludes Finance from overdue alerts while structurally blocked.</div></div>
+      </div>
+    </div>
+    <div class="callout co-red" style="margin-top:14px;">
+      <div class="co-icon">🚫</div>
+      <div><div class="co-title ct-red">Decline Path — Any Tier</div><div class="co-body">Any signatory can Decline with a mandatory remark. Status → <em>declined</em>. Chain halts. HR gets high-priority inbox alert. HR resolves the issue and reopens the case — declined stage resets to pending and chain continues from that point.</div></div>
+    </div>
+    <div class="callout co-blue" style="margin-top:12px;">
+      <div class="co-icon">⏰</div>
+      <div>
+        <div class="co-title ct-blue">SLA Reminder Engine (Hourly Worker)</div>
+        <div class="co-body">
+          Stage pending beyond <strong>48 hours</strong> → Reminder #1 to role holder (email + Work Inbox) ·
+          +24h → Reminder #2 · <strong>Branch Head added to CC</strong> ·
+          +24h → Reminder #3 (final) ·
+          Finance excluded from overdue while asset gate is structurally blocked ·
+          Max 40 reminders per hourly sweep
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="sec-div"><div class="sec-div-icon">▼</div></div>
+
+<!-- ══ SECTION 4: GATES & OUTCOMES ══ -->
+<div class="sec-hdr sh-green">
+  <div class="sec-hdr-icon">🔒</div>
+  <div><div class="sec-hdr-title">Section 4 — 3 Gates Before "Exited" &amp; Final Outcomes</div><div class="sec-hdr-sub">ALL three must pass (checked in finalExitBlockers()) · Any one open gate blocks the exited transition</div></div>
+</div>
+
+<div class="gate-grid">
+  <div class="gate-box gb1"><div class="gate-icon">📋</div><div class="gate-title">Gate 1 — Clearance Tasks</div><div class="gate-body">0 open tasks in exit_clearance_task. Every task must be status = cleared or waived before transition to exited is allowed.</div></div>
+  <div class="gate-box gb2"><div class="gate-icon">💰</div><div class="gate-title">Gate 2 — F&amp;F Approved</div><div class="gate-body">full_final_calculation must exist, status = "approved" or "paid", and is_ff_provisional must be 0 (not provisional).</div></div>
+  <div class="gate-box gb3"><div class="gate-icon">🔐</div><div class="gate-title">Gate 3 — NOC Completed</div><div class="gate-body">If NOC is required (inactive employee + open salary), noc_case.status must be "completed" before exited transition is allowed.</div></div>
+</div>
+
+<div class="outcome-grid" style="margin-top:16px;">
+  <div class="oc oc1"><div class="oc-icon">📜</div><div class="oc-title">NOC Certificate Generated</div><div class="oc-body">Digital 8-signature certificate auto-generated. All signatories listed with name, role, timestamp, remarks. Printable from clearance workspace.</div></div>
+  <div class="oc oc2"><div class="oc-icon">💸</div><div class="oc-title">Salary &amp; F&amp;F Released</div><div class="oc-body">Payroll salary gate lifts. F&amp;F settled per chosen route: current payroll / 45 days / both. Payroll Head and HR notified via Work Inbox.</div></div>
+  <div class="oc oc3"><div class="oc-icon">🗃️</div><div class="oc-title">Employee Fully Exited</div><div class="oc-body">Status → exited / closed. Experience letter, relieving letter generated. Employee account deactivated. All inbox tasks auto-resolved.</div></div>
+</div>
+
+<div class="sec-div"><div class="sec-div-icon">▼</div></div>
+
+<!-- ══ SECTION 5: AUTOMATIONS ══ -->
+<div class="sec-hdr sh-pink">
+  <div class="sec-hdr-icon">🤖</div>
+  <div><div class="sec-hdr-title">Section 5 — System Automations</div><div class="sec-hdr-sub">Zero manual triggers required — everything fires on schedule or on event</div></div>
+</div>
+
+<div class="auto-grid">
+  <div class="auto-card ac1"><div class="auto-icon">⏰</div><div><div class="auto-title">Daily 8 AM — NOC Case Auto-Creation</div><div class="auto-body">Scans exit_requests where LWD ≤ today, status not terminal, no existing NOC case. Auto-opens case, mints invite link, emails employee, creates HR Work Inbox item (high priority). 7-day lookback for missed LWDs. openCase() is idempotent — safe to re-run daily.</div></div></div>
+  <div class="auto-card ac2"><div class="auto-icon">📨</div><div><div class="auto-title">Event-Driven — Stage Unlock Notifications</div><div class="auto-body">Every accepted stage immediately notifies the next stage holder (email + Work Inbox). HR accepting Tier 4 notifies all 4 Tier-5 holders simultaneously. Notifications are deduplicated — no double-firing even on retry.</div></div></div>
+  <div class="auto-card ac3"><div class="auto-icon">🔔</div><div><div class="auto-title">Hourly — SLA Breach Reminders</div><div class="auto-body">noc-sla-reminder worker sweeps every hour. Stages past 48h SLA get up to 3 reminders (24h apart). Reminders #2 and #3 copy Branch Head. Finance excluded while asset gate is structurally blocked. Max 40 reminders per sweep.</div></div></div>
+  <div class="auto-card ac4"><div class="auto-icon">🎯</div><div><div class="auto-title">On Completion — Inbox Cleanup + Gate Lift</div><div class="auto-body">When last required stage is signed: all NOC inbox items auto-resolved, salary release gate lifts, HR and Payroll Head receive completion notification with F&amp;F route. Case permanently marked completed.</div></div></div>
+</div>
+
+<div class="sec-div"><div class="sec-div-icon">▼</div></div>
+
+<!-- ══ SECTION 6: STATUS REFERENCE ══ -->
+<div class="sec-hdr sh-blue">
+  <div class="sec-hdr-icon">📊</div>
+  <div><div class="sec-hdr-title">Section 6 — Status Reference</div><div class="sec-hdr-sub">exit_request.status FSM (11 states) + noc_case.status (5 states)</div></div>
+</div>
+
+<div style="font-size:11px;font-weight:700;color:#334155;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">exit_request.status</div>
+<div class="status-strip" style="margin-bottom:18px;">
+  <div class="ss-cell ss1"><div class="ss-key">draft → submitted</div><div class="ss-val">Created, then submitted by employee or HR</div></div>
+  <div class="ss-cell ss2"><div class="ss-key">manager_review</div><div class="ss-val">With manager. Accepts or records objection (cannot reject)</div></div>
+  <div class="ss-cell ss3"><div class="ss-key">accepted</div><div class="ss-val">9 clearance tasks created. Notice period begins.</div></div>
+  <div class="ss-cell ss4"><div class="ss-key">notice_serving</div><div class="ss-val">Voluntary only. Notice period running. LWD confirmed.</div></div>
+  <div class="ss-cell ss5"><div class="ss-key">clearance_pending</div><div class="ss-val">9 tasks must be cleared/waived. Assets being recovered.</div></div>
+  <div class="ss-cell ss6"><div class="ss-key">fnf_pending</div><div class="ss-val">F&amp;F under calculation. NOC chain also runs here.</div></div>
+  <div class="ss-cell ss7"><div class="ss-key">closed → exited</div><div class="ss-val">All 3 gates passed. Employee fully exited.</div></div>
+  <div class="ss-cell ss8"><div class="ss-key">revoked / withdrawn</div><div class="ss-val">Terminal. NOC skipped permanently. <em>rejected</em> = 11 legacy rows only.</div></div>
+</div>
+
+<div style="font-size:11px;font-weight:700;color:#334155;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;">noc_case.status</div>
+<div class="status-strip">
+  <div class="ss-cell nss1"><div class="ss-key">invited</div><div class="ss-val">Case open. Form not yet submitted. All stages locked.</div></div>
+  <div class="ss-cell nss2"><div class="ss-key">employee_submitted</div><div class="ss-val">Form filled (employee or HR on behalf). Tier 1 actionable.</div></div>
+  <div class="ss-cell nss3"><div class="ss-key">in_progress</div><div class="ss-val">Chain moving. One or more tiers signed.</div></div>
+  <div class="ss-cell nss4"><div class="ss-key">declined</div><div class="ss-val">A tier declined. Chain halted. HR resolves and reopens.</div></div>
+  <div class="ss-cell nss5"><div class="ss-key">completed</div><div class="ss-val">All 8 signed. Certificate ready. F&amp;F gate lifted.</div></div>
+</div>
+
+<div class="sec-div"><div class="sec-div-icon">▼</div></div>
+
+<!-- ══ SECTION 7: FLOWCHART ══ -->
+<div class="sec-hdr sh-rainbow">
+  <div class="sec-hdr-icon">🗺️</div>
+  <div><div class="sec-hdr-title">Section 7 — Complete Process Flowchart</div><div class="sec-hdr-sub">Full FSM from initiation to exited · Both paths · All decisions · 3-gate check</div></div>
+</div>
+
+<div style="background:#fff;border-radius:18px;padding:24px;box-shadow:0 4px 20px rgba(0,0,0,.08);overflow-x:auto;">
+<svg viewBox="0 0 1100 1780" xmlns="http://www.w3.org/2000/svg" style="width:100%;min-width:700px;display:block;">
+  <defs>
+    <marker id="a0" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#6366f1"/></marker>
+    <marker id="a1" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#8b5cf6"/></marker>
+    <marker id="a2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#dc2626"/></marker>
+    <marker id="a3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#22c55e"/></marker>
+    <marker id="a4" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#f59e0b"/></marker>
+    <marker id="a5" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#ec4899"/></marker>
+    <linearGradient id="gV" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#a855f7"/></linearGradient>
+    <linearGradient id="gR" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#dc2626"/><stop offset="100%" stop-color="#f87171"/></linearGradient>
+    <linearGradient id="gI" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#4338ca"/><stop offset="100%" stop-color="#6366f1"/></linearGradient>
+    <linearGradient id="gG" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#15803d"/><stop offset="100%" stop-color="#22c55e"/></linearGradient>
+    <linearGradient id="gA" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#b45309"/><stop offset="100%" stop-color="#f59e0b"/></linearGradient>
+    <linearGradient id="gP" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#be185d"/><stop offset="100%" stop-color="#ec4899"/></linearGradient>
+    <linearGradient id="gBg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f0f2ff"/><stop offset="100%" stop-color="#e8eaf8"/></linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1100" height="1780" fill="url(#gBg)" rx="18"/>
+
+  <!-- Column labels -->
+  <rect x="40" y="14" width="200" height="26" rx="13" fill="url(#gV)" opacity=".9"/>
+  <text x="140" y="31" text-anchor="middle" fill="#fff" font-size="10" font-weight="800" font-family="Segoe UI,sans-serif" letter-spacing="1">VOLUNTARY PATH</text>
+  <rect x="860" y="14" width="200" height="26" rx="13" fill="url(#gR)" opacity=".9"/>
+  <text x="960" y="31" text-anchor="middle" fill="#fff" font-size="10" font-weight="800" font-family="Segoe UI,sans-serif" letter-spacing="1">INVOLUNTARY PATH</text>
+  <rect x="420" y="14" width="260" height="26" rx="13" fill="url(#gI)" opacity=".9"/>
+  <text x="550" y="31" text-anchor="middle" fill="#fff" font-size="10" font-weight="800" font-family="Segoe UI,sans-serif" letter-spacing="1">COMMON FLOW</text>
+
+  <!-- START — Voluntary -->
+  <rect x="40" y="56" width="220" height="54" rx="27" fill="url(#gV)"/>
+  <text x="150" y="78" text-anchor="middle" fill="#fff" font-size="12" font-weight="800" font-family="Segoe UI,sans-serif">Employee Submits</text>
+  <text x="150" y="96" text-anchor="middle" fill="rgba(255,255,255,.7)" font-size="10" font-family="Segoe UI,sans-serif">exit_type = voluntary</text>
+
+  <!-- START — Involuntary -->
+  <rect x="840" y="56" width="220" height="54" rx="27" fill="url(#gR)"/>
+  <text x="950" y="78" text-anchor="middle" fill="#fff" font-size="12" font-weight="800" font-family="Segoe UI,sans-serif">HR Creates Exit</text>
+  <text x="950" y="96" text-anchor="middle" fill="rgba(255,255,255,.7)" font-size="10" font-family="Segoe UI,sans-serif">exit_type = absconding</text>
+
+  <!-- arrows into submitted -->
+  <line x1="195" y1="110" x2="390" y2="162" stroke="#8b5cf6" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#a1)"/>
+  <line x1="905" y1="110" x2="710" y2="162" stroke="#dc2626" stroke-width="2" stroke-dasharray="6,3" marker-end="url(#a2)"/>
+
+  <!-- SUBMITTED -->
+  <rect x="370" y="162" width="360" height="50" rx="12" fill="url(#gI)"/>
+  <text x="550" y="182" text-anchor="middle" fill="rgba(255,255,255,.7)" font-size="9" font-weight="700" font-family="Segoe UI,sans-serif" letter-spacing="1">STATUS</text>
+  <text x="550" y="200" text-anchor="middle" fill="#fff" font-size="14" font-weight="900" font-family="Segoe UI,sans-serif">submitted → manager_review</text>
+
+  <line x1="550" y1="212" x2="550" y2="254" stroke="#6366f1" stroke-width="2" marker-end="url(#a0)"/>
+
+  <!-- Objection side note -->
+  <rect x="780" y="218" width="200" height="48" rx="10" fill="url(#gA)"/>
+  <text x="880" y="237" text-anchor="middle" fill="#fff" font-size="11" font-weight="800" font-family="Segoe UI,sans-serif">Objection Recorded</text>
+  <text x="880" y="252" text-anchor="middle" fill="rgba(255,255,255,.8)" font-size="9.5" font-family="Segoe UI,sans-serif">Non-blocking · Reason mandatory</text>
+  <text x="880" y="264" text-anchor="middle" fill="rgba(255,255,255,.8)" font-size="9.5" font-family="Segoe UI,sans-serif">Resignation stays ACTIVE</text>
+  <line x1="730" y1="242" x2="780" y2="242" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#a4)"/>
+
+  <!-- ACCEPTED -->
+  <rect x="370" y="254" width="360" height="50" rx="12" fill="url(#gG)"/>
+  <text x="550" y="274" text-anchor="middle" fill="rgba(255,255,255,.7)" font-size="9" font-weight="700" font-family="Segoe UI,sans-serif" letter-spacing="1">STATUS</text>
+  <text x="550" y="292" text-anchor="middle" fill="#fff" font-size="14" font-weight="900" font-family="Segoe UI,sans-serif">accepted</text>
+  <!-- 9 tasks annotation -->
+  <rect x="40" y="265" width="196" height="34" rx="8" fill="#fff" stroke="#c4b5fd" stroke-width="1.5"/>
+  <text x="138" y="281" text-anchor="middle" fill="#7c3aed" font-size="10" font-weight="800" font-family="Segoe UI,sans-serif">9 clearance tasks</text>
+  <text x="138" y="294" text-anchor="middle" fill="#64748b" font-size="9" font-family="Segoe UI,sans-serif">auto-created · due 3 days</text>
+  <line x1="236" y1="282" x2="370" y2="280" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#a1)"/>
+
+  <line x1="550" y1="304" x2="550" y2="348" stroke="#22c55e" stroke-width="2" marker-end="url(#a3)"/>
+
+  <!-- DECISION: Notice period? -->
+  <polygon points="550,348 720,388 550,428 380,388" fill="url(#gA)"/>
+  <text x="550" y="382" text-anchor="middle" fill="#fff" font-size="12" font-weight="800" font-family="Segoe UI,sans-serif">Notice Period</text>
+  <text x="550" y="400" text-anchor="middle" fill="#fff" font-size="13" font-weight="900" font-family="Segoe UI,sans-serif">Required?</text>
+
+  <!-- YES branch -->
+  <line x1="380" y1="388" x2="248" y2="458" stroke="#22c55e" stroke-width="2" marker-end="url(#a3)"/>
+  <text x="307" y="416" fill="#15803d" font-size="10" font-weight="800" font-family="Segoe UI,sans-serif">YES (voluntary)</text>
+  <rect x="110" y="458" width="276" height="50" rx="12" fill="url(#gG)"/>
+  <text x="248" y="478" text-anchor="middle" fill="rgba(255,255,255,.75)" font-size="9" font-weight="700" font-family="Segoe UI,sans-serif" letter-spacing="1">STATUS</text>
+  <text x="248" y="496" text-anchor="middle" fill="#fff" font-size="13" font-weight="900" font-family="Segoe UI,sans-serif">notice_serving</text>
+  <line x1="248" y1="508" x2="248" y2="542" stroke="#22c55e" stroke-width="1.5" opacity=".6"/>
+  <line x1="248" y1="542" x2="400" y2="568" stroke="#6366f1" stroke-width="2" marker-end="url(#a0)"/>
+
+  <!-- NO branch -->
+  <line x1="720" y1="388" x2="840" y2="458" stroke="#dc2626" stroke-width="2" marker-end="url(#a2)"/>
+  <text x="798" y="416" fill="#b91c1c" font-size="10" font-weight="800" font-family="Segoe UI,sans-serif">NO (absconding)</text>
+  <rect x="714" y="458" width="240" height="50" rx="12" fill="url(#gR)"/>
+  <text x="834" y="478" text-anchor="middle" fill="rgba(255,255,255,.75)" font-size="9" font-weight="700" font-family="Segoe UI,sans-serif">Skips notice_serving</text>
+  <text x="834" y="496" text-anchor="middle" fill="#fff" font-size="13" font-weight="900" font-family="Segoe UI,sans-serif">LWD = absconding_since</text>
+  <line x1="834" y1="508" x2="834" y2="542" stroke="#dc2626" stroke-width="1.5" opacity=".6"/>
+  <line x1="834" y1="542" x2="700" y2="568" stroke="#6366f1" stroke-width="2" marker-end="url(#a0)"/>
+
+  <!-- CLEARANCE_PENDING -->
+  <rect x="370" y="568" width="360" height="50" rx="12" fill="url(#gA)"/>
+  <text x="550" y="588" text-anchor="middle" fill="rgba(255,255,255,.75)" font-size="9" font-weight="700" font-family="Segoe UI,sans-serif" letter-spacing="1">STATUS</text>
+  <text x="550" y="606" text-anchor="middle" fill="#fff" font-size="13" font-weight="900" font-family="Segoe UI,sans-serif">clearance_pending</text>
+  <rect x="754" y="578" width="220" height="30" rx="8" fill="#fff" stroke="#fde68a" stroke-width="1.5"/>
+  <text x="864" y="597" text-anchor="middle" fill="#92400e" font-size="10" font-weight="700" font-family="Segoe UI,sans-serif">9 tasks must clear / waive</text>
+  <line x1="754" y1="593" x2="730" y2="593" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="3,2" marker-end="url(#a4)"/>
+
+  <line x1="550" y1="618" x2="550" y2="658" stroke="#6366f1" stroke-width="2" marker-end="url(#a0)"/>
+
+  <!-- FNF_PENDING -->
+  <rect x="370" y="658" width="360" height="50" rx="12" fill="url(#gP)"/>
+  <text x="550" y="678" text-anchor="middle" fill="rgba(255,255,255,.75)" font-size="9" font-weight="700" font-family="Segoe UI,sans-serif" letter-spacing="1">STATUS</text>
+  <text x="550" y="696" text-anchor="middle" fill="#fff" font-size="13" font-weight="900" font-family="Segoe UI,sans-serif">fnf_pending</text>
+  <rect x="754" y="668" width="220" height="30" rx="8" fill="#fff" stroke="#fbcfe8" stroke-width="1.5"/>
+  <text x="864" y="687" text-anchor="middle" fill="#9d174d" font-size="10" font-weight="700" font-family="Segoe UI,sans-serif">F&amp;F calculated &amp; approved</text>
+  <line x1="754" y1="683" x2="730" y2="683" stroke="#ec4899" stroke-width="1.5" stroke-dasharray="3,2" marker-end="url(#a5)"/>
+
+  <line x1="550" y1="708" x2="550" y2="748" stroke="#6366f1" stroke-width="2" marker-end="url(#a0)"/>
+
+  <!-- LWD TRIGGER -->
+  <rect x="330" y="748" width="440" height="56" rx="14" fill="url(#gG)"/>
+  <text x="550" y="770" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="11" font-weight="700" font-family="Segoe UI,sans-serif">⚡ LWD ARRIVES — 8:00 AM DAILY TRIGGER</text>
+  <text x="550" y="790" text-anchor="middle" fill="#fff" font-size="12" font-weight="800" font-family="Segoe UI,sans-serif">NOC case auto-created · Invite link sent to employee</text>
+  <rect x="40" y="756" width="200" height="40" rx="8" fill="#fff" stroke="#86efac" stroke-width="1.5"/>
+  <text x="140" y="773" text-anchor="middle" fill="#15803d" font-size="10" font-weight="700" font-family="Segoe UI,sans-serif">Absconding: HR uses</text>
+  <text x="140" y="787" text-anchor="middle" fill="#64748b" font-size="9.5" font-family="Segoe UI,sans-serif">"Record on behalf"</text>
+  <line x1="240" y1="776" x2="330" y2="776" stroke="#22c55e" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#a3)"/>
+
+  <line x1="550" y1="804" x2="550" y2="844" stroke="#6366f1" stroke-width="2" marker-end="url(#a0)"/>
+
+  <!-- NOC CHAIN BOX -->
+  <rect x="310" y="844" width="480" height="230" rx="16" fill="#1e1b4b"/>
+  <rect x="310" y="844" width="480" height="46" rx="16" fill="none"/>
+  <rect x="310" y="844" width="480" height="46" rx="0" fill="url(#gI)" opacity=".6"/>
+  <rect x="310" y="866" width="480" height="24" rx="0" fill="url(#gI)" opacity=".4"/>
+  <text x="550" y="872" text-anchor="middle" fill="#fff" font-size="13" font-weight="900" font-family="Segoe UI,sans-serif">🔐 8-SIGNATORY NOC CHAIN</text>
+
+  <!-- Tiers 1-4 in a row -->
+  <rect x="326" y="900" width="100" height="30" rx="8" fill="#6366f1"/>
+  <text x="376" y="919" text-anchor="middle" fill="#fff" font-size="10" font-weight="800" font-family="Segoe UI,sans-serif">1. Team Leader</text>
+  <line x1="426" y1="915" x2="450" y2="915" stroke="#fff" stroke-width="1.5" marker-end="url(#a0)" opacity=".6"/>
+  <rect x="450" y="900" width="100" height="30" rx="8" fill="#8b5cf6"/>
+  <text x="500" y="919" text-anchor="middle" fill="#fff" font-size="10" font-weight="800" font-family="Segoe UI,sans-serif">2. Process Mgr</text>
+  <line x1="550" y1="930" x2="550" y2="948" stroke="#fff" stroke-width="1.5" opacity=".3" marker-end="url(#a0)"/>
+  <line x1="376" y1="930" x2="376" y2="948" stroke="#fff" stroke-width="1.5" opacity=".3"/>
+  <line x1="376" y1="948" x2="550" y2="948" stroke="#fff" stroke-width="1" opacity=".2"/>
+  <line x1="463" y1="948" x2="463" y2="960" stroke="#fff" stroke-width="1.5" opacity=".3" marker-end="url(#a0)"/>
+  <rect x="380" y="960" width="100" height="30" rx="8" fill="#ec4899"/>
+  <text x="430" y="979" text-anchor="middle" fill="#fff" font-size="10" font-weight="800" font-family="Segoe UI,sans-serif">3. Branch Mgr</text>
+  <line x1="480" y1="975" x2="506" y2="975" stroke="#fff" stroke-width="1.5" marker-end="url(#a0)" opacity=".6"/>
+  <rect x="506" y="960" width="100" height="30" rx="8" fill="#f59e0b"/>
+  <text x="556" y="975" text-anchor="middle" fill="#1e293b" font-size="10" font-weight="800" font-family="Segoe UI,sans-serif">4. HR ← unlocks ↓</text>
+  <line x1="556" y1="990" x2="556" y2="1006" stroke="#f59e0b" stroke-width="2" marker-end="url(#a4)"/>
+
+  <!-- Tier 5 parallel -->
+  <rect x="330" y="1006" width="90" height="26" rx="7" fill="#3b82f6"/>
+  <text x="375" y="1023" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="800" font-family="Segoe UI,sans-serif">5. IT</text>
+  <rect x="428" y="1006" width="90" height="26" rx="7" fill="#10b981"/>
+  <text x="473" y="1023" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="800" font-family="Segoe UI,sans-serif">6. Admin</text>
+  <rect x="526" y="1006" width="90" height="26" rx="7" fill="#a855f7"/>
+  <text x="571" y="1023" text-anchor="middle" fill="#fff" font-size="9.5" font-weight="800" font-family="Segoe UI,sans-serif">7. Accounts</text>
+  <rect x="624" y="1006" width="140" height="26" rx="7" fill="#f59e0b"/>
+  <text x="694" y="1019" text-anchor="middle" fill="#1e293b" font-size="9.5" font-weight="800" font-family="Segoe UI,sans-serif">8. Finance</text>
+  <text x="694" y="1030" text-anchor="middle" fill="#92400e" font-size="8.5" font-family="Segoe UI,sans-serif">⚠ asset-gated</text>
+
+  <!-- All → completed -->
+  <line x1="550" y1="1032" x2="550" y2="1052" stroke="#22c55e" stroke-width="2" marker-end="url(#a3)"/>
+  <text x="550" y="1068" text-anchor="middle" fill="#86efac" font-size="12" font-weight="900" font-family="Segoe UI,sans-serif">✅ NOC status = completed</text>
+
+  <line x1="550" y1="1074" x2="550" y2="1114" stroke="#6366f1" stroke-width="2" marker-end="url(#a0)"/>
+
+  <!-- 3-GATE DECISION -->
+  <polygon points="550,1114 760,1160 550,1206 340,1160" fill="url(#gG)"/>
+  <text x="550" y="1148" text-anchor="middle" fill="#fff" font-size="11" font-weight="800" font-family="Segoe UI,sans-serif">All 3 Gates</text>
+  <text x="550" y="1167" text-anchor="middle" fill="#fff" font-size="13" font-weight="900" font-family="Segoe UI,sans-serif">Passed?</text>
+  <text x="550" y="1183" text-anchor="middle" fill="rgba(255,255,255,.75)" font-size="9" font-family="Segoe UI,sans-serif">Tasks + F&amp;F + NOC</text>
+
+  <!-- NO loop -->
+  <line x1="760" y1="1160" x2="860" y2="1160" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#a2)"/>
+  <line x1="860" y1="1160" x2="860" y2="660" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="5,3" opacity=".5"/>
+  <line x1="860" y1="660" x2="730" y2="660" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#a2)" opacity=".6"/>
+  <rect x="868" y="870" width="136" height="36" rx="8" fill="#fff" stroke="#fca5a5" stroke-width="1.5"/>
+  <text x="936" y="886" text-anchor="middle" fill="#dc2626" font-size="10" font-weight="700" font-family="Segoe UI,sans-serif">NO — resolve</text>
+  <text x="936" y="899" text-anchor="middle" fill="#64748b" font-size="9" font-family="Segoe UI,sans-serif">blockers first</text>
+
+  <!-- YES arrow -->
+  <line x1="550" y1="1206" x2="550" y2="1246" stroke="#22c55e" stroke-width="2" marker-end="url(#a3)"/>
+
+  <!-- EXITED -->
+  <rect x="280" y="1246" width="540" height="60" rx="30" fill="url(#gG)"/>
+  <text x="550" y="1270" text-anchor="middle" fill="#fff" font-size="12" font-weight="700" font-family="Segoe UI,sans-serif">STATUS: closed → exited</text>
+  <text x="550" y="1292" text-anchor="middle" fill="#fff" font-size="14" font-weight="900" font-family="Segoe UI,sans-serif">✅ NOC Certificate · F&amp;F Released · Employee Exited</text>
+
+  <!-- TERMINAL box -->
+  <rect x="40" y="1246" width="196" height="60" rx="12" fill="url(#gR)" opacity=".9"/>
+  <text x="138" y="1266" text-anchor="middle" fill="#fff" font-size="10" font-weight="700" font-family="Segoe UI,sans-serif">TERMINAL STATES</text>
+  <text x="138" y="1283" text-anchor="middle" fill="#fff" font-size="11" font-weight="800" font-family="Segoe UI,sans-serif">revoked / withdrawn</text>
+  <text x="138" y="1298" text-anchor="middle" fill="rgba(255,255,255,.75)" font-size="9" font-family="Segoe UI,sans-serif">NOC trigger skipped forever</text>
+  <line x1="236" y1="1276" x2="280" y2="1276" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#a2)" opacity=".6"/>
+
+  <!-- LEGEND -->
+  <rect x="40" y="1360" width="460" height="140" rx="14" fill="#fff" stroke="#e2e8f0" stroke-width="1.5"/>
+  <text x="270" y="1383" text-anchor="middle" fill="#64748b" font-size="10" font-weight="800" font-family="Segoe UI,sans-serif" letter-spacing="1">LEGEND</text>
+  <rect x="60" y="1394" width="50" height="24" rx="12" fill="url(#gI)"/>
+  <text x="120" y="1409" fill="#1e293b" font-size="10" font-weight="700" font-family="Segoe UI,sans-serif">Process / State</text>
+  <polygon points="270,1394 310,1418 270,1442 230,1418" fill="url(#gA)" opacity=".9"/>
+  <text x="330" y="1422" fill="#1e293b" font-size="10" font-weight="700" font-family="Segoe UI,sans-serif">Decision</text>
+  <line x1="60" y1="1464" x2="100" y2="1464" stroke="#6366f1" stroke-width="2" marker-end="url(#a0)"/>
+  <text x="110" y="1468" fill="#1e293b" font-size="10" font-weight="700" font-family="Segoe UI,sans-serif">Normal flow</text>
+  <line x1="200" y1="1464" x2="240" y2="1464" stroke="#f59e0b" stroke-width="2" stroke-dasharray="4,2" marker-end="url(#a4)"/>
+  <text x="250" y="1468" fill="#1e293b" font-size="10" font-weight="700" font-family="Segoe UI,sans-serif">Side annotation</text>
+  <line x1="350" y1="1464" x2="390" y2="1464" stroke="#dc2626" stroke-width="2" stroke-dasharray="4,3" marker-end="url(#a2)"/>
+  <text x="400" y="1468" fill="#1e293b" font-size="10" font-weight="700" font-family="Segoe UI,sans-serif">Return / loop</text>
+
+  <!-- Right panel legend 2 -->
+  <rect x="560" y="1360" width="500" height="140" rx="14" fill="#fff" stroke="#e2e8f0" stroke-width="1.5"/>
+  <text x="810" y="1383" text-anchor="middle" fill="#64748b" font-size="10" font-weight="800" font-family="Segoe UI,sans-serif" letter-spacing="1">COLOR KEY</text>
+  <rect x="580" y="1394" width="20" height="14" rx="4" fill="url(#gV)"/><text x="608" y="1406" fill="#1e293b" font-size="10" font-family="Segoe UI,sans-serif">Voluntary path</text>
+  <rect x="720" y="1394" width="20" height="14" rx="4" fill="url(#gR)"/><text x="748" y="1406" fill="#1e293b" font-size="10" font-family="Segoe UI,sans-serif">Involuntary path</text>
+  <rect x="880" y="1394" width="20" height="14" rx="4" fill="url(#gI)"/><text x="908" y="1406" fill="#1e293b" font-size="10" font-family="Segoe UI,sans-serif">Common flow</text>
+  <rect x="580" y="1418" width="20" height="14" rx="4" fill="url(#gG)"/><text x="608" y="1430" fill="#1e293b" font-size="10" font-family="Segoe UI,sans-serif">Accepted / Exited</text>
+  <rect x="720" y="1418" width="20" height="14" rx="4" fill="url(#gA)"/><text x="748" y="1430" fill="#1e293b" font-size="10" font-family="Segoe UI,sans-serif">Decision / Warning</text>
+  <rect x="880" y="1418" width="20" height="14" rx="4" fill="url(#gP)"/><text x="908" y="1430" fill="#1e293b" font-size="10" font-family="Segoe UI,sans-serif">F&amp;F / Pink stage</text>
+  <text x="580" y="1458" fill="#64748b" font-size="10" font-family="Segoe UI,sans-serif">All gradients verified against source code · exit.secure.routes.ts · exit.routes.ts · resignation.routes.ts</text>
+  <text x="580" y="1472" fill="#64748b" font-size="10" font-family="Segoe UI,sans-serif">FSM ruling 2026-09-12: manager cannot reject — records objection instead (non-blocking)</text>
+
+</svg>
+</div>
+
+<div class="footer">
+  MAS Callnet PeopleOS — Exit &amp; NOC Clearance System · Source-verified 2026-09-14 · All 11 FSM states · All 9 clearance tasks · 3 exit gates
+</div>
+
+</div>
+</body>
+</html>

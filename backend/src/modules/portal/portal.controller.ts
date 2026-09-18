@@ -10,18 +10,28 @@ import { portalOverviewService } from "./portal.overview.service.js";
 import { portalKpiService } from "./portal.kpi.service.js";
 import { portalGlideService } from "./portal.glide.service.js";
 import { portalActionsService } from "./portal.actions.service.js";
-import { portalGovernanceService } from "./portal.governance.service.js";
 import { portalAttritionService } from "./portal.attrition.service.js";
 import { portalCommentaryService } from "./portal.commentary.service.js";
+import { getProcessOperationsForPortal, getProcessBusinessHealthForPortal } from "../process-operations/process-operations.service.js";
 import {
   requestOtpSchema, verifyOtpSchema, actionPlanFilterSchema,
   createActionPlanSchema, updateActionPlanSchema, setGlideSchema,
-  updateGovernanceSchema, createCommentarySchema, replyCommentarySchema,
+  createCommentarySchema, replyCommentarySchema,
   createClientUserSchema, passwordLoginSchema, changeClientPasswordSchema,
 } from "./portal.validation.js";
 
 function currentPeriod() {
   return new Date().toISOString().slice(0, 7);
+}
+
+// process-operations.service.ts's ReportPeriod ("trend"|"today"|"wtd"|"mtd"), deliberately
+// NOT the "YYYY-MM" month string the KPI/Attrition/Commentary tabs use above -- this data is
+// a 30-day rolling window by nature (daily process_metric_actual rows), not something that
+// maps onto a calendar month picker. Defaults to "trend" (rolling window).
+const VALID_REPORT_PERIODS = new Set(["trend", "today", "wtd", "mtd"]);
+function readReportPeriod(req: ClientAuthRequest): "trend" | "today" | "wtd" | "mtd" {
+  const raw = String(req.query.period ?? "trend");
+  return (VALID_REPORT_PERIODS.has(raw) ? raw : "trend") as "trend" | "today" | "wtd" | "mtd";
 }
 
 function assertProcessAccess(req: ClientAuthRequest): void {
@@ -174,13 +184,52 @@ export const portalController = {
     res.json({ data: items });
   },
 
-  // ── Governance ────────────────────────────────────────────────────────────
-  async getGovernance(req: ClientAuthRequest, res: Response) {
+  // ── Operations & Quality ──────────────────────────────────────────────────
+  // Real data, not a portal-only invention: reuses process-operations.service.ts's
+  // process_metric_actual read (the same "operations"/"quality"/"hygiene" section
+  // catalog that backs the internal-staff ProcessOperationsPage.tsx), scoped by the
+  // portal's own process_ids boundary instead of the internal readableProcessIds(userId)
+  // check. Section split lets the client dashboard show operations tiles (AHT, SL%,
+  // shrinkage) and quality tiles (QA_QUALITY_PCT, fatal call rate, etc.) as two
+  // separate, clearly-labelled tabs from the exact same underlying read.
+  async getOperations(req: ClientAuthRequest, res: Response) {
     assertProcessAccess(req);
-    const period = (req.query.period as string) || currentPeriod();
-    const data = await portalGovernanceService.getChecklist(req.params.id, period);
-    await logAccess(req, `/portal/processes/${req.params.id}/governance`);
-    res.json({ data });
+    const result = await getProcessOperationsForPortal(req.params.id, 30, readReportPeriod(req));
+    await logAccess(req, `/portal/processes/${req.params.id}/operations`);
+    if (!result) return res.json({ data: null });
+    const opsSections = result.sections.filter((s) => s.key === "operations" || s.key === "conversion");
+    res.json({ data: { ...result, sections: opsSections } });
+  },
+
+  async getQuality(req: ClientAuthRequest, res: Response) {
+    assertProcessAccess(req);
+    const result = await getProcessOperationsForPortal(req.params.id, 30, readReportPeriod(req));
+    await logAccess(req, `/portal/processes/${req.params.id}/quality`);
+    if (!result) return res.json({ data: null });
+    const qualitySections = result.sections.filter((s) => s.key === "quality" || s.key === "risk" || s.key === "conduct");
+    res.json({ data: { ...result, sections: qualitySections } });
+  },
+
+  // ── Workforce (headcount vs. mandate + hiring pipeline) ──────────────────
+  // Deliberately excludes getProcessBusinessHealthForPortal's `finance` field
+  // (revenue, GRN, agent salary, EBIT, operating profit %) -- internal cost and
+  // profitability data this portal's own policy (see the Client Portal master
+  // prompt's commercial-section rules) explicitly bars from anything client-facing.
+  // Headcount-vs-mandate and the hiring pipeline carry no cost or PII, so those
+  // two are safe to surface as-is.
+  async getWorkforce(req: ClientAuthRequest, res: Response) {
+    assertProcessAccess(req);
+    const result = await getProcessBusinessHealthForPortal(req.params.id);
+    await logAccess(req, `/portal/processes/${req.params.id}/workforce`);
+    if (!result) return res.json({ data: null });
+    res.json({
+      data: {
+        periodCode: result.periodCode,
+        headcount: result.headcount,
+        hiring: result.hiring,
+        // finance intentionally omitted -- internal cost/profitability data.
+      },
+    });
   },
 
   // ── Attrition ─────────────────────────────────────────────────────────────
@@ -239,14 +288,6 @@ export const portalController = {
     const parsed = updateActionPlanSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     await portalActionsService.update(req.params.id, parsed.data);
-    res.json({ ok: true });
-  },
-
-  // ── Internal: Governance log ──────────────────────────────────────────────
-  async updateGovernance(req: Request, res: Response) {
-    const parsed = updateGovernanceSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    await portalGovernanceService.updateLog(parsed.data, (req as any).authUser?.id ?? "system");
     res.json({ ok: true });
   },
 

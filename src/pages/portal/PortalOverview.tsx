@@ -152,7 +152,7 @@ export default function PortalOverview() {
           equal to the banner's height only while impersonating, so the fixed banner never
           overlaps real content. */}
       <header className="sticky top-0 bg-slate-900/80 backdrop-blur-xl border-b border-slate-800/80 z-40">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+        <div className="max-w-[1600px] mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-blue-600 text-white font-bold shadow-md shadow-blue-900/50">
               M
@@ -188,7 +188,7 @@ export default function PortalOverview() {
       </header>
 
       {/* Content */}
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="max-w-[1600px] mx-auto px-6 py-8">
         {isLoading ? (
           <div>
             <div className="mb-8">

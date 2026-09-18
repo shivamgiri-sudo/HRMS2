@@ -44,7 +44,6 @@ const PORTAL_CONTENT_ROLES = ["admin", "hr", "finance_head", "operations_manager
 router.post("/internal/glide-paths",          requireRole(...PORTAL_CONTENT_ROLES), h(c.setGlideCommitment));
 router.post("/internal/action-plans",         requireRole(...PORTAL_CONTENT_ROLES), h(c.createActionPlan));
 router.put ("/internal/action-plans/:id",     requireRole(...PORTAL_CONTENT_ROLES), h(c.updateActionPlan));
-router.post("/internal/governance",           requireRole(...PORTAL_CONTENT_ROLES), h(c.updateGovernance));
 router.post("/internal/commentary",           requireRole(...PORTAL_CONTENT_ROLES), h(c.createCommentary));
 router.get ("/internal/client-users",         requireRole("admin", "hr"), h(c.listClientUsers));
 router.post("/internal/client-users",         requireRole("admin", "hr"), h(c.createClientUser));
@@ -251,7 +250,9 @@ router.get ("/processes/:id/info",                    h(c.getProcessInfo));
 router.get ("/processes/:id/kpis",                    h(c.getKpis));
 router.get ("/processes/:id/glide-paths",             h(c.getGlidePaths));
 router.get ("/processes/:id/action-plans",            h(c.getActionPlans));
-router.get ("/processes/:id/governance",              h(c.getGovernance));
+router.get ("/processes/:id/operations",              h(c.getOperations));
+router.get ("/processes/:id/quality",                 h(c.getQuality));
+router.get ("/processes/:id/workforce",               h(c.getWorkforce));
 router.get ("/processes/:id/attrition",               h(c.getAttrition));
 router.get ("/processes/:id/commentary",              h(c.getCommentary));
 router.post("/commentary/:id/acknowledge",            h(c.acknowledgeCommentary));

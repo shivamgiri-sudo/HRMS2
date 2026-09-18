@@ -40,6 +40,7 @@ const BankReconciliationPage       = lazy(() => import("@/pages/finance/BankReco
 const LedgerHeadsPage              = lazy(() => import("@/pages/finance/LedgerHeadsPage"));
 const BankDirectoryPage            = lazy(() => import("@/pages/finance/BankDirectoryPage"));
 const LedgerReportsPage             = lazy(() => import("@/pages/finance/LedgerReportsPage"));
+const FinanceLedgerHubPage          = lazy(() => import("@/pages/finance/FinanceLedgerHubPage"));
 
 const financeRoles = ['super_admin','admin','finance','finance_head','accounts_head','payroll_head'] as const;
 // Branch roles raise GRNs — the backend already grants them GRN write access and
@@ -88,22 +89,26 @@ export const financeRouteElements = (
       {/* Roles match 1532_finance_masters_page_access.sql */}
       <Route path="/finance/masters" element={<ProtectedRoute roles={['super_admin','finance_head','branch_admin']}><Gate pageCode="FINANCE_MASTERS"><FinanceMasterPage /></Gate></ProtectedRoute>} />
 
-      {/* Payment Voucher System Phase 1 (2026-09-09). Roles must match BANK_ACCOUNT_READ_ROLES /
-          VOUCHER_READ_ROLES exactly (company-bank-account.routes.ts / payment-voucher.routes.ts)
-          and the grant in migration 1706 — same discipline as every other finance route above. */}
-      <Route path="/finance/bank-accounts"    element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','branch_head','admin','finance']}><Gate pageCode="FINANCE_BANK_ACCOUNTS"><CompanyBankAccountsPage /></Gate></ProtectedRoute>} />
-      <Route path="/finance/payment-vouchers" element={<ProtectedRoute roles={['super_admin','finance_head','ceo','accounts_head','branch_head','admin','finance']}><Gate pageCode="FINANCE_PAYMENT_VOUCHERS"><PaymentVouchersPage /></Gate></ProtectedRoute>} />
-      <Route path="/finance/bank-ledger"      element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','admin','finance']}><Gate pageCode="FINANCE_BANK_LEDGER"><BankLedgerReportPage /></Gate></ProtectedRoute>} />
-      <Route path="/finance/bank-reconciliation" element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','admin','finance']}><Gate pageCode="FINANCE_BANK_RECONCILIATION"><BankReconciliationPage /></Gate></ProtectedRoute>} />
-      <Route path="/finance/ledger-heads"     element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','admin','finance']}><Gate pageCode="FINANCE_LEDGER_HEADS"><LedgerHeadsPage /></Gate></ProtectedRoute>} />
-      <Route path="/finance/bank-directory"   element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','admin','finance']}><Gate pageCode="FINANCE_BANK_DIRECTORY"><BankDirectoryPage /></Gate></ProtectedRoute>} />
-      {/* Roles must match BANK_ACCOUNT_READ_ROLES exactly (company-bank-account.routes.ts),
-          same discipline as every other finance route here — ledger-reports.routes.ts reuses
-          that same role list rather than introducing a new one (see its own header comment). */}
-      <Route path="/finance/ledger-reports"   element={<ProtectedRoute roles={['super_admin','finance_head','accounts_head','ceo','branch_head','admin','finance']}><Gate pageCode="FINANCE_LEDGER_REPORTS"><LedgerReportsPage /></Gate></ProtectedRoute>} />
+      {/* Finance Ledger Hub (2026-09-18) — owner request: these 8 pages are one connected
+          subject (Payment Vouchers, Vendor Payment Tracking, Bank Accounts, Ledger Heads, Bank
+          Directory, Bank Ledger, Ledger Reports, Bank Reconciliation), combined into one page
+          with tabs instead of 8 separate URLs. Role list is the UNION of all 8 pages' own
+          ProtectedRoute roles below — nobody who could reach any one of them loses access.
+          pageCode reuses FINANCE_PAYMENT_VOUCHERS (already granted to the broadest overlapping
+          set) rather than a new page_catalog row — each tab's own API calls still enforce their
+          own correct, narrower role list underneath, same "broad shell + tight per-endpoint
+          data gate" pattern /process-performance-v2's PROCESS_OPERATIONS gate already uses. */}
+      <Route path="/finance/ledger" element={<ProtectedRoute roles={['super_admin','admin','finance','finance_head','accounts_head','ceo','branch_head','payroll_head','branch_admin']}><Gate pageCode="FINANCE_PAYMENT_VOUCHERS"><FinanceLedgerHubPage /></Gate></ProtectedRoute>} />
+      <Route path="/finance/bank-accounts"    element={<Navigate to="/finance/ledger?tab=bank-accounts" replace />} />
+      <Route path="/finance/payment-vouchers" element={<Navigate to="/finance/ledger?tab=payments" replace />} />
+      <Route path="/finance/bank-ledger"      element={<Navigate to="/finance/ledger?tab=bank-ledger" replace />} />
+      <Route path="/finance/bank-reconciliation" element={<Navigate to="/finance/ledger?tab=reconciliation" replace />} />
+      <Route path="/finance/ledger-heads"     element={<Navigate to="/finance/ledger?tab=ledger-heads" replace />} />
+      <Route path="/finance/bank-directory"   element={<Navigate to="/finance/ledger?tab=bank-directory" replace />} />
+      <Route path="/finance/ledger-reports"   element={<Navigate to="/finance/ledger?tab=ledger-reports" replace />} />
+      <Route path="/finance/vendor-payment-tracking" element={<Navigate to="/finance/ledger?tab=payments" replace />} />
 
       {/* Finance */}
-      <Route path="/finance/vendor-payment-tracking" element={<ProtectedRoute roles={vendorPaymentRoles}><Gate pageCode="FINANCE_VENDOR_PAYMENTS"><NativeVendorPaymentTracking /></Gate></ProtectedRoute>} />
       <Route path="/finance/grn"                     element={<ProtectedRoute roles={grnRoles}><Gate pageCode="FINANCE_GRN"><NativeGRNManagement /></Gate></ProtectedRoute>} />
       {/* Roles match migration 1104's grants and the API's VOUCHER_ROLES exactly. A salary
           voucher renders a whole branch payroll, so this stays narrower than the GRN set. */}

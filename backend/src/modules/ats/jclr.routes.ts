@@ -26,6 +26,17 @@ router.get('/:candidateId', requireAuth, requireRole('payroll_hr', 'payroll_head
 router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payroll_hr', 'payroll_head', 'admin'), h(async (req: AuthenticatedRequest, res: Response) => {
   const { candidateId } = req.params;
   const f = req.body as Record<string, unknown>;
+
+  // Prevent salary_start_date < joining_date — same guard as payroll-hr.routes.ts /validate.
+  const joiningDate = f.joining_date as string | undefined;
+  const salaryStartDate = f.salary_start_date as string | undefined;
+  if (joiningDate && salaryStartDate && salaryStartDate < joiningDate) {
+    return res.status(400).json({
+      success: false,
+      message: `Salary start date (${salaryStartDate}) cannot be before joining date (${joiningDate}).`,
+    });
+  }
+
   await db.execute(
     `INSERT INTO jclr_entries (
        id, candidate_id, employee_location, kpi_applicable, billable_status,

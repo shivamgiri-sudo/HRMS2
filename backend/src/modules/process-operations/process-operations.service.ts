@@ -416,7 +416,27 @@ export async function getProcessOperations(
 ): Promise<ProcessOperations | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
+  return computeProcessOperations(processId, windowDays, period);
+}
 
+/**
+ * Client Portal entry point. No `readableProcessIds(userId)` call: the portal's own
+ * boundary (a client_user's token-carried process_ids, re-verified live on every request
+ * by requireClientAuth, plus the controller's assertProcessAccess) has ALREADY authorized
+ * this exact processId before this function is ever called -- applying the internal
+ * staff role/scope predicate on top would be redundant, not safer, and would wrongly deny
+ * every portal client (none of them hold an internal user_roles row at all). Same pattern
+ * kpi-scorecard.service.ts's getKpiScorecardsForProcessId already uses for the portal.
+ */
+export async function getProcessOperationsForPortal(
+  processId: string, windowDays = 30, period: ReportPeriod = "trend",
+): Promise<ProcessOperations | null> {
+  return computeProcessOperations(processId, windowDays, period);
+}
+
+async function computeProcessOperations(
+  processId: string, windowDays: number, period: ReportPeriod,
+): Promise<ProcessOperations | null> {
   const [procRows] = await db.execute<RowDataPacket[]>(
     `SELECT p.id, p.process_name,
             (SELECT COUNT(*) FROM employees e WHERE e.process_id = p.id AND e.active_status = 1) headcount
@@ -3417,7 +3437,32 @@ export async function getProcessBusinessHealth(
 ): Promise<ProcessBusinessHealth | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
+  return computeProcessBusinessHealth(processId);
+}
 
+/**
+ * Client Portal entry point. Same pattern as getProcessOperationsForPortal above --
+ * no readableProcessIds(userId) call, since the portal's own process_ids boundary
+ * (verified by requireClientAuth + the controller's assertProcessAccess) already
+ * authorized this exact processId before this is ever called.
+ *
+ * IMPORTANT: the portal controller consuming this MUST strip the `finance` field
+ * (revenue, GRN, agent salary, EBIT, operating profit %) before this reaches a
+ * client response. That field carries internal cost/profitability data this
+ * platform's own client-portal policy explicitly excludes from anything client-
+ * facing -- see portal.controller.ts's getWorkforce for where that stripping
+ * happens. This function still computes it (cheap to skip, not worth a second
+ * code path) so a future INTERNAL caller of this exact function is not
+ * short-changed; the boundary is enforced at the controller, not by omitting the
+ * data here.
+ */
+export async function getProcessBusinessHealthForPortal(
+  processId: string,
+): Promise<ProcessBusinessHealth | null> {
+  return computeProcessBusinessHealth(processId);
+}
+
+async function computeProcessBusinessHealth(processId: string): Promise<ProcessBusinessHealth | null> {
   const [processRows] = await db.execute<RowDataPacket[]>(
     `SELECT process_name FROM process_master WHERE id = ?`, [processId],
   );
