@@ -129,15 +129,63 @@ interface FaceBbox {
   imageHeight: number;
 }
 
-// ── Resolution options (same as NativeFraudAlertReview) ──────────────────────
+// ── Resolution options, keyed by what the alert actually checked ─────────────
+//
+// These used to be one fixed list for every alert type, worded entirely around
+// name spelling ("written differently", "changed after marriage"). That fits a
+// shared-identity duplicate, but makes no sense for a face-photo mismatch or a
+// bare account-number/document-number mismatch — a reviewer clearing one of
+// those had no honest option to pick. Split by what the alert is actually
+// about instead.
 
-const RESOLUTIONS = [
+type ResolutionOption = {
+  value: "resolved_false_positive" | "resolved_fraud" | "dismissed";
+  code: string;
+  label: string;
+  hint: string;
+};
+
+// DUPLICATE_AADHAAR / DUPLICATE_PAN / DUPLICATE_BANK_ACCOUNT / REPEAT_APPLICANT:
+// the question is whether this is the same person re-applying under a name
+// variant, or a genuinely different person sharing someone else's identifier.
+const IDENTITY_DUPLICATE_RESOLUTIONS: ResolutionOption[] = [
   { value: "resolved_false_positive", code: "name_variance",  label: "Same person — name written differently",  hint: "Initials, added/dropped middle name, regional ordering" },
   { value: "resolved_false_positive", code: "married_name",   label: "Name changed after marriage",             hint: "Supporting document seen" },
   { value: "resolved_false_positive", code: "data_entry",     label: "Our data was wrong",                     hint: "OCR misread or a typo in the record" },
   { value: "resolved_fraud",          code: "confirmed_fraud", label: "Confirmed — different person",           hint: "Candidate rejected" },
   { value: "dismissed",               code: "not_applicable",  label: "Not applicable",                         hint: "Raised in error or duplicate alert" },
-] as const;
+];
+
+// FACE_MISMATCH: a photo comparison, not a name or number.
+const FACE_MISMATCH_RESOLUTIONS: ResolutionOption[] = [
+  { value: "resolved_false_positive", code: "image_quality",  label: "Same person — image quality issue",  hint: "Lighting, angle, blur, or a low-resolution scan" },
+  { value: "resolved_false_positive", code: "wrong_photo",    label: "Wrong photo was compared",           hint: "Document or selfie was mismatched; corrected" },
+  { value: "resolved_fraud",          code: "confirmed_fraud", label: "Confirmed — different person",      hint: "Candidate rejected" },
+  { value: "dismissed",               code: "not_applicable",  label: "Not applicable",                    hint: "Raised in error or duplicate alert" },
+];
+
+// DOCUMENT_NUMBER_MISMATCH / CHEQUE_ACCOUNT_MISMATCH: a bare digit-string
+// comparison — there is no name and no photo involved.
+const NUMBER_MISMATCH_RESOLUTIONS: ResolutionOption[] = [
+  { value: "resolved_false_positive", code: "ocr_misread",    label: "OCR misread the document",             hint: "Number confirmed correct on manual review" },
+  { value: "resolved_false_positive", code: "data_entry",     label: "Candidate's entered number was wrong", hint: "Corrected the record to match the document" },
+  { value: "resolved_fraud",          code: "confirmed_fraud", label: "Confirmed — number does not match",   hint: "Candidate could not produce a matching document" },
+  { value: "dismissed",               code: "not_applicable",  label: "Not applicable",                      hint: "Raised in error or duplicate alert" },
+];
+
+const RESOLUTIONS_BY_ALERT_TYPE: Record<string, ResolutionOption[]> = {
+  DUPLICATE_AADHAAR: IDENTITY_DUPLICATE_RESOLUTIONS,
+  DUPLICATE_PAN: IDENTITY_DUPLICATE_RESOLUTIONS,
+  DUPLICATE_BANK_ACCOUNT: IDENTITY_DUPLICATE_RESOLUTIONS,
+  REPEAT_APPLICANT: IDENTITY_DUPLICATE_RESOLUTIONS,
+  FACE_MISMATCH: FACE_MISMATCH_RESOLUTIONS,
+  DOCUMENT_NUMBER_MISMATCH: NUMBER_MISMATCH_RESOLUTIONS,
+  CHEQUE_ACCOUNT_MISMATCH: NUMBER_MISMATCH_RESOLUTIONS,
+};
+
+function resolutionsForAlertType(alertType: string): ResolutionOption[] {
+  return RESOLUTIONS_BY_ALERT_TYPE[alertType] ?? IDENTITY_DUPLICATE_RESOLUTIONS;
+}
 
 // ── Severity styles ───────────────────────────────────────────────────────────
 
@@ -527,12 +575,13 @@ export function FraudComparisonPanel({
   };
 
   const resolveAlert = async (alert: FraudAlert) => {
-    const picked = RESOLUTIONS[choice[alert.id] ?? -1];
+    const picked = resolutionsForAlertType(alert.alert_type)[choice[alert.id] ?? -1];
     const reason = (notes[alert.id] ?? "").trim();
     if (!picked) { setSaveError("Choose what you found before clearing this alert."); return; }
-    // RESOLUTIONS (below) has no "under_review" option — every real choice here already
-    // requires a note, so this was already unconditional at runtime. Simplified rather than
-    // widening RESOLUTIONS' type just to keep a comparison that could never be true.
+    // None of the resolutionsForAlertType() lists has an "under_review" option —
+    // every real choice here already requires a note, so this was already
+    // unconditional at runtime. Simplified rather than widening the option
+    // type just to keep a comparison that could never be true.
     if (!reason) { setSaveError("Add a note — it becomes the audit record."); return; }
     setSavingId(alert.id);
     setSaveError(null);
@@ -1057,7 +1106,7 @@ export function FraudComparisonPanel({
 
               {/* Resolution choices */}
               <div className="grid gap-1.5">
-                {RESOLUTIONS.map((opt, idx) => (
+                {resolutionsForAlertType(alert.alert_type).map((opt, idx) => (
                   <label
                     key={`${alert.id}-${opt.code}`}
                     className={`flex items-start gap-2.5 rounded-lg border p-2.5 cursor-pointer text-xs transition-colors ${
