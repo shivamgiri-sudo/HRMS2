@@ -46,6 +46,7 @@ const PayrollHeadSalaryReviewDetail = lazy(() => import("@/pages/payroll/Payroll
 const PayrollApprovalStatusView     = lazy(() => import("@/pages/payroll/PayrollApprovalStatusView"));
 const SalaryChangeCenter            = lazy(() => import("@/pages/payroll/SalaryChangeCenter"));
 const SalaryTrendExport             = lazy(() => import("@/pages/payroll/SalaryTrendExport"));
+const AttendanceRegisterExport      = lazy(() => import("@/pages/payroll/AttendanceRegisterExport"));
 const SalaryRevisionPage            = lazy(() => import("@/pages/payroll/SalaryRevisionPage"));
 const HolidayWork               = lazy(() => import("@/pages/payroll/HolidayWork"));
 const PfManagement              = lazy(() => import("@/pages/payroll/PfManagement"));
@@ -245,6 +246,7 @@ export const payrollRouteElements = (
       <Route path="/payroll/approval-status"           element={<ProtectedRoute roles={['branch_head','payroll_hr','payroll_head','admin','super_admin']}><Gate pageCode="PAYROLL_APPROVAL_STATUS_VIEW"><PayrollApprovalStatusView /></Gate></ProtectedRoute>} />
       <Route path="/payroll/salary-change"             element={<ProtectedRoute roles={['payroll_head','admin','super_admin','payroll_hr']}><Gate pageCode="SALARY_CHANGE_CENTER"><SalaryChangeCenter /></Gate></ProtectedRoute>} />
       <Route path="/payroll/salary-trend"              element={<ProtectedRoute roles={['payroll_head','admin','super_admin','payroll_hr','hr','hr_admin']}><Gate pageCode="SALARY_TREND_EXPORT"><SalaryTrendExport /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/attendance-register"       element={<ProtectedRoute roles={['payroll_head','admin','super_admin','payroll_hr','hr','hr_admin','wfm','branch_head','process_manager']}><Gate pageCode="ATTENDANCE_REGISTER_EXPORT"><AttendanceRegisterExport /></Gate></ProtectedRoute>} />
       <Route path="/salary-revision"                   element={<ProtectedRoute roles={['payroll_hr','payroll_head','branch_head','hr','admin','super_admin']}><Gate pageCode="SALARY_REVISION"><DashboardLayout><SalaryRevisionPage /></DashboardLayout></Gate></ProtectedRoute>} />
       <Route path="/payroll/cheque-validation"   element={<Navigate to="/payroll/ho-queues" replace />} />
       <Route path="/payroll/epf-compliance"      element={<ProtectedRoute roles={['admin','super_admin','payroll_hr','payroll','hr','manager','finance_head','payroll_head']}><Gate pageCode="PAYROLL_EPF_COMPLIANCE"><PayrollEpfCompliancePage /></Gate></ProtectedRoute>} />

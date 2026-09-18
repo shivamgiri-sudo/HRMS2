@@ -24,7 +24,7 @@ interface EmployeeTrend {
 }
 interface TrendData { months: MonthSlot[]; employees: EmployeeTrend[]; }
 interface BranchRow { id: string; branch_name: string; }
-interface CcRow    { id: string; cost_centre_name: string; }
+interface CcRow    { id: string; cost_centre_name: string; process_name?: string; }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -177,7 +177,9 @@ export default function SalaryTrendExport() {
                 <SelectContent>
                   <SelectItem value="all">ALL</SelectItem>
                   {ccs.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>{c.cost_centre_name}</SelectItem>
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.cost_centre_name}{c.process_name ? ` (${c.process_name})` : ''}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
