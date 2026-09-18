@@ -14626,7 +14626,8 @@
       "process_type",
       "billing_rate_per_hour",
       "close_date",
-      "planning_mode"
+      "planning_mode",
+      "slug"
     ],
     "process_metric_actual": [
       "id",
