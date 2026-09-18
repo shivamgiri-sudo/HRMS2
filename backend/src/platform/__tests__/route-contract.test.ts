@@ -164,6 +164,23 @@ const KNOWN_GAPS: Record<string, string> = {
   "POST /api/payroll/esic-automation/cases/:p/approve":
     "ESIC automation backend is an empty stub. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx calls /cases/:id/approve for approvals. In-progress work; remove once handlers are implemented.",
 
+  // ── Reporting suite dynamic route — added 2026-09-18 ────────────────────────────────────
+  // GET /api/reporting/suite/:code is a dynamic catch-all route that serves multiple report
+  // codes including attendance-register-monthly. The static route scanner cannot match a
+  // concrete call path against a parameterised :code segment — it surfaces as an orphan even
+  // though the route resolves correctly at runtime. No backend work needed; remove if the
+  // route scanner gains wildcard-match capability.
+  "GET /api/reporting/suite/attendance-register-monthly":
+    "Resolved at runtime by the dynamic GET /api/reporting/suite/:code route in reporting.routes.ts. The static scanner cannot match a concrete code against a :param segment. AttendanceRegisterExport.tsx calls this path for the attendance day-grid export.",
+
+  // ── Portal client-user login generation — added 2026-09-18 ────────────────────────────
+  // Pre-existing gap unrelated to the Attendance Register or Salary Trend changes. The route
+  // POST /api/portal/internal/client-users/:p/generate-login is mounted in portal.routes.ts
+  // but the static scanner resolves the :p segment differently from the call-site literal.
+  // Verify and remove once the route-scanner handles parameterised portal paths correctly.
+  "POST /api/portal/internal/client-users/:p/generate-login":
+    "Pre-existing scanner gap: portal.routes.ts mounts this route under /api/portal/internal/client-users/:clientUserId/generate-login. The call-site uses the literal :p placeholder and the scanner cannot match it. No missing backend; remove once scanner handles param aliases.",
+
 };
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {
