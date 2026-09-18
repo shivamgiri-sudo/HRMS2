@@ -41,6 +41,14 @@ const SLA_HOURS = 24;
 const MAX_REMINDERS = 3;
 /** Per-sweep ceiling, matching the gateway's own daily cap philosophy. */
 const MAX_PER_RUN = 100;
+/**
+ * Backfill floor — same pattern as grn-approval-reminder.worker.ts's ROLLOUT_AT.
+ * Without this, a fresh deployment or restart sweeps ALL pending leave requests
+ * ever recorded (including requests from 2018–2025 that were never resolved),
+ * flooding managers with reminders for leave dates years in the past.
+ * Only requests created on or after this date are ever reminded.
+ */
+const ROLLOUT_AT = "2026-09-18 00:00:00";
 
 let intervalRef: ReturnType<typeof setInterval> | undefined;
 let startupRef: ReturnType<typeof setTimeout> | undefined;
@@ -56,11 +64,12 @@ async function findOverdueLeaveRequests(): Promise<OverdueLeaveRow[]> {
        FROM leave_request
       WHERE status = 'pending'
         AND created_at < DATE_SUB(NOW(), INTERVAL ? HOUR)
+        AND created_at >= ?
         AND reminder_count < ?
         AND (last_reminder_at IS NULL OR last_reminder_at < DATE_SUB(NOW(), INTERVAL ? HOUR))
       ORDER BY created_at
       LIMIT ${MAX_PER_RUN}`,
-    [SLA_HOURS, MAX_REMINDERS, SLA_HOURS],
+    [SLA_HOURS, ROLLOUT_AT, MAX_REMINDERS, SLA_HOURS],
   );
   return rows;
 }
