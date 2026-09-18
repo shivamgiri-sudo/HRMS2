@@ -164,14 +164,6 @@ const KNOWN_GAPS: Record<string, string> = {
   "POST /api/payroll/esic-automation/cases/:p/approve":
     "ESIC automation backend is an empty stub. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx calls /cases/:id/approve for approvals. In-progress work; remove once handlers are implemented.",
 
-  // ── Reporting suite dynamic route — added 2026-09-18 ────────────────────────────────────
-  // GET /api/reporting/suite/:code is a dynamic catch-all route that serves multiple report
-  // codes including attendance-register-monthly. The static route scanner cannot match a
-  // concrete call path against a parameterised :code segment — it surfaces as an orphan even
-  // though the route resolves correctly at runtime. No backend work needed; remove if the
-  // route scanner gains wildcard-match capability.
-  "GET /api/reports/suite/attendance-register-monthly":
-    "Resolved at runtime by the dynamic GET /api/reports/suite/:code route (reportSuiteRouter mounted at /api/reports/suite in reporting.routes.ts). The static scanner cannot match a concrete code string against a :param segment. AttendanceRegisterExport.tsx calls this path for the attendance day-grid export.",
 
 };
 
