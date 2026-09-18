@@ -3,6 +3,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./onfido-process-dashboard.service.js";
 import * as clientDocSeries from "./onfido-client-doc-series.service.js";
+import { ensureDocTaskTypeColumn } from "./onfido-doc-task-type-column.js";
 import { onfidoResponseCache } from "./onfido-response-cache.js";
 import { mountPoaPageRoutes } from "./onfido-poa-pages.routes.js";
 import type { RowDataPacket } from "mysql2";
@@ -48,6 +49,7 @@ async function requireOnfidoScope(req: AuthenticatedRequest, res: Response, next
   }
 }
 router.use(requireAuth, requireOnfidoScope);
+router.use(ensureDocTaskTypeColumn);
 // Same numbers are re-requested on every tab switch and each takes seconds on the multi-GB tables.
 router.use(onfidoResponseCache);
 

@@ -63,7 +63,10 @@ export { readFilters };
 //
 // The task type lives in the row's raw_data ("Task Information Task Type Old"); the
 // older "Task Type Short Name" key is blank on ~99% of rows and cannot carry it.
-export const DOC_TASK_TYPE_EXPR = `JSON_UNQUOTE(JSON_EXTRACT(raw_data, '$."Task Information Task Type Old"'))`;
+// A VIRTUAL generated column over raw_data."Task Information Task Type Old", indexed together with
+// report_date and manual_processing_time_secs so the AHT averages never have to read the 2.6 GB JSON.
+// Created by scripts/onfido-add-doc-task-type-index.ts (and by onfido-doc-task-type-column.ts if absent).
+export const DOC_TASK_TYPE_EXPR = "doc_task_type_old";
 /** The task type as a label: the Old key first, the Short Name key (populated on a
  *  small tail of rows) as a fallback, NULL when both are blank. */
 export const DOC_TASK_TYPE_LABEL_EXPR =
