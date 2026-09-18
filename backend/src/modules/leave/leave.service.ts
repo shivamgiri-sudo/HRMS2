@@ -237,6 +237,25 @@ export const leaveService = {
   async submitRequest(input: LeaveRequestInput, actorUserId?: string): Promise<LeaveRequest> {
     const id = randomUUID();
 
+    // ── Inactive employee guard ─────────────────────────────────────────────
+    // Employees with active_status = 0 have exited. No new leave should be
+    // created for them — the exit module already blocks attendance; leave must
+    // follow the same rule so that payroll and leave-balance reports stay clean.
+    {
+      const [empCheck] = await db.execute<RowDataPacket[]>(
+        `SELECT active_status FROM employees WHERE id = ? LIMIT 1`,
+        [input.employeeId],
+      );
+      const emp = (empCheck as RowDataPacket[])[0];
+      if (!emp) throw Object.assign(new Error("Employee not found"), { statusCode: 404 });
+      if (Number(emp.active_status) !== 1) {
+        throw Object.assign(
+          new Error("Cannot apply leave for an inactive (exited) employee"),
+          { statusCode: 409 },
+        );
+      }
+    }
+
     // ── Half-day leave ──────────────────────────────────────────────────────
     // Enabled 2026-09-04 on the owner's explicit decision, replacing the blanket
     // reject added by the 2026-08-13 audit.

@@ -944,7 +944,9 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance, onSta
       await onStatusChange(id, nextStatus);
       setMessage(`Moved to ${nextStatus.replace(/_/g, " ")}`);
     } catch (err: any) {
-      setMessage(err?.message || "Status update failed");
+      const blockers: string[] = err?.payload?.blockers ?? [];
+      const detail = blockers.length ? ` — ${blockers.join("; ")}` : "";
+      setMessage((err?.message || "Status update failed") + detail);
     }
   };
 

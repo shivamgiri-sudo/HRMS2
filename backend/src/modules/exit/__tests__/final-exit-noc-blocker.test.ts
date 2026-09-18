@@ -1,20 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 
 /**
- * finalExitBlockers() must NOT gate the final "exited" transition on NOC (2026-09-16, reversing
- * the 2026-08-27 change this file used to pin).
+ * finalExitBlockers() must NOT gate the "exited" transition on NOC or F&F.
  *
- * NOC gates money and paperwork, not the exit date/status itself — F&F payout is gated
- * independently by noc-release-gate.service.ts (keyed off employees.employment_status, which
- * this transition itself writes), and the experience/relieving letter is gated independently in
- * the letters module. Blocking the "exited" transition on NOC left an employee stuck active —
- * no exit date, active_status still 1 — for however long NOC took, even after every clearance
- * task was done and F&F was approved.
+ * Rulings:
+ *   - NOC: 2026-09-16 — NOC gates money/paperwork, not the exit date itself.
+ *   - F&F: 2026-09-18 — same reasoning. F&F payout is gated independently by
+ *     noc-release-gate.service.ts (keyed off employees.employment_status, which this
+ *     transition writes). Blocking "exited" on F&F left employees stuck active — counted
+ *     in headcount, eligible for attendance and leave — while HR completed retroactive
+ *     paperwork for someone who physically left weeks ago.
+ *
+ * Only clearance tasks remain as a gate: they represent physical handover (IT
+ * deprovisioning, asset return) that must complete before the employee is inactive.
  *
  * These tests pin the two behaviours that matter now:
- *   1. Clearance tasks open, or F&F not approved/provisional -> still blocks (unchanged).
- *   2. NOC missing/invalid, with clearance and F&F both clean -> does NOT block, and
- *      noc.service.ts is never even imported/consulted by this function.
+ *   1. Clearance tasks open → blocks.
+ *   2. Clearance clean, regardless of F&F or NOC state → does NOT block.
  */
 
 const { dbExecute } = vi.hoisted(() => ({ dbExecute: vi.fn() }));
@@ -31,16 +33,10 @@ vi.mock("../exit.service.js", () => ({ exitService: {} }));
 
 const EXIT_ID = "exit-req-1";
 
-/**
- * finalExitBlockers is module-private, so drive it through the two queries it issues, in order:
- * open clearance tasks, then the latest F&F row. There is no third (employee_id/NOC) query
- * anymore — a test below asserts exactly that.
- */
-function primeDb(clearanceOpenCount: number, ff: { status: string; is_ff_provisional: number } | null) {
+/** Prime the single clearance-count query finalExitBlockers now issues. */
+function primeDb(clearanceOpenCount: number) {
   dbExecute.mockReset();
-  dbExecute
-    .mockResolvedValueOnce([[{ open_count: clearanceOpenCount }]])
-    .mockResolvedValueOnce([ff ? [ff] : []]);
+  dbExecute.mockResolvedValueOnce([[{ open_count: clearanceOpenCount }]]);
 }
 
 async function loadBlockers() {
@@ -49,38 +45,45 @@ async function loadBlockers() {
   return mod.__testFinalExitBlockers ?? null;
 }
 
-describe("finalExitBlockers — NOC is not a gate here", () => {
+describe("finalExitBlockers — only clearance tasks gate the exit", () => {
   it("blocks when clearance tasks are still open", async () => {
     const finalExitBlockers = await loadBlockers();
     expect(finalExitBlockers, "finalExitBlockers must be exported for test").toBeTypeOf("function");
-    primeDb(2, { status: "approved", is_ff_provisional: 0 });
+    primeDb(3);
 
     const blockers = await finalExitBlockers(EXIT_ID);
     expect(blockers.some((b: string) => b.includes("clearance task(s) still open"))).toBe(true);
   });
 
-  it("blocks when F&F is missing, not approved, or still provisional", async () => {
+  it("does NOT block when all clearance tasks are done — regardless of F&F state", async () => {
     const finalExitBlockers = await loadBlockers();
-    primeDb(0, null);
-    expect((await finalExitBlockers(EXIT_ID)).some((b: string) => b.includes("F&F calculation is missing"))).toBe(true);
-
-    primeDb(0, { status: "pending", is_ff_provisional: 0 });
-    expect((await finalExitBlockers(EXIT_ID)).some((b: string) => b.includes("F&F is pending"))).toBe(true);
-
-    primeDb(0, { status: "approved", is_ff_provisional: 1 });
-    expect((await finalExitBlockers(EXIT_ID)).some((b: string) => b.includes("F&F is provisional"))).toBe(true);
-  });
-
-  it("does NOT block on a missing/invalid NOC once clearance and F&F are clean", async () => {
-    const finalExitBlockers = await loadBlockers();
-    primeDb(0, { status: "approved", is_ff_provisional: 0 });
+    primeDb(0);
 
     const blockers = await finalExitBlockers(EXIT_ID);
-
     expect(blockers).toEqual([]);
+  });
+
+  it("does NOT block on missing/unapproved F&F (ruling 2026-09-18)", async () => {
+    const finalExitBlockers = await loadBlockers();
+    primeDb(0);
+
+    const blockers = await finalExitBlockers(EXIT_ID);
+    expect(blockers.some((b: string) => /f&f|full.{0,5}final/i.test(b))).toBe(false);
+  });
+
+  it("does NOT block on NOC (ruling 2026-09-16)", async () => {
+    const finalExitBlockers = await loadBlockers();
+    primeDb(0);
+
+    const blockers = await finalExitBlockers(EXIT_ID);
     expect(blockers.some((b: string) => /noc/i.test(b))).toBe(false);
-    // Only the clearance-task and F&F queries run — no third query looking up the employee
-    // for a NOC check.
-    expect(dbExecute).toHaveBeenCalledTimes(2);
+  });
+
+  it("issues exactly one DB query — no F&F or NOC lookups", async () => {
+    const finalExitBlockers = await loadBlockers();
+    primeDb(0);
+
+    await finalExitBlockers(EXIT_ID);
+    expect(dbExecute).toHaveBeenCalledTimes(1);
   });
 });

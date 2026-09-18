@@ -78,9 +78,22 @@ export function assertValidExitTransition(
 }
 
 /**
- * Blockers for the final "exited" transition: open clearance tasks, and F&F not yet approved
- * or still provisional. Originally built as finalExitBlockers() in exit.compat.routes.ts,
- * which never ran for the same shadowing reason as the FSM map above. Consolidated here.
+ * Blockers for the final "exited" transition: only open clearance tasks.
+ *
+ * F&F is deliberately NOT checked here (owner ruling 2026-09-18, same reasoning as the
+ * NOC ruling on 2026-09-16). F&F gates money, not the exit date/status itself:
+ *   - F&F payout is gated independently by noc-release-gate.service.ts, which keys off
+ *     employees.employment_status flipping to inactive/terminated — the exact write this
+ *     transition performs.
+ *   - Blocking "exited" on F&F approval leaves an employee stuck active (active_status=1,
+ *     counted in headcount, eligible for attendance/leave) for however long the finance
+ *     team takes to approve the settlement — even when the person physically left weeks ago
+ *     and HR is doing retroactive paperwork. That is the same bug the NOC removal fixed.
+ *
+ * NOC is also not checked here — see the 2026-09-16 ruling comment in noc.service.ts.
+ *
+ * Clearance tasks remain the sole gate: they represent physical handover (IT deprovisioning,
+ * asset return) that must complete before the employee is formally inactive.
  */
 async function finalExitBlockers(exitRequestId: string): Promise<string[]> {
   const [clearanceRows] = await db.execute<RowDataPacket[]>(
@@ -90,35 +103,9 @@ async function finalExitBlockers(exitRequestId: string): Promise<string[]> {
         AND status NOT IN ('cleared', 'waived')`,
     [exitRequestId],
   );
-  const [ffRows] = await db.execute<RowDataPacket[]>(
-    `SELECT status, is_ff_provisional
-       FROM full_final_calculation
-      WHERE exit_request_id = ?
-      ORDER BY created_at DESC
-      LIMIT 1`,
-    [exitRequestId],
-  );
-  const ff = ffRows[0];
   const blockers: string[] = [];
   const openClearance = Number(clearanceRows[0]?.open_count ?? 0);
   if (openClearance > 0) blockers.push(`${openClearance} clearance task(s) still open`);
-  if (!ff) blockers.push("F&F calculation is missing");
-  else {
-    if (!["approved", "paid"].includes(String(ff.status))) blockers.push(`F&F is ${ff.status}`);
-    if (Number(ff.is_ff_provisional) === 1) blockers.push("F&F is provisional");
-  }
-
-  // NOC is deliberately NOT checked here (owner ruling 2026-09-16, reversing the 2026-08-27
-  // change below this comment used to make). NOC gates money and paperwork, not the exit
-  // date/status itself:
-  //   - F&F payout: gated independently by noc-release-gate.service.ts, which keys off
-  //     employees.employment_status flipping to inactive/terminated — the exact write this
-  //     transition performs. That gate does not depend on exit_request ever reaching "exited".
-  //   - Experience/relieving letter: gated independently in the letters module.
-  // Blocking the "exited" transition itself on NOC left an employee stuck active — no exit
-  // date, active_status still 1 — for however long NOC took, even after every clearance task
-  // was done and F&F was approved. That is the bug this removal fixes. See noc.service.ts's
-  // nocRequired()/nocValidated() for the money/letter gates that replace this one.
   return blockers;
 }
 
