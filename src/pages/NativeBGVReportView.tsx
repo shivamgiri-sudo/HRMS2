@@ -163,6 +163,8 @@ export default function NativeBGVReportView() {
 
   const statusColors: Record<string, string> = {
     passed: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+    verified: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+    waived: 'bg-emerald-100 text-emerald-800 border-emerald-300',
     failed: 'bg-red-100 text-red-800 border-red-300',
     partial: 'bg-amber-100 text-amber-800 border-amber-300',
     not_run: 'bg-slate-100 text-slate-600 border-slate-300',
@@ -171,6 +173,8 @@ export default function NativeBGVReportView() {
     negative: 'bg-red-100 text-red-800 border-red-300',
     pending: 'bg-slate-100 text-slate-600 border-slate-300',
     in_progress: 'bg-blue-100 text-blue-800 border-blue-300',
+    pending_review: 'bg-amber-100 text-amber-800 border-amber-300',
+    manual_review: 'bg-amber-100 text-amber-800 border-amber-300',
     validated: 'bg-emerald-100 text-emerald-800 border-emerald-300',
     not_done: 'bg-slate-100 text-slate-600 border-slate-300',
     invalid: 'bg-red-100 text-red-800 border-red-300',
@@ -193,19 +197,31 @@ export default function NativeBGVReportView() {
   const photoCheck = checkDetailMap.get('photo_match');
   const nameMatchCheck = checkDetailMap.get('name_match');
 
+  // Zero and placeholder match values from the API response are not meaningful to display.
+  const cleanMatch = (v: unknown) => {
+    if (!v) return null;
+    const s = String(v).trim();
+    if (!s || s === '0' || s === '0%' || s === '-' || s === 'null') return null;
+    return s;
+  };
+
+  // photo_match "manual_review" means the system flagged for human review, NOT that fraud
+  // was detected. Show it as "Pending HR Review" so HR can act, rather than as a failure badge.
+  const photoStatus = photoCheck?.status === 'manual_review' ? 'pending_review' : photoCheck?.status;
+
   const verificationChecks = [
-    { name: 'Aadhaar Verification', status: report.aadhaar_status, match: report.aadhaar_name_match, remarks: report.aadhaar_remarks, type: 'aadhaar' },
+    { name: 'Aadhaar Verification', status: report.aadhaar_status, match: cleanMatch(report.aadhaar_name_match), remarks: report.aadhaar_remarks, type: 'aadhaar' },
     { name: 'DigiLocker KYC', status: report.digilocker_status || 'not_run', match: null, remarks: report.digilocker_remarks, type: 'digilocker' },
-    { name: 'PAN Verification', status: report.pan_status, match: report.pan_name_match, remarks: report.pan_remarks, type: 'pan' },
-    { name: 'Bank Account Verification', status: report.bank_status, match: report.bank_account_match, remarks: report.bank_remarks, type: 'bank' },
+    { name: 'PAN Verification', status: report.pan_status, match: cleanMatch(report.pan_name_match), remarks: report.pan_remarks, type: 'pan' },
+    { name: 'Bank Account Verification', status: report.bank_status, match: cleanMatch(report.bank_account_match), remarks: report.bank_remarks, type: 'bank' },
     { name: 'Education Verification', status: report.education_status, match: null, remarks: report.education_remarks, type: 'education' },
     { name: 'Employment Verification', status: report.employment_status, match: null, remarks: report.employment_remarks, type: 'employment' },
     { name: 'Address Verification', status: report.address_status, match: null, remarks: report.address_remarks, type: 'address' },
     { name: 'Criminal / Court Records Check', status: report.criminal_status || report.court_status || 'not_run', match: null, remarks: report.criminal_remarks || report.court_remarks, type: 'court' },
-    { name: 'E-Signature Verification', status: report.esignature_status, match: null, remarks: report.esignature_remarks, type: 'esignature' },
+    // E-Signature is a joining document flow, not a BGV check — excluded from this report section
     // Photo match and name reconciliation — internal system checks shown to HR
-    ...(photoCheck ? [{ name: 'Photo Identity Match', status: photoCheck.status, match: null, remarks: photoCheck.result_summary, type: 'photo_match' }] : []),
-    ...(nameMatchCheck ? [{ name: 'Cross-Source Name Match', status: nameMatchCheck.status, match: nameMatchCheck.matched_name ? `${nameMatchCheck.matched_name}${nameMatchCheck.match_score != null ? ` (${nameMatchCheck.match_score}%)` : ''}` : null, remarks: nameMatchCheck.result_summary, type: 'name_match' }] : []),
+    ...(photoCheck ? [{ name: 'Photo Identity Match', status: photoStatus, match: null, remarks: photoCheck.result_summary, type: 'photo_match' }] : []),
+    ...(nameMatchCheck ? [{ name: 'Cross-Source Name Match', status: nameMatchCheck.status, match: nameMatchCheck.matched_name ? `${nameMatchCheck.matched_name}${nameMatchCheck.match_score != null && nameMatchCheck.match_score > 0 ? ` (${nameMatchCheck.match_score}%)` : ''}` : null, remarks: nameMatchCheck.result_summary, type: 'name_match' }] : []),
   ];
 
   return (
@@ -623,8 +639,10 @@ export default function NativeBGVReportView() {
               <tbody>
                 {[
                   ['Photo', report.photo_received],
-                  ['Aadhaar Card', report.aadhaar_received],
-                  ['PAN Card', report.pan_received],
+                  // DigiLocker KYC delivers Aadhaar and PAN digitally — treat them as received
+                  // even if the HR hasn't ticked the physical-receipt checkbox on the report form.
+                  ['Aadhaar Card', report.aadhaar_received || digilockerClear],
+                  ['PAN Card', report.pan_received || digilockerClear],
                   ['Passport', report.passport_received],
                   ['Driving License', report.driving_license_received],
                   ['Education Certificate', report.edu_cert_received],
@@ -633,12 +651,13 @@ export default function NativeBGVReportView() {
                   ['Offer Letter', report.offer_letter_received],
                 ].map(([docType, received], i) => {
                   const doc = documents.find((d: any) => d.doc_type?.toLowerCase().includes((docType as string).toLowerCase().split(' ')[0]));
+                  const isDigilocker = digilockerClear && (docType === 'Aadhaar Card' || docType === 'PAN Card');
                   return (
                     <tr key={i} className="border-b border-slate-200">
-                      <td className="py-2 px-3">{docType}</td>
-                      <td className="py-2 px-3 text-center">{received ? '✓' : '✗'}</td>
-                      <td className="py-2 px-3">{doc?.uploaded_at ? formatISTDate(new Date(doc.uploaded_at)) : '-'}</td>
-                      <td className="py-2 px-3">{safeText(doc?.document_status)}</td>
+                      <td className="py-2 px-3">{docType}{isDigilocker && !report.aadhaar_received && !report.pan_received ? <span className="ml-1 text-xs text-blue-600">(DigiLocker)</span> : null}</td>
+                      <td className="py-2 px-3 text-center text-base">{received ? '✓' : '✗'}</td>
+                      <td className="py-2 px-3">{doc?.uploaded_at ? formatISTDate(new Date(doc.uploaded_at)) : (isDigilocker ? 'Via DigiLocker KYC' : '-')}</td>
+                      <td className="py-2 px-3">{doc?.document_status ? safeText(doc.document_status) : (isDigilocker ? 'verified' : '-')}</td>
                     </tr>
                   );
                 })}
@@ -791,12 +810,14 @@ export default function NativeBGVReportView() {
               <tbody>
                 <tr className="border-b border-slate-200">
                   <td className="py-2 px-3 font-semibold bg-slate-50 w-1/3">Completed By</td>
-                  <td className="py-2 px-3">{completedByName || safeText(report.completed_by)}</td>
+                  <td className="py-2 px-3">{completedByName || safeText(report.completed_by) || <span className="text-slate-400 italic">Not yet finalized</span>}</td>
                 </tr>
                 <tr className="border-b border-slate-200">
                   <td className="py-2 px-3 font-semibold bg-slate-50">Completed At</td>
                   <td className="py-2 px-3">
-                    {report.completed_at ? `${formatISTDate(new Date(report.completed_at))} ${formatISTTime(new Date(report.completed_at))}` : '-'}
+                    {report.completed_at
+                      ? `${formatISTDate(new Date(report.completed_at))} ${formatISTTime(new Date(report.completed_at))}`
+                      : <span className="text-slate-400 italic">Not yet finalized — BGV still in progress</span>}
                   </td>
                 </tr>
                 <tr className="border-b border-slate-200">
