@@ -163,6 +163,7 @@ const KNOWN_GAPS: Record<string, string> = {
     "ESIC automation backend is an empty stub. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx calls /cases/:id for the detail view. In-progress work; remove once handlers are implemented.",
   "POST /api/payroll/esic-automation/cases/:p/approve":
     "ESIC automation backend is an empty stub. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx calls /cases/:id/approve for approvals. In-progress work; remove once handlers are implemented.",
+
 };
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {
