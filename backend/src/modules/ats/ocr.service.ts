@@ -5,6 +5,7 @@ import { db } from "../../db/mysql.js";
 import { extractDobFromText } from "./ageVerification.service.js";
 import { classifyDuplicateIdentity } from "./duplicate-identity.js";
 import { hashPiiForMatch } from "../../shared/piiHash.js";
+import { isValidAadhaarChecksum } from "../../shared/aadhaarChecksum.js";
 
 const AADHAAR_REGEX = /\b(\d{4}\s?\d{4}\s?\d{4})\b/;
 const PAN_REGEX = /\b([A-Z]{3}[PCHFATBLJG][A-Z]\d{4}[A-Z])\b/;
@@ -223,13 +224,29 @@ export async function crossValidateDocument(
     return { matched: true };
   }
 
-  const hashExtracted = hashPiiForMatch(ocrResult.extractedNumber);
   const normalizedDocType = docType.toLowerCase();
+  const isAadhaarDoc = normalizedDocType.includes("aadhaar") || normalizedDocType.includes("aadhar");
+
+  // A genuine 12-digit Aadhaar always satisfies the Verhoeff checksum (see
+  // shared/aadhaarChecksum.ts), so an extraction that fails it is not a real
+  // Aadhaar reading a mismatch off of — it is OCR noise (one misread digit is
+  // enough to fail the checksum). Raising DOCUMENT_NUMBER_MISMATCH here would
+  // flag a bad photo, not a bad candidate; treat it the same as "no usable
+  // number extracted" instead of comparing it against the stored value at all.
+  if (isAadhaarDoc && !isValidAadhaarChecksum(ocrResult.extractedNumber)) {
+    await db.execute(
+      `UPDATE candidate_onboarding_document SET ocr_extraction_status = 'success', ocr_number_match = 'no_number_found', ocr_raw_text = ? WHERE id = ?`,
+      [ocrResult.rawText.substring(0, 5000), documentId]
+    );
+    return { matched: true };
+  }
+
+  const hashExtracted = hashPiiForMatch(ocrResult.extractedNumber);
 
   let storedHash: string | null = null;
   let alertType: string | null = null;
 
-  if (normalizedDocType.includes("aadhaar") || normalizedDocType.includes("aadhar")) {
+  if (isAadhaarDoc) {
     const [rows] = await db.execute<any[]>(
       `SELECT aadhaar_number_hash FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
       [candidateId]
