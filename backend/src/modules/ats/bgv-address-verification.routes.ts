@@ -47,14 +47,14 @@ function haversineMetres(lat1: number, lng1: number, lat2: number, lng2: number)
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
+function nominatimQuery(query: string): Promise<{ lat: number; lng: number } | null> {
   return new Promise((resolve) => {
-    const q = encodeURIComponent(address + ", India");
+    const q = encodeURIComponent(query);
     const options = {
       hostname: "nominatim.openstreetmap.org",
       path: `/search?q=${q}&format=json&limit=1&countrycodes=IN`,
       headers: { "User-Agent": "MASCallnet-HRMS/1.0" },
-      timeout: 5000,
+      timeout: 6000,
     };
     const req = https.get(options, (res) => {
       let data = "";
@@ -72,25 +72,45 @@ async function geocodeAddress(address: string): Promise<{ lat: number; lng: numb
   });
 }
 
-function buildDeclaredAddress(profile: RowDataPacket | null): string {
+// Tries pincode → city+state → full address in order. Stops at first hit.
+async function geocodeAddress(
+  fullAddress: string,
+  hints?: { pincode?: string; city?: string; state?: string }
+): Promise<{ lat: number; lng: number } | null> {
+  // 1. Pincode is the most precise and least ambiguous query for Indian addresses
+  if (hints?.pincode && /^\d{6}$/.test(hints.pincode)) {
+    const r = await nominatimQuery(`${hints.pincode}, India`);
+    if (r) return r;
+  }
+  // 2. City + State
+  if (hints?.city && hints?.state) {
+    const r = await nominatimQuery(`${hints.city}, ${hints.state}, India`);
+    if (r) return r;
+  }
+  // 3. Full concatenated address as last resort
+  return nominatimQuery(fullAddress + ", India");
+}
+
+// Returns ONLY the present address — permanent address is not used for GPS verification.
+function buildPresentAddress(profile: RowDataPacket | null): string {
   if (!profile) return "";
-  const present = [
+  return [
     profile.present_address_line1,
     profile.present_address_line2,
     profile.present_address,
     profile.present_city,
     profile.present_state,
     profile.present_pincode,
-  ].map((v) => (v ? String(v).trim() : "")).filter(Boolean);
-  if (present.length) return present.join(", ");
-  return [
-    profile.permanent_address_line1,
-    profile.permanent_address_line2,
-    profile.permanent_address,
-    profile.permanent_city,
-    profile.permanent_state,
-    profile.permanent_pincode,
   ].map((v) => (v ? String(v).trim() : "")).filter(Boolean).join(", ");
+}
+
+function extractAddressHints(profile: RowDataPacket | null) {
+  if (!profile) return {};
+  return {
+    pincode: profile.present_pincode ? String(profile.present_pincode).trim() : undefined,
+    city:    profile.present_city    ? String(profile.present_city).trim()    : undefined,
+    state:   profile.present_state   ? String(profile.present_state).trim()   : undefined,
+  };
 }
 
 async function syncAddressBgvCheck(candidateId: string, status: "verified" | "failed" | "not_run") {
@@ -138,15 +158,17 @@ router.post(
          FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
       [candidateId]
     );
-    const declaredAddress = buildDeclaredAddress(profiles[0] ?? null);
+    const profile = profiles[0] ?? null;
+    const declaredAddress = buildPresentAddress(profile);
     if (!declaredAddress) {
       return res.status(422).json({
         success: false,
-        message: "No address on record. Ask the candidate to complete their onboarding profile first.",
+        message: "No present address on record. Ask the candidate to fill in their current address in the onboarding profile first.",
       });
     }
 
-    const geo = await geocodeAddress(declaredAddress).catch(() => null);
+    const hints = extractAddressHints(profile);
+    const geo = await geocodeAddress(declaredAddress, hints).catch(() => null);
 
     const token = uuidv4();
     const expiresAt = new Date(Date.now() + EXPIRY_HOURS * 3600 * 1000);
