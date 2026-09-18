@@ -1577,10 +1577,6 @@ export default function BulkUploadHub() {
 
   function validateRows(template: UploadTemplate, rows: CsvRow[]) {
     const requiredColumns = template.required_columns || [];
-    const allowedColumns = new Set([
-      ...(template.required_columns || []),
-      ...(template.optional_columns || []),
-    ]);
 
     return rows.map((row, index) => {
       const errors: string[] = [];
@@ -1593,11 +1589,10 @@ export default function BulkUploadHub() {
         }
       });
 
-      Object.keys(row).forEach((column) => {
-        if (column && !allowedColumns.has(column)) {
-          errors.push(`Unknown column: ${column}`);
-        }
-      });
+      // Extra columns beyond required_columns/optional_columns are NOT flagged as errors here.
+      // Real-world exports routinely carry columns the template doesn't list (or a typo'd header
+      // name) -- rejecting the whole row over an unrecognized column blocked every row of a real
+      // Onfido GD/MCN/POA file that had nothing wrong with its actual required data.
 
       ["HireDate", "DateOfBirth", "AttendanceDate", "RosterDate", "EffectiveDate", "PayrollMonth"].forEach((column) => {
         const value = String(row[column] || "").trim();
