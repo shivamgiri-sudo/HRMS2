@@ -23,6 +23,15 @@ export interface PortalTokenPayload {
    * treating them as revoked would sign out every client currently holding a 7-day token.
    */
   jti?: string;
+  /**
+   * Present only on a token minted by POST /api/portal/admin/impersonate (a super admin
+   * opening a client's dashboard on their behalf, not the client's own OTP login).
+   * Carries the impersonating admin's own id so the persistent client-side banner and
+   * every downstream audit event can say who is actually looking, not just whose data
+   * it is. Never set on a real client login -- its absence IS the "this is the real
+   * client" signal, so this must never default to a placeholder value.
+   */
+  impersonatedBy?: string;
 }
 
 export interface ProcessCard {
@@ -122,7 +131,9 @@ export interface AttritionData {
   voluntary_count: number;
   involuntary_count: number;
   headcount: number;
-  sanctioned_strength: number;
+  /** null when no workforce_mandate row is configured for this process yet --
+   *  must render as "not configured", never silently fall back to headcount. */
+  sanctioned_strength: number | null;
   open_positions: number;
   avg_tenure_months: number;
   top_exit_reasons: Array<{ reason: string; count: number }>;

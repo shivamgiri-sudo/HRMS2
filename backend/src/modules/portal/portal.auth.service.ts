@@ -35,13 +35,21 @@ export const portalAuthService = {
    */
   async issueToken(payload: Omit<PortalTokenPayload, "role" | "jti">): Promise<string> {
     const jti = randomUUID();
+    // impersonatedBy passes straight through into the signed payload when the caller
+    // supplied one (portal-admin.routes.ts's /impersonate) -- undefined otherwise, so a
+    // real client login's token never carries this key at all, not even as a false-y value.
+    const sessionLifetimeMs = payload.impersonatedBy ? 2 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
     const token = jwt.sign(
       { ...payload, role: "client", jti },
       env.PORTAL_JWT_SECRET,
-      { expiresIn: "7d" }
+      { expiresIn: payload.impersonatedBy ? "2h" : "7d" }
     );
 
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    // Must match the JWT's own expiresIn above -- an impersonation session recorded with
+    // the real client's 7-day expiry would outlive the 2h token it actually belongs to in
+    // portal_user_sessions (harmless on its own since the JWT itself still expires at 2h,
+    // but it would misreport how long this session window was really open for).
+    const expiresAt = new Date(Date.now() + sessionLifetimeMs);
     await db.execute(
       `INSERT INTO portal_user_sessions (id, client_user_id, jti, expires_at)
        VALUES (?, ?, ?, ?)`,
@@ -172,6 +180,71 @@ export const portalAuthService = {
       clientId: user.client_id,
       processIds,
     });
+  },
+
+  /**
+   * Password-based login (login_id + password), the alternative the client portal offers
+   * alongside email OTP above. Deliberately mirrors verifyOtp's shape (same issueToken call,
+   * same "not found" behaviour), but keyed on login_id/password_hash instead of email/otp_hash.
+   *
+   * Returns mustChangePassword alongside the token so the frontend can route straight to a
+   * forced change-password screen on first login, without needing a second round trip.
+   */
+  async loginWithPassword(loginId: string, password: string): Promise<{ token: string; mustChangePassword: boolean }> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT id, client_id, process_ids, password_hash, must_change_password FROM client_user WHERE login_id = ? AND is_active = 1 LIMIT 1",
+      [loginId]
+    );
+    const user = (rows as RowDataPacket[])[0];
+    // Same message whether the login_id doesn't exist or the password is wrong -- this
+    // must not tell an attacker which half of the pair was incorrect.
+    if (!user || !user.password_hash) throw new Error("Invalid login ID or password");
+
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) throw new Error("Invalid login ID or password");
+
+    let processIds: string[];
+    try {
+      processIds = typeof user.process_ids === "string" ? JSON.parse(user.process_ids) : (user.process_ids as string[]);
+    } catch {
+      throw new Error("Invalid process_ids data");
+    }
+
+    const token = await portalAuthService.issueToken({
+      clientUserId: user.id,
+      clientId: user.client_id,
+      processIds,
+    });
+
+    return { token, mustChangePassword: Number(user.must_change_password) === 1 };
+  },
+
+  /**
+   * Self-service password change. Mirrors auth.service.ts's changePassword exactly (verify
+   * current password at cost 10, hash new one at cost 12, clear must_change_password) --
+   * same cost-factor distinction that file's own header comment documents: system-generated
+   * passwords hash at 10, a user's deliberate choice hashes at 12.
+   */
+  async changePassword(clientUserId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT password_hash FROM client_user WHERE id = ? LIMIT 1",
+      [clientUserId]
+    );
+    const user = (rows as RowDataPacket[])[0];
+    if (!user || !user.password_hash) throw new Error("Account not found");
+
+    const valid = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!valid) throw new Error("Current password is incorrect");
+
+    const newHash = await bcrypt.hash(newPassword, 12);
+    await db.execute(
+      "UPDATE client_user SET password_hash = ?, must_change_password = 0 WHERE id = ?",
+      [newHash, clientUserId]
+    );
+    // Revoke every other live session -- a password change should not leave an old,
+    // possibly-compromised session usable elsewhere. Mirrors
+    // auth.service.ts's invalidateSessionsAfterPasswordChange for staff accounts.
+    await portalAuthService.revokeAllSessionsForUser(clientUserId);
   },
 
   async sendOtpEmail(to: string, otp: string): Promise<void> {

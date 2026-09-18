@@ -1,9 +1,11 @@
 import { randomUUID } from "crypto";
+import bcrypt from "bcryptjs";
 import type { Request, Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { ClientAuthRequest } from "../../middleware/requireClientAuth.js";
 import { portalAuthService } from "./portal.auth.service.js";
+import { ensureProcessSlug, generateCredentialsFromSlug, disambiguateLoginId } from "./portal-credentials.js";
 import { portalOverviewService } from "./portal.overview.service.js";
 import { portalKpiService } from "./portal.kpi.service.js";
 import { portalGlideService } from "./portal.glide.service.js";
@@ -15,7 +17,7 @@ import {
   requestOtpSchema, verifyOtpSchema, actionPlanFilterSchema,
   createActionPlanSchema, updateActionPlanSchema, setGlideSchema,
   updateGovernanceSchema, createCommentarySchema, replyCommentarySchema,
-  createClientUserSchema,
+  createClientUserSchema, passwordLoginSchema, changeClientPasswordSchema,
 } from "./portal.validation.js";
 
 function currentPeriod() {
@@ -81,6 +83,53 @@ export const portalController = {
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const token = await portalAuthService.verifyOtp(parsed.data.email, parsed.data.otp);
     res.json({ token });
+  },
+
+  async loginWithPassword(req: Request, res: Response) {
+    const parsed = passwordLoginSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    try {
+      const { token, mustChangePassword } = await portalAuthService.loginWithPassword(
+        parsed.data.loginId,
+        parsed.data.password
+      );
+      res.json({ token, mustChangePassword });
+    } catch (err) {
+      res.status(401).json({ error: (err as Error).message });
+    }
+  },
+
+  async changePassword(req: ClientAuthRequest, res: Response) {
+    const parsed = changeClientPasswordSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    try {
+      await portalAuthService.changePassword(
+        req.portalUser!.clientUserId,
+        parsed.data.currentPassword,
+        parsed.data.newPassword
+      );
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  },
+
+  /** Public: resolves a URL slug (from /:slug_clientportal) to the process/client name
+   *  the login page should display -- no auth required, this is purely cosmetic branding
+   *  for the login screen, never a data-access grant. */
+  async getProcessBySlug(req: Request, res: Response) {
+    const slug = String(req.params.slug ?? "").trim();
+    if (!slug) return res.status(400).json({ error: "slug is required" });
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT p.id AS process_id, p.process_name, cm.client_name
+       FROM process_master p
+       JOIN client_master cm ON cm.id = p.client_id
+       WHERE p.slug = ? AND p.active_status = 1 LIMIT 1`,
+      [slug]
+    );
+    const row = (rows as RowDataPacket[])[0];
+    if (!row) return res.status(404).json({ error: "Unknown portal URL" });
+    res.json({ data: row });
   },
 
   // ── Overview ──────────────────────────────────────────────────────────────
@@ -214,14 +263,50 @@ export const portalController = {
     const parsed = createClientUserSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const id = randomUUID();
-    await db.execute(
-      "INSERT INTO client_user (id, client_id, email, name, designation, process_ids) VALUES (?, ?, ?, ?, ?, ?)",
-      [id, parsed.data.clientId, parsed.data.email, parsed.data.name, parsed.data.designation ?? null, JSON.stringify(parsed.data.processIds)]
-    );
+
+    // Login ID / password are derived from the user's first assigned process's slug
+    // (ensureProcessSlug persists one on process_master if it doesn't have one yet).
+    // Collisions on client_user.login_id (a real UNIQUE KEY, migration 1814) are retried
+    // once with a short disambiguator rather than failing outright -- two different
+    // portal users legitimately scoped to the same process should not be blocked from
+    // both existing.
+    const primaryProcessId = parsed.data.processIds[0];
+    const slug = await ensureProcessSlug(primaryProcessId);
+    const generated = generateCredentialsFromSlug(slug);
+    const passwordHash = await bcrypt.hash(generated.password, 10);
+
+    let loginId = generated.loginId;
+    let inserted = false;
+    for (let attempt = 0; attempt < 2 && !inserted; attempt++) {
+      try {
+        await db.execute(
+          `INSERT INTO client_user
+             (id, client_id, email, name, designation, process_ids, login_id, password_hash, must_change_password)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+          [id, parsed.data.clientId, parsed.data.email, parsed.data.name, parsed.data.designation ?? null,
+           JSON.stringify(parsed.data.processIds), loginId, passwordHash]
+        );
+        inserted = true;
+      } catch (err) {
+        if ((err as { code?: string }).code === "ER_DUP_ENTRY" && attempt === 0) {
+          loginId = disambiguateLoginId(generated.loginId);
+          continue;
+        }
+        throw err;
+      }
+    }
+
     const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM client_user WHERE id = ? LIMIT 1", [id]);
     const created = (rows as RowDataPacket[])[0];
     if (!created) throw new Error("Failed to fetch created client user");
-    res.status(201).json({ data: created });
+    // The one-time plaintext password is returned ONLY on this create response -- it is
+    // never stored or retrievable again, same convention as
+    // employee-activation.service.ts's temp-password flow. The admin must share it with
+    // the client out-of-band right now, or reset it later via a new endpoint.
+    res.status(201).json({
+      data: created,
+      generatedCredentials: { loginId, temporaryPassword: generated.password },
+    });
   },
 
   async listClientUsers(_req: Request, res: Response) {

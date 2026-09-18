@@ -16,6 +16,12 @@ router.get("/health", h(async (_req, res) => {
 }));
 router.post("/auth/request-otp", h(c.requestOtp));
 router.post("/auth/verify-otp",  h(c.verifyOtp));
+router.post("/auth/login",       h(c.loginWithPassword));
+// Public branding lookup for /:slug_clientportal -- no auth, no client-scoped data.
+router.get ("/process-by-slug/:slug", h(c.getProcessBySlug));
+
+// ── Client-authenticated: self-service password change ──────────────────────
+router.post("/auth/change-password", requireClientAuth, h(c.changePassword));
 
 // ── Internal ops (internal staff JWT) ── MUST be before requireClientAuth middleware ──
 router.use("/internal", requireAuth);

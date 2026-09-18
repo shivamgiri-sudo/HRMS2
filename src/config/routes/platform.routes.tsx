@@ -42,6 +42,7 @@ const NativeWorkflowAdmin           = lazy(() => import("@/pages/NativeWorkflowA
 const NativeBenefitsClaims          = lazy(() => import("@/pages/NativeBenefitsClaims"));
 const NativeIntegrationHub          = lazy(() => import("@/pages/NativeIntegrationHub"));
 const EnhancedClientMaster          = lazy(() => import("@/pages/EnhancedClientMaster"));
+const SuperAdminClientPortalAccess  = lazy(() => import("@/pages/portal/SuperAdminClientPortalAccess"));
 const NativeCustomizationManager    = lazy(() => import("@/pages/customization/NativeCustomizationManager"));
 const NativeCustomizationRuleEditor = lazy(() => import("@/pages/customization/NativeCustomizationRuleEditor"));
 const NativeMigrationConsole        = lazy(() => import("@/pages/NativeMigrationConsole"));
@@ -209,6 +210,10 @@ export const platformRouteElements = (
       <Route path="/workflow-admin"               element={<ProtectedRoute><Gate pageCode="WORKFLOW_ADMIN"><NativeWorkflowAdmin /></Gate></ProtectedRoute>} />
       <Route path="/process-config"               element={<ProtectedRoute><Gate pageCode="PROCESS_CONFIG"><NativeProcessConfig /></Gate></ProtectedRoute>} />
       <Route path="/client-master"                element={<ProtectedRoute><Gate pageCode="CLIENT_MASTER"><EnhancedClientMaster /></Gate></ProtectedRoute>} />
+      {/* Super-admin-only: open any client's real portal dashboard directly (no OTP needed).
+          Backend independently enforces requireRole("super_admin","admin") on the API this
+          calls, so the role gate here is a UX convenience, not the actual security boundary. */}
+      <Route path="/super-admin/client-portal-access" element={<ProtectedRoute roles={['super_admin','admin']}><SuperAdminClientPortalAccess /></ProtectedRoute>} />
 
       {/* Integration / migration / audit */}
       <Route path="/integration-hub"              element={<ProtectedRoute><Gate pageCode="INTEGRATION_HUB"><NativeIntegrationHub /></Gate></ProtectedRoute>} />

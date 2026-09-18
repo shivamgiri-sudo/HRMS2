@@ -274,6 +274,9 @@ export default function NativeBGVReportView() {
               <div><span className="font-bold">Generated On:</span> {formatISTDate(new Date())} {formatISTTime(new Date())}</div>
               <div><span className="font-bold">Candidate Name:</span> {safeText(report.candidate_name)}</div>
               <div><span className="font-bold">Candidate Code:</span> {safeText(report.candidate_code)}</div>
+              {report.employee_code && (
+                <div><span className="font-bold">Employee Code:</span> {safeText(report.employee_code)}</div>
+              )}
               <div><span className="font-bold">Branch:</span> {safeText(report.branch_name)}</div>
               <div><span className="font-bold">Process / LOB:</span> {safeText(report.process_name)}</div>
               <div><span className="font-bold">Mobile:</span> {safeText(report.mobile)}</div>

@@ -62,6 +62,28 @@ export function clearPortalToken() {
   localStorage.removeItem("portal_token");
 }
 
+/**
+ * Reads the (unverified, client-side only) impersonatedBy claim off the current portal
+ * token, so the UI can show a persistent "you are viewing as X" banner. This is purely a
+ * UX signal -- it is never trusted for authorization. The server independently knows the
+ * same fact (requireClientAuth decodes and verifies the same JWT), and every data-changing
+ * request the client makes is checked there, not here. A tampered/forged token that claims
+ * NOT to be impersonating gains nothing: it must still pass server-side signature
+ * verification to be accepted at all, and a real client's token never carries this claim
+ * in the first place (see PortalTokenPayload.impersonatedBy's own comment).
+ */
+export function getImpersonationInfo(): { isImpersonating: boolean; adminUserId: string | null } {
+  const token = getPortalToken();
+  if (!token) return { isImpersonating: false, adminUserId: null };
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    const adminUserId = typeof payload.impersonatedBy === "string" ? payload.impersonatedBy : null;
+    return { isImpersonating: !!adminUserId, adminUserId };
+  } catch {
+    return { isImpersonating: false, adminUserId: null };
+  }
+}
+
 async function portalRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
   const token = getPortalToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -77,11 +99,32 @@ async function portalRequest<T>(method: string, path: string, body?: unknown): P
   return json;
 }
 
+/** Set on a successful password login when the server reports mustChangePassword.
+ *  UX-only nag, not a security boundary -- the server does not restrict what a
+ *  must-change-password token can read (same trust model as the OTP flow), this only
+ *  routes the client to the change-password screen instead of the dashboard immediately
+ *  after login. Cleared once portalApi.changePassword succeeds. */
+export function setMustChangePasswordFlag(value: boolean) {
+  if (value) localStorage.setItem("portal_must_change_password", "1");
+  else localStorage.removeItem("portal_must_change_password");
+}
+export function getMustChangePasswordFlag(): boolean {
+  return localStorage.getItem("portal_must_change_password") === "1";
+}
+
 export const portalApi = {
   requestOtp: (email: string) =>
     portalRequest<{ ok: boolean }>("POST", "/api/portal/auth/request-otp", { email }),
   verifyOtp: (email: string, otp: string) =>
     portalRequest<{ token: string }>("POST", "/api/portal/auth/verify-otp", { email, otp }),
+  loginWithPassword: (loginId: string, password: string) =>
+    portalRequest<{ token: string; mustChangePassword: boolean }>("POST", "/api/portal/auth/login", { loginId, password }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    portalRequest<{ ok: boolean }>("POST", "/api/portal/auth/change-password", { currentPassword, newPassword }),
+  getProcessBySlug: (slug: string) =>
+    portalRequest<{ data: { process_id: string; process_name: string; client_name: string } }>(
+      "GET", `/api/portal/process-by-slug/${encodeURIComponent(slug)}`
+    ),
   getOverview: () =>
     portalRequest<{ data: any[] }>("GET", "/api/portal/overview"),
   getProcess: (processId: string) =>

@@ -693,12 +693,19 @@ router.get("/report/full", requireAuth, requireRole("admin", "hr", "branch_hr", 
     [candidateRows],
   ] = await Promise.all([
     db.execute<RowDataPacket[]>(
+      // applied_for_branch on ats_candidate is a raw name string, not a UUID,
+      // so branch_master can't be joined on it. The reliable source is the
+      // employee record reached via ats_onboarding_bridge.
       `SELECT r.*, c.full_name AS candidate_name, c.candidate_code, c.mobile, c.email,
-              b.branch_name, p.process_name
+              COALESCE(emp_bm.branch_name, c.applied_for_branch) AS branch_name,
+              COALESCE(p.process_name, c.applied_for_process) AS process_name,
+              e.employee_code
          FROM candidate_bgv_report r
          JOIN ats_candidate c ON c.id = r.candidate_id
-         LEFT JOIN branch_master b ON b.id = c.applied_for_branch
          LEFT JOIN process_master p ON p.id = c.applied_for_process
+         LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
+         LEFT JOIN employees e ON e.id = ob.employee_id
+         LEFT JOIN branch_master emp_bm ON emp_bm.id = e.branch_id
         WHERE r.candidate_id = ? LIMIT 1`,
       [candidateId]
     ),

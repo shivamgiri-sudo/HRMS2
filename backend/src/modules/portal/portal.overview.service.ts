@@ -5,11 +5,6 @@ import { getKpiScorecardsForProcessId } from "../process-performance/kpi-scoreca
 
 const HEADLINE_METRICS = ["CSAT", "AHT", "FCR"];
 
-// Lower is more urgent -- an unrated process sorts after every rated one, real
-// or not: "we don't know yet" is not the same claim as "green", and should not
-// look calmer than an amber process that is at least being measured.
-const RAG_PRIORITY: Record<PortalRag, number> = { red: 0, amber: 1, no_data: 2, green: 3 };
-
 function computeRag(achievementPct: number): "green" | "amber" | "red" {
   if (achievementPct >= 100) return "green";
   if (achievementPct >= 85) return "amber";
@@ -24,10 +19,32 @@ function mapScorecardRag(rag: "good" | "warn" | "crit" | null): "green" | "amber
   return null;
 }
 
-/** Only a REAL reading (red/amber/green) may move a card off "no_data" -- and only toward
- *  something more urgent than what it already holds, never back toward calm. */
+/**
+ * Only a REAL reading (red/amber/green) may move a card off "no_data" -- and once it has
+ * a real reading, only a MORE urgent one may replace it, never a calmer one overwriting a
+ * worse one already found.
+ *
+ * The card's rag starts at "no_data" (priority 2), which sits between amber (1) and green
+ * (3) specifically so an unmeasured process never LOOKS calmer than an amber one that is at
+ * least being watched. But comparing every incoming reading's priority against the card's
+ * CURRENT priority breaks the very first transition: a green reading (3) is never "more
+ * urgent" than no_data (2), so a process whose only real readings are green could never
+ * clear "no_data" -- confirmed live for GS1, whose two real headline metrics are both green
+ * (achievement >= 100%) yet the card stayed "no_data" until this fix. No process on the
+ * platform could ever show a true "green" card because of this.
+ *
+ * Fix: "no_data" is not a real classification and must never be compared against as if it
+ * were one. The first real reading always sets the card's rag outright; every reading after
+ * that follows the real red/amber/green urgency ordering (RAG_PRIORITY_REAL) among themselves.
+ */
+const RAG_PRIORITY_REAL: Record<"red" | "amber" | "green", number> = { red: 0, amber: 1, green: 2 };
 function escalate(card: ProcessCard, rag: "green" | "amber" | "red"): void {
-  if (RAG_PRIORITY[rag] < RAG_PRIORITY[card.rag]) card.rag = rag;
+  if (card.rag === "no_data") {
+    card.rag = rag;
+    return;
+  }
+  if (card.rag !== "red" && card.rag !== "amber" && card.rag !== "green") return;
+  if (RAG_PRIORITY_REAL[rag] < RAG_PRIORITY_REAL[card.rag]) card.rag = rag;
 }
 
 function computeAchievement(actual: number, target: number, direction: string): number {
@@ -144,13 +161,23 @@ export const portalOverviewService = {
     // 4 registered processes) -- a second, newer source alongside the legacy
     // kpi_assignment/kpi_score one above, never a replacement for it, since other
     // processes may only ever have legacy data.
-    // '2026-09-31' is not a valid DATE literal for every month; day 0 of next
-    // month is always that month's real last day.
+    //
+    // Window MUST match portal.kpi.service.ts's periodToRange (current month + 6 months
+    // back). This used to query only the current calendar month: a process whose latest
+    // reading landed a few days into a prior month (confirmed live for GS1, whose most
+    // recent kpi_daily_actual rows are dated in August while this ran in September) showed
+    // "no_data" on the Executive Home overview while the same process's own Performance
+    // tab, reading the wider window, showed real green metrics -- two pages of the same
+    // portal disagreeing about whether a process has any data at all.
     const [cpYear, cpMonth] = currentPeriod.split("-").map(Number);
     const lastDayOfMonth = new Date(cpYear, cpMonth, 0).getDate();
-    const currentMonthRange = { from: `${currentPeriod}-01`, to: `${currentPeriod}-${String(lastDayOfMonth).padStart(2, "0")}` };
+    const sixMonthsBackDate = new Date(cpYear, cpMonth - 1 - 6, 1);
+    const sixMonthWindow = {
+      from: `${sixMonthsBackDate.getFullYear()}-${String(sixMonthsBackDate.getMonth() + 1).padStart(2, "0")}-01`,
+      to: `${currentPeriod}-${String(lastDayOfMonth).padStart(2, "0")}`,
+    };
     for (const processId of processMap.keys()) {
-      const rows = await getKpiScorecardsForProcessId(processId, currentMonthRange).catch(() => null);
+      const rows = await getKpiScorecardsForProcessId(processId, sixMonthWindow).catch(() => null);
       if (!rows) continue;
       const card = processMap.get(processId)!;
       for (const r of rows) {

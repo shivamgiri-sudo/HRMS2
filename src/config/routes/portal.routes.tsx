@@ -6,6 +6,7 @@ import WorkforcePageGate from "@/components/security/WorkforcePageGate";
 
 const PortalOverview         = lazy(() => import("@/pages/portal/PortalOverview"));
 const PortalProcessDashboard = lazy(() => import("@/pages/portal/PortalProcessDashboard"));
+const PortalChangePassword   = lazy(() => import("@/pages/portal/PortalChangePassword"));
 const SuperAdminDashboardV2  = lazy(() => import("@/pages/SuperAdminDashboardV2"));
 
 export const portalRouteElements = (
@@ -13,6 +14,7 @@ export const portalRouteElements = (
       {/* Client Portal — authenticated surfaces (/portal/login is in public.routes) */}
       <Route path="/portal"               element={<PortalRoute><PortalOverview /></PortalRoute>} />
       <Route path="/portal/processes/:id" element={<PortalRoute><PortalProcessDashboard /></PortalRoute>} />
+      <Route path="/portal/change-password" element={<PortalRoute><PortalChangePassword /></PortalRoute>} />
 
       {/* Super admin portal */}
       <Route

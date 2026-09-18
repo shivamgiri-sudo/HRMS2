@@ -38,24 +38,55 @@ export const portalAttritionService = {
     );
     const hc = (hcRows as RowDataPacket[])[0];
 
+    // Real exits table is exit_request (joined via employees.process_id — exit_request
+    // itself has no process_id column). This used to query a table named `exit_records`,
+    // which has never existed in this schema; the resulting SQL error was silently
+    // swallowed by a .catch() that returned zeros for every client, every period. That
+    // is exactly the false-zero this codebase's other portal services are written to
+    // avoid (see portal.overview.service.ts's "no_data" comments) — a client reading
+    // "0 voluntary exits" had no way to tell that apart from a genuinely perfect month.
+    // exit_request.status counts a request as an actual exit only once it has reached
+    // exit_confirmed_at; a submitted-but-not-yet-confirmed resignation is not an exit yet.
     const [exitRows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*) AS total_exits,
-         SUM(CASE WHEN exit_type = 'voluntary'   THEN 1 ELSE 0 END) AS voluntary_count,
-         SUM(CASE WHEN exit_type = 'involuntary' THEN 1 ELSE 0 END) AS involuntary_count
-       FROM exit_records
-       WHERE process_id = ? AND DATE_FORMAT(exit_date, '%Y-%m') = ?`,
+         SUM(CASE WHEN er.exit_type = 'voluntary' THEN 1 ELSE 0 END) AS voluntary_count,
+         SUM(CASE WHEN er.exit_type IN ('involuntary','absconding') THEN 1 ELSE 0 END) AS involuntary_count
+       FROM exit_request er
+       JOIN employees e ON e.id = er.employee_id
+       WHERE e.process_id = ?
+         AND er.exit_confirmed_at IS NOT NULL
+         AND DATE_FORMAT(er.last_working_day_confirmed, '%Y-%m') = ?`,
       [processId, period]
-    ).catch((): [RowDataPacket[], unknown] => [[{ total_exits: 0, voluntary_count: 0, involuntary_count: 0 } as RowDataPacket], null]);
+    );
     const exits = (exitRows as RowDataPacket[])[0];
 
     const [reasonRows] = await db.execute<RowDataPacket[]>(
-      `SELECT exit_reason AS reason, COUNT(*) AS cnt
-       FROM exit_records
-       WHERE process_id = ? AND DATE_FORMAT(exit_date, '%Y-%m') = ?
-       GROUP BY exit_reason ORDER BY cnt DESC LIMIT 3`,
+      `SELECT COALESCE(er.exit_reason_category, 'Not categorized') AS reason, COUNT(*) AS cnt
+       FROM exit_request er
+       JOIN employees e ON e.id = er.employee_id
+       WHERE e.process_id = ?
+         AND er.exit_confirmed_at IS NOT NULL
+         AND DATE_FORMAT(er.last_working_day_confirmed, '%Y-%m') = ?
+       GROUP BY reason ORDER BY cnt DESC LIMIT 3`,
       [processId, period]
-    ).catch((): [RowDataPacket[], unknown] => [[], null]);
+    );
+
+    // Sanctioned strength is the mandated headcount for this process, not a copy of
+    // whoever happens to be active today — those are different claims. The mandate is
+    // effective-dated (workforce_mandate.effective_from/effective_to), so this takes the
+    // row covering "now", per process, summed across any split by branch/role_group.
+    // Falls back to null (rendered as "—", never as the active headcount) when no
+    // mandate has been configured for this process yet.
+    const [mandateRows] = await db.execute<RowDataPacket[]>(
+      `SELECT SUM(mandated_hc) AS mandated_hc
+       FROM workforce_mandate
+       WHERE process_id = ? AND active_status = 1
+         AND effective_from <= CURDATE()
+         AND (effective_to IS NULL OR effective_to >= CURDATE())`,
+      [processId]
+    );
+    const mandatedHc = (mandateRows as RowDataPacket[])[0]?.mandated_hc;
 
     const headcount = Number(hc.headcount) || 0;
     const totalExits = Number(exits.total_exits) || 0;
@@ -69,7 +100,10 @@ export const portalAttritionService = {
       voluntary_count: Number(exits.voluntary_count) || 0,
       involuntary_count: Number(exits.involuntary_count) || 0,
       headcount,
-      sanctioned_strength: headcount,
+      // null (not headcount) when no mandate is configured -- a client-side "100%
+      // capacity" that only holds because we copied the numerator into the
+      // denominator is worse than admitting the mandate isn't set up yet.
+      sanctioned_strength: mandatedHc != null ? Number(mandatedHc) : null,
       open_positions: 0,
       avg_tenure_months: Math.round(Number(hc.avg_tenure) || 0),
       top_exit_reasons: (reasonRows as RowDataPacket[]).map(r => ({ reason: r.reason, count: Number(r.cnt) })),

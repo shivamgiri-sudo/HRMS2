@@ -195,6 +195,9 @@ export default function EnhancedClientMaster() {
   const [createScopeIds, setCreateScopeIds] = useState<string[]>([]);
   const [newUser, setNewUser] = useState({ clientId: "", email: "", name: "", designation: "" });
   const [selectedUser, setSelectedUser] = useState<PortalUser | null>(null);
+  /** Shown once, right after a portal user is created — the plaintext password is never
+   *  retrievable again after this dialog closes (see createUserMutation's own comment). */
+  const [generatedCredentials, setGeneratedCredentials] = useState<{ loginId: string; temporaryPassword: string } | null>(null);
 
   // Deactivate dialog state — replaces prompt()
   const [showDeactivateDialog, setShowDeactivateDialog] = useState(false);
@@ -332,16 +335,29 @@ export default function EnhancedClientMaster() {
   const createUserMutation = useMutation({
     // POST /api/portal/internal/client-users (admin/hr). The endpoint has existed since the
     // portal was built and nothing in the frontend called it, so every client portal login
-    // had to be created directly in the database.
+    // had to be created directly in the database. It now also generates a login_id/password
+    // (ProcessName_mas / ProcessName@2026, derived from the user's first assigned process)
+    // and returns the one-time plaintext password in generatedCredentials -- never stored,
+    // never retrievable again after this response, same convention as the staff
+    // temp-password flow.
     mutationFn: async (data: {
       clientId: string; email: string; name: string; designation?: string; processIds: string[];
-    }) => hrmsApi.post("/api/portal/internal/client-users", data),
-    onSuccess: () => {
+    }) =>
+      // Response shape is the raw client_user row (portal.controller.ts's createClientUser),
+      // not the enriched PortalUser this page's list view uses (that comes from a different
+      // endpoint, GET /api/portal-users) -- only generatedCredentials is actually read here.
+      hrmsApi.post<{ data: Record<string, unknown>; generatedCredentials?: { loginId: string; temporaryPassword: string } }>(
+        "/api/portal/internal/client-users", data
+      ),
+    onSuccess: (res) => {
       toast.success("Portal user created");
       queryClient.invalidateQueries({ queryKey: ["portal-users"] });
       setShowCreateUserDialog(false);
       setNewUser({ clientId: "", email: "", name: "", designation: "" });
       setCreateScopeIds([]);
+      if (res.generatedCredentials) {
+        setGeneratedCredentials(res.generatedCredentials);
+      }
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.message || error.response?.data?.error || "Failed to create portal user");
@@ -799,8 +815,9 @@ export default function EnhancedClientMaster() {
                 <DialogHeader>
                   <DialogTitle>Add Portal User</DialogTitle>
                   <DialogDescription>
-                    Creates a client login for the portal at /portal/login. They sign in by email OTP
-                    and see only the processes selected below.
+                    Creates a client login for the portal. A Login ID and one-time password are
+                    generated automatically from the first process selected below (they can also
+                    sign in by email OTP instead). The client sees only the processes selected here.
                   </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleCreateUserSubmit} className="space-y-4">
@@ -846,6 +863,44 @@ export default function EnhancedClientMaster() {
                     </Button>
                   </div>
                 </form>
+              </DialogContent>
+            </Dialog>
+
+            {/* One-time credentials display — shown right after creation. The plaintext
+                password is never stored and cannot be retrieved again once this closes; if
+                the client loses it, use "Reactivate"/edit flows to reset rather than expecting
+                to look it up here later. */}
+            <Dialog open={!!generatedCredentials} onOpenChange={(open) => { if (!open) setGeneratedCredentials(null); }}>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Portal Login Created</DialogTitle>
+                  <DialogDescription>
+                    Share these with the client now — the password will not be shown again after
+                    you close this dialog.
+                  </DialogDescription>
+                </DialogHeader>
+                {generatedCredentials && (
+                  <div className="space-y-3">
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Login ID</Label>
+                      <div className="font-mono text-sm bg-muted rounded px-3 py-2 mt-1">
+                        {generatedCredentials.loginId}
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Temporary Password</Label>
+                      <div className="font-mono text-sm bg-muted rounded px-3 py-2 mt-1">
+                        {generatedCredentials.temporaryPassword}
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      They will be required to set a new password on first login.
+                    </p>
+                  </div>
+                )}
+                <div className="flex justify-end">
+                  <Button onClick={() => setGeneratedCredentials(null)}>Done</Button>
+                </div>
               </DialogContent>
             </Dialog>
 

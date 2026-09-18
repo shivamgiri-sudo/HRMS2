@@ -151,9 +151,20 @@ export async function getUploadBatch(batchId: string): Promise<{
 // Order_DateTime, state, line_item_name, pincode, "Order Date", hrs_24_48, crazy_deal,
 // perfume, size, order_pickup_datetime, rto_initiated_datetime, diff_hour, lob,
 // pincode_relevent, rto_status, draft_order, time_1608, sale_source_name, shift.
+// Lowercase, strip everything but letters/digits before comparing -- real uploaded files spell
+// the same column differently per file (confirmed live: "AgentId", "CallDate", "EMPID" in one
+// AW Out file skipped every row because none of those matched the exact candidate strings below).
+// Normalizing is a strict superset of exact matching, so this can only accept more real headers,
+// never fewer.
+function normalizeFieldKey(k: string): string {
+  return k.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
 function getField(r: Record<string, unknown>, ...keys: string[]): string {
+  const normalized: Record<string, unknown> = {};
+  for (const k of Object.keys(r)) normalized[normalizeFieldKey(k)] = r[k];
   for (const k of keys) {
-    if (r[k] !== undefined && r[k] !== null && String(r[k]).trim() !== "") return String(r[k]).trim();
+    const v = normalized[normalizeFieldKey(k)];
+    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
   }
   return "";
 }
@@ -356,7 +367,7 @@ export async function insertGncAllocationRows(
     const uid = getField(r, "uid");
     if (!uid) continue;
     validRows.push([
-      uid, parseBellavitaDate(r["alloc_date"]), getField(r, "helper") || null,
+      uid, parseBellavitaDate(getField(r, "alloc_date")), getField(r, "helper") || null,
       getField(r, "date_type") || null, getField(r, "time_slot") || null,
       getField(r, "store") || null, getField(r, "customer_name") || null,
       getField(r, "email") || null, nullableNumber(getField(r, "total")),
@@ -365,7 +376,7 @@ export async function insertGncAllocationRows(
       getField(r, "shipping_street") || null, getField(r, "shipping_city") || null,
       getField(r, "shipping_zip") || null, getField(r, "shipping_phone") || null,
       getField(r, "emp_id") || null, getField(r, "calling_status") || null,
-      getField(r, "sub_scenarios_1") || null, parseBellavitaDate(r["callback_date"]),
+      getField(r, "sub_scenarios_1") || null, parseBellavitaDate(getField(r, "callback_date")),
       getField(r, "same_day_connect") || null, getField(r, "nc_connect") || null,
       batchId,
     ]);

@@ -13,6 +13,16 @@ export const verifyOtpSchema = z.object({
   ]),
 });
 
+export const passwordLoginSchema = z.object({
+  loginId: z.string().min(1).max(100),
+  password: z.string().min(1).max(100),
+});
+
+export const changeClientPasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(100),
+  newPassword: z.string().min(8).max(100),
+});
+
 export const periodSchema = z.string().regex(/^\d{4}-\d{2}$/, "Period must be YYYY-MM");
 
 export const processParamSchema = z.object({

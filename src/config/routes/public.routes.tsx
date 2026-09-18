@@ -29,6 +29,7 @@ const OpsBoard             = lazy(() => import("@/pages/OpsBoard"));
 const CandidatePortalLogin = lazy(() => import("@/pages/CandidatePortalLogin"));
 const CandidatePortalDashboard = lazy(() => import("@/pages/CandidatePortalDashboard"));
 const PortalLogin          = lazy(() => import("@/pages/portal/PortalLogin"));
+const PortalSlugRoute      = lazy(() => import("@/components/portal/PortalSlugRoute"));
 
 const EmployeeDocumentEsignReviewPage = lazy(() => import("@/pages/EmployeeDocumentEsignReviewPage"));
 const EmployeeNocFormPage = lazy(() => import("@/pages/EmployeeNocFormPage"));
@@ -116,6 +117,13 @@ export const publicRouteElements = (
       <Route path="/candidate-portal/login"     element={<CandidatePortalLogin />} />
       <Route path="/candidate-portal/dashboard" element={<CandidatePortalDashboard />} />
       <Route path="/portal/login"               element={<PortalLogin />} />
+      {/* mcnhrms.teammas.in/processname_clientportal — owner-specified per-process login URL.
+          React Router can't match a literal suffix inside a dynamic segment, so this
+          catches any single top-level segment and PortalSlugRoute itself checks for the
+          "_clientportal" suffix, falling through to 404 otherwise. Every other literal
+          route above (and elsewhere in the app) still takes precedence by React Router's
+          own specificity rules regardless of declaration order, so this cannot shadow them. */}
+      <Route path="/:portalSlug"                element={<PortalSlugRoute />} />
 
       {/* Kiosk displays — intentionally public (wall-mounted screens) */}
       <Route path="/break-desk"           element={<BreakDeskErrorBoundary><BreakDesk /></BreakDeskErrorBoundary>} />

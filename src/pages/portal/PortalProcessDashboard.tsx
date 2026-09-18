@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { portalApi, clearPortalToken } from "@/lib/portalApi";
+import { portalApi, clearPortalToken, getImpersonationInfo } from "@/lib/portalApi";
 import { KpiScorecardGrid } from "@/components/portal/KpiScorecardGrid";
 import { GlidePathChart } from "@/components/portal/GlidePathChart";
+import { PortalKpiStrip, type KpiStripItem } from "@/components/portal/PortalKpiStrip";
+import { ImpersonationBanner, IMPERSONATION_BANNER_HEIGHT_PX } from "@/components/portal/ImpersonationBanner";
 import {
   Loader2, LogOut, Briefcase, CheckCircle, Clock, AlertCircle, RefreshCw,
   FileText, Activity, Users, MessageSquare, ClipboardList, Shield, User, ArrowRight,
-  TrendingUp
+  TrendingUp, Gauge, AlertTriangle
 } from "lucide-react";
 import { formatISTDate } from "@/lib/utils";
 
@@ -54,8 +56,14 @@ export default function PortalProcessDashboard() {
     navigate("/portal/login");
   }
 
+  const { isImpersonating } = getImpersonationInfo();
+
   return (
-    <div className="min-h-screen bg-slate-950 text-white font-sans selection:bg-blue-600/30 selection:text-white">
+    <div
+      className="min-h-screen bg-slate-950 text-white font-sans selection:bg-blue-600/30 selection:text-white"
+      style={isImpersonating ? { paddingTop: IMPERSONATION_BANNER_HEIGHT_PX } : undefined}
+    >
+      <ImpersonationBanner />
       {/* Glow Rings background */}
       <div className="absolute top-0 right-0 w-[400px] h-[300px] bg-blue-600/5 blur-[100px] pointer-events-none" />
       <div className="absolute bottom-0 left-0 w-[300px] h-[300px] bg-emerald-600/5 blur-[100px] pointer-events-none" />
@@ -190,7 +198,10 @@ export default function PortalProcessDashboard() {
               <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
             </div>
           ) : (
-            <KpiScorecardGrid scorecards={kpis.data?.data ?? []} />
+            <div className="space-y-6">
+              <PerformanceKpiStrip scorecards={kpis.data?.data ?? []} />
+              <KpiScorecardGrid scorecards={kpis.data?.data ?? []} />
+            </div>
           )
         )}
         
@@ -240,6 +251,60 @@ export default function PortalProcessDashboard() {
       </main>
     </div>
   );
+}
+
+// ----------------------------------------------------
+// 📊 PERFORMANCE KPI STRIP — roll-up across this process's scorecards for the
+// selected period. Derived entirely from the same portalApi.getKpis() response
+// KpiScorecardGrid renders below it; no separate fetch, no fabricated numbers.
+// ----------------------------------------------------
+function PerformanceKpiStrip({ scorecards }: { scorecards: any[] }) {
+  if (!scorecards || scorecards.length === 0) return null;
+
+  const tracked = scorecards.filter((m) => m.achievement_pct != null);
+  const avgAchievement = tracked.length > 0
+    ? Math.round(tracked.reduce((s, m) => s + m.achievement_pct, 0) / tracked.length)
+    : null;
+  const redCount = scorecards.filter((m) => m.rag === "red").length;
+  const amberCount = scorecards.filter((m) => m.rag === "amber").length;
+  const greenCount = scorecards.filter((m) => m.rag === "green").length;
+
+  const items: KpiStripItem[] = [
+    {
+      key: "tracked",
+      label: "Metrics Tracked",
+      value: scorecards.length,
+      sub: `${greenCount} on target`,
+      accent: "cyan",
+      icon: <Activity className="w-4 h-4" />,
+    },
+    {
+      key: "achievement",
+      label: "Avg. Target Achievement",
+      value: avgAchievement != null ? `${avgAchievement}%` : null,
+      sub: `${tracked.length} of ${scorecards.length} with a real reading`,
+      accent: avgAchievement == null ? "slate" : avgAchievement >= 95 ? "emerald" : avgAchievement >= 80 ? "amber" : "rose",
+      icon: <Gauge className="w-4 h-4" />,
+    },
+    {
+      key: "critical",
+      label: "Critical Metrics",
+      value: redCount,
+      sub: "RAG = Red this period",
+      accent: redCount === 0 ? "emerald" : "rose",
+      icon: <AlertTriangle className="w-4 h-4" />,
+    },
+    {
+      key: "watch",
+      label: "Watch List",
+      value: amberCount,
+      sub: "RAG = Amber this period",
+      accent: amberCount === 0 ? "emerald" : "amber",
+      icon: <Clock className="w-4 h-4" />,
+    },
+  ];
+
+  return <PortalKpiStrip items={items} />;
 }
 
 // ----------------------------------------------------
@@ -485,15 +550,25 @@ function AttritionTab({ data, loading }: { data: any; loading: boolean }) {
     );
   }
 
-  const sanctioned = data.sanctioned_strength || 1;
-  const actualRatio = Math.round((data.headcount / sanctioned) * 100);
+  // sanctioned_strength is null when no workforce_mandate row is configured for this
+  // process -- that is a different claim from "sanctioned == headcount", so the ratio
+  // and the capacity ring below must render as "not configured", not a fabricated 100%.
+  const hasMandate = data.sanctioned_strength != null;
+  const actualRatio = hasMandate ? Math.round((data.headcount / data.sanctioned_strength!) * 100) : null;
 
   return (
     <div className="space-y-6">
       {/* Metrics Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         {[
-          { label: "Active Headcount", value: data.headcount, sub: `${actualRatio}% of sanctioned staff (${sanctioned})`, color: "text-blue-400" },
+          {
+            label: "Active Headcount",
+            value: data.headcount,
+            sub: hasMandate
+              ? `${actualRatio}% of sanctioned staff (${data.sanctioned_strength})`
+              : "Sanctioned strength not configured",
+            color: "text-blue-400",
+          },
           { label: "Voluntary Exits", value: data.voluntary_count, sub: "Resignations / Career growth", color: "text-amber-400" },
           { label: "Involuntary Exits", value: data.involuntary_count, sub: "Performance / Policy breach", color: "text-rose-400" },
           { label: "Average Floor Tenure", value: `${data.avg_tenure_months} Months`, sub: "Average analyst lifecycle", color: "text-emerald-400" }
@@ -551,20 +626,24 @@ function AttritionTab({ data, loading }: { data: any; loading: boolean }) {
               <div className="inline-block relative">
                 <svg className="w-28 h-28 transform -rotate-90">
                   <circle cx="56" cy="56" r="48" fill="transparent" stroke="#1e293b" strokeWidth="8" />
-                  <circle
-                    cx="56"
-                    cy="56"
-                    r="48"
-                    fill="transparent"
-                    stroke="#2563eb"
-                    strokeWidth="8"
-                    strokeDasharray={301.6}
-                    strokeDashoffset={301.6 - (301.6 * Math.min(actualRatio, 100)) / 100}
-                    strokeLinecap="round"
-                  />
+                  {hasMandate && (
+                    <circle
+                      cx="56"
+                      cy="56"
+                      r="48"
+                      fill="transparent"
+                      stroke="#2563eb"
+                      strokeWidth="8"
+                      strokeDasharray={301.6}
+                      strokeDashoffset={301.6 - (301.6 * Math.min(actualRatio!, 100)) / 100}
+                      strokeLinecap="round"
+                    />
+                  )}
                 </svg>
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-2xl font-extrabold text-white">{actualRatio}%</span>
+                  <span className={`text-2xl font-extrabold ${hasMandate ? "text-white" : "text-slate-600"}`}>
+                    {hasMandate ? `${actualRatio}%` : "—"}
+                  </span>
                   <span className="text-[9px] text-slate-500 uppercase font-bold tracking-wide">Capacity</span>
                 </div>
               </div>
@@ -572,7 +651,17 @@ function AttritionTab({ data, loading }: { data: any; loading: boolean }) {
           </div>
 
           <div className="text-center text-xs text-slate-400 border-t border-slate-800/40 pt-3">
-            <span className="font-semibold text-white">{data.headcount} Agents</span> on floor vs <span className="font-semibold text-white">{sanctioned} sanctioned</span> positions
+            {hasMandate ? (
+              <>
+                <span className="font-semibold text-white">{data.headcount} Agents</span> on floor vs{" "}
+                <span className="font-semibold text-white">{data.sanctioned_strength} sanctioned</span> positions
+              </>
+            ) : (
+              <>
+                <span className="font-semibold text-white">{data.headcount} Agents</span> on floor.{" "}
+                Sanctioned strength has not been configured for this process yet.
+              </>
+            )}
           </div>
         </div>
       </div>
