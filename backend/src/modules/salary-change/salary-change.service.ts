@@ -44,7 +44,13 @@ export async function getEmployeeSalaryProfile(employeeId: string) {
   // whole package, and lets the builder open pre-filled with all of it rather than a
   // partial copy that would silently drop those components on the next save.
   const [scRows] = await db.execute<RowDataPacket[]>(
-    `SELECT sca.*, sca.net_estimate AS net_in_hand,
+    `SELECT sca.*,
+            COALESCE(sca.ctc, pm.ctc,
+              sca.gross + COALESCE(sca.employer_pf, 0) + COALESCE(sca.employer_esi, 0) + COALESCE(pm.admin_charges, 0)
+            ) AS ctc,
+            COALESCE(sca.net_estimate, pm.net_in_hand,
+              sca.gross - COALESCE(sca.pf_employee, 0) - COALESCE(sca.esic_employee, 0)
+            ) AS net_in_hand,
             pm.bonus, pm.lta, pm.portfolio, pm.medical, pm.pli,
             pm.other_allowance, pm.professional_tax, pm.admin_charges,
             pm.band_code AS pkg_band_code
