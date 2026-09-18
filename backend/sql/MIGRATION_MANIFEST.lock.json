@@ -854,7 +854,8 @@
     "1813_employees_aadhaar_number_candidate_id.sql",
     "1814_client_portal_password_login.sql",
     "1815_meta_integration_config.sql",
-    "1816_marketing_brief_recipients_update.sql"
+    "1816_marketing_brief_recipients_update.sql",
+    "1817_leave_approval_overdue_cc_employee.sql"
   ],
   "approvedDeletions": [
     {

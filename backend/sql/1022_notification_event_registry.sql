@@ -112,7 +112,7 @@ INSERT IGNORE INTO notification_event_config
 ('leave_credit_posted',    'leave','Leave credited','int',0,
  '{"to":[{"kind":"employee"}]}',NULL),
 ('leave_approval_overdue', 'leave','Leave approval overdue','int',0,
- '{"to":[{"kind":"reporting_manager"}],"cc":[{"kind":"branch_hr"}]}',NULL),
+ '{"to":[{"kind":"reporting_manager"}],"cc":[{"kind":"employee"}]}',NULL),
 ('leave_balance_digest',   'leave','Monthly leave balance digest','int',0,
  '{"to":[{"kind":"employee"}]}',NULL);
 
