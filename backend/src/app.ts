@@ -272,6 +272,7 @@ import { bmiBenchmarkRouter } from "./modules/ats/bmi-benchmark.routes.js";
 import { interviewRouter } from "./modules/ats/interview.routes.js";
 // bgvEnhancedRouter removed — duplicate UI, name-match functions migrated to bgv-verification.service.ts
 import bgvVerificationRouter from "./modules/ats/bgv-verification.routes.js";
+import bgvAddressVerifRouter from "./modules/ats/bgv-address-verification.routes.js";
 import { candidatePortalRouter } from "./modules/ats/candidate-portal.routes.js";
 import { superAdminRouter } from "./modules/ats/super-admin.routes.js";
 import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
@@ -545,6 +546,7 @@ app.use("/api/public/login-info", loginInfoRouter);  // public login page stats 
 // requireAuth to every /api/* path and would 401 the form before it loaded.
 app.use("/api/public/kpi-capture", kpiCaptureLimiter, kpiCaptureRouter);
 app.use("/api/ats/bgv", bgvVerificationRouter); // BGV token-driven routes (consent, verify, digilocker) — mount BEFORE requireAuth
+app.use("/api/bgv/address-verification", bgvAddressVerifRouter); // public submit + HR manage — public sub-routes have no requireAuth
 app.use("/api/ats", atsPublicRouter); // PUBLIC: candidate file uploads (no auth, 1-hour window)
 app.use("/api/visitor/public", visitorPublicRouter); // PUBLIC: token-scoped visitor registration and status only
 app.use("/api/ats", atsRouter);

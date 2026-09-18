@@ -1,6 +1,6 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1178,
+  "tableCount": 1179,
   "columnCount": 17473,
   "tables": {
     "_migrations": [
@@ -3614,6 +3614,16 @@
       "actor_type",
       "actor_id",
       "attempt_no"
+    ],
+    "candidate_bgv_address_verification": [
+      "id", "candidate_id", "token", "declared_address",
+      "ref_latitude", "ref_longitude",
+      "attempt_number", "sent_via", "sent_at", "expires_at",
+      "unblocked_by", "unblock_note", "submitted_at",
+      "selfie_path", "gps_latitude", "gps_longitude", "gps_accuracy_m", "gps_distance_m",
+      "ip_address", "device_info", "status",
+      "auto_verified", "hr_decision", "hr_notes", "hr_decided_by", "hr_decided_at",
+      "created_at", "updated_at"
     ],
     "candidate_bgv_check": [
       "id",

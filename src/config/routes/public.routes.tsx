@@ -48,6 +48,7 @@ const OnboardingFullDemo  = import.meta.env.DEV ? lazy(() => import("@/component
 const CandidateOnboardingFullPageV2 = lazy(() => import("@/pages/CandidateOnboardingFullPageV2"));
 const PublicKpiCapture        = lazy(() => import("@/pages/PublicKpiCapture"));
 const PublicKpiCaptureResults = lazy(() => import("@/pages/PublicKpiCaptureResults"));
+const BGVAddressVerify        = lazy(() => import("@/pages/public/BGVAddressVerify"));
 
 export const publicRouteElements = (
   <>
@@ -145,6 +146,9 @@ export const publicRouteElements = (
           rather than a plain path, and the page sets robots noindex. */}
       <Route path="/kpi-capture"                element={<PublicKpiCapture />} />
       <Route path="/kpi-capture/results/:token" element={<PublicKpiCaptureResults />} />
+
+      {/* BGV address geo-selfie — token-gated, no session required */}
+      <Route path="/bgv-address-verify/:token" element={<BGVAddressVerify />} />
 
       {/* Visitor management — public unauthenticated surfaces */}
       <Route path="/visitor-register"        element={<VisitorSelfRegister />} />
