@@ -77,7 +77,7 @@ const emptyForm = {
   openingBalance: "0",
 };
 
-export default function CompanyBankAccountsPage() {
+export function CompanyBankAccountsContent() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [formOpen, setFormOpen] = useState(false);
@@ -168,7 +168,6 @@ export default function CompanyBankAccountsPage() {
   const accounts = accountsQuery.data ?? [];
 
   return (
-    <DashboardLayout>
     <div className="mx-auto max-w-6xl space-y-4 p-4 sm:p-6">
       <div className="overflow-hidden rounded-3xl border border-white/60 bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm">
         <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -406,6 +405,13 @@ export default function CompanyBankAccountsPage() {
         </SheetContent>
       </Sheet>
     </div>
+  );
+}
+
+export default function CompanyBankAccountsPage() {
+  return (
+    <DashboardLayout>
+      <CompanyBankAccountsContent />
     </DashboardLayout>
   );
 }

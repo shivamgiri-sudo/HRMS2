@@ -481,9 +481,8 @@ function HeadSubHeadLedgerTab() {
   );
 }
 
-export default function LedgerReportsPage() {
+export function LedgerReportsContent() {
   return (
-    <DashboardLayout>
       <div className="mx-auto max-w-6xl space-y-4 p-4 sm:p-6">
         <div className="overflow-hidden rounded-3xl border border-white/60 bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm">
           <div className="flex items-center gap-3 p-5">
@@ -515,6 +514,13 @@ export default function LedgerReportsPage() {
           <TabsContent value="head-subhead" className="mt-4"><HeadSubHeadLedgerTab /></TabsContent>
         </Tabs>
       </div>
+  );
+}
+
+export default function LedgerReportsPage() {
+  return (
+    <DashboardLayout>
+      <LedgerReportsContent />
     </DashboardLayout>
   );
 }

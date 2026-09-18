@@ -20,6 +20,10 @@ import { useToast } from "@/hooks/use-toast";
 import { useHasRole } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+// PaymentVouchersContent has no DashboardLayout of its own — it is reused as a tab inside
+// FinanceLedgerHubPage.tsx, which owns the one shared layout for every ledger-adjacent page.
+// The default export below still wraps it in DashboardLayout, so a direct link to this page
+// (or anything still importing the default) keeps working exactly as before.
 // Voucher vocabulary, formatters and the drill-down drawer now live outside this page so the
 // Vendor Payment Dispatch page renders the identical thing for the identical voucher.
 import { STATUS_LABEL, STATUS_TONE, money, type Voucher } from "@/lib/finance/paymentVoucherStatus";
@@ -58,7 +62,7 @@ async function downloadCsv(path: string, filename: string, toast: (opts: any) =>
   }
 }
 
-export default function PaymentVouchersPage() {
+export function PaymentVouchersContent() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   // Role model (2026-09-10): Finance Head both raises and releases — CEO approval is the one
@@ -199,7 +203,6 @@ export default function PaymentVouchersPage() {
   const primaryGrn = selectedGrnRows[0];
 
   return (
-    <DashboardLayout>
     <div className="mx-auto max-w-6xl space-y-4 p-4 sm:p-6">
       <div className="overflow-hidden rounded-3xl border border-white/60 bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm">
         <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -517,6 +520,13 @@ export default function PaymentVouchersPage() {
         onOpenChange={(o) => !o && setDetailId(null)}
       />
     </div>
+  );
+}
+
+export default function PaymentVouchersPage() {
+  return (
+    <DashboardLayout>
+      <PaymentVouchersContent />
     </DashboardLayout>
   );
 }

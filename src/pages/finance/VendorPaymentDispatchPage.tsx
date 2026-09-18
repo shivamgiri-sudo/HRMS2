@@ -228,7 +228,7 @@ async function downloadAuthenticated(path: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export default function VendorPaymentDispatchPage() {
+export function VendorPaymentDispatchContent() {
   const { toast } = useToast();
   const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(1);
@@ -400,7 +400,7 @@ export default function VendorPaymentDispatchPage() {
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
   return (
-    <DashboardLayout>
+    <>
       <div className="flex h-full flex-col">
         {/* ── Slim page header ── */}
         <div className="flex items-center justify-between border-b px-4 h-12 shrink-0">
@@ -927,6 +927,14 @@ export default function VendorPaymentDispatchPage() {
         onOpenChange={(o) => { if (!o) setRaiseForDue(null); }}
         onRaised={() => void refetch()}
       />
+    </>
+  );
+}
+
+export default function VendorPaymentDispatchPage() {
+  return (
+    <DashboardLayout>
+      <VendorPaymentDispatchContent />
     </DashboardLayout>
   );
 }

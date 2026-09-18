@@ -28,7 +28,7 @@ const TYPE_LABELS: Record<string, string> = {
 
 const emptyForm = { id: "", accountName: "", accountType: "" as string, tallyLedgerName: "" };
 
-export default function LedgerHeadsPage() {
+export function LedgerHeadsContent() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [formOpen, setFormOpen] = useState(false);
@@ -62,7 +62,6 @@ export default function LedgerHeadsPage() {
   const heads = listQuery.data ?? [];
 
   return (
-    <DashboardLayout>
     <div className="space-y-6 p-6">
       <div className="overflow-hidden rounded-2xl bg-gradient-to-r from-blue-700 to-blue-500 p-6 text-white shadow-sm">
         <div className="flex items-center justify-between">
@@ -148,6 +147,13 @@ export default function LedgerHeadsPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+export default function LedgerHeadsPage() {
+  return (
+    <DashboardLayout>
+      <LedgerHeadsContent />
     </DashboardLayout>
   );
 }

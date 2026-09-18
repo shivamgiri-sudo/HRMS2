@@ -79,7 +79,7 @@ function dayAfter(dateStr: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-export default function BankReconciliationPage() {
+export function BankReconciliationContent() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -244,7 +244,6 @@ export default function BankReconciliationPage() {
   }, [closedPeriods]);
 
   return (
-    <DashboardLayout>
     <div className="space-y-6 p-6">
       <div className="overflow-hidden rounded-2xl bg-gradient-to-r from-blue-700 to-blue-500 p-6 text-white shadow-sm">
         <div className="flex items-center gap-3">
@@ -612,6 +611,13 @@ export default function BankReconciliationPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+export default function BankReconciliationPage() {
+  return (
+    <DashboardLayout>
+      <BankReconciliationContent />
     </DashboardLayout>
   );
 }

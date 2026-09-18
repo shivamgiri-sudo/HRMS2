@@ -22,7 +22,7 @@ type Bank = {
 
 const emptyForm = { id: "", bankName: "", bankCode: "", ifscPrefix: "" };
 
-export default function BankDirectoryPage() {
+export function BankDirectoryContent() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [formOpen, setFormOpen] = useState(false);
@@ -56,7 +56,6 @@ export default function BankDirectoryPage() {
   const banks = listQuery.data ?? [];
 
   return (
-    <DashboardLayout>
     <div className="space-y-6 p-6">
       <div className="overflow-hidden rounded-2xl bg-gradient-to-r from-blue-700 to-blue-500 p-6 text-white shadow-sm">
         <div className="flex items-center justify-between">
@@ -137,6 +136,13 @@ export default function BankDirectoryPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+export default function BankDirectoryPage() {
+  return (
+    <DashboardLayout>
+      <BankDirectoryContent />
     </DashboardLayout>
   );
 }
