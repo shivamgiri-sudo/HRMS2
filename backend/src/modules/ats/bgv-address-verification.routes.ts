@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import fs from "fs";
 import https from "https";
+import { sendAddressBgvLinkEmail } from "./ats.email.service.js";
 import multer from "multer";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
@@ -150,6 +151,11 @@ router.post(
       });
     }
 
+    const [[candRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT full_name, email FROM ats_candidate WHERE id = ? LIMIT 1`,
+      [candidateId]
+    );
+
     const [profiles] = await db.execute<RowDataPacket[]>(
       `SELECT present_address_line1, present_address_line2, present_address,
               present_city, present_state, present_pincode,
@@ -188,8 +194,23 @@ router.post(
       [candidateId, token, declaredAddress, geo?.lat ?? null, geo?.lng ?? null, nextAttempt, expiresAt, unblockerId]
     );
 
-    const appUrl = process.env.APP_URL ?? "";
+    const appUrl = process.env.APP_URL ?? "https://mcnhrms.teammas.in";
     const link = `${appUrl}/bgv-address-verify/${token}`;
+
+    // Fire email to candidate — non-blocking, failure doesn't stop the response
+    if (candRow?.email) {
+      void sendAddressBgvLinkEmail({
+        candidateId,
+        to: candRow.email as string,
+        candidateName: (candRow.full_name as string) ?? "Candidate",
+        declaredAddress,
+        verificationLink: link,
+        attemptNumber: nextAttempt,
+        maxAttempts: MAX_ATTEMPTS,
+        expiresAt,
+      }).catch(() => {});
+    }
+
     return res.json({
       success: true,
       data: { token, link, expiresAt, declaredAddress, attemptNumber: nextAttempt, geoResolved: geo !== null },

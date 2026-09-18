@@ -15,7 +15,7 @@ import {
 
 type EmailType = 'registration' | 'selected' | 'rejected' | 'rejected_professional' | 'token_sent' | 'offer_review' | 'approved' | 'welcome' |
                  'recruiter_notification' | 'selection_congratulations' | 'selection_letter' | 'bgv_completion' | 'payroll_hr_notification' | 'branch_head_approval' | 'otp_verification' |
-                 'joining_doc_reminder' | 'bank_resubmit_request';
+                 'joining_doc_reminder' | 'bank_resubmit_request' | 'bgv_address_link';
 
 interface SendResult { ok: boolean; error?: string }
 
@@ -684,4 +684,68 @@ export async function sendJoiningDocReminderEmail(params: {
     </div>
   </div>`;
   return send(to, 'Reminder: Joining documents pending — MAS Callnet', html, employeeId, 'joining_doc_reminder');
+}
+
+export async function sendAddressBgvLinkEmail(params: {
+  candidateId: string;
+  to: string;
+  candidateName: string;
+  declaredAddress: string;
+  verificationLink: string;
+  attemptNumber: number;
+  maxAttempts: number;
+  expiresAt: Date;
+}): Promise<SendResult> {
+  const { candidateName, declaredAddress, verificationLink, attemptNumber, maxAttempts, expiresAt } = params;
+  const expiryStr = expiresAt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  const html = `
+  <div style="margin:0;padding:24px;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+    <div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #dbe4f0;border-radius:18px;overflow:hidden">
+      <div style="background:linear-gradient(135deg,#0f766e,#0ea5e9);padding:24px 28px;color:#ffffff">
+        <div style="font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;opacity:.88">MAS Callnet HRMS — BGV</div>
+        <h1 style="margin:8px 0 0;font-size:20px;line-height:1.3">Current Address Verification Required</h1>
+      </div>
+      <div style="padding:26px 28px">
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:#334155">Dear <strong>${escapeHtml(candidateName)}</strong>,</p>
+        <p style="margin:0 0 14px;font-size:15px;line-height:1.65;color:#334155">
+          As part of your Background Verification (BGV), we need to verify your <strong>current residential address</strong>.
+          Please complete this step by clicking the button below.
+        </p>
+
+        <div style="background:#fef9c3;border:1px solid #fde047;border-radius:12px;padding:16px 18px;margin:0 0 20px;color:#713f12;font-size:14px;line-height:1.6">
+          <strong style="display:block;margin-bottom:6px">&#9888;&#65039; Important — Read before you proceed</strong>
+          <ul style="margin:0;padding-left:18px">
+            <li>You must be <strong>physically present at your current address</strong> (shown below) when you open this link.</li>
+            <li>The link will capture your <strong>live GPS location</strong> — submitting from a different location will result in a <strong>failed verification</strong>.</li>
+            <li>Take a <strong>live selfie</strong> showing your surroundings. Screenshots or photos from your gallery are not accepted.</li>
+            <li>By submitting you consent to your location and photo being recorded for verification purposes.</li>
+          </ul>
+        </div>
+
+        <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:12px;padding:14px 18px;margin:0 0 20px;font-size:14px;color:#166534">
+          <strong>Your declared current address:</strong><br/>
+          <span style="font-size:13px;color:#374151">${escapeHtml(declaredAddress)}</span>
+        </div>
+
+        <p style="margin:0 0 6px;font-size:13px;color:#64748b">
+          Attempt ${attemptNumber} of ${maxAttempts} &nbsp;|&nbsp; Link expires on <strong>${expiryStr}</strong>
+        </p>
+
+        <p style="margin:22px 0 10px">
+          <a href="${escapeHtml(verificationLink)}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;padding:14px 26px;border-radius:999px;font-weight:800;font-size:15px">
+            &#128247; Open Verification Link
+          </a>
+        </p>
+        <p style="margin:10px 0 0;font-size:12px;color:#94a3b8">
+          If the button doesn't work, copy and paste this URL into your phone browser:<br/>
+          <span style="color:#0ea5e9;word-break:break-all">${escapeHtml(verificationLink)}</span>
+        </p>
+      </div>
+      <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:14px 28px;color:#94a3b8;font-size:11px">
+        MAS Callnet India Pvt. Ltd. &nbsp;|&nbsp; This link is single-use and expires on ${expiryStr}.
+        If you have any questions, contact your HR team.
+      </div>
+    </div>
+  </div>`;
+  return send(params.to, 'Action Required: Verify your current address — MAS Callnet BGV', html, params.candidateId, 'bgv_address_link');
 }
