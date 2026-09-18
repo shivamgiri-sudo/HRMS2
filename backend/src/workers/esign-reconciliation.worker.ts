@@ -56,7 +56,18 @@ const ABANDONED_AUDIT_ACTION = "ESIGN_ABANDONED_UNRESOLVED";
 // sweepAbandoned idempotent by construction — the `status NOT IN (TERMINAL)` guard it
 // shares with claimBatch is the marker, so a second tick matches zero rows and no extra
 // column or timestamp is needed.
-const TERMINAL = ["signed", "completed", "failed", "expired", "cancelled", ABANDONED_STATUS];
+//
+// 'failed' is deliberately NOT a member. Verified live on a real joining-kit transaction
+// (MAS63544, 2026-09-17): Luckpay's checkESignStatus reported "FAILED" — a genuine response,
+// not a transport error — for a redirect session the candidate went on to complete
+// successfully two days later on the SAME session URL. Luckpay's "FAILED" can describe a
+// recoverable state (e.g. an earlier failed OTP attempt within a still-open session), not
+// only a dead one. Treating it as terminal here, and in kitEsignSessionIsAlive
+// (joiningKitDispatch.service.ts) which shares this reasoning, stopped the reconciliation
+// worker from ever checking again — exactly the "signature happened, system never found out"
+// loss this worker's own header comment says it exists to prevent. A transaction that stays
+// 'failed' still ages out via GIVE_UP_AFTER_DAYS below, so this does not poll forever.
+const TERMINAL = ["signed", "completed", "expired", "cancelled", ABANDONED_STATUS];
 
 function nextDelayMinutes(attempts: number) {
   return BACKOFF_MINUTES[Math.min(attempts, BACKOFF_MINUTES.length - 1)];

@@ -495,7 +495,7 @@ async function loadKitForRelink(kitId: string): Promise<KitForRelink | null> {
  * been captured. This is the guard that stops that: a resend or reminder only
  * mints a link when the kit's own transaction is not already terminal.
  */
-async function kitEsignSessionIsAlive(kitId: string): Promise<boolean> {
+export async function kitEsignSessionIsAlive(kitId: string): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT status FROM employee_document_esign_transaction
       WHERE kit_id = ? ORDER BY initiated_at DESC LIMIT 1`,
@@ -503,7 +503,12 @@ async function kitEsignSessionIsAlive(kitId: string): Promise<boolean> {
   );
   const status = String((rows as RowDataPacket[])[0]?.status ?? "").toLowerCase();
   if (!status) return true; // no transaction row yet: nothing to have failed
-  return !["failed", "expired", "cancelled", "abandoned_unresolved"].includes(status);
+  // 'failed' is deliberately not treated as dead here — see the matching note on
+  // TERMINAL in esign-reconciliation.worker.ts. Verified live: a transaction Luckpay
+  // reported FAILED was completed by the candidate on the same session two days
+  // later. Excluding it from "dead" keeps resend/reminder links flowing instead of
+  // silently going quiet the moment one status check comes back FAILED.
+  return !["expired", "cancelled", "abandoned_unresolved"].includes(status);
 }
 
 /**
@@ -787,7 +792,11 @@ export async function finalizeKitEsign(params: {
 }): Promise<{ kitId: string; documentsClosed: number; artefactRetrieved: boolean; placementOk: boolean }> {
   const completedAt = params.completedAt ?? null;
   const [kits] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_id, candidate_id, reserved_band_pt FROM employee_joining_esign_kit WHERE id = ? LIMIT 1`,
+    `SELECT k.id, k.employee_id, k.candidate_id, k.reserved_band_pt,
+            COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_full_name
+       FROM employee_joining_esign_kit k
+       JOIN employees e ON e.id = k.employee_id
+      WHERE k.id = ? LIMIT 1`,
     [params.kitId],
   );
   const kit = (kits as RowDataPacket[])[0];
@@ -1008,6 +1017,62 @@ export async function finalizeKitEsign(params: {
     },
     { kit: { status: preWriteKitStatus }, checklist: preWriteChecklist },
   );
+
+  // Signer-identity check (alert-only, owner directive 2026-09-18): compares the
+  // real, CA-verified signer of the artefact just downloaded against the employee
+  // this kit was sent to. Never blocks completion — a check that could fail closed
+  // on a legitimate signature would be worse than the fraud it looks for.
+  if (signedBytes) {
+    try {
+      const { extractEsignCertificateIdentity } = await import("../../shared/esignCertificateIdentity.js");
+      const { classifyNameMatch } = await import("../ats/indian-name-match.js");
+      const identity = extractEsignCertificateIdentity(signedBytes);
+      const ownerName = String(kit.employee_full_name ?? "");
+      const match = identity?.commonName
+        ? classifyNameMatch(ownerName, identity.commonName)
+        : null;
+      const matchTier = match?.tier ?? "unverifiable";
+      const suspicious = match?.suspicious ?? false;
+
+      await db.execute(
+        `INSERT INTO esign_signer_identity_check
+           (id, employee_id, candidate_id, scope, reference_id, transaction_id,
+            document_owner_name, certificate_common_name, certificate_issuer_cn,
+            certificate_valid_from, certificate_valid_to, match_tier, is_suspicious, match_reason)
+         VALUES (?, ?, ?, 'joining_kit', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          randomUUID(), String(kit.employee_id), kit.candidate_id ?? null, params.kitId, params.transactionId,
+          ownerName, identity?.commonName ?? null, identity?.issuerCommonName ?? null,
+          identity?.validFrom ?? null, identity?.validTo ?? null,
+          matchTier, suspicious ? 1 : 0, match?.reason ?? (identity ? null : "No embedded eSign certificate found"),
+        ],
+      );
+
+      if (suspicious) {
+        // Written directly rather than via the shared audit() helper above: that
+        // helper hardcodes remarks to a generic "Joining kit <id>" string, and
+        // this UI's Audit Trail only renders `remarks` as visible text — the
+        // detail JSON isn't shown. A fraud flag with no readable remarks would be
+        // invisible on the page HR actually looks at.
+        await db.execute(
+          `INSERT INTO employee_joining_document_audit_log
+             (id, employee_id, checklist_id, document_code, action_type, new_value, remarks, actor_type)
+           VALUES (UUID(), ?, NULL, 'JOINING_KIT', 'ESIGN_SIGNER_IDENTITY_MISMATCH', CAST(? AS JSON), ?, 'system')`,
+          [
+            String(kit.employee_id),
+            JSON.stringify({
+              kitId: params.kitId, documentOwnerName: ownerName,
+              certificateCommonName: identity?.commonName ?? null, matchTier, reason: match?.reason ?? null,
+            }),
+            `This kit was addressed to "${ownerName}" but the eSign certificate's verified signer is "${identity?.commonName}" — review before treating this signature as valid.`,
+          ],
+        );
+      }
+    } catch (e) {
+      // Diagnostic only — a broken identity check must never undo a real signature.
+      console.warn("[joining-kit] signer-identity check failed:", e instanceof Error ? e.message : e);
+    }
+  }
 
   // Fire-and-forget: kit completion must never depend on letter issuance
   // succeeding. issueAppointmentLetter() has its own eligibility gate (BGV,

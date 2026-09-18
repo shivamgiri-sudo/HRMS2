@@ -170,16 +170,36 @@ export default function EmployeeJoiningKitEsignPage() {
                     <Maximize2 className="h-3.5 w-3.5" /> Open full screen
                   </a>
                 </div>
+                {/* Some browsers (mobile Safari/Chrome, or desktop Chrome with "always
+                    download PDFs" turned on — common on managed corporate laptops) refuse
+                    to render a PDF inside an iframe at all and show their own blocked-content
+                    placeholder instead of the document, with no visible way out of it. This
+                    banner sits ABOVE the iframe so it is seen before the signer hits that
+                    placeholder, not discovered by scrolling past it. */}
+                <div className="mx-5 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3">
+                  <p className="text-xs text-amber-100">
+                    <strong className="text-amber-200">See a blocked or greyed-out box below instead of the document?</strong>{" "}
+                    Your browser is blocking the preview — this is a browser setting, not a problem with your documents.
+                  </p>
+                  <a
+                    href={`/api/public/joining-kit/esign/${token}/download`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex min-h-[40px] shrink-0 items-center gap-2 rounded-xl bg-amber-400 px-4 text-xs font-black text-slate-950 hover:bg-amber-300"
+                  >
+                    <Maximize2 className="h-3.5 w-3.5" /> Open the document here instead
+                  </a>
+                </div>
                 {/* The signer must be able to read the exact file being signed,
                     not a summary of it. Sized against the viewport rather than a
                     fixed 560px so an A4 page is legible without pinch-zooming.
-                    Mobile browsers (iOS/Android) block PDF iframes — the "Open
-                    full screen" link above covers those cases. */}
+                    Mobile browsers (iOS/Android) block PDF iframes — the banner
+                    above and the header link both cover those cases. */}
                 <iframe
                   title="Joining documents"
                   src={`/api/public/joining-kit/esign/${token}/download#view=FitH`}
-                  className="h-[calc(100vh-160px)] min-h-[600px] w-full bg-white"
-                  onError={() => {/* browser swallows iframe load errors; user has the download link */}}
+                  className="mt-4 h-[calc(100vh-220px)] min-h-[600px] w-full bg-white"
+                  onError={() => {/* browser swallows iframe load errors; the banner above and the download link are the way out */}}
                 />
                 <p className="px-5 py-3 text-center text-xs text-slate-400">
                   If the document does not appear above, use{" "}
