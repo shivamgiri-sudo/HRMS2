@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
 Clovia's APR export (cl_apr.xlsx, 34 real columns). Not a
@@ -51,8 +52,7 @@ export async function importClAprBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -65,60 +65,62 @@ export async function importClAprBatch(
     const requiredVal = getByColumn(data, "Unique ID");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "Unique ID" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.cl_apr
-           (unique_id, report_date, user_name, mas_id, no_of_calls, login_time, parks, park_time, avg_park, parks_per_call, wait_time, talk_time, dispo_time, pause_time, bio, lunch, outcal, qualit, short_aux, traini, acht, team_briefing_aux, total_break, actual_login_hrs, downtime, net_login_hrs_dn, utilization, attendance, week_1, lob, chat_count, email_count, total_calls, csat, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          requiredVal,
-          n(data, "Date"),
-          n(data, "USER NAME"),
-          n(data, "MAS ID"),
-          n(data, "No. of Calls"),
-          n(data, "LOGIN TIME"),
-          n(data, "PARKS"),
-          n(data, "PARK TIME"),
-          n(data, "AVG PARK"),
-          n(data, "PARKS/CALL"),
-          n(data, "WAIT"),
-          n(data, "TALK"),
-          n(data, "DISPO"),
-          n(data, "PAUSE"),
-          n(data, "Bio"),
-          n(data, "Lunch"),
-          n(data, "OutCal"),
-          n(data, "Qualit"),
-          n(data, "Short"),
-          n(data, "Traini"),
-          n(data, "ACHT"),
-          n(data, "Team Briefing AUX"),
-          n(data, "Total Break"),
-          n(data, "Actual Login Hrs"),
-          n(data, "Downtime"),
-          n(data, "Net Login Hrs+DN"),
-          n(data, "Utilization"),
-          n(data, "Attendance"),
-          n(data, "Week 1"),
-          n(data, "LOB"),
-          n(data, "Chat Count"),
-          n(data, "Email Count"),
-          n(data, "Total Calls"),
-          n(data, "CSAT"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        requiredVal,
+        n(data, "Date"),
+        n(data, "USER NAME"),
+        n(data, "MAS ID"),
+        n(data, "No. of Calls"),
+        n(data, "LOGIN TIME"),
+        n(data, "PARKS"),
+        n(data, "PARK TIME"),
+        n(data, "AVG PARK"),
+        n(data, "PARKS/CALL"),
+        n(data, "WAIT"),
+        n(data, "TALK"),
+        n(data, "DISPO"),
+        n(data, "PAUSE"),
+        n(data, "Bio"),
+        n(data, "Lunch"),
+        n(data, "OutCal"),
+        n(data, "Qualit"),
+        n(data, "Short"),
+        n(data, "Traini"),
+        n(data, "ACHT"),
+        n(data, "Team Briefing AUX"),
+        n(data, "Total Break"),
+        n(data, "Actual Login Hrs"),
+        n(data, "Downtime"),
+        n(data, "Net Login Hrs+DN"),
+        n(data, "Utilization"),
+        n(data, "Attendance"),
+        n(data, "Week 1"),
+        n(data, "LOB"),
+        n(data, "Chat Count"),
+        n(data, "Email Count"),
+        n(data, "Total Calls"),
+        n(data, "CSAT"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.cl_apr
+       (unique_id, report_date, user_name, mas_id, no_of_calls, login_time, parks, park_time, avg_park, parks_per_call, wait_time, talk_time, dispo_time, pause_time, bio, lunch, outcal, qualit, short_aux, traini, acht, team_briefing_aux, total_break, actual_login_hrs, downtime, net_login_hrs_dn, utilization, attendance, week_1, lob, chat_count, email_count, total_calls, csat, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

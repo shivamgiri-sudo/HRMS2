@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Neemans' monthly revenue target -- writes into the SAME already-live
@@ -74,8 +75,7 @@ export async function importNeemansMonthTargetBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   const createdByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -89,24 +89,26 @@ export async function importNeemansMonthTargetBatch(
     const target = parseNullableDecimal(get(data, "Target", "target", "Amount", "amount"));
     if (!month || target === null) {
       const msg = `Row ${row.row_no}: "month" (YYYY-MM) and "target" are both required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.neemans_month_targets (month, target, created_by)
-         VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE target = VALUES(target)`,
-        [month, target, createdByInt],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [month, target, createdByInt],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.neemans_month_targets (month, target, created_by)`,
+    placeholderGroup: "(?, ?, ?)",
+    insertSuffix: "ON DUPLICATE KEY UPDATE target = VALUES(target)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

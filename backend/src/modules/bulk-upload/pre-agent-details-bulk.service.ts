@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Housing Premium's "Premium Agent Details" roster -- writes into
@@ -56,8 +57,7 @@ export async function importPreAgentDetailsBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -70,32 +70,34 @@ export async function importPreAgentDetailsBatch(
     const empId = getByColumn(data, "Emp ID");
     if (!empId) {
       const msg = `Row ${row.row_no}: "Emp ID" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.pre_agent_details
-           (emp_id, agent_name, tl_name, center, doj, tenure, tenure_bucket, target,
-            achievement, ach_pct, status, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          empId, n(data, "Agent Name(As per CRM)", "Agent Name"), n(data, "TL Name"),
-          n(data, "Center"), n(data, "DOJ"), n(data, "Tenure"), n(data, "Tenure Bucket"),
-          parseNullableDecimal(getByColumn(data, "Target")),
-          parseNullableDecimal(getByColumn(data, "Achievement")),
-          n(data, "Ach%"), n(data, "Status") ?? "Active",
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        empId, n(data, "Agent Name(As per CRM)", "Agent Name"), n(data, "TL Name"),
+        n(data, "Center"), n(data, "DOJ"), n(data, "Tenure"), n(data, "Tenure Bucket"),
+        parseNullableDecimal(getByColumn(data, "Target")),
+        parseNullableDecimal(getByColumn(data, "Achievement")),
+        n(data, "Ach%"), n(data, "Status") ?? "Active",
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.pre_agent_details
+       (emp_id, agent_name, tl_name, center, doj, tenure, tenure_bucket, target,
+        achievement, ach_pct, status, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

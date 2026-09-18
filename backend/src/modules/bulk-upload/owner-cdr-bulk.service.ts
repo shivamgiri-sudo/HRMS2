@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Housing Owner's "Owner CDR" export -- writes into db_masmis.Owner_cdr
@@ -55,8 +56,7 @@ export async function importOwnerCdrBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -69,48 +69,50 @@ export async function importOwnerCdrBatch(
     const uid = getByColumn(data, "UID");
     if (!uid) {
       const msg = `Row ${row.row_no}: "UID" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.Owner_cdr
-           (uid, report_date, agent, email_id, intercom_id, group_name, department,
-            login_based_calling, avg_calls_per_day, avg_c2c_calls_per_day_outbound_answered,
-            avg_inbound_calls_per_day, call_handling_rate, total_calls, inbound_calls_offered,
-            outbound_click_to_call_attempted, calls_handled, inbound_calls_answered,
-            inbound_calls_missed, outbound_click_to_call_answered, available_duration,
-            in_call_duration, break_duration, inbound_in_call_duration, outbound_in_call_duration,
-            avg_call_handling_duration, avg_inbound_call_handling_duration,
-            avg_outbound_call_handling_duration, not_connected, connected, tl_name,
-            avg_talk_time, month, day, last_val, am, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          uid, n(data, "Date", "report_date"), n(data, "Agent"), n(data, "Email ID"),
-          n(data, "Intercom ID"), n(data, "Group"), n(data, "Department"),
-          n(data, "Login Based Calling"), n(data, "Average Calls/Day"),
-          n(data, "Average C2C Calls/Day - Outbound Answered"), n(data, "Average Inbound Calls/Day"),
-          n(data, "Call Handling Rate"), n(data, "Total Calls"), n(data, "Inbound Calls Offered"),
-          n(data, "Outbound Click to Call Attempted"), n(data, "Calls Handled"),
-          n(data, "Inbound Calls Answered"), n(data, "Inbound Calls Missed"),
-          n(data, "Outbound Click to Call Answered"), n(data, "Available Duration"),
-          n(data, "In-Call Duration"), n(data, "Break Duration"), n(data, "Inbound In-Call Duration"),
-          n(data, "Outbound In-Call Duration"), n(data, "Average Call Handling Duration"),
-          n(data, "Average Inbound Call Handling Duration"),
-          n(data, "Average Outbound Call Handling Duration"), n(data, "Not Connected"),
-          n(data, "Connected"), n(data, "TL Name"), n(data, "Average Talk time"),
-          n(data, "Month"), n(data, "Day"), n(data, "last"), n(data, "AM"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        uid, n(data, "Date", "report_date"), n(data, "Agent"), n(data, "Email ID"),
+        n(data, "Intercom ID"), n(data, "Group"), n(data, "Department"),
+        n(data, "Login Based Calling"), n(data, "Average Calls/Day"),
+        n(data, "Average C2C Calls/Day - Outbound Answered"), n(data, "Average Inbound Calls/Day"),
+        n(data, "Call Handling Rate"), n(data, "Total Calls"), n(data, "Inbound Calls Offered"),
+        n(data, "Outbound Click to Call Attempted"), n(data, "Calls Handled"),
+        n(data, "Inbound Calls Answered"), n(data, "Inbound Calls Missed"),
+        n(data, "Outbound Click to Call Answered"), n(data, "Available Duration"),
+        n(data, "In-Call Duration"), n(data, "Break Duration"), n(data, "Inbound In-Call Duration"),
+        n(data, "Outbound In-Call Duration"), n(data, "Average Call Handling Duration"),
+        n(data, "Average Inbound Call Handling Duration"),
+        n(data, "Average Outbound Call Handling Duration"), n(data, "Not Connected"),
+        n(data, "Connected"), n(data, "TL Name"), n(data, "Average Talk time"),
+        n(data, "Month"), n(data, "Day"), n(data, "last"), n(data, "AM"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.Owner_cdr
+       (uid, report_date, agent, email_id, intercom_id, group_name, department,
+        login_based_calling, avg_calls_per_day, avg_c2c_calls_per_day_outbound_answered,
+        avg_inbound_calls_per_day, call_handling_rate, total_calls, inbound_calls_offered,
+        outbound_click_to_call_attempted, calls_handled, inbound_calls_answered,
+        inbound_calls_missed, outbound_click_to_call_answered, available_duration,
+        in_call_duration, break_duration, inbound_in_call_duration, outbound_in_call_duration,
+        avg_call_handling_duration, avg_inbound_call_handling_duration,
+        avg_outbound_call_handling_duration, not_connected, connected, tl_name,
+        avg_talk_time, month, day, last_val, am, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Neemans' real "Sale Raw" export -- writes into the SAME already-live
@@ -76,8 +77,7 @@ export async function importNeemansSaleRawMasmisBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -88,18 +88,13 @@ export async function importNeemansSaleRawMasmisBatch(
     const orderId = get(data, "OrderID", "orderId", "order_id");
     if (!orderId) {
       const msg = `Row ${row.row_no}: "orderId" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.neemans_sale_raw
-           (week, date, emp_id, name, tl, lob, tenure, order_id, customer_number, email_id,
-            payment_status, amount, discount_code, line_item_name, calling_lob, calling_status,
-            status, count, neemans_order_id, current_status, final_status, line_item_qty,
-            target, call_date_time, duration, created_at_raw, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
           n(data, "Week", "week"), n(data, "Date", "date"), n(data, "EMP ID", "empId", "emp_id"), n(data, "Name", "name"),
           n(data, "TL", "tl"), n(data, "LOB", "lob"), n(data, "Tenure", "tenure"), orderId,
           n(data, "CustomerNumber", "customerNumber", "customer_number"), n(data, "E-mail ID", "emailId", "email_id"),
@@ -112,16 +107,23 @@ export async function importNeemansSaleRawMasmisBatch(
           parseNullableInt(get(data, "Target", "target")), n(data, "Call Date& Time", "callDateTime", "call_date_time"),
           n(data, "Duration ", "Duration", "duration"), n(data, "Created at", "createdAt", "created_at_raw"),
           null, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.neemans_sale_raw
+           (week, date, emp_id, name, tl, lob, tenure, order_id, customer_number, email_id,
+            payment_status, amount, discount_code, line_item_name, calling_lob, calling_status,
+            status, count, neemans_order_id, current_status, final_status, line_item_qty,
+            target, call_date_time, duration, created_at_raw, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

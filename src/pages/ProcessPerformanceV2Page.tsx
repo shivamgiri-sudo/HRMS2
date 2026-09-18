@@ -43,7 +43,7 @@ const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
   { key: "bellavita", label: "Bellavita" },
   { key: "gnc", label: "GNC" },
   { key: "neemans", label: "Neemans" },
-  { key: "appreciate_health", label: "Appreciate Health" },
+  { key: "appreciate_health", label: "Appreciate Wealth" },
   { key: "housing_owner", label: "Housing Owner" },
   { key: "housing_premium", label: "Housing Premium" },
   { key: "clovia", label: "Clovia" },
@@ -91,7 +91,7 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
   bellavita: [
     { key: "sale_performance", label: "Sale Performance", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
     { key: "chat_performance", label: "Chat Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
-    { key: "cart_performance", label: "Cart Recovery", description: "Cart value, connect%, discount codes, agent-wise + Repeat Allocation — live from uploaded cart data", kind: "bellavita_cart" },
+    { key: "cart_performance", label: "Abandon Cart", description: "Cart value, connect%, discount codes, agent-wise + Repeat Allocation — live from uploaded cart data", kind: "bellavita_cart" },
     { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%", kind: "inbound" },
   ],
   housing_owner: [
@@ -178,18 +178,19 @@ const NEEMANS_UPLOADERS = [
   { code: "NEEMANS_CHAT_MASMIS",           label: "Chat Data",      description: "Upload Neemans chat/DM ticket data", icon: MessageSquare },
 ];
 
-/** Appreciate Health's 5 live db_masmis uploaders. No real Excel export has
+/** Appreciate Wealth's 5 live db_masmis uploaders (internal key/table names stay
+ * "appreciate_health"/"aw_*" -- only the user-facing label changed). No real Excel export has
  * been seen for any of them yet (unlike GNC/Neemans, no sample file or
  * screenshot) -- header matching is normalized on both this component's own
  * pre-check and each aw-*-bulk.service.ts backend importer, so real-world
  * spelling/case/spacing differences shouldn't block an upload the way they
  * did for GNC/Neemans before those were fixed. See aw-mandate-bulk.service.ts. */
 const APPRECIATE_HEALTH_UPLOADERS = [
-  { code: "AW_BILLING_MASMIS", label: "Billing",  description: "Upload Appreciate Health billing data",  icon: Receipt },
-  { code: "AW_INBOUND_MASMIS", label: "Inbound",   description: "Upload Appreciate Health inbound CDR",   icon: PhoneIncoming },
-  { code: "AW_MANDATE_MASMIS", label: "Mandate",   description: "Upload Appreciate Health billing mandate", icon: ClipboardList },
-  { code: "AW_NEW_CDR_MASMIS", label: "New CDR",   description: "Upload Appreciate Health new CDR data",   icon: Activity },
-  { code: "AW_OUT_MASMIS",     label: "Outbound",  description: "Upload Appreciate Health outbound data",  icon: PhoneOutgoing },
+  { code: "AW_BILLING_MASMIS", label: "Billing",  description: "Upload Appreciate Wealth billing data",  icon: Receipt },
+  { code: "AW_INBOUND_MASMIS", label: "Inbound",   description: "Upload Appreciate Wealth inbound CDR",   icon: PhoneIncoming },
+  { code: "AW_MANDATE_MASMIS", label: "Mandate",   description: "Upload Appreciate Wealth billing mandate", icon: ClipboardList },
+  { code: "AW_NEW_CDR_MASMIS", label: "New CDR",   description: "Upload Appreciate Wealth new CDR data",   icon: Activity },
+  { code: "AW_OUT_MASMIS",     label: "Outbound",  description: "Upload Appreciate Wealth outbound data",  icon: PhoneOutgoing },
 ];
 
 /** Housing Owner's 3 uploaders, writing into brand-new db_masmis tables

@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
 Clovia's Outbound call export (cl_outbound.xlsx, 14 real
@@ -49,8 +50,7 @@ export async function importClOutboundBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -63,40 +63,42 @@ export async function importClOutboundBatch(
     const requiredVal = getByColumn(data, "Agent");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "Agent" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.cl_outbound
-           (agent, phone_number, call_date, call_code, start_time, end_time, length_sec, length_min, campaign, reason, status, uan, count_val, u_r, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          requiredVal,
-          n(data, "Phone Number"),
-          n(data, "Call Date"),
-          n(data, "Call Code"),
-          n(data, "Start Time"),
-          n(data, "End Time"),
-          n(data, "Length (Sec)"),
-          n(data, "Length (Min)"),
-          n(data, "Campaign"),
-          n(data, "Reason"),
-          n(data, "Status"),
-          n(data, "UAN"),
-          n(data, "Count"),
-          n(data, "U/R"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        requiredVal,
+        n(data, "Phone Number"),
+        n(data, "Call Date"),
+        n(data, "Call Code"),
+        n(data, "Start Time"),
+        n(data, "End Time"),
+        n(data, "Length (Sec)"),
+        n(data, "Length (Min)"),
+        n(data, "Campaign"),
+        n(data, "Reason"),
+        n(data, "Status"),
+        n(data, "UAN"),
+        n(data, "Count"),
+        n(data, "U/R"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.cl_outbound
+       (agent, phone_number, call_date, call_code, start_time, end_time, length_sec, length_min, campaign, reason, status, uan, count_val, u_r, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

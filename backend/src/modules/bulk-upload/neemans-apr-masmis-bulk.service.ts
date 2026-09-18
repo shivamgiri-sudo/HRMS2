@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Neemans' real APR export -- writes into the SAME already-live
@@ -59,8 +60,7 @@ export async function importNeemansAprMasmisBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -71,18 +71,13 @@ export async function importNeemansAprMasmisBatch(
     const empName = get(data, "Emp_Name", "empName", "emp_name");
     if (!empName) {
       const msg = `Row ${row.row_no}: "empName" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.neemans_apr
-           (unique_id, week, date, emp_name, emp_id, calls, uca_ob, lob, login_time, parks,
-            park_time, avg_park, parks_per_call, wait, talk, dispo, pause, login_ts, logout_ts,
-            acht, team_briefing, lunch, tea, tea1, washr, total_break, net_login, occu_pct,
-            week_short, mtd, attendance, capping, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
           n(data, "Unique ID", "uniqueId", "unique_id"), n(data, "Week", "week"), n(data, "Date", "date"), empName,
           n(data, "EMP ID", "empId", "emp_id"), parseNullableInt(get(data, "No. of Calls/Chat", "calls")),
           parseNullableInt(get(data, "UCA OB", "ucaOb", "uca_ob")), n(data, "LOB", "lob"),
@@ -98,16 +93,23 @@ export async function importNeemansAprMasmisBatch(
           n(data, "Week_1", "weekShort", "week_short"), n(data, "MTD", "mtd"),
           parseNullableInt(get(data, "Attendance", "attendance")), n(data, "Capping", "capping"),
           null, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.neemans_apr
+           (unique_id, week, date, emp_name, emp_id, calls, uca_ob, lob, login_time, parks,
+            park_time, avg_park, parks_per_call, wait, talk, dispo, pause, login_ts, logout_ts,
+            acht, team_briefing, lunch, tea, tea1, washr, total_break, net_login, occu_pct,
+            week_short, mtd, attendance, capping, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

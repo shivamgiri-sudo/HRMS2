@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Housing Owner's "Owner Agent Details" roster -- writes into
@@ -59,8 +60,7 @@ export async function importOwnerAgentDetailsBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -73,34 +73,36 @@ export async function importOwnerAgentDetailsBatch(
     const masId = getByColumn(data, "MAS");
     if (!masId) {
       const msg = `Row ${row.row_no}: "MAS" (employee code) is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.owner_agent_details
-           (sno, crm_id, overall, tl_name, doj, status, ageing, bucket, monthly_target,
-            without_gst_target, per_day_target, mtd, mas_id, name, am, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          n(data, "SNo"), n(data, "CRMID"), n(data, "Overall"), n(data, "TLName", "TL Name"),
-          n(data, "DOJ"), n(data, "Status") ?? "Active", n(data, "Ageing"), n(data, "Bucket"),
-          parseNullableDecimal(getByColumn(data, "MonthlyTarget", "Monthly Target")),
-          parseNullableDecimal(getByColumn(data, "Without GST Target")),
-          parseNullableDecimal(getByColumn(data, "PerDayTarget", "Per Day Target")),
-          parseNullableDecimal(getByColumn(data, "MTD")),
-          masId, n(data, "Name"), n(data, "AM"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        n(data, "SNo"), n(data, "CRMID"), n(data, "Overall"), n(data, "TLName", "TL Name"),
+        n(data, "DOJ"), n(data, "Status") ?? "Active", n(data, "Ageing"), n(data, "Bucket"),
+        parseNullableDecimal(getByColumn(data, "MonthlyTarget", "Monthly Target")),
+        parseNullableDecimal(getByColumn(data, "Without GST Target")),
+        parseNullableDecimal(getByColumn(data, "PerDayTarget", "Per Day Target")),
+        parseNullableDecimal(getByColumn(data, "MTD")),
+        masId, n(data, "Name"), n(data, "AM"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.owner_agent_details
+       (sno, crm_id, overall, tl_name, doj, status, ageing, bucket, monthly_target,
+        without_gst_target, per_day_target, mtd, mas_id, name, am, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

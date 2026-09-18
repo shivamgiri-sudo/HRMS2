@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Neemans' real "Allocation" export -- writes into the SAME already-live
@@ -54,8 +55,7 @@ export async function importNeemansAllocationMasmisBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -66,16 +66,13 @@ export async function importNeemansAllocationMasmisBatch(
     const phone = get(data, "Phone", "phone", "phone_number", "mobile");
     if (!phone) {
       const msg = `Row ${row.row_no}: "phone" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.neemans_allocation
-           (phone, email, customer_name, product_title, amount, type, date, agent,
-            calling_status, sub_scenario1, sub_scenario2, call_id, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
           phone, n(data, "Email", "email", "email_id", "emailid"),
           n(data, "CustomerName", "customerName", "customername", "customer_name", "name"),
           n(data, "Producttitle", "productTitle", "producttitle", "product_title", "line_items", "lineitems", "product"),
@@ -86,16 +83,21 @@ export async function importNeemansAllocationMasmisBatch(
           n(data, "SUBSCENARIOS2", "subScenario2", "subscenario2", "sub_scenario2", "subscenario_2", "scenario2"),
           n(data, "CallDate", "callId", "callid", "call_id", "id"),
           null, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.neemans_allocation
+           (phone, email, customer_name, product_title, amount, type, date, agent,
+            calling_status, sub_scenario1, sub_scenario2, call_id, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

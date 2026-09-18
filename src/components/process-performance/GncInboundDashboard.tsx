@@ -8,8 +8,9 @@ import {
   PhoneIncoming, PhoneCall, PhoneOff, Gauge, Timer, Users, Search, ListFilter, Radio, Clock3,
 } from "lucide-react";
 import {
-  Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar,
+  Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
   last7DaysRange, formatShortDate,
+  type ExportSlide,
 } from "./DashboardKit";
 
 /**
@@ -108,6 +109,47 @@ export function GncInboundDashboard() {
     };
   }).sort((a, b) => a.date.localeCompare(b.date)), [trend]);
 
+  /** Export slides for "Download Snap"/"Download Excel" — one per tab. */
+  const exportSlides = useMemo<ExportSlide[]>(() => {
+    if (!summary) return [];
+    const overview: ExportSlide = {
+      title: "Overview",
+      kpis: [
+        { label: "Total Calls", value: summary.total.toLocaleString("en-IN") },
+        { label: "Answered", value: summary.answered.toLocaleString("en-IN") },
+        { label: "Answer Rate", value: `${summary.ans_pct}%` },
+        { label: "Abandon Rate (AL %)", value: `${summary.abandon_pct}%` },
+        { label: "Service Level (SL %)", value: `${summary.sl_pct}%` },
+        { label: "Avg Handle Time", value: secondsToMin(summary.avg_handle) },
+        { label: "Active Agents", value: String(summary.login_count) },
+        { label: "Unique Callers", value: summary.unique_phones.toLocaleString("en-IN") },
+      ],
+    };
+    const agentsSlide: ExportSlide = {
+      title: "Agent-wise",
+      tables: [{
+        title: "Agent-wise Call Performance",
+        columns: ["Agent", "Agent ID", "Offered", "Answered", "Answer %", "Service Level", "Avg Handle", "Repeat %"],
+        rows: agents.map((a) => [
+          a.agentName, a.agentId, a.offered, a.answered, `${pct(a.answered, a.offered)}%`,
+          `${a.sl_pct}%`, a.acht ? secondsToMin(a.acht) : "—", `${a.repeat_pct}%`,
+        ]),
+      }],
+    };
+    const datewiseSlide: ExportSlide = {
+      title: "Date-wise",
+      tables: [{
+        title: "Date-wise Call Performance",
+        columns: ["Date", "Active Agents", "Offered", "Call Answered", "Answer %", "Abandoned", "AL %", "SL %", "Avg Handle"],
+        rows: dateWiseRows.map((r) => [
+          formatShortDate(r.date), r.login_count, r.offered, r.answered, `${r.ansPct}%`,
+          r.abandoned, `${r.abandonPct}%`, `${r.slPct}%`, r.acht ? secondsToMin(n(r.acht)) : "—",
+        ]),
+      }],
+    };
+    return [overview, agentsSlide, datewiseSlide];
+  }, [summary, agents, dateWiseRows]);
+
   if (loading && !summary) return <Spinner tone="blue" />;
 
   if (error) {
@@ -116,17 +158,26 @@ export function GncInboundDashboard() {
 
   return (
     <div className="space-y-5">
-      <DashboardHero
+      <DashboardHero<TabKey>
         icon={PhoneIncoming} eyebrow="GNC · Process Performance" title="Inbound Call Performance"
         tabs={TABS} activeTab={tab} onTabChange={setTab}
         gradient="from-blue-600 via-indigo-600 to-blue-700"
       />
 
-      <DateRangeToolbar
-        from={from} to={to} onFrom={setFrom} onTo={setTo}
-        onReset={() => { const r = last7DaysRange(); setFrom(r.from); setTo(r.to); }}
-        resetLabel="Last 7 Days" accentFocus="focus:border-blue-400"
-      />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <DashboardExportMenu
+          reportTitle="GNC — Inbound Call Performance"
+          fileBaseName="GNC_Inbound"
+          subtitle={`${from} to ${to}`}
+          slides={exportSlides}
+          activeSlideTitle={tab === "overview" ? "Overview" : tab === "agents" ? "Agent-wise" : "Date-wise"}
+        />
+        <DateRangeToolbar
+          from={from} to={to} onFrom={setFrom} onTo={setTo}
+          onReset={() => { const r = last7DaysRange(); setFrom(r.from); setTo(r.to); }}
+          resetLabel="Last 7 Days" accentFocus="focus:border-blue-400"
+        />
+      </div>
 
       {unavailable && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-700">
@@ -226,8 +277,8 @@ export function GncInboundDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {filteredAgents.map((a) => (
-                  <tr key={a.agentId} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-indigo-50/40">
+                {filteredAgents.map((a, i) => (
+                  <tr key={a.agentId} className={`border-b border-slate-50 transition-colors last:border-0 hover:bg-indigo-50/40 ${i % 2 === 1 ? "bg-indigo-50/20" : "bg-white"}`}>
                     <td className="py-2.5 pr-3">
                       <div className="font-medium text-slate-700">{a.agentName}</div>
                       <div className="text-[11px] text-slate-400">{a.agentId}</div>
@@ -251,43 +302,71 @@ export function GncInboundDashboard() {
       )}
 
       {tab === "datewise" && (
-      <SectionCard icon={PhoneCall} title="Date-wise Call Performance" tone="blue">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                <th className="py-2 pr-3 font-semibold">Date</th>
-                <th className="py-2 pr-3 text-right font-semibold">Active Agents</th>
-                <th className="py-2 pr-3 text-right font-semibold">Offered</th>
-                <th className="py-2 pr-3 text-right font-semibold">Answered</th>
-                <th className="py-2 pr-3 text-right font-semibold">Answer %</th>
-                <th className="py-2 pr-3 text-right font-semibold">Abandoned</th>
-                <th className="py-2 pr-3 text-right font-semibold">Abandon %</th>
-                <th className="py-2 pr-3 text-right font-semibold">Service Level</th>
-                <th className="py-2 pr-0 text-right font-semibold">Avg Handle</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dateWiseRows.map((r) => (
-                <tr key={r.date} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-blue-50/40">
-                  <td className="py-2.5 pr-3 font-medium text-slate-700">{formatShortDate(r.date)}</td>
-                  <td className="py-2.5 pr-3 text-right text-slate-600">{r.login_count}</td>
-                  <td className="py-2.5 pr-3 text-right text-slate-600">{r.offered}</td>
-                  <td className="py-2.5 pr-3 text-right text-slate-600">{r.answered}</td>
-                  <td className="py-2.5 pr-3 text-right text-slate-600">{r.ansPct}%</td>
-                  <td className="py-2.5 pr-3 text-right text-slate-600">{r.abandoned}</td>
-                  <td className="py-2.5 pr-3 text-right text-slate-600">{r.abandonPct}%</td>
-                  <td className={`py-2.5 pr-3 text-right font-semibold ${r.slPct >= 70 ? "text-emerald-600" : r.slPct >= 40 ? "text-amber-600" : "text-red-600"}`}>{r.slPct}%</td>
-                  <td className="py-2.5 pr-0 text-right text-slate-600">{r.acht ? secondsToMin(n(r.acht)) : "—"}</td>
+      <div className="space-y-4">
+        <SectionCard icon={Gauge} title="Date-wise Call Answered, AL % & SL % Trend" tone="blue">
+          <ResponsiveContainer width="100%" height={240}>
+            <AreaChart data={dateWiseRows} margin={{ top: 4, right: 12, left: -16, bottom: 0 }}>
+              <defs>
+                <linearGradient id="gncAnsweredFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#059669" stopOpacity={0.22} />
+                  <stop offset="100%" stopColor="#059669" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+              <XAxis dataKey="date" tickFormatter={formatShortDate} tick={{ fontSize: 9 }} />
+              <YAxis yAxisId="left" tick={{ fontSize: 10 }} />
+              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} domain={[0, 100]} unit="%" />
+              <Tooltip
+                labelFormatter={(v: unknown) => formatShortDate(String(v))}
+                formatter={(value: number, name: string) => (name === "Call Answered" ? value : `${value}%`)}
+                contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #e2e8f0" }}
+              />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Area yAxisId="left" type="monotone" dataKey="answered" name="Call Answered" stroke="#059669" strokeWidth={2.5} fill="url(#gncAnsweredFill)" />
+              <Line yAxisId="right" type="monotone" dataKey="slPct" name="SL %" stroke="#6366f1" strokeWidth={2} dot={false} />
+              <Line yAxisId="right" type="monotone" dataKey="abandonPct" name="AL %" stroke="#f43f5e" strokeWidth={2} dot={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </SectionCard>
+
+        <SectionCard icon={PhoneCall} title="Date-wise Call Performance" tone="blue">
+          <div className="overflow-x-auto rounded-xl border border-slate-100">
+            <table className="w-full min-w-[720px] border-collapse text-left text-xs">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50/80 text-[11px] uppercase tracking-wide text-slate-400">
+                  <th className="py-2.5 pl-3 pr-3 font-bold text-slate-500">Date</th>
+                  <th className="py-2.5 pr-3 text-right font-semibold">Active Agents</th>
+                  <th className="py-2.5 pr-3 text-right font-semibold">Offered</th>
+                  <th className="border-l border-slate-100 bg-emerald-50/60 py-2.5 pr-3 text-right font-bold text-emerald-700">Call Answered</th>
+                  <th className="py-2.5 pr-3 text-right font-semibold">Answer %</th>
+                  <th className="py-2.5 pr-3 text-right font-semibold">Abandoned</th>
+                  <th className="border-l border-slate-100 bg-rose-50/60 py-2.5 pr-3 text-right font-bold text-rose-700">AL %</th>
+                  <th className="border-l border-slate-100 bg-indigo-50/60 py-2.5 pr-3 text-right font-bold text-indigo-700">SL %</th>
+                  <th className="py-2.5 pr-3 text-right font-semibold">Avg Handle</th>
                 </tr>
-              ))}
-              {dateWiseRows.length === 0 && (
-                <tr><td colSpan={9} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
+              </thead>
+              <tbody>
+                {dateWiseRows.map((r, i) => (
+                  <tr key={r.date} className={`border-b border-slate-50 transition-colors last:border-0 hover:bg-blue-50/40 ${i % 2 === 1 ? "bg-slate-50/60" : "bg-white"}`}>
+                    <td className="py-2.5 pl-3 pr-3 font-medium text-slate-700">{formatShortDate(r.date)}</td>
+                    <td className="py-2.5 pr-3 text-right text-slate-600">{r.login_count}</td>
+                    <td className="py-2.5 pr-3 text-right text-slate-600">{r.offered}</td>
+                    <td className="border-l border-slate-50 bg-emerald-50/20 py-2.5 pr-3 text-right font-bold text-emerald-700">{r.answered}</td>
+                    <td className="py-2.5 pr-3 text-right text-slate-600">{r.ansPct}%</td>
+                    <td className="py-2.5 pr-3 text-right text-slate-600">{r.abandoned}</td>
+                    <td className="border-l border-slate-50 bg-rose-50/20 py-2.5 pr-3 text-right font-bold text-rose-600">{r.abandonPct}%</td>
+                    <td className={`border-l border-slate-50 bg-indigo-50/20 py-2.5 pr-3 text-right font-bold ${r.slPct >= 70 ? "text-emerald-600" : r.slPct >= 40 ? "text-amber-600" : "text-red-600"}`}>{r.slPct}%</td>
+                    <td className="py-2.5 pr-3 text-right text-slate-600">{r.acht ? secondsToMin(n(r.acht)) : "—"}</td>
+                  </tr>
+                ))}
+                {dateWiseRows.length === 0 && (
+                  <tr><td colSpan={9} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </SectionCard>
+      </div>
       )}
     </div>
   );

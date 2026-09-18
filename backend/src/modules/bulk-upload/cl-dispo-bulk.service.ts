@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
 Clovia's CRM disposition export (cl_dispo.xlsx, 26 real
@@ -52,8 +53,7 @@ export async function importClDispoBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -66,52 +66,54 @@ export async function importClDispoBatch(
     const requiredVal = getByColumn(data, "Ticket No");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "Ticket No" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.cl_dispo
-           (ticket_no, report_date, order_no, agent_name, source_val, gender, conduct_of_customer, reason, sub_reason, comment, action_taken, user_state, skill, flag, awb_number, order_status, courier_partner, actual_date, count_of_order, repeat_ftr, ftr, emp_name, campaign, weeks, con, qrc, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          requiredVal,
-          n(data, "Date"),
-          n(data, "Order No"),
-          n(data, "Agent Name"),
-          n(data, "Sourece"),
-          n(data, "Gender"),
-          n(data, "Conduct Of Customer"),
-          n(data, "Reason"),
-          n(data, "Sub Reason"),
-          n(data, "Comment"),
-          n(data, "Action Taken"),
-          n(data, "User State"),
-          n(data, "Skill"),
-          n(data, "Flag"),
-          n(data, "AWB Number"),
-          n(data, "Order Status"),
-          n(data, "Courier Partner"),
-          n(data, "Actual Date"),
-          n(data, "Count of order"),
-          n(data, "Repeat/FTR"),
-          n(data, "FTR"),
-          n(data, "EMP Name"),
-          n(data, "Campaign"),
-          n(data, "WEEKS"),
-          n(data, "CON"),
-          n(data, "QRC"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        requiredVal,
+        n(data, "Date"),
+        n(data, "Order No"),
+        n(data, "Agent Name"),
+        n(data, "Sourece"),
+        n(data, "Gender"),
+        n(data, "Conduct Of Customer"),
+        n(data, "Reason"),
+        n(data, "Sub Reason"),
+        n(data, "Comment"),
+        n(data, "Action Taken"),
+        n(data, "User State"),
+        n(data, "Skill"),
+        n(data, "Flag"),
+        n(data, "AWB Number"),
+        n(data, "Order Status"),
+        n(data, "Courier Partner"),
+        n(data, "Actual Date"),
+        n(data, "Count of order"),
+        n(data, "Repeat/FTR"),
+        n(data, "FTR"),
+        n(data, "EMP Name"),
+        n(data, "Campaign"),
+        n(data, "WEEKS"),
+        n(data, "CON"),
+        n(data, "QRC"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.cl_dispo
+       (ticket_no, report_date, order_no, agent_name, source_val, gender, conduct_of_customer, reason, sub_reason, comment, action_taken, user_state, skill, flag, awb_number, order_status, courier_partner, actual_date, count_of_order, repeat_ftr, ftr, emp_name, campaign, weeks, con, qrc, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

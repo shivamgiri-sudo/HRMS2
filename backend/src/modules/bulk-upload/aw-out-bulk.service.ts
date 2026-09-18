@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Appreciate Health's "Outbound" (agent productivity/conversion) export --
@@ -50,8 +51,7 @@ export async function importAwOutBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -64,92 +64,94 @@ export async function importAwOutBatch(
     const requiredVal = getByColumn(data, "agent_id");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "agent_id" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.aw_out
-           (call_date, agent_id, agent_name, total_calls, connected_calls, not_connected_calls, total_talk_time, total_wrapup_time, total_pause_time, total_idle_time, pickup_time, total_login_time, first_login_time, last_logout_time, customer_disconnect, uuid, emp_id, lob, sub_lob, centre_mcn_or_enser, week, month, call_date_agent_id, bio, lunch, tea, meeting_aux, training, sip_disconnected, sip_unregistered, technical_issue_dialer, technical_issue_cc, change_mode, technical_issue_crm, qa_feedback, unused_col, net_login_hrs, actual_mandays, conversion_target, conversion, shift_time, roster_count, shift_start_time, late_login_status, ontime_login_status, late_login_count, ontime_login_count, acht_with_picked_up_time, acht, occupancy_on_calls, calling_target, break_exceed_count, net_occupancy, idle_on_manual, idle_on_blended, agent_disconnect, wrap_exceed_count, lrs_target, lrs_count, lrs_amount, trade_target, trade_count, trade_amount, mf_target, mf_count, mf_amount, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          n(data, "call_date"),
-          requiredVal,
-          n(data, "agent_name"),
-          n(data, "total_calls"),
-          n(data, "connected_calls"),
-          n(data, "not_connected_calls"),
-          n(data, "total_talk_time"),
-          n(data, "total_wrapup_time"),
-          n(data, "total_pause_time"),
-          n(data, "total_idle_time"),
-          n(data, "pickup_time"),
-          n(data, "total_login_time"),
-          n(data, "first_login_time"),
-          n(data, "last_logout_time"),
-          n(data, "customer_disconnect"),
-          n(data, "uuid"),
-          n(data, "emp_id"),
-          n(data, "lob"),
-          n(data, "sub_lob"),
-          n(data, "centre_mcn_or_enser"),
-          n(data, "week"),
-          n(data, "month"),
-          n(data, "call_date_agent_id"),
-          n(data, "bio"),
-          n(data, "lunch"),
-          n(data, "tea"),
-          n(data, "meeting_aux"),
-          n(data, "training"),
-          n(data, "sip_disconnected"),
-          n(data, "sip_unregistered"),
-          n(data, "technical_issue_dialer"),
-          n(data, "technical_issue_cc"),
-          n(data, "change_mode"),
-          n(data, "technical_issue_crm"),
-          n(data, "qa_feedback"),
-          n(data, "unused_col"),
-          n(data, "net_login_hrs"),
-          n(data, "actual_mandays"),
-          n(data, "conversion_target"),
-          n(data, "conversion"),
-          n(data, "shift_time"),
-          n(data, "roster_count"),
-          n(data, "shift_start_time"),
-          n(data, "late_login_status"),
-          n(data, "ontime_login_status"),
-          n(data, "late_login_count"),
-          n(data, "ontime_login_count"),
-          n(data, "acht_with_picked_up_time"),
-          n(data, "acht"),
-          n(data, "occupancy_on_calls"),
-          n(data, "calling_target"),
-          n(data, "break_exceed_count"),
-          n(data, "net_occupancy"),
-          n(data, "idle_on_manual"),
-          n(data, "idle_on_blended"),
-          n(data, "agent_disconnect"),
-          n(data, "wrap_exceed_count"),
-          n(data, "lrs_target"),
-          n(data, "lrs_count"),
-          n(data, "lrs_amount"),
-          n(data, "trade_target"),
-          n(data, "trade_count"),
-          n(data, "trade_amount"),
-          n(data, "mf_target"),
-          n(data, "mf_count"),
-          n(data, "mf_amount"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        n(data, "call_date"),
+        requiredVal,
+        n(data, "agent_name"),
+        n(data, "total_calls"),
+        n(data, "connected_calls"),
+        n(data, "not_connected_calls"),
+        n(data, "total_talk_time"),
+        n(data, "total_wrapup_time"),
+        n(data, "total_pause_time"),
+        n(data, "total_idle_time"),
+        n(data, "pickup_time"),
+        n(data, "total_login_time"),
+        n(data, "first_login_time"),
+        n(data, "last_logout_time"),
+        n(data, "customer_disconnect"),
+        n(data, "uuid"),
+        n(data, "emp_id"),
+        n(data, "lob"),
+        n(data, "sub_lob"),
+        n(data, "centre_mcn_or_enser"),
+        n(data, "week"),
+        n(data, "month"),
+        n(data, "call_date_agent_id"),
+        n(data, "bio"),
+        n(data, "lunch"),
+        n(data, "tea"),
+        n(data, "meeting_aux"),
+        n(data, "training"),
+        n(data, "sip_disconnected"),
+        n(data, "sip_unregistered"),
+        n(data, "technical_issue_dialer"),
+        n(data, "technical_issue_cc"),
+        n(data, "change_mode"),
+        n(data, "technical_issue_crm"),
+        n(data, "qa_feedback"),
+        n(data, "unused_col"),
+        n(data, "net_login_hrs"),
+        n(data, "actual_mandays"),
+        n(data, "conversion_target"),
+        n(data, "conversion"),
+        n(data, "shift_time"),
+        n(data, "roster_count"),
+        n(data, "shift_start_time"),
+        n(data, "late_login_status"),
+        n(data, "ontime_login_status"),
+        n(data, "late_login_count"),
+        n(data, "ontime_login_count"),
+        n(data, "acht_with_picked_up_time"),
+        n(data, "acht"),
+        n(data, "occupancy_on_calls"),
+        n(data, "calling_target"),
+        n(data, "break_exceed_count"),
+        n(data, "net_occupancy"),
+        n(data, "idle_on_manual"),
+        n(data, "idle_on_blended"),
+        n(data, "agent_disconnect"),
+        n(data, "wrap_exceed_count"),
+        n(data, "lrs_target"),
+        n(data, "lrs_count"),
+        n(data, "lrs_amount"),
+        n(data, "trade_target"),
+        n(data, "trade_count"),
+        n(data, "trade_amount"),
+        n(data, "mf_target"),
+        n(data, "mf_count"),
+        n(data, "mf_amount"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.aw_out
+       (call_date, agent_id, agent_name, total_calls, connected_calls, not_connected_calls, total_talk_time, total_wrapup_time, total_pause_time, total_idle_time, pickup_time, total_login_time, first_login_time, last_logout_time, customer_disconnect, uuid, emp_id, lob, sub_lob, centre_mcn_or_enser, week, month, call_date_agent_id, bio, lunch, tea, meeting_aux, training, sip_disconnected, sip_unregistered, technical_issue_dialer, technical_issue_cc, change_mode, technical_issue_crm, qa_feedback, unused_col, net_login_hrs, actual_mandays, conversion_target, conversion, shift_time, roster_count, shift_start_time, late_login_status, ontime_login_status, late_login_count, ontime_login_count, acht_with_picked_up_time, acht, occupancy_on_calls, calling_target, break_exceed_count, net_occupancy, idle_on_manual, idle_on_blended, agent_disconnect, wrap_exceed_count, lrs_target, lrs_count, lrs_amount, trade_target, trade_count, trade_amount, mf_target, mf_count, mf_amount, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

@@ -62,6 +62,14 @@ export function parseBellavitaDateOnly(raw: unknown): string | null {
   // never matched a single-digit day at all.
   const m = /^(\d{1,2})-(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-(\d{2})$/i.exec(v);
   if (m) {
+    // Day "0"/"00" is Excel's own degenerate text for a blank/zero date cell
+    // (confirmed live: "0-Jan-00" was exactly what MySQL rejected as
+    // '2000-01-00' -- MySQL has no day-zero date, and inserting it errors
+    // rather than silently truncating since this connection runs with
+    // strict SQL mode). A day of 0 was never a real FHD date to begin with,
+    // so this reads as "no value" and returns null, same as a blank cell.
+    const day = parseInt(m[1], 10);
+    if (day < 1 || day > 31) return null;
     const months: Record<string, string> = {
       Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
       Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",

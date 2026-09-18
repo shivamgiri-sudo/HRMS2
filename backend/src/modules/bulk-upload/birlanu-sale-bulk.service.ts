@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * birlanu_sale -- writes into db_masmis.birlanu_sale (sql/1770). Source: Birlanu Sale.xlsx / Birlanu APR.xlsx (Sale Raw sheet).
@@ -51,8 +52,7 @@ export async function importBirlanuSaleBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -65,105 +65,107 @@ export async function importBirlanuSaleBatch(
     const requiredVal = getByColumn(data, "Unique Id");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "Unique Id" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.birlanu_sale
-           (week_month, weeks, days, lead_register_month, report_date, lead_id, unique_id, customer_name, customer_type, calling_number, enquiry_type, enquiry_source, sub_enquiry_source, lead_register_date, lead_outcalled_date, call_type, calling_status, interested_status, sub_calling_status, sub_sub_calling_status, select_business, buyer_type, lead_status, construction_level, customer_name_2, alternative_number, email_id, address, landmark, brand, product, sub_product, state, district, zone, pincode, agent_name, order_qty, order_description, order_value, customer_type_select, registration_status, remark, secure_url, seller_email_id, seller_phone_no, lead_closer_status, lead_closer_status_new, merged_lead_closer_status, lead_close_date, final_lead_close_date, lead_upload_type, created_by, updated_by, created_at_src, updated_at_src, sale_mt, sale_inr, sale_team_remarks, sale_lead_status, cc_fil_remarks_reformat, sale_lead_category, sale_product, sale_product_value, sale_status, attempt, revised_source, lead_closer_month, organic_paid, partner, helper, closed, first_call_date_time, created_at_ist, frt, within_tat, bucket, for_fr_tat, created_at_ist_2, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          n(data, "Week/Month"),
-          n(data, "Weeks"),
-          n(data, "Days"),
-          n(data, "LeadRegisterMonth"),
-          n(data, "Date"),
-          n(data, "ID"),
-          requiredVal,
-          n(data, "Customer Name"),
-          n(data, "Customer Type"),
-          n(data, "Calling Number"),
-          n(data, "Enquiry Type"),
-          n(data, "Enquiry Source"),
-          n(data, "Sub Enquiry Source"),
-          n(data, "LeadRegisterDate"),
-          n(data, "LeadOutcalledDate"),
-          n(data, "Call type"),
-          n(data, "Calling Status"),
-          n(data, "Interested Status"),
-          n(data, "Sub Calling Status"),
-          n(data, "Sub Sub Calling Status"),
-          n(data, "Select Business"),
-          n(data, "Buyer Type"),
-          n(data, "Lead Status"),
-          n(data, "Construction Level"),
-          n(data, "Customer Name_1"),
-          n(data, "Alternative Number"),
-          n(data, "Email ID"),
-          n(data, "Address"),
-          n(data, "Landmark"),
-          n(data, "Brand"),
-          n(data, "Product"),
-          n(data, "Sub Product"),
-          n(data, "State"),
-          n(data, "District"),
-          n(data, "Zone"),
-          n(data, "Pincode"),
-          n(data, "Agent Name"),
-          n(data, "Order Qty"),
-          n(data, "Order Description"),
-          n(data, "Order Value"),
-          n(data, "Customer Type Select"),
-          n(data, "Registration Status"),
-          n(data, "Remark"),
-          n(data, "Secure URL"),
-          n(data, "Seller Email ID"),
-          n(data, "Seller Phone No"),
-          n(data, "Lead Closer Status"),
-          n(data, "Lead Closer Status New"),
-          n(data, "merged Lead Closer Status"),
-          n(data, "Lead Close Date"),
-          n(data, "Final Lead Close Date"),
-          n(data, "Lead Upload Type"),
-          n(data, "Created By"),
-          n(data, "Updated By"),
-          n(data, "Created At"),
-          n(data, "Updated At"),
-          n(data, "Sale MT"),
-          n(data, "Sale INR"),
-          n(data, "Sale Team Remarks"),
-          n(data, "Sale Lead Status"),
-          n(data, "CC Fi-l Remarks Reformat"),
-          n(data, "Sale Lead Category"),
-          n(data, "Sale Product"),
-          n(data, "Sale Product Value"),
-          n(data, "Sale Status"),
-          n(data, "Attempt"),
-          n(data, "Revised Source"),
-          n(data, "Lead Closer Month"),
-          n(data, "Organic/Paid"),
-          n(data, "Partner"),
-          n(data, "Helper"),
-          n(data, "Closed"),
-          n(data, "First Call Date & Time"),
-          n(data, "Created At (IST)"),
-          n(data, "FRT"),
-          n(data, "Within TAT"),
-          n(data, "Bucket"),
-          n(data, "For FR TAT"),
-          n(data, "Created At (IST)_1"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        n(data, "Week/Month"),
+        n(data, "Weeks"),
+        n(data, "Days"),
+        n(data, "LeadRegisterMonth"),
+        n(data, "Date"),
+        n(data, "ID"),
+        requiredVal,
+        n(data, "Customer Name"),
+        n(data, "Customer Type"),
+        n(data, "Calling Number"),
+        n(data, "Enquiry Type"),
+        n(data, "Enquiry Source"),
+        n(data, "Sub Enquiry Source"),
+        n(data, "LeadRegisterDate"),
+        n(data, "LeadOutcalledDate"),
+        n(data, "Call type"),
+        n(data, "Calling Status"),
+        n(data, "Interested Status"),
+        n(data, "Sub Calling Status"),
+        n(data, "Sub Sub Calling Status"),
+        n(data, "Select Business"),
+        n(data, "Buyer Type"),
+        n(data, "Lead Status"),
+        n(data, "Construction Level"),
+        n(data, "Customer Name_1"),
+        n(data, "Alternative Number"),
+        n(data, "Email ID"),
+        n(data, "Address"),
+        n(data, "Landmark"),
+        n(data, "Brand"),
+        n(data, "Product"),
+        n(data, "Sub Product"),
+        n(data, "State"),
+        n(data, "District"),
+        n(data, "Zone"),
+        n(data, "Pincode"),
+        n(data, "Agent Name"),
+        n(data, "Order Qty"),
+        n(data, "Order Description"),
+        n(data, "Order Value"),
+        n(data, "Customer Type Select"),
+        n(data, "Registration Status"),
+        n(data, "Remark"),
+        n(data, "Secure URL"),
+        n(data, "Seller Email ID"),
+        n(data, "Seller Phone No"),
+        n(data, "Lead Closer Status"),
+        n(data, "Lead Closer Status New"),
+        n(data, "merged Lead Closer Status"),
+        n(data, "Lead Close Date"),
+        n(data, "Final Lead Close Date"),
+        n(data, "Lead Upload Type"),
+        n(data, "Created By"),
+        n(data, "Updated By"),
+        n(data, "Created At"),
+        n(data, "Updated At"),
+        n(data, "Sale MT"),
+        n(data, "Sale INR"),
+        n(data, "Sale Team Remarks"),
+        n(data, "Sale Lead Status"),
+        n(data, "CC Fi-l Remarks Reformat"),
+        n(data, "Sale Lead Category"),
+        n(data, "Sale Product"),
+        n(data, "Sale Product Value"),
+        n(data, "Sale Status"),
+        n(data, "Attempt"),
+        n(data, "Revised Source"),
+        n(data, "Lead Closer Month"),
+        n(data, "Organic/Paid"),
+        n(data, "Partner"),
+        n(data, "Helper"),
+        n(data, "Closed"),
+        n(data, "First Call Date & Time"),
+        n(data, "Created At (IST)"),
+        n(data, "FRT"),
+        n(data, "Within TAT"),
+        n(data, "Bucket"),
+        n(data, "For FR TAT"),
+        n(data, "Created At (IST)_1"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.birlanu_sale
+       (week_month, weeks, days, lead_register_month, report_date, lead_id, unique_id, customer_name, customer_type, calling_number, enquiry_type, enquiry_source, sub_enquiry_source, lead_register_date, lead_outcalled_date, call_type, calling_status, interested_status, sub_calling_status, sub_sub_calling_status, select_business, buyer_type, lead_status, construction_level, customer_name_2, alternative_number, email_id, address, landmark, brand, product, sub_product, state, district, zone, pincode, agent_name, order_qty, order_description, order_value, customer_type_select, registration_status, remark, secure_url, seller_email_id, seller_phone_no, lead_closer_status, lead_closer_status_new, merged_lead_closer_status, lead_close_date, final_lead_close_date, lead_upload_type, created_by, updated_by, created_at_src, updated_at_src, sale_mt, sale_inr, sale_team_remarks, sale_lead_status, cc_fil_remarks_reformat, sale_lead_category, sale_product, sale_product_value, sale_status, attempt, revised_source, lead_closer_month, organic_paid, partner, helper, closed, first_call_date_time, created_at_ist, frt, within_tat, bucket, for_fr_tat, created_at_ist_2, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

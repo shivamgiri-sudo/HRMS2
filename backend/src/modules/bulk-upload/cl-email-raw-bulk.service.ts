@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
 Clovia's Email raw export (cl_email_raw.xlsx, 12 real
@@ -50,8 +51,7 @@ export async function importClEmailRawBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -64,38 +64,40 @@ export async function importClEmailRawBatch(
     const requiredVal = getByColumn(data, "Unique ID");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "Unique ID" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.cl_email_raw
-           (unique_id, emp_id, week, report_date, agent_name, open_email, in_process, re_open, total_mail_assigned, total_touched_email, closed_email, junk_mail, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          requiredVal,
-          n(data, "EMP ID"),
-          n(data, "Week"),
-          n(data, "Date"),
-          n(data, "Agent Name"),
-          n(data, "Open Email"),
-          n(data, "In Process"),
-          n(data, "Re-Open"),
-          n(data, "Total Mail Assigned"),
-          n(data, "Total Touched Email"),
-          n(data, "Closed Email"),
-          n(data, "JunkMail"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        requiredVal,
+        n(data, "EMP ID"),
+        n(data, "Week"),
+        n(data, "Date"),
+        n(data, "Agent Name"),
+        n(data, "Open Email"),
+        n(data, "In Process"),
+        n(data, "Re-Open"),
+        n(data, "Total Mail Assigned"),
+        n(data, "Total Touched Email"),
+        n(data, "Closed Email"),
+        n(data, "JunkMail"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.cl_email_raw
+       (unique_id, emp_id, week, report_date, agent_name, open_email, in_process, re_open, total_mail_assigned, total_touched_email, closed_email, junk_mail, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

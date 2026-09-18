@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Neemans' agent roster -- writes into the SAME already-live
@@ -77,8 +78,7 @@ export async function importNeemansAgentDetailsBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   const createdByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -92,15 +92,13 @@ export async function importNeemansAgentDetailsBatch(
     const name = get(data, "Name", "name", "Agent Name", "AgentName");
     if (!empId || !name) {
       const msg = `Row ${row.row_no}: "emp_id" and "name" are both required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.nms_Agent_Details
-           (emp_id, daildesk_id, name, lob, tl, doj, fhd, status, dol, created_by, monthly_target)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
           empId,
           n(data, "DialDesk ID", "DailDesk ID", "daildesk_id", "DialDeskId"),
           name,
@@ -112,16 +110,20 @@ export async function importNeemansAgentDetailsBatch(
           parseAgentDate(get(data, "DOL", "dol", "Date of Leaving")),
           createdByInt,
           parseNullableDecimal(get(data, "Monthly Target", "monthly_target", "Target", "target")),
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.nms_Agent_Details
+           (emp_id, daildesk_id, name, lob, tl, doj, fhd, status, dol, created_by, monthly_target)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

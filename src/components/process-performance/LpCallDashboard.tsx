@@ -6,7 +6,10 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import {
   PhoneCall, Users, Gauge, Timer, Target, ListChecks, Search, ListFilter, Scale, Activity,
 } from "lucide-react";
-import { Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, currentMonthRange } from "./DashboardKit";
+import {
+  Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
+  currentMonthRange, type ExportSlide,
+} from "./DashboardKit";
 
 /**
  * Shared call-performance dashboard for LP Feedback and LP Onboarding --
@@ -88,6 +91,63 @@ export function LpCallDashboard({
     return rows.filter((a) => a.agent.toLowerCase().includes(q) || a.loginId.toLowerCase().includes(q));
   }, [data, agentSearch]);
 
+  /** Export slides for "Download Snap"/"Download Excel" — one per tab,
+   * built from the same data already rendered on screen, not re-fetched.
+   * Shared by both LpFeedbackDashboard and LpOnboardingDashboard; the
+   * report/file names below derive from this instance's own `title` prop
+   * so each consumer's export reflects which one it is. */
+  const exportSlides = useMemo<ExportSlide[]>(() => {
+    if (!data) return [];
+    const overall: ExportSlide = {
+      title: "Overall",
+      kpis: [
+        { label: "Login Count", value: String(data.headline.loginCount) },
+        { label: "Overall Calls", value: data.headline.overallCalls.toLocaleString("en-IN") },
+        { label: "Unique Leadset", value: data.headline.uniqueLeadset.toLocaleString("en-IN") },
+        { label: "Unique Connectivity %", value: `${data.headline.uniqueConnectivityPct}%` },
+        { label: "Overall Connected %", value: `${data.headline.overallConnectedPct}%` },
+        { label: "Shrinkage %", value: `${data.headline.shrinkagePct}%` },
+        { label: "Occupancy %", value: `${data.headline.occupancyPct}%` },
+        { label: "Avg Talk Time", value: secToHms(data.headline.avgTalkTimeSec) },
+        { label: "Avg Lead / Agent", value: String(data.headline.avgLeadPerAgent) },
+        { label: "Per Agent Dial Count", value: String(data.headline.perAgentDialCount) },
+        { label: "Unique Connected Calls", value: data.headline.uniqueConnectedCalls.toLocaleString("en-IN") },
+        { label: "Overall Connected", value: data.headline.overallConnected.toLocaleString("en-IN") },
+      ],
+      tables: [
+        {
+          title: "Lead-Source Detail",
+          columns: ["Service", "Calls", "Connected", "Connected %", "Unique Leads"],
+          rows: data.byService.map((s) => [s.service, s.calls, s.connected, `${s.connectedPct}%`, s.uniqueLeads]),
+        },
+        {
+          title: "Week-wise Performance",
+          columns: ["Week", "Login Count", "Overall Calls", "Unique Leadset", "Overall Connected", "Connected %", "Talk Time"],
+          rows: data.byWeek.map((w) => [
+            w.weekLabel, w.loginCount, w.overallCalls, w.uniqueLeadset, w.overallConnected,
+            `${w.overallConnectedPct}%`, secToHms(w.talkTimeSec),
+          ]),
+        },
+      ],
+    };
+    const agentsSlide: ExportSlide = {
+      title: "Agent-wise",
+      tables: [{
+        title: "Agent-wise Performance",
+        columns: ["Agent", "Login ID", "Calls", "Connected", "Connected %", "Unique Leads", "Talk Time", "Login Time", "Shrinkage %", "Occupancy %"],
+        rows: data.agents.map((a) => [
+          a.agent, a.loginId, a.totalCalls, a.connectedCalls, `${a.connectedPct}%`, a.uniqueLeads,
+          a.talkTimeSec ? secToHms(a.talkTimeSec) : "—", a.loginTimeSec ? secToHms(a.loginTimeSec) : "—",
+          a.loginTimeSec ? `${a.shrinkagePct}%` : "—", a.loginTimeSec ? `${a.occupancyPct}%` : "—",
+        ]),
+      }],
+    };
+    return [overall, agentsSlide];
+  }, [data]);
+
+  const exportFileBaseName = title.replace(/[^a-zA-Z0-9]+/g, "_");
+  const exportReportTitle = `${eyebrow.split(" · ")[0]} — ${title}`;
+
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!data) return null;
@@ -96,17 +156,26 @@ export function LpCallDashboard({
 
   return (
     <div className="space-y-5">
-      <DashboardHero
+      <DashboardHero<TabKey>
         icon={Scale} eyebrow={eyebrow} title={title}
         tabs={TABS} activeTab={tab} onTabChange={setTab}
         gradient="from-blue-700 via-indigo-700 to-blue-800"
       />
 
-      <DateRangeToolbar
-        from={from} to={to} onFrom={setFrom} onTo={setTo}
-        onReset={() => { const r = currentMonthRange(); setFrom(r.from); setTo(r.to); }}
-        accentFocus="focus:border-blue-400"
-      />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <DashboardExportMenu
+          reportTitle={exportReportTitle}
+          fileBaseName={exportFileBaseName}
+          subtitle={`${from} to ${to}`}
+          slides={exportSlides}
+          activeSlideTitle={tab === "overall" ? "Overall" : "Agent-wise"}
+        />
+        <DateRangeToolbar
+          from={from} to={to} onFrom={setFrom} onTo={setTo}
+          onReset={() => { const r = currentMonthRange(); setFrom(r.from); setTo(r.to); }}
+          accentFocus="focus:border-blue-400"
+        />
+      </div>
 
       {tab === "overall" && (
       <>

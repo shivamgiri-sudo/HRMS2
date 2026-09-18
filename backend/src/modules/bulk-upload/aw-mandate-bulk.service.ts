@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Appreciate Health's "Mandate" export -- writes into the SAME already-live
@@ -58,8 +59,7 @@ export async function importAwMandateBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -72,28 +72,30 @@ export async function importAwMandateBatch(
     const billingType = getByColumn(data, "billing_type");
     if (!billingType) {
       const msg = `Row ${row.row_no}: "billing_type" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.aw_mandate
-           (billing_type, mandate, per_fe_rate, login_hours_per_fte, month, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          billingType, n(data, "mandate"), n(data, "per_fe_rate"),
-          n(data, "login_hours_per_fte"), n(data, "month"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        billingType, n(data, "mandate"), n(data, "per_fe_rate"),
+        n(data, "login_hours_per_fte"), n(data, "month"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.aw_mandate
+       (billing_type, mandate, per_fe_rate, login_hours_per_fte, month, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

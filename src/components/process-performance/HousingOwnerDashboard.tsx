@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -7,6 +7,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import {
   IndianRupee, ShoppingBag, PhoneCall, PhoneMissed, Timer, Target, Users, TrendingUp, CalendarDays,
 } from "lucide-react";
+import { DashboardExportMenu, type ExportSlide } from "./DashboardKit";
 
 interface Headline {
   totalRevenue: number;
@@ -249,6 +250,69 @@ export function HousingOwnerDashboard() {
 
   useEffect(() => { void load(); }, [load]);
 
+  /** Single export slide for "Download Snap"/"Download Excel" — this
+   * dashboard has no tabs, so the whole page's KPIs/tables become one
+   * slide, built from the same data already rendered on screen. */
+  const exportSlides = useMemo<ExportSlide[]>(() => {
+    if (!data) return [];
+    const { headline } = data;
+    const slide: ExportSlide = {
+      title: "Housing Owner Performance",
+      kpis: [
+        { label: "Revenue", value: formatINR(headline.totalRevenue) },
+        { label: "Sale Count", value: headline.totalSaleCount.toLocaleString("en-IN") },
+        { label: "AOV", value: formatINR(headline.aov) },
+        { label: "Total Calls", value: headline.totalCalls.toLocaleString("en-IN") },
+        { label: "Connected %", value: `${headline.connectedPct.toFixed(1)}%` },
+        { label: "Avg Talk Time", value: formatSecs(headline.avgTalkTimeSec) },
+        { label: "Achievement %", value: `${headline.achievementPct.toFixed(1)}%` },
+        { label: "Active Agents", value: String(headline.activeAgents) },
+      ],
+      tables: [
+        {
+          title: "AM-wise Performance",
+          columns: ["Name", "Calls", "Connected %", "Sale Count", "Revenue", "Target", "Achievement %"],
+          rows: data.byAm.map((r) => [
+            r.name, r.totalCalls.toLocaleString("en-IN"), `${r.connectedPct.toFixed(1)}%`, r.saleCount, formatINR(r.revenue),
+            r.target > 0 ? formatINR(r.target) : "—", r.target > 0 ? `${r.achievementPct.toFixed(0)}%` : "—",
+          ]),
+        },
+        {
+          title: "TL-wise Performance",
+          columns: ["Name", "Calls", "Connected %", "Sale Count", "Revenue", "Target", "Achievement %"],
+          rows: data.byTl.map((r) => [
+            r.name, r.totalCalls.toLocaleString("en-IN"), `${r.connectedPct.toFixed(1)}%`, r.saleCount, formatINR(r.revenue),
+            r.target > 0 ? formatINR(r.target) : "—", r.target > 0 ? `${r.achievementPct.toFixed(0)}%` : "—",
+          ]),
+        },
+        {
+          title: "Top 5 Performers (by Achievement %)",
+          columns: ["Agent", "TL", "Revenue", "Achievement %"],
+          rows: data.topPerformers.map((r) => [r.name, r.tlName, formatINR(r.revenue), `${r.achievementPct.toFixed(0)}%`]),
+        },
+        {
+          title: "Bottom 5 Performers (by Achievement %)",
+          columns: ["Agent", "TL", "Revenue", "Achievement %"],
+          rows: data.bottomPerformers.map((r) => [r.name, r.tlName, formatINR(r.revenue), `${r.achievementPct.toFixed(0)}%`]),
+        },
+        {
+          title: "Agent-wise Performance",
+          columns: [
+            "Agent", "Emp ID", "TL", "AM", "Bucket", "Status", "Target", "Total Calls", "Connected %",
+            "Avg Talk", "Sale Count", "Revenue", "Achievement %", "Stage",
+          ],
+          rows: data.agents.map((a) => [
+            a.name, a.empId ?? "—", a.tlName, a.am, a.bucket ?? "—", a.status,
+            a.target > 0 ? formatINR(a.target) : "—", a.totalCalls.toLocaleString("en-IN"), `${a.connectedPct.toFixed(1)}%`,
+            a.avgTalkTimeSec > 0 ? formatSecs(a.avgTalkTimeSec) : "—", a.saleCount, formatINR(a.revenue),
+            a.target > 0 ? `${a.achievementPct.toFixed(0)}%` : "—", a.stage,
+          ]),
+        },
+      ],
+    };
+    return [slide];
+  }, [data]);
+
   const dateFilter = (
     <div className="flex flex-wrap items-center justify-end gap-2">
       <CalendarDays className="h-4 w-4 text-slate-400" />
@@ -300,7 +364,16 @@ export function HousingOwnerDashboard() {
 
   return (
     <div className="space-y-5">
-      {dateFilter}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <DashboardExportMenu
+          reportTitle="Housing Owner — Performance"
+          fileBaseName="Housing_Owner_Performance"
+          subtitle={`${from} to ${to}`}
+          slides={exportSlides}
+          activeSlideTitle="Housing Owner Performance"
+        />
+        {dateFilter}
+      </div>
 
       {/* Headline KPIs */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">

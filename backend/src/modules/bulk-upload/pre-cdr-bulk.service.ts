@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Housing Premium's "Premium CDR" export -- writes into db_masmis.Pre_cdr
@@ -53,8 +54,7 @@ export async function importPreCdrBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -67,34 +67,36 @@ export async function importPreCdrBatch(
     const caller = getByColumn(data, "CALLER");
     if (!caller) {
       const msg = `Row ${row.row_no}: "CALLER" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.Pre_cdr
-           (caller, member, end_time, duration, status, routing_numbers, routing_status,
-            talk_duration, ringing_duration, start_time, time_value, report_date, tl_name,
-            call_count, unique_count, date_row_count, v_plus_w, talk_time, tl,
-            uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          caller, n(data, "MEMBER"), n(data, "End Time"), n(data, "DURATION"), n(data, "STATUS"),
-          n(data, "Routing Numbers"), n(data, "Routing Status"), n(data, "Talk Duration"),
-          n(data, "Ringing Duration"), n(data, "Start Time"), n(data, "Time"), n(data, "Date"),
-          n(data, "TL Name"), n(data, "Count"), n(data, "Unique Count"), n(data, "Date row Count"),
-          n(data, "V+W"), n(data, "Talk Time"), n(data, "TL"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        caller, n(data, "MEMBER"), n(data, "End Time"), n(data, "DURATION"), n(data, "STATUS"),
+        n(data, "Routing Numbers"), n(data, "Routing Status"), n(data, "Talk Duration"),
+        n(data, "Ringing Duration"), n(data, "Start Time"), n(data, "Time"), n(data, "Date"),
+        n(data, "TL Name"), n(data, "Count"), n(data, "Unique Count"), n(data, "Date row Count"),
+        n(data, "V+W"), n(data, "Talk Time"), n(data, "TL"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.Pre_cdr
+       (caller, member, end_time, duration, status, routing_numbers, routing_status,
+        talk_duration, ringing_duration, start_time, time_value, report_date, tl_name,
+        call_count, unique_count, date_row_count, v_plus_w, talk_time, tl,
+        uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

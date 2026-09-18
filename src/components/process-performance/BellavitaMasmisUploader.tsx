@@ -257,13 +257,52 @@ export function BellavitaMasmisUploader({
     setLastBatchId(null);
   }
 
+  /** Picks the sheet whose header row best matches this template's expected
+   * columns, rather than always the first — a workbook can ship its real
+   * data sheet anywhere in the tab order (confirmed live: an LP Feedback
+   * CDR export whose first sheet held APR-shaped columns like Total_Calls/
+   * Login_Time/Talk_Duration, with the real Call_Number/CDR sheet second).
+   * Blindly reading SheetNames[0] staged the wrong sheet, so every row
+   * failed the Call_Number requirement even though the real data was right
+   * there in the same file. Same fix already applied in BulkUploadHub.tsx's
+   * excelFileToCsvText — ported here using this file's own normalized
+   * header match (normalizeHeaderKey) instead of an exact-string match,
+   * consistent with this uploader's existing tolerant-header philosophy. */
+  function pickBestSheet(workbook: XLSX.WorkBook, tmpl: UploadTemplate | null): string {
+    const sheetNames = workbook.SheetNames;
+    if (sheetNames.length === 0) throw new Error("The file has no sheets.");
+    const expected = new Set(
+      [...(tmpl?.required_columns || []), ...(tmpl?.optional_columns || [])].map(normalizeHeaderKey),
+    );
+    if (expected.size === 0) return sheetNames[0]!;
+
+    let bestSheetName = sheetNames[0]!;
+    let bestScore = -1;
+    let bestExtra = Infinity;
+    for (const name of sheetNames) {
+      const sheet = workbook.Sheets[name];
+      if (!sheet) continue;
+      const firstRow = XLSX.utils.sheet_to_json(sheet, { header: 1, range: 0 })[0] as unknown[] | undefined;
+      if (!firstRow) continue;
+      const headerCells = firstRow.map((cell) => String(cell ?? "").trim()).filter((c) => c !== "");
+      const normalizedHeaders = headerCells.map(normalizeHeaderKey);
+      const score = normalizedHeaders.filter((h) => expected.has(h)).length;
+      const extra = normalizedHeaders.filter((h) => !expected.has(h)).length;
+      if (score > bestScore || (score === bestScore && extra < bestExtra)) {
+        bestScore = score;
+        bestExtra = extra;
+        bestSheetName = name;
+      }
+    }
+    return bestSheetName;
+  }
+
   async function fileToRows(f: File): Promise<Record<string, string>[]> {
     const lower = f.name.toLowerCase();
     const workbook = lower.endsWith(".csv")
       ? XLSX.read(await f.text(), { type: "string" })
       : XLSX.read(new Uint8Array(await f.arrayBuffer()), { type: "array" });
-    const sheetName = workbook.SheetNames[0];
-    if (!sheetName) throw new Error("The file has no sheets.");
+    const sheetName = pickBestSheet(workbook, template);
     return XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets[sheetName]!, {
       defval: "", raw: false,
     });

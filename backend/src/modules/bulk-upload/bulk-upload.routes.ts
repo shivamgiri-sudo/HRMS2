@@ -8,7 +8,7 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { startBatchJob, getBatchJob, readBatchProgress } from "./batch-job.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { loadRowsWithLiveStatus, reconcileStuckRows } from "./bulk-approval.service.js";
-import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
+import { withDeadlockRetry, isDeadlockError } from "../../shared/deadlockRetry.js";
 
 /**
  * A batch left in 'importing' for longer than this is assumed to be from an API that
@@ -268,8 +268,24 @@ router.delete("/batches/:id", requireRole("admin", "hr", "super_admin", "wfm", "
     }
   }
 
-  await db.execute("DELETE FROM upload_batch_row WHERE upload_batch_id = ?", [id]);
-  await db.execute("DELETE FROM upload_batch WHERE id = ?", [id]);
+  // Deletes are wrapped the same way owner-sale/lp-feedback-cdr's own writes
+  // are (withDeadlockRetry): confirmed live 2026-09-18 that a delete on a
+  // large batch's upload_batch_row rows can hit ER_LOCK_WAIT_TIMEOUT from
+  // an unrelated, long-running query elsewhere on this shared DB -- both
+  // deletes are single autocommit statements and idempotent (deleting an
+  // already-deleted row is a no-op), so retrying is safe.
+  try {
+    await withDeadlockRetry(() => db.execute("DELETE FROM upload_batch_row WHERE upload_batch_id = ?", [id]));
+    await withDeadlockRetry(() => db.execute("DELETE FROM upload_batch WHERE id = ?", [id]));
+  } catch (err: unknown) {
+    if (isDeadlockError(err)) {
+      return res.status(503).json({
+        success: false,
+        error: "The database is under heavy load from another process right now and this delete couldn't complete. Please try again in a minute.",
+      });
+    }
+    throw err;
+  }
   res.json({ success: true });
 }));
 

@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Appreciate Health's "New CDR" export -- writes into the SAME already-live
@@ -51,8 +52,7 @@ export async function importAwNewCdrBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -65,42 +65,44 @@ export async function importAwNewCdrBatch(
     const callId = getByColumn(data, "call_id");
     if (!callId) {
       const msg = `Row ${row.row_no}: "call_id" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.aw_new_cdr
-           (call_id, call_type, campaign, location, caller_no, skill, call_date, start_time,
-            time_to_answer, end_time, talk_time, hold_time, duration, call_flow, dialed_number,
-            agent, disposition, wrapup_duration, handling_time, status, dial_status,
-            customer_dial_status, agent_dial_status, hangup_by, transfer_details, uui, comments,
-            feedback, customer_ring_time, recording_url, agent_id, ratings, rating_comments,
-            dynamic_did, did, sub_lob, partner, slot, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          callId, n(data, "call_type"), n(data, "campaign"), n(data, "location"),
-          n(data, "caller_no"), n(data, "skill"), n(data, "call_date"), n(data, "start_time"),
-          n(data, "time_to_answer"), n(data, "end_time"), n(data, "talk_time"), n(data, "hold_time"),
-          n(data, "duration"), n(data, "call_flow"), n(data, "dialed_number"), n(data, "agent"),
-          n(data, "disposition"), n(data, "wrapup_duration"), n(data, "handling_time"),
-          n(data, "status"), n(data, "dial_status"), n(data, "customer_dial_status"),
-          n(data, "agent_dial_status"), n(data, "hangup_by"), n(data, "transfer_details"),
-          n(data, "uui"), n(data, "comments"), n(data, "feedback"), n(data, "customer_ring_time"),
-          n(data, "recording_url"), n(data, "agent_id"), n(data, "ratings"),
-          n(data, "rating_comments"), n(data, "dynamic_did"), n(data, "did"), n(data, "sub_lob"),
-          n(data, "partner"), n(data, "slot"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        callId, n(data, "call_type"), n(data, "campaign"), n(data, "location"),
+        n(data, "caller_no"), n(data, "skill"), n(data, "call_date"), n(data, "start_time"),
+        n(data, "time_to_answer"), n(data, "end_time"), n(data, "talk_time"), n(data, "hold_time"),
+        n(data, "duration"), n(data, "call_flow"), n(data, "dialed_number"), n(data, "agent"),
+        n(data, "disposition"), n(data, "wrapup_duration"), n(data, "handling_time"),
+        n(data, "status"), n(data, "dial_status"), n(data, "customer_dial_status"),
+        n(data, "agent_dial_status"), n(data, "hangup_by"), n(data, "transfer_details"),
+        n(data, "uui"), n(data, "comments"), n(data, "feedback"), n(data, "customer_ring_time"),
+        n(data, "recording_url"), n(data, "agent_id"), n(data, "ratings"),
+        n(data, "rating_comments"), n(data, "dynamic_did"), n(data, "did"), n(data, "sub_lob"),
+        n(data, "partner"), n(data, "slot"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.aw_new_cdr
+       (call_id, call_type, campaign, location, caller_no, skill, call_date, start_time,
+        time_to_answer, end_time, talk_time, hold_time, duration, call_flow, dialed_number,
+        agent, disposition, wrapup_duration, handling_time, status, dial_status,
+        customer_dial_status, agent_dial_status, hangup_by, transfer_details, uui, comments,
+        feedback, customer_ring_time, recording_url, agent_id, ratings, rating_comments,
+        dynamic_did, did, sub_lob, partner, slot, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

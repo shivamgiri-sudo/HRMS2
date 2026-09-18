@@ -16,6 +16,12 @@ import type { RowDataPacket } from "mysql2";
  * - Sale: neemans_sale_raw.amount/payment_status/final_status(RTO)/tl/lob.
  *   Real RTO data exists here (final_status='RTO', 137/6051 rows) -- unlike
  *   GNC's sibling dashboard, which had no RTO column at all.
+ * - Sale count everywhere below is COUNT(DISTINCT order_id), not COUNT(*):
+ *   confirmed live, neemans_sale_raw has 6,051 rows but only 6,006 distinct
+ *   order_id values -- 45 orders have >1 row (multiple line items on the
+ *   same order), and counting rows would overstate order volume. Revenue
+ *   still SUMs amount across all rows, since that's the real total across
+ *   an order's line items.
  * - Target/Achievement: nms_Agent_Details.monthly_target (a real per-agent
  *   roster figure), NOT neemans_sale_raw's own per-row `target` column --
  *   that column repeats a single value across many rows on the same
@@ -30,11 +36,13 @@ import type { RowDataPacket } from "mysql2";
  * - Productivity: neemans_apr.calls/login_time/talk/occu_pct/attendance.
  *
  * No date-range picker for Sale/Allocation/Productivity: neemans_sale_raw
- * and neemans_apr use consistent "D-Mon-YY" text (parseable), but
- * neemans_allocation's mixed-format `date` makes a reliable range filter
- * fragile across all three at once. This dashboard shows all currently
- * uploaded data instead of fabricating date-scoped precision; a Sale-only
- * date-wise trend is still provided since that table's dates are clean.
+ * and neemans_apr both mix multiple date text formats (see SALE_DATE_EXPR
+ * below for the exact shapes and how they're parsed), and
+ * neemans_allocation's `date` is mixed-format too, so a reliable range
+ * filter across all three at once stays fragile. This dashboard shows all
+ * currently uploaded data instead of fabricating date-scoped precision; a
+ * Sale-only and Productivity-only date-wise trend are still provided since
+ * SALE_DATE_EXPR now parses those tables' dates correctly.
  */
 
 export interface NeemansOverviewHeadline {
@@ -102,14 +110,32 @@ function timeToSec(v: unknown): number {
   return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
 }
 
-/** neemans_sale_raw.date / neemans_apr.date are "D-Mon-YY" text (e.g.
- * "31-Aug-26") -- MySQL parses this natively via STR_TO_DATE with %e-%b-%y. */
-const SALE_DATE_EXPR = "STR_TO_DATE(date, '%e-%b-%y')";
+/** `date` on both neemans_sale_raw and neemans_apr is NOT one consistent
+ * text format -- confirmed live 2026-09-18 after a raw DB screenshot showed
+ * values like "46174" instead of a readable date. Three formats coexist:
+ *   - neemans_sale_raw: 3,800/6,051 rows are a bare numeric Excel date
+ *     serial (e.g. "46174" -> 2026-06-01, verified via DATE_ADD('1899-12-30',
+ *     INTERVAL n DAY)); the other 2,251 rows are "D-Mon-YY" text
+ *     (e.g. "1-Aug-26"). Same `week` values mix both formats, so this is
+ *     an export-time inconsistency, not two different batches.
+ *   - neemans_apr: 271 rows are "D-Mon-YY" (2-digit year), 132 rows are
+ *     "DD-Mon-YYYY" (4-digit year, e.g. "01-Jul-2026").
+ * A plain STR_TO_DATE(date, '%e-%b-%y') silently returns NULL on whichever
+ * of these it doesn't match, and every query below filters on
+ * "IS NOT NULL" -- so the previous single-format version was quietly
+ * dropping up to 63% of neemans_sale_raw from the date-wise view. This CASE
+ * expression tries all three shapes instead of assuming one. */
+const SALE_DATE_EXPR = `CASE
+  WHEN date REGEXP '^[0-9]+$' THEN DATE_ADD('1899-12-30', INTERVAL CAST(date AS UNSIGNED) DAY)
+  WHEN date REGEXP '^[0-9]{1,2}-[A-Za-z]{3}-[0-9]{4}$' THEN STR_TO_DATE(date, '%e-%b-%Y')
+  WHEN date REGEXP '^[0-9]{1,2}-[A-Za-z]{3}-[0-9]{2}$' THEN STR_TO_DATE(date, '%e-%b-%y')
+  ELSE NULL
+END`;
 
 async function getSaleData(): Promise<NeemansSaleData> {
   const [[headlineRow]] = await db.execute<RowDataPacket[]>(
     `SELECT
-       SUM(amount) AS revenue, COUNT(*) AS sale_count,
+       SUM(amount) AS revenue, COUNT(DISTINCT NULLIF(order_id, '')) AS sale_count,
        SUM(CASE WHEN payment_status = 'paid' THEN 1 ELSE 0 END) AS prepaid_count,
        SUM(CASE WHEN payment_status = 'cod' THEN 1 ELSE 0 END) AS cod_count,
        SUM(CASE WHEN final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count,
@@ -139,7 +165,7 @@ async function getSaleData(): Promise<NeemansSaleData> {
   }
 
   const [trendRows] = await db.execute<RowDataPacket[]>(
-    `SELECT ${SALE_DATE_EXPR} AS d, COUNT(*) AS sale_count, SUM(amount) AS revenue,
+    `SELECT ${SALE_DATE_EXPR} AS d, COUNT(DISTINCT NULLIF(order_id, '')) AS sale_count, SUM(amount) AS revenue,
        SUM(CASE WHEN final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count
      FROM db_masmis.neemans_sale_raw
      WHERE ${SALE_DATE_EXPR} IS NOT NULL
@@ -147,14 +173,14 @@ async function getSaleData(): Promise<NeemansSaleData> {
   );
 
   const [paymentRows] = await db.execute<RowDataPacket[]>(
-    `SELECT payment_status, COUNT(*) AS n, SUM(amount) AS revenue
+    `SELECT payment_status, COUNT(DISTINCT NULLIF(order_id, '')) AS n, SUM(amount) AS revenue
      FROM db_masmis.neemans_sale_raw
      WHERE payment_status IS NOT NULL AND payment_status != ''
      GROUP BY payment_status ORDER BY n DESC`,
   );
 
   const [tlRows] = await db.execute<RowDataPacket[]>(
-    `SELECT tl AS tl_name, COUNT(*) AS sale_count, SUM(amount) AS revenue,
+    `SELECT tl AS tl_name, COUNT(DISTINCT NULLIF(order_id, '')) AS sale_count, SUM(amount) AS revenue,
        SUM(CASE WHEN final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count
      FROM db_masmis.neemans_sale_raw
      WHERE tl IS NOT NULL AND tl != ''
@@ -163,7 +189,7 @@ async function getSaleData(): Promise<NeemansSaleData> {
 
   const [agentRows] = await db.execute<RowDataPacket[]>(
     `SELECT emp_id, MAX(name) AS name, MAX(tl) AS tl_name,
-       COUNT(*) AS sale_count, SUM(amount) AS revenue,
+       COUNT(DISTINCT NULLIF(order_id, '')) AS sale_count, SUM(amount) AS revenue,
        SUM(CASE WHEN final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count,
        SUM(CASE WHEN payment_status = 'paid' THEN 1 ELSE 0 END) AS prepaid_count
      FROM db_masmis.neemans_sale_raw

@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
 Clovia's Quality Audit export (cl_quality.xlsx, 23 real
@@ -52,8 +53,7 @@ export async function importClQualityBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const insertRows: ChunkInsertRow[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -66,49 +66,51 @@ export async function importClQualityBatch(
     const requiredVal = getByColumn(data, "Unique");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "Unique" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.cl_quality
-           (unique_id, chat_mail_date, audit_date, chat_id, emp_id, emp_name, tl, chat_source, cx_query, frt_shared_within_timeline, correct_information_shared, soft_skills_followed_on_chat, reminder_shared_to_cx, cx_concern_resolved, tagging_mail_shared, aoi_if_any, lob, week, count_val, cq_score, fatal, acpt, acpt_reason, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          requiredVal,
-          n(data, "Chat/Mail Date"),
-          n(data, "Audit Date"),
-          n(data, "Chat ID"),
-          n(data, "Emp ID"),
-          n(data, "Emp Name"),
-          n(data, "TL"),
-          n(data, "Chat Source"),
-          n(data, "Cx Query"),
-          n(data, "FRT shared within timeline"),
-          n(data, "Correct Information Shared"),
-          n(data, "Softs skills followed on chat"),
-          n(data, "Reminder shared to cx"),
-          n(data, "Cx's Concern Resolved"),
-          n(data, "Tagging/mail shared"),
-          n(data, "AOI if any"),
-          n(data, "LOB"),
-          n(data, "Week"),
-          n(data, "Count"),
-          n(data, "CQ Score"),
-          n(data, "Fatal"),
-          n(data, "ACPT"),
-          n(data, "ACPT Reason"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        requiredVal,
+        n(data, "Chat/Mail Date"),
+        n(data, "Audit Date"),
+        n(data, "Chat ID"),
+        n(data, "Emp ID"),
+        n(data, "Emp Name"),
+        n(data, "TL"),
+        n(data, "Chat Source"),
+        n(data, "Cx Query"),
+        n(data, "FRT shared within timeline"),
+        n(data, "Correct Information Shared"),
+        n(data, "Softs skills followed on chat"),
+        n(data, "Reminder shared to cx"),
+        n(data, "Cx's Concern Resolved"),
+        n(data, "Tagging/mail shared"),
+        n(data, "AOI if any"),
+        n(data, "LOB"),
+        n(data, "Week"),
+        n(data, "Count"),
+        n(data, "CQ Score"),
+        n(data, "Fatal"),
+        n(data, "ACPT"),
+        n(data, "ACPT Reason"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.cl_quality
+       (unique_id, chat_mail_date, audit_date, chat_id, emp_id, emp_name, tl, chat_source, cx_query, frt_shared_within_timeline, correct_information_shared, soft_skills_followed_on_chat, reminder_shared_to_cx, cx_concern_resolved, tagging_mail_shared, aoi_if_any, lob, week, count_val, cq_score, fatal, acpt, acpt_reason, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: insertRows,
+  });
+  const importedRows = inserted.importedRows;
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

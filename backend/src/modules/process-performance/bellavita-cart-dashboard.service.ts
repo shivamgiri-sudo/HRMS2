@@ -32,6 +32,29 @@ export interface BellavitaCartHeadline {
   connectedPct: number;
   uniqueCustomers: number;
   activeAgents: number;
+  /** disposition IN ('Connect','Not Connect') -- cases an agent actually
+   * worked, as opposed to ones still sitting unattempted. */
+  workableCases: number;
+  /** disposition = 'Pending to call', per explicit user mapping (labeled
+   * "DND Cases" in the reference sheet the user supplied -- this app's real
+   * disposition values have no separate DND flag, only 'Pending to call',
+   * so that's what's counted here rather than inventing a DND-specific
+   * column that doesn't exist). */
+  dndCases: number;
+  /** Distinct (call_date, phone_number) pairs -- the same customer called
+   * twice on the same day counts once; called again on a different day
+   * counts again, per explicit "Unique call from date and Number" request. */
+  uniqueCallCount: number;
+  uniqueCallConnectedCount: number;
+  uniqueCallConnectedPct: number;
+  /** SUM(db_masmis.bb_sale.amount) WHERE campaign = 'Abandon Cart', over
+   * the same date range (matched on bb_sale's own `Date` column) -- the
+   * REALIZED revenue from recovered carts, a real, distinct figure from
+   * `cartValue` above (which is the pre-recovery value of the carts
+   * themselves, SUM(bb_cart.amount)). Same pattern already used for the
+   * Chat dashboard's Revenue (campaign = 'Chat'). */
+  abandonCartRevenue: number;
+  abandonCartSaleCount: number;
 }
 
 export interface BellavitaAllocationHeadline {
@@ -84,10 +107,26 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
     `SELECT COUNT(*) AS total, SUM(amount) AS value,
        SUM(CASE WHEN disposition = 'Connect' THEN 1 ELSE 0 END) AS connected,
        COUNT(DISTINCT NULLIF(phone_number, '')) AS unique_customers,
-       COUNT(DISTINCT NULLIF(agent, '')) AS active_agents
+       COUNT(DISTINCT NULLIF(agent, '')) AS active_agents,
+       SUM(CASE WHEN disposition IN ('Connect', 'Not Connect') THEN 1 ELSE 0 END) AS workable_cases,
+       SUM(CASE WHEN disposition = 'Pending to call' THEN 1 ELSE 0 END) AS dnd_cases,
+       COUNT(DISTINCT CASE WHEN phone_number IS NOT NULL AND phone_number != ''
+         THEN CONCAT(call_date, '|', phone_number) END) AS unique_call_count,
+       COUNT(DISTINCT CASE WHEN disposition = 'Connect' AND phone_number IS NOT NULL AND phone_number != ''
+         THEN CONCAT(call_date, '|', phone_number) END) AS unique_call_connected
      FROM db_masmis.bb_cart
      WHERE ${CART_DATE_EXPR} >= ? AND ${CART_DATE_EXPR} < DATE_ADD(?, INTERVAL 1 DAY)`,
     range,
+  );
+
+  /** bb_sale's own `Date` column is a plain "YYYY-MM-DD" string (confirmed
+   * live, same as the Chat dashboard's identical cross-reference) -- directly
+   * comparable to `from`/`to` without parsing. */
+  const [[abandonSaleRow]] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS n, SUM(amount) AS revenue
+     FROM db_masmis.bb_sale
+     WHERE campaign = 'Abandon Cart' AND \`Date\` >= ? AND \`Date\` <= ?`,
+    [from, to],
   );
 
   const [trendRows] = await db.execute<RowDataPacket[]>(
@@ -133,6 +172,8 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
   const totalCarts = num(headlineRow?.total);
   const connectedCount = num(headlineRow?.connected);
   const allocTotal = num(allocRow?.total);
+  const uniqueCallCount = num(headlineRow?.unique_call_count);
+  const uniqueCallConnectedCount = num(headlineRow?.unique_call_connected);
 
   return {
     headline: {
@@ -143,6 +184,13 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
       connectedPct: pct(connectedCount, totalCarts),
       uniqueCustomers: num(headlineRow?.unique_customers),
       activeAgents: num(headlineRow?.active_agents),
+      workableCases: num(headlineRow?.workable_cases),
+      dndCases: num(headlineRow?.dnd_cases),
+      uniqueCallCount,
+      uniqueCallConnectedCount,
+      uniqueCallConnectedPct: pct(uniqueCallConnectedCount, uniqueCallCount),
+      abandonCartRevenue: num(abandonSaleRow?.revenue),
+      abandonCartSaleCount: num(abandonSaleRow?.n),
     },
     from, to,
     dateWiseTrend: trendRows.map((r) => ({ date: String(r.d), cartCount: num(r.cart_count), cartValue: num(r.cart_value) })),

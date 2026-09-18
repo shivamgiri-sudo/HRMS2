@@ -7,7 +7,10 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import {
   IndianRupee, ShoppingBag, TrendingUp, PhoneCall, Timer, Users, Target, Trophy, Search, ListFilter, Building2,
 } from "lucide-react";
-import { Spinner, KpiCard, SectionCard, DashboardHero, formatINR } from "./DashboardKit";
+import {
+  Spinner, KpiCard, SectionCard, DashboardHero, DashboardExportMenu, formatINR,
+  type ExportSlide,
+} from "./DashboardKit";
 
 /**
  * Housing Premium's real "Sale Performance" dashboard -- live aggregates
@@ -92,6 +95,60 @@ export function HousingPremiumSaleDashboard() {
     return rows.filter((a) => a.name.toLowerCase().includes(q) || a.tlName.toLowerCase().includes(q) || (a.empId ?? "").toLowerCase().includes(q));
   }, [data, agentSearch]);
 
+  /** Export slides for "Download Snap"/"Download Excel" — one per tab,
+   * built from the same data already rendered on screen, not re-fetched. */
+  const exportSlides = useMemo<ExportSlide[]>(() => {
+    if (!data) return [];
+    const overall: ExportSlide = {
+      title: "Overall",
+      kpis: [
+        { label: "Revenue", value: formatINR(data.headline.totalRevenue) },
+        { label: "Sale Count", value: String(data.headline.totalSaleCount) },
+        { label: "AOV", value: formatINR(data.headline.aov) },
+        { label: "Connected %", value: `${data.headline.connectedPct}%` },
+        { label: "Avg Talk Time", value: secondsToMin(data.headline.avgTalkTimeSec) },
+        { label: "Active Agents", value: String(data.headline.activeAgents) },
+        { label: "Target", value: formatINR(data.headline.totalTarget) },
+        { label: "Achievement %", value: `${data.headline.achievementPct}%` },
+      ],
+      tables: [
+        {
+          title: "TL-wise Revenue vs Target",
+          columns: ["TL Name", "Revenue", "Target"],
+          rows: data.byTl.map((r) => [r.tlName, formatINR(r.revenue), formatINR(r.target)]),
+        },
+        {
+          title: "Partner Breakdown",
+          columns: ["Partner", "Revenue", "Sale Count"],
+          rows: data.partnerBreakdown.map((p) => [p.partnerName, formatINR(p.revenue), p.saleCount]),
+        },
+      ],
+    };
+    const tl: ExportSlide = {
+      title: "TL-wise",
+      tables: [{
+        title: "TL-wise Summary",
+        columns: ["TL Name", "Agents", "Target", "Achievement", "Ach %", "Revenue", "Sale Count", "Calls", "Connected %"],
+        rows: data.byTl.map((r) => [
+          r.tlName, r.agentCount, formatINR(r.target), formatINR(r.achievement), `${r.achievementPct}%`,
+          formatINR(r.revenue), r.saleCount, r.totalCalls, `${r.connectedPct}%`,
+        ]),
+      }],
+    };
+    const agentsSlide: ExportSlide = {
+      title: "Agent-wise",
+      tables: [{
+        title: "Agent-wise Performance",
+        columns: ["Emp Id", "Agent Name", "TL", "DOJ", "Tenure", "Bucket", "Status", "Target", "Ach %", "Revenue", "Calls", "Connected %"],
+        rows: data.agents.map((a) => [
+          a.empId ?? "—", a.name, a.tlName, formatDDMMYYYY(a.doj), a.tenureDays ?? "—", a.bucket ?? "Unknown", a.status,
+          formatINR(a.target), `${a.achievementPct}%`, formatINR(a.revenue), a.totalCalls, `${a.connectedPct}%`,
+        ]),
+      }],
+    };
+    return [overall, tl, agentsSlide];
+  }, [data]);
+
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!data) return null;
@@ -100,11 +157,20 @@ export function HousingPremiumSaleDashboard() {
 
   return (
     <div className="space-y-5">
-      <DashboardHero
+      <DashboardHero<TabKey>
         icon={Building2} eyebrow="Housing Premium · Process Performance" title="Sale Performance"
         tabs={TABS} activeTab={tab} onTabChange={setTab}
         gradient="from-amber-500 via-orange-500 to-amber-600"
       />
+
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <DashboardExportMenu
+          reportTitle="Housing Premium — Sale Performance"
+          fileBaseName="HousingPremium_Sale_Performance"
+          slides={exportSlides}
+          activeSlideTitle={tab === "overall" ? "Overall" : tab === "tl" ? "TL-wise" : "Agent-wise"}
+        />
+      </div>
 
       {tab === "overall" && (
       <>

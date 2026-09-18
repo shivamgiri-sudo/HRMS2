@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
@@ -6,6 +6,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import {
   Users, PhoneCall, Heart, TrendingUp, IndianRupee, Wallet, Timer, Map, Tag, Award,
 } from "lucide-react";
+import { DashboardExportMenu, type ExportSlide } from "./DashboardKit";
 
 interface GroupRow { label: string; leads: number; connected: number; connectedPct: number; converted: number; conversionPct: number; saleValue: number }
 interface DashboardData {
@@ -132,6 +133,73 @@ export function BirlanuDashboard() {
 
   useEffect(() => { void load(); }, [load]);
 
+  /** Export slide for "Download Snap"/"Download Excel" — this dashboard has
+   * no tabs and no date-range toolbar, so a single slide mirrors everything
+   * already rendered below. */
+  const exportSlides = useMemo<ExportSlide[]>(() => {
+    if (!data) return [];
+    const { headline } = data;
+    return [{
+      title: "Overview",
+      kpis: [
+        { label: "Total Leads", value: headline.totalLeads.toLocaleString("en-IN") },
+        { label: "Connected %", value: `${headline.connectedPct}%` },
+        { label: "Interested %", value: `${headline.interestedPct}%` },
+        { label: "Conversion %", value: `${headline.conversionPct}%` },
+        { label: "Total Sale Value", value: formatINR(headline.totalSaleValue) },
+        { label: "Avg Order Value", value: formatINR(headline.avgOrderValue) },
+        { label: "TAT Compliance", value: headline.tatTracked ? `${headline.tatCompliancePct}%` : "—" },
+      ],
+      tables: [
+        {
+          title: "Lead Closer Status",
+          columns: ["Status", "Count", "Sale Value"],
+          rows: data.byLeadCloserStatus.map((s) => [statusLabel(s.status), s.count, formatINR(s.saleValue)]),
+        },
+        {
+          title: "Daily Lead Volume & Sale Value",
+          columns: ["Date", "Leads", "Sale Value"],
+          rows: data.dailyTrend.map((r) => [formatShortDate(r.date), r.leads, formatINR(r.saleValue)]),
+        },
+        {
+          title: "Business-wise (LOB)",
+          columns: ["Label", "Leads", "Connected %", "Conversion %", "Sale Value"],
+          rows: data.byBusiness.map((r) => [r.label, r.leads, `${r.connectedPct}%`, `${r.conversionPct}%`, formatINR(r.saleValue)]),
+        },
+        {
+          title: "Brand-wise",
+          columns: ["Label", "Leads", "Connected %", "Conversion %", "Sale Value"],
+          rows: data.byBrand.map((r) => [r.label, r.leads, `${r.connectedPct}%`, `${r.conversionPct}%`, formatINR(r.saleValue)]),
+        },
+        {
+          title: "Enquiry Source",
+          columns: ["Label", "Leads", "Connected %", "Conversion %", "Sale Value"],
+          rows: data.byEnquirySource.map((r) => [r.label, r.leads, `${r.connectedPct}%`, `${r.conversionPct}%`, formatINR(r.saleValue)]),
+        },
+        {
+          title: "Organic vs Paid",
+          columns: ["Label", "Leads", "Connected %", "Conversion %", "Sale Value"],
+          rows: data.byOrganicPaid.map((r) => [r.label, r.leads, `${r.connectedPct}%`, `${r.conversionPct}%`, formatINR(r.saleValue)]),
+        },
+        {
+          title: "Zone-wise",
+          columns: ["Label", "Leads", "Connected %", "Conversion %", "Sale Value"],
+          rows: data.byZone.map((r) => [r.label, r.leads, `${r.connectedPct}%`, `${r.conversionPct}%`, formatINR(r.saleValue)]),
+        },
+        {
+          title: "Agent-wise Performance",
+          columns: ["Label", "Leads", "Connected %", "Conversion %", "Sale Value"],
+          rows: data.byAgent.map((r) => [r.label, r.leads, `${r.connectedPct}%`, `${r.conversionPct}%`, formatINR(r.saleValue)]),
+        },
+        {
+          title: "Agent Productivity (APR)",
+          columns: ["Agents in Roster", "Agents with Metrics"],
+          rows: [[data.productivity.agentsInRoster, data.productivity.agentsWithMetrics]],
+        },
+      ],
+    }];
+  }, [data]);
+
   if (loading && !data) return <Spinner />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!data) return null;
@@ -140,6 +208,15 @@ export function BirlanuDashboard() {
 
   return (
     <div className="space-y-5">
+      <div className="flex justify-end">
+        <DashboardExportMenu
+          reportTitle="Birlanu — Lead-to-Sale Performance"
+          fileBaseName="Birlanu_Performance"
+          slides={exportSlides}
+          activeSlideTitle="Overview"
+        />
+      </div>
+
       {/* Headline KPIs */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
         <KpiCard icon={Users} label="Total Leads" value={headline.totalLeads.toLocaleString("en-IN")} tone="bg-indigo-50 text-indigo-600" />

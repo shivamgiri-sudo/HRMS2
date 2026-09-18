@@ -8,7 +8,10 @@ import {
   IndianRupee, ShoppingBag, TrendingUp, PhoneCall, Users, Search, ListFilter,
   Target, Trophy, MessageSquare, Gauge, Clock3, Layers, ClipboardList, Footprints,
 } from "lucide-react";
-import { Spinner, KpiCard, SectionCard, DashboardHero, formatINR, formatShortDate } from "./DashboardKit";
+import {
+  Spinner, KpiCard, SectionCard, DashboardHero, DashboardExportMenu, formatINR, formatShortDate,
+  type ExportSlide,
+} from "./DashboardKit";
 
 /**
  * Neemans' combined Sale/Allocation/Chat/Productivity dashboard -- one
@@ -128,6 +131,124 @@ export function NeemansPerformanceDashboard() {
     return rows.filter((a) => a.name.toLowerCase().includes(q) || a.empId.toLowerCase().includes(q));
   }, [data, prodSearch]);
 
+  /** Export slides for "Download Snap"/"Download Excel" — one per tab,
+   * built from the same data already rendered on screen, not re-fetched. */
+  const exportSlides = useMemo<ExportSlide[]>(() => {
+    if (!data) return [];
+    const { overview, sale, allocation, chat, productivity } = data;
+
+    const overviewSlide: ExportSlide = {
+      title: "Overview",
+      kpis: [
+        { label: "Sale Revenue", value: formatINR(overview.saleRevenue) },
+        { label: "Sale Count", value: overview.saleCount.toLocaleString("en-IN") },
+        { label: "RTO %", value: `${overview.rtoPct}%` },
+        { label: "Total Allocation", value: overview.totalAllocation.toLocaleString("en-IN") },
+        { label: "Allocation Connected %", value: `${overview.allocationConnectedPct}%` },
+        { label: "Chat Tickets", value: String(overview.totalChatTickets) },
+        { label: "Chat Resolved %", value: `${overview.chatResolvedPct}%` },
+        { label: "Avg Occupancy %", value: `${overview.avgOccupancyPct}%` },
+      ],
+    };
+
+    const saleSlide: ExportSlide = {
+      title: "Sale",
+      kpis: [
+        { label: "Revenue", value: formatINR(sale.headline.revenue) },
+        { label: "Sale Count", value: sale.headline.saleCount.toLocaleString("en-IN") },
+        { label: "AOV", value: formatINR(sale.headline.aov) },
+        { label: "Prepaid %", value: `${sale.headline.prepaidPct}%` },
+        { label: "COD %", value: `${sale.headline.codPct}%` },
+        { label: "RTO %", value: `${sale.headline.rtoPct}%` },
+        { label: "Target", value: formatINR(sale.headline.target) },
+        { label: "Achievement %", value: `${sale.headline.achievementPct}%` },
+      ],
+      tables: [
+        {
+          title: "TL-wise Summary",
+          columns: ["TL Name", "Sale Count", "Revenue", "RTO %", "Target", "Achievement %"],
+          rows: sale.byTl.map((r) => [r.tlName, r.saleCount, formatINR(r.revenue), `${r.rtoPct}%`, formatINR(r.target), `${r.achievementPct}%`]),
+        },
+        {
+          title: "Agent-wise Sale Performance",
+          columns: ["Agent", "Emp ID", "TL", "Sale Count", "Revenue", "RTO %", "Prepaid %", "Target", "Achievement %"],
+          rows: sale.agents.map((a) => [
+            a.name, a.empId, a.tlName, a.saleCount, formatINR(a.revenue), `${a.rtoPct}%`, `${a.prepaidPct}%`, formatINR(a.target), `${a.achievementPct}%`,
+          ]),
+        },
+      ],
+    };
+
+    const allocationSlide: ExportSlide = {
+      title: "Allocation",
+      kpis: [
+        { label: "Total Allocation", value: allocation.headline.totalAllocation.toLocaleString("en-IN") },
+        { label: "Connected", value: allocation.headline.connected.toLocaleString("en-IN") },
+        { label: "Connected %", value: `${allocation.headline.connectedPct}%` },
+        { label: "Not Connected", value: allocation.headline.notConnected.toLocaleString("en-IN") },
+        { label: "Pending", value: allocation.headline.pending.toLocaleString("en-IN") },
+        { label: "Unique Phones", value: allocation.headline.uniquePhones.toLocaleString("en-IN") },
+        { label: "Active Agents", value: String(allocation.headline.activeAgents) },
+      ],
+      tables: [
+        {
+          title: "Calling Status Breakdown",
+          columns: ["Status", "Count", "Share"],
+          rows: allocation.statusBreakdown.map((s) => [s.status, s.count.toLocaleString("en-IN"), `${s.pct}%`]),
+        },
+        {
+          title: "Agent-wise Allocation",
+          columns: ["Agent", "Allocation", "Connected", "Connected %"],
+          rows: allocation.agents.map((a) => [a.agent, a.allocation.toLocaleString("en-IN"), a.connected.toLocaleString("en-IN"), `${a.connectedPct}%`]),
+        },
+      ],
+    };
+
+    const chatSlide: ExportSlide = {
+      title: "Chat",
+      kpis: [
+        { label: "Total Tickets", value: String(chat.headline.totalTickets) },
+        { label: "Resolved %", value: `${chat.headline.resolvedPct}%` },
+        { label: "Avg FRT", value: `${chat.headline.avgFrtHrs}h` },
+        { label: "Avg Resolution", value: `${chat.headline.avgResolutionHrs}h` },
+        { label: "Avg CSAT", value: String(chat.headline.avgCsat) },
+      ],
+      tables: [
+        {
+          title: "LOB-wise Tickets",
+          columns: ["LOB", "Tickets", "Resolved %"],
+          rows: chat.byLob.map((r) => [r.lob, r.tickets, `${r.resolvedPct}%`]),
+        },
+        {
+          title: "Agent-wise Chat Performance",
+          columns: ["Agent", "Emp ID", "Tickets", "Resolved %", "Avg CSAT"],
+          rows: chat.agents.map((a) => [a.agent, a.empId, a.tickets, `${a.resolvedPct}%`, a.avgCsat || "—"]),
+        },
+      ],
+    };
+
+    const productivitySlide: ExportSlide = {
+      title: "Productivity",
+      kpis: [
+        { label: "Total Calls", value: productivity.headline.totalCalls.toLocaleString("en-IN") },
+        { label: "Active Agents", value: String(productivity.headline.activeAgents) },
+        { label: "Avg Occupancy %", value: `${productivity.headline.avgOccupancyPct}%` },
+        { label: "Attendance Days", value: String(productivity.headline.attendanceDays) },
+      ],
+      tables: [
+        {
+          title: "Agent-wise Productivity",
+          columns: ["Agent", "Emp ID", "Calls", "Login Time", "Talk Time", "Occupancy %", "Attendance Days"],
+          rows: productivity.agents.map((a) => [
+            a.name, a.empId, a.calls, secondsToHms(a.loginTimeSec), secondsToHms(a.talkTimeSec), `${a.occupancyPct}%`, a.attendanceDays,
+          ]),
+        },
+      ],
+    };
+
+    return [overviewSlide, saleSlide, allocationSlide, chatSlide, productivitySlide];
+  }, [data]);
+
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!data) return null;
@@ -136,11 +257,26 @@ export function NeemansPerformanceDashboard() {
 
   return (
     <div className="space-y-5">
-      <DashboardHero
+      <DashboardHero<TabKey>
         icon={Footprints} eyebrow="Neemans · Process Performance" title="Sale, Allocation, Chat & Productivity"
         tabs={TABS} activeTab={tab} onTabChange={setTab}
         gradient="from-violet-600 via-purple-600 to-violet-700"
       />
+
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <DashboardExportMenu
+          reportTitle="Neemans — Sale, Allocation, Chat & Productivity"
+          fileBaseName="Neemans_Performance"
+          slides={exportSlides}
+          activeSlideTitle={
+            tab === "overview" ? "Overview"
+            : tab === "sale" ? "Sale"
+            : tab === "allocation" ? "Allocation"
+            : tab === "chat" ? "Chat"
+            : "Productivity"
+          }
+        />
+      </div>
 
       {tab === "overview" && (
         <div className="space-y-4">
