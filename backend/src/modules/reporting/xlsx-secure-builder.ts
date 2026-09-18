@@ -99,6 +99,11 @@ export interface XlsxBuildParams {
   /** All data rows; may have been accumulated across keyset chunks */
   rows: Record<string, unknown>[];
   totalRows: number; // matches rows.length for normal runs; may be lower if row-limit hit
+  /**
+   * Skip the 20 MB size cap. Set true for restricted/link-delivery reports where the file
+   * is stored on disk and sent as a download link — the cap only applies to email attachments.
+   */
+  skipSizeCap?: boolean;
 }
 
 export async function buildSecureXlsxBuffer(params: XlsxBuildParams): Promise<Buffer> {
@@ -185,8 +190,10 @@ export async function buildSecureXlsxBuffer(params: XlsxBuildParams): Promise<Bu
   // ── Write to buffer ──────────────────────────────────────────────────────────
   const buffer = Buffer.from(await wb.xlsx.writeBuffer());
 
-  // File size guard (after building so we know the real size)
-  if (buffer.length > ATTACHMENT_MAX_BYTES) {
+  // File size guard — only applies when the file is delivered as an email attachment.
+  // Link-delivery reports (restricted/highly_restricted) bypass this cap because the
+  // file is stored on disk and sent as a signed download URL, not an attachment.
+  if (!params.skipSizeCap && buffer.length > ATTACHMENT_MAX_BYTES) {
     throw new XlsxFileSizeError(buffer.length, ATTACHMENT_MAX_BYTES);
   }
 
