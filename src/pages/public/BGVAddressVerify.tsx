@@ -178,14 +178,26 @@ export default function BGVAddressVerify() {
           <p className="text-sm text-white/90 leading-relaxed">{info?.declaredAddress}</p>
         </div>
 
+        {/* Consent notice */}
+        <div className="bg-blue-500/10 border border-blue-400/30 rounded-2xl p-4 text-xs text-blue-100 leading-relaxed">
+          <strong className="block mb-1 text-blue-200">📋 Consent &amp; Important Notice</strong>
+          By submitting this verification you confirm that:
+          <ul className="list-disc ml-4 mt-1 space-y-1 text-blue-100/90">
+            <li>You <strong>consent</strong> to your GPS location being captured and stored for address verification purposes.</li>
+            <li>You are <strong>physically present at the address shown above</strong> at the time of capture.</li>
+            <li>The selfie is taken <strong>live</strong> — screenshots or previously captured photos are not accepted.</li>
+            <li>Submitting from a different location will result in a <strong>failed verification</strong>.</li>
+          </ul>
+        </div>
+
         {/* Instructions */}
         <div className="bg-amber-500/10 border border-amber-400/20 rounded-2xl p-4 text-xs text-amber-200 leading-relaxed">
-          <strong className="block mb-1">Instructions</strong>
-          Go to the address shown above, then:
+          <strong className="block mb-1">How to complete</strong>
           <ol className="list-decimal ml-4 mt-1 space-y-1">
-            <li>Allow location access when prompted</li>
-            <li>Take a selfie with your surroundings visible</li>
-            <li>Submit — your GPS will be recorded automatically</li>
+            <li>Go to your <strong>current address</strong> shown above</li>
+            <li>Allow location access when the browser asks</li>
+            <li>Take a live selfie with your surroundings clearly visible</li>
+            <li>Submit — your GPS coordinates are recorded automatically</li>
           </ol>
         </div>
 
