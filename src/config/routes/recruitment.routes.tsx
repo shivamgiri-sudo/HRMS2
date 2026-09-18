@@ -40,6 +40,7 @@ const ATSBulkImportPage                = lazy(() => import("@/pages/ATSBulkImpor
 const NativeATSCandidateRegistration   = lazy(() => import("@/pages/NativeATSCandidateRegistration"));
 const NativeJobRequisition             = lazy(() => import("@/pages/NativeJobRequisition"));
 const IjpAdminPage                     = lazy(() => import("@/pages/recruitment/IjpAdminPage"));
+const MetaCampaignDashboard            = lazy(() => import("@/pages/ats/MetaCampaignDashboard"));
 
 export const recruitmentRouteElements = (
   <>
@@ -85,6 +86,11 @@ export const recruitmentRouteElements = (
 
       {/* Sourcing */}
       <Route path="/ats/sourcing-analysis" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSSourcingAnalysis /></Gate></ProtectedRoute>} />
+
+      {/* META Lead Gen campaign automation. Its own page code rather than reusing ATS_DASHBOARD:
+          the write side (linking a Lead Gen Form ID) misroutes candidates if done wrongly, so it
+          needs a narrower grant than the general ATS dashboards. Seeded by migration 1812. */}
+      <Route path="/ats/meta-campaigns" element={<ProtectedRoute><Gate pageCode="ATS_META_CAMPAIGNS"><MetaCampaignDashboard /></Gate></ProtectedRoute>} />
 
       {/* Onboarding bridge */}
       <Route path="/ats/onboarding-bridge"    element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><NativeATSOnboardingBridge /></Gate></ProtectedRoute>} />

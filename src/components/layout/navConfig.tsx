@@ -7,7 +7,8 @@ import {
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
   Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle, IndianRupee,
   Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound, RotateCcw, Mail, Share2,
-  Video, PenLine, Workflow, Layers3, CalendarOff, MessageSquare, AlertCircle, Trophy, History
+  Video, PenLine, Workflow, Layers3, CalendarOff, MessageSquare, AlertCircle, Trophy, History,
+  Megaphone
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
 
@@ -130,6 +131,7 @@ export const navGroups: NavGroup[] = [
           { label: "Waiting Queue", href: "/ats/waiting-queue", icon: ic(Users), pageCode: "ATS_WAITING_QUEUE", description: "Candidate waiting workflow" },
           { label: "Recruiter Portal", href: "/ats/recruiter-portal", icon: ic(Briefcase), pageCode: "ATS_RECRUITER_PORTAL", description: "Recruiter interview workspace" },
           { label: "ATS Sourcing",      href: "/ats/sourcing-analysis",        icon: ic(BarChart3),    pageCode: "ATS_DASHBOARD",         roles: ["admin","hr"], description: "Sourcing analytics" },
+          { label: "META Campaigns",    href: "/ats/meta-campaigns",           icon: ic(Megaphone),    pageCode: "ATS_META_CAMPAIGNS",    description: "META Lead Gen ad performance & lead screening" },
           { label: "Name Consistency", href: "/ats/name-consistency", icon: ic(FileCheck), pageCode: "NAME_CONSISTENCY_MATRIX", description: "Candidate identity consistency" },
           { label: "ATS Reconciliation", href: "/ats/reconciliation", icon: ic(CheckCircle), roles: ["admin","hr","super_admin"], description: "Recruitment reconciliation" },
           { label: "Form Config",       href: "/ats/form-config",              icon: ic(Settings2),                                               roles: ["admin","hr","super_admin"], description: "Interview form & branch aliases" },

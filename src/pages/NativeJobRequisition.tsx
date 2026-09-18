@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { HeadcountShortagePanel } from '@/components/workforce/HeadcountShortagePanel';
+import RequisitionMetaPanel from '@/components/ats/RequisitionMetaPanel';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { formatISTDate } from '@/lib/utils';
 import {
@@ -181,6 +182,15 @@ const emptyForm = {
   training_start_date: '',
   target_joining_date: '',
   requisition_validity: '',
+  // META campaign targeting (migration 1810). These are read by the campaign brief email sent to
+  // marketing on approval, and the age band is also what lead-screener.service.ts screens incoming
+  // Lead Gen leads against — so leaving the band blank means age is not screened at all, not that
+  // every age is rejected.
+  bmi_assessment_url: '',
+  meta_target_age_min: '',
+  meta_target_age_max: '',
+  meta_target_locations: '',
+  meta_target_radius_km: '',
 };
 
 // ── Main Component ─────────────────────────────────────────────────────────────
@@ -386,6 +396,16 @@ export default function NativeJobRequisition() {
         target_joining_date: formData.target_joining_date || null,
         requisition_validity: formData.requisition_validity || null,
         process_id: formData.process_id || null,
+        // META campaign targeting. Locations are sent as a real array — the column is JSON, and
+        // the backend stringifies it; sending the raw comma string would store a JSON string
+        // rather than a JSON array and every reader that expects to iterate it would get characters.
+        bmi_assessment_url: formData.bmi_assessment_url || null,
+        meta_target_age_min: formData.meta_target_age_min ? Number(formData.meta_target_age_min) : null,
+        meta_target_age_max: formData.meta_target_age_max ? Number(formData.meta_target_age_max) : null,
+        meta_target_locations: formData.meta_target_locations
+          ? formData.meta_target_locations.split(',').map((s) => s.trim()).filter(Boolean)
+          : null,
+        meta_target_radius_km: formData.meta_target_radius_km ? Number(formData.meta_target_radius_km) : null,
       };
 
       if (editingRequisition) {
@@ -1355,6 +1375,83 @@ export default function NativeJobRequisition() {
                     placeholder="List required skills..."
                   />
                 </div>
+
+                {/* ── META Campaign Targeting ───────────────────────────────────
+                    Feeds the campaign brief emailed to marketing on approval, and the age band
+                    doubles as the automated screening criterion for incoming Lead Gen leads. */}
+                <div className="border-t pt-4">
+                  <h3 className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-1">
+                    META Campaign Targeting
+                  </h3>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Optional. Included in the campaign brief emailed to marketing when this requisition is
+                    approved. The age band is also used to auto-screen incoming leads — leave it blank to skip
+                    age screening rather than to reject every age.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        BMI / Assessment Link
+                      </label>
+                      <input
+                        type="url"
+                        value={formData.bmi_assessment_url}
+                        onChange={(e) => field('bmi_assessment_url', e.target.value)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        placeholder="https://…"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Target Age (min)</label>
+                      <input
+                        type="number"
+                        min={18}
+                        max={70}
+                        value={formData.meta_target_age_min}
+                        onChange={(e) => field('meta_target_age_min', e.target.value)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        placeholder="18"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Target Age (max)</label>
+                      <input
+                        type="number"
+                        min={18}
+                        max={70}
+                        value={formData.meta_target_age_max}
+                        onChange={(e) => field('meta_target_age_max', e.target.value)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        placeholder="35"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Target Locations
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.meta_target_locations}
+                        onChange={(e) => field('meta_target_locations', e.target.value)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        placeholder="Mumbai, Thane, Navi Mumbai"
+                      />
+                      <p className="mt-1 text-xs text-gray-400">Comma-separated city or area names.</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Radius (km)</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={200}
+                        value={formData.meta_target_radius_km}
+                        onChange={(e) => field('meta_target_radius_km', e.target.value)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        placeholder="25"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
               <div className="p-6 border-t bg-gray-50 flex justify-end gap-3">
                 <button
@@ -1449,6 +1546,18 @@ export default function NativeJobRequisition() {
                       <div><span className="text-gray-500">Target Joining:</span> <span className="ml-2 font-medium">{selectedRequisition.target_joining_date ? formatISTDate(selectedRequisition.target_joining_date) : '—'}</span></div>
                     </div>
                   </div>
+                )}
+
+                {/* META campaign link — the manual step that lets the Lead Gen webhook route an
+                    incoming lead to THIS requisition. Shown only once approved: marketing builds
+                    the campaign after approval, so before that there is nothing to link. */}
+                {selectedRequisition.approval_status === 'approved' && (
+                  <RequisitionMetaPanel
+                    requisitionId={selectedRequisition.id}
+                    requisitionCode={selectedRequisition.requisition_code}
+                    designationName={selectedRequisition.designation_name}
+                    canEdit={['super_admin', 'admin', 'hr', 'recruitment_hr'].includes(currentUserRole ?? '')}
+                  />
                 )}
 
                 {/* Tab Nav */}

@@ -122,6 +122,126 @@ function generateRequisitionCode(): string {
   return `REQ-${year}${month}-${random}`;
 }
 
+/**
+ * Read one org_settings key as a de-duplicated list of email addresses.
+ *
+ * Stored in org_settings (the codebase's key/value table — there is no `system_config` table,
+ * despite what the feature plan assumed). Two keys use this: `marketing_team_emails` (the brief's
+ * To line, one editable marketing owner — currently brijesh.kumar@teammas.co.in per 1816) and
+ * `marketing_team_cc_emails` (the fixed Cc list — rajesh.ramachandran@teammas.in,
+ * shivam.giri@teammas.in). An empty list from either key makes that part of the send a no-op, not
+ * an error. Accepts either a JSON array or a bare comma-separated string, because an admin editing
+ * the setting by hand through raw SQL is far more likely to type the latter.
+ */
+async function getEmailListSetting(settingKey: string): Promise<string[]> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT setting_value FROM org_settings WHERE setting_key = ? LIMIT 1`,
+      [settingKey]
+    );
+    const raw = rows[0]?.setting_value as string | null | undefined;
+    if (!raw) return [];
+    const trimmed = raw.trim();
+    let list: string[];
+    if (trimmed.startsWith("[")) {
+      const parsed: unknown = JSON.parse(trimmed);
+      list = Array.isArray(parsed) ? parsed.filter((e): e is string => typeof e === "string") : [];
+    } else {
+      list = trimmed.split(",");
+    }
+    const seen = new Set<string>();
+    for (const raw2 of list) {
+      const email = raw2.trim().toLowerCase();
+      if (email.includes("@")) seen.add(email);
+    }
+    return [...seen];
+  } catch (e: unknown) {
+    console.warn(`[JobRequisition getEmailListSetting:${settingKey}] failed:`, e instanceof Error ? e.message : e);
+    return [];
+  }
+}
+
+/** The brief's To line — the marketing team member who builds the META campaign. */
+const getMarketingEmails = () => getEmailListSetting("marketing_team_emails");
+
+/** The brief's fixed Cc list. The requisition's branch head is added on top of this, not stored in it. */
+const getMarketingCcEmails = () => getEmailListSetting("marketing_team_cc_emails");
+
+/**
+ * Official email of the branch head for one requisition's branch, or null.
+ *
+ * Deliberately does NOT fall back to any inferred contact when a branch has no active branch head
+ * assignment — notifyRequisitionRaised's own comment on this file documents why: that inference was
+ * tried once, turned out unreliable (branch_head_assignments then held only 3 seed rows), and
+ * silently emailing the wrong person is worse than emailing one fewer person. Unioned across both
+ * scoping models live in this codebase (see branch-head-approval.service.ts's resolveBranchScope
+ * for the same union), so a branch head assigned via either path is found.
+ */
+async function getBranchHeadEmail(branchName: string | null | undefined): Promise<string | null> {
+  if (!branchName) return null;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT au.email
+         FROM branch_head_assignments bha
+         JOIN employees e ON e.id = bha.branch_head_id AND e.active_status = 1
+         JOIN auth_user au ON au.id = e.user_id
+        WHERE bha.branch_name = ? AND bha.is_active = TRUE
+        UNION
+       SELECT au2.email
+         FROM user_assignment_scope uas
+         JOIN branch_master bm ON bm.id = uas.branch_id AND bm.branch_name = ?
+         JOIN employees e2 ON e2.user_id = uas.user_id AND e2.active_status = 1
+         JOIN auth_user au2 ON au2.id = e2.user_id
+        WHERE uas.scope_type = 'branch_head'
+        LIMIT 1`,
+      [branchName, branchName]
+    );
+    const email = rows[0]?.email as string | undefined;
+    return email && email.includes("@") ? email.trim() : null;
+  } catch (e: unknown) {
+    // Missing table/column on an older schema, or a bad join, must not block the brief from
+    // sending to its To+fixed-Cc list — the branch head is an addition, not a precondition.
+    console.warn("[JobRequisition getBranchHeadEmail] failed:", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+/**
+ * Escape a DB value before interpolating it into the brief's HTML.
+ *
+ * The brief is assembled as a raw HTML string rather than through templateService, so every
+ * interpolated field is a potential injection point. Designation, skills and location strings are
+ * all originally free-text user input, and marketing mail clients render HTML — an unescaped
+ * `<` in a job description would at best corrupt the layout.
+ */
+function escapeHtml(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Parse a MySQL JSON column that may arrive as an object (mysql2 auto-parses) or a string. */
+function parseJsonArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string");
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function formatInr(value: unknown): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n) || n === 0) return "—";
+  return `₹${n.toLocaleString("en-IN")}`;
+}
+
 export const jobRequisitionService = {
   /**
    * List requisitions with filters and pagination
@@ -414,8 +534,10 @@ export const jobRequisitionService = {
         salary_min, salary_max, experience_min_years, experience_max_years, education_requirement,
         skills_required, job_description, shift_requirement, rotational_shift, night_shift_required,
         target_joining_date, requisition_validity, priority, requisition_type, business_justification,
-        preferred_sources, internal_posting, requested_by, requested_by_name, approval_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        preferred_sources, internal_posting, requested_by, requested_by_name,
+        bmi_assessment_url, meta_target_age_min, meta_target_age_max, meta_target_locations,
+        meta_target_radius_km, approval_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
       [
         id,
         code,
@@ -448,6 +570,11 @@ export const jobRequisitionService = {
         input.internal_posting ? 1 : 0,
         requestedBy,
         requestedByName,
+        input.bmi_assessment_url ?? null,
+        input.meta_target_age_min ?? null,
+        input.meta_target_age_max ?? null,
+        input.meta_target_locations ? JSON.stringify(input.meta_target_locations) : null,
+        input.meta_target_radius_km ?? null,
       ]
     );
 
@@ -496,12 +623,18 @@ export const jobRequisitionService = {
       "rotational_shift", "night_shift_required", "target_joining_date", "requisition_validity",
       "priority", "requisition_type", "business_justification", "preferred_sources",
       "internal_posting", "owner_recruiter_id",
+      // META campaign targeting (migration 1810).
+      "bmi_assessment_url", "meta_target_age_min", "meta_target_age_max",
+      "meta_target_locations", "meta_target_radius_km",
     ];
 
     for (const field of allowedFields) {
       if (field in input) {
         const value = input[field];
-        if (field === "preferred_sources" && Array.isArray(value)) {
+        // meta_target_locations is a JSON column like preferred_sources, so it needs the same
+        // stringify treatment. Without it mysql2 would bind a JS array by flattening it into the
+        // placeholder list and the statement would fail on argument count.
+        if ((field === "preferred_sources" || field === "meta_target_locations") && Array.isArray(value)) {
           sets.push(`${field} = ?`);
           params.push(JSON.stringify(value));
         } else if (field === "rotational_shift" || field === "night_shift_required" || field === "internal_posting") {
@@ -645,6 +778,13 @@ export const jobRequisitionService = {
       action_url: `/recruitment/job-requisition`,
       priority: "high",
     }).catch((e: unknown) => console.warn("[JR notify]", e));
+
+    // META campaign brief to marketing. Fired without awaiting: the approval is already committed
+    // above, and an email failure must not surface as a failed approval to the approver. The
+    // method swallows its own errors too, so this .catch is belt-and-braces.
+    this.notifyMarketingTeam(id).catch((e: unknown) =>
+      console.warn("[JR notifyMarketingTeam]", e)
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM job_requisition WHERE id = ? LIMIT 1",
@@ -1257,6 +1397,117 @@ export const jobRequisitionService = {
       });
     } catch (e: unknown) {
       console.warn("[JobRequisition notifyRequisitionRaised] email send failed:", e instanceof Error ? e.message : e);
+    }
+  },
+
+  /**
+   * META campaign brief — sent to the marketing team when a requisition is APPROVED.
+   *
+   * Distinct from notifyRequisitionRaised above in trigger, audience and purpose: that one fires
+   * at raise-time to the branch's HR/Branch Head so they know an approval is pending; this one
+   * fires at approval-time to a global marketing list so they can build the META Lead Gen
+   * campaign. They deliberately do not share the branch_notification_recipient mechanism —
+   * marketing is not a branch-scoped audience, and a per-branch table would mean re-configuring
+   * every branch before the first campaign could run.
+   *
+   * Two independent conditions make this inert rather than noisy:
+   *   - emailService.isConfigured() — same guard as every other sender here. Per
+   *     communication/providers/provider.interface.ts, uncredentialed channels have historically
+   *     produced ~1,800 guaranteed-failed dispatch rows; this refuses to add to that.
+   *   - an empty org_settings.marketing_team_emails, which is how 1811 seeds it.
+   *
+   * Never throws. The caller fires it without awaiting, because a marketing email must not be
+   * able to fail an approval that has already been committed to the database.
+   */
+  async notifyMarketingTeam(requisitionId: string): Promise<void> {
+    try {
+      if (!emailService.isConfigured()) return;
+
+      const recipients = await getMarketingEmails();
+      if (recipients.length === 0) return;
+
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT * FROM job_requisition WHERE id = ? LIMIT 1`,
+        [requisitionId]
+      );
+      const req = rows[0];
+      if (!req) return;
+
+      const locations = parseJsonArray(req.meta_target_locations);
+      const sources = parseJsonArray(req.preferred_sources);
+      const ageBand =
+        req.meta_target_age_min || req.meta_target_age_max
+          ? `${req.meta_target_age_min ?? "?"}–${req.meta_target_age_max ?? "?"} years`
+          : "Not specified";
+      const salaryBand =
+        req.salary_min || req.salary_max
+          ? `${formatInr(req.salary_min)} – ${formatInr(req.salary_max)}`
+          : "Not specified";
+      const targetDate = req.target_joining_date
+        ? new Date(req.target_joining_date as string).toLocaleDateString("en-IN")
+        : "—";
+      const frontendUrl = process.env.FRONTEND_URL ?? "";
+
+      const row = (label: string, value: string, shaded: boolean) =>
+        `<tr${shaded ? ' style="background:#f1f5f9"' : ""}>` +
+        `<td style="font-weight:bold;width:210px;padding:6px;vertical-align:top">${label}</td>` +
+        `<td style="padding:6px">${value}</td></tr>`;
+
+      const fields: Array<[string, string]> = [
+        ["Requisition ID", `<code>${escapeHtml(req.requisition_code)}</code>`],
+        ["Role / Designation", escapeHtml(req.designation_name)],
+        ["Process", escapeHtml(req.process_name)],
+        ["Branch", escapeHtml(req.branch_name)],
+        ["Headcount Required", escapeHtml(req.requested_headcount)],
+        ["Target Joining Date", escapeHtml(targetDate)],
+        ["Employment Type", escapeHtml(req.employment_type)],
+        ["Salary Range", salaryBand],
+        [
+          "Experience Required",
+          `${escapeHtml(req.experience_min_years ?? 0)}–${escapeHtml(req.experience_max_years ?? 0)} years`,
+        ],
+        ["Education Requirement", escapeHtml(req.education_requirement)],
+        ["Target Age Group", escapeHtml(ageBand)],
+        ["Target Locations", locations.length ? escapeHtml(locations.join(", ")) : "Not specified"],
+        ["Target Radius", req.meta_target_radius_km ? `${escapeHtml(req.meta_target_radius_km)} km` : "—"],
+        ["Skills Required", escapeHtml(req.skills_required)],
+        ["Preferred Sources", sources.length ? escapeHtml(sources.join(", ")) : "—"],
+      ];
+
+      const bmiUrl = req.bmi_assessment_url as string | null;
+      const bmiBlock = bmiUrl
+        ? `<h3 style="color:#1e40af;margin-top:22px">Assessment / BMI Link</h3>
+<p style="margin:0 0 8px">Include this link in the META Lead Ad form:</p>
+<p><a href="${escapeHtml(bmiUrl)}" style="background:#1e40af;color:#fff;padding:8px 16px;text-decoration:none;border-radius:4px;display:inline-block">${escapeHtml(bmiUrl)}</a></p>`
+        : `<p style="margin-top:22px;color:#b45309"><strong>No assessment / BMI link was set on this requisition.</strong> Ask the raiser to add one before the ad goes live if the campaign needs it.</p>`;
+
+      const html = `<html><body style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.5">
+<h2 style="color:#1e40af;margin-bottom:4px">New Recruitment Campaign Brief</h2>
+<p style="margin-top:0;color:#64748b">Requisition ${escapeHtml(req.requisition_code)} has been approved. Details below are ready for a META Lead Gen campaign.</p>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:14px">
+${fields.map(([l, v], i) => row(l, v, i % 2 === 1)).join("\n")}
+</table>
+${bmiBlock}
+<h3 style="color:#1e40af;margin-top:22px">Important Instructions</h3>
+<ol style="padding-left:20px">
+  <li>Create the META campaign using the details above.</li>
+  <li><strong>Put Requisition ID <code>${escapeHtml(req.requisition_code)}</code> in the campaign name or a UTM parameter</strong> so HRMS can match leads back to this requisition.</li>
+  <li>After the campaign is live, open HRMS and link the META Campaign ID and <strong>Lead Gen Form ID</strong> to this requisition. Without the Form ID, incoming leads cannot be routed and will sit unscreened.</li>
+</ol>
+<p style="margin-top:18px"><a href="${escapeHtml(frontendUrl)}/recruitment/meta-campaigns" style="color:#1e40af">Open the campaign dashboard in HRMS</a></p>
+<p style="font-size:12px;color:#999;margin-top:28px">Auto-generated by MAS PeopleOS on ${new Date().toLocaleString("en-IN")}.</p>
+</body></html>`;
+
+      await emailService.send({
+        to: recipients.join(", "),
+        subject: `[Campaign Brief] ${req.designation_name} — ${req.branch_name} — ${req.requisition_code}`,
+        html,
+      });
+    } catch (e: unknown) {
+      console.warn(
+        "[JobRequisition notifyMarketingTeam] failed:",
+        e instanceof Error ? e.message : e
+      );
     }
   },
 

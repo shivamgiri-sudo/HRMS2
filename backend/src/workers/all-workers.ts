@@ -55,6 +55,7 @@ import { startAttendanceReconciliationWorker, stopAttendanceReconciliationWorker
 // topologies). No-ops unless MANAGER_DAILY_BRIEF_ENABLED=true.
 import { startManagerDailyBriefScheduler, stopManagerDailyBriefScheduler } from "../modules/management/daily-brief/daily-brief.cron.js";
 import { startInterventionRecommendationScheduler, stopInterventionRecommendationScheduler } from "../modules/analytics/intervention-recommendation.cron.js";
+import { startMetaCampaignSyncScheduler, stopMetaCampaignSyncScheduler } from "../modules/meta-campaign/meta-campaign.cron.js";
 import { startRetentionCron } from "./privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "../modules/ats/ats-reminders.cron.js";
 import { startAtsDailyReportScheduler, stopAtsDailyReportScheduler } from "../modules/ats/ats-daily-report.cron.js";
@@ -283,6 +284,12 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // "true" — see intervention-recommendation.cron.ts's header.
     name: "intervention-recommendation-generation",
     start: () => { startInterventionRecommendationScheduler(); return Promise.resolve(); },
+  },
+  {
+    // Off by default twice over: META_CAMPAIGN_SYNC_ENABLED must be "true", AND the sync itself
+    // no-ops without META_MARKETING_ACCESS_TOKEN — see meta-campaign.cron.ts's header.
+    name: "meta-campaign-metrics-sync",
+    start: () => { startMetaCampaignSyncScheduler(); return Promise.resolve(); },
   },
   {
     name: "dashboard-snapshot",
@@ -525,6 +532,7 @@ function shutdown(): void {
   stopAttendanceReconciliationWorker();
   stopManagerDailyBriefScheduler();
   stopInterventionRecommendationScheduler();
+  stopMetaCampaignSyncScheduler();
   stopAccessExpiryScheduler();
   stopIntegrationScheduler();
   stopEsignComplianceWorker();
