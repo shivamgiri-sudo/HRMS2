@@ -8,6 +8,7 @@ import { vendorPaymentLedgerService } from "./vendor-payment-ledger.service.js";
 import { assertNotInClosedPeriod } from "./bank-reconciliation-period.service.js";
 import { imprestLedgerService } from "./imprest-ledger.service.js";
 import { imprestService } from "./imprest.service.js";
+import { vendorExpenseMappingService } from "./vendor-expense-mapping.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
 import { journalService, type JournalLineInput } from "./journal.service.js";
@@ -191,6 +192,30 @@ async function getVendorAdvanceBalance(
   return last ? Number((last as any).balance_after) : 0;
 }
 
+/**
+ * Validates the Head / Sub-head picked for a vendor payment against that vendor's own mapping.
+ * A vendor with no active mapping is unrestricted, so nothing is required or stored for it —
+ * the same rule vendorExpenseMappingService.selectableClassifications applies to GRNs.
+ */
+async function resolveExpenseClassification(
+  connection: PoolConnection,
+  vendorId: string,
+  input: { expenseHeadCode?: string | null; expenseSubHeadCode?: string | null },
+): Promise<{ headCode: string; headName: string; subHeadCode: string; subHeadName: string } | null> {
+  const options = await vendorExpenseMappingService.activeOptionsForVendor(vendorId, connection);
+  if (!options.length) return null;
+  const headCode = input.expenseHeadCode?.trim();
+  const subHeadCode = input.expenseSubHeadCode?.trim();
+  if (!headCode || !subHeadCode) {
+    throw new PaymentVoucherError("Select the Head and Sub-head this vendor payment is against");
+  }
+  const match = options.find((o) => o.head_code === headCode && o.sub_head_code === subHeadCode);
+  if (!match) {
+    throw new PaymentVoucherError("That Head / Sub-head is not mapped to this vendor");
+  }
+  return { headCode: match.head_code, headName: match.head_name, subHeadCode: match.sub_head_code, subHeadName: match.sub_head_name };
+}
+
 export interface RaiseVoucherInput {
   sourceType: "vendor_grn" | "imprest_allocation" | "general" | "vendor_advance" | "vendor_advance_application";
   bankAccountId: string;
@@ -215,6 +240,10 @@ export interface RaiseVoucherInput {
    *  'vendor_advance_application' (whose advance balance this draws down). Neither source type
    *  is GRN-anchored, so there is no other column carrying vendor identity for them. */
   linkedVendorId?: string | null;
+  /** Head / Sub-head this vendor payment is against, chosen from the vendor's mapped heads.
+   *  Required when the vendor has an active mapping; ignored for a vendor with none. */
+  expenseHeadCode?: string | null;
+  expenseSubHeadCode?: string | null;
   amount: number;
   remarks?: string | null;
   reason?: string | null;
@@ -294,7 +323,7 @@ export const paymentVoucherService = {
     const rows = await this.list({ ...filters, limit: 5000 });
     const columns = [
       "Voucher No.", "Type", "Bank Account", "Payable Account", "Purpose",
-      "Amount", "Status", "Raised At", "CEO Approved At", "Released At", "Remarks",
+      "Head", "Sub Head", "Amount", "Status", "Raised At", "CEO Approved At", "Released At", "Remarks",
     ];
     const purposeOf = (r: any) =>
       r.source_type === "vendor_grn" ? (r.vendor_name ?? r.grn_number ?? "")
@@ -319,6 +348,8 @@ export const paymentVoucherService = {
       r.bank_account_name ?? "",
       r.payable_account_name ?? "",
       purposeOf(r),
+      r.expense_head_name ?? "",
+      r.expense_sub_head_name ?? "",
       Number(r.amount ?? 0).toFixed(2),
       r.status ?? "",
       r.raised_at ?? "",
@@ -448,6 +479,12 @@ export const paymentVoucherService = {
     };
   },
 
+  /** Head / Sub-head choices for the raise form once a vendor is picked (empty = vendor unmapped). */
+  async vendorExpenseOptions(vendorId: string) {
+    if (!vendorId) throw new PaymentVoucherError("vendorId is required");
+    return vendorExpenseMappingService.activeOptionsForVendor(vendorId);
+  },
+
   async raise(input: RaiseVoucherInput, actorUserId: string, actorRole?: string) {
     if ((input.sourceType as string) === "sales_receipt") {
       throw new PaymentVoucherError("Sales-receipt vouchers are not available yet — vendor_grn, imprest_allocation and general only.");
@@ -491,11 +528,13 @@ export const paymentVoucherService = {
       // singular/plural special case.
       let grnAllocations: Array<{ vendorPaymentTrackingId: string; amount: number }> = [];
       let linkedVendorId: string | null = null;
+      let expenseClassification: { headCode: string; headName: string; subHeadCode: string; subHeadName: string } | null = null;
       if (input.sourceType === "vendor_grn") {
         const result = await validateGrnAllocations(
           connection, input, amount, "At least one vendor GRN payment record must be selected",
         );
         grnAllocations = result.allocations;
+        expenseClassification = await resolveExpenseClassification(connection, result.vendorId, input);
       } else if (input.sourceType === "imprest_allocation") {
         if (!input.linkedImprestManagerId) throw new PaymentVoucherError("An imprest manager must be selected");
         const [[manager]] = await connection.execute<RowDataPacket[]>(
@@ -507,6 +546,7 @@ export const paymentVoucherService = {
       } else if (input.sourceType === "vendor_advance") {
         if (!input.linkedVendorId) throw new PaymentVoucherError("A vendor must be selected");
         linkedVendorId = input.linkedVendorId;
+        expenseClassification = await resolveExpenseClassification(connection, linkedVendorId, input);
       } else if (input.sourceType === "vendor_advance_application") {
         if (!input.linkedVendorId) throw new PaymentVoucherError("A vendor must be selected");
         const result = await validateGrnAllocations(
@@ -517,6 +557,7 @@ export const paymentVoucherService = {
           throw new PaymentVoucherError("The selected GRN dues do not belong to the chosen vendor");
         }
         linkedVendorId = input.linkedVendorId;
+        expenseClassification = await resolveExpenseClassification(connection, linkedVendorId, input);
         // Friendly check now; release() re-checks under a row lock, since the balance can move
         // between raise and a later release (e.g. a second application raised against the same
         // balance in the meantime).
@@ -537,8 +578,9 @@ export const paymentVoucherService = {
         `INSERT INTO payment_voucher
            (id, voucher_number, voucher_type, source_type, bank_account_id, payable_account_id,
             linked_vendor_payment_id, linked_imprest_manager_id, linked_vendor_id, amount, remarks, reason,
-            particulars, status, raised_by, raised_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'raised', ?, NOW())`,
+            particulars, expense_head_code, expense_head_name, expense_sub_head_code, expense_sub_head_name,
+            status, raised_by, raised_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'raised', ?, NOW())`,
         [
           id,
           voucherNumber,
@@ -553,6 +595,10 @@ export const paymentVoucherService = {
           input.remarks?.trim() || null,
           input.reason?.trim() || null,
           input.particulars?.trim() || null,
+          expenseClassification?.headCode ?? null,
+          expenseClassification?.headName ?? null,
+          expenseClassification?.subHeadCode ?? null,
+          expenseClassification?.subHeadName ?? null,
           actorUserId,
         ],
       );
@@ -582,6 +628,8 @@ export const paymentVoucherService = {
         source_type: input.sourceType,
         amount,
         bank_account_id: input.bankAccountId,
+        expense_head: expenseClassification?.headName ?? null,
+        expense_sub_head: expenseClassification?.subHeadName ?? null,
       });
 
       await connection.commit();

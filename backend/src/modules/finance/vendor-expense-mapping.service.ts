@@ -71,6 +71,31 @@ export const vendorExpenseMappingService = {
     }
   },
 
+  /**
+   * The Head / Sub-head pairs a vendor is currently mapped to, one row per selectable pair.
+   * A mapping row whose sub_head_code is the wildcard expands to every active sub-head under
+   * its head. Empty for a vendor with no active mapping — such a vendor is unrestricted.
+   */
+  async activeOptionsForVendor(
+    vendorId: string,
+    executor: { execute: (sql: string, values?: any) => Promise<any> } = db,
+  ): Promise<Array<{ head_code: string; head_name: string; sub_head_code: string; sub_head_name: string }>> {
+    const [rows] = (await executor.execute(
+      `SELECT DISTINCT h.head_code, h.head_name, s.sub_head_code, s.sub_head_name
+         FROM vendor_expense_mapping m
+         JOIN finance_expense_head_master h ON h.head_code = m.head_code AND h.active_status = 1
+         JOIN finance_expense_sub_head_master s
+              ON s.head_id = h.id AND s.active_status = 1
+             AND (m.sub_head_code = s.sub_head_code OR m.sub_head_code = '${ALL_SUB_HEADS}')
+        WHERE m.vendor_id = ? AND m.active_status = 1
+          AND (m.effective_from IS NULL OR m.effective_from <= CURDATE())
+          AND (m.effective_to IS NULL OR m.effective_to >= CURDATE())
+        ORDER BY h.head_name, s.sub_head_name`,
+      [vendorId],
+    )) as [RowDataPacket[]];
+    return rows as Array<{ head_code: string; head_name: string; sub_head_code: string; sub_head_name: string }>;
+  },
+
   async listForVendor(vendorId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT m.id, m.vendor_id, m.head_code, m.sub_head_code,
