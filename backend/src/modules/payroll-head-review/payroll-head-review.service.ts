@@ -815,6 +815,14 @@ async function writeComponentAssignment(
   approvalReference: string,
   candidateId: string | null
 ) {
+  // Supersede any existing active assignment before writing the new one.
+  // Without this, repeated "Assign" clicks stack multiple active rows and
+  // payroll queries that read WHERE status='active' return the wrong package.
+  await db.execute(
+    `UPDATE salary_component_assignments SET status = 'superseded'
+      WHERE employee_id = ? AND status = 'active'`,
+    [employeeId]
+  );
   await db.execute(
     `INSERT INTO salary_component_assignments
        (id, employee_id, effective_date, package_id,
