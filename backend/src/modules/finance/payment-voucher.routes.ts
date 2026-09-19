@@ -78,6 +78,16 @@ paymentVoucherRouter.get(
   }),
 );
 
+/** Registered before "/:id" for the same shadowing reason as "/export" below. */
+paymentVoucherRouter.get(
+  "/vendor-expense-options",
+  requireRole(...VOUCHER_RAISE_ROLES),
+  h(async (req, res) => {
+    const data = await paymentVoucherService.vendorExpenseOptions(String(req.query.vendorId ?? ""));
+    res.json({ success: true, data });
+  }),
+);
+
 /** MUST be registered before the bare "/:id" route below — Express matches routes in
  *  registration order, and "/:id" is a single-segment wildcard that would otherwise swallow
  *  "/export" as if it were a voucher id (the same route-shadowing this repo has hit before —

@@ -26,6 +26,8 @@ export type Voucher = {
   voucher_type: string;
   source_type: "vendor_grn" | "imprest_allocation" | "general" | "vendor_advance" | "vendor_advance_application";
   particulars: string | null;
+  expense_head_name?: string | null;
+  expense_sub_head_name?: string | null;
   bank_account_id: string;
   bank_account_name: string | null;
   payable_account_id: string;

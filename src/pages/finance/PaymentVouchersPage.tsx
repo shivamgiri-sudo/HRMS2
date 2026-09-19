@@ -1,5 +1,5 @@
 // src/pages/finance/PaymentVouchersPage.tsx
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, IndianRupee, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -40,10 +40,16 @@ const emptyRaiseForm = {
    *  vendor_advance_application) settling several GRN dues from an existing advance balance. */
   grnAllocations: {} as Record<string, string>,
   linkedImprestManagerId: "",
+  /** Vendor-mapped Head / Sub-head, encoded "<head_code>::<sub_head_code>" (see EXPENSE_KEY_SEP). */
+  expenseKey: "",
   particulars: "",
   amount: "",
   remarks: "",
 };
+
+const EXPENSE_KEY_SEP = "::";
+
+type VendorExpenseOption = { head_code: string; head_name: string; sub_head_code: string; sub_head_name: string };
 
 /** Same download pattern BankLedgerReportPage.tsx already uses for its CSV/Tally XML export. */
 async function downloadCsv(path: string, filename: string, toast: (opts: any) => void) {
@@ -128,6 +134,24 @@ export function PaymentVouchersContent() {
     enabled: raiseOpen && usesGrnChecklist && !!raiseForm.vendorId,
   });
   const filteredDues = vendorDuesQuery.data ?? [];
+  // Head / Sub-head choices are the ones mapped to the picked vendor. A vendor with no mapping
+  // returns an empty list and is raised without one, as it is for GRNs.
+  const vendorExpenseQuery = useQuery({
+    queryKey: ["payment-voucher-vendor-expense-options", raiseForm.vendorId],
+    queryFn: async () =>
+      ((await hrmsApi.get<{ success: boolean; data: VendorExpenseOption[] }>(
+        `/api/finance/payment-vouchers/vendor-expense-options?vendorId=${encodeURIComponent(raiseForm.vendorId)}`,
+      )).data ?? []) as VendorExpenseOption[],
+    enabled: raiseOpen && isVendorLane && !!raiseForm.vendorId,
+  });
+  const vendorExpenseOptions = vendorExpenseQuery.data ?? [];
+  const expenseRequired = isVendorLane && vendorExpenseOptions.length > 0;
+  useEffect(() => {
+    if (vendorExpenseOptions.length === 1 && !raiseForm.expenseKey) {
+      const only = vendorExpenseOptions[0];
+      setRaiseForm((f) => ({ ...f, expenseKey: `${only.head_code}${EXPENSE_KEY_SEP}${only.sub_head_code}` }));
+    }
+  }, [vendorExpenseOptions, raiseForm.expenseKey]);
   // Backs both the raise form's inline balance display and the checklist cap for
   // vendor_advance_application.
   const advanceBalanceQuery = useQuery({
@@ -169,6 +193,8 @@ export function PaymentVouchersContent() {
         : undefined,
       linkedImprestManagerId: raiseForm.sourceType === "imprest_allocation" ? raiseForm.linkedImprestManagerId : undefined,
       linkedVendorId: (raiseForm.sourceType === "vendor_advance" || raiseForm.sourceType === "vendor_advance_application") ? raiseForm.vendorId : undefined,
+      expenseHeadCode: expenseRequired ? raiseForm.expenseKey.split(EXPENSE_KEY_SEP)[0] || undefined : undefined,
+      expenseSubHeadCode: expenseRequired ? raiseForm.expenseKey.split(EXPENSE_KEY_SEP)[1] || undefined : undefined,
       particulars: raiseForm.sourceType === "general" ? raiseForm.particulars.trim() : undefined,
       amount: Number(raiseForm.amount),
       remarks: raiseForm.remarks?.trim() || undefined,
@@ -319,7 +345,7 @@ export function PaymentVouchersContent() {
                     loading={vendorSearchQuery.isFetching}
                     options={vendorOptions.map((v) => ({ value: v.id, label: v.name }))}
                     value={raiseForm.vendorId}
-                    onChange={(v) => setRaiseForm((f) => ({ ...f, vendorId: v, grnAllocations: {}, amount: "" }))}
+                    onChange={(v) => setRaiseForm((f) => ({ ...f, vendorId: v, grnAllocations: {}, amount: "", expenseKey: "" }))}
                     search={vendorSearch}
                     onSearchChange={setVendorSearch}
                     placeholder="Select vendor"
@@ -327,6 +353,31 @@ export function PaymentVouchersContent() {
                     emptyText={vendorSearch.trim() ? "No matching vendor" : "Type to search vendors"}
                   />
                 </div>
+
+                {raiseForm.vendorId && (
+                  <div>
+                    <Label>Head / Sub-head (mapped to this vendor){expenseRequired ? " *" : ""}</Label>
+                    {vendorExpenseQuery.isLoading ? (
+                      <p className="mt-1 text-xs text-slate-400">Loading this vendor's heads…</p>
+                    ) : vendorExpenseOptions.length ? (
+                      <Select
+                        value={raiseForm.expenseKey}
+                        onValueChange={(v) => setRaiseForm((f) => ({ ...f, expenseKey: v }))}
+                      >
+                        <SelectTrigger aria-label="Head / Sub-head"><SelectValue placeholder="Select head and sub-head" /></SelectTrigger>
+                        <SelectContent>
+                          {vendorExpenseOptions.map((o) => (
+                            <SelectItem key={`${o.head_code}${EXPENSE_KEY_SEP}${o.sub_head_code}`} value={`${o.head_code}${EXPENSE_KEY_SEP}${o.sub_head_code}`}>
+                              {o.head_name} › {o.sub_head_name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <p className="mt-1 text-xs text-slate-400">No Head / Sub-head is mapped to this vendor, so this voucher is raised without one.</p>
+                    )}
+                  </div>
+                )}
 
                 {/* Available vs Applied — the advance balance read as one glance, not a bare
                     number next to a dropdown. */}
@@ -505,7 +556,7 @@ export function PaymentVouchersContent() {
           </div>
           <DialogFooter>
             <Button variant="outline" className="cursor-pointer" onClick={() => setRaiseOpen(false)}>Cancel</Button>
-            <Button className="cursor-pointer bg-blue-600 hover:bg-blue-700" disabled={raiseMutation.isPending} onClick={() => raiseMutation.mutate()}>
+            <Button className="cursor-pointer bg-blue-600 hover:bg-blue-700" disabled={raiseMutation.isPending || (expenseRequired && !raiseForm.expenseKey)} onClick={() => raiseMutation.mutate()}>
               Raise Voucher
             </Button>
           </DialogFooter>

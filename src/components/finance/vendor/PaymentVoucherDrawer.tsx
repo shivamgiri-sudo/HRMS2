@@ -189,6 +189,12 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
                       </dd>
                     </>
                   )}
+                  {detailQuery.data.expense_head_name && (
+                    <>
+                      <dt className="text-slate-500">Paid against Head</dt><dd className="text-gray-600">{detailQuery.data.expense_head_name}</dd>
+                      <dt className="text-slate-500">Paid against Sub-head</dt><dd className="text-gray-600">{detailQuery.data.expense_sub_head_name ?? "—"}</dd>
+                    </>
+                  )}
                   <dt className="text-slate-500">Bank Account</dt><dd className="font-semibold text-gray-800">{detailQuery.data.bank_account_name}</dd>
                   <dt className="text-slate-500">Current Bank Balance</dt>
                   <dd className={detailQuery.data.current_bank_balance != null && detailQuery.data.current_bank_balance < detailQuery.data.amount ? "font-semibold text-rose-600" : "font-mono text-gray-600"}>
