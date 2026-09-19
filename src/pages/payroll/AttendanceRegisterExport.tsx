@@ -119,6 +119,7 @@ export default function AttendanceRegisterExport() {
   const [branchId,     setBranchId]     = useState('all');
   const [costCentreId, setCostCentreId] = useState('all');
   const [empCode,      setEmpCode]      = useState('');
+  const [empStatus,    setEmpStatus]    = useState('active');
   const [queryKey,     setQueryKey]     = useState<string|null>(null);
 
   const branchesQ = useQuery({
@@ -143,12 +144,13 @@ export default function AttendanceRegisterExport() {
       const p = new URLSearchParams({ month, limit: '1000' });
       if (branchId !== 'all')     p.set('branchId',     branchId);
       if (costCentreId !== 'all') p.set('costCentreId', costCentreId);
+      if (empStatus !== 'all')    p.set('employeeStatus', empStatus);
       if (empCode.trim()) {
-        // If the value looks like an employee code (alphanumeric, no spaces), search by code;
-        // otherwise treat it as a name search.
+        // If the value contains any digit it's an employee code; otherwise name search.
+        // "MAS61061" / "24852C" → code  |  "shivam" / "John Smith" → name
         const v = empCode.trim();
-        if (/^[A-Za-z0-9]+$/.test(v)) p.set('employeeCode', v);
-        else                           p.set('employeeName',  v);
+        if (/\d/.test(v)) p.set('employeeCode', v);
+        else              p.set('employeeName',  v);
       }
       return hrmsApi.get<{data:AttRow[]}>(`/api/reports/suite/attendance-register-monthly?${p}`).then(r => r.data ?? []);
     },
@@ -156,7 +158,7 @@ export default function AttendanceRegisterExport() {
   });
 
   function handleShow() {
-    setQueryKey(`${month}|${branchId}|${costCentreId}|${empCode}`);
+    setQueryKey(`${month}|${branchId}|${costCentreId}|${empCode}|${empStatus}`);
   }
 
   const rows     = dataQ.data ?? [];
@@ -185,13 +187,12 @@ export default function AttendanceRegisterExport() {
 
         {/* Filter bar */}
         <div className="bg-white border rounded-xl p-4 shadow-sm">
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
+          <div className="grid grid-cols-2 md:grid-cols-7 gap-3 items-end">
             <div className="space-y-1">
               <Label className="text-xs font-medium text-slate-600">Month</Label>
               <Select value={month} onValueChange={v => {
                 setMonth(v);
-                // Auto-refresh if a query was already running
-                if (queryKey !== null) setQueryKey(`${v}|${branchId}|${costCentreId}|${empCode}`);
+                if (queryKey !== null) setQueryKey(`${v}|${branchId}|${costCentreId}|${empCode}|${empStatus}`);
               }}>
                 <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -213,7 +214,7 @@ export default function AttendanceRegisterExport() {
               </Select>
             </div>
 
-            <div className="space-y-1 col-span-2">
+            <div className="space-y-1 col-span-2 md:col-span-1">
               <Label className="text-xs font-medium text-slate-600">Cost Centre</Label>
               <Select value={costCentreId} onValueChange={setCostCentreId}>
                 <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="ALL" /></SelectTrigger>
@@ -224,6 +225,18 @@ export default function AttendanceRegisterExport() {
                       {c.cost_centre_name}{c.process_name ? ` (${c.process_name})` : ''}
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <Label className="text-xs font-medium text-slate-600">Status</Label>
+              <Select value={empStatus} onValueChange={setEmpStatus}>
+                <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                  <SelectItem value="all">All</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -290,6 +303,7 @@ export default function AttendanceRegisterExport() {
                   <th rowSpan={2} className="px-2 py-1 text-left whitespace-nowrap min-w-[120px] border-r border-slate-600">Cost Centre</th>
                   <th rowSpan={2} className="px-2 py-1 text-left whitespace-nowrap min-w-[110px] border-r border-slate-600">Process</th>
                   <th rowSpan={2} className="px-2 py-1 text-left whitespace-nowrap min-w-[70px] border-r border-slate-600">Desig.</th>
+                  <th rowSpan={2} className="px-2 py-1 text-center whitespace-nowrap min-w-[52px] border-r border-slate-600">Status</th>
                   <th colSpan={nd} className="px-2 py-1 text-center border-l border-slate-600 bg-slate-700">{monthLabel} — Day wise</th>
                   <th colSpan={9} className="px-2 py-1 text-center bg-teal-700">Summary</th>
                 </tr>
@@ -321,6 +335,11 @@ export default function AttendanceRegisterExport() {
                     <td className="px-2 py-1 whitespace-nowrap text-slate-600 border-r border-slate-100 max-w-[140px] truncate">{row.cost_center ?? '—'}</td>
                     <td className="px-2 py-1 whitespace-nowrap text-slate-600 border-r border-slate-100 max-w-[130px] truncate">{row.process_name ?? '—'}</td>
                     <td className="px-2 py-1 whitespace-nowrap text-slate-500 text-[10px] border-r border-slate-100">{row.designation ?? '—'}</td>
+                    <td className="px-1 py-1 text-center border-r border-slate-100">
+                      <span className={`text-[9px] font-semibold px-1 py-0.5 rounded ${row.employee_status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-700'}`}>
+                        {row.employee_status === 'Active' ? 'A' : 'I'}
+                      </span>
+                    </td>
                     {days.map(d => {
                       const code = String(row[`day_${d}`] ?? '').trim();
                       const isReg = Boolean(row[`day_${d}_reg`]);

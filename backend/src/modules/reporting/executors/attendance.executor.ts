@@ -25,6 +25,7 @@ import {
 import {
   appendScopeConditions,
   appendFilterConditions,
+  appendEmployeeStatusFilter,
   dateParam,
   monthParam,
   monthRange,
@@ -159,6 +160,7 @@ export async function attendanceRegisterMonthly(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
+  appendEmployeeStatusFilter(filters, clauses, params);
   // Capture scope/filter params BEFORE the JOIN binds are unshifted below.
   // The pre-pagination query (which only reads the employees table) uses these
   // params + arm binds only — no JOIN binds needed.
