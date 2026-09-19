@@ -108,18 +108,16 @@ export function ViewAsProvider({ children }: { children: React.ReactNode }) {
       if (!user?.id) return;
       setIsLoading(true);
       try {
-        // Fetch full employee record to get role
-        const res = await hrmsApi.get<{ success: boolean; data: any }>(
-          `/api/employees/${emp.id}`
+        // Fetch full access profile for the target user — real roles + real page grants
+        const accessRes = await hrmsApi.get<{ success: boolean; data: any }>(
+          `/api/access/me-as/${emp.id}`
         );
-        const empData = res?.data ?? res;
-        const rawRole: string =
-          empData?.primary_role ??
-          empData?.role ??
-          emp.primary_role ??
-          "employee";
+        const accessData = accessRes?.data ?? accessRes;
 
-        const roles = [rawRole] as AppRole[];
+        const rawRoles: string[] = accessData?.roles?.length
+          ? accessData.roles
+          : [emp.primary_role ?? "employee"];
+        const roles = rawRoles as AppRole[];
         const roleKeys = expandRoleKeys(roles);
         const primaryRole = getPrimaryRole(roles);
 
@@ -127,26 +125,23 @@ export function ViewAsProvider({ children }: { children: React.ReactNode }) {
           roles,
           roleKeys,
           primaryRole,
-          employeeId: String(emp.id),
-          employeeCode: empData?.employee_code ?? emp.employee_code,
-          employeeName: empData?.full_name ?? emp.full_name,
-          scopes: [],
-          pages: [],
-          disabledPageCodes: [],
+          employeeId: accessData?.employeeId ?? String(emp.id),
+          employeeCode: accessData?.employeeCode ?? emp.employee_code,
+          employeeName: accessData?.employeeName ?? emp.full_name,
+          scopes: accessData?.scopes ?? [],
+          pages: accessData?.pages ?? [],
+          disabledPageCodes: accessData?.disabledPageCodes ?? [],
         };
 
-        queryClient.setQueryData(
-          ["user-role-workforce-os", user.id],
-          synthetic
-        );
+        queryClient.setQueryData(["user-role-workforce-os", user.id], synthetic);
         setActiveEmployeeState({
           ...emp,
-          primary_role: rawRole,
-          designation_name: empData?.designation_name ?? emp.designation_name,
-          branch_name: empData?.branch_name ?? emp.branch_name,
+          primary_role: primaryRole ?? rawRoles[0],
+          designation_name: emp.designation_name,
+          branch_name: emp.branch_name,
         });
       } catch {
-        // Fallback: use whatever role was passed with the option
+        // Fallback: use whatever role was passed, but no page grants
         const rawRole = emp.primary_role ?? "employee";
         const roles = [rawRole] as AppRole[];
         const synthetic: UserRoleData = {

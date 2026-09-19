@@ -88,6 +88,17 @@ router.get("/me", h(async (req: AuthenticatedRequest, res: Response) => {
 }));
 
 /**
+ * GET /api/access/me-as/:userId
+ * Admin-only: returns the full access profile for any user.
+ * Used by the View As developer feature to simulate another user's page grants.
+ */
+router.get("/me-as/:userId", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.params as { userId: string };
+  const data = await getAccessMe(userId);
+  res.json({ success: true, data });
+}));
+
+/**
  * GET /api/access/pages/my-catalog
  * User-safe page catalog for module launcher and role-based navigation.
  * Unlike /pages/catalog, this does not expose pages the current user cannot view.
