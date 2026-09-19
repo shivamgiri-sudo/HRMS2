@@ -2087,6 +2087,45 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
   // Unreachable default removed — see /my-attendance above. The COALESCEs are the guard.
   const data = (rows as any[])[0];
 
+  // weekOffDays from SQL only counts rows with attendance_status='week_off'. For employees
+  // whose non-working days are never inserted as records (NCOSEC import skips them), that
+  // count is 0. Compute calendar-based eligible week-offs and use the larger value.
+  if (Number(data.weekOffDays) === 0) {
+    const [empRows] = await db.execute(
+      `SELECT working_days FROM employees WHERE id = ? LIMIT 1`,
+      [employeeId]
+    );
+    const emp = (empRows as any[])[0];
+    if (emp) {
+      let workingDays: number[] = [1, 2, 3, 4, 5];
+      const wd = emp.working_days;
+      if (Array.isArray(wd)) {
+        workingDays = wd.map(Number).filter((d: number) => d >= 0 && d <= 6);
+      } else if (typeof wd === 'string' && wd.trim()) {
+        try {
+          const parsed = JSON.parse(wd);
+          if (Array.isArray(parsed)) workingDays = parsed.map(Number).filter((d: number) => d >= 0 && d <= 6);
+        } catch {
+          workingDays = wd.split(',').map((s: string) => Number(s.trim())).filter((d: number) => d >= 0 && d <= 6);
+        }
+      }
+
+      const [yr, mo] = month.split('-').map(Number);
+      const lastDay = new Date(yr, mo, 0).getDate();
+      const todayIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const isCurrentMonth = new Date(yr, mo - 1).getMonth() === todayIST.getMonth()
+        && new Date(yr, mo - 1).getFullYear() === todayIST.getFullYear();
+      const periodEndDay = isCurrentMonth ? todayIST.getDate() : lastDay;
+
+      let eligibleWeekoffs = 0;
+      for (let d = 1; d <= periodEndDay; d++) {
+        const dow = new Date(yr, mo - 1, d).getDay(); // 0=Sun … 6=Sat
+        if (!workingDays.includes(dow)) eligibleWeekoffs++;
+      }
+      data.weekOffDays = eligibleWeekoffs;
+    }
+  }
+
   return res.json({
     success: true,
     data
