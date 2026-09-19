@@ -43,12 +43,31 @@ export type GrnReportFilters = {
   grnNumber?: string;
   vendorId?: string;
   status?: string;
+  /** Approval-chain position, one of APPROVAL_STAGE_STATUSES' keys. Expands to several statuses. */
+  approvalStage?: string;
   /** Rows awaiting a named stage. Derived from status, never stored. */
   pendingWith?: string;
   limit?: number;
 };
 
 const MAX_ROWS = 5000;
+
+/**
+ * Approval-chain positions for the register filter (Branch Head -> Accounts Head -> Finance Head).
+ * "fully_approved" is every status at or past Finance Head approval — the point at which the GRN
+ * number is issued — so it includes the payment tail (payable, scheduled, part paid, paid).
+ */
+export const APPROVAL_STAGE_STATUSES: Record<string, readonly string[]> = {
+  draft: ["draft"],
+  awaiting_branch_head: ["submitted"],
+  awaiting_accounts_head: ["branch_head_approved"],
+  awaiting_finance_head: ["accounts_head_approved"],
+  pending_any_level: ["submitted", "branch_head_approved", "accounts_head_approved", "returned_to_branch_head", "returned_to_raiser"],
+  fully_approved: ["approved", "finance_head_approved", "pending_accounts_payment", "payment_scheduled", "partially_paid", "paid"],
+  returned: ["returned_to_branch_head", "returned_to_raiser"],
+  rejected: ["rejected"],
+  cancelled: ["cancelled"],
+};
 
 function scopeConditions(filters: GrnReportFilters) {
   const conditions: string[] = [];
@@ -121,6 +140,13 @@ function scopeConditions(filters: GrnReportFilters) {
   if (filters.status) {
     conditions.push("g.status = ?");
     params.push(filters.status);
+  }
+  if (filters.approvalStage) {
+    const statuses = APPROVAL_STAGE_STATUSES[filters.approvalStage];
+    // An unknown key matches nothing rather than being ignored, so a stale link cannot
+    // silently return the whole register as if it had been filtered.
+    conditions.push(statuses ? `g.status IN (${statuses.map(() => "?").join(", ")})` : "1 = 0");
+    if (statuses) params.push(...statuses);
   }
   return { conditions, params };
 }

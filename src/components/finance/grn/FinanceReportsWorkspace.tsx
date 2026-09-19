@@ -39,6 +39,7 @@ type Filters = {
   expenseMode: string;
   grnNumber: string;
   status: string;
+  approvalStage: string;
   pendingWith: string;
   entityType: string;
   action: string;
@@ -48,9 +49,38 @@ type Filters = {
 
 const EMPTY: Filters = {
   branchId: "", financialYear: "", month: "", head: "", subHead: "",
-  expenseMode: "", grnNumber: "", status: "", pendingWith: "",
+  expenseMode: "", grnNumber: "", status: "", approvalStage: "", pendingWith: "",
   entityType: "", action: "", from: "", to: "",
 };
+
+const APPROVAL_STAGE_OPTIONS = [
+  ["draft", "Drafted — not submitted"],
+  ["awaiting_branch_head", "Pending at Branch Head (no approval yet)"],
+  ["awaiting_accounts_head", "Approved by Branch Head — pending Accounts Head"],
+  ["awaiting_finance_head", "Approved by Branch Head + Accounts Head — pending Finance Head"],
+  ["pending_any_level", "Pending at any level"],
+  ["fully_approved", "Fully approved — all levels done, GRN created"],
+  ["returned", "Returned for correction"],
+  ["rejected", "Rejected"],
+  ["cancelled", "Cancelled"],
+] as const;
+
+const EXACT_STATUS_OPTIONS = [
+  ["draft", "Draft"],
+  ["submitted", "Submitted (Branch Head queue)"],
+  ["branch_head_approved", "Branch Head approved"],
+  ["accounts_head_approved", "Accounts Head approved"],
+  ["approved", "Approved (final)"],
+  ["pending_accounts_payment", "Pending accounts payment"],
+  ["payment_scheduled", "Payment scheduled"],
+  ["partially_paid", "Partially paid"],
+  ["paid", "Paid"],
+  ["returned_to_branch_head", "Returned to Branch Head"],
+  ["returned_to_raiser", "Returned to raiser"],
+  ["rejected", "Rejected"],
+  ["cancelled", "Cancelled"],
+  ["consumption_reversed", "Consumption reversed"],
+] as const;
 
 const REPORTS: Array<{ key: ReportKey; label: string; icon: typeof Search; endpoint: string; hint: string }> = [
   {
@@ -253,10 +283,11 @@ export function FinanceReportsWorkspace() {
       add("head", applied.head);
       add("subHead", applied.subHead);
       add("pendingWith", applied.pendingWith);
-      add("status", applied.status);
       if (report === "register") {
         add("expenseMode", applied.expenseMode);
         add("grnNumber", applied.grnNumber);
+        add("status", applied.status);
+        add("approvalStage", applied.approvalStage);
       }
       if (report === "audit") {
         add("entityType", applied.entityType);
@@ -421,6 +452,32 @@ export function FinanceReportsWorkspace() {
                   </select>
                 </div>
                 <div className="space-y-1">
+                  <Label className="text-xs">Approval stage</Label>
+                  <select
+                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                    value={draft.approvalStage}
+                    onChange={(event) => set("approvalStage")(event.target.value)}
+                  >
+                    <option value="">Any stage</option>
+                    {APPROVAL_STAGE_OPTIONS.map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Exact status</Label>
+                  <select
+                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                    value={draft.status}
+                    onChange={(event) => set("status")(event.target.value)}
+                  >
+                    <option value="">Any status</option>
+                    {EXACT_STATUS_OPTIONS.map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
                   <Label className="text-xs">GRN No.</Label>
                   <Input
                     className="h-9"
@@ -480,6 +537,7 @@ export function FinanceReportsWorkspace() {
                 >
                   <option value="">Any</option>
                   <option value="branch_head">Branch Head</option>
+                  {report === "register" && <option value="accounts_head">Accounts Head</option>}
                   <option value="finance_head">Finance Head</option>
                 </select>
               </div>

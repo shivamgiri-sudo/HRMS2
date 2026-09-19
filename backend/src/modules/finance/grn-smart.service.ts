@@ -31,6 +31,7 @@ import {
   resolveEligiblePeriods,
 } from "./grn-period-allocation.service.js";
 import { notifyGrnStage, resolveGrnNotifications } from "./grn-notify.js";
+import { runInBackground } from "./grn-background.js";
 import { notifyGrnAccountsHeadPendingEmail } from "./grn.notifications.js";
 
 export interface SmartAllocationInput {
@@ -3001,23 +3002,24 @@ export const grnSmartService = {
     } finally {
       connection.release();
     }
-    if (paymentId) await vendorPaymentService.notifyPaymentPending(paymentId).catch(() => undefined);
-    // The stage this decision cleared is done with; close its bell alert regardless of outcome,
-    // then raise the next stage's alert only when the chain continues (Branch Head approving
-    // moves it to Accounts Head, Accounts Head approving moves it to Finance Head). Finance
-    // Head's own decision ends the chain either way, so nothing new is raised there. Mirrors
-    // grn.service.ts's reviewGrn() — see grn-notify.ts's header for why this call, not that one,
-    // is the one that actually fires in production.
+    // Side effects below are off the request path: the decision is already committed, and each
+    // helper is non-fatal by design, so the approver does not wait on inbox or email delivery.
+    if (paymentId) {
+      const pendingPaymentId = paymentId;
+      runInBackground("payment-pending", () => vendorPaymentService.notifyPaymentPending(pendingPaymentId));
+    }
+    // Closing the old bell alert is one cheap UPDATE and must land before the next stage's alert
+    // is raised, so it stays inline; raising the next alert and the email run in the background.
     await resolveGrnNotifications(grnId);
     if (decision === "approved") {
       const clearedRole = actorRole.toLowerCase();
       if (clearedRole === "branch_head") {
-        await notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, "accounts_head");
-        // Email leg — Branch Head -> Accounts Head only (see grn.notifications.ts's header
-        // for why Accounts Head -> Finance Head is deliberately not wired here).
-        await notifyGrnAccountsHeadPendingEmail(grnId);
+        runInBackground("accounts-head-alert", () =>
+          notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, "accounts_head"));
+        runInBackground("accounts-head-email", () => notifyGrnAccountsHeadPendingEmail(grnId));
       } else if (clearedRole === "accounts_head") {
-        await notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, "finance_head");
+        runInBackground("finance-head-alert", () =>
+          notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, "finance_head"));
       }
     }
     return { success: true, newStatus, paymentId, grnNumber };

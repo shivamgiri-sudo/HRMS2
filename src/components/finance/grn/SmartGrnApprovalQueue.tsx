@@ -95,6 +95,7 @@ function daysSince(dateStr: string | null | undefined): number {
 type Workspace = {
   grn: Record<string, any>;
   allocations: Array<Record<string, any>>;
+  invoiceComponents?: Array<Record<string, any>>;
   documents: Array<Record<string, any>>;
   extractions: Array<Record<string, any>>;
   validations: Array<Record<string, any>>;
@@ -311,6 +312,70 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
   const unlinkedAllocations = useMemo(
     () => (workspace?.allocations ?? []).filter((allocation) => !allocation.budget_line_id),
     [workspace]
+  );
+  const allocationTotals = useMemo(
+    () =>
+      (workspace?.allocations ?? []).reduce(
+        (sum, alloc) => ({
+          withoutTax: sum.withoutTax + Number(alloc.amount_without_tax ?? 0),
+          withTax: sum.withTax + Number(alloc.amount_with_tax ?? 0),
+          percentage: sum.percentage + Number(alloc.allocation_percentage ?? 0),
+        }),
+        { withoutTax: 0, withTax: 0, percentage: 0 }
+      ),
+    [workspace]
+  );
+  const gstRows = useMemo(() => {
+    const num = (value: unknown) => Number(value ?? 0) || 0;
+    const components = workspace?.invoiceComponents ?? [];
+    if (components.length) {
+      return components.map((component, index) => {
+        const gst = num(component.tax_amount);
+        const isIgst = recordedGstType === "igst";
+        return {
+          key: String(component.id ?? index),
+          label: String(index + 1),
+          hsn: component.hsn_sac_code ? String(component.hsn_sac_code) : "—",
+          rate: num(component.gst_rate),
+          taxable: num(component.amount_without_tax),
+          cgst: isIgst ? 0 : gst / 2,
+          sgst: isIgst ? 0 : gst / 2,
+          igst: isIgst ? gst : 0,
+          gst,
+          gross: num(component.amount_with_tax),
+        };
+      });
+    }
+    const byRate = new Map<number, { taxable: number; cgst: number; sgst: number; igst: number; gst: number; gross: number }>();
+    for (const alloc of workspace?.allocations ?? []) {
+      const rate = num(alloc.gst_rate);
+      const row = byRate.get(rate) ?? { taxable: 0, cgst: 0, sgst: 0, igst: 0, gst: 0, gross: 0 };
+      row.taxable += num(alloc.amount_without_tax);
+      row.cgst += num(alloc.cgst_amount);
+      row.sgst += num(alloc.sgst_amount);
+      row.igst += num(alloc.igst_amount);
+      row.gst += num(alloc.tax_amount);
+      row.gross += num(alloc.amount_with_tax);
+      byRate.set(rate, row);
+    }
+    return [...byRate.entries()].map(([rate, row], index) => ({
+      key: `rate-${rate}`, label: String(index + 1), hsn: "—", rate, ...row,
+    }));
+  }, [workspace, recordedGstType]);
+  const gstTotals = useMemo(
+    () =>
+      gstRows.reduce(
+        (sum, row) => ({
+          taxable: sum.taxable + row.taxable,
+          cgst: sum.cgst + row.cgst,
+          sgst: sum.sgst + row.sgst,
+          igst: sum.igst + row.igst,
+          gst: sum.gst + row.gst,
+          gross: sum.gross + row.gross,
+        }),
+        { taxable: 0, cgst: 0, sgst: 0, igst: 0, gst: 0, gross: 0 }
+      ),
+    [gstRows]
   );
   // The month the GRN books into — the same value consumptionPeriodOf() derives server-side, and
   // the only period whose budget lines the server will accept for this GRN.
@@ -807,7 +872,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       {/* Tabbed Sheet — replaces the 1180px Dialog */}
       <Sheet open={Boolean(target)} onOpenChange={(open) => !open && setTarget(null)}>
         {/* Full width below 560px — a fixed 560 overflowed the viewport on a phone. */}
-        <SheetContent side="right" className="grn-scope flex w-full flex-col gap-0 p-0 sm:w-[560px] sm:max-w-[560px]">
+        <SheetContent side="right" className="grn-scope flex w-full flex-col gap-0 p-0 sm:w-[920px] sm:max-w-[92vw]">
           <SheetHeader className="border-b border-grn-line bg-grn-line-soft px-[16px] py-[12px]">
             <SheetTitle className="font-grn-mono text-[13px] font-bold text-grn-brand">
               {target ? grnDisplayNumber(target) : "…"} — Review
@@ -823,7 +888,6 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
           <Tabs defaultValue="details" className="flex flex-1 flex-col overflow-hidden">
             <TabsList className={`${GRN_SHEET_TABS_LIST} shrink-0`}>
               <TabsTrigger value="details" className={GRN_SHEET_TAB_TRIGGER}>Details</TabsTrigger>
-              <TabsTrigger value="allocations" className={GRN_SHEET_TAB_TRIGGER}>Allocations</TabsTrigger>
               <TabsTrigger value="validation" className={GRN_SHEET_TAB_TRIGGER}>
                 Validation
                 {blockers.length > 0 && (
@@ -988,29 +1052,11 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                     </div>
                   </div>
 
-                  {canReview && (
-                    <div className="border-t border-grn-line-soft px-4 py-4">
-                      <p className="mb-2 text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
-                        Remarks
-                      </p>
-                      <GrnTextarea
-                        value={reviewNote}
-                        onChange={(e) => setReviewNote(e.target.value)}
-                        className="min-h-[72px] w-full text-[12px]"
-                        placeholder="Why this decision — required on reject, recorded in audit trail"
-                        disabled={reviewMutation.isPending}
-                      />
-                    </div>
-                  )}
-                </>
-              )}
-            </TabsContent>
-
-            {/* Allocations tab */}
-            <TabsContent value="allocations" className="m-0 flex-1 overflow-y-auto">
-              {workspaceQuery.isLoading ? (
-                <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-grn-ink-soft" /></div>
-              ) : workspace?.allocations?.length ? (
+                  <div className="border-t border-grn-line-soft">
+                    <p className="px-4 pb-1 pt-4 text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
+                      Allocations
+                    </p>
+                    {workspace?.allocations?.length ? (
                 <>
                 {isUnbudgetedTarget && (
                   <div className="p-4 pb-0">
@@ -1133,12 +1179,93 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-grn-line bg-grn-line-soft font-bold">
+                      <GrnTd className="text-grn-ink-soft" />
+                      <GrnTd colSpan={2}>Total</GrnTd>
+                      <GrnTd align="right">{money(allocationTotals.withoutTax)}</GrnTd>
+                      <GrnTd align="right">{money(allocationTotals.withTax)}</GrnTd>
+                      <GrnTd align="right">{allocationTotals.percentage.toFixed(2)}%</GrnTd>
+                    </tr>
+                  </tfoot>
                 </GrnTable>
                 </>
-              ) : (
+                    ) : (
                 <p className="px-4 py-6 text-[12px] text-grn-ink-soft">
                   Legacy single-attribution GRN — no split allocations.
                 </p>
+                    )}
+                  </div>
+                  <div className="border-t border-grn-line-soft">
+                    <p className="px-4 pb-1 pt-4 text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
+                      GST breakdown
+                      <span className="ml-2 font-normal normal-case tracking-normal">
+                        {recordedGstType === "igst" ? "IGST (inter-state)" : recordedGstType === "cgst_sgst" ? "CGST + SGST (intra-state)" : "No GST"}
+                        {parent?.vendor_gstin ? ` · GSTIN ${parent.vendor_gstin}` : ""}
+                      </span>
+                    </p>
+                    {gstRows.length ? (
+                      <GrnTable minWidth={720}>
+                        <thead>
+                          <tr>
+                            <GrnTh sticky={false}>#</GrnTh>
+                            <GrnTh sticky={false}>HSN / SAC</GrnTh>
+                            <GrnTh sticky={false} align="right">GST slab</GrnTh>
+                            <GrnTh sticky={false} align="right">Taxable value</GrnTh>
+                            <GrnTh sticky={false} align="right">CGST</GrnTh>
+                            <GrnTh sticky={false} align="right">SGST</GrnTh>
+                            <GrnTh sticky={false} align="right">IGST</GrnTh>
+                            <GrnTh sticky={false} align="right">Total GST</GrnTh>
+                            <GrnTh sticky={false} align="right">Invoice total</GrnTh>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {gstRows.map((row) => (
+                            <tr key={row.key} className={GRN_TR}>
+                              <GrnTd className="font-grn-mono text-grn-ink-soft">{row.label}</GrnTd>
+                              <GrnTd className="font-grn-mono">{row.hsn}</GrnTd>
+                              <GrnTd align="right" className="font-semibold">{row.rate}%</GrnTd>
+                              <GrnTd align="right">{money(row.taxable)}</GrnTd>
+                              <GrnTd align="right">{money(row.cgst)}</GrnTd>
+                              <GrnTd align="right">{money(row.sgst)}</GrnTd>
+                              <GrnTd align="right">{money(row.igst)}</GrnTd>
+                              <GrnTd align="right">{money(row.gst)}</GrnTd>
+                              <GrnTd align="right" className="font-semibold">{money(row.gross)}</GrnTd>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t-2 border-grn-line bg-grn-line-soft font-bold">
+                            <GrnTd colSpan={3}>Total</GrnTd>
+                            <GrnTd align="right">{money(gstTotals.taxable)}</GrnTd>
+                            <GrnTd align="right">{money(gstTotals.cgst)}</GrnTd>
+                            <GrnTd align="right">{money(gstTotals.sgst)}</GrnTd>
+                            <GrnTd align="right">{money(gstTotals.igst)}</GrnTd>
+                            <GrnTd align="right">{money(gstTotals.gst)}</GrnTd>
+                            <GrnTd align="right">{money(gstTotals.gross)}</GrnTd>
+                          </tr>
+                        </tfoot>
+                      </GrnTable>
+                    ) : (
+                      <p className="px-4 pb-4 text-[12px] text-grn-ink-soft">No GST component recorded on this GRN.</p>
+                    )}
+                  </div>
+
+                  {canReview && (
+                    <div className="border-t border-grn-line-soft px-4 py-4">
+                      <p className="mb-2 text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
+                        Remarks
+                      </p>
+                      <GrnTextarea
+                        value={reviewNote}
+                        onChange={(e) => setReviewNote(e.target.value)}
+                        className="min-h-[72px] w-full text-[12px]"
+                        placeholder="Why this decision — required on reject, recorded in audit trail"
+                        disabled={reviewMutation.isPending}
+                      />
+                    </div>
+                  )}
+                </>
               )}
             </TabsContent>
 

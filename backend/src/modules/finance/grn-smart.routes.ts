@@ -587,9 +587,10 @@ smartGrnRouter.post(
         effectiveRole
       );
       if (data.paymentId) {
-        await import("./vendor-payment.service.js")
+        const createdPaymentId = data.paymentId;
+        void import("./vendor-payment.service.js")
           .then(({ vendorPaymentService }) =>
-            vendorPaymentService.auditCreatedPayment(data.paymentId!, user.id)
+            vendorPaymentService.auditCreatedPayment(createdPaymentId, user.id)
           )
           .catch(() => undefined);
       }

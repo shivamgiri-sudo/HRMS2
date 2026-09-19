@@ -5,6 +5,7 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { grnSmartService } from "./grn-smart.service.js";
 import { assertGrnTypeSupported } from "./grn-type-support.js";
 import { notifyGrnStage } from "./grn-notify.js";
+import { runInBackground } from "./grn-background.js";
 import { notifyGrnSubmittedEmail } from "./grn.notifications.js";
 
 const NON_OVERRIDABLE_VALIDATIONS = new Set(["LOB_ATTRIBUTION"]);
@@ -321,15 +322,13 @@ export const grnValidationControlService = {
     // actually goes through (requireAllocationsForSubmit hard-blocks anything without
     // allocations rather than falling through), so it needed the same wiring grn.service.ts's
     // submit() had but this path never reached. See grn-notify.ts's header.
-    await notifyGrnStage(
-      grnId,
-      typeRows[0].grn_number ? String(typeRows[0].grn_number) : null,
-      typeRows[0].branch_id ? String(typeRows[0].branch_id) : null,
-      typeRows[0].vendor_name ? String(typeRows[0].vendor_name) : null,
-      Number(typeRows[0].amount_with_tax ?? typeRows[0].amount ?? 0) || null,
-      "branch_head",
-    );
-    await notifyGrnSubmittedEmail(grnId);
+    const submittedGrnNumber = typeRows[0].grn_number ? String(typeRows[0].grn_number) : null;
+    const submittedBranchId = typeRows[0].branch_id ? String(typeRows[0].branch_id) : null;
+    const submittedVendorName = typeRows[0].vendor_name ? String(typeRows[0].vendor_name) : null;
+    const submittedAmount = Number(typeRows[0].amount_with_tax ?? typeRows[0].amount ?? 0) || null;
+    runInBackground("submit-alert", () =>
+      notifyGrnStage(grnId, submittedGrnNumber, submittedBranchId, submittedVendorName, submittedAmount, "branch_head"));
+    runInBackground("submit-email", () => notifyGrnSubmittedEmail(grnId));
     return { success: true, newStatus: "submitted", grnNumber: typeRows[0].grn_number ?? null, validation };
   },
 

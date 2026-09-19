@@ -797,6 +797,7 @@ function grnReportFiltersFrom(req: AuthenticatedRequest, branchScope: Awaited<Re
     grnNumber: str(req.query.grnNumber),
     vendorId: str(req.query.vendorId),
     status: str(req.query.status),
+    approvalStage: str(req.query.approvalStage),
     pendingWith: str(req.query.pendingWith),
     limit: req.query.limit ? Number(req.query.limit) : undefined,
   };
