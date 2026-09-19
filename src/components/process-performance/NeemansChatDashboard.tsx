@@ -108,6 +108,7 @@ export function NeemansChatDashboard() {
         <DashboardExportMenu
           reportTitle="Neemans — Chat Performance"
           fileBaseName="Neemans_Chat_Performance"
+          raw={{ dashboard: "neemans_chat" }}
           slides={exportSlides}
           activeSlideTitle="Chat Performance"
         />

@@ -368,6 +368,7 @@ export function HousingOwnerDashboard() {
         <DashboardExportMenu
           reportTitle="Housing Owner — Performance"
           fileBaseName="Housing_Owner_Performance"
+          raw={{ dashboard: "housing_owner", from, to }}
           subtitle={`${from} to ${to}`}
           slides={exportSlides}
           activeSlideTitle="Housing Owner Performance"

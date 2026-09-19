@@ -54,9 +54,12 @@ export async function importLpFeedbackAprBatch(
         ? JSON.parse(row.normalized_data)
         : ((row.normalized_data ?? {}) as Record<string, unknown>);
 
-    const requiredVal = getByColumn(data, "LoginId");
+    // Newer APR exports have no LoginId column (the SOP deletes it before
+    // pasting), so Agent stands in -- the same value the dashboard already
+    // falls back to when login_id is blank.
+    const requiredVal = getByColumn(data, "LoginId") || getByColumn(data, "Agent");
     if (!requiredVal) {
-      const msg = `Row ${row.row_no}: "LoginId" is required`;
+      const msg = `Row ${row.row_no}: "LoginId" (or "Agent") is required`;
       errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 

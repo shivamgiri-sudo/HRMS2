@@ -199,7 +199,7 @@ export async function getBellavitaChatDashboard(
   for (const r of salesByTlRows) revenueByTl.set(String(r.tl), num(r.revenue));
 
   const [agentRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(NULLIF(agent_name, ''), 'Unassigned') AS agent, MAX(emp_id) AS emp_id, COUNT(*) AS n,
+    `SELECT COALESCE(NULLIF(agent_name, ''), NULLIF(current_agent, ''), 'Unassigned') AS agent, MAX(emp_id) AS emp_id, COUNT(*) AS n,
        SUM(CASE WHEN ${RESOLVED_EXPR} THEN 1 ELSE 0 END) AS resolved,
        SUM(CASE WHEN repeat_status = 'Unique' THEN 1 ELSE 0 END) AS unique_count,
        SUM(CASE WHEN disposition = 'Saleschat' THEN 1 ELSE 0 END) AS sale_chat_count,

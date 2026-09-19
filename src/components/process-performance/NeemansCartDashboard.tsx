@@ -238,6 +238,7 @@ export function NeemansCartDashboard() {
         <DashboardExportMenu
           reportTitle="Neemans — Abandoned Cart Performance"
           fileBaseName="Neemans_Abandoned_Cart"
+          raw={{ dashboard: "neemans_cart", from, to }}
           subtitle={`${from} to ${to}`}
           slides={exportSlides}
           activeSlideTitle={tab === "overview" ? "Overview" : tab === "agents" ? "Agent-wise" : "Records"}

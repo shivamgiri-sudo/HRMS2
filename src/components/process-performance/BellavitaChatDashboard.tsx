@@ -12,6 +12,9 @@ import {
   formatShortDate, formatINR, currentMonthRange, localDateStr, type ExportSlide,
 } from "./DashboardKit";
 import { BellavitaChatLobSnapshot } from "./BellavitaChatLobSnapshot";
+import { BellavitaChatOverview } from "./BellavitaChatOverview";
+
+const CHAT_API = "/api/process-performance/bellavita-chat-dashboard";
 
 /**
  * Bellavita's real Chat performance dashboard -- live aggregates over
@@ -51,12 +54,16 @@ interface DashboardData {
 
 const DISPOSITION_COLORS = ["#e11d48", "#f59e0b", "#0ea5e9", "#8b5cf6", "#059669", "#64748b", "#ec4899"];
 
-type TabKey = "overview" | "tl" | "agents" | "snapshot";
+/** "overview" is the new Chat Dashboard BVO snapshot (new_bb_chat). The other
+ * tabs -- including "legacy", the previous Overview -- still read the older
+ * bb_chat table and keep working as before. */
+type TabKey = "overview" | "tl" | "agents" | "snapshot" | "legacy";
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "overview", label: "Overview" },
   { key: "tl", label: "TL-wise" },
   { key: "agents", label: "Agent-wise" },
   { key: "snapshot", label: "Snapshot" },
+  { key: "legacy", label: "Legacy" },
 ];
 
 export function BellavitaChatDashboard() {
@@ -86,7 +93,9 @@ export function BellavitaChatDashboard() {
     }
   }, [from, to, lob]);
 
-  useEffect(() => { void load(); }, [load]);
+  // The legacy bb_chat aggregate is slow, so it only loads for the tabs that use it.
+  const needsLegacy = tab === "tl" || tab === "agents" || tab === "legacy";
+  useEffect(() => { if (needsLegacy) void load(); }, [load, needsLegacy]);
 
   const filteredAgents = useMemo(() => {
     const rows = data?.agents ?? [];
@@ -142,11 +151,7 @@ export function BellavitaChatDashboard() {
     return [overview, tl, agentsSlide];
   }, [data]);
 
-  if (loading && !data) return <Spinner tone="blue" />;
-  if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
-  if (!data) return null;
-
-  const { headline } = data;
+  const headline = data?.headline;
 
   return (
     <div className="space-y-5">
@@ -157,24 +162,29 @@ export function BellavitaChatDashboard() {
       />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <DashboardExportMenu
-          reportTitle="Bellavita — Chat Performance"
-          fileBaseName="Bellavita_Chat"
-          subtitle={`${from} to ${to}`}
-          slides={exportSlides}
-          activeSlideTitle={tab === "overview" ? "Overview" : tab === "tl" ? "TL-wise" : tab === "agents" ? "Agent-wise" : "Overview"}
-        />
+        {needsLegacy ? (
+          <DashboardExportMenu
+            reportTitle="Bellavita — Chat Performance"
+            fileBaseName="Bellavita_Chat"
+            raw={{ dashboard: "bellavita_chat", from, to, lob: lob || undefined }}
+            subtitle={`${from} to ${to}`}
+            slides={exportSlides}
+            activeSlideTitle={tab === "tl" ? "TL-wise" : tab === "agents" ? "Agent-wise" : "Overview"}
+          />
+        ) : <span />}
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={lob}
-            onChange={(e) => setLob(e.target.value)}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition-colors focus:border-rose-400 focus:outline-none"
-          >
-            <option value="">All LOBs</option>
-            {data.lobOptions.map((l) => (
-              <option key={l} value={l}>{l}</option>
-            ))}
-          </select>
+          {needsLegacy && (
+            <select
+              value={lob}
+              onChange={(e) => setLob(e.target.value)}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition-colors focus:border-rose-400 focus:outline-none"
+            >
+              <option value="">All LOBs</option>
+              {(data?.lobOptions ?? []).map((l) => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </select>
+          )}
           <DateRangeToolbar
             from={from} to={to} onFrom={setFrom} onTo={setTo}
             onReset={() => { const r = currentMonthRange(); setFrom(r.from); setTo(r.to); }}
@@ -183,7 +193,19 @@ export function BellavitaChatDashboard() {
         </div>
       </div>
 
-      {headline.totalTickets === 0 && data.latestAvailableDate && (
+      {tab === "overview" && (
+        <BellavitaChatOverview
+          apiPath={CHAT_API} from={from} to={to}
+          onRangeChange={(f, t) => { setFrom(f); setTo(t); }}
+        />
+      )}
+
+      {needsLegacy && loading && !data && <Spinner tone="blue" />}
+      {needsLegacy && error && (
+        <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>
+      )}
+
+      {needsLegacy && data && headline && headline.totalTickets === 0 && data.latestAvailableDate && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-700">
           <span>
             No chat tickets between {from} and {to} — the most recent uploaded data is from{" "}
@@ -205,7 +227,7 @@ export function BellavitaChatDashboard() {
         </div>
       )}
 
-      {tab === "overview" && (
+      {tab === "legacy" && data && headline && (
       <>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-10">
         <KpiCard icon={MessageSquare} label="Total Tickets" value={headline.totalTickets.toLocaleString("en-IN")} sub="overall" tone="rose" />
@@ -261,7 +283,7 @@ export function BellavitaChatDashboard() {
       </>
       )}
 
-      {tab === "tl" && (
+      {tab === "tl" && data && (
       <SectionCard
         icon={Users} title="TL-wise Summary" tone="rose"
         footnote="Amount is SUM(bb_sale.amount) for that TL where campaign = 'Chat', over the same date range — a real figure from Bellavita's sale table, matched by TL name. It reflects every Chat-channel sale for that TL and does not narrow further when the LOB filter above is set to Bevzilla or Kenaz specifically, since bb_sale has no such split."
@@ -304,7 +326,7 @@ export function BellavitaChatDashboard() {
       </SectionCard>
       )}
 
-      {tab === "agents" && (
+      {tab === "agents" && data && (
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="relative w-full max-w-sm">

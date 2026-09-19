@@ -174,6 +174,7 @@ function SaleDashboardSlide({ from, to }: { from: string; to: string }) {
         <DashboardExportMenu
           reportTitle="Bellavita — Sale Performance"
           fileBaseName="Bellavita_Sale"
+          raw={{ dashboard: "bellavita_sale", from, to }}
           subtitle={`${from} to ${to}`}
           slides={exportSlides}
           activeSlideTitle="Sale Performance"

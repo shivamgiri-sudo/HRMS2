@@ -162,6 +162,7 @@ export function BellavitaCartDashboard() {
         <DashboardExportMenu
           reportTitle="Bellavita — Abandon Cart"
           fileBaseName="Bellavita_Cart"
+          raw={{ dashboard: "bellavita_cart", from, to }}
           subtitle={`${from} to ${to}`}
           slides={exportSlides}
           activeSlideTitle={tab === "overview" ? "Overview" : "Agent-wise"}

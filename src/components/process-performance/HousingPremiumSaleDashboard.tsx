@@ -167,6 +167,7 @@ export function HousingPremiumSaleDashboard() {
         <DashboardExportMenu
           reportTitle="Housing Premium — Sale Performance"
           fileBaseName="HousingPremium_Sale_Performance"
+          raw={{ dashboard: "housing_premium" }}
           slides={exportSlides}
           activeSlideTitle={tab === "overall" ? "Overall" : tab === "tl" ? "TL-wise" : "Agent-wise"}
         />

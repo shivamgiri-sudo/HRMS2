@@ -169,6 +169,29 @@ export async function getProjectSummary(filters: InboundFilters, projectKey?: st
   return results;
 }
 
+/**
+ * One project's summary AND daily trend from a single pass over its CDR
+ * table. getProjectSummary and getProjectTrend each call runProjectQuery on
+ * their own, so a caller needing both (the Neemans overview) paid for the
+ * same slow remote dialer_db query twice; this runs it once, with the FCR
+ * lookup in parallel. Same aggregation as getProjectSummary -- additive, the
+ * existing functions are unchanged.
+ */
+export async function getProjectOverview(filters: InboundFilters, projectKey: string) {
+  const p = PROJECTS.find((x) => x.key === projectKey);
+  if (!p) throw new Error(`Unknown project key: ${projectKey}`);
+
+  const [rows, fcrRows] = await Promise.all([runProjectQuery(p, filters), getFCRData(p, filters)]);
+  const fcr_pct = fcrRows.length
+    ? Math.round(fcrRows.reduce((s, r) => s + r.fcr_pct, 0) / fcrRows.length * 100) / 100
+    : null;
+
+  return {
+    summary: { key: p.key, name: p.name, mandate: p.mandate, required: p.required, hasFCR: p.hasFCR, ...aggregateRows(rows), fcr_pct },
+    trend: rows,
+  };
+}
+
 export async function getProjectTrend(filters: InboundFilters, projectKey?: string) {
   const projects = projectKey ? PROJECTS.filter((p) => p.key === projectKey) : PROJECTS;
 

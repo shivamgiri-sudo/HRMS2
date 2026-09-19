@@ -9,6 +9,7 @@ import { startBatchJob, getBatchJob, readBatchProgress } from "./batch-job.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { loadRowsWithLiveStatus, reconcileStuckRows } from "./bulk-approval.service.js";
 import { withDeadlockRetry, isDeadlockError } from "../../shared/deadlockRetry.js";
+import { UPLOAD_DESTINATION_REGISTRY, UPLOAD_DESTINATION_KNOWN_GAPS } from "./upload-destination-registry.js";
 
 /**
  * A batch left in 'importing' for longer than this is assumed to be from an API that
@@ -255,7 +256,7 @@ router.get("/batches/:id/rows", requireRole("admin", "hr", "super_admin", "wfm",
 router.delete("/batches/:id", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const [rows] = await db.execute<RowDataPacket[]>(
-    "SELECT id, uploaded_by FROM upload_batch WHERE id = ? LIMIT 1",
+    "SELECT id, uploaded_by, upload_type_code FROM upload_batch WHERE id = ? LIMIT 1",
     [id],
   );
   const batch = rows[0];
@@ -274,7 +275,33 @@ router.delete("/batches/:id", requireRole("admin", "hr", "super_admin", "wfm", "
   // an unrelated, long-running query elsewhere on this shared DB -- both
   // deletes are single autocommit statements and idempotent (deleting an
   // already-deleted row is a no-op), so retrying is safe.
+  let destinationRowsDeleted: number | null = null;
+  let warning: string | null = null;
   try {
+    const destination = UPLOAD_DESTINATION_REGISTRY[batch.upload_type_code as string];
+    if (destination) {
+      // This is the actual imported data (e.g. db_masmis.bb_chat) -- without
+      // this, deleting the upload log left every already-inserted row behind
+      // forever, still counted by every dashboard reading that table.
+      destinationRowsDeleted = 0;
+      for (const table of [destination.table, ...(destination.alsoTables ?? [])]) {
+        try {
+          const [result] = await withDeadlockRetry(() =>
+            db.execute<ResultSetHeader>(
+              `DELETE FROM ${table} WHERE ${destination.batchIdColumn} = ?`,
+              [id],
+            ),
+          );
+          destinationRowsDeleted += result.affectedRows;
+        } catch (err: unknown) {
+          // A table that hasn't been created yet holds nothing to delete.
+          if ((err as { code?: string }).code === "ER_NO_SUCH_TABLE") continue;
+          throw err;
+        }
+      }
+    } else if (UPLOAD_DESTINATION_KNOWN_GAPS[batch.upload_type_code as string]) {
+      warning = UPLOAD_DESTINATION_KNOWN_GAPS[batch.upload_type_code as string];
+    }
     await withDeadlockRetry(() => db.execute("DELETE FROM upload_batch_row WHERE upload_batch_id = ?", [id]));
     await withDeadlockRetry(() => db.execute("DELETE FROM upload_batch WHERE id = ?", [id]));
   } catch (err: unknown) {
@@ -286,7 +313,7 @@ router.delete("/batches/:id", requireRole("admin", "hr", "super_admin", "wfm", "
     }
     throw err;
   }
-  res.json({ success: true });
+  res.json({ success: true, destinationRowsDeleted, warning });
 }));
 
 /**

@@ -137,7 +137,13 @@ export function currentMonthRange(): { from: string; to: string } {
   return { from, to };
 }
 
-export async function getNeemansCartDashboard(fromInput: string, toInput: string): Promise<NeemansCartDashboardData> {
+/** `skipRecords` lets the combined Neemans overview reuse every aggregate here
+ * without paying for the up-to-1,000-row raw-records query it never shows. */
+export async function getNeemansCartDashboard(
+  fromInput: string,
+  toInput: string,
+  opts: { skipRecords?: boolean } = {},
+): Promise<NeemansCartDashboardData> {
   const fallback = currentMonthRange();
   const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
   const to = DATE_RE.test(toInput) ? toInput : fallback.to;
@@ -185,11 +191,11 @@ export async function getNeemansCartDashboard(fromInput: string, toInput: string
 
   const [agentRows] = await db.execute<AgentRow[]>(
     `SELECT agent,
-       COUNT(*) AS cart_count,
-       SUM(amount) AS cart_value,
+       SUM(disp_count) AS cart_count,
+       SUM(disp_value) AS cart_value,
        SUBSTRING_INDEX(GROUP_CONCAT(disposition ORDER BY disp_count DESC), ',', 1) AS top_disposition
      FROM (
-       SELECT agent, disposition, COUNT(*) AS disp_count
+       SELECT agent, disposition, COUNT(*) AS disp_count, SUM(amount) AS disp_value
        FROM db_masmis.neemans_cart
        WHERE call_date >= ? AND call_date < DATE_ADD(?, INTERVAL 1 DAY) AND agent IS NOT NULL AND agent != ''
        GROUP BY agent, disposition
@@ -199,15 +205,17 @@ export async function getNeemansCartDashboard(fromInput: string, toInput: string
     range,
   );
 
-  const [recordRows] = await db.execute<RecordRow[]>(
-    `SELECT id, cart_id, customer_name, phone_number, email_id, line_items, amount,
-       agent, disposition, sub_disposition, call_date, status
-     FROM db_masmis.neemans_cart
-     WHERE call_date >= ? AND call_date < DATE_ADD(?, INTERVAL 1 DAY)
-     ORDER BY call_date DESC, id DESC
-     LIMIT ${RECORDS_LIMIT}`,
-    range,
-  );
+  const recordRows: RecordRow[] = opts.skipRecords
+    ? []
+    : (await db.execute<RecordRow[]>(
+        `SELECT id, cart_id, customer_name, phone_number, email_id, line_items, amount,
+           agent, disposition, sub_disposition, call_date, status
+         FROM db_masmis.neemans_cart
+         WHERE call_date >= ? AND call_date < DATE_ADD(?, INTERVAL 1 DAY)
+         ORDER BY call_date DESC, id DESC
+         LIMIT ${RECORDS_LIMIT}`,
+        range,
+      ))[0];
 
   const totalCarts = num(headlineRow?.total_carts);
   const totalCartValue = num(headlineRow?.total_value);
@@ -259,6 +267,6 @@ export async function getNeemansCartDashboard(fromInput: string, toInput: string
       status: r.status || "Unknown",
     })),
     recordsTotal: totalCarts,
-    recordsTruncated: totalCarts > recordRows.length,
+    recordsTruncated: !opts.skipRecords && totalCarts > recordRows.length,
   };
 }

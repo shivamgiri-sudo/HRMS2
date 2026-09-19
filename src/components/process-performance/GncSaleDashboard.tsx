@@ -196,6 +196,7 @@ export function GncSaleDashboard() {
         <DashboardExportMenu
           reportTitle="GNC — Sale Performance"
           fileBaseName="GNC_Sale_Performance"
+          raw={{ dashboard: "gnc_sale", from, to }}
           subtitle={`${from} to ${to}`}
           slides={exportSlides}
           activeSlideTitle={tab === "overall" ? "Overall" : "Agent-wise Performance"}

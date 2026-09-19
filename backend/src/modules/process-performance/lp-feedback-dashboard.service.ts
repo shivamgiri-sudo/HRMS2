@@ -1,5 +1,5 @@
 import {
-  getLpCallDashboard, currentMonthRange,
+  getLpCallDashboard, getLpCallDetail, currentMonthRange, type LpDetailKind,
   type LpCallDashboardData, type LpCallHeadline, type LpCallServiceRow, type LpCallWeekRow, type LpCallAgentRow,
 } from "./lp-call-dashboard.shared.js";
 
@@ -20,4 +20,8 @@ export { currentMonthRange };
 
 export async function getLpFeedbackDashboard(fromInput: string, toInput: string): Promise<LpCallDashboardData> {
   return getLpCallDashboard("lp_feedback", fromInput, toInput);
+}
+
+export async function getLpFeedbackDetail(kind: LpDetailKind, key: string, fromInput: string, toInput: string) {
+  return getLpCallDetail("lp_feedback", kind, key, fromInput, toInput);
 }

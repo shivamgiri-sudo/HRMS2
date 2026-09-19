@@ -168,6 +168,7 @@ export function GncInboundDashboard() {
         <DashboardExportMenu
           reportTitle="GNC — Inbound Call Performance"
           fileBaseName="GNC_Inbound"
+          raw={{ dashboard: "gnc_inbound", from, to }}
           subtitle={`${from} to ${to}`}
           slides={exportSlides}
           activeSlideTitle={tab === "overview" ? "Overview" : tab === "agents" ? "Agent-wise" : "Date-wise"}

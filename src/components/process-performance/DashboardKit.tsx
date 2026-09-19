@@ -1,8 +1,9 @@
-import type { ComponentType, ReactNode } from "react";
+import { useState, type ComponentType, type ReactNode } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import ExcelJS from "exceljs";
-import { Download, FileText, FileSpreadsheet, Layers } from "lucide-react";
+import { Download, FileText, FileSpreadsheet, Layers, Loader2 } from "lucide-react";
+import { getAuthToken } from "@/lib/hrmsApi";
+import { apiUrl } from "@/lib/apiBase";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
@@ -304,186 +305,111 @@ export function exportSlidesToPdf(params: {
   doc.save(fileName);
 }
 
-const sanitizeSheetName = (name: string): string => {
-  const cleaned = name.replace(/[:\\/?*[\]]/g, " ").trim().slice(0, 31);
-  return cleaned || "Sheet";
-};
+/** Tells the server which report an Excel export belongs to, so it can attach
+ * the raw source rows behind that report as extra sheets. `from`/`to`/`lob`
+ * must be the same filters the report itself is currently showing. */
+export interface ExportRawSpec {
+  /** Key of the report in the backend's dashboard-export registry. */
+  dashboard: string;
+  from?: string;
+  to?: string;
+  lob?: string;
+}
 
-/** Real formatting (dark header bands, zebra rows, borders, bold values,
- * auto-sized columns) -- the free "xlsx" (SheetJS Community Edition)
- * package already used elsewhere in this app cannot reliably write cell
- * styles (fills/fonts/borders on write are a Pro-only feature there), so
- * this uses "exceljs" instead, which is built for exactly this and works
- * the same way in the browser: build a workbook in memory, get a Blob back. */
-const XL_NAVY = "FF1E293B";
-const XL_SLATE700 = "FF334155";
-const XL_ZEBRA = "FFF1F5F9";
-const XL_BORDER_COLOR = "FFCBD5E1";
-const XL_HEADER_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: XL_NAVY } };
-const XL_SUBHEADER_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: XL_SLATE700 } };
-const XL_ZEBRA_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: XL_ZEBRA } };
-const XL_WHITE_BOLD: Partial<ExcelJS.Font> = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
-const XL_THIN_BORDER: Partial<ExcelJS.Borders> = {
-  top: { style: "thin", color: { argb: XL_BORDER_COLOR } },
-  bottom: { style: "thin", color: { argb: XL_BORDER_COLOR } },
-  left: { style: "thin", color: { argb: XL_BORDER_COLOR } },
-  right: { style: "thin", color: { argb: XL_BORDER_COLOR } },
-};
-
+/**
+ * Excel is built by the server (POST /api/process-performance/dashboard-export/excel):
+ * the report's on-screen tables become styled summary sheets, and the raw
+ * source rows behind the report are streamed into extra "Raw - <table>"
+ * sheets, followed by a "Raw Data Notes" sheet stating what each one holds.
+ * It is not built in the browser because raw data is large (tens of
+ * thousands of rows x dozens of columns) -- the server streams it to disk
+ * with flat memory, where the browser would have to hold every cell at once.
+ */
 export async function exportSlidesToExcel(params: {
-  fileName: string; slides: ExportSlide[]; reportTitle?: string; subtitle?: string;
-}): Promise<void> {
-  const { fileName, slides, reportTitle, subtitle } = params;
-  const wb = new ExcelJS.Workbook();
-  wb.creator = "MAS Callnet PeopleOS";
-  wb.created = new Date();
-  const usedNames = new Set<string>();
-  let sheetsWritten = 0;
-
-  for (const slide of slides) {
-    let name = sanitizeSheetName(slide.title);
-    let suffix = 2;
-    while (usedNames.has(name)) { name = sanitizeSheetName(`${slide.title} ${suffix}`); suffix += 1; }
-    usedNames.add(name);
-
-    const ws = wb.addWorksheet(name);
-    const maxCols = Math.max(2, ...(slide.tables ?? []).map((t) => t.columns.length));
-    let rowIdx = 1;
-
-    if (reportTitle) {
-      ws.mergeCells(rowIdx, 1, rowIdx, maxCols);
-      const titleCell = ws.getCell(rowIdx, 1);
-      titleCell.value = reportTitle;
-      titleCell.font = { bold: true, size: 14, color: { argb: "FF0F172A" } };
-      rowIdx += 1;
-      ws.mergeCells(rowIdx, 1, rowIdx, maxCols);
-      const subCell = ws.getCell(rowIdx, 1);
-      subCell.value = subtitle ? `${slide.title} · ${subtitle}` : slide.title;
-      subCell.font = { italic: true, size: 9, color: { argb: "FF64748B" } };
-      rowIdx += 2;
-    }
-
-    const contentStartRow = rowIdx;
-
-    if (slide.kpis && slide.kpis.length > 0) {
-      const headerCells = ["Metric", "Value"];
-      headerCells.forEach((label, i) => {
-        const cell = ws.getCell(rowIdx, i + 1);
-        cell.value = label;
-        cell.fill = XL_HEADER_FILL;
-        cell.font = XL_WHITE_BOLD;
-        cell.border = XL_THIN_BORDER;
-        cell.alignment = { vertical: "middle", horizontal: i === 0 ? "left" : "right" };
-      });
-      rowIdx += 1;
-      slide.kpis.forEach((k, i) => {
-        const labelCell = ws.getCell(rowIdx, 1);
-        const valueCell = ws.getCell(rowIdx, 2);
-        labelCell.value = k.label;
-        valueCell.value = k.value;
-        for (const cell of [labelCell, valueCell]) {
-          cell.border = XL_THIN_BORDER;
-          if (i % 2 === 1) cell.fill = XL_ZEBRA_FILL;
-        }
-        labelCell.alignment = { horizontal: "left" };
-        valueCell.alignment = { horizontal: "right" };
-        valueCell.font = { bold: true };
-        rowIdx += 1;
-      });
-      rowIdx += 1;
-    }
-
-    for (const table of slide.tables ?? []) {
-      if (table.rows.length === 0) continue;
-      ws.mergeCells(rowIdx, 1, rowIdx, Math.max(1, table.columns.length));
-      const titleCell = ws.getCell(rowIdx, 1);
-      titleCell.value = table.title;
-      titleCell.font = { bold: true, size: 11, color: { argb: "FF334155" } };
-      rowIdx += 1;
-
-      table.columns.forEach((col, i) => {
-        const cell = ws.getCell(rowIdx, i + 1);
-        cell.value = col;
-        cell.fill = XL_SUBHEADER_FILL;
-        cell.font = XL_WHITE_BOLD;
-        cell.border = XL_THIN_BORDER;
-        cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
-      });
-      rowIdx += 1;
-
-      table.rows.forEach((row, ri) => {
-        row.forEach((val, ci) => {
-          const cell = ws.getCell(rowIdx, ci + 1);
-          cell.value = val;
-          cell.border = XL_THIN_BORDER;
-          if (ri % 2 === 1) cell.fill = XL_ZEBRA_FILL;
-          cell.alignment = { horizontal: typeof val === "number" ? "right" : "center" };
-        });
-        rowIdx += 1;
-      });
-      rowIdx += 1;
-    }
-
-    if (rowIdx === contentStartRow) {
-      const cell = ws.getCell(rowIdx, 1);
-      cell.value = "No data for this period.";
-      cell.font = { italic: true, color: { argb: "FF94A3B8" } };
-      rowIdx += 1;
-    }
-
-    for (let c = 1; c <= maxCols; c++) {
-      let maxLen = 10;
-      ws.getColumn(c).eachCell({ includeEmpty: false }, (cell) => {
-        const len = String(cell.value ?? "").length;
-        if (len > maxLen) maxLen = len;
-      });
-      ws.getColumn(c).width = Math.min(42, maxLen + 3);
-    }
-    ws.views = [{ state: "frozen", ySplit: reportTitle ? contentStartRow : 0 }];
-    sheetsWritten += 1;
+  fileName: string; slides: ExportSlide[]; reportTitle: string; subtitle?: string; raw: ExportRawSpec;
+}): Promise<{ failedSheets: number; truncatedSheets: number }> {
+  const { fileName, slides, reportTitle, subtitle, raw } = params;
+  const response = await fetch(apiUrl("/api/process-performance/dashboard-export/excel"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${getAuthToken()}` },
+    body: JSON.stringify({
+      dashboard: raw.dashboard, from: raw.from, to: raw.to, lob: raw.lob, reportTitle, subtitle, slides,
+    }),
+  });
+  if (!response.ok) {
+    let message = `Excel export failed (${response.status}).`;
+    try {
+      const body = await response.json();
+      if (body?.error || body?.message) message = String(body.error ?? body.message);
+    } catch { /* body was not JSON */ }
+    throw new Error(message);
   }
-
-  if (sheetsWritten === 0) {
-    const ws = wb.addWorksheet("Sheet1");
-    ws.getCell(1, 1).value = "No data for this period.";
-  }
-
-  const buffer = await wb.xlsx.writeBuffer();
-  const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = fileName;
   link.click();
   URL.revokeObjectURL(url);
+  return {
+    failedSheets: Number(response.headers.get("X-Export-Failed-Sheets") ?? 0),
+    truncatedSheets: Number(response.headers.get("X-Export-Truncated-Sheets") ?? 0),
+  };
 }
+
 
 /** Drop-in "Export" button for a dashboard's toolbar row, next to
  * DateRangeToolbar. `slides` is every tab the dashboard has (feeds the two
  * "Download All" options); `activeSlideTitle` must match one slide's
- * `title` exactly and picks what the two single-view options act on. */
+ * `title` exactly and picks what the two single-view options act on.
+ * `raw` is required on purpose: every Excel export carries the raw source
+ * rows behind the report, so a report that forgot to say which source it
+ * reads is a compile error rather than an export silently missing its data. */
 export function DashboardExportMenu({
-  reportTitle, fileBaseName, subtitle, slides, activeSlideTitle,
+  reportTitle, fileBaseName, subtitle, slides, activeSlideTitle, raw,
 }: {
   reportTitle: string;
   fileBaseName: string;
   subtitle?: string;
   slides: ExportSlide[];
   activeSlideTitle: string;
+  raw: ExportRawSpec;
 }) {
+  const [busy, setBusy] = useState(false);
   const activeSlide = slides.find((s) => s.title === activeSlideTitle) ?? slides[0];
   const stamp = localDateStr(new Date());
   const safeFileBase = fileBaseName.replace(/\s+/g, "_");
+
+  const runExcel = async (fileName: string, excelSlides: ExportSlide[]) => {
+    setBusy(true);
+    try {
+      const { failedSheets, truncatedSheets } = await exportSlidesToExcel({
+        fileName, slides: excelSlides, reportTitle, subtitle, raw,
+      });
+      if (failedSheets > 0 || truncatedSheets > 0) {
+        window.alert(
+          `Excel downloaded. ${failedSheets > 0 ? `${failedSheets} raw-data sheet(s) could not be included. ` : ""}` +
+          `${truncatedSheets > 0 ? `${truncatedSheets} raw-data sheet(s) were cut short (row limit or time limit). ` : ""}` +
+          `See the "Raw Data Notes" sheet in the file for exactly what happened and how to get the rest.`,
+        );
+      }
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Excel export failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition-colors hover:bg-slate-50"
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition-colors hover:bg-slate-50 disabled:cursor-wait disabled:opacity-70"
         >
-          <Download className="h-3.5 w-3.5" />
-          Export
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+          {busy ? "Preparing Excel…" : "Export"}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="text-xs">
@@ -498,12 +424,11 @@ export function DashboardExportMenu({
               <FileText className="mr-2 h-3.5 w-3.5" /> Download Snap ({activeSlide.title})
             </DropdownMenuItem>
             <DropdownMenuItem
-              onClick={() => void exportSlidesToExcel({
-                fileName: `${safeFileBase}_${activeSlide.title.replace(/\s+/g, "_")}_${stamp}.xlsx`,
-                reportTitle, subtitle, slides: [activeSlide],
-              })}
+              onClick={() => void runExcel(
+                `${safeFileBase}_${activeSlide.title.replace(/\s+/g, "_")}_${stamp}.xlsx`, [activeSlide],
+              )}
             >
-              <FileSpreadsheet className="mr-2 h-3.5 w-3.5" /> Download Excel ({activeSlide.title})
+              <FileSpreadsheet className="mr-2 h-3.5 w-3.5" /> Download Excel + raw data ({activeSlide.title})
             </DropdownMenuItem>
             <DropdownMenuSeparator />
           </>
@@ -513,10 +438,8 @@ export function DashboardExportMenu({
         >
           <Layers className="mr-2 h-3.5 w-3.5" /> Download All Views (PDF, all slides)
         </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => void exportSlidesToExcel({ fileName: `${safeFileBase}_All_${stamp}.xlsx`, reportTitle, subtitle, slides })}
-        >
-          <Layers className="mr-2 h-3.5 w-3.5" /> Download All Views (Excel, all sheets)
+        <DropdownMenuItem onClick={() => void runExcel(`${safeFileBase}_All_${stamp}.xlsx`, slides)}>
+          <Layers className="mr-2 h-3.5 w-3.5" /> Download All Views (Excel + raw data)
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

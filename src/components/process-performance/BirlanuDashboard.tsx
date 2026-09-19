@@ -212,6 +212,7 @@ export function BirlanuDashboard() {
         <DashboardExportMenu
           reportTitle="Birlanu — Lead-to-Sale Performance"
           fileBaseName="Birlanu_Performance"
+          raw={{ dashboard: "birlanu" }}
           slides={exportSlides}
           activeSlideTitle="Overview"
         />

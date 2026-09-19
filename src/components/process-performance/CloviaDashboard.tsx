@@ -795,6 +795,7 @@ export function CloviaDashboard() {
         <DashboardExportMenu
           reportTitle="Clovia — Process Performance"
           fileBaseName="Clovia_Dashboard"
+          raw={{ dashboard: "clovia", from, to }}
           subtitle={`${from} to ${to}`}
           slides={exportSlides}
           activeSlideTitle={slide === "overview" ? "Overview" : slide === "inbound" ? "Inbound" : "Channels"}

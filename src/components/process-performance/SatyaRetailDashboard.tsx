@@ -154,6 +154,7 @@ export function SatyaRetailDashboard() {
         <DashboardExportMenu
           reportTitle="Satya Retail — Beat & Call Performance"
           fileBaseName="SatyaRetail_Beat_Call_Performance"
+          raw={{ dashboard: "satya_retail" }}
           slides={exportSlides}
           activeSlideTitle={tab === "overall" ? "Overall" : tab === "warehouse" ? "Warehouse-wise" : "Agent-wise"}
         />

@@ -5,6 +5,7 @@ import { ProjectDetailView } from "@/pages/NativeInboundDashboard";
 import { BellavitaSaleDashboard } from "@/components/process-performance/BellavitaSaleDashboard";
 import { GncSaleDashboard } from "@/components/process-performance/GncSaleDashboard";
 import { GncInboundDashboard } from "@/components/process-performance/GncInboundDashboard";
+import { InboundInsightsDashboard } from "@/components/process-performance/InboundInsightsDashboard";
 import { NeemansCartDashboard } from "@/components/process-performance/NeemansCartDashboard";
 import { NeemansPerformanceDashboard } from "@/components/process-performance/NeemansPerformanceDashboard";
 import { NeemansChatDashboard } from "@/components/process-performance/NeemansChatDashboard";
@@ -27,7 +28,7 @@ import {
   Receipt, PhoneIncoming, PhoneOutgoing, PhoneCall, ClipboardList,
   Mail, Star, ShieldCheck, Repeat, RotateCcw, TrendingUp,
   Heart, Footprints, HeartPulse, Home, Crown, Shirt, FileText, Tag,
-  Building2, Globe, Settings, Zap, LayoutGrid, UploadCloud,
+  Building2, Globe, Settings, Zap, LayoutGrid, UploadCloud, Sparkles,
 } from "lucide-react";
 
 /**
@@ -36,7 +37,7 @@ import {
  * company is passed straight through as projectKey with no separate
  * mapping table, same as bellavita/gnc/clovia/neemans already are.
  */
-type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "lp_feedback" | "lp_onboarding" | "dalmia" | "dubangladesh" | "viega" | "exicom";
+type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "lp_feedback" | "lp_onboarding" | "puresta" | "dalmia" | "dubangladesh" | "viega" | "exicom";
 type SectionKey = "dashboards" | "uploader";
 
 const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
@@ -51,6 +52,7 @@ const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
   { key: "satya_retail", label: "Satya Retail" },
   { key: "lp_feedback", label: "LP Feedback" },
   { key: "lp_onboarding", label: "LP Onboarding" },
+  { key: "puresta", label: "Puresta" },
   { key: "dalmia", label: "Dalmia" },
   { key: "dubangladesh", label: "DU Bangladesh" },
   { key: "viega", label: "Viega" },
@@ -71,6 +73,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
   satya_retail: { icon: Tag, tone: "yellow" },
   lp_feedback: { icon: MessageSquare, tone: "blue" },
   lp_onboarding: { icon: Users, tone: "pink" },
+  puresta: { icon: Sparkles, tone: "slate" },
   dalmia: { icon: Building2, tone: "green" },
   dubangladesh: { icon: Globe, tone: "cyan" },
   viega: { icon: Settings, tone: "purple" },
@@ -492,7 +495,7 @@ export default function ProcessPerformanceV2Page() {
         )}
 
         {/* Level 3: Dashboards — blank for now (single stub for every company without named sub-dashboards) */}
-        {company === "appreciate_health" && section === "dashboards" && (
+        {(company === "appreciate_health" || company === "puresta") && section === "dashboards" && (
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel, "Dashboards"]} onBack={backToCompany} />
             <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white p-16 text-sm text-slate-400">
@@ -529,7 +532,11 @@ export default function ProcessPerformanceV2Page() {
               // dashboard (GncInboundDashboard) per explicit user request -- every
               // other "inbound" company keeps the original shared InboundDashboardTab/
               // ProjectDetailView untouched.
-              company === "gnc" ? <GncInboundDashboard /> : <InboundDashboardTab projectKey={company} />
+              // DU Bangladesh / Exicom / Viega / Dalmia get the full hour/date/agent/LOB/wait/caller
+              // InboundInsightsDashboard (dialer data, call-level drill-down).
+              company === "gnc" ? <GncInboundDashboard />
+                : company === "dubangladesh" || company === "exicom" || company === "viega" || company === "dalmia" ? <InboundInsightsDashboard projectKey={company} />
+                  : <InboundDashboardTab projectKey={company} />
             ) : selectedDashboard.kind === "bellavita_sale" ? (
               <BellavitaSaleDashboard />
             ) : selectedDashboard.kind === "gnc_sale" ? (
@@ -597,9 +604,10 @@ export default function ProcessPerformanceV2Page() {
         )}
 
         {/* Dalmia/DU Bangladesh/Viega/Exicom only have an Inbound dashboard so far
-            (no uploader requested) — stub, same "nothing here yet" state the
+            (no uploader requested), and Puresta was added as a placeholder with
+            both tabs deliberately blank — stub, same "nothing here yet" state the
             Dashboards section uses elsewhere, so Uploader is never a dead end. */}
-        {(company === "dalmia" || company === "dubangladesh" || company === "viega" || company === "exicom") && section === "uploader" && (
+        {(company === "dalmia" || company === "dubangladesh" || company === "viega" || company === "exicom" || company === "puresta") && section === "uploader" && (
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel, "Data Uploader"]} onBack={backToCompany} />
             <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white p-16 text-sm text-slate-400">

@@ -90,6 +90,20 @@ function getNormalized(row: Record<string, unknown>, column: string): string {
   return "";
 }
 
+/** A required column that may be satisfied by another column when the file
+ * doesn't carry it. LP Feedback/Onboarding APR exports arrive without a
+ * LoginId column (the SOP deletes it before the sheet is pasted), so Agent
+ * stands in -- mirrored by lp-*-apr-bulk.service.ts, which stores it as
+ * login_id. Kept in code rather than in upload_template_master so no live
+ * template row has to change. */
+const REQUIRED_COLUMN_FALLBACKS: Record<string, Record<string, string>> = {
+  LP_FEEDBACK_APR_MASMIS: { loginid: "Agent" },
+  LP_ONBOARDING_APR_MASMIS: { loginid: "Agent" },
+  // The Bellavita Chat sheet has no Ticket ID; its row key is Unique ID
+  // (see bb-chat-masmis-bulk.service.ts).
+  BB_CHAT_MASMIS: { ticketid: "Unique ID" },
+};
+
 const STAGE_CHUNK_SIZE = 500;
 
 interface UploadTemplate {
@@ -182,11 +196,14 @@ export function BellavitaMasmisUploader({
   }, [templateCode]);
 
   async function handleDelete(id: string) {
-    if (!window.confirm("Remove this entry from the upload log? The data it already imported will NOT be affected.")) return;
+    if (!window.confirm("Delete this upload? The rows it imported into the database will also be permanently removed. This cannot be undone.")) return;
     setDeletingId(id);
     try {
-      await hrmsApi.delete(`/api/bulk-upload/batches/${id}`);
+      const res = await hrmsApi.delete<{ success: boolean; destinationRowsDeleted: number | null; warning: string | null }>(
+        `/api/bulk-upload/batches/${id}`,
+      );
       setLog((prev) => prev.filter((b) => b.id !== id));
+      if (res?.warning) window.alert(`Upload log entry removed.\n\n${res.warning}`);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : "Failed to delete this log entry.");
     } finally {
@@ -322,9 +339,12 @@ export function BellavitaMasmisUploader({
 
       const required = template.required_columns || [];
       const stagedRows = rows.map((row, index) => {
-        const errors = required.filter(
-          (col) => getNormalized(row, col) === "",
-        ).map((col) => `${col} is required`);
+        const fallbacks = REQUIRED_COLUMN_FALLBACKS[template.upload_type_code] ?? {};
+        const errors = required.filter((col) => {
+          if (getNormalized(row, col) !== "") return false;
+          const alt = fallbacks[normalizeHeaderKey(col)];
+          return !alt || getNormalized(row, alt) === "";
+        }).map((col) => `${col} is required`);
         return {
           rowNo: index + 1,
           rawData: row,

@@ -197,6 +197,7 @@ import { processMetricDefinitionRouter } from "./modules/kpi/process-metric-defi
 import { qualityAggregationRouter } from "./modules/quality-dashboard/quality-aggregation.routes.js";
 import { callMasterRouter } from "./modules/call-master/call-master.routes.js";
 import { inboundRouter } from "./modules/call-master/inbound.routes.js";
+import { inboundInsightsRouter } from "./modules/call-master/inbound-insights.routes.js";
 import { salesUploadRouter } from "./modules/sales-upload/sales-upload.routes.js";
 import { housingDashboardsRouter } from "./modules/housing-dashboards/housing-dashboards.routes.js";
 import { inboundQualityRouter } from "./modules/quality-dashboard/inbound-quality.routes.js";
@@ -249,6 +250,7 @@ import { neemansCartDashboardRouter } from "./modules/process-performance/neeman
 import { neemansPerformanceDashboardRouter } from "./modules/process-performance/neemans-performance-dashboard.routes.js";
 import { bellavitaChatDashboardRouter } from "./modules/process-performance/bellavita-chat-dashboard.routes.js";
 import { bellavitaCartDashboardRouter } from "./modules/process-performance/bellavita-cart-dashboard.routes.js";
+import { dashboardExportRouter } from "./modules/process-performance/dashboard-export.routes.js";
 import { kpiScorecardRouter } from "./modules/process-performance/kpi-scorecard.routes.js";
 import { processDataSourceRouter } from "./modules/process-data-source/process-data-source.routes.js";
 import { dashboardBuilderRouter } from "./modules/dashboard-builder/dashboard-builder.routes.js";
@@ -767,6 +769,7 @@ app.use("/api/kpi/process-metrics", processMetricDefinitionRouter);   // per-pro
 app.use("/api/agent", qualityAggregationRouter);
 app.use("/api/call-master", callMasterRouter);
 app.use("/api/inbound", inboundRouter);
+app.use("/api/inbound-insights", inboundInsightsRouter);
 app.use("/api/sales-upload", salesUploadRouter);
 app.use("/api/housing-dashboards", housingDashboardsRouter);
 app.use("/api/inbound-quality", inboundQualityRouter);
@@ -803,6 +806,7 @@ app.use("/api/process-performance", neemansCartDashboardRouter);
 app.use("/api/process-performance", neemansPerformanceDashboardRouter);
 app.use("/api/process-performance", bellavitaChatDashboardRouter);
 app.use("/api/process-performance", bellavitaCartDashboardRouter);
+app.use("/api/process-performance", dashboardExportRouter);
 app.use("/api/process-kpi-dashboard", kpiScorecardRouter);
 app.use("/api/process-data-source", processDataSourceRouter);
 app.use("/api/dashboard-builder", dashboardBuilderRouter);

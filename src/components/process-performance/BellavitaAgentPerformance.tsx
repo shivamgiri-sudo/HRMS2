@@ -105,6 +105,7 @@ export function BellavitaAgentPerformance({ from, to }: { from: string; to: stri
           <DashboardExportMenu
             reportTitle="Bellavita — Agent Performance"
             fileBaseName="Bellavita_Agent_Performance"
+            raw={{ dashboard: "bellavita_agent_performance", from, to }}
             subtitle={`${from} to ${to}`}
             slides={exportSlides}
             activeSlideTitle="Agent Performance"
