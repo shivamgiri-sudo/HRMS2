@@ -856,7 +856,8 @@
     "1815_meta_integration_config.sql",
     "1816_marketing_brief_recipients_update.sql",
     "1817_leave_approval_overdue_cc_employee.sql",
-    "1818_payroll_export_pages_page_access.sql"
+    "1818_payroll_export_pages_page_access.sql",
+    "1819_payment_voucher_expense_head.sql"
   ],
   "approvedDeletions": [
     {
@@ -907,8 +908,7 @@
     "migrations/1612_fix_festival_calendar_2026_rakhi_bhaidooj.sql",
     "migrations/1613_add_missing_festival_calendar_2026_entries.sql",
     "migrations/440_salary_date_revision_requests.sql",
-    "migrations/0060_portal_admin_impersonation_log.sql",
-    "1818_payroll_export_pages_page_access.sql"
+    "migrations/0060_portal_admin_impersonation_log.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
