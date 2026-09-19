@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1179,
-  "columnCount": 17473,
+  "columnCount": 17477,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -13260,7 +13260,11 @@
       "attachment_uploaded_by",
       "attachment_uploaded_at",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "expense_head_code",
+      "expense_head_name",
+      "expense_sub_head_code",
+      "expense_sub_head_name"
     ],
     "payment_voucher_grn_allocation": [
       "id",
