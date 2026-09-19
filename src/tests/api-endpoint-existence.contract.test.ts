@@ -376,6 +376,11 @@ const NOT_A_REQUEST: Record<string, string> = {
   "/api/housing-dashboards/housing-premium":
     "same shape as housing-owner above -- the useFilterOptions(base) argument, not a fetch target " +
     "on its own; the real call is `${base}/filter-options`, a mounted route.",
+  "/api/onfido-process/poa-pages/:x":
+    "usePoaPage(kind) in PoaPagesViews.tsx builds `/api/onfido-process/poa-pages/${kind}` where kind " +
+    "is 'internal' | 'external' | 'trail'. All three are mounted in onfido-poa-pages.routes.ts " +
+    "(verified 2026-09-19); the static scan cannot expand the template-literal segment, so it reads " +
+    "the placeholder as its own request.",
   "/api/files/company-feed":
     "a prefix in AuthedImage.tsx's PUBLIC_CATEGORIES, used by isPublicUrl(src) to decide whether to attach an auth header to a URL it was given. It is a predicate, never a fetch target, so the backend is not expected to mount it.",
 };

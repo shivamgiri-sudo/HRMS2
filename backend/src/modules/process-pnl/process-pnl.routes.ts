@@ -412,7 +412,8 @@ router.post(
       user.id,
       effectiveRole,
       req.body?.remarks ? String(req.body.remarks) : undefined,
-      lineCorrections
+      lineCorrections,
+      [user.role, ...(user.roles ?? [])]
     );
     res.json({ success: true, data });
   })

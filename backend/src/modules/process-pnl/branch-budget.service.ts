@@ -2073,9 +2073,16 @@ export const branchBudgetService = {
     remarks?: string,
     /** Per head/sub-head correction notes. Only meaningful when sending a budget back, so the
      *  branch admin is told which head/sub-head to fix rather than just "revise this budget". */
-    lineCorrections?: BudgetLineCorrectionInput[]
+    lineCorrections?: BudgetLineCorrectionInput[],
+    /** Every role the caller actually holds. `actorRole` is the role that OWNS the stage being
+     *  performed (resolveFinanceStageRole), so a Finance Head acting at the Branch Head stage
+     *  arrives as "branch_head" — the exemption below must look at what they hold, not that. */
+    callerRoles: string[] = []
   ) {
     const role = actorRole.toLowerCase();
+    const holdsMakerCheckerExemptRole = callerRoles.some((held) =>
+      MAKER_CHECKER_EXEMPT_ROLES.has(String(held).toLowerCase())
+    );
     if (!REVIEW_CAPABLE_ROLES.has(role)) {
       throw refuse(403, "BUDGET_NO_REVIEW_ROLE", `Role ${actorRole} cannot review branch budgets`);
     }
@@ -2139,7 +2146,7 @@ export const branchBudgetService = {
       // reviewer is still blocked. The approval log records each stage with the actor's name and
       // timestamp, so a single person completing multiple stages remains visible after the fact
       // rather than prevented up front.
-      if (decision === "approve" && !MAKER_CHECKER_EXEMPT_ROLES.has(role)) {
+      if (decision === "approve" && !MAKER_CHECKER_EXEMPT_ROLES.has(role) && !holdsMakerCheckerExemptRole) {
         const submittedBy = rows[0].submitted_by ? String(rows[0].submitted_by) : null;
         const bhApprovedBy = rows[0].branch_head_approved_by ? String(rows[0].branch_head_approved_by) : null;
         // Every actor who already touched this budget at or before the current stage. A reviewer
