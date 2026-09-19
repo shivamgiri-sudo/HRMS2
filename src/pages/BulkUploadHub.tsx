@@ -151,6 +151,8 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   ONFIDO_DOC_ESCALATION_CRQ: "import_onfido_crq_batch",
   ONFIDO_POA_RAW: "import_onfido_poa_raw_batch",
   ONFIDO_POA_TRIAL_RAW: "import_onfido_poa_trial_batch",
+  ONFIDO_POA_EXTERNAL_RAW: "import_onfido_poa_external_batch",
+  ONFIDO_GD_MCN_SLA: "import_onfido_gd_mcn_sla_batch",
   ONFIDO_POA_QUALITY: "import_onfido_poa_quality_batch",
   ONFIDO_DOC_EXTERNAL_AUDIT: "import_onfido_external_audit_batch",
   ONFIDO_DOC_ETM: "import_onfido_doc_etm_batch",

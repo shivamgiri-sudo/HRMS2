@@ -388,6 +388,8 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_onfido_crq_batch",
   "import_onfido_poa_raw_batch",
   "import_onfido_poa_trial_batch",
+  "import_onfido_poa_external_batch",
+  "import_onfido_gd_mcn_sla_batch",
   "import_onfido_poa_quality_batch",
   "import_onfido_external_audit_batch",
   "import_onfido_doc_etm_batch",
