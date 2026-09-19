@@ -55,7 +55,7 @@ export default function FinanceLedgerHubPage() {
 
   return (
     <DashboardLayout>
-      <div className="mx-auto max-w-6xl space-y-4 p-4 sm:p-6">
+      <div className="w-full space-y-4 p-4 sm:p-6">
         <div>
           <h1 className="text-lg font-bold text-slate-900">Finance Ledger</h1>
           <p className="text-sm text-slate-500">Payment vouchers, bank accounts and the general ledger — one place.</p>

@@ -626,10 +626,10 @@ export function VendorPaymentDispatchContent() {
                     onClick={() => { setSelected(p); setSheetOpen(true); }}
                   >
                     <td className="py-1">
-                      <div className="font-medium truncate max-w-[120px]">{p.grn_number ?? p.grn_request_id}</div>
-                      <div className="text-slate-400 truncate max-w-[120px]">{p.branch_name}</div>
+                      <div className="font-medium truncate max-w-[220px]">{p.grn_number ?? p.grn_request_id}</div>
+                      <div className="text-slate-400 truncate max-w-[220px]">{p.branch_name}</div>
                     </td>
-                    <td className="truncate max-w-[110px] py-1">
+                    <td className="truncate max-w-[200px] py-1">
                       <div className="truncate">{p.invoice_number ?? "-"}</div>
                       {/* The GRN file is what a vendor query actually needs opening; surfaced
                           here rather than only inside the dispatch sheet. */}
@@ -637,12 +637,12 @@ export function VendorPaymentDispatchContent() {
                         <div className="truncate text-slate-400">{p.grn_file_name}</div>
                       )}
                     </td>
-                    <td className="truncate max-w-[120px] py-1">{p.vendor_name ?? "-"}</td>
-                    <td className="truncate max-w-[110px] py-1">
+                    <td className="truncate max-w-[220px] py-1">{p.vendor_name ?? "-"}</td>
+                    <td className="truncate max-w-[200px] py-1">
                       <div className="truncate">{p.head ?? "-"}</div>
                       <div className="truncate text-slate-400">{p.sub_head ?? "-"}</div>
                     </td>
-                    <td className="truncate max-w-[110px] py-1">
+                    <td className="truncate max-w-[200px] py-1">
                       <div className="truncate">{p.cost_centre_name ?? "-"}</div>
                       <div className="truncate text-slate-400">{p.process_name ?? "-"}</div>
                     </td>
@@ -680,7 +680,7 @@ export function VendorPaymentDispatchContent() {
                           onClick={(e) => { e.stopPropagation(); setVoucherDrawerId(p.voucher_id ?? null); }}
                         >
                           <VoucherStatusBadge status={p.voucher_status} className="text-[10px]" />
-                          <div className="truncate max-w-[110px] text-[10px] text-slate-400">{p.voucher_number}</div>
+                          <div className="truncate max-w-[200px] text-[10px] text-slate-400">{p.voucher_number}</div>
                         </button>
                       ) : (
                         <span className="text-slate-300">—</span>

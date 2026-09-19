@@ -84,7 +84,7 @@ export function BankLedgerReportContent() {
   const selectedAccount = (accountsQuery.data ?? []).find((a: any) => a.id === bankAccountId);
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4 p-4 sm:p-6">
+    <div className="w-full space-y-4">
       <div className="overflow-hidden rounded-3xl border border-white/60 bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm">
         <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
