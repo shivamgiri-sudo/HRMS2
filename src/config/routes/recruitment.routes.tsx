@@ -130,7 +130,7 @@ export const recruitmentRouteElements = (
       <Route path="/ats/bgv-enhanced" element={<Navigate to="/ats/bgv" replace />} />
       {/* /ats/bgv-report removed — NativeBGVReport was a redirect stub; canonical page is /ats/bgv */}
       <Route path="/ats/bgv-report"   element={<Navigate to="/ats/bgv" replace />} />
-      <Route path="/bgv-report-view/:candidateId" element={<ProtectedRoute roles={['admin','branch_hr','branch_head','branch_manager']}><NativeBGVReportView /></ProtectedRoute>} />
+      <Route path="/bgv-report-view/:candidateId" element={<ProtectedRoute roles={['admin','hr','branch_hr','branch_head','branch_manager']}><NativeBGVReportView /></ProtectedRoute>} />
       <Route path="/ats/bgv-api-monitor" element={<ProtectedRoute roles={['admin','hr','super_admin']}><NativeBGVAPIMonitor /></ProtectedRoute>} />
       <Route path="/ats/reconciliation" element={<ProtectedRoute roles={['admin','super_admin','hr']}><DashboardLayout><NativeReconciliationDashboard /></DashboardLayout></ProtectedRoute>} />
 

@@ -9,7 +9,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
-import { hasScopedAccess, buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { getUserAssignmentScopes, hasAnyRole, hasScopedAccess, buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
 import { env } from "../../config/env.js";
 import {
@@ -86,21 +86,47 @@ async function requireBgvCandidateScope(req: AuthenticatedRequest, candidateId: 
 
 /**
  * The candidate BGV *report* (the HR-facing report page and its API) is limited to admin, branch HR and
- * the branch manager / branch head (owner instruction 2026-09-19). Branch HR and branch managers are
- * additionally restricted to candidates applied to their own branch — no other HR role reaches it.
+ * the branch manager / branch head (owner instruction 2026-09-19):
+ *  - admin / super_admin: everything.
+ *  - Branch HR: in production these are users with the `hr` role (or `branch_hr`) whose assignment scope is a
+ *    BRANCH — only candidates who applied to that branch. `hr` users with an all-branches scope (head office)
+ *    are deliberately not covered.
+ *  - Branch manager / branch head: the manager of the branch they are an EMPLOYEE of (employees.branch_id) —
+ *    only candidates who applied to that branch, whatever scopes are assigned to their login.
  * The wider BGV verification endpoints above keep their own role list.
  */
-const BGV_REPORT_ROLES = ["admin", "branch_hr", "branch_head", "branch_manager"] as const;
+const BGV_REPORT_ROLES = ["admin", "hr", "branch_hr", "branch_head", "branch_manager"] as const;
+const BGV_BRANCH_HR_ROLES = ["hr", "branch_hr"] as const;
+const BGV_BRANCH_MANAGER_ROLES = ["branch_head", "branch_manager"] as const;
+
+async function employeeBranchOf(userId: string): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT branch_id FROM employees WHERE user_id = ? AND branch_id IS NOT NULL LIMIT 1",
+    [userId],
+  );
+  return rows[0]?.branch_id ? String(rows[0].branch_id) : null;
+}
 
 async function requireBgvReportScope(req: AuthenticatedRequest, candidateId: string): Promise<void> {
   const candidate = await atsService.getCandidate(candidateId);
-  const allowed = await hasScopedAccess(
-    req.authUser!.id,
-    [...BGV_REPORT_ROLES],
-    { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined },
-    { allowAdminBypass: true },
-  );
-  if (!allowed) throw Object.assign(new Error("Access denied"), { statusCode: 403 });
+  const userId = req.authUser!.id;
+  const candidateBranch = candidate.applied_for_branch ? String(candidate.applied_for_branch) : null;
+
+  // admin / super_admin bypass.
+  if (await hasScopedAccess(userId, ["admin"], {}, { allowAdminBypass: true })) return;
+  if (!candidateBranch) throw Object.assign(new Error("Access denied"), { statusCode: 403 });
+
+  // Branch HR: a branch-type assignment scope on the candidate's branch.
+  if (await hasAnyRole(userId, ...BGV_BRANCH_HR_ROLES)) {
+    const scopes = await getUserAssignmentScopes(userId, [...BGV_BRANCH_HR_ROLES]);
+    if (scopes.some((sc) => (sc.scope_type === "branch" || sc.scope_type === "branch_process") && sc.branch_id === candidateBranch)) return;
+  }
+
+  // Branch manager / branch head: only their own employee branch.
+  if (await hasAnyRole(userId, ...BGV_BRANCH_MANAGER_ROLES)) {
+    if ((await employeeBranchOf(userId)) === candidateBranch) return;
+  }
+  throw Object.assign(new Error("Access denied"), { statusCode: 403 });
 }
 
 // Public token-driven candidate BGV routes. Mount before global requireAuth.
