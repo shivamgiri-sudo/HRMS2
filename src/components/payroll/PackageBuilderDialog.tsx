@@ -151,12 +151,27 @@ export function PackageBuilderDialog({
     hrmsApi.get<any>('/api/payroll-masters/branch-states').then((r: any) => setBranchStates(r?.data ?? [])).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (!draft.branch_name) { setExistingPkgs([]); return; }
-    hrmsApi.get<any>(`/api/payroll-masters/packages?branch=${encodeURIComponent(draft.branch_name)}`)
+  const [pkgsLoading, setPkgsLoading] = useState(false);
+
+  const fetchPkgs = useCallback((branch: string) => {
+    if (!branch) { setExistingPkgs([]); return; }
+    setPkgsLoading(true);
+    hrmsApi.get<any>(`/api/payroll-masters/packages?branch=${encodeURIComponent(branch)}`)
       .then((r: any) => setExistingPkgs(r?.data ?? []))
-      .catch(() => {});
-  }, [draft.branch_name]);
+      .catch(() => {})
+      .finally(() => setPkgsLoading(false));
+  }, []);
+
+  useEffect(() => {
+    fetchPkgs(draft.branch_name);
+  }, [draft.branch_name, fetchPkgs]);
+
+  // Re-fetch when entering 'existing' mode — guards against the race where the user
+  // clicks "Pick existing package" before the initial branch fetch has returned.
+  useEffect(() => {
+    if (mode === 'existing' && draft.branch_name) fetchPkgs(draft.branch_name);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   useEffect(() => {
     if (!open) return;
@@ -412,7 +427,10 @@ export function PackageBuilderDialog({
               <Label className="text-xs">Catalog package for {draft.branch_name || 'this branch'}</Label>
               <Select value={pickedPkgId || '__none__'} onValueChange={(v) => setPickedPkgId(v === '__none__' ? '' : v)}>
                 <SelectTrigger className="bg-white">
-                  <SelectValue placeholder={existingPkgs.length ? 'Choose a package…' : 'Select a branch first'} />
+                  {pkgsLoading
+                    ? <span className="flex items-center gap-1.5 text-slate-400 text-xs"><Loader2 className="h-3 w-3 animate-spin" />Loading packages…</span>
+                    : <SelectValue placeholder={existingPkgs.length ? 'Choose a package…' : (draft.branch_name ? 'No packages found for this branch' : 'Select a branch first')} />
+                  }
                 </SelectTrigger>
                 <SelectContent>
                   {existingPkgs.map(p => (
