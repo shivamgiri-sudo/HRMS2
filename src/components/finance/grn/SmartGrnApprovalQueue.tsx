@@ -60,6 +60,7 @@ import { useGrnSummary } from "@/hooks/useGrnSummary";
 import { useHasRole } from "@/hooks/useUserRole";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { deriveGstType, gstStateLabel } from "@/lib/indian-states";
+import { openDocumentInNewTab } from "@/lib/openDocumentInNewTab";
 
 type GrnRow = {
   id: string;
@@ -544,10 +545,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       const endpoint = documentId
         ? `/api/finance/grns/${target.id}/documents/${documentId}/file`
         : `/api/finance/grns/${target.id}/attachment`;
-      const blob = await hrmsApi.getBlob(endpoint);
-      const url = URL.createObjectURL(blob);
-      window.open(url, "_blank", "noopener,noreferrer");
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      await openDocumentInNewTab(() => hrmsApi.getBlob(endpoint));
     } catch (error) {
       toast({
         title: "Document could not be opened",

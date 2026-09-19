@@ -28,6 +28,7 @@ import {
   PAYMENT_MODES, buildJournalPreview, buildStages, dateTime, money, type Voucher,
 } from "@/lib/finance/paymentVoucherStatus";
 import { ApprovalTrack } from "./VoucherStatusBadge";
+import { openDocumentInNewTab } from "@/lib/openDocumentInNewTab";
 
 interface PaymentVoucherDrawerProps {
   voucherId: string | null;
@@ -138,9 +139,7 @@ export function PaymentVoucherDrawer({ voucherId, open, onOpenChange, onChanged 
   const openAttachment = async (id: string) => {
     setAttachmentOpening(true);
     try {
-      const blob = await hrmsApi.getBlob(`/api/finance/payment-vouchers/${id}/attachment`);
-      const url = URL.createObjectURL(blob);
-      window.open(url, "_blank", "noopener,noreferrer");
+      await openDocumentInNewTab(() => hrmsApi.getBlob(`/api/finance/payment-vouchers/${id}/attachment`));
     } catch (e) {
       toast({ title: "Error", description: e instanceof Error ? e.message : "Could not open the attachment", variant: "destructive" });
     } finally {

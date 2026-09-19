@@ -10,6 +10,7 @@ import { ChevronRight, FileText, Loader2, Paperclip, AlertTriangle } from "lucid
 import { hrmsApi } from "@/lib/hrmsApi";
 import { money, dateLabel, dateTimeLabel, grnDisplayNumber, labelStatus, grnStatusTone, checkTone } from "@/components/finance/grn/grn-format";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
+import { openDocumentInNewTab } from "@/lib/openDocumentInNewTab";
 
 export type GrnDrillDownContext = {
   costCentreId: string | null;
@@ -252,10 +253,7 @@ export function BudgetGrnDrillDownDialog({
       const endpoint = documentId
         ? `/api/finance/grns/${grnId}/documents/${documentId}/file`
         : `/api/finance/grns/${grnId}/attachment`;
-      const blob = await hrmsApi.getBlob(endpoint);
-      const url = URL.createObjectURL(blob);
-      window.open(url, "_blank", "noopener,noreferrer");
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      await openDocumentInNewTab(() => hrmsApi.getBlob(endpoint));
     } catch (error) {
       alert(error instanceof Error ? error.message : "Document could not be opened");
     }
