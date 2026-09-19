@@ -12,6 +12,8 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { SecureDocumentList } from "@/components/documents/SecureDocumentList";
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { AddressBgvPanel } from "@/components/bgv/AddressBgvPanel";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { BGV_REPORT_ROLES } from "@/lib/bgvReportAccess";
 import { ErrorState } from "@/components/enterprise/ErrorState";
 
 type QueueRow = {
@@ -408,6 +410,9 @@ function ProvisioningTaskCard({ task }: { task: ProvisioningTask }) {
 }
 
 export default function NativeJoiningControlRoom() {
+  const { hasAnyRole } = useWorkforceAccess();
+  // BGV report / address panel: admin, branch HR and branch manager/head only (API enforces it too).
+  const canViewBgvReport = hasAnyRole(...BGV_REPORT_ROLES);
   const [queue, setQueue] = useState<QueueRow[]>([]);
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1021,7 +1026,7 @@ export default function NativeJoiningControlRoom() {
 
                   <TabsContent value="bgv" className="grid gap-4">
                     {/* PDF shortcut — same button present in BGV Verification Center */}
-                    <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    {canViewBgvReport && <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                       <span className="text-sm font-semibold text-slate-700">BGV Report PDF</span>
                       <a href={`/bgv-report-view/${detail.summary.candidate_id}`} target="_blank" rel="noopener noreferrer">
                         <Button size="sm" variant="outline" className="gap-2">
@@ -1029,8 +1034,8 @@ export default function NativeJoiningControlRoom() {
                           View / Download PDF
                         </Button>
                       </a>
-                    </div>
-                    <AddressBgvPanel candidateId={detail.summary.candidate_id} />
+                    </div>}
+                    {canViewBgvReport && <AddressBgvPanel candidateId={detail.summary.candidate_id} />}
                     <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4">
                       <div className="text-sm font-semibold">Name/Document Match</div>
                       <div className="mt-2 text-sm text-slate-600">Review per-document name match in Documents tab.</div>

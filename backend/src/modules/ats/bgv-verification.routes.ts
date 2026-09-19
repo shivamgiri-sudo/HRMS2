@@ -84,6 +84,25 @@ async function requireBgvCandidateScope(req: AuthenticatedRequest, candidateId: 
   if (!allowed && !isAssignedRecruiter) throw Object.assign(new Error("Access denied"), { statusCode: 403 });
 }
 
+/**
+ * The candidate BGV *report* (the HR-facing report page and its API) is limited to admin, branch HR and
+ * the branch manager / branch head (owner instruction 2026-09-19). Branch HR and branch managers are
+ * additionally restricted to candidates applied to their own branch — no other HR role reaches it.
+ * The wider BGV verification endpoints above keep their own role list.
+ */
+const BGV_REPORT_ROLES = ["admin", "branch_hr", "branch_head", "branch_manager"] as const;
+
+async function requireBgvReportScope(req: AuthenticatedRequest, candidateId: string): Promise<void> {
+  const candidate = await atsService.getCandidate(candidateId);
+  const allowed = await hasScopedAccess(
+    req.authUser!.id,
+    [...BGV_REPORT_ROLES],
+    { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined },
+    { allowAdminBypass: true },
+  );
+  if (!allowed) throw Object.assign(new Error("Access denied"), { statusCode: 403 });
+}
+
 // Public token-driven candidate BGV routes. Mount before global requireAuth.
 router.post("/consent", bgvSensitiveLimiter, h(async (req, res) => {
   const token = String(req.body.token ?? "");
@@ -295,10 +314,10 @@ router.post("/candidates/:candidateId/waive", requireAuth, requireRole("admin", 
 // categories (address in particular) from the Joining Control Room BGV tab — mirrors
 // the payroll_head grant on waive/manual-review above; requireBgvCandidateScope's inner
 // role list was updated to match.
-router.get("/report", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res) => {
+router.get("/report", requireAuth, requireRole(...BGV_REPORT_ROLES), h(async (req: AuthenticatedRequest, res) => {
   const candidateId = String(req.query.candidateId ?? "");
   if (!candidateId) return res.status(400).json({ success: false, message: "candidateId required" });
-  await requireBgvCandidateScope(req, candidateId);
+  await requireBgvReportScope(req, candidateId);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT r.*, c.full_name AS candidate_name, c.candidate_code, c.mobile, c.email,
             b.branch_name, p.process_name
@@ -312,10 +331,10 @@ router.get("/report", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_a
   return res.json({ success: true, data: (rows as RowDataPacket[])[0] ?? null });
 }));
 
-router.post("/report", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res) => {
+router.post("/report", requireAuth, requireRole(...BGV_REPORT_ROLES), h(async (req: AuthenticatedRequest, res) => {
   const { candidate_id, locked, ...fields } = req.body;
   if (!candidate_id) return res.status(400).json({ success: false, message: "candidate_id required" });
-  await requireBgvCandidateScope(req, candidate_id);
+  await requireBgvReportScope(req, candidate_id);
 
   // Prevent updating a locked report
   const [existing] = await db.execute<RowDataPacket[]>(
@@ -470,10 +489,10 @@ router.patch("/candidates/:candidateId/vendor-dispatch/:dispatchId/result", requ
 // HR clicks "Initiate BGV via InfinitiAI" → backend calls InfinitiAI to create
 // the candidate on their portal → InfinitiAI emails the candidate a login URL
 // http://candidates.theinfiniti.ai/login/{token} to fill the BGV form themselves.
-router.post("/report/initiate-portal", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+router.post("/report/initiate-portal", requireAuth, requireRole(...BGV_REPORT_ROLES), h(async (req: AuthenticatedRequest, res) => {
   const { candidate_id } = req.body;
   if (!candidate_id) return res.status(400).json({ success: false, message: "candidate_id required" });
-  await requireBgvCandidateScope(req, candidate_id);
+  await requireBgvReportScope(req, candidate_id);
 
   // Guard: already initiated
   const [existing] = await db.execute<RowDataPacket[]>(
@@ -663,10 +682,10 @@ router.post("/sync-report", requireAuth, requireRole("admin", "hr", "branch_hr",
 }));
 
 // ── Full BGV Report Data (for PDF generation) ─────────────────────────────────
-router.get("/report/full", requireAuth, requireRole("admin", "hr", "branch_hr", "hr_admin", "ho_hr", "process_hr", "recruitment_hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/report/full", requireAuth, requireRole(...BGV_REPORT_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const candidateId = String(req.query.candidateId ?? "");
   if (!candidateId) return res.status(400).json({ success: false, message: "candidateId required" });
-  await requireBgvCandidateScope(req, candidateId);
+  await requireBgvReportScope(req, candidateId);
 
   // Kick off sync+score recompute in the background so the endpoint returns
   // immediately from current DB state. The fire-and-forget was already the
@@ -789,10 +808,10 @@ router.get("/report/full", requireAuth, requireRole("admin", "hr", "branch_hr", 
 }));
 
 // ── DigiLocker Aadhaar face photo (for the PDF generator + HTML preview) ──────
-router.get("/report/digilocker-photo", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/report/digilocker-photo", requireAuth, requireRole(...BGV_REPORT_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const candidateId = String(req.query.candidateId ?? "");
   if (!candidateId) return res.status(400).json({ success: false, message: "candidateId required" });
-  await requireBgvCandidateScope(req, candidateId);
+  await requireBgvReportScope(req, candidateId);
 
   const buffer = await getDigilockerFacePhotoBuffer(candidateId);
   if (!buffer) return res.status(404).json({ error: "No DigiLocker photo on file" });
