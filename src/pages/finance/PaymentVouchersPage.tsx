@@ -227,7 +227,7 @@ export function PaymentVouchersContent() {
           ? `${receiptForm.instrumentType}${receiptForm.instrumentRef ? ` — ${receiptForm.instrumentRef}` : ""}`
           : receiptForm.remarks || undefined,
       };
-      return (await hrmsApi.post("/api/finance/payment-voucher/raise", payload)).data;
+      return (await hrmsApi.post("/api/finance/payment-vouchers", payload)).data;
     },
     onSuccess: () => {
       toast({ title: "Receipt recorded", description: "Pending CEO approval before it posts to the bank ledger." });
