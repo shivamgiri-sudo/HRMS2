@@ -2486,6 +2486,31 @@ export async function reviewFullOnboarding(
   scopeFilter?: OnboardingScopeFilter
 ) {
   await ensureCandidateWithinScope(candidateId, scopeFilter);
+
+  // A profile the system has flagged as suspicious cannot be approved until the
+  // reviewer has recorded a decision on every critical/high alert. The screen already
+  // disables Approve, but a screen is not a control — this is the enforcement. Alerts
+  // still "under_review" count as unresolved: the reviewer said they need more
+  // information, not that they were satisfied.
+  if (input.status === "approved") {
+    const [openAlerts] = await db.execute<RowDataPacket[]>(
+      `SELECT alert_type FROM candidate_fraud_alert
+        WHERE candidate_id = ?
+          AND LOWER(COALESCE(status, 'open')) IN ('open', 'under_review')
+          AND LOWER(COALESCE(severity, '')) IN ('critical', 'high')`,
+      [candidateId],
+    );
+    if ((openAlerts as RowDataPacket[]).length > 0) {
+      const types = [...new Set((openAlerts as RowDataPacket[]).map((a) => String(a.alert_type).replace(/_/g, " ").toLowerCase()))];
+      throw Object.assign(
+        new Error(
+          `This profile was flagged by the fraud check (${types.join(", ")}). Review the documents and the Fraud & Identity Review section and record a decision on each alert before approving.`,
+        ),
+        { statusCode: 409, code: "FRAUD_REVIEW_REQUIRED" },
+      );
+    }
+  }
+
   const profileStatusMap: Record<string, string> = {
     approved: "hr_approved",
     rejected: "rejected",

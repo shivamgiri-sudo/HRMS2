@@ -11,6 +11,7 @@ import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import { recalculateNameMatch } from "./name-consistency.routes.js";
 import { getLatestDigilockerFile } from "../integrations/luckpay/luckpay-status.service.js";
 import { getDigilockerFacePhotoBuffer } from "./digilocker-face-photo.js";
+import { buildIdentityComparison } from "./fraud-identity.service.js";
 
 const router = Router();
 const PAGE_SIZE = 100; // matches the frontend's PAGE_SIZE in NativeFraudAlertReview.tsx
@@ -270,8 +271,22 @@ router.get("/candidate/:candidateId/comparison", requireAuth, requireRole(...FRA
     }
   }
 
+  // Who the blocking alert matched against, if anyone: prefer an alert still
+  // waiting for a decision, otherwise the most recent one that names a match.
+  const matchedRow =
+    alerts.find((a) => a.matched_candidate_id && (a.status === "open" || a.status === "under_review")) ??
+    alerts.find((a) => a.matched_candidate_id);
+  const identity = await buildIdentityComparison(
+    candidateId,
+    matchedRow?.matched_candidate_id ? String(matchedRow.matched_candidate_id) : null,
+  ).catch((err: unknown) => {
+    console.error("[fraud-alerts/comparison] identity snapshot failed for", candidateId, err instanceof Error ? err.message : err);
+    return null;
+  });
+
   res.json({
     alerts,
+    identity,
     faceMatches,
     docs,
     profile: profileRows[0] ?? null,
