@@ -228,6 +228,77 @@ export async function assertTatTaskAccess(userId: string, taskId: string): Promi
 }
 
 /**
+ * Extends a TAT instance's due_at — the one capability tat.service.ts never had (verified:
+ * no existing function anywhere updates due_at after createTatInstance sets it once). Used
+ * by manager-initiated "Extend Deadline" bulk actions (e.g. quality-learning's manager
+ * dashboard), not by any automatic process.
+ *
+ * Deliberately narrow:
+ *   - Only extends FORWARD. Shortening a deadline is a different, more dangerous action
+ *     (it can retroactively put a task into breach) and has no caller today.
+ *   - Only on tasks not already completed/cancelled — matches completeTatInstance's guard.
+ *   - Logs the extension in task_escalation_log at a synthetic escalation_level = -1, the
+ *     same "reuse the existing audit trail with a level outside the real 1..3 ladder" pattern
+ *     completeTatInstance already uses at level 0. -1 cannot collide with uq_tel_level for
+ *     any real escalation level, and multiple extensions of the same instance are legitimate
+ *     (unlike a second completion), so this does NOT enforce single-row uniqueness the way
+ *     level 0/1/2/3 do — every extension gets its own audit row.
+ *   - The justification is NOT stored on task_escalation_log (it has no remarks/reason
+ *     column, and widening a shared audit table for one caller is disproportionate). Callers
+ *     that need to keep a reason should append it to their own domain row's notes field, the
+ *     way quality-gap.service.ts's annotateExistingAssignment already does.
+ */
+export async function extendTatDeadline(
+  tatInstanceId: string,
+  newDueAt: Date | string,
+  extendedBy: string
+): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT due_at, status FROM task_tat_instance WHERE id = ? LIMIT 1",
+    [tatInstanceId]
+  );
+  const task = (rows as RowDataPacket[])[0];
+  if (!task) {
+    throw Object.assign(new Error("TAT task not found"), { statusCode: 404 });
+  }
+  if (task.status === "completed" || task.status === "cancelled") {
+    throw Object.assign(new Error("TAT task already " + task.status), { statusCode: 400 });
+  }
+  const currentDueAt = new Date(task.due_at);
+  const requestedDueAt = new Date(newDueAt);
+  if (Number.isNaN(requestedDueAt.getTime())) {
+    throw Object.assign(new Error("Invalid due date"), { statusCode: 400 });
+  }
+  if (requestedDueAt.getTime() <= currentDueAt.getTime()) {
+    throw Object.assign(new Error("New deadline must be later than the current one"), { statusCode: 400 });
+  }
+
+  const [result] = await db.execute<ResultSetHeader>(
+    `UPDATE task_tat_instance
+        SET due_at = ?,
+            -- An extended, previously-breached task is no longer breached against its new
+            -- deadline. current_escalation_level is left untouched — the escalation LOG is
+            -- history and must not be edited, but the instance's own "how far up the ladder
+            -- are we" counter would otherwise keep a task looking pre-escalated against a
+            -- deadline that has not actually passed yet.
+            status = CASE WHEN status = 'sla_breached' THEN 'open' ELSE status END,
+            updated_at = NOW()
+      WHERE id = ? AND status NOT IN ('completed', 'cancelled')`,
+    [newDueAt, tatInstanceId]
+  );
+  if (!result.affectedRows) {
+    throw Object.assign(new Error("TAT task not found or already completed"), { statusCode: 409 });
+  }
+
+  await db.execute(
+    `INSERT INTO task_escalation_log
+       (id, tat_instance_id, escalation_level, triggered_at, notified_user_id, action_taken)
+     VALUES (UUID(), ?, -1, NOW(), ?, 'extended')`,
+    [tatInstanceId, extendedBy]
+  );
+}
+
+/**
  * Mark a TAT instance as completed and log the completion in task_escalation_log.
  *
  * The UPDATE is conditioned on status here (not just in assertTatTaskAccess above) so two
