@@ -120,7 +120,11 @@ describe("the GST split is honest about where it came from", () => {
 
   it("never counts a released allocation toward the split", async () => {
     await grnReportService.register({ branchScope: ORG_WIDE });
-    expect(lastSql()).toContain("lifecycle_status <> 'released'");
+    // The query uses a named-inclusion list (reserved + consumed) rather than a single
+    // negation (<> 'released') — this also excludes 'reversed' (tax credited back) and
+    // 'draft' (not yet a real booking), so overstating the split on corrected GRNs is
+    // impossible. A new lifecycle value must be consciously added to the list.
+    expect(lastSql()).toContain("lifecycle_status IN ('reserved', 'consumed')");
   });
 
   it("shows the provenance in the table", () => {

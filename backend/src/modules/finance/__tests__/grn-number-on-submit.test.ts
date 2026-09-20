@@ -50,7 +50,7 @@ describe("the GRN number is allocated at final (Finance Head) approval, by which
     expect(smartFhBranch).toContain("grn_number = COALESCE(grn_number, ?)");
 
     const legacyAnchor = '} else if (effectiveStage === "finance_head") {';
-    const legacyFhBranch = legacy.slice(legacy.indexOf(legacyAnchor), legacy.indexOf(legacyAnchor) + 3000);
+    const legacyFhBranch = legacy.slice(legacy.indexOf(legacyAnchor), legacy.indexOf(legacyAnchor) + 4000);
     expect(legacyFhBranch).toContain("grnNumber = await resolveGrnNumberOnSubmit(grn)");
     expect(legacyFhBranch).toContain("grn_number = COALESCE(grn_number, ?)");
   });
