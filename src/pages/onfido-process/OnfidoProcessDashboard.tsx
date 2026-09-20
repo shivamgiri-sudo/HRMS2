@@ -2722,10 +2722,9 @@ function DocRawView({
   return (
     <div className="space-y-4">
       {ov && (
-        <div className="kr" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
+        <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
           <KpiPlain kpi={ov.taskCount} kc="var(--blue)" />
           <KpiPlain kpi={ov.avgAht} kc="var(--teal)" />
-          <KpiPlain kpi={ov.avgQueueTime} kc="var(--orange)" />
           <KpiPlain kpi={ov.escalationRate} kc="var(--red)" />
         </div>
       )}
@@ -2754,6 +2753,12 @@ function DocRawView({
             </BarChart>
           </ResponsiveContainer>
         )}
+      </div>
+
+      <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
+        <h3>DOC Avg AHT Trend</h3>
+        <div className="oc-card-sub">Average handling time per bucket, excluding process_labelling_document_raw_extraction task type.</div>
+        <TaskAhtTrendChart points={points} barLabel="DOC Tasks" lineLabel="DOC Avg AHT" barColor="var(--blue)" lineColor="var(--teal)" />
       </div>
 
       <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
@@ -3010,7 +3015,15 @@ function PoaView({
   });
   const poaCombinedTrendQuery = useQuery({
     queryKey: ["onfido-process", "poa-combined-trend", range, tlFilter, amFilter],
-    queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/poa/combined-trend?from=${range.from}&to=${range.to}${qs}`),
+    queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/poa/combined-trend?from=${range.from}&to=${range.to}${qs}&granularity=monthly`),
+  });
+  const poaWeeklyTrendQuery = useQuery({
+    queryKey: ["onfido-process", "poa-weekly-trend", range, tlFilter, amFilter],
+    queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/poa/combined-trend?from=${range.from}&to=${range.to}${qs}&granularity=weekly`),
+  });
+  const poaDailyTrendQuery = useQuery({
+    queryKey: ["onfido-process", "poa-daily-trend", range, tlFilter, amFilter],
+    queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/poa/combined-trend?from=${range.from}&to=${range.to}${qs}&granularity=daily`),
   });
   const poaQualityTrendQuery = useQuery({
     queryKey: ["onfido-process", "poa-quality-trend-for-poa", range, tlFilter, amFilter],
@@ -3044,6 +3057,8 @@ function PoaView({
   const breakdown = breakdownQuery.data?.data ?? [];
   const dimLabel = { tl_name: "TL", am_name: "AM" }[dimension];
   const poaCombinedTrend = poaCombinedTrendQuery.data?.data ?? [];
+  const poaWeeklyTrend = poaWeeklyTrendQuery.data?.data ?? [];
+  const poaDailyTrend = poaDailyTrendQuery.data?.data ?? [];
   const poaMonthlyErrPct = useMemo(() => {
     const byBucket = new Map<string, { bucket: string; intErrPct: number | null; extErrPct: number | null }>();
     for (const r of poaQualityTrendQuery.data?.data ?? []) {
@@ -3078,6 +3093,14 @@ function PoaView({
       <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
         <h3>Month-wise POA Task &amp; AHT</h3>
         <TaskAhtTrendChart points={poaCombinedTrend} barLabel="POA Tasks" lineLabel="POA Avg AHT" barColor="var(--blue)" lineColor="var(--orange)" />
+      </div>
+      <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
+        <h3>Week-wise POA Task &amp; AHT</h3>
+        <TaskAhtTrendChart points={poaWeeklyTrend} barLabel="POA Tasks" lineLabel="POA Avg AHT" barColor="var(--teal)" lineColor="var(--orange)" />
+      </div>
+      <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
+        <h3>Day-wise POA Task &amp; AHT</h3>
+        <TaskAhtTrendChart points={poaDailyTrend} barLabel="POA Tasks" lineLabel="POA Avg AHT" barColor="var(--purple)" lineColor="var(--orange)" />
       </div>
       <div className="oc-card" style={{ "--hc": "var(--red)" } as React.CSSProperties}>
         <h3>Month-wise POA Error % — Internal vs External</h3>
@@ -3664,39 +3687,70 @@ const fmtIsoDay = (iso: string) => {
 
 /** The client's GD/MCN/SLA/APS sheet as a table: one row per hourly slot plus a highlighted Total row per day. */
 function GdMcnDetailTable({ rows, loading, onSelect }: { rows: GdMcnSlaDetailRow[]; loading: boolean; onSelect: (slot: string) => void }) {
+  const [viewMode, setViewMode] = useState<"all" | "total">("all");
+  const [slotType, setSlotType] = useState<"gmt" | "ist">("gmt");
+
+  const visibleRows = viewMode === "total" ? rows.filter((r) => r.isTotal) : rows;
+  const slotLabel = slotType === "gmt" ? "GMT" : "IST";
+  const getSlot = (r: GdMcnSlaDetailRow) => slotType === "gmt" ? r.gmt : r.ist;
+
   return (
-    <div style={{ overflow: "auto", maxHeight: 560 }}>
-      <table className="oc-table">
-        <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
-          <tr>
-            <th>GMT</th><th>IST</th><th>Date</th>
-            <th className="oc-right">GD%</th><th className="oc-right">MCN%</th><th className="oc-right">Deficit</th><th className="oc-right">SLA%</th>
-            <th className="oc-right">Doc AHT</th><th className="oc-right">POA AHT</th>
-            <th className="oc-right">Commitment</th><th className="oc-right">FTE Delivered</th>
-            <th className="oc-right">APS%</th><th className="oc-right">Occupancy%</th><th className="oc-right">Avail%</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 && <tr className="oc-empty-row"><td colSpan={14}>{loading ? "Loading…" : "No data in this range"}</td></tr>}
-          {rows.map((r, i) => (
-            <tr key={`${r.date}-${r.gmt}-${i}`} className="oc-row-click" onClick={() => onSelect(r.gmt)}
-              style={r.isTotal ? { fontWeight: 800, background: "rgba(148,163,184,0.12)" } : undefined}>
-              <td>{r.gmt}</td><td>{r.ist}</td><td>{fmtIsoDay(r.date)}</td>
-              <td className="oc-right">{fmtPctRatio(r.gdPct)}</td>
-              <td className="oc-right">{fmtPctRatio(r.mcnPct, 2)}</td>
-              <td className="oc-right">{fmtPctRatio(r.deficit)}</td>
-              <td className="oc-right">{fmtPctRatio(r.slaPct)}</td>
-              <td className="oc-right">{fmtNum2(r.docAht)}</td>
-              <td className="oc-right">{fmtNum2(r.poaAht)}</td>
-              <td className="oc-right">{r.commitment ?? "—"}</td>
-              <td className="oc-right">{r.fteDelivered ?? "—"}</td>
-              <td className="oc-right">{fmtPctRatio(r.apsPct, 0)}</td>
-              <td className="oc-right">{fmtPctRatio(r.occupancyPct, 2)}</td>
-              <td className="oc-right">{fmtPctRatio(r.availPct, 2)}</td>
+    <div>
+      <div className="flex flex-wrap items-center gap-3" style={{ marginBottom: 10 }}>
+        <div className="oc-field" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <label style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)" }}>View</label>
+          <select
+            className="oc-select"
+            value={viewMode}
+            onChange={(e) => setViewMode(e.target.value as "all" | "total")}
+            style={{ minWidth: 120 }}
+          >
+            <option value="all">All Slots</option>
+            <option value="total">Total Only (Date-wise)</option>
+          </select>
+        </div>
+        <div className="oc-field" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <label style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)" }}>Slot</label>
+          <PillGroup
+            value={slotType}
+            onChange={setSlotType}
+            options={[{ key: "gmt", label: "GMT" }, { key: "ist", label: "IST" }]}
+          />
+        </div>
+      </div>
+      <div style={{ overflow: "auto", maxHeight: 560 }}>
+        <table className="oc-table">
+          <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
+            <tr>
+              <th>{slotLabel}</th><th>Date</th>
+              <th className="oc-right">GD%</th><th className="oc-right">MCN%</th><th className="oc-right">Deficit</th><th className="oc-right">SLA%</th>
+              <th className="oc-right">Doc AHT</th><th className="oc-right">POA AHT</th>
+              <th className="oc-right">Commitment</th><th className="oc-right">FTE Delivered</th>
+              <th className="oc-right">APS%</th><th className="oc-right">Occupancy%</th><th className="oc-right">Avail%</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {visibleRows.length === 0 && <tr className="oc-empty-row"><td colSpan={13}>{loading ? "Loading…" : "No data in this range"}</td></tr>}
+            {visibleRows.map((r, i) => (
+              <tr key={`${r.date}-${r.gmt}-${i}`} className="oc-row-click" onClick={() => onSelect(r.gmt)}
+                style={r.isTotal ? { fontWeight: 800, background: "rgba(148,163,184,0.12)" } : undefined}>
+                <td>{getSlot(r)}</td><td>{fmtIsoDay(r.date)}</td>
+                <td className="oc-right">{fmtPctRatio(r.gdPct)}</td>
+                <td className="oc-right">{fmtPctRatio(r.mcnPct, 2)}</td>
+                <td className="oc-right">{fmtPctRatio(r.deficit)}</td>
+                <td className="oc-right">{fmtPctRatio(r.slaPct)}</td>
+                <td className="oc-right">{fmtNum2(r.docAht)}</td>
+                <td className="oc-right">{fmtNum2(r.poaAht)}</td>
+                <td className="oc-right">{r.commitment ?? "—"}</td>
+                <td className="oc-right">{r.fteDelivered ?? "—"}</td>
+                <td className="oc-right">{fmtPctRatio(r.apsPct, 0)}</td>
+                <td className="oc-right">{fmtPctRatio(r.occupancyPct, 2)}</td>
+                <td className="oc-right">{fmtPctRatio(r.availPct, 2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
