@@ -80,4 +80,25 @@ export const bankMasterService = {
     );
     if (result.affectedRows !== 1) throw new BankMasterError("Bank not found.", 404);
   },
+
+  async delete(id: string): Promise<void> {
+    const [[bank]] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM bank_master WHERE id = ? LIMIT 1`,
+      [id],
+    );
+    if (!bank) throw new BankMasterError("Bank not found.", 404);
+
+    const [[ref]] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM company_bank_account WHERE bank_id = ? LIMIT 1`,
+      [id],
+    );
+    if (Number((ref as any).cnt) > 0) {
+      throw new BankMasterError(
+        "This bank is referenced by one or more company bank accounts and cannot be deleted. Deactivate it instead.",
+        409,
+      );
+    }
+
+    await db.execute(`DELETE FROM bank_master WHERE id = ?`, [id]);
+  },
 };

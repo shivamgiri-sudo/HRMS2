@@ -63,3 +63,17 @@ bankMasterRouter.put(
     }
   }),
 );
+
+bankMasterRouter.delete(
+  "/:id",
+  requireWriteAccess,
+  requireRole(...WRITE_ROLES),
+  h(async (req, res) => {
+    try {
+      await bankMasterService.delete(req.params.id);
+      res.status(204).send();
+    } catch (error) {
+      fail(res, error);
+    }
+  }),
+);

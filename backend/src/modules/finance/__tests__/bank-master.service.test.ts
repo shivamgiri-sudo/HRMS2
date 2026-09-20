@@ -48,3 +48,26 @@ describe("bankMasterService.update", () => {
     expect(execute).toHaveBeenCalledWith(expect.stringMatching(/UPDATE bank_master/), expect.arrayContaining([0, "bank-1"]));
   });
 });
+
+describe("bankMasterService.delete", () => {
+  beforeEach(() => { execute.mockReset(); });
+
+  it("throws 404 when the bank does not exist", async () => {
+    execute.mockResolvedValueOnce([[]]); // SELECT returns empty array
+    await expect(bankMasterService.delete("bm-missing")).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  it("throws 409 when a company_bank_account references this bank", async () => {
+    execute.mockResolvedValueOnce([[{ id: "bm-1", bank_name: "SBI" }]]); // bank exists
+    execute.mockResolvedValueOnce([[{ cnt: 2 }]]); // references found
+    await expect(bankMasterService.delete("bm-1")).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it("hard-deletes the bank when no account references it", async () => {
+    execute.mockResolvedValueOnce([[{ id: "bm-2", bank_name: "HDFC" }]]); // bank exists
+    execute.mockResolvedValueOnce([[{ cnt: 0 }]]); // no references
+    execute.mockResolvedValueOnce([{ affectedRows: 1 }]); // DELETE succeeds
+    await expect(bankMasterService.delete("bm-2")).resolves.toBeUndefined();
+    expect(execute).toHaveBeenCalledWith(expect.stringMatching(/DELETE FROM bank_master/), ["bm-2"]);
+  });
+});
