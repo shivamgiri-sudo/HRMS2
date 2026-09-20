@@ -9,12 +9,13 @@ import {
 } from "recharts";
 
 const TOOLTIP_STYLE = {
-  background: "#0f172a",
-  border: "1px solid #1e293b",
+  background: "#ffffff",
+  border: "1px solid #e2e8f0",
   borderRadius: 8,
   fontSize: 12,
-  color: "#f1f5f9",
+  color: "#0f172a",
   padding: "6px 10px",
+  boxShadow: "0 4px 6px -1px rgba(0,0,0,0.1)",
 };
 
 type CategoryStat = {
@@ -37,8 +38,8 @@ export function CategoryRadarChart({ categories }: Props) {
   if (data.length < 2) return null;
 
   return (
-    <div className="bg-slate-900/60 backdrop-blur-md rounded-xl p-5 border border-slate-800/80">
-      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
+    <div className="bg-white rounded-xl p-5 border border-slate-200 shadow-sm">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">
         Category Overview
       </p>
       <ResponsiveContainer width="100%" height={220}>
@@ -47,14 +48,14 @@ export function CategoryRadarChart({ categories }: Props) {
           outerRadius="70%"
           margin={{ top: 16, right: 36, bottom: 16, left: 36 }}
         >
-          <PolarGrid stroke="#1e293b" />
+          <PolarGrid stroke="#e2e8f0" />
           <PolarAngleAxis
             dataKey="axis"
-            tick={{ fontSize: 11, fill: "#94a3b8", fontWeight: 600 }}
+            tick={{ fontSize: 11, fill: "#64748b", fontWeight: 600 }}
           />
           <PolarRadiusAxis
             domain={[0, 100]}
-            tick={{ fontSize: 9, fill: "#475569" }}
+            tick={{ fontSize: 9, fill: "#94a3b8" }}
             axisLine={false}
           />
           <Tooltip
@@ -66,9 +67,9 @@ export function CategoryRadarChart({ categories }: Props) {
           />
           <Radar
             dataKey="value"
-            stroke="#3b82f6"
-            fill="#3b82f6"
-            fillOpacity={0.15}
+            stroke="#2563eb"
+            fill="#2563eb"
+            fillOpacity={0.12}
             strokeWidth={2}
           />
         </RadarChart>
