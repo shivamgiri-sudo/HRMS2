@@ -234,6 +234,7 @@ import { workInboxRouter } from "./modules/work-inbox/work-inbox.routes.js";
 import { dashboardRouter } from "./modules/dashboards/dashboard.routes.js";
 import dashboardTargetRouter from "./modules/dashboards/dashboard-target.routes.js";
 import { tatRouter } from "./modules/governance/tat.routes.js";
+import { qualityLearningRouter } from "./modules/quality-learning/quality-learning.routes.js";
 import { nameConsistencyRouter } from "./modules/ats/name-consistency.routes.js";
 import { jclrRouter } from "./modules/ats/jclr.routes.js";
 import { joiningControlRoomRouter } from "./modules/ats/joining-control-room.routes.js";
@@ -293,6 +294,7 @@ import { legacyReportsRouter } from "./modules/legacy-reports/legacy-reports.rou
 import { costCentreManagementRouter } from "./modules/finance/cost-centre-management.routes.js";
 import { clientPaymentTrackingRouter } from "./modules/finance/client-payment-tracking.routes.js";
 import mandateSeatTrackingRouter from "./modules/finance/mandate-seat-tracking.routes.js";
+import { financeAnalyticsRouter } from "./modules/finance/finance-analytics.routes.js";
 import { processPnlRouter } from "./modules/process-pnl/process-pnl.routes.js";
 import billabilityRouter from "./modules/process-pnl/billability.routes.js";
 import { annualBudgetSummaryRouter } from "./modules/process-pnl/annual-budget-summary.routes.js";
@@ -704,6 +706,7 @@ app.use("/api/legacy-reports", legacyReportsRouter);
 app.use("/api/finance/cost-centres", costCentreManagementRouter);
 app.use("/api/finance/client-payments", clientPaymentTrackingRouter);
 app.use("/api/finance/mandate-seats", mandateSeatTrackingRouter);
+app.use("/api/finance/analytics", financeAnalyticsRouter);
 app.use("/api/finance", processPnlRouter);
 // Mounted on its own base after processPnlRouter. Owning /api/finance/billability/* outright
 // protects it from a wildcard ROUTE on the shared /api/finance base — but not from a path-less
@@ -811,6 +814,7 @@ app.use("/api/work-inbox", workInboxRouter);
 app.use("/api/dashboards/targets", dashboardTargetRouter);
 app.use("/api/dashboards", dashboardRouter);
 app.use("/api/governance/tat", tatRouter);
+app.use("/api/quality-learning", qualityLearningRouter);
 app.use("/api/ats/name-consistency", nameConsistencyRouter);
 app.use("/api/ats/jclr", jclrRouter);
 app.use("/api/ats/joining-control-room", joiningControlRoomRouter);
