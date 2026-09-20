@@ -1,37 +1,40 @@
-import { useEffect, useState } from "react";
-import { TrendingUp, TrendingDown, Minus, Loader, RefreshCcw, Activity, CalendarDays } from "lucide-react";
-import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Loader,
+  RefreshCcw,
+  Activity,
+  CalendarDays,
+  BarChart3,
+  Zap,
+  Users,
+  TrendingUp,
+  ShieldCheck,
+  AlertCircle,
+} from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { AIInsightPanel } from "@/components/ai";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card } from "@/components/ui/card";
+import { HeroScoreDial } from "@/components/my-kpi/HeroScoreDial";
+import { CategorySummaryTile } from "@/components/my-kpi/CategorySummaryTile";
+import { CategoryRadarChart } from "@/components/my-kpi/CategoryRadarChart";
+import { PeerMetricCard } from "@/components/my-kpi/PeerMetricCard";
+import type { KpiMetricResult } from "@/components/my-kpi/PeerMetricCard";
+import { useAgentQualityData, useCallDetail } from "@/hooks/useAgentQualityData";
+import { HeroCard } from "@/components/quality-dashboard/HeroCard";
+import { QuickWins } from "@/components/quality-dashboard/QuickWins";
+import { WeaknessPanel } from "@/components/quality-dashboard/WeaknessPanel";
+import { TrendPanel } from "@/components/quality-dashboard/TrendPanel";
+import { CallsTable } from "@/components/quality-dashboard/CallsTable";
+import { CallDetailModal } from "@/components/quality-dashboard/CallDetailModal";
+import { NoCalls } from "@/components/quality-dashboard/empty-states/NoCalls";
+import { ScoringPending } from "@/components/quality-dashboard/empty-states/ScoringPending";
+import { DataError } from "@/components/quality-dashboard/empty-states/DataError";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Period = "day" | "wtd" | "mtd" | "past_month";
-
-interface TrendPoint {
-  date: string;
-  value: number;
-  source: string;
-}
-
-interface KpiMetricResult {
-  metric_id: string;
-  metric_code: string;
-  metric_name: string;
-  category: string;
-  unit: string;
-  direction: string;
-  family: string;
-  target_value: number;
-  min_threshold: number | null;
-  actual_value: number | null;
-  score_pct: number;
-  score_status: string;
-  rating: string | null;
-  rating_color: string | null;
-  resolved_from: string;
-  trend_data: TrendPoint[];
-}
 
 interface LivePerformanceData {
   period: Period;
@@ -44,6 +47,7 @@ interface LivePerformanceData {
     date: string;
     overall_score: number;
     overall_rating: string | null;
+    overall_rating_color: string | null;
     metrics: Array<{
       metric_id: string;
       metric_code: string;
@@ -55,6 +59,8 @@ interface LivePerformanceData {
     }>;
   }>;
 }
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const PERIOD_LABELS: Record<Period, string> = {
   day: "Today",
@@ -71,159 +77,104 @@ const CATEGORY_LABELS: Record<string, string> = {
   custom: "Custom",
 };
 
-const CATEGORY_COLORS: Record<string, string> = {
-  operations: "bg-blue-100 text-blue-700",
-  quality: "bg-green-100 text-green-700",
-  hr: "bg-purple-100 text-purple-700",
-  sales: "bg-orange-100 text-orange-700",
-  custom: "bg-gray-100 text-gray-700",
+const CATEGORY_ICONS: Record<string, typeof Activity> = {
+  operations: BarChart3,
+  quality: ShieldCheck,
+  hr: Users,
+  sales: TrendingUp,
+  custom: Zap,
 };
 
-const RATING_BG: Record<string, string> = {
-  S: "bg-emerald-500",
-  A: "bg-blue-500",
-  B: "bg-amber-500",
-  C: "bg-orange-500",
-  D: "bg-red-500",
-};
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function today() {
-  const date = new Date();
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function formatMetricValue(value: number, unit: string) {
   if (unit === "seconds") return `${Math.round(value)} sec`;
   if (unit === "percent") return `${Math.round(value * 10) / 10}%`;
-  if (unit === "currency") return `₹${value.toLocaleString()}`;
+  if (unit === "currency") return `₹${value.toLocaleString("en-IN")}`;
   return String(Math.round(value * 10) / 10);
 }
 
-// ─── Sparkline ────────────────────────────────────────────────────────────────
+const RATING_DARK: Record<string, string> = {
+  S: "bg-emerald-500/20 border-emerald-500/40 text-emerald-300",
+  A: "bg-blue-500/20   border-blue-500/40   text-blue-300",
+  B: "bg-amber-500/20  border-amber-500/40  text-amber-300",
+  C: "bg-orange-500/20 border-orange-500/40 text-orange-300",
+  D: "bg-rose-500/20   border-rose-500/40   text-rose-300",
+};
 
-function Sparkline({ data, color }: { data: TrendPoint[]; color: string }) {
-  if (!data.length) return <div className="h-10 flex items-center justify-center text-xs text-gray-300">No data</div>;
+// ─── Skeleton ─────────────────────────────────────────────────────────────────
 
-  const values = data.map(d => d.value);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const w = 120;
-  const h = 36;
-  const pts = values.map((v, i) => {
-    const x = (i / Math.max(values.length - 1, 1)) * w;
-    const y = h - ((v - min) / range) * h;
-    return `${x},${y}`;
-  });
-
+function DarkSkeleton() {
   return (
-    <svg width={w} height={h} className="overflow-visible">
-      <polyline
-        points={pts.join(" ")}
-        fill="none"
-        stroke={color}
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      {pts.map((pt, i) => {
-        const [x, y] = pt.split(",");
-        return <circle key={i} cx={x} cy={y} r="2" fill={color} />;
-      })}
-    </svg>
+    <div className="animate-pulse space-y-6">
+      <div className="flex gap-6">
+        <div className="w-44 h-44 bg-slate-900/60 rounded-full border border-slate-800" />
+        <div className="flex-1 space-y-3 py-4">
+          <div className="h-6 bg-slate-900/60 rounded border border-slate-800 w-2/3" />
+          <div className="h-16 bg-slate-900/60 rounded border border-slate-800" />
+          <div className="h-10 bg-slate-900/60 rounded border border-slate-800 w-1/2" />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="h-24 bg-slate-900/60 rounded-xl border border-slate-800" />
+        ))}
+      </div>
+      <div className="h-64 bg-slate-900/60 rounded-xl border border-slate-800" />
+    </div>
   );
 }
 
-// ─── KPI Card ─────────────────────────────────────────────────────────────────
+// ─── Quality Tab Skeletons ────────────────────────────────────────────────────
 
-function KpiCard({ metric }: { metric: KpiMetricResult }) {
-  const hasData = metric.actual_value !== null;
-  const isLower = metric.direction === "lower_is_better";
-  const ratingBg = metric.rating ? RATING_BG[metric.rating] ?? "bg-gray-400" : "bg-gray-300";
-  const sparkColor = metric.rating === "S" || metric.rating === "A" ? "#10b981"
-    : metric.rating === "B" ? "#f59e0b"
-    : "#ef4444";
-  const barWidth = Math.min(metric.score_pct, 100);
-  const barColor = metric.score_pct >= 90 ? "bg-emerald-500"
-    : metric.score_pct >= 75 ? "bg-amber-500"
-    : "bg-red-500";
-
-  function formatValue(v: number | null, unit: string): string {
-    if (v === null) return "—";
-    if (unit === "seconds") {
-      const m = Math.floor(v / 60);
-      const s = Math.round(v % 60);
-      return m > 0 ? `${m}m ${s}s` : `${s}s`;
-    }
-    if (unit === "percent") return `${Math.round(v * 10) / 10}%`;
-    if (unit === "currency") return `₹${v.toLocaleString()}`;
-    return String(Math.round(v * 10) / 10);
-  }
-
+function HeroSkeleton() {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-3 hover:shadow-md transition-shadow">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-semibold text-gray-900 text-sm truncate">{metric.metric_name}</span>
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${CATEGORY_COLORS[metric.category] ?? "bg-gray-100 text-gray-700"}`}>
-              {CATEGORY_LABELS[metric.category] ?? metric.category}
-            </span>
-          </div>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {metric.metric_code} · via {metric.resolved_from}
-            {isLower ? " · lower is better" : ""}
-          </p>
-        </div>
-        {metric.rating && (
-          <span className={`${ratingBg} text-white text-sm font-bold w-8 h-8 flex items-center justify-center rounded-full flex-shrink-0`}>
-            {metric.rating}
-          </span>
-        )}
+    <Card className="p-6 bg-slate-900/60 border-slate-800">
+      <div className="animate-pulse space-y-4">
+        <div className="h-8 bg-slate-700 rounded w-1/3" />
+        <div className="h-64 bg-slate-700 rounded" />
       </div>
+    </Card>
+  );
+}
 
-      {/* Values */}
-      <div className="flex items-end gap-3">
-        <div>
-          <div className="text-2xl font-bold text-gray-900 leading-tight">
-            {formatValue(metric.actual_value, metric.unit)}
-          </div>
-          <div className="text-xs text-gray-400 mt-0.5">
-            Target: {formatValue(metric.target_value, metric.unit)}
-          </div>
-        </div>
-        <div className="flex-1 pb-1">
-          <Sparkline data={metric.trend_data} color={hasData ? sparkColor : "#e5e7eb"} />
+function PanelSkeleton() {
+  return (
+    <Card className="p-6 bg-slate-900/60 border-slate-800">
+      <div className="animate-pulse space-y-4">
+        <div className="h-6 bg-slate-700 rounded w-1/2" />
+        <div className="h-40 bg-slate-700 rounded" />
+      </div>
+    </Card>
+  );
+}
+
+function TableSkeleton() {
+  return (
+    <Card className="p-6 bg-slate-900/60 border-slate-800">
+      <div className="animate-pulse space-y-4">
+        <div className="h-10 bg-slate-700 rounded" />
+        <div className="space-y-2">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="h-12 bg-slate-700 rounded" />
+          ))}
         </div>
       </div>
-
-      {/* Progress bar */}
-      {hasData && (
-        <div className="space-y-1">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-gray-500">Score</span>
-            <span className="font-semibold text-gray-700">{Math.round(metric.score_pct)}%</span>
-          </div>
-          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all ${barColor}`}
-              style={{ width: `${barWidth}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      {!hasData && (
-        <div className="text-xs text-gray-400 text-center py-1">No data available for this period</div>
-      )}
-    </div>
+    </Card>
   );
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function MyKpiDashboard() {
+  const { user } = useAuth();
+
+  // KPI state
   const [period, setPeriod] = useState<Period>("day");
   const [selectedDate, setSelectedDate] = useState(today());
   const [data, setData] = useState<LivePerformanceData | null>(null);
@@ -231,21 +182,27 @@ export default function MyKpiDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [noKpis, setNoKpis] = useState(false);
 
+  // Quality state
+  const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
   async function loadData(p: Period) {
     setLoading(true);
     setError(null);
     setNoKpis(false);
     try {
       const dateQuery = p === "day" ? `&date=${selectedDate}` : "";
-      const res = await hrmsApi.get<{ success: boolean; data: LivePerformanceData }>(`/api/kpi-master/live?period=${p}${dateQuery}`);
+      const res = await hrmsApi.get<{ success: boolean; data: LivePerformanceData }>(
+        `/api/kpi-master/live?period=${p}${dateQuery}`
+      );
       if (!res.data?.metrics?.length) {
         setNoKpis(true);
         setData(null);
       } else {
         setData(res.data);
       }
-    } catch (err: any) {
-      setError(err?.message ?? "Failed to load KPI data");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load KPI data");
     } finally {
       setLoading(false);
     }
@@ -255,205 +212,525 @@ export default function MyKpiDashboard() {
     loadData(period);
   }, [period, selectedDate]);
 
-  const overallRatingBg = data?.overall_rating ? RATING_BG[data.overall_rating] ?? "bg-gray-400" : "bg-gray-300";
+  // Quality hooks
+  const {
+    cqScore,
+    weakness,
+    callsReview,
+    error: qualityError,
+    refetch: qualityRefetch,
+    cqScoreLoading,
+    weaknessLoading,
+    callsLoading,
+    isLoading: qualityLoading,
+  } = useAgentQualityData(user?.id);
 
-  const groupedMetrics = data?.metrics.reduce((acc, m) => {
-    const cat = m.category;
-    if (!acc[cat]) acc[cat] = [];
-    acc[cat].push(m);
-    return acc;
-  }, {} as Record<string, KpiMetricResult[]>) ?? {};
+  const { data: callDetail } = useCallDetail(isModalOpen ? selectedCallId : null);
+
+  // Derived KPI data
+  const groupedMetrics = useMemo(
+    () =>
+      data?.metrics.reduce(
+        (acc, m) => {
+          if (!acc[m.category]) acc[m.category] = [];
+          acc[m.category].push(m);
+          return acc;
+        },
+        {} as Record<string, KpiMetricResult[]>
+      ) ?? {},
+    [data]
+  );
+
+  const categoryStats = useMemo(
+    () =>
+      Object.entries(groupedMetrics).map(([cat, metrics]) => {
+        const withData = metrics.filter((m) => m.actual_value !== null);
+        const avgScore =
+          withData.length
+            ? withData.reduce((s, m) => s + m.score_pct, 0) / withData.length
+            : 0;
+        return {
+          category: cat,
+          label: CATEGORY_LABELS[cat] ?? cat,
+          avgScore,
+          count: metrics.length,
+        };
+      }),
+    [groupedMetrics]
+  );
+
+  // Quality derived state
+  const hasNoCalls = useMemo(
+    () => !qualityLoading && callsReview && callsReview.total_calls === 0,
+    [qualityLoading, callsReview]
+  );
+
+  const hasPendingScoring = useMemo(
+    () =>
+      !qualityLoading &&
+      callsReview &&
+      callsReview.total_calls > 0 &&
+      callsReview.calls.length === 0,
+    [qualityLoading, callsReview]
+  );
+
+  const showQualityEmptyState = useMemo(() => {
+    if (qualityError) return "error";
+    if (hasNoCalls) return "no-calls";
+    if (hasPendingScoring) return "scoring-pending";
+    return null;
+  }, [qualityError, hasNoCalls, hasPendingScoring]);
 
   return (
-    <DashboardLayout>
-      <div className="p-6 max-w-6xl mx-auto space-y-6">
+    <>
+      <div className="relative bg-slate-950 min-h-[calc(100vh-64px)] p-6 max-w-7xl mx-auto overflow-hidden">
+        {/* Ambient glow orbs */}
+        <div className="pointer-events-none absolute -top-32 left-1/4 w-[480px] h-[480px] bg-blue-600/5 blur-[120px]" />
+        <div className="pointer-events-none absolute top-1/2 right-0 w-[320px] h-[320px] bg-indigo-600/4 blur-[100px]" />
 
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <Activity className="text-indigo-600" size={28} />
+            <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20">
+              <Activity className="text-blue-400" size={22} />
+            </div>
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">My KPI Performance</h1>
-              <p className="text-sm text-gray-500 mt-0.5">Your live performance metrics across categories</p>
+              <h1 className="text-xl font-bold text-white">My Performance Hub</h1>
+              <p className="text-xs text-slate-400 mt-0.5 uppercase tracking-widest font-medium">
+                Live metrics · {PERIOD_LABELS[period]}
+              </p>
             </div>
           </div>
           <button
             onClick={() => loadData(period)}
             disabled={loading}
-            className="flex items-center gap-2 text-gray-500 hover:text-indigo-600 transition-colors text-sm"
+            className="flex items-center gap-1.5 text-slate-400 hover:text-blue-400 text-xs font-semibold uppercase tracking-widest transition-colors disabled:opacity-50"
           >
-            <RefreshCcw size={16} className={loading ? "animate-spin" : ""} />
+            <RefreshCcw size={13} className={loading ? "animate-spin" : ""} />
             Refresh
           </button>
         </div>
 
-        {/* Period Tabs */}
-        <div className="flex gap-2">
+        {/* Period selector */}
+        <div className="flex gap-2 mb-6 flex-wrap">
           {(Object.entries(PERIOD_LABELS) as [Period, string][]).map(([p, label]) => (
             <button
               key={p}
               onClick={() => setPeriod(p)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              className={`px-4 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all ${
                 period === p
-                  ? "bg-indigo-600 text-white shadow-sm"
-                  : "bg-white text-gray-600 border border-gray-200 hover:border-indigo-300"
+                  ? "bg-blue-600 text-white shadow-[0_0_16px_-4px_rgba(59,130,246,0.5)]"
+                  : "bg-slate-900/60 border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-600"
               }`}
             >
               {label}
             </button>
           ))}
           {period === "day" && (
-            <label className="flex items-center gap-2 rounded-lg border bg-white px-3 text-sm text-gray-600">
-              <CalendarDays size={16} />
+            <label className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-3 text-xs text-slate-400">
+              <CalendarDays size={14} />
               <input
                 type="date"
                 value={selectedDate}
                 max={today()}
-                onChange={(event) => setSelectedDate(event.target.value)}
-                className="bg-transparent py-2 outline-none"
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="bg-transparent py-2 outline-none text-slate-300"
               />
             </label>
           )}
         </div>
 
-        {/* Loading */}
-        {loading && (
-          <div className="flex items-center justify-center py-20">
-            <Loader className="animate-spin text-indigo-500" size={32} />
-          </div>
-        )}
+        {/* Tabs */}
+        <Tabs defaultValue="performance">
+          <TabsList className="bg-slate-900/60 border border-slate-800 rounded-xl p-1 mb-6 w-auto inline-flex">
+            <TabsTrigger
+              value="performance"
+              className="data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-[0_0_12px_-4px_rgba(59,130,246,0.6)] text-slate-400 rounded-lg text-xs font-semibold uppercase tracking-wider px-5 py-2 transition-all"
+            >
+              My Performance
+            </TabsTrigger>
+            <TabsTrigger
+              value="quality"
+              className="data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-[0_0_12px_-4px_rgba(59,130,246,0.6)] text-slate-400 rounded-lg text-xs font-semibold uppercase tracking-wider px-5 py-2 transition-all"
+            >
+              Call Quality
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Error */}
-        {!loading && error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{error}</div>
-        )}
+          {/* ── KPI Performance Tab ────────────────────────────────────────── */}
+          <TabsContent value="performance">
+            {loading && <DarkSkeleton />}
 
-        {/* No KPIs assigned */}
-        {!loading && !error && noKpis && (
-          <div className="text-center py-20 text-gray-400">
-            <Activity size={48} className="mx-auto mb-3 opacity-40" />
-            <p className="text-lg font-medium text-gray-600">No KPIs assigned yet</p>
-            <p className="text-sm mt-1">Your KPIs are defined based on your department, designation, process, or cost centre.</p>
-            <p className="text-sm mt-1">Please contact HR or your manager to get KPIs configured for your role.</p>
-          </div>
-        )}
+            {!loading && error && (
+              <div className="bg-rose-950/40 border border-rose-800/60 text-rose-400 px-4 py-3 rounded-xl text-sm">
+                {error}
+              </div>
+            )}
 
-        {/* Dashboard */}
-        {!loading && data && (
-          <>
-            {/* AI KPI Brief */}
-            <AIInsightPanel
-              contextType="performance_kpi"
-              role="employee"
-              title="Your KPI AI Brief"
-              enabled={data !== null}
-              data={{
-                overall_score: data.overall_score,
-                overall_rating: data.overall_rating,
-                total_kpis: data.metrics.length,
-                kpis_with_data: data.metrics.filter((m) => m.actual_value !== null).length,
-                on_target_count: data.metrics.filter((m) => m.score_pct >= 90).length,
-                below_60_count: data.metrics.filter((m) => m.score_pct < 60).length,
-              }}
-            />
+            {!loading && !error && noKpis && (
+              <div className="text-center py-24 text-slate-500">
+                <Activity size={48} className="mx-auto mb-4 opacity-30" />
+                <p className="text-lg font-semibold text-slate-400">No KPIs assigned yet</p>
+                <p className="text-sm mt-2">
+                  Your KPIs are configured by HR based on your department, process, and designation.
+                </p>
+                <p className="text-sm mt-1">Contact HR or your manager to get started.</p>
+              </div>
+            )}
 
-            {/* Summary Bar */}
-            <div className="bg-gradient-to-r from-indigo-600 to-indigo-700 rounded-2xl p-5 text-white">
-              <div className="flex items-center justify-between flex-wrap gap-4">
-                <div>
-                  <p className="text-indigo-200 text-sm">Overall Score — {PERIOD_LABELS[period]}</p>
-                  <div className="flex items-center gap-3 mt-1">
-                    <span className="text-4xl font-bold">{Math.round(data.overall_score)}%</span>
-                    {data.overall_rating && (
-                      <span className={`${overallRatingBg} text-white text-xl font-bold w-12 h-12 flex items-center justify-center rounded-full shadow-lg`}>
-                        {data.overall_rating}
-                      </span>
+            {!loading && data && (
+              <div className="space-y-6">
+                {/* Hero row */}
+                <div className="flex flex-col sm:flex-row gap-6 items-start">
+                  <HeroScoreDial
+                    score={data.overall_score}
+                    rating={data.overall_rating}
+                    ratingColor={data.overall_rating_color}
+                  />
+                  <div className="flex-1 space-y-3">
+                    <AIInsightPanel
+                      contextType="performance_kpi"
+                      role="employee"
+                      title="AI Performance Brief"
+                      enabled
+                      data={{
+                        overall_score: data.overall_score,
+                        overall_rating: data.overall_rating,
+                        total_kpis: data.metrics.length,
+                        kpis_with_data: data.metrics.filter((m) => m.actual_value !== null).length,
+                        on_target_count: data.metrics.filter((m) => m.score_pct >= 90).length,
+                        below_60_count: data.metrics.filter((m) => m.score_pct < 60).length,
+                      }}
+                    />
+                    {/* Stat chips */}
+                    <div className="flex gap-3 flex-wrap">
+                      {[
+                        { label: "KPIs Tracked", value: data.metrics.length },
+                        { label: "With Data", value: data.metrics.filter((m) => m.actual_value !== null).length },
+                        { label: "On Target", value: data.metrics.filter((m) => m.score_pct >= 90).length },
+                      ].map((chip) => (
+                        <div
+                          key={chip.label}
+                          className="bg-slate-900/60 border border-slate-800 rounded-lg px-4 py-2 text-center"
+                        >
+                          <div className="text-xl font-bold font-mono text-white">{chip.value}</div>
+                          <div className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">
+                            {chip.label}
+                          </div>
+                        </div>
+                      ))}
+                      {data.date_range && (
+                        <div className="bg-slate-900/60 border border-slate-800 rounded-lg px-4 py-2 text-center">
+                          <div className="text-xs font-mono text-slate-300">
+                            {data.date_range.start}
+                          </div>
+                          <div className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">
+                            → {data.date_range.end}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Category tiles */}
+                {categoryStats.length > 0 && (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    {categoryStats.map((cat) => {
+                      const Icon = CATEGORY_ICONS[cat.category] ?? Zap;
+                      return (
+                        <CategorySummaryTile
+                          key={cat.category}
+                          category={cat.category}
+                          label={cat.label}
+                          avgScore={cat.avgScore}
+                          metricsCount={cat.count}
+                          icon={Icon}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Radar + Peer context */}
+                {categoryStats.length >= 2 && (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="md:col-span-2">
+                      <CategoryRadarChart categories={categoryStats} />
+                    </div>
+                    <div className="bg-slate-900/60 backdrop-blur-md rounded-xl p-5 border border-slate-800/80">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-4">
+                        Peer Benchmarking
+                      </p>
+                      <div className="space-y-3">
+                        {categoryStats.map((cat) => {
+                          const catMetrics = groupedMetrics[cat.category] ?? [];
+                          const withPeer = catMetrics.filter(
+                            (m) => m.peer_avg !== null && m.actual_value !== null
+                          );
+                          const peerAvgScore =
+                            withPeer.length > 0
+                              ? withPeer.reduce((s, m) => {
+                                  const isLower = m.direction === "lower_is_better";
+                                  const pct =
+                                    m.target_value > 0 && m.peer_avg !== null
+                                      ? isLower
+                                        ? Math.min((m.target_value / m.peer_avg) * 100, 100)
+                                        : Math.min((m.peer_avg / m.target_value) * 100, 100)
+                                      : 0;
+                                  return s + pct;
+                                }, 0) / withPeer.length
+                              : null;
+
+                          return (
+                            <div key={cat.category}>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                                  {cat.label}
+                                </span>
+                                <span className="text-[10px] font-mono text-slate-300">
+                                  {Math.round(cat.avgScore)}%
+                                </span>
+                              </div>
+                              <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-blue-500 rounded-full"
+                                  style={{ width: `${Math.min(cat.avgScore, 100)}%` }}
+                                />
+                              </div>
+                              {peerAvgScore !== null && (
+                                <div className="flex items-center justify-between mt-0.5">
+                                  <span className="text-[9px] text-slate-600">Peer avg</span>
+                                  <span className="text-[9px] font-mono text-slate-500">
+                                    {Math.round(peerAvgScore)}%
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {categoryStats.every(
+                          (c) =>
+                            !(groupedMetrics[c.category] ?? []).some(
+                              (m) => m.peer_avg !== null
+                            )
+                        ) && (
+                          <p className="text-xs text-slate-600 text-center py-4">
+                            Peer data not available for this period
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* KPI metric cards per category */}
+                {Object.entries(groupedMetrics).map(([category, catMetrics]) => (
+                  <div key={category}>
+                    <h2 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3">
+                      {CATEGORY_LABELS[category] ?? category}
+                    </h2>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {catMetrics.map((m) => (
+                        <PeerMetricCard key={m.metric_id} metric={m} />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+
+                {/* Day-wise timeline */}
+                <div className="overflow-auto rounded-2xl border border-slate-800/80 bg-slate-900/60 backdrop-blur-md">
+                  <div className="border-b border-slate-800/80 px-5 py-3.5">
+                    <h2 className="font-semibold text-slate-200 text-sm">Day-wise performance</h2>
+                  </div>
+                  <table className="w-full min-w-[720px] text-sm">
+                    <thead className="bg-slate-950 text-left">
+                      <tr>
+                        {["Date", "Overall Score", "Rating", "Metrics & Source"].map((col) => (
+                          <th
+                            key={col}
+                            className="px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-500"
+                          >
+                            {col}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.daily_performance.length === 0 && (
+                        <tr>
+                          <td
+                            colSpan={4}
+                            className="px-5 py-10 text-center text-slate-600 text-sm"
+                          >
+                            No source data available for this date or period.
+                          </td>
+                        </tr>
+                      )}
+                      {data.daily_performance.map((day) => (
+                        <tr key={day.date} className="border-t border-slate-800/50 align-top">
+                          <td className="px-5 py-3 font-medium text-slate-300 font-mono text-xs">
+                            {day.date}
+                          </td>
+                          <td className="px-5 py-3 font-bold text-white font-mono">
+                            {Math.round(day.overall_score)}%
+                          </td>
+                          <td className="px-5 py-3">
+                            {day.overall_rating ? (
+                              <span
+                                className={`text-xs font-extrabold px-2.5 py-0.5 rounded-full border ${
+                                  RATING_DARK[day.overall_rating] ??
+                                  "bg-slate-700/40 border-slate-600 text-slate-400"
+                                }`}
+                              >
+                                {day.overall_rating}
+                              </span>
+                            ) : (
+                              <span className="text-slate-600">—</span>
+                            )}
+                          </td>
+                          <td className="px-5 py-3">
+                            <div className="flex flex-wrap gap-2">
+                              {day.metrics.map((m) => (
+                                <span
+                                  key={m.metric_id}
+                                  className="rounded-full bg-slate-800/60 border border-slate-700/50 px-2.5 py-1 text-xs text-slate-300"
+                                >
+                                  {m.metric_code}:{" "}
+                                  {formatMetricValue(m.actual_value, m.unit)} ·{" "}
+                                  {m.source}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </TabsContent>
+
+          {/* ── Call Quality Tab ───────────────────────────────────────────── */}
+          <TabsContent value="quality">
+            <div className="space-y-6">
+              {showQualityEmptyState === "error" && (
+                <DataError onRetry={qualityRefetch} />
+              )}
+
+              {showQualityEmptyState === "no-calls" && <NoCalls />}
+
+              {showQualityEmptyState === "scoring-pending" && <ScoringPending />}
+
+              {!showQualityEmptyState && (
+                <>
+                  {/* Hero Card */}
+                  <div className="w-full">
+                    {cqScoreLoading ? (
+                      <HeroSkeleton />
+                    ) : cqScore ? (
+                      <HeroCard data={cqScore} isLoading={false} />
+                    ) : (
+                      <Card className="p-6 bg-amber-950/30 border-amber-800/40">
+                        <div className="flex items-start gap-4">
+                          <AlertCircle className="h-5 w-5 text-amber-400 mt-1 flex-shrink-0" />
+                          <div>
+                            <h3 className="font-semibold text-amber-300">
+                              Quality Score Unavailable
+                            </h3>
+                            <p className="text-sm text-amber-400/70 mt-1">
+                              Your CQ score could not be loaded. Please refresh the page.
+                            </p>
+                          </div>
+                        </div>
+                      </Card>
                     )}
                   </div>
-                  {data.date_range && (
-                    <p className="text-indigo-200 text-xs mt-1">
-                      {data.date_range.start} → {data.date_range.end}
-                    </p>
+
+                  {/* Quick Wins */}
+                  {cqScore && !cqScoreLoading && (
+                    <div className="w-full">
+                      <QuickWins
+                        topWeakness={weakness?.weakness_areas?.[0]?.category}
+                        isLoading={cqScoreLoading}
+                      />
+                    </div>
                   )}
-                </div>
-                <div className="flex gap-6 text-center">
-                  <div>
-                    <div className="text-2xl font-bold">{data.metrics.length}</div>
-                    <div className="text-indigo-200 text-xs">KPIs Tracked</div>
-                  </div>
-                  <div>
-                    <div className="text-2xl font-bold">{data.metrics.filter(m => m.actual_value !== null).length}</div>
-                    <div className="text-indigo-200 text-xs">With Data</div>
-                  </div>
-                  <div>
-                    <div className="text-2xl font-bold">{data.metrics.filter(m => m.score_pct >= 90).length}</div>
-                    <div className="text-indigo-200 text-xs">On Target</div>
-                  </div>
-                </div>
-              </div>
 
-              {/* Progress bar */}
-              <div className="mt-4 h-2 bg-indigo-800 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-white rounded-full transition-all"
-                  style={{ width: `${Math.min(data.overall_score, 100)}%` }}
-                />
-              </div>
+                  {/* Weakness + Trend 2-col */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      {weaknessLoading ? (
+                        <PanelSkeleton />
+                      ) : weakness ? (
+                        <WeaknessPanel weaknessAreas={weakness.weakness_areas} />
+                      ) : (
+                        <Card className="p-6 text-center text-slate-500 bg-slate-900/60 border-slate-800">
+                          No weakness data available
+                        </Card>
+                      )}
+                    </div>
+                    <div>
+                      {cqScoreLoading ? (
+                        <PanelSkeleton />
+                      ) : cqScore ? (
+                        <TrendPanel
+                          weekly={cqScore.weekly}
+                          cq_7day_avg={cqScore.cq_score_7day_avg}
+                          cq_30day_avg={cqScore.cq_score_30day_avg}
+                          trend_7day={cqScore.trend_7day}
+                          trend_30day={cqScore.trend_30day}
+                        />
+                      ) : (
+                        <Card className="p-6 text-center text-slate-500 bg-slate-900/60 border-slate-800">
+                          No trend data available
+                        </Card>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Calls Table */}
+                  <div className="w-full">
+                    {callsLoading ? (
+                      <TableSkeleton />
+                    ) : callsReview && callsReview.calls.length > 0 ? (
+                      <CallsTable
+                        calls={callsReview.calls}
+                        totalCalls={callsReview.total_calls}
+                        currentPage={
+                          Math.floor(callsReview.page.offset / callsReview.page.limit) + 1
+                        }
+                        pageSize={callsReview.page.limit}
+                        isLoading={callsLoading}
+                        onCallClick={(call) => {
+                          setSelectedCallId(call.call_id);
+                          setIsModalOpen(true);
+                        }}
+                      />
+                    ) : (
+                      <Card className="p-6 text-center text-slate-500 bg-slate-900/60 border-slate-800">
+                        No calls available yet
+                      </Card>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
-
-            {/* KPI Cards by category */}
-            {Object.entries(groupedMetrics).map(([category, catMetrics]) => (
-              <div key={category}>
-                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">
-                  {CATEGORY_LABELS[category] ?? category}
-                </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {catMetrics.map(m => (
-                    <KpiCard key={m.metric_id} metric={m} />
-                  ))}
-                </div>
-              </div>
-            ))}
-
-            <div className="overflow-auto rounded-2xl border border-gray-200 bg-white">
-              <div className="border-b px-4 py-3">
-                <h2 className="font-semibold text-gray-900">Day-wise performance details</h2>
-              </div>
-              <table className="w-full min-w-[720px] text-sm">
-                <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500">
-                  <tr>
-                    <th className="px-4 py-3">Date</th>
-                    <th className="px-4 py-3">Overall score</th>
-                    <th className="px-4 py-3">Rating</th>
-                    <th className="px-4 py-3">Metrics and source</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.daily_performance.length === 0 && (
-                    <tr><td colSpan={4} className="px-4 py-10 text-center text-gray-400">No source data is available for this date or period.</td></tr>
-                  )}
-                  {data.daily_performance.map((day) => (
-                    <tr key={day.date} className="border-t align-top">
-                      <td className="px-4 py-3 font-medium text-gray-900">{day.date}</td>
-                      <td className="px-4 py-3 font-bold">{Math.round(day.overall_score)}%</td>
-                      <td className="px-4 py-3">{day.overall_rating ?? "—"}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          {day.metrics.map((metric) => (
-                            <span key={metric.metric_id} className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-700">
-                              {metric.metric_code}: {formatMetricValue(metric.actual_value, metric.unit)} · {metric.source}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
+          </TabsContent>
+        </Tabs>
       </div>
-    </DashboardLayout>
+
+      {/* Call Detail Modal — outside tabs so it can overlay full screen */}
+      <CallDetailModal
+        isOpen={isModalOpen}
+        onClose={() => {
+          setIsModalOpen(false);
+          setSelectedCallId(null);
+        }}
+        call={callDetail}
+        isLoading={!callDetail && isModalOpen}
+      />
+    </>
   );
 }
