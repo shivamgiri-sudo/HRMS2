@@ -283,7 +283,7 @@ export default function MyKpiDashboard() {
 
   return (
     <>
-      <div className="relative bg-slate-950 min-h-[calc(100vh-64px)] p-6 max-w-7xl mx-auto overflow-hidden">
+      <div className="relative bg-slate-950 min-h-[calc(100vh-64px)] overflow-hidden -mx-4 -mt-5 -mb-9 sm:-mx-5 lg:-mx-6 lg:-mt-6 px-4 pt-5 pb-9 sm:px-5 lg:px-6 lg:pt-6">
         {/* Ambient glow orbs */}
         <div className="pointer-events-none absolute -top-32 left-1/4 w-[480px] h-[480px] bg-blue-600/5 blur-[120px]" />
         <div className="pointer-events-none absolute top-1/2 right-0 w-[320px] h-[320px] bg-indigo-600/4 blur-[100px]" />
