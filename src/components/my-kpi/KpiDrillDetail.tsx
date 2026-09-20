@@ -23,6 +23,14 @@ function fmtDate(d: string): string {
   }
 }
 
+function estimatePeerScore(peerAvg: number, targetValue: number | null, direction: string): number {
+  if (!targetValue || targetValue === 0 || peerAvg === 0) return 0;
+  const raw = direction === "lower_is_better"
+    ? (targetValue / peerAvg) * 100
+    : (peerAvg / targetValue) * 100;
+  return Math.min(Math.max(raw, 0), 100);
+}
+
 type Props = { metric: KpiMetricResult };
 
 export function KpiDrillDetail({ metric }: Props) {
@@ -82,12 +90,7 @@ export function KpiDrillDetail({ metric }: Props) {
               { label: "You", pct: Math.min(scorePct, 100), color: "bg-blue-500" },
               {
                 label: "Peer Avg",
-                pct: Math.min(
-                  metric.direction === "lower_is_better"
-                    ? (metric.target_value / metric.peer_avg) * 100
-                    : (metric.peer_avg / metric.target_value) * 100,
-                  100
-                ),
+                pct: estimatePeerScore(metric.peer_avg!, metric.target_value, metric.direction ?? "higher_is_better"),
                 color: "bg-slate-300",
               },
             ].map((row) => (

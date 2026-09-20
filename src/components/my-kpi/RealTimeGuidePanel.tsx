@@ -3,6 +3,7 @@ import {
   Zap, Headphones, HelpCircle, BookOpen, PhoneCall,
   Activity, CheckCircle2, AlertTriangle, Info,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 interface WeaknessCategory {
@@ -38,6 +39,11 @@ const COACHING_TIPS: Record<string, { tip: string; action: string }> = {
     tip: "Confirm satisfaction, offer further help, and close warmly — never hang up abruptly.",
     action: "Practice closing phrases from the call scripts library.",
   },
+};
+
+const FALLBACK_TIP = {
+  tip: "Review your recent calls and focus on the areas where your score is below the team average.",
+  action: "Check your quality dashboard for detailed feedback from your QA team.",
 };
 
 type Props = {
@@ -145,7 +151,9 @@ export function RealTimeGuidePanel({ refetchInterval = 30_000 }: Props) {
           <div className="space-y-3">
             {topWeaknesses.map((w, i) => {
               const key = w.category.toLowerCase().replace(/[\s]+/g, "_");
-              const coaching = COACHING_TIPS[key] ?? COACHING_TIPS[Object.keys(COACHING_TIPS).find(k => w.category.toLowerCase().includes(k)) ?? ""];
+              const coaching = COACHING_TIPS[key]
+                ?? COACHING_TIPS[Object.keys(COACHING_TIPS).find(k => w.category.toLowerCase().includes(k)) ?? ""]
+                ?? FALLBACK_TIP;
               return (
                 <div key={w.category} className="rounded-lg border border-blue-100 bg-blue-50/50 p-3">
                   <div className="flex items-center gap-2 mb-1.5">
@@ -153,12 +161,10 @@ export function RealTimeGuidePanel({ refetchInterval = 30_000 }: Props) {
                     <p className="text-sm font-bold text-slate-900 capitalize">{w.category.replace(/_/g, " ")}</p>
                     <span className="text-[10px] text-rose-600 font-semibold ml-auto">{Math.round(w.gap)}pp gap</span>
                   </div>
-                  {coaching && (
-                    <>
-                      <p className="text-xs text-slate-700 leading-relaxed">{coaching.tip}</p>
-                      <p className="text-[11px] text-blue-600 font-semibold mt-1.5">→ {coaching.action}</p>
-                    </>
-                  )}
+                  <>
+                    <p className="text-xs text-slate-700 leading-relaxed">{coaching.tip}</p>
+                    <p className="text-[11px] text-blue-600 font-semibold mt-1.5">→ {coaching.action}</p>
+                  </>
                 </div>
               );
             })}
@@ -179,15 +185,15 @@ export function RealTimeGuidePanel({ refetchInterval = 30_000 }: Props) {
             { icon: HelpCircle, label: "FAQ & Guides", desc: "Quick reference sheets", href: "/lms", color: "text-amber-600 bg-amber-50 border-amber-100 hover:border-amber-300" },
             { icon: PhoneCall, label: "Schedule Coaching", desc: "Book a 1:1 session", href: "/helpdesk", color: "text-emerald-600 bg-emerald-50 border-emerald-100 hover:border-emerald-300" },
           ].map(({ icon: Icon, label, desc, href, color }) => (
-            <a
+            <Link
               key={label}
-              href={href}
+              to={href}
               className={`rounded-xl border p-3 transition-all hover:shadow-sm ${color}`}
             >
               <Icon size={16} className="mb-2" />
               <p className="text-sm font-bold text-slate-900">{label}</p>
               <p className="text-[11px] text-slate-500 mt-0.5">{desc}</p>
-            </a>
+            </Link>
           ))}
         </div>
       </div>

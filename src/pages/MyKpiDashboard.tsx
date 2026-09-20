@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Loader,
   RefreshCcw,
@@ -163,10 +163,14 @@ export default function MyKpiDashboard() {
 
   // Drill-down state
   const [drillMetric, setDrillMetric] = useState<KpiMetricResult | null>(null);
+  const [drillDay, setDrillDay] = useState<LivePerformanceData["daily_performance"][0] | null>(null);
 
-  // Quality state
+  // Quality state — paginated calls
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [callsPage, setCallsPage] = useState(0);
+  const [callsSort, setCallsSort] = useState<"date" | "cq" | "fatal">("date");
+  const CALLS_PAGE_SIZE = 10;
 
   async function loadData(p: Period) {
     setLoading(true);
@@ -210,6 +214,24 @@ export default function MyKpiDashboard() {
   } = useAgentQualityData(user?.id);
 
   const { data: callDetail } = useCallDetail(isModalOpen ? selectedCallId : null);
+
+  // Paginated calls query for the Quality tab
+  const { data: pagedCalls, isFetching: pagedCallsFetching } = useQuery({
+    queryKey: ["quality-calls-paged", callsPage, callsSort],
+    queryFn: () =>
+      hrmsApi
+        .get<unknown>(
+          `/api/agent/calls-review?limit=${CALLS_PAGE_SIZE}&offset=${callsPage * CALLS_PAGE_SIZE}&sort=${callsSort}`
+        )
+        .then((r) => {
+          const env = r.data as { data?: typeof callsReview; success?: boolean } | typeof callsReview | null;
+          return (env && "data" in (env as object)
+            ? (env as { data?: typeof callsReview }).data
+            : env) as typeof callsReview | null;
+        }),
+    staleTime: 120_000,
+    placeholderData: (prev) => prev,
+  });
 
   // Derived KPI data
   const groupedMetrics = useMemo(
@@ -340,6 +362,14 @@ export default function MyKpiDashboard() {
                 )}
                 {loading && <Loader size={14} className="animate-spin text-blue-500 ml-2" />}
               </div>
+
+              {/* Date range subtitle */}
+              {data?.date_range && !loading && (
+                <p className="text-xs text-slate-400 -mt-3">
+                  <CalendarDays size={11} className="inline mr-1 -mt-0.5" />
+                  {fmtDate(data.date_range.start)} – {fmtDate(data.date_range.end)}
+                </p>
+              )}
 
               {/* Loading */}
               {loading && <LightSkeleton />}
@@ -507,7 +537,11 @@ export default function MyKpiDashboard() {
                           </thead>
                           <tbody className="divide-y divide-slate-50">
                             {data.daily_performance.map((day) => (
-                              <tr key={day.date} className="hover:bg-blue-50/30 transition-colors">
+                              <tr
+                                key={day.date}
+                                className="hover:bg-blue-50/30 transition-colors cursor-pointer"
+                                onClick={() => setDrillDay(day)}
+                              >
                                 <td className="px-4 py-2.5 font-medium text-slate-700">{fmtDate(day.date)}</td>
                                 <td className="px-4 py-2.5 text-center font-extrabold font-mono text-slate-900">
                                   {Math.round(day.overall_score)}
@@ -605,15 +639,19 @@ export default function MyKpiDashboard() {
                   <ClapBreakdown processId={processId} />
 
                   {/* Calls table */}
-                  {callsLoading ? (
+                  {callsLoading && !pagedCalls ? (
                     <div className="h-64 bg-slate-100 rounded-xl animate-pulse" />
                   ) : (
-                    callsReview && (
+                    (pagedCalls ?? callsReview) && (
                       <CallsTable
-                        calls={callsReview.calls}
-                        totalCalls={callsReview.total_calls}
-                        currentPage={0}
-                        pageSize={callsReview.page?.limit ?? 10}
+                        calls={(pagedCalls ?? callsReview)?.calls ?? []}
+                        totalCalls={(pagedCalls ?? callsReview)?.total_calls ?? 0}
+                        currentPage={callsPage}
+                        pageSize={CALLS_PAGE_SIZE}
+                        sortBy={callsSort}
+                        isLoading={pagedCallsFetching}
+                        onPageChange={(page) => setCallsPage(page)}
+                        onSortChange={(sort) => { setCallsSort(sort); setCallsPage(0); }}
                         onCallClick={(call) => {
                           setSelectedCallId(call.call_id);
                           setIsModalOpen(true);
@@ -675,6 +713,67 @@ export default function MyKpiDashboard() {
         }
       >
         {drillMetric && <KpiDrillDetail metric={drillMetric} />}
+      </DrillDownDrawer>
+
+      {/* ── Day-wise drill-down drawer ───────────────────────── */}
+      <DrillDownDrawer
+        open={!!drillDay}
+        onClose={() => setDrillDay(null)}
+        title={drillDay ? fmtDate(drillDay.date) : ""}
+        subtitle="Day breakdown"
+        badge={
+          drillDay?.overall_rating ? (
+            <span className={`text-xs font-extrabold px-2 py-0.5 rounded-full border ${RATING_STYLE[drillDay.overall_rating] ?? "bg-slate-100 text-slate-600 border-slate-200"}`}>
+              {drillDay.overall_rating}
+            </span>
+          ) : undefined
+        }
+      >
+        {drillDay && (
+          <>
+            {/* Summary */}
+            <div className={`rounded-xl border p-4 mb-1 ${
+              drillDay.overall_score >= 90 ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+              : drillDay.overall_score >= 70 ? "bg-amber-50 border-amber-200 text-amber-700"
+              : "bg-rose-50 border-rose-200 text-rose-700"
+            }`}>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest opacity-70">Overall Score</p>
+                  <p className="text-3xl font-extrabold font-mono">{Math.round(drillDay.overall_score)}</p>
+                  <p className="text-xs opacity-70">/ 100 composite</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-bold uppercase tracking-widest opacity-70">Date</p>
+                  <p className="text-sm font-bold">{fmtDate(drillDay.date)}</p>
+                  <p className="text-xs opacity-70">{drillDay.metrics.length} metrics tracked</p>
+                </div>
+              </div>
+            </div>
+            {/* Per-metric breakdown */}
+            <div className="px-5 py-3 space-y-2">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Metric Breakdown</p>
+              {drillDay.metrics.map((m) => (
+                <div key={m.metric_id} className="flex items-center justify-between gap-3 py-2 border-b border-slate-50">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-slate-900 truncate">{m.metric_name}</p>
+                    <p className="text-[10px] text-slate-400">{m.metric_code} · {m.source}</p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className="text-xs font-mono text-slate-700">{formatMetricValue(m.actual_value, m.unit)}</span>
+                    <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border ${
+                      m.score_pct >= 90 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                      : m.score_pct >= 70 ? "bg-amber-50 text-amber-700 border-amber-200"
+                      : "bg-rose-50 text-rose-700 border-rose-200"
+                    }`}>
+                      {Math.round(m.score_pct)}%
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </DrillDownDrawer>
 
       {/* ── Call detail modal ─────────────────────────────────── */}

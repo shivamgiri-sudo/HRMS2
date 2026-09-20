@@ -107,14 +107,10 @@ function unwrapAgentPayload<T>(res: unknown): T | null {
 }
 
 async function fetchCQScore(_employeeId: string, daysBack = 7): Promise<CQScoreData> {
-  try {
-    // Self-scoped: the server resolves the agent from the token, not from _employeeId.
-    const res = await hrmsApi.get<unknown>(`/api/agent/cq-score?daysBack=${daysBack}`);
-    return unwrapAgentPayload<CQScoreData>(res) ?? getEmptyCQScore();
-  } catch (err) {
-    console.error("Failed to fetch CQ score:", err);
-    return getEmptyCQScore();
-  }
+  // Self-scoped: the server resolves the agent from the token, not from _employeeId.
+  // Errors are no longer swallowed — React Query handles retries and surfaces them.
+  const res = await hrmsApi.get<unknown>(`/api/agent/cq-score?daysBack=${daysBack}`);
+  return unwrapAgentPayload<CQScoreData>(res) ?? getEmptyCQScore();
 }
 
 /**
@@ -122,13 +118,8 @@ async function fetchCQScore(_employeeId: string, daysBack = 7): Promise<CQScoreD
  * Cache: 10 minutes
  */
 async function fetchWeaknessDetail(_employeeId: string): Promise<{ weakness_areas: WeaknessArea[] }> {
-  try {
-    const res = await hrmsApi.get<unknown>(`/api/agent/weakness-detail`);
-    return unwrapAgentPayload<{ weakness_areas: WeaknessArea[] }>(res) ?? { weakness_areas: [] };
-  } catch (err) {
-    console.error("Failed to fetch weakness details:", err);
-    return { weakness_areas: [] };
-  }
+  const res = await hrmsApi.get<unknown>(`/api/agent/weakness-detail`);
+  return unwrapAgentPayload<{ weakness_areas: WeaknessArea[] }>(res) ?? { weakness_areas: [] };
 }
 
 /**
@@ -136,15 +127,10 @@ async function fetchWeaknessDetail(_employeeId: string): Promise<{ weakness_area
  * Cache: 2 minutes
  */
 async function fetchCallsReview(_employeeId: string, limit = 10, offset = 0): Promise<CallsReviewData> {
-  try {
-    const res = await hrmsApi.get<unknown>(
-      `/api/agent/calls-review?limit=${limit}&offset=${offset}&sort=date`
-    );
-    return unwrapAgentPayload<CallsReviewData>(res) ?? emptyCallsReview(limit, offset);
-  } catch (err) {
-    console.error("Failed to fetch calls review:", err);
-    return emptyCallsReview(limit, offset);
-  }
+  const res = await hrmsApi.get<unknown>(
+    `/api/agent/calls-review?limit=${limit}&offset=${offset}&sort=date`
+  );
+  return unwrapAgentPayload<CallsReviewData>(res) ?? emptyCallsReview(limit, offset);
 }
 
 /**
