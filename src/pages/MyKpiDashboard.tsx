@@ -10,17 +10,25 @@ import {
   TrendingUp,
   ShieldCheck,
   AlertCircle,
+  GraduationCap,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { AIInsightPanel } from "@/components/ai";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card } from "@/components/ui/card";
 import { HeroScoreDial } from "@/components/my-kpi/HeroScoreDial";
 import { CategorySummaryTile } from "@/components/my-kpi/CategorySummaryTile";
 import { CategoryRadarChart } from "@/components/my-kpi/CategoryRadarChart";
 import { PeerMetricCard } from "@/components/my-kpi/PeerMetricCard";
 import type { KpiMetricResult } from "@/components/my-kpi/PeerMetricCard";
+import { DrillDownDrawer } from "@/components/my-kpi/DrillDownDrawer";
+import { KpiDrillDetail } from "@/components/my-kpi/KpiDrillDetail";
+import { LiveCallScoreStrip } from "@/components/my-kpi/LiveCallScoreStrip";
+import { AhtTrendChart } from "@/components/my-kpi/AhtTrendChart";
+import { OpportunitiesMissed } from "@/components/my-kpi/OpportunitiesMissed";
+import { ClapBreakdown } from "@/components/my-kpi/ClapBreakdown";
+import { MyLearningSection } from "@/components/my-kpi/MyLearningSection";
+import { RealTimeGuidePanel } from "@/components/my-kpi/RealTimeGuidePanel";
 import { useAgentQualityData, useCallDetail } from "@/hooks/useAgentQualityData";
 import { HeroCard } from "@/components/quality-dashboard/HeroCard";
 import { QuickWins } from "@/components/quality-dashboard/QuickWins";
@@ -85,6 +93,14 @@ const CATEGORY_ICONS: Record<string, typeof Activity> = {
   custom: Zap,
 };
 
+const RATING_STYLE: Record<string, string> = {
+  S: "bg-emerald-50 border-emerald-200 text-emerald-700",
+  A: "bg-blue-50 border-blue-200 text-blue-700",
+  B: "bg-amber-50 border-amber-200 text-amber-700",
+  C: "bg-orange-50 border-orange-200 text-orange-700",
+  D: "bg-rose-50 border-rose-200 text-rose-700",
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function today() {
@@ -99,73 +115,34 @@ function formatMetricValue(value: number, unit: string) {
   return String(Math.round(value * 10) / 10);
 }
 
-const RATING_DARK: Record<string, string> = {
-  S: "bg-emerald-500/20 border-emerald-500/40 text-emerald-300",
-  A: "bg-blue-500/20   border-blue-500/40   text-blue-300",
-  B: "bg-amber-500/20  border-amber-500/40  text-amber-300",
-  C: "bg-orange-500/20 border-orange-500/40 text-orange-300",
-  D: "bg-rose-500/20   border-rose-500/40   text-rose-300",
-};
+function fmtDate(d: string): string {
+  try {
+    return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+  } catch {
+    return d;
+  }
+}
 
-// ─── Skeleton ─────────────────────────────────────────────────────────────────
+// ─── Skeletons ────────────────────────────────────────────────────────────────
 
-function DarkSkeleton() {
+function LightSkeleton() {
   return (
     <div className="animate-pulse space-y-6">
       <div className="flex gap-6">
-        <div className="w-44 h-44 bg-slate-900/60 rounded-full border border-slate-800" />
+        <div className="w-44 h-44 bg-slate-100 rounded-full" />
         <div className="flex-1 space-y-3 py-4">
-          <div className="h-6 bg-slate-900/60 rounded border border-slate-800 w-2/3" />
-          <div className="h-16 bg-slate-900/60 rounded border border-slate-800" />
-          <div className="h-10 bg-slate-900/60 rounded border border-slate-800 w-1/2" />
+          <div className="h-6 bg-slate-100 rounded w-2/3" />
+          <div className="h-16 bg-slate-100 rounded" />
+          <div className="h-10 bg-slate-100 rounded w-1/2" />
         </div>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[...Array(4)].map((_, i) => (
-          <div key={i} className="h-24 bg-slate-900/60 rounded-xl border border-slate-800" />
+          <div key={i} className="h-24 bg-slate-100 rounded-xl" />
         ))}
       </div>
-      <div className="h-64 bg-slate-900/60 rounded-xl border border-slate-800" />
+      <div className="h-64 bg-slate-100 rounded-xl" />
     </div>
-  );
-}
-
-// ─── Quality Tab Skeletons ────────────────────────────────────────────────────
-
-function HeroSkeleton() {
-  return (
-    <Card className="p-6 bg-slate-900/60 border-slate-800">
-      <div className="animate-pulse space-y-4">
-        <div className="h-8 bg-slate-700 rounded w-1/3" />
-        <div className="h-64 bg-slate-700 rounded" />
-      </div>
-    </Card>
-  );
-}
-
-function PanelSkeleton() {
-  return (
-    <Card className="p-6 bg-slate-900/60 border-slate-800">
-      <div className="animate-pulse space-y-4">
-        <div className="h-6 bg-slate-700 rounded w-1/2" />
-        <div className="h-40 bg-slate-700 rounded" />
-      </div>
-    </Card>
-  );
-}
-
-function TableSkeleton() {
-  return (
-    <Card className="p-6 bg-slate-900/60 border-slate-800">
-      <div className="animate-pulse space-y-4">
-        <div className="h-10 bg-slate-700 rounded" />
-        <div className="space-y-2">
-          {[...Array(5)].map((_, i) => (
-            <div key={i} className="h-12 bg-slate-700 rounded" />
-          ))}
-        </div>
-      </div>
-    </Card>
   );
 }
 
@@ -182,6 +159,9 @@ export default function MyKpiDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [noKpis, setNoKpis] = useState(false);
 
+  // Drill-down state
+  const [drillMetric, setDrillMetric] = useState<KpiMetricResult | null>(null);
+
   // Quality state
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -195,11 +175,12 @@ export default function MyKpiDashboard() {
       const res = await hrmsApi.get<{ success: boolean; data: LivePerformanceData }>(
         `/api/kpi-master/live?period=${p}${dateQuery}`
       );
-      if (!res.data?.metrics?.length) {
+      const d = (res.data as { data?: LivePerformanceData })?.data ?? res.data as unknown as LivePerformanceData;
+      if (!d?.metrics?.length) {
         setNoKpis(true);
         setData(null);
       } else {
-        setData(res.data);
+        setData(d);
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load KPI data");
@@ -260,421 +241,344 @@ export default function MyKpiDashboard() {
   );
 
   // Quality derived state
-  const hasNoCalls = useMemo(
-    () => !qualityLoading && callsReview && callsReview.total_calls === 0,
-    [qualityLoading, callsReview]
-  );
+  const hasNoCalls = !qualityLoading && callsReview && callsReview.total_calls === 0;
+  const hasPendingScoring = !qualityLoading && callsReview && callsReview.total_calls > 0 && callsReview.calls.length === 0;
+  const showQualityEmptyState = qualityError ? "error" : hasNoCalls ? "no-calls" : hasPendingScoring ? "scoring-pending" : null;
 
-  const hasPendingScoring = useMemo(
-    () =>
-      !qualityLoading &&
-      callsReview &&
-      callsReview.total_calls > 0 &&
-      callsReview.calls.length === 0,
-    [qualityLoading, callsReview]
-  );
-
-  const showQualityEmptyState = useMemo(() => {
-    if (qualityError) return "error";
-    if (hasNoCalls) return "no-calls";
-    if (hasPendingScoring) return "scoring-pending";
-    return null;
-  }, [qualityError, hasNoCalls, hasPendingScoring]);
+  const processId = (user as { process_id?: string | number } | null)?.process_id;
 
   return (
     <>
-      <div className="relative bg-slate-950 min-h-[calc(100vh-64px)] overflow-hidden -mx-4 -mt-5 -mb-9 sm:-mx-5 lg:-mx-6 lg:-mt-6 px-4 pt-5 pb-9 sm:px-5 lg:px-6 lg:pt-6">
-        {/* Ambient glow orbs */}
-        <div className="pointer-events-none absolute -top-32 left-1/4 w-[480px] h-[480px] bg-blue-600/5 blur-[120px]" />
-        <div className="pointer-events-none absolute top-1/2 right-0 w-[320px] h-[320px] bg-indigo-600/4 blur-[100px]" />
+      {/* Page container — light theme, bleeds edge-to-edge */}
+      <div className="-mx-4 -mt-5 -mb-9 sm:-mx-5 lg:-mx-6 lg:-mt-6 bg-slate-50 min-h-[calc(100vh-64px)] overflow-hidden">
+        {/* Blue accent bar at top */}
+        <div className="h-1 bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-500" />
 
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20">
-              <Activity className="text-blue-400" size={22} />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-white">My Performance Hub</h1>
-              <p className="text-xs text-slate-400 mt-0.5 uppercase tracking-widest font-medium">
-                Live metrics · {PERIOD_LABELS[period]}
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={() => loadData(period)}
-            disabled={loading}
-            className="flex items-center gap-1.5 text-slate-400 hover:text-blue-400 text-xs font-semibold uppercase tracking-widest transition-colors disabled:opacity-50"
-          >
-            <RefreshCcw size={13} className={loading ? "animate-spin" : ""} />
-            Refresh
-          </button>
-        </div>
+        <div className="px-4 pt-5 pb-9 sm:px-5 lg:px-6 lg:pt-6">
 
-        {/* Period selector */}
-        <div className="flex gap-2 mb-6 flex-wrap">
-          {(Object.entries(PERIOD_LABELS) as [Period, string][]).map(([p, label]) => (
-            <button
-              key={p}
-              onClick={() => setPeriod(p)}
-              className={`px-4 py-2 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all ${
-                period === p
-                  ? "bg-blue-600 text-white shadow-[0_0_16px_-4px_rgba(59,130,246,0.5)]"
-                  : "bg-slate-900/60 border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-600"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-          {period === "day" && (
-            <label className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-3 text-xs text-slate-400">
-              <CalendarDays size={14} />
-              <input
-                type="date"
-                value={selectedDate}
-                max={today()}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="bg-transparent py-2 outline-none text-slate-300"
-              />
-            </label>
-          )}
-        </div>
-
-        {/* Tabs */}
-        <Tabs defaultValue="performance">
-          <TabsList className="bg-slate-900/60 border border-slate-800 rounded-xl p-1 mb-6 w-auto inline-flex">
-            <TabsTrigger
-              value="performance"
-              className="data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-[0_0_12px_-4px_rgba(59,130,246,0.6)] text-slate-400 rounded-lg text-xs font-semibold uppercase tracking-wider px-5 py-2 transition-all"
-            >
-              My Performance
-            </TabsTrigger>
-            <TabsTrigger
-              value="quality"
-              className="data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-[0_0_12px_-4px_rgba(59,130,246,0.6)] text-slate-400 rounded-lg text-xs font-semibold uppercase tracking-wider px-5 py-2 transition-all"
-            >
-              Call Quality
-            </TabsTrigger>
-          </TabsList>
-
-          {/* ── KPI Performance Tab ────────────────────────────────────────── */}
-          <TabsContent value="performance">
-            {loading && <DarkSkeleton />}
-
-            {!loading && error && (
-              <div className="bg-rose-950/40 border border-rose-800/60 text-rose-400 px-4 py-3 rounded-xl text-sm">
-                {error}
+          {/* ── Header ───────────────────────────────────────────────── */}
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-blue-600/10 border border-blue-600/20">
+                <Activity className="text-blue-600" size={22} />
               </div>
-            )}
-
-            {!loading && !error && noKpis && (
-              <div className="text-center py-24 text-slate-500">
-                <Activity size={48} className="mx-auto mb-4 opacity-30" />
-                <p className="text-lg font-semibold text-slate-400">No KPIs assigned yet</p>
-                <p className="text-sm mt-2">
-                  Your KPIs are configured by HR based on your department, process, and designation.
+              <div>
+                <h1 className="text-xl font-bold text-slate-900">My Performance Hub</h1>
+                <p className="text-xs text-slate-500 mt-0.5 uppercase tracking-widest font-medium">
+                  Personal Performance Dashboard
                 </p>
-                <p className="text-sm mt-1">Contact HR or your manager to get started.</p>
               </div>
-            )}
+            </div>
+            <button
+              onClick={() => loadData(period)}
+              className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-blue-600 transition-colors px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50"
+            >
+              <RefreshCcw size={13} />
+              Refresh
+            </button>
+          </div>
 
-            {!loading && data && (
-              <div className="space-y-6">
-                {/* Hero row */}
-                <div className="flex flex-col sm:flex-row gap-6 items-start">
-                  <HeroScoreDial
-                    score={data.overall_score}
-                    rating={data.overall_rating}
-                    ratingColor={data.overall_rating_color}
+          {/* ── Main Tabs ────────────────────────────────────────────── */}
+          <Tabs defaultValue="performance" className="space-y-5">
+            <TabsList className="bg-white border border-slate-200 rounded-xl p-1 h-auto gap-1">
+              {[
+                { value: "performance", label: "Performance", icon: BarChart3 },
+                { value: "quality", label: "Quality & CLAP", icon: ShieldCheck },
+                { value: "learning", label: "Learning & TNI", icon: GraduationCap },
+                { value: "live", label: "Live Activity", icon: Zap },
+              ].map(({ value, label, icon: Icon }) => (
+                <TabsTrigger
+                  key={value}
+                  value={value}
+                  className="flex items-center gap-1.5 text-xs font-semibold data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm rounded-lg px-3 py-2 transition-all"
+                >
+                  <Icon size={13} />
+                  {label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+
+            {/* ═══════════════════════════════════════════════════════
+                TAB 1: PERFORMANCE
+            ═══════════════════════════════════════════════════════ */}
+            <TabsContent value="performance" className="space-y-5 focus-visible:outline-none">
+
+              {/* Period selector */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {(Object.entries(PERIOD_LABELS) as [Period, string][]).map(([p, label]) => (
+                  <button
+                    key={p}
+                    onClick={() => setPeriod(p)}
+                    className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${
+                      period === p
+                        ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                        : "bg-white text-slate-600 border-slate-200 hover:border-blue-300 hover:text-blue-600"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+                {period === "day" && (
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    max={today()}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    className="text-xs border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
                   />
-                  <div className="flex-1 space-y-3">
-                    <AIInsightPanel
-                      contextType="performance_kpi"
-                      role="employee"
-                      title="AI Performance Brief"
-                      enabled
-                      data={{
-                        overall_score: data.overall_score,
-                        overall_rating: data.overall_rating,
-                        total_kpis: data.metrics.length,
-                        kpis_with_data: data.metrics.filter((m) => m.actual_value !== null).length,
-                        on_target_count: data.metrics.filter((m) => m.score_pct >= 90).length,
-                        below_60_count: data.metrics.filter((m) => m.score_pct < 60).length,
-                      }}
-                    />
-                    {/* Stat chips */}
-                    <div className="flex gap-3 flex-wrap">
-                      {[
-                        { label: "KPIs Tracked", value: data.metrics.length },
-                        { label: "With Data", value: data.metrics.filter((m) => m.actual_value !== null).length },
-                        { label: "On Target", value: data.metrics.filter((m) => m.score_pct >= 90).length },
-                      ].map((chip) => (
-                        <div
-                          key={chip.label}
-                          className="bg-slate-900/60 border border-slate-800 rounded-lg px-4 py-2 text-center"
-                        >
-                          <div className="text-xl font-bold font-mono text-white">{chip.value}</div>
-                          <div className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">
-                            {chip.label}
-                          </div>
-                        </div>
-                      ))}
-                      {data.date_range && (
-                        <div className="bg-slate-900/60 border border-slate-800 rounded-lg px-4 py-2 text-center">
-                          <div className="text-xs font-mono text-slate-300">
-                            {data.date_range.start}
-                          </div>
-                          <div className="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">
-                            → {data.date_range.end}
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                )}
+                {loading && <Loader size={14} className="animate-spin text-blue-500 ml-2" />}
+              </div>
+
+              {/* Loading */}
+              {loading && <LightSkeleton />}
+
+              {/* Error */}
+              {!loading && error && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-5 flex items-start gap-3">
+                  <AlertCircle size={18} className="text-rose-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-bold text-rose-700">Failed to load KPI data</p>
+                    <p className="text-xs text-rose-600 mt-0.5">{error}</p>
+                    <button
+                      onClick={() => loadData(period)}
+                      className="mt-2 text-xs font-semibold text-rose-600 hover:underline"
+                    >
+                      Try again
+                    </button>
                   </div>
                 </div>
+              )}
 
-                {/* Category tiles */}
-                {categoryStats.length > 0 && (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    {categoryStats.map((cat) => {
-                      const Icon = CATEGORY_ICONS[cat.category] ?? Zap;
+              {/* No KPIs */}
+              {!loading && !error && noKpis && (
+                <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
+                  <BarChart3 size={36} className="text-slate-300 mx-auto mb-3" />
+                  <p className="text-sm font-bold text-slate-600">No KPI data for this period</p>
+                  <p className="text-xs text-slate-400 mt-1">Try a different period or check your KPI assignments.</p>
+                </div>
+              )}
+
+              {/* Data loaded */}
+              {!loading && !error && data && (
+                <>
+                  {/* Hero row */}
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+                    <div className="flex gap-6 flex-wrap sm:flex-nowrap">
+                      <HeroScoreDial
+                        score={data.overall_score}
+                        rating={data.overall_rating}
+                        ratingColor={data.overall_rating_color}
+                      />
+                      <div className="flex-1 min-w-0 flex flex-col justify-center gap-4">
+                        <AIInsightPanel
+                          context="performance_kpi"
+                          contextData={{ period, metrics: data.metrics.slice(0, 5) }}
+                        />
+                        <div className="flex gap-3 flex-wrap">
+                          {[
+                            { label: "KPIs Tracked", value: data.metrics.length, color: "bg-blue-50 text-blue-700 border-blue-100" },
+                            { label: "With Data", value: data.metrics.filter((m) => m.actual_value !== null).length, color: "bg-slate-50 text-slate-700 border-slate-200" },
+                            {
+                              label: "On Target",
+                              value: data.metrics.filter((m) => m.actual_value !== null && m.score_pct >= 80).length,
+                              color: "bg-emerald-50 text-emerald-700 border-emerald-100",
+                            },
+                          ].map(({ label, value, color }) => (
+                            <div key={label} className={`rounded-lg border px-3 py-2 ${color}`}>
+                              <p className="text-[10px] font-bold uppercase tracking-widest opacity-70">{label}</p>
+                              <p className="text-xl font-extrabold font-mono">{value}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Category summary tiles */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {categoryStats.map((stat) => {
+                      const Icon = CATEGORY_ICONS[stat.category] ?? Zap;
                       return (
                         <CategorySummaryTile
-                          key={cat.category}
-                          category={cat.category}
-                          label={cat.label}
-                          avgScore={cat.avgScore}
-                          metricsCount={cat.count}
+                          key={stat.category}
+                          category={stat.category}
+                          label={stat.label}
+                          avgScore={stat.avgScore}
+                          metricsCount={stat.count}
                           icon={Icon}
                         />
                       );
                     })}
                   </div>
-                )}
 
-                {/* Radar + Peer context */}
-                {categoryStats.length >= 2 && (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {/* Radar + Peer context */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                     <div className="md:col-span-2">
                       <CategoryRadarChart categories={categoryStats} />
                     </div>
-                    <div className="bg-slate-900/60 backdrop-blur-md rounded-xl p-5 border border-slate-800/80">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-4">
-                        Peer Benchmarking
-                      </p>
-                      <div className="space-y-3">
-                        {categoryStats.map((cat) => {
-                          const catMetrics = groupedMetrics[cat.category] ?? [];
-                          const withPeer = catMetrics.filter(
-                            (m) => m.peer_avg !== null && m.actual_value !== null
-                          );
-                          const peerAvgScore =
-                            withPeer.length > 0
-                              ? withPeer.reduce((s, m) => {
-                                  const isLower = m.direction === "lower_is_better";
-                                  const pct =
-                                    m.target_value > 0 && m.peer_avg !== null
-                                      ? isLower
-                                        ? Math.min((m.target_value / m.peer_avg) * 100, 100)
-                                        : Math.min((m.peer_avg / m.target_value) * 100, 100)
-                                      : 0;
-                                  return s + pct;
-                                }, 0) / withPeer.length
-                              : null;
-
-                          return (
-                            <div key={cat.category}>
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                                  {cat.label}
-                                </span>
-                                <span className="text-[10px] font-mono text-slate-300">
-                                  {Math.round(cat.avgScore)}%
-                                </span>
-                              </div>
-                              <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                                <div
-                                  className="h-full bg-blue-500 rounded-full"
-                                  style={{ width: `${Math.min(cat.avgScore, 100)}%` }}
-                                />
-                              </div>
-                              {peerAvgScore !== null && (
-                                <div className="flex items-center justify-between mt-0.5">
-                                  <span className="text-[9px] text-slate-600">Peer avg</span>
-                                  <span className="text-[9px] font-mono text-slate-500">
-                                    {Math.round(peerAvgScore)}%
-                                  </span>
-                                </div>
-                              )}
+                    <div className="space-y-3">
+                      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3">
+                          Category vs Peers
+                        </p>
+                        {categoryStats.map((stat) => (
+                          <div key={stat.category} className="mb-2">
+                            <div className="flex justify-between text-xs mb-1">
+                              <span className="text-slate-600 font-medium">{stat.label}</span>
+                              <span className="font-mono font-bold text-slate-900">{Math.round(stat.avgScore)}%</span>
                             </div>
-                          );
-                        })}
-                        {categoryStats.every(
-                          (c) =>
-                            !(groupedMetrics[c.category] ?? []).some(
-                              (m) => m.peer_avg !== null
-                            )
-                        ) && (
-                          <p className="text-xs text-slate-600 text-center py-4">
-                            Peer data not available for this period
-                          </p>
+                            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${stat.avgScore >= 90 ? "bg-emerald-500" : stat.avgScore >= 70 ? "bg-amber-500" : "bg-rose-500"}`}
+                                style={{ width: `${Math.min(stat.avgScore, 100)}%` }}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="bg-blue-50 rounded-xl border border-blue-100 p-4">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-blue-700 mb-2">
+                          Overall Period
+                        </p>
+                        <p className="text-3xl font-extrabold font-mono text-blue-700">
+                          {Math.round(data.overall_score)}
+                        </p>
+                        <p className="text-xs text-blue-600 mt-1">/100 composite score</p>
+                        {data.overall_rating && (
+                          <span className={`inline-block mt-2 text-xs font-extrabold px-2.5 py-0.5 rounded-full border ${RATING_STYLE[data.overall_rating] ?? "bg-slate-100 text-slate-600 border-slate-200"}`}>
+                            Rating: {data.overall_rating}
+                          </span>
                         )}
                       </div>
                     </div>
                   </div>
-                )}
 
-                {/* KPI metric cards per category */}
-                {Object.entries(groupedMetrics).map(([category, catMetrics]) => (
-                  <div key={category}>
-                    <h2 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-3">
-                      {CATEGORY_LABELS[category] ?? category}
-                    </h2>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {catMetrics.map((m) => (
-                        <PeerMetricCard key={m.metric_id} metric={m} />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-
-                {/* Day-wise timeline */}
-                <div className="overflow-auto rounded-2xl border border-slate-800/80 bg-slate-900/60 backdrop-blur-md">
-                  <div className="border-b border-slate-800/80 px-5 py-3.5">
-                    <h2 className="font-semibold text-slate-200 text-sm">Day-wise performance</h2>
-                  </div>
-                  <table className="w-full min-w-[720px] text-sm">
-                    <thead className="bg-slate-950 text-left">
-                      <tr>
-                        {["Date", "Overall Score", "Rating", "Metrics & Source"].map((col) => (
-                          <th
-                            key={col}
-                            className="px-5 py-3 text-[10px] font-bold uppercase tracking-widest text-slate-500"
-                          >
-                            {col}
-                          </th>
+                  {/* KPI cards per category — all clickable */}
+                  {Object.entries(groupedMetrics).map(([cat, metrics]) => (
+                    <div key={cat}>
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="h-px flex-1 bg-slate-200" />
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-2">
+                          {CATEGORY_LABELS[cat] ?? cat}
+                        </span>
+                        <div className="h-px flex-1 bg-slate-200" />
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {metrics.map((m) => (
+                          <PeerMetricCard
+                            key={m.metric_id}
+                            metric={m}
+                            onClick={() => setDrillMetric(m)}
+                          />
                         ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.daily_performance.length === 0 && (
-                        <tr>
-                          <td
-                            colSpan={4}
-                            className="px-5 py-10 text-center text-slate-600 text-sm"
-                          >
-                            No source data available for this date or period.
-                          </td>
-                        </tr>
-                      )}
-                      {data.daily_performance.map((day) => (
-                        <tr key={day.date} className="border-t border-slate-800/50 align-top">
-                          <td className="px-5 py-3 font-medium text-slate-300 font-mono text-xs">
-                            {day.date}
-                          </td>
-                          <td className="px-5 py-3 font-bold text-white font-mono">
-                            {Math.round(day.overall_score)}%
-                          </td>
-                          <td className="px-5 py-3">
-                            {day.overall_rating ? (
-                              <span
-                                className={`text-xs font-extrabold px-2.5 py-0.5 rounded-full border ${
-                                  RATING_DARK[day.overall_rating] ??
-                                  "bg-slate-700/40 border-slate-600 text-slate-400"
-                                }`}
-                              >
-                                {day.overall_rating}
-                              </span>
-                            ) : (
-                              <span className="text-slate-600">—</span>
-                            )}
-                          </td>
-                          <td className="px-5 py-3">
-                            <div className="flex flex-wrap gap-2">
-                              {day.metrics.map((m) => (
-                                <span
-                                  key={m.metric_id}
-                                  className="rounded-full bg-slate-800/60 border border-slate-700/50 px-2.5 py-1 text-xs text-slate-300"
-                                >
-                                  {m.metric_code}:{" "}
-                                  {formatMetricValue(m.actual_value, m.unit)} ·{" "}
-                                  {m.source}
-                                </span>
-                              ))}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </TabsContent>
+                      </div>
+                    </div>
+                  ))}
 
-          {/* ── Call Quality Tab ───────────────────────────────────────────── */}
-          <TabsContent value="quality">
-            <div className="space-y-6">
-              {showQualityEmptyState === "error" && (
-                <DataError onRetry={qualityRefetch} />
-              )}
-
-              {showQualityEmptyState === "no-calls" && <NoCalls />}
-
-              {showQualityEmptyState === "scoring-pending" && <ScoringPending />}
-
-              {!showQualityEmptyState && (
-                <>
-                  {/* Hero Card */}
-                  <div className="w-full">
-                    {cqScoreLoading ? (
-                      <HeroSkeleton />
-                    ) : cqScore ? (
-                      <HeroCard data={cqScore} isLoading={false} />
-                    ) : (
-                      <Card className="p-6 bg-amber-950/30 border-amber-800/40">
-                        <div className="flex items-start gap-4">
-                          <AlertCircle className="h-5 w-5 text-amber-400 mt-1 flex-shrink-0" />
-                          <div>
-                            <h3 className="font-semibold text-amber-300">
-                              Quality Score Unavailable
-                            </h3>
-                            <p className="text-sm text-amber-400/70 mt-1">
-                              Your CQ score could not be loaded. Please refresh the page.
-                            </p>
-                          </div>
-                        </div>
-                      </Card>
-                    )}
-                  </div>
-
-                  {/* Quick Wins */}
-                  {cqScore && !cqScoreLoading && (
-                    <div className="w-full">
-                      <QuickWins
-                        topWeakness={weakness?.weakness_areas?.[0]?.category}
-                        isLoading={cqScoreLoading}
-                      />
+                  {/* Day-wise performance timeline */}
+                  {data.daily_performance?.length > 0 && (
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                      <div className="px-5 py-3 border-b border-slate-100">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                          Day-wise Timeline
+                        </p>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-slate-100 bg-slate-50">
+                              <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Date</th>
+                              <th className="text-center px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Score</th>
+                              <th className="text-center px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Rating</th>
+                              <th className="text-left px-4 py-2.5 font-bold text-slate-500 uppercase tracking-wide">Metrics</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-50">
+                            {data.daily_performance.map((day) => (
+                              <tr key={day.date} className="hover:bg-blue-50/30 transition-colors">
+                                <td className="px-4 py-2.5 font-medium text-slate-700">{fmtDate(day.date)}</td>
+                                <td className="px-4 py-2.5 text-center font-extrabold font-mono text-slate-900">
+                                  {Math.round(day.overall_score)}
+                                </td>
+                                <td className="px-4 py-2.5 text-center">
+                                  {day.overall_rating && (
+                                    <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border ${RATING_STYLE[day.overall_rating] ?? "bg-slate-100 text-slate-600 border-slate-200"}`}>
+                                      {day.overall_rating}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-2.5">
+                                  <div className="flex flex-wrap gap-1">
+                                    {day.metrics.slice(0, 4).map((m) => (
+                                      <span key={m.metric_id} className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono">
+                                        {m.metric_code}: {formatMetricValue(m.actual_value, m.unit)}
+                                      </span>
+                                    ))}
+                                    {day.metrics.length > 4 && (
+                                      <span className="text-[10px] text-slate-400">+{day.metrics.length - 4} more</span>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   )}
+                </>
+              )}
+            </TabsContent>
 
-                  {/* Weakness + Trend 2-col */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      {weaknessLoading ? (
-                        <PanelSkeleton />
-                      ) : weakness ? (
-                        <WeaknessPanel weaknessAreas={weakness.weakness_areas} />
-                      ) : (
-                        <Card className="p-6 text-center text-slate-500 bg-slate-900/60 border-slate-800">
-                          No weakness data available
-                        </Card>
-                      )}
-                    </div>
-                    <div>
-                      {cqScoreLoading ? (
-                        <PanelSkeleton />
-                      ) : cqScore ? (
+            {/* ═══════════════════════════════════════════════════════
+                TAB 2: QUALITY & CLAP
+            ═══════════════════════════════════════════════════════ */}
+            <TabsContent value="quality" className="space-y-5 focus-visible:outline-none">
+
+              {/* Live call score strip */}
+              <LiveCallScoreStrip />
+
+              {/* Quality empty states */}
+              {showQualityEmptyState === "error" && (
+                <DataError onRetry={() => qualityRefetch()} />
+              )}
+              {showQualityEmptyState === "no-calls" && <NoCalls />}
+              {showQualityEmptyState === "scoring-pending" && <ScoringPending />}
+
+              {/* Full quality data */}
+              {!showQualityEmptyState && (
+                <>
+                  {/* Hero CQ score */}
+                  {cqScoreLoading ? (
+                    <div className="h-40 bg-slate-100 rounded-xl animate-pulse" />
+                  ) : (
+                    cqScore && <HeroCard data={cqScore} />
+                  )}
+
+                  {/* Quick wins */}
+                  {weakness && (
+                    <QuickWins topWeakness={weakness.weakness_areas?.[0]?.category ?? null} />
+                  )}
+
+                  {/* Opportunities Missed */}
+                  <OpportunitiesMissed />
+
+                  {/* Weakness + Trend row */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    {weaknessLoading ? (
+                      <div className="h-48 bg-slate-100 rounded-xl animate-pulse" />
+                    ) : (
+                      weakness && (
+                        <WeaknessPanel
+                          weaknessAreas={weakness.weakness_areas ?? []}
+                        />
+                      )
+                    )}
+                    {cqScoreLoading ? (
+                      <div className="h-48 bg-slate-100 rounded-xl animate-pulse" />
+                    ) : (
+                      cqScore && (
                         <TrendPanel
                           weekly={cqScore.weekly}
                           cq_7day_avg={cqScore.cq_score_7day_avg}
@@ -682,54 +586,94 @@ export default function MyKpiDashboard() {
                           trend_7day={cqScore.trend_7day}
                           trend_30day={cqScore.trend_30day}
                         />
-                      ) : (
-                        <Card className="p-6 text-center text-slate-500 bg-slate-900/60 border-slate-800">
-                          No trend data available
-                        </Card>
-                      )}
-                    </div>
+                      )
+                    )}
                   </div>
 
-                  {/* Calls Table */}
-                  <div className="w-full">
-                    {callsLoading ? (
-                      <TableSkeleton />
-                    ) : callsReview && callsReview.calls.length > 0 ? (
+                  {/* CLAP breakdown */}
+                  <ClapBreakdown processId={processId} />
+
+                  {/* Calls table */}
+                  {callsLoading ? (
+                    <div className="h-64 bg-slate-100 rounded-xl animate-pulse" />
+                  ) : (
+                    callsReview && (
                       <CallsTable
                         calls={callsReview.calls}
                         totalCalls={callsReview.total_calls}
-                        currentPage={
-                          Math.floor(callsReview.page.offset / callsReview.page.limit) + 1
-                        }
-                        pageSize={callsReview.page.limit}
-                        isLoading={callsLoading}
+                        currentPage={0}
+                        pageSize={callsReview.page?.limit ?? 10}
                         onCallClick={(call) => {
                           setSelectedCallId(call.call_id);
                           setIsModalOpen(true);
                         }}
                       />
-                    ) : (
-                      <Card className="p-6 text-center text-slate-500 bg-slate-900/60 border-slate-800">
-                        No calls available yet
-                      </Card>
-                    )}
-                  </div>
+                    )
+                  )}
                 </>
               )}
-            </div>
-          </TabsContent>
-        </Tabs>
+            </TabsContent>
+
+            {/* ═══════════════════════════════════════════════════════
+                TAB 3: LEARNING & TNI
+            ═══════════════════════════════════════════════════════ */}
+            <TabsContent value="learning" className="space-y-5 focus-visible:outline-none">
+              <MyLearningSection />
+            </TabsContent>
+
+            {/* ═══════════════════════════════════════════════════════
+                TAB 4: LIVE ACTIVITY
+            ═══════════════════════════════════════════════════════ */}
+            <TabsContent value="live" className="space-y-5 focus-visible:outline-none">
+              {/* Live score strip with animated badge */}
+              <LiveCallScoreStrip refetchInterval={30_000} showLiveBadge />
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {/* AHT Trend Chart */}
+                <AhtTrendChart refetchInterval={30_000} />
+
+                {/* Real-time Guide Panel */}
+                <RealTimeGuidePanel refetchInterval={30_000} />
+              </div>
+
+              {/* Live monitoring note */}
+              <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-center gap-3">
+                <span className="h-3 w-3 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+                <p className="text-xs text-blue-700">
+                  <span className="font-bold">Auto-refreshes every 30 seconds.</span>{" "}
+                  Data sourced from live call logs and quality audit system.
+                </p>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </div>
       </div>
 
-      {/* Call Detail Modal — outside tabs so it can overlay full screen */}
+      {/* ── Metric drill-down drawer ──────────────────────────── */}
+      <DrillDownDrawer
+        open={!!drillMetric}
+        onClose={() => setDrillMetric(null)}
+        title={drillMetric?.metric_name ?? ""}
+        subtitle={drillMetric?.metric_code}
+        badge={
+          drillMetric?.rating ? (
+            <span className={`text-xs font-extrabold px-2 py-0.5 rounded-full border ${RATING_STYLE[drillMetric.rating] ?? "bg-slate-100 text-slate-600 border-slate-200"}`}>
+              {drillMetric.rating}
+            </span>
+          ) : undefined
+        }
+      >
+        {drillMetric && <KpiDrillDetail metric={drillMetric} />}
+      </DrillDownDrawer>
+
+      {/* ── Call detail modal ─────────────────────────────────── */}
       <CallDetailModal
-        isOpen={isModalOpen}
+        isOpen={isModalOpen && !!callDetail}
+        call={callDetail as Parameters<typeof CallDetailModal>[0]["call"]}
         onClose={() => {
           setIsModalOpen(false);
           setSelectedCallId(null);
         }}
-        call={callDetail}
-        isLoading={!callDetail && isModalOpen}
       />
     </>
   );

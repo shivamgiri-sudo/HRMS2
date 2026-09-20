@@ -29,9 +29,9 @@ function scoreToRag(score: number): Rag {
 }
 
 const RAG_BORDER: Record<Rag, string> = {
-  green: "border-l-emerald-500 shadow-[0_0_20px_-8px_rgba(16,185,129,0.3)]",
-  amber: "border-l-amber-500  shadow-[0_0_20px_-8px_rgba(245,158,11,0.3)]",
-  red:   "border-l-rose-500   shadow-[0_0_20px_-8px_rgba(244,63,94,0.3)]",
+  green: "border-l-emerald-500",
+  amber: "border-l-amber-500",
+  red:   "border-l-rose-500",
 };
 
 const RAG_BAR: Record<Rag, string> = {
@@ -41,11 +41,11 @@ const RAG_BAR: Record<Rag, string> = {
 };
 
 const RATING_PILL: Record<string, string> = {
-  S: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
-  A: "text-blue-400    bg-blue-500/10    border-blue-500/20",
-  B: "text-amber-400   bg-amber-500/10   border-amber-500/20",
-  C: "text-orange-400  bg-orange-500/10  border-orange-500/20",
-  D: "text-rose-400    bg-rose-500/10    border-rose-500/20",
+  S: "text-emerald-700 bg-emerald-50 border-emerald-200",
+  A: "text-blue-700    bg-blue-50    border-blue-200",
+  B: "text-amber-700   bg-amber-50   border-amber-200",
+  C: "text-orange-700  bg-orange-50  border-orange-200",
+  D: "text-rose-700    bg-rose-50    border-rose-200",
 };
 
 function formatValue(v: number | null, unit: string): string {
@@ -60,7 +60,7 @@ function formatValue(v: number | null, unit: string): string {
   return String(Math.round(v * 10) / 10);
 }
 
-function DarkSparkline({
+function Sparkline({
   data,
   rag,
   metricId,
@@ -70,7 +70,7 @@ function DarkSparkline({
   metricId: string;
 }) {
   if (!data || data.length < 2)
-    return <div className="h-8 w-24 bg-slate-800 rounded opacity-25" />;
+    return <div className="h-8 w-24 bg-slate-100 rounded opacity-50" />;
 
   const vals = data.map((d) => d.value);
   const min = Math.min(...vals);
@@ -88,15 +88,12 @@ function DarkSparkline({
     })
     .join(" ");
 
-  const fillPts =
-    `${pad},${h} ` +
-    pts +
-    ` ${w - pad},${h}`;
+  const fillPts = `${pad},${h} ` + pts + ` ${w - pad},${h}`;
 
   const color =
-    rag === "green" ? "#34d399"
-    : rag === "amber" ? "#fbbf24"
-    : "#fb7185";
+    rag === "green" ? "#16a34a"
+    : rag === "amber" ? "#d97706"
+    : "#e11d48";
 
   const gradId = `spk-${metricId.replace(/[^a-z0-9]/gi, "_")}`;
 
@@ -104,7 +101,7 @@ function DarkSparkline({
     <svg width={w} height={h} className="overflow-visible">
       <defs>
         <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.2" />
+          <stop offset="0%" stopColor={color} stopOpacity="0.15" />
           <stop offset="100%" stopColor={color} stopOpacity="0" />
         </linearGradient>
       </defs>
@@ -135,19 +132,12 @@ function ScoreRing({ score }: { score: number }) {
   const rag = scoreToRag(score);
   const dashOffset = CIRC - (Math.min(score, 100) / 100) * CIRC;
   const color =
-    rag === "green" ? "#34d399" : rag === "amber" ? "#fbbf24" : "#fb7185";
+    rag === "green" ? "#16a34a" : rag === "amber" ? "#d97706" : "#e11d48";
 
   return (
     <div className="relative flex-shrink-0" style={{ width: SIZE, height: SIZE }}>
       <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
-        <circle
-          cx={SIZE / 2}
-          cy={SIZE / 2}
-          r={R}
-          fill="none"
-          stroke="#1e293b"
-          strokeWidth="4"
-        />
+        <circle cx={SIZE / 2} cy={SIZE / 2} r={R} fill="none" stroke="#e2e8f0" strokeWidth="4" />
         <circle
           cx={SIZE / 2}
           cy={SIZE / 2}
@@ -165,7 +155,7 @@ function ScoreRing({ score }: { score: number }) {
         />
       </svg>
       <div className="absolute inset-0 flex items-center justify-center">
-        <span className="text-[9px] font-bold font-mono text-slate-200">
+        <span className="text-[9px] font-bold font-mono text-slate-700">
           {Math.round(score)}
         </span>
       </div>
@@ -173,9 +163,9 @@ function ScoreRing({ score }: { score: number }) {
   );
 }
 
-type Props = { metric: KpiMetricResult };
+type Props = { metric: KpiMetricResult; onClick?: () => void };
 
-export function PeerMetricCard({ metric }: Props) {
+export function PeerMetricCard({ metric, onClick }: Props) {
   const hasData = metric.actual_value !== null;
   const rag = scoreToRag(hasData ? metric.score_pct : 0);
   const isLower = metric.direction === "lower_is_better";
@@ -191,25 +181,26 @@ export function PeerMetricCard({ metric }: Props) {
 
   return (
     <div
-      className={`bg-slate-900/60 backdrop-blur-md rounded-xl p-4 border border-slate-800/80 border-l-[3px] flex flex-col gap-3 transition-all hover:-translate-y-0.5 hover:bg-slate-800/70 duration-200 ${
-        hasData ? RAG_BORDER[rag] : "border-l-slate-600"
-      }`}
+      className={`bg-white rounded-xl p-4 border border-slate-200 border-l-[3px] shadow-sm flex flex-col gap-3 transition-all hover:shadow-md hover:-translate-y-0.5 duration-200 ${
+        hasData ? RAG_BORDER[rag] : "border-l-slate-300"
+      } ${onClick ? "cursor-pointer" : ""}`}
+      onClick={onClick}
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
             {metric.metric_code}
             {isLower ? " · lower is better" : ""}
           </p>
-          <p className="text-sm font-bold text-slate-100 mt-0.5 truncate">
+          <p className="text-sm font-bold text-slate-900 mt-0.5 truncate">
             {metric.metric_name}
           </p>
         </div>
         {metric.rating && (
           <span
             className={`text-[11px] font-extrabold px-2 py-0.5 rounded-full border flex-shrink-0 ${
-              RATING_PILL[metric.rating] ?? "text-slate-400 bg-slate-500/10 border-slate-500/20"
+              RATING_PILL[metric.rating] ?? "text-slate-600 bg-slate-100 border-slate-200"
             }`}
           >
             {metric.rating}
@@ -220,37 +211,37 @@ export function PeerMetricCard({ metric }: Props) {
       {/* Value + sparkline + ring */}
       <div className="flex items-end justify-between gap-2">
         <div className="flex-1">
-          <div className="text-2xl font-extrabold font-mono text-white leading-tight">
+          <div className="text-2xl font-extrabold font-mono text-slate-900 leading-tight">
             {formatValue(metric.actual_value, metric.unit)}
           </div>
-          <div className="text-[11px] text-slate-500 mt-0.5">
+          <div className="text-[11px] text-slate-400 mt-0.5">
             Target: {formatValue(metric.target_value, metric.unit)}
           </div>
         </div>
-        <DarkSparkline data={metric.trend_data} rag={rag} metricId={metric.metric_id} />
+        <Sparkline data={metric.trend_data} rag={rag} metricId={metric.metric_id} />
         {hasData && <ScoreRing score={metric.score_pct} />}
       </div>
 
       {/* Peer comparison bars */}
       {hasData && metric.peer_avg !== null && peerScorePct !== null && (
-        <div className="space-y-1.5 pt-1 border-t border-slate-800/60">
+        <div className="space-y-1.5 pt-1 border-t border-slate-100">
           {[
             { label: "YOU", pct: Math.min(metric.score_pct, 100), isYou: true, raw: metric.actual_value },
             { label: "PEER", pct: peerScorePct, isYou: false, raw: metric.peer_avg },
           ].map((row) => (
             <div key={row.label} className="flex items-center gap-2">
-              <span className="text-[9px] font-bold tracking-widest text-slate-500 w-8 flex-shrink-0">
+              <span className="text-[9px] font-bold tracking-widest text-slate-400 w-8 flex-shrink-0">
                 {row.label}
               </span>
-              <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+              <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all duration-500 ${
-                    row.isYou ? RAG_BAR[rag] : "bg-slate-500"
+                    row.isYou ? RAG_BAR[rag] : "bg-slate-300"
                   }`}
                   style={{ width: `${Math.min(row.pct, 100)}%` }}
                 />
               </div>
-              <span className="text-[10px] font-mono text-slate-300 w-12 text-right flex-shrink-0">
+              <span className="text-[10px] font-mono text-slate-600 w-12 text-right flex-shrink-0">
                 {formatValue(row.raw, metric.unit)}
               </span>
             </div>
@@ -263,10 +254,10 @@ export function PeerMetricCard({ metric }: Props) {
         <div
           className={`text-center text-[10px] font-bold uppercase tracking-widest py-1 rounded-lg border ${
             percentile >= 75
-              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
               : percentile >= 50
-              ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-              : "bg-slate-700/40 text-slate-400 border-slate-700/60"
+              ? "bg-amber-50 text-amber-700 border-amber-200"
+              : "bg-slate-50 text-slate-500 border-slate-200"
           }`}
         >
           Ahead of {Math.round(percentile)}% of peers
@@ -274,7 +265,7 @@ export function PeerMetricCard({ metric }: Props) {
       )}
 
       {!hasData && (
-        <div className="text-xs text-slate-500 text-center py-1">
+        <div className="text-xs text-slate-400 text-center py-1">
           No data available for this period
         </div>
       )}

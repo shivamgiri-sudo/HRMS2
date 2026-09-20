@@ -1,31 +1,33 @@
-const RATING_DARK_STYLE: Record<string, string> = {
-  S: "bg-emerald-500/20 border-emerald-500/40 text-emerald-300",
-  A: "bg-blue-500/20 border-blue-500/40 text-blue-300",
-  B: "bg-amber-500/20 border-amber-500/40 text-amber-300",
-  C: "bg-orange-500/20 border-orange-500/40 text-orange-300",
-  D: "bg-rose-500/20 border-rose-500/40 text-rose-300",
+const RATING_STYLE: Record<string, string> = {
+  S: "bg-emerald-50 border-emerald-200 text-emerald-700",
+  A: "bg-blue-50 border-blue-200 text-blue-700",
+  B: "bg-amber-50 border-amber-200 text-amber-700",
+  C: "bg-orange-50 border-orange-200 text-orange-700",
+  D: "bg-rose-50 border-rose-200 text-rose-700",
 };
 
 type Props = {
   score: number;
   rating: string | null;
   ratingColor: string | null;
+  size?: number;
 };
 
-export function HeroScoreDial({ score, rating }: Props) {
-  const SIZE = 176;
-  const R = 72;
+export function HeroScoreDial({ score, rating, size = 176 }: Props) {
+  const SIZE = size;
+  const R = Math.round(SIZE * 0.41);
   const CIRCUMFERENCE = 2 * Math.PI * R;
+  const strokeW = Math.round(SIZE * 0.08);
   const clampedScore = Math.min(Math.max(score, 0), 100);
   const dashOffset = CIRCUMFERENCE - (clampedScore / 100) * CIRCUMFERENCE;
 
   const strokeColor =
-    clampedScore >= 90 ? "#34d399"
-    : clampedScore >= 70 ? "#fbbf24"
-    : "#fb7185";
+    clampedScore >= 90 ? "#16a34a"
+    : clampedScore >= 70 ? "#d97706"
+    : "#e11d48";
 
   return (
-    <div className="relative flex-shrink-0 w-44 h-44">
+    <div className="relative flex-shrink-0" style={{ width: SIZE, height: SIZE }}>
       <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
         {/* Background track */}
         <circle
@@ -33,16 +35,8 @@ export function HeroScoreDial({ score, rating }: Props) {
           cy={SIZE / 2}
           r={R}
           fill="none"
-          stroke="#0f172a"
-          strokeWidth="18"
-        />
-        <circle
-          cx={SIZE / 2}
-          cy={SIZE / 2}
-          r={R}
-          fill="none"
-          stroke="#1e293b"
-          strokeWidth="14"
+          stroke="#f1f5f9"
+          strokeWidth={strokeW}
         />
         {/* Progress arc */}
         <circle
@@ -51,14 +45,13 @@ export function HeroScoreDial({ score, rating }: Props) {
           r={R}
           fill="none"
           stroke={strokeColor}
-          strokeWidth="14"
+          strokeWidth={strokeW}
           strokeDasharray={CIRCUMFERENCE}
           strokeDashoffset={dashOffset}
           strokeLinecap="round"
           style={{
             transform: `rotate(-90deg)`,
             transformOrigin: `${SIZE / 2}px ${SIZE / 2}px`,
-            filter: `drop-shadow(0 0 10px ${strokeColor}88)`,
             transition: "stroke-dashoffset 0.7s ease",
           }}
         />
@@ -67,20 +60,20 @@ export function HeroScoreDial({ score, rating }: Props) {
           x={SIZE / 2}
           y={SIZE / 2 - 4}
           textAnchor="middle"
-          fontSize="34"
+          fontSize={Math.round(SIZE * 0.19)}
           fontWeight="800"
-          fill="#f8fafc"
+          fill="#0f172a"
           fontFamily="ui-monospace, SFMono-Regular, monospace"
         >
           {Math.round(clampedScore)}
         </text>
         <text
           x={SIZE / 2}
-          y={SIZE / 2 + 16}
+          y={SIZE / 2 + Math.round(SIZE * 0.1)}
           textAnchor="middle"
-          fontSize="10"
+          fontSize={Math.round(SIZE * 0.057)}
           fontWeight="700"
-          fill="#475569"
+          fill="#64748b"
           letterSpacing="2"
         >
           / 100
@@ -89,8 +82,8 @@ export function HeroScoreDial({ score, rating }: Props) {
 
       {rating && (
         <div
-          className={`absolute -bottom-2 left-1/2 -translate-x-1/2 text-lg font-extrabold px-4 py-0.5 rounded-full border whitespace-nowrap ${
-            RATING_DARK_STYLE[rating] ?? "bg-slate-700/60 border-slate-600 text-slate-300"
+          className={`absolute -bottom-2 left-1/2 -translate-x-1/2 text-sm font-extrabold px-4 py-0.5 rounded-full border whitespace-nowrap ${
+            RATING_STYLE[rating] ?? "bg-slate-100 border-slate-200 text-slate-600"
           }`}
         >
           {rating}

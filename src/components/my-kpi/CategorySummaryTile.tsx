@@ -3,21 +3,21 @@ import { type LucideIcon } from "lucide-react";
 type Rag = "green" | "amber" | "red";
 
 const RAG_BORDER: Record<Rag, string> = {
-  green: "border-l-emerald-500 shadow-[0_0_20px_-8px_rgba(16,185,129,0.3)]",
-  amber: "border-l-amber-500  shadow-[0_0_20px_-8px_rgba(245,158,11,0.3)]",
-  red:   "border-l-rose-500   shadow-[0_0_20px_-8px_rgba(244,63,94,0.3)]",
+  green: "border-l-emerald-500",
+  amber: "border-l-amber-500",
+  red:   "border-l-rose-500",
 };
 
 const RAG_ICON_BG: Record<Rag, string> = {
-  green: "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20",
-  amber: "bg-amber-500/10  text-amber-400  border border-amber-500/20",
-  red:   "bg-rose-500/10   text-rose-400   border border-rose-500/20",
+  green: "bg-emerald-50 text-emerald-600 border border-emerald-100",
+  amber: "bg-amber-50  text-amber-600  border border-amber-100",
+  red:   "bg-rose-50   text-rose-600   border border-rose-100",
 };
 
 const RAG_SCORE: Record<Rag, string> = {
-  green: "text-emerald-300",
-  amber: "text-amber-300",
-  red:   "text-rose-300",
+  green: "text-emerald-700",
+  amber: "text-amber-700",
+  red:   "text-rose-700",
 };
 
 function scoreToRag(score: number): Rag {
@@ -32,20 +32,22 @@ type Props = {
   avgScore: number;
   metricsCount: number;
   icon: LucideIcon;
+  onClick?: () => void;
 };
 
-export function CategorySummaryTile({ label, avgScore, metricsCount, icon: Icon }: Props) {
+export function CategorySummaryTile({ label, avgScore, metricsCount, icon: Icon, onClick }: Props) {
   const rag = scoreToRag(avgScore);
 
   return (
     <div
-      className={`bg-slate-900/60 backdrop-blur-md rounded-xl p-4 border border-slate-800/80 border-l-[3px] transition-all hover:-translate-y-0.5 hover:bg-slate-800/70 duration-200 ${RAG_BORDER[rag]}`}
+      className={`bg-white rounded-xl p-4 border border-slate-200 border-l-[3px] shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5 duration-200 ${RAG_BORDER[rag]} ${onClick ? "cursor-pointer" : ""}`}
+      onClick={onClick}
     >
       <div className="flex items-center gap-2.5 mb-3">
         <div className={`p-2 rounded-lg ${RAG_ICON_BG[rag]}`}>
           <Icon size={16} />
         </div>
-        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
           {label}
         </span>
       </div>
@@ -54,10 +56,10 @@ export function CategorySummaryTile({ label, avgScore, metricsCount, icon: Icon 
           {avgScore > 0 ? Math.round(avgScore) : "—"}
         </span>
         {avgScore > 0 && (
-          <span className="text-slate-500 text-sm mb-1">/100</span>
+          <span className="text-slate-400 text-sm mb-1">/100</span>
         )}
       </div>
-      <p className="text-xs text-slate-500 mt-1">{metricsCount} metric{metricsCount !== 1 ? "s" : ""} tracked</p>
+      <p className="text-xs text-slate-400 mt-1">{metricsCount} metric{metricsCount !== 1 ? "s" : ""} tracked</p>
     </div>
   );
 }
