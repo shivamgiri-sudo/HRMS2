@@ -47,6 +47,11 @@ const emptyRaiseForm = {
   remarks: "",
 };
 
+const emptyReceiptForm = {
+  bankAccountId: "", payableAccountId: "", clientName: "",
+  amount: "", instrumentType: "RTGS" as string, instrumentRef: "", remarks: "",
+};
+
 const EXPENSE_KEY_SEP = "::";
 
 type VendorExpenseOption = { head_code: string; head_name: string; sub_head_code: string; sub_head_name: string };
@@ -79,6 +84,8 @@ export function PaymentVouchersContent() {
   const [raiseOpen, setRaiseOpen] = useState(false);
   const [raiseForm, setRaiseForm] = useState(emptyRaiseForm);
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [receiptForm, setReceiptForm] = useState(emptyReceiptForm);
 
   const vouchersQuery = useQuery({
     queryKey: ["payment-vouchers", tab],
@@ -92,12 +99,12 @@ export function PaymentVouchersContent() {
   const bankAccountsQuery = useQuery({
     queryKey: ["payment-voucher-bank-accounts"],
     queryFn: async () => (await hrmsApi.get<{ success: boolean; data: any[] }>("/api/finance/bank-accounts")).data ?? [],
-    enabled: raiseOpen || !!detailId,
+    enabled: raiseOpen || receiptOpen || !!detailId,
   });
   const payableAccountsQuery = useQuery({
     queryKey: ["payment-voucher-payable-accounts"],
     queryFn: async () => (await hrmsApi.get<{ success: boolean; data: any[] }>("/api/finance/payable-accounts")).data ?? [],
-    enabled: raiseOpen,
+    enabled: raiseOpen || receiptOpen,
   });
   // Vendor Master runs to ~1.8k active rows (same scale BudgetLinkedGrnForm.tsx's GRN vendor
   // picker already searches server-side, /api/erp/vendors?is_active=1&limit=50&q=). A vendor
@@ -208,6 +215,29 @@ export function PaymentVouchersContent() {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const raiseReceiptMutation = useMutation({
+    mutationFn: async () => {
+      const payload = {
+        sourceType: "sales_receipt",
+        bankAccountId: receiptForm.bankAccountId,
+        payableAccountId: receiptForm.payableAccountId,
+        clientName: receiptForm.clientName.trim() || undefined,
+        amount: parseFloat(receiptForm.amount),
+        remarks: receiptForm.instrumentType
+          ? `${receiptForm.instrumentType}${receiptForm.instrumentRef ? ` — ${receiptForm.instrumentRef}` : ""}`
+          : receiptForm.remarks || undefined,
+      };
+      return (await hrmsApi.post("/api/finance/payment-voucher/raise", payload)).data;
+    },
+    onSuccess: () => {
+      toast({ title: "Receipt recorded", description: "Pending CEO approval before it posts to the bank ledger." });
+      queryClient.invalidateQueries({ queryKey: ["payment-vouchers"] });
+      setReceiptOpen(false);
+      setReceiptForm(emptyReceiptForm);
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
   const vouchers = vouchersQuery.data ?? [];
   // Every GRN the finance head has ticked for this voucher — drives the checklist, the running
   // total, and (via its head/sub_head) the auto-populated ledger classification below.
@@ -258,6 +288,14 @@ export function PaymentVouchersContent() {
                 <Plus className="mr-1.5 h-4 w-4" /> Raise Voucher
               </Button>
             )}
+            {canRaise && (
+              <Button
+                className="cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white transition-all duration-200"
+                onClick={() => { setReceiptForm(emptyReceiptForm); setReceiptOpen(true); }}
+              >
+                <IndianRupee className="mr-1.5 h-4 w-4" /> Record Receipt
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -292,7 +330,9 @@ export function PaymentVouchersContent() {
                     <tr key={v.id} className="cursor-pointer transition-colors duration-150 hover:bg-blue-50/50" onClick={() => setDetailId(v.id)}>
                       <td className="px-4 py-2.5 font-mono font-semibold text-gray-800">{v.voucher_number}</td>
                       <td className="px-4 py-2.5 text-gray-600">
-                        {v.source_type === "vendor_grn" ? "Vendor GRN"
+                        {v.voucher_type === "receipt"
+                          ? <Badge className="border-transparent bg-emerald-600 text-white">Receipt</Badge>
+                          : v.source_type === "vendor_grn" ? "Vendor GRN"
                           : v.source_type === "imprest_allocation" ? "Imprest Top-up"
                           : v.source_type === "vendor_advance" ? "Vendor Advance"
                           : v.source_type === "vendor_advance_application" ? "Apply Advance"
@@ -558,6 +598,93 @@ export function PaymentVouchersContent() {
             <Button variant="outline" className="cursor-pointer" onClick={() => setRaiseOpen(false)}>Cancel</Button>
             <Button className="cursor-pointer bg-blue-600 hover:bg-blue-700" disabled={raiseMutation.isPending || (expenseRequired && !raiseForm.expenseKey)} onClick={() => raiseMutation.mutate()}>
               Raise Voucher
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Record Receipt dialog */}
+      <Dialog open={receiptOpen} onOpenChange={setReceiptOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Record Client Receipt</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="mb-1 block text-xs text-slate-500">Bank Account (where money was received)</Label>
+              <SearchableSelect
+                options={(bankAccountsQuery.data ?? []).map((b: any) => ({ value: b.id, label: `${b.account_name} — ${b.bank_name}` }))}
+                value={receiptForm.bankAccountId}
+                onChange={(v) => setReceiptForm((f) => ({ ...f, bankAccountId: v }))}
+                placeholder="Select bank account"
+              />
+            </div>
+            <div>
+              <Label className="mb-1 block text-xs text-slate-500">Client / Party Name</Label>
+              <Input
+                value={receiptForm.clientName}
+                onChange={(e) => setReceiptForm((f) => ({ ...f, clientName: e.target.value }))}
+                placeholder="e.g. Vodafone Mobile Services Ltd."
+              />
+            </div>
+            <div>
+              <Label className="mb-1 block text-xs text-slate-500">Payable Account (Ledger Head)</Label>
+              <SearchableSelect
+                options={(payableAccountsQuery.data ?? [])
+                  .filter((p: any) => p.account_type === "receivable" || p.account_type === "income")
+                  .map((p: any) => ({ value: p.id, label: p.account_name }))}
+                value={receiptForm.payableAccountId}
+                onChange={(v) => setReceiptForm((f) => ({ ...f, payableAccountId: v }))}
+                placeholder="e.g. Sundry Debtors"
+              />
+            </div>
+            <div>
+              <Label className="mb-1 block text-xs text-slate-500">Amount Received (₹)</Label>
+              <Input
+                type="number" min="0" step="0.01"
+                value={receiptForm.amount}
+                onChange={(e) => setReceiptForm((f) => ({ ...f, amount: e.target.value }))}
+                placeholder="0.00"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="mb-1 block text-xs text-slate-500">Instrument Type</Label>
+                <Select value={receiptForm.instrumentType} onValueChange={(v) => setReceiptForm((f) => ({ ...f, instrumentType: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {["RTGS", "NEFT", "IMPS", "Cheque", "UPI", "Cash", "Bank Transfer"].map((m) => (
+                      <SelectItem key={m} value={m}>{m}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="mb-1 block text-xs text-slate-500">UTR / Cheque No.</Label>
+                <Input
+                  value={receiptForm.instrumentRef}
+                  onChange={(e) => setReceiptForm((f) => ({ ...f, instrumentRef: e.target.value }))}
+                  placeholder="UTR or ref"
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="mb-1 block text-xs text-slate-500">Remarks (optional)</Label>
+              <Input
+                value={receiptForm.remarks}
+                onChange={(e) => setReceiptForm((f) => ({ ...f, remarks: e.target.value }))}
+                placeholder="Invoice month, any note"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="cursor-pointer" onClick={() => setReceiptOpen(false)}>Cancel</Button>
+            <Button
+              className="cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white transition-all duration-200"
+              disabled={!receiptForm.bankAccountId || !receiptForm.payableAccountId || !receiptForm.clientName.trim() || !receiptForm.amount || raiseReceiptMutation.isPending}
+              onClick={() => raiseReceiptMutation.mutate()}
+            >
+              {raiseReceiptMutation.isPending ? "Saving…" : "Record Receipt"}
             </Button>
           </DialogFooter>
         </DialogContent>

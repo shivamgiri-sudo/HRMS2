@@ -53,6 +53,12 @@ export function BankDirectoryContent() {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => hrmsApi.delete(`/api/finance/bank-master/${id}`),
+    onSuccess: () => { toast({ title: "Bank deleted" }); qc.invalidateQueries({ queryKey: ["bank-directory"] }); },
+    onError: (e: Error) => toast({ title: "Cannot delete", description: e.message, variant: "destructive" }),
+  });
+
   const banks = listQuery.data ?? [];
 
   return (
@@ -72,37 +78,49 @@ export function BankDirectoryContent() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
+      <div className="overflow-hidden rounded-2xl border border-white/60 bg-white/95 shadow-sm backdrop-blur-sm">
         <Table>
           <TableHeader>
-            <TableRow>
-              <TableHead>Bank Name</TableHead>
-              <TableHead>Code</TableHead>
-              <TableHead>IFSC Prefix</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Actions</TableHead>
+            <TableRow className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-100">
+              <TableHead className="text-[11px] font-bold uppercase tracking-wide text-blue-800">Bank Name</TableHead>
+              <TableHead className="text-[11px] font-bold uppercase tracking-wide text-blue-800">Code</TableHead>
+              <TableHead className="text-[11px] font-bold uppercase tracking-wide text-blue-800">IFSC Prefix</TableHead>
+              <TableHead className="text-[11px] font-bold uppercase tracking-wide text-blue-800">Status</TableHead>
+              <TableHead className="text-[11px] font-bold uppercase tracking-wide text-blue-800">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {banks.length === 0 && (
-              <TableRow><TableCell colSpan={5} className="text-center text-sm text-slate-400">No banks yet</TableCell></TableRow>
+              <TableRow><TableCell colSpan={5} className="text-center text-sm text-slate-400 py-8">No banks yet</TableCell></TableRow>
             )}
             {banks.map((b) => (
-              <TableRow key={b.id}>
-                <TableCell className="font-medium">{b.bank_name}</TableCell>
-                <TableCell>{b.bank_code ?? "—"}</TableCell>
-                <TableCell>{b.ifsc_prefix ?? "—"}</TableCell>
+              <TableRow key={b.id} className="hover:bg-blue-50/30 transition-colors duration-150">
+                <TableCell className="font-medium text-gray-800">{b.bank_name}</TableCell>
+                <TableCell className="text-gray-600">{b.bank_code ?? "—"}</TableCell>
+                <TableCell className="text-gray-600">{b.ifsc_prefix ?? "—"}</TableCell>
                 <TableCell>
                   {b.active_status
                     ? <Badge className="bg-emerald-100 text-emerald-800"><CheckCircle2 className="mr-1 h-3 w-3" />Active</Badge>
                     : <Badge className="bg-slate-100 text-slate-600"><XCircle className="mr-1 h-3 w-3" />Inactive</Badge>}
                 </TableCell>
                 <TableCell className="space-x-2">
-                  <Button size="sm" variant="outline" className="cursor-pointer" onClick={() => { setForm({ id: b.id, bankName: b.bank_name, bankCode: b.bank_code ?? "", ifscPrefix: b.ifsc_prefix ?? "" }); setFormOpen(true); }}>
+                  <Button size="sm" variant="outline" className="cursor-pointer transition-all duration-200" onClick={() => { setForm({ id: b.id, bankName: b.bank_name, bankCode: b.bank_code ?? "", ifscPrefix: b.ifsc_prefix ?? "" }); setFormOpen(true); }}>
                     Edit
                   </Button>
-                  <Button size="sm" variant="outline" className="cursor-pointer" onClick={() => toggleActiveMutation.mutate({ id: b.id, active: !b.active_status })}>
+                  <Button size="sm" variant="outline" className="cursor-pointer transition-all duration-200" onClick={() => toggleActiveMutation.mutate({ id: b.id, active: !b.active_status })}>
                     {b.active_status ? "Deactivate" : "Activate"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="cursor-pointer border-red-200 text-red-600 hover:bg-red-50 transition-all duration-200"
+                    onClick={() => {
+                      if (window.confirm(`Delete "${b.bank_name}"? This cannot be undone.`)) {
+                        deleteMutation.mutate(b.id);
+                      }
+                    }}
+                  >
+                    Delete
                   </Button>
                 </TableCell>
               </TableRow>
