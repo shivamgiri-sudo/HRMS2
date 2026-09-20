@@ -68,6 +68,7 @@ export const navGroups: NavGroup[] = [
           { label: "Apply Leave",        href: "/leaves",                      icon: ic(CalendarDays), public: true, description: "Leave" },
         ],
       },
+      { label: "My KPI",     href: "/my-kpi",     icon: ic(Target),       pageCode: "MY_KPI",    description: "Personal KPI targets and actuals" },
       {
         label: "Pay & Tax",  href: "/profile?tab=payslips", icon: ic(CreditCard), public: true, description: "Payslips & tax",
         children: [
