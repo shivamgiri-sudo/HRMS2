@@ -26,6 +26,17 @@ export interface ParsedLead {
   location: string | null;
   education: string | null;
   experienceYears: number | null;
+  /**
+   * The batch-requisition routing code carried in a hidden Lead Gen Form field.
+   *
+   * This is the drift-proof link between a form and a requisition: the marketing person sets a
+   * hidden field (requisition_code = "REQ-2609-K7BK") when building the form, and it arrives in
+   * field_data exactly like any other answer. When present it takes priority over the form-ID ->
+   * meta_campaign link, because it is authored per-form-per-batch and cannot be misrouted by an
+   * operator forgetting to paste a Form ID into HRMS. Null when the form carries no such field —
+   * in which case routing falls back to the form-ID link.
+   */
+  routingCode: string | null;
 }
 
 function normaliseKey(raw: string): string {
@@ -224,6 +235,53 @@ export function deriveExperienceYears(raw: string | null): number | null {
   return null;
 }
 
+/**
+ * Field names a marketing person might give the hidden routing field. Kept broad on purpose:
+ * the Meta form builder does not constrain the label, and the whole point of this field is that
+ * it should Just Work regardless of which of these the marketer typed.
+ */
+const ROUTING_CODE_ALIASES = [
+  'requisition_code', 'requisition_id', 'req_code', 'req_id',
+  'batch_code', 'batch_id', 'batch_requisition_code', 'batch_requisition_id',
+  'hrms_requisition_code', 'hrms_code', 'requisition',
+];
+
+/**
+ * Normalise a routing code to how it is stored in job_requisition.requisition_code.
+ *
+ * requisition_code values in this DB look like `REQ-2609-K7BK` / `TEST-REQ-SALES-001` — uppercase,
+ * hyphenated. A marketer pasting the code may add stray spaces, lowercase it, or wrap it in
+ * quotes; this canonicalises to uppercased, trimmed, internal-whitespace-collapsed so the lookup
+ * matches. It deliberately does NOT strip hyphens (they are part of the real code).
+ */
+export function normaliseRoutingCode(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null;
+  const cleaned = String(raw).trim().replace(/^["']|["']$/g, '').replace(/\s+/g, '').toUpperCase();
+  // A plausible requisition code has at least a few alphanumerics; reject obvious non-codes
+  // ("N/A", "-", empty) so they do not become a lookup that matches nothing but looks intentional.
+  return /[A-Z0-9]{3,}/.test(cleaned) ? cleaned : null;
+}
+
+/**
+ * Read the hidden routing code from a lead's field_data, if the form carries one.
+ *
+ * Exact alias match first, then a substring pass (a marketer may label it
+ * "hrms_requisition_code_do_not_edit"). Returns the normalised code or null.
+ */
+export function extractRoutingCode(detail: MetaLeadDetail): string | null {
+  const map = toAnswerMap(detail.field_data);
+  for (const alias of ROUTING_CODE_ALIASES) {
+    const hit = map.get(alias);
+    if (hit) return normaliseRoutingCode(hit);
+  }
+  for (const alias of ROUTING_CODE_ALIASES) {
+    for (const [key, value] of map) {
+      if (key.includes(alias)) return normaliseRoutingCode(value);
+    }
+  }
+  return null;
+}
+
 export function parseLead(detail: MetaLeadDetail): ParsedLead {
   const map = toAnswerMap(detail.field_data);
 
@@ -255,5 +313,6 @@ export function parseLead(detail: MetaLeadDetail): ParsedLead {
     experienceYears: deriveExperienceYears(
       pick(map, ['experience', 'work_experience', 'years_of_experience', 'total_experience'])
     ),
+    routingCode: extractRoutingCode(detail),
   };
 }

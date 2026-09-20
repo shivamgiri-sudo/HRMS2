@@ -29,7 +29,7 @@ import {
   isMetaConfigured,
   MetaApiError,
 } from './meta-api.client.js';
-import { parseLead, normaliseMetaId } from './meta-lead.parser.js';
+import { parseLead, normaliseMetaId, extractRoutingCode } from './meta-lead.parser.js';
 import { screenLead } from './lead-screener.service.js';
 import { notifyQualifiedLead } from './lead-outreach.service.js';
 import { buildCanonicalFunnel, canonicalStage, CANONICAL_STAGE_LABEL, CANONICAL_STAGE_ORDER } from '../ats/ats-stage-model.js';
@@ -365,6 +365,89 @@ export const metaCampaignService = {
   },
 
   /**
+   * Resolve a batch requisition from a hidden routing code carried in the lead form, and ensure a
+   * meta_campaign row exists linking THIS form to it.
+   *
+   * This is the Option-A auto-routing path. When a form carries requisition_code=REQ-2609-K7BK:
+   *
+   *   1. look up job_requisition by that code (exact, case-insensitive on the stored value);
+   *   2. if a meta_campaign row already exists for this form_id, adopt it (and correct its
+   *      requisition link if it drifted);
+   *   3. otherwise create a meta_campaign row on the fly, so the lead screens and reports exactly
+   *      as a manually-linked form would — no operator step required.
+   *
+   * Returns the campaign row (same shape ingestLead already reads) or null when the code does not
+   * resolve to a real requisition, in which case ingestLead falls back to the form-ID link and
+   * finally to pending. A code that names no requisition is NOT invented into one — a wrong batch
+   * is worse than an unrouted lead a human can place.
+   */
+  async resolveCampaignByRoutingCode(
+    formId: string,
+    routingCode: string
+  ): Promise<RowDataPacket | null> {
+    const [reqRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, requisition_code FROM job_requisition WHERE UPPER(requisition_code) = ? LIMIT 1`,
+      [routingCode]
+    );
+    const requisition = reqRows[0];
+    if (!requisition) return null;
+
+    // Is this form already linked (manually or by an earlier auto-route)?
+    const [existing] = await db.execute<RowDataPacket[]>(
+      'SELECT id, requisition_id FROM meta_campaign WHERE meta_form_id = ? LIMIT 1',
+      [formId]
+    );
+    if (existing[0]) {
+      // Correct a drifted link: the hidden code is authoritative, so if the stored campaign points
+      // at a different requisition than the form now declares, re-point it. This is how a form
+      // that was manually mislinked self-heals once it starts carrying the code.
+      if (existing[0].requisition_id !== requisition.id) {
+        await db.execute('UPDATE meta_campaign SET requisition_id = ? WHERE id = ?', [
+          requisition.id,
+          existing[0].id,
+        ]);
+      }
+    } else {
+      // Auto-create the link. campaign_status 'active' (not 'draft') because a form actively
+      // receiving leads is, by definition, live; the name records that it was self-registered.
+      const newId = randomUUID();
+      await db
+        .execute(
+          `INSERT INTO meta_campaign
+             (id, requisition_id, meta_form_id, campaign_name, campaign_status, notes, created_by)
+           VALUES (?, ?, ?, ?, 'active', ?, NULL)`,
+          [
+            newId,
+            requisition.id,
+            formId,
+            `Auto-linked · ${requisition.requisition_code}`,
+            `Self-registered from hidden requisition_code field on form ${formId}.`,
+          ]
+        )
+        .catch(async (e: unknown) => {
+          // A UNIQUE clash on meta_form_id means a concurrent lead from the same form created the
+          // row a millisecond earlier — harmless, adopt whatever is there now.
+          const msg = e instanceof Error ? e.message : String(e);
+          if (!/duplicate|ER_DUP_ENTRY/i.test(msg)) throw e;
+        });
+    }
+
+    // Return the campaign joined to the requisition's screening criteria, matching the exact shape
+    // ingestLead's own lookup produces.
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT mc.id, mc.requisition_id,
+              jr.meta_target_age_min, jr.meta_target_age_max,
+              jr.education_requirement, jr.experience_min_years, jr.experience_max_years,
+              jr.designation_name, jr.branch_name, jr.process_name
+         FROM meta_campaign mc
+         LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id
+        WHERE mc.meta_form_id = ? LIMIT 1`,
+      [formId]
+    );
+    return rows[0] ?? null;
+  },
+
+  /**
    * Ingest one lead: dedup, fetch, parse, screen, persist, then (if qualified) create the ATS
    * candidate and fire outreach.
    */
@@ -412,7 +495,9 @@ export const metaCampaignService = {
         WHERE mc.meta_form_id = ? LIMIT 1`,
       [formId]
     );
-    const campaign = campaignRows[0] ?? null;
+    // The form-ID link, resolved before we have the lead detail. It may be overridden below once
+    // the detail is parsed and a hidden requisition_code is found (Option-A auto-routing).
+    const campaignFromForm = campaignRows[0] ?? null;
 
     let detail;
     try {
@@ -429,8 +514,8 @@ export const metaCampaignService = {
           stubId,
           formId,
           leadgenId,
-          campaign?.id ?? null,
-          campaign?.requisition_id ?? null,
+          campaignFromForm?.id ?? null,
+          campaignFromForm?.requisition_id ?? null,
           JSON.stringify({ error: 'graph_fetch_failed', args }),
           err instanceof MetaApiError ? err.message : String(err),
         ]
@@ -439,6 +524,22 @@ export const metaCampaignService = {
     }
 
     const parsed = parseLead(detail);
+
+    // Option-A auto-routing: a hidden requisition_code on the form is authoritative and overrides
+    // the form-ID link resolved above. This is what makes many-batches/many-campaigns route
+    // correctly without an operator pasting a Form ID for every batch — the form declares its own
+    // requisition. Falls through to the form-ID `campaign` when absent or unresolvable.
+    let campaign = campaignFromForm;
+    if (parsed.routingCode) {
+      const routed = await this.resolveCampaignByRoutingCode(formId, parsed.routingCode).catch(
+        (e: unknown) => {
+          console.warn('[meta] routing-code resolution failed', e instanceof Error ? e.message : e);
+          return null;
+        }
+      );
+      if (routed) campaign = routed;
+    }
+
     const screening = campaign
       ? screenLead(
           {
@@ -658,6 +759,65 @@ export const metaCampaignService = {
         campaignName: (r.campaign_name as string | null) ?? null,
       })),
       total,
+    };
+  },
+
+  /**
+   * One lead with its raw form answers, for the All-Leads drill-down drawer.
+   *
+   * The list endpoints deliberately omit raw_payload (it would bloat every row of a 2,600-row
+   * table). This returns a single lead joined to its requisition/campaign, PLUS the flattened
+   * field_data — every question the form asked and its answer, including the hidden routing code —
+   * so the drawer can show exactly what META delivered without a second Graph call.
+   */
+  async getLeadDetail(leadId: string): Promise<
+    | (MetaLead & {
+        requisitionCode: string | null;
+        designationName: string | null;
+        branchName: string | null;
+        campaignName: string | null;
+        routingCode: string | null;
+        fields: Array<{ name: string; value: string }>;
+      })
+    | null
+  > {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ml.*, jr.requisition_code, jr.designation_name, jr.branch_name, mc.campaign_name
+         FROM meta_lead_raw ml
+         LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id
+         LEFT JOIN meta_campaign mc ON mc.id = ml.campaign_id
+        WHERE ml.id = ? LIMIT 1`,
+      [leadId]
+    );
+    const row = rows[0];
+    if (!row) return null;
+
+    // Flatten field_data for display. raw_payload may be a string or already-parsed JSON depending
+    // on the mysql2 driver version, mirroring rescreenLead's handling.
+    let fields: Array<{ name: string; value: string }> = [];
+    let routingCode: string | null = null;
+    try {
+      const raw = typeof row.raw_payload === 'string' ? JSON.parse(row.raw_payload) : row.raw_payload;
+      if (raw && Array.isArray(raw.field_data)) {
+        fields = raw.field_data.map((f: { name?: string; field_name?: string; values?: string[] }) => ({
+          name: String(f.name ?? f.field_name ?? ''),
+          value: Array.isArray(f.values) ? f.values.filter(Boolean).join(', ') : '',
+        }));
+        routingCode = extractRoutingCode(raw);
+      }
+    } catch {
+      // A stub row (graph_fetch_failed) has no field_data — leave fields empty rather than throw.
+      fields = [];
+    }
+
+    return {
+      ...toLead(row),
+      requisitionCode: (row.requisition_code as string | null) ?? null,
+      designationName: (row.designation_name as string | null) ?? null,
+      branchName: (row.branch_name as string | null) ?? null,
+      campaignName: (row.campaign_name as string | null) ?? null,
+      routingCode,
+      fields,
     };
   },
 
@@ -928,12 +1088,32 @@ export const metaCampaignService = {
     let screeningResult: 'pending' | 'qualified' | 'disqualified' = 'pending';
     let reason: string | null = null;
 
-    if (lead.requisition_id) {
+    // Retro-route on re-parse: if this lead's form carries a hidden requisition_code, resolve it
+    // and (re)link the lead to that requisition + campaign. This is how the leads imported before
+    // auto-routing existed — the 2,600+ backfilled ones sitting at pending/unlinked — get placed
+    // onto their batch requisition simply by being re-parsed, with no manual form linking.
+    let effectiveRequisitionId: string | null = (lead.requisition_id as string | null) ?? null;
+    if (parsed.routingCode) {
+      const routed = await this.resolveCampaignByRoutingCode(
+        String(lead.meta_form_id),
+        parsed.routingCode
+      ).catch(() => null);
+      if (routed?.requisition_id) {
+        effectiveRequisitionId = routed.requisition_id as string;
+        await db.execute('UPDATE meta_lead_raw SET campaign_id = ?, requisition_id = ? WHERE id = ?', [
+          routed.id,
+          routed.requisition_id,
+          leadId,
+        ]);
+      }
+    }
+
+    if (effectiveRequisitionId) {
       const [reqRows] = await db.execute<RowDataPacket[]>(
         `SELECT meta_target_age_min, meta_target_age_max, education_requirement,
                 experience_min_years, experience_max_years
            FROM job_requisition WHERE id = ? LIMIT 1`,
-        [lead.requisition_id]
+        [effectiveRequisitionId]
       );
       const r = reqRows[0];
       if (r) {
@@ -971,6 +1151,16 @@ export const metaCampaignService = {
         leadId,
       ]
     );
+
+    // If the re-screen (typically after retro-routing) now qualifies the lead, create the ATS
+    // candidate — same adopt-or-insert path as live ingestion. Outreach is intentionally NOT fired
+    // here: rescreen runs over historical/backfilled leads, and messaging them is the exact thing
+    // the backfill's skipOutreach was built to avoid. A recruiter can trigger outreach per-lead.
+    if (screeningResult === 'qualified') {
+      await this.createCandidateFromLead(leadId).catch((e: unknown) =>
+        console.warn('[meta] rescreen createCandidateFromLead failed', e instanceof Error ? e.message : e)
+      );
+    }
 
     const [after] = await db.execute<RowDataPacket[]>('SELECT * FROM meta_lead_raw WHERE id = ? LIMIT 1', [leadId]);
     return after[0] ? toLead(after[0]) : null;
