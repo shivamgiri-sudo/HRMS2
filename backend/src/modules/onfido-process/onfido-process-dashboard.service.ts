@@ -3234,3 +3234,224 @@ export async function getLiveDocBreakdown(dimension: LiveDimension): Promise<Liv
     avgAht: r.aht !== null ? Math.round(Number(r.aht)) : null,
   }));
 }
+
+// ── POA SLA Metrics ───────────────────────────────────────────────────────────
+
+export interface PoaSlaBucket { label: string; count: number; pct: number | null }
+export interface PoaSlaMetrics {
+  total: number;
+  sla10: number; sla10Pct: number | null;
+  sla20: number; sla20Pct: number | null;
+  sla30: number; sla30Pct: number | null;
+  gt30: number; gt30Pct: number | null;
+  buckets: PoaSlaBucket[];
+  dailyTrend: { date: string; total: number; sla10Pct: number | null; sla30Pct: number | null }[];
+  weeklyTrend: { bucket: string; total: number; sla10Pct: number | null; sla30Pct: number | null }[];
+  analystRows: { analyst: string; tlName: string | null; volume: number; sla10Pct: number | null; sla30Pct: number | null; avgAht: number | null }[];
+}
+
+export async function getPoaSlaMetrics(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+): Promise<PoaSlaMetrics> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const pool = await getOnfidoPool();
+
+  const [agg] = await pool.query<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total,
+            SUM(CASE WHEN manual_processing_time_secs <= 300 THEN 1 ELSE 0 END) AS b05,
+            SUM(CASE WHEN manual_processing_time_secs > 300 AND manual_processing_time_secs <= 600 THEN 1 ELSE 0 END) AS b10,
+            SUM(CASE WHEN manual_processing_time_secs > 600 AND manual_processing_time_secs <= 1200 THEN 1 ELSE 0 END) AS b20,
+            SUM(CASE WHEN manual_processing_time_secs > 1200 AND manual_processing_time_secs <= 1800 THEN 1 ELSE 0 END) AS b30,
+            SUM(CASE WHEN manual_processing_time_secs > 1800 THEN 1 ELSE 0 END) AS bgt30,
+            SUM(CASE WHEN manual_processing_time_secs <= 600 THEN 1 ELSE 0 END) AS sla10,
+            SUM(CASE WHEN manual_processing_time_secs <= 1200 THEN 1 ELSE 0 END) AS sla20,
+            SUM(CASE WHEN manual_processing_time_secs <= 1800 THEN 1 ELSE 0 END) AS sla30
+       FROM onfido_poa_raw WHERE report_completed_date BETWEEN ? AND ? ${clause}
+        AND manual_processing_time_secs IS NOT NULL`,
+    [f.from, f.to, ...params]
+  );
+  const row = agg[0] ?? {};
+  const total = Number(row.total ?? 0);
+  const pct = (n: number): number | null => total > 0 ? Math.round((n / total) * 1000) / 10 : null;
+  const sla10 = Number(row.sla10 ?? 0);
+  const sla20 = Number(row.sla20 ?? 0);
+  const sla30 = Number(row.sla30 ?? 0);
+  const gt30 = Number(row.bgt30 ?? 0);
+  const buckets: PoaSlaBucket[] = [
+    { label: "0 to 5 Min", count: Number(row.b05 ?? 0), pct: pct(Number(row.b05 ?? 0)) },
+    { label: "5 to 10 Min", count: Number(row.b10 ?? 0), pct: pct(Number(row.b10 ?? 0)) },
+    { label: "11 to 20 Min", count: Number(row.b20 ?? 0), pct: pct(Number(row.b20 ?? 0)) },
+    { label: "21 to 30 Min", count: Number(row.b30 ?? 0), pct: pct(Number(row.b30 ?? 0)) },
+    { label: "> 30 Min", count: gt30, pct: pct(gt30) },
+  ];
+
+  const slaRow = (n: number, vol: number): number | null => vol > 0 ? Math.round((n / vol) * 1000) / 10 : null;
+
+  const [dailyRows] = await pool.query<RowDataPacket[]>(
+    `SELECT DATE(report_completed_date) AS date, COUNT(*) AS total,
+            SUM(CASE WHEN manual_processing_time_secs <= 600 THEN 1 ELSE 0 END) AS sla10,
+            SUM(CASE WHEN manual_processing_time_secs <= 1800 THEN 1 ELSE 0 END) AS sla30
+       FROM onfido_poa_raw WHERE report_completed_date BETWEEN ? AND ? ${clause}
+        AND manual_processing_time_secs IS NOT NULL
+       GROUP BY date ORDER BY date`,
+    [f.from, f.to, ...params]
+  );
+  const [weeklyRows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${bucketExpr("report_completed_date", "weekly")} AS bucket, COUNT(*) AS total,
+            SUM(CASE WHEN manual_processing_time_secs <= 600 THEN 1 ELSE 0 END) AS sla10,
+            SUM(CASE WHEN manual_processing_time_secs <= 1800 THEN 1 ELSE 0 END) AS sla30
+       FROM onfido_poa_raw WHERE report_completed_date BETWEEN ? AND ? ${clause}
+        AND manual_processing_time_secs IS NOT NULL
+       GROUP BY bucket ORDER BY bucket`,
+    [f.from, f.to, ...params]
+  );
+  const [analystRows] = await pool.query<RowDataPacket[]>(
+    `SELECT analyst_email AS analyst,
+            COALESCE(NULLIF(TRIM(tl_name),''),'(unassigned)') AS tl_name,
+            COUNT(*) AS volume,
+            SUM(CASE WHEN manual_processing_time_secs <= 600 THEN 1 ELSE 0 END) AS sla10,
+            SUM(CASE WHEN manual_processing_time_secs <= 1800 THEN 1 ELSE 0 END) AS sla30,
+            AVG(manual_processing_time_secs) AS avgAht
+       FROM onfido_poa_raw WHERE report_completed_date BETWEEN ? AND ? ${clause}
+        AND manual_processing_time_secs IS NOT NULL AND analyst_email IS NOT NULL AND analyst_email <> ''
+       GROUP BY analyst, tl_name ORDER BY volume DESC LIMIT 100`,
+    [f.from, f.to, ...params]
+  );
+  return {
+    total, sla10, sla10Pct: pct(sla10), sla20, sla20Pct: pct(sla20), sla30, sla30Pct: pct(sla30),
+    gt30, gt30Pct: pct(gt30), buckets,
+    dailyTrend: dailyRows.map((r) => ({
+      date: String(r.date).split("T")[0],
+      total: Number(r.total),
+      sla10Pct: slaRow(Number(r.sla10), Number(r.total)),
+      sla30Pct: slaRow(Number(r.sla30), Number(r.total)),
+    })),
+    weeklyTrend: weeklyRows.map((r) => ({
+      bucket: bucketLabel(r.bucket, "weekly"),
+      total: Number(r.total),
+      sla10Pct: slaRow(Number(r.sla10), Number(r.total)),
+      sla30Pct: slaRow(Number(r.sla30), Number(r.total)),
+    })),
+    analystRows: analystRows.map((r) => ({
+      analyst: r.analyst, tlName: r.tl_name,
+      volume: Number(r.volume),
+      sla10Pct: slaRow(Number(r.sla10), Number(r.volume)),
+      sla30Pct: slaRow(Number(r.sla30), Number(r.volume)),
+      avgAht: r.avgAht !== null ? Math.round(Number(r.avgAht)) : null,
+    })),
+  };
+}
+
+// ── Analyst Quality Ranking ───────────────────────────────────────────────────
+
+export interface AnalystQualityRow {
+  analyst: string; tlName: string | null;
+  intAudits: number; intErrors: number; intErrPct: number | null;
+  extAudits: number; extErrors: number; extErrPct: number | null;
+  overallErrPct: number | null;
+}
+
+export async function getAnalystQualityRanking(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+): Promise<AnalystQualityRow[]> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const pool = await getOnfidoPool();
+
+  const [intRows] = await pool.query<RowDataPacket[]>(
+    `SELECT analyst_email AS analyst,
+            COALESCE(NULLIF(TRIM(tl_name),''),'(unassigned)') AS tl_name,
+            COALESCE(SUM(total_audits),0) AS audits, COALESCE(SUM(total_error),0) AS errors
+       FROM onfido_doc_quality_raw
+      WHERE task_complete_date BETWEEN ? AND ? ${clause}
+        AND analyst_email IS NOT NULL AND analyst_email <> ''
+      GROUP BY analyst, tl_name`,
+    [f.from, f.to, ...params]
+  );
+  const [extRows] = await pool.query<RowDataPacket[]>(
+    `SELECT analyst_email AS analyst,
+            COALESCE(NULLIF(TRIM(tl_name),''),'(unassigned)') AS tl_name,
+            COUNT(*) AS audits, COALESCE(SUM(has_error),0) AS errors
+       FROM onfido_doc_external_audit_raw
+      WHERE report_date BETWEEN ? AND ? ${clause}
+        AND analyst_email IS NOT NULL AND analyst_email <> ''
+      GROUP BY analyst, tl_name`,
+    [f.from, f.to, ...params]
+  );
+
+  const pct = (err: number, tot: number): number | null => tot > 0 ? Math.round((err / tot) * 1000) / 10 : null;
+  const map = new Map<string, AnalystQualityRow>();
+
+  for (const r of intRows) {
+    const key = String(r.analyst).toLowerCase();
+    map.set(key, {
+      analyst: r.analyst, tlName: r.tl_name,
+      intAudits: Number(r.audits), intErrors: Number(r.errors),
+      intErrPct: pct(Number(r.errors), Number(r.audits)),
+      extAudits: 0, extErrors: 0, extErrPct: null, overallErrPct: null,
+    });
+  }
+  for (const r of extRows) {
+    const key = String(r.analyst).toLowerCase();
+    const ex = map.get(key);
+    if (ex) {
+      ex.extAudits = Number(r.audits); ex.extErrors = Number(r.errors);
+      ex.extErrPct = pct(Number(r.errors), Number(r.audits));
+    } else {
+      map.set(key, {
+        analyst: r.analyst, tlName: r.tl_name,
+        intAudits: 0, intErrors: 0, intErrPct: null,
+        extAudits: Number(r.audits), extErrors: Number(r.errors),
+        extErrPct: pct(Number(r.errors), Number(r.audits)),
+        overallErrPct: null,
+      });
+    }
+  }
+  for (const row of map.values()) {
+    const tot = row.intAudits + row.extAudits;
+    row.overallErrPct = pct(row.intErrors + row.extErrors, tot);
+  }
+  return [...map.values()].sort((a, b) => (b.extAudits + b.intAudits) - (a.extAudits + a.intAudits));
+}
+
+// ── Analyst Ranking (default leaderboard for Analyst Performance page) ────────
+
+export interface AnalystRankingRow {
+  email: string; tlName: string | null; amName: string | null;
+  tasks: number; avgAht: number | null; errorRate: number | null; poaTasks: number;
+}
+
+export async function getAnalystRanking(
+  rawFilters: { from?: string; to?: string }
+): Promise<AnalystRankingRow[]> {
+  const f = readFilters(rawFilters);
+  const pool = await getOnfidoPool();
+  const [docRows] = await pool.query<RowDataPacket[]>(
+    `SELECT analyst_email AS email,
+            MAX(tl_name) AS tl_name, MAX(am_name) AS am_name,
+            COUNT(*) AS tasks,
+            COALESCE(SUM(has_error),0) AS errors,
+            AVG(manual_processing_time_secs) AS avgSecs
+       FROM onfido_doc_external_audit_raw
+      WHERE report_date BETWEEN ? AND ? AND analyst_email IS NOT NULL AND analyst_email <> ''
+      GROUP BY email ORDER BY tasks DESC LIMIT 50`,
+    [f.from, f.to]
+  );
+  const [poaRows] = await pool.query<RowDataPacket[]>(
+    `SELECT analyst_email AS email, COUNT(*) AS tasks
+       FROM onfido_poa_raw
+      WHERE report_completed_date BETWEEN ? AND ? AND analyst_email IS NOT NULL AND analyst_email <> ''
+      GROUP BY email`,
+    [f.from, f.to]
+  );
+  const poaMap = new Map(poaRows.map((r) => [String(r.email).toLowerCase(), Number(r.tasks)]));
+  const pct = (err: number, tot: number): number | null => tot > 0 ? Math.round((err / tot) * 1000) / 10 : null;
+  return docRows.map((r) => ({
+    email: r.email, tlName: r.tl_name || null, amName: r.am_name || null,
+    tasks: Number(r.tasks),
+    avgAht: r.avgSecs !== null ? Math.round(Number(r.avgSecs)) : null,
+    errorRate: pct(Number(r.errors), Number(r.tasks)),
+    poaTasks: poaMap.get(String(r.email).toLowerCase()) ?? 0,
+  }));
+}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer, LabelList } from "recharts";
 import {
   Loader,
   RefreshCcw,
@@ -44,6 +45,16 @@ import { DataError } from "@/components/quality-dashboard/empty-states/DataError
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type Period = "day" | "wtd" | "mtd" | "past_month";
+
+interface OnfidoKpiValue { key: string; label: string; value: number | null; unit: "count" | "seconds" | "percent"; availability: string; note?: string }
+interface OnfidoAnalystPerformance {
+  email: string; tlName: string | null; amName: string | null; qaName: string | null;
+  totalTasks: OnfidoKpiValue; avgManualProcessingTime: OnfidoKpiValue;
+  overallErrorRate: OnfidoKpiValue;
+  poaTasks: OnfidoKpiValue; poaAvgAht: OnfidoKpiValue; poaErrorRate: OnfidoKpiValue;
+  monthly: { month: string; tasks: number; errorRate: number | null }[];
+  peers: { email: string; tlName: string | null; tasks: number; errorRate: number | null }[];
+}
 
 interface LivePerformanceData {
   period: Period;
@@ -272,6 +283,24 @@ export default function MyKpiDashboard() {
 
   const processId = (user as { process_id?: string | number } | null)?.process_id;
 
+  // Onfido analyst performance — fetched by the logged-in user's email.
+  // Only visible if the analyst has Onfido data in the selected range.
+  const onfidoFrom = useMemo(() => {
+    const d = new Date(); d.setMonth(d.getMonth() - 3);
+    return d.toISOString().slice(0, 10);
+  }, []);
+  const onfidoTo = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const onfidoQuery = useQuery({
+    queryKey: ["onfido-my-perf", user?.email, onfidoFrom, onfidoTo],
+    queryFn: () =>
+      hrmsApi.get<{ data: OnfidoAnalystPerformance }>(
+        `/api/onfido-process/analyst-performance/${encodeURIComponent(user?.email ?? "")}?from=${onfidoFrom}&to=${onfidoTo}`
+      ),
+    enabled: !!user?.email,
+    retry: false,
+  });
+  const onfidoPerf = onfidoQuery.data?.data ?? null;
+
   return (
     <>
       {/* Page container — bleeds edge-to-edge */}
@@ -321,6 +350,7 @@ export default function MyKpiDashboard() {
                 { value: "quality", label: "Quality & CLAP", icon: ShieldCheck },
                 { value: "learning", label: "Learning & TNI", icon: GraduationCap },
                 { value: "live", label: "Live Activity", icon: Zap },
+                ...(onfidoPerf ? [{ value: "onfido", label: "Onfido KPI", icon: Activity }] : []),
               ].map(({ value, label, icon: Icon }) => (
                 <TabsTrigger
                   key={value}
@@ -696,6 +726,109 @@ export default function MyKpiDashboard() {
                 </p>
               </div>
             </TabsContent>
+
+            {/* ═══════════════════════════════════════════════════════
+                TAB 5: ONFIDO KPI (only visible to Onfido analysts)
+            ═══════════════════════════════════════════════════════ */}
+            {onfidoPerf && (
+              <TabsContent value="onfido" className="space-y-5 focus-visible:outline-none">
+                <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-4">
+                  <p className="text-xs font-bold text-blue-700">Onfido Process Performance — last 3 months</p>
+                  <p className="text-xs text-blue-500 mt-0.5">Sourced from Onfido DOC and POA queue data via the Onfido Process Dashboard.</p>
+                </div>
+
+                {/* DOC KPIs */}
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">DOC Queue</p>
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { kpi: onfidoPerf.totalTasks, color: "bg-blue-50 border-blue-200 text-blue-700" },
+                      { kpi: onfidoPerf.avgManualProcessingTime, color: "bg-indigo-50 border-indigo-200 text-indigo-700" },
+                      { kpi: onfidoPerf.overallErrorRate, color: "bg-rose-50 border-rose-200 text-rose-700" },
+                    ].map(({ kpi, color }) => (
+                      <div key={kpi.key} className={`rounded-xl border p-4 ${color}`}>
+                        <p className="text-[10px] font-bold uppercase tracking-widest opacity-70">{kpi.label}</p>
+                        <p className="text-2xl font-extrabold font-mono mt-1">
+                          {kpi.value === null ? "—" : kpi.unit === "percent" ? `${kpi.value}%` : kpi.unit === "seconds" ? `${kpi.value}s` : kpi.value.toLocaleString("en-IN")}
+                        </p>
+                        {kpi.note && <p className="text-[10px] opacity-60 mt-0.5">{kpi.note}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* POA KPIs */}
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">POA Queue</p>
+                  <div className="grid grid-cols-3 gap-3">
+                    {[
+                      { kpi: onfidoPerf.poaTasks, color: "bg-teal-50 border-teal-200 text-teal-700" },
+                      { kpi: onfidoPerf.poaAvgAht, color: "bg-cyan-50 border-cyan-200 text-cyan-700" },
+                      { kpi: onfidoPerf.poaErrorRate, color: "bg-orange-50 border-orange-200 text-orange-700" },
+                    ].map(({ kpi, color }) => (
+                      <div key={kpi.key} className={`rounded-xl border p-4 ${color}`}>
+                        <p className="text-[10px] font-bold uppercase tracking-widest opacity-70">{kpi.label}</p>
+                        <p className="text-2xl font-extrabold font-mono mt-1">
+                          {kpi.value === null ? "—" : kpi.unit === "percent" ? `${kpi.value}%` : kpi.unit === "seconds" ? `${kpi.value}s` : kpi.value.toLocaleString("en-IN")}
+                        </p>
+                        {kpi.note && <p className="text-[10px] opacity-60 mt-0.5">{kpi.note}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Month-wise chart */}
+                {onfidoPerf.monthly.length > 0 && (
+                  <div className="rounded-xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm p-5">
+                    <p className="text-xs font-bold text-slate-700 mb-3">Month-wise DOC Task Volume</p>
+                    <ResponsiveContainer width="100%" height={200}>
+                      <BarChart data={onfidoPerf.monthly} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                        <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" />
+                        <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "#64748b" }} />
+                        <YAxis tickLine={false} axisLine={false} width={36} allowDecimals={false} tick={{ fontSize: 11, fill: "#64748b" }} />
+                        <RTooltip />
+                        <Bar dataKey="tasks" name="Tasks" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={40}>
+                          <LabelList dataKey="tasks" position="top" fontSize={10} fill="#64748b" />
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
+                {/* Peer ranking */}
+                {onfidoPerf.peers.length > 0 && (
+                  <div className="rounded-xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm p-5">
+                    <p className="text-xs font-bold text-slate-700 mb-3">Peer Ranking (Same TL)</p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-100">
+                            <th className="text-left py-2 px-3 font-bold text-slate-500 text-[10px] uppercase tracking-wide">Rank</th>
+                            <th className="text-left py-2 px-3 font-bold text-slate-500 text-[10px] uppercase tracking-wide">Analyst</th>
+                            <th className="text-right py-2 px-3 font-bold text-slate-500 text-[10px] uppercase tracking-wide">Tasks</th>
+                            <th className="text-right py-2 px-3 font-bold text-slate-500 text-[10px] uppercase tracking-wide">Error Rate</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...onfidoPerf.peers].sort((a, b) => b.tasks - a.tasks).slice(0, 20).map((p, i) => (
+                            <tr key={p.email}
+                              className={`border-b border-slate-50 ${p.email.toLowerCase() === onfidoPerf.email.toLowerCase() ? "bg-blue-50 font-bold" : ""}`}
+                            >
+                              <td className="py-2 px-3 text-slate-400 font-bold">{i + 1}</td>
+                              <td className="py-2 px-3 text-slate-700">{p.email}</td>
+                              <td className="py-2 px-3 text-right font-mono text-slate-700">{p.tasks.toLocaleString("en-IN")}</td>
+                              <td className="py-2 px-3 text-right font-mono" style={{ color: p.errorRate !== null && p.errorRate > 2 ? "#ef4444" : p.errorRate !== null && p.errorRate < 1 ? "#22c55e" : "#64748b" }}>
+                                {p.errorRate !== null ? `${p.errorRate}%` : "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </TabsContent>
+            )}
           </Tabs>
         </div>
       </div>

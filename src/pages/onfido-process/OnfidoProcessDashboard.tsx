@@ -246,6 +246,31 @@ interface LiveOverview {
 type LiveDimension = "tl_name" | "am_name";
 interface LiveBreakdownRow { label: string; taskCount: number; avgAht: number | null }
 
+interface PoaSlaBucket { label: string; count: number; pct: number | null }
+interface PoaSlaMetrics {
+  total: number;
+  sla10: number; sla10Pct: number | null;
+  sla20: number; sla20Pct: number | null;
+  sla30: number; sla30Pct: number | null;
+  gt30: number; gt30Pct: number | null;
+  buckets: PoaSlaBucket[];
+  dailyTrend: { date: string; total: number; sla10Pct: number | null; sla30Pct: number | null }[];
+  weeklyTrend: { bucket: string; total: number; sla10Pct: number | null; sla30Pct: number | null }[];
+  analystRows: { analyst: string; tlName: string | null; volume: number; sla10Pct: number | null; sla30Pct: number | null; avgAht: number | null }[];
+}
+
+interface AnalystQualityRow {
+  analyst: string; tlName: string | null;
+  intAudits: number; intErrors: number; intErrPct: number | null;
+  extAudits: number; extErrors: number; extErrPct: number | null;
+  overallErrPct: number | null;
+}
+
+interface AnalystRankingRow {
+  email: string; tlName: string | null; amName: string | null;
+  tasks: number; avgAht: number | null; errorRate: number | null; poaTasks: number;
+}
+
 // ── Formatting helpers ───────────────────────────────────────────────────────
 
 function formatValue(kpi: KpiValue): string {
@@ -940,10 +965,16 @@ function AnalystPerformanceView({ range }: { range: { from: string; to: string }
     enabled: !!selected,
   });
 
+  const rankingQuery = useQuery({
+    queryKey: ["onfido-process", "analyst-ranking", range],
+    queryFn: () => hrmsApi.get<{ data: AnalystRankingRow[] }>(`/api/onfido-process/analyst-ranking?from=${range.from}&to=${range.to}`),
+  });
+
   const suggestions = searchQuery.data?.data ?? [];
   const perf = perfQuery.data?.data;
   const rankedPeers = perf ? [...perf.peers].sort((a, b) => b.tasks - a.tasks) : [];
   const rank = perf ? rankedPeers.findIndex((p) => p.email.toLowerCase() === perf.email.toLowerCase()) + 1 : 0;
+  const rankingRows = rankingQuery.data?.data ?? [];
 
   return (
     <div className="space-y-4">
@@ -973,9 +1004,39 @@ function AnalystPerformanceView({ range }: { range: { from: string; to: string }
         </div>
       </div>
 
+      {/* Default ranking table — always visible; shows top 50 analysts by DOC task volume */}
+      <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
+        <h3>Analyst Leaderboard — Top 50 by DOC Tasks</h3>
+        <div className="oc-card-sub">Ranked by DOC task count. Click a row to load that analyst's full profile above.</div>
+        <div style={{ overflowX: "auto" }}>
+          <table className="oc-table">
+            <thead><tr><th>Rank</th><th>Analyst</th><th>TL</th><th>AM</th><th className="oc-right">DOC Tasks</th><th className="oc-right">Avg AHT</th><th className="oc-right">Error Rate</th><th className="oc-right">POA Tasks</th></tr></thead>
+            <tbody>
+              {rankingRows.length === 0 && <tr className="oc-empty-row"><td colSpan={8}>{rankingQuery.isLoading ? "Loading…" : "No data in this range"}</td></tr>}
+              {rankingRows.map((r, i) => (
+                <tr key={r.email} className="oc-row-click"
+                  style={r.email.toLowerCase() === selected?.toLowerCase() ? { background: "rgba(47,109,246,0.08)", fontWeight: 700 } : undefined}
+                  onClick={() => { setSelected(r.email); setQuery(r.email); }}>
+                  <td style={{ color: "var(--muted)", fontWeight: 700 }}>{i + 1}</td>
+                  <td>{r.email}</td>
+                  <td>{r.tlName ?? "—"}</td>
+                  <td>{r.amName ?? "—"}</td>
+                  <td className="oc-right">{r.tasks.toLocaleString("en-IN")}</td>
+                  <td className="oc-right">{r.avgAht !== null ? `${r.avgAht}s` : "—"}</td>
+                  <td className="oc-right" style={{ color: r.errorRate !== null && r.errorRate > 2 ? "var(--red)" : r.errorRate !== null && r.errorRate < 1 ? "var(--good)" : undefined }}>
+                    {r.errorRate !== null ? `${r.errorRate}%` : "—"}
+                  </td>
+                  <td className="oc-right">{r.poaTasks > 0 ? r.poaTasks.toLocaleString("en-IN") : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {!selected && (
-        <div className="oc-card" style={{ textAlign: "center", padding: "40px 0", color: "var(--muted)", fontSize: 13 }}>
-          Search an analyst above to see their performance profile.
+        <div className="oc-card" style={{ textAlign: "center", padding: "20px 0", color: "var(--muted)", fontSize: 13 }}>
+          Click a row above or search by email to see a full analyst profile.
         </div>
       )}
 
@@ -2259,6 +2320,10 @@ function QualityView({
     queryKey: ["onfido-process", "quality-poa-ext-trend-for-table", range, tlFilter, amFilter, granularity],
     queryFn: () => hrmsApi.get<{ data: PoaExternalTrendPoint[] }>(`/api/onfido-process/poa-external/trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`),
   });
+  const analystQualityQuery = useQuery({
+    queryKey: ["onfido-process", "quality-analyst-quality", range, tlFilter, amFilter],
+    queryFn: () => hrmsApi.get<{ data: AnalystQualityRow[] }>(`/api/onfido-process/quality/analyst-quality?from=${range.from}&to=${range.to}${qs}`),
+  });
 
   const ov = overviewQuery.data?.data;
   const points = trendQuery.data?.data ?? [];
@@ -2460,6 +2525,89 @@ function QualityView({
         )}
       </div>
       )}
+
+      {(() => {
+        const allRows = analystQualityQuery.data?.data ?? [];
+        const loading = analystQualityQuery.isLoading;
+        const errColor = (v: number | null) =>
+          v === null ? undefined : v > 2 ? "var(--red)" : v > 1 ? "var(--warn)" : "var(--good)";
+        const fmtErr = (v: number | null) => v !== null ? `${v}%` : "—";
+
+        const top20perf = [...allRows]
+          .filter((r) => r.extAudits + r.intAudits >= 5)
+          .sort((a, b) => (a.overallErrPct ?? 999) - (b.overallErrPct ?? 999))
+          .slice(0, 20);
+        const top20def = [...allRows]
+          .filter((r) => r.extAudits + r.intAudits >= 5)
+          .sort((a, b) => (b.overallErrPct ?? 0) - (a.overallErrPct ?? 0))
+          .slice(0, 20);
+
+        const AnalystQualityTable = ({ rows, title, sub }: { rows: AnalystQualityRow[]; title: string; sub: string }) => (
+          <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 style={{ marginBottom: 0 }}>{title}</h3>
+                <div className="oc-card-sub">{sub}</div>
+              </div>
+              <PillGroup
+                value={granularity} onChange={setGranularity}
+                options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
+              />
+            </div>
+            <div style={{ overflowX: "auto", marginTop: 10 }}>
+              <table className="oc-table">
+                <thead>
+                  <tr>
+                    <th>Analyst</th><th>TL</th>
+                    <th className="oc-right">Int Audits</th>
+                    <th className="oc-right">Int Err%</th>
+                    <th className="oc-right">Ext Audits</th>
+                    <th className="oc-right">Ext Err%</th>
+                    <th className="oc-right">Overall Err%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.length === 0 && <tr className="oc-empty-row"><td colSpan={7}>{loading ? "Loading…" : "No data in this range"}</td></tr>}
+                  {rows.map((r) => (
+                    <tr key={r.analyst}>
+                      <td style={{ fontSize: 11 }}>{r.analyst}</td>
+                      <td style={{ fontSize: 11 }}>{r.tlName ?? "—"}</td>
+                      <td className="oc-right">{r.intAudits > 0 ? r.intAudits.toLocaleString("en-IN") : "—"}</td>
+                      <td className="oc-right" style={{ color: errColor(r.intErrPct), fontWeight: r.intErrPct !== null ? 700 : undefined }}>{fmtErr(r.intErrPct)}</td>
+                      <td className="oc-right">{r.extAudits > 0 ? r.extAudits.toLocaleString("en-IN") : "—"}</td>
+                      <td className="oc-right" style={{ color: errColor(r.extErrPct), fontWeight: r.extErrPct !== null ? 700 : undefined }}>{fmtErr(r.extErrPct)}</td>
+                      <td className="oc-right" style={{ color: errColor(r.overallErrPct), fontWeight: r.overallErrPct !== null ? 700 : undefined }}>{fmtErr(r.overallErrPct)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ marginTop: 8, fontSize: 10, color: "var(--muted)" }}>
+              Conditional formatting: <span style={{ color: "var(--good)", fontWeight: 700 }}>Green</span> = &lt;1% · <span style={{ color: "var(--warn)", fontWeight: 700 }}>Amber</span> = 1–2% · <span style={{ color: "var(--red)", fontWeight: 700 }}>Red</span> = &gt;2%
+            </div>
+          </div>
+        );
+
+        return (
+          <>
+            <AnalystQualityTable
+              rows={allRows}
+              title="Analyst Quality Score"
+              sub="Internal error % (from DOC internal audit), external error % (from external audit), overall combined."
+            />
+            <AnalystQualityTable
+              rows={top20perf}
+              title="Top 20 Performers"
+              sub="Analysts with the lowest overall error rate (min 5 audits)."
+            />
+            <AnalystQualityTable
+              rows={top20def}
+              title="Top 20 Defaulters"
+              sub="Analysts with the highest overall error rate (min 5 audits)."
+            />
+          </>
+        );
+      })()}
 
       {drilldown && (
         <BreakdownDrilldownSheet
@@ -3033,6 +3181,10 @@ function PoaView({
     queryKey: ["onfido-process", "poa-external-trend-for-poa", range, tlFilter, amFilter],
     queryFn: () => hrmsApi.get<{ data: PoaExternalTrendPoint[] }>(`/api/onfido-process/poa-external/trend?from=${range.from}&to=${range.to}${qs}`),
   });
+  const poaSlaMetricsQuery = useQuery({
+    queryKey: ["onfido-process", "poa-sla-metrics", range, tlFilter, amFilter],
+    queryFn: () => hrmsApi.get<{ data: PoaSlaMetrics }>(`/api/onfido-process/poa/sla-metrics?from=${range.from}&to=${range.to}${qs}`),
+  });
   // Entity x month grouped tables (AM/TL/Analyst Wise) + day-wise detail —
   // company-wide (no tl/am filter), matching the reference dashboard's own tables.
   const amGridQuery = useQuery({
@@ -3102,6 +3254,120 @@ function PoaView({
         <h3>Day-wise POA Task &amp; AHT</h3>
         <TaskAhtTrendChart points={poaDailyTrend} barLabel="POA Tasks" lineLabel="POA Avg AHT" barColor="var(--purple)" lineColor="var(--orange)" />
       </div>
+
+      {/* POA SLA Section */}
+      {(() => {
+        const sla = poaSlaMetricsQuery.data?.data;
+        if (!sla && !poaSlaMetricsQuery.isLoading) return null;
+        return (
+          <>
+            <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
+              <h3>POA SLA</h3>
+              <div className="oc-card-sub">SLA compliance based on manual processing time from POA Raw reports.</div>
+              {poaSlaMetricsQuery.isLoading ? (
+                <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>Loading…</div>
+              ) : sla && (
+                <>
+                  <div className="kr" style={{ gridTemplateColumns: "repeat(4, 1fr)", marginTop: 8 }}>
+                    {[
+                      { label: "SLA < 10 Min", value: sla.sla10Pct, sub: `${sla.sla10.toLocaleString("en-IN")} cases`, target: "Target 97.5%", color: "var(--teal)" },
+                      { label: "SLA < 20 Min", value: sla.sla20Pct, sub: `${sla.sla20.toLocaleString("en-IN")} cases`, target: "", color: "var(--blue)" },
+                      { label: "SLA < 30 Min", value: sla.sla30Pct, sub: `${sla.sla30.toLocaleString("en-IN")} cases`, target: "Target 99.5%", color: "var(--orange)" },
+                      { label: "> 30 Min Risk", value: sla.gt30Pct, sub: `${sla.gt30.toLocaleString("en-IN")} cases`, target: "SLA leakage", color: "var(--red)" },
+                    ].map((k) => (
+                      <div key={k.label} className="oc-kpi-plain" style={{ "--kc": k.color } as React.CSSProperties}>
+                        <div className="oc-kpi-label">{k.label}</div>
+                        <div className="oc-kpi-value">{k.value !== null ? `${k.value}%` : "—"}</div>
+                        <div className="oc-kpi-note">{k.sub}</div>
+                        {k.target && <div className="oc-kpi-note" style={{ color: "var(--muted)", fontSize: 10 }}>{k.target}</div>}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ marginTop: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginBottom: 8 }}>SLA Bucket Split</div>
+                    <ResponsiveContainer width="100%" height={180}>
+                      <BarChart data={sla.buckets} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                        <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+                        <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "var(--muted)" }} />
+                        <YAxis tickLine={false} axisLine={false} width={36} allowDecimals={false} tick={{ fontSize: 10, fill: "var(--muted)" }} />
+                        <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
+                        <Bar dataKey="count" name="Count" fill="var(--teal)" radius={[4, 4, 0, 0]}>
+                          <LabelList dataKey="count" position="top" fontSize={10} fill="var(--muted)" />
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 16 }}>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>Day-wise SLA Trend</div>
+                      <div style={{ overflowX: "auto", maxHeight: 220, overflowY: "auto" }}>
+                        <table className="oc-table" style={{ fontSize: 11 }}>
+                          <thead><tr><th>Date</th><th className="oc-right">Total</th><th className="oc-right">SLA&lt;10%</th><th className="oc-right">SLA&lt;30%</th></tr></thead>
+                          <tbody>
+                            {sla.dailyTrend.length === 0 && <tr className="oc-empty-row"><td colSpan={4}>No data</td></tr>}
+                            {sla.dailyTrend.map((r) => (
+                              <tr key={r.date}>
+                                <td>{r.date}</td>
+                                <td className="oc-right">{r.total.toLocaleString("en-IN")}</td>
+                                <td className="oc-right">{r.sla10Pct !== null ? `${r.sla10Pct}%` : "—"}</td>
+                                <td className="oc-right">{r.sla30Pct !== null ? `${r.sla30Pct}%` : "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>Week-wise SLA Trend</div>
+                      <div style={{ overflowX: "auto", maxHeight: 220, overflowY: "auto" }}>
+                        <table className="oc-table" style={{ fontSize: 11 }}>
+                          <thead><tr><th>Week</th><th className="oc-right">Total</th><th className="oc-right">SLA&lt;10%</th><th className="oc-right">SLA&lt;30%</th></tr></thead>
+                          <tbody>
+                            {sla.weeklyTrend.length === 0 && <tr className="oc-empty-row"><td colSpan={4}>No data</td></tr>}
+                            {sla.weeklyTrend.map((r) => (
+                              <tr key={r.bucket}>
+                                <td>{r.bucket}</td>
+                                <td className="oc-right">{r.total.toLocaleString("en-IN")}</td>
+                                <td className="oc-right">{r.sla10Pct !== null ? `${r.sla10Pct}%` : "—"}</td>
+                                <td className="oc-right">{r.sla30Pct !== null ? `${r.sla30Pct}%` : "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>Analyst-wise SLA</div>
+                    <div style={{ overflowX: "auto", maxHeight: 280, overflowY: "auto" }}>
+                      <table className="oc-table" style={{ fontSize: 11 }}>
+                        <thead><tr><th>Analyst</th><th>TL</th><th className="oc-right">Volume</th><th className="oc-right">SLA&lt;10%</th><th className="oc-right">SLA&lt;30%</th><th className="oc-right">Avg AHT</th></tr></thead>
+                        <tbody>
+                          {sla.analystRows.length === 0 && <tr className="oc-empty-row"><td colSpan={6}>No data</td></tr>}
+                          {sla.analystRows.map((r) => (
+                            <tr key={r.analyst}>
+                              <td>{r.analyst}</td>
+                              <td>{r.tlName ?? "—"}</td>
+                              <td className="oc-right">{r.volume.toLocaleString("en-IN")}</td>
+                              <td className="oc-right">{r.sla10Pct !== null ? `${r.sla10Pct}%` : "—"}</td>
+                              <td className="oc-right">{r.sla30Pct !== null ? `${r.sla30Pct}%` : "—"}</td>
+                              <td className="oc-right">{r.avgAht !== null ? `${r.avgAht}s` : "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </>
+        );
+      })()}
+
       <div className="oc-card" style={{ "--hc": "var(--red)" } as React.CSSProperties}>
         <h3>Month-wise POA Error % — Internal vs External</h3>
         {poaMonthlyErrPct.length === 0 ? (

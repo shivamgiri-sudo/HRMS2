@@ -496,6 +496,21 @@ router.get("/poa-trial/breakdown/:dimension", requireAuth, requireRole(...VIEWER
   res.json({ success: true, data });
 }));
 
+router.get("/poa/sla-metrics", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getPoaSlaMetrics(readQueryFilters(req));
+  res.json({ success: true, data });
+}));
+
+router.get("/quality/analyst-quality", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getAnalystQualityRanking(readQueryFilters(req));
+  res.json({ success: true, data });
+}));
+
+router.get("/analyst-ranking", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getAnalystRanking(readQueryFilters(req));
+  res.json({ success: true, data });
+}));
+
 // Live/Today — deliberately not range-filtered, see the service's own comment.
 router.get("/live/overview", requireAuth, requireRole(...VIEWER_ROLES), h(async (_req, res) => {
   const data = await svc.getLiveOverview();
