@@ -274,22 +274,20 @@ export default function MyKpiDashboard() {
 
   return (
     <>
-      {/* Page container — light theme, bleeds edge-to-edge */}
-      <div className="-mx-4 -mt-5 -mb-9 sm:-mx-5 lg:-mx-6 lg:-mt-6 bg-slate-50 min-h-[calc(100vh-64px)] overflow-hidden">
-        {/* Blue accent bar at top */}
-        <div className="h-1 bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-500" />
-
-        <div className="px-4 pt-5 pb-9 sm:px-5 lg:px-6 lg:pt-6">
-
-          {/* ── Header ───────────────────────────────────────────────── */}
-          <div className="flex items-center justify-between mb-6">
+      {/* Page container — bleeds edge-to-edge */}
+      <div className="-mx-4 -mt-5 -mb-9 sm:-mx-5 lg:-mx-6 lg:-mt-6 bg-blue-50/60 min-h-[calc(100vh-64px)] overflow-hidden">
+        {/* Gradient hero header — MAS HRMS GradientHeader pattern */}
+        <div className="relative overflow-hidden bg-gradient-to-r from-blue-600 to-indigo-700 text-white px-4 pt-5 pb-6 sm:px-5 lg:px-6 lg:pt-6 shadow-lg shadow-blue-500/20">
+          <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-white/10 blur-3xl" />
+          <div className="pointer-events-none absolute bottom-0 left-1/3 h-24 w-24 rounded-full bg-indigo-300/20 blur-2xl" />
+          <div className="relative flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-blue-600/10 border border-blue-600/20">
-                <Activity className="text-blue-600" size={22} />
+              <div className="p-2.5 rounded-xl bg-white/20 border border-white/30 backdrop-blur-sm">
+                <Activity className="text-white" size={22} />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-slate-900">My Performance Hub</h1>
-                <p className="text-xs text-slate-500 mt-0.5 uppercase tracking-widest font-medium">
+                <h1 className="text-xl font-bold text-white">My Performance Hub</h1>
+                <p className="text-xs text-white/70 mt-0.5 uppercase tracking-widest font-medium">
                   Personal Performance Dashboard
                 </p>
               </div>
@@ -304,16 +302,20 @@ export default function MyKpiDashboard() {
                 queryClient.invalidateQueries({ queryKey: ["my-assignments"] });
                 queryClient.invalidateQueries({ queryKey: ["lms-employee"] });
               }}
-              className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-blue-600 transition-colors px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50"
+              className="flex items-center gap-1.5 text-xs font-semibold text-white/70 hover:text-white transition-colors px-3 py-1.5 rounded-lg border border-white/30 bg-white/15 hover:bg-white/25 backdrop-blur-sm"
             >
               <RefreshCcw size={13} />
               Refresh
             </button>
           </div>
+        </div>
+
+        {/* ── Content area below gradient header ── */}
+        <div className="px-4 pt-5 pb-9 sm:px-5 lg:px-6">
 
           {/* ── Main Tabs ────────────────────────────────────────────── */}
           <Tabs defaultValue="performance" className="space-y-5">
-            <TabsList className="bg-white border border-slate-200 rounded-xl p-1 h-auto gap-1">
+            <TabsList className="bg-white/95 backdrop-blur-sm border border-white/60 rounded-xl p-1 h-auto gap-1 shadow-[0_1px_3px_rgba(37,99,235,0.08),_0_4px_12px_rgba(37,99,235,0.06)]">
               {[
                 { value: "performance", label: "Performance", icon: BarChart3 },
                 { value: "quality", label: "Quality & CLAP", icon: ShieldCheck },
@@ -404,7 +406,7 @@ export default function MyKpiDashboard() {
               {!loading && !error && data && (
                 <>
                   {/* Hero row */}
-                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+                  <div className="rounded-xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-[0_1px_3px_rgba(37,99,235,0.08),_0_4px_12px_rgba(37,99,235,0.06)] p-5">
                     <div className="flex gap-6 flex-wrap sm:flex-nowrap">
                       <HeroScoreDial
                         score={data.overall_score}
