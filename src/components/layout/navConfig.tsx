@@ -133,6 +133,7 @@ export const navGroups: NavGroup[] = [
           { label: "Recruiter Portal", href: "/ats/recruiter-portal", icon: ic(Briefcase), pageCode: "ATS_RECRUITER_PORTAL", description: "Recruiter interview workspace" },
           { label: "ATS Sourcing",      href: "/ats/sourcing-analysis",        icon: ic(BarChart3),    pageCode: "ATS_DASHBOARD",         roles: ["admin","hr"], description: "Sourcing analytics" },
           { label: "META Campaigns",    href: "/ats/meta-campaigns",           icon: ic(Megaphone),    pageCode: "ATS_META_CAMPAIGNS",    description: "META Lead Gen ad performance & lead screening" },
+          { label: "META Leads",        href: "/ats/meta-leads",               icon: ic(Users),        pageCode: "ATS_META_CAMPAIGNS",    description: "All leads captured from META Lead Gen forms" },
           { label: "Name Consistency", href: "/ats/name-consistency", icon: ic(FileCheck), pageCode: "NAME_CONSISTENCY_MATRIX", description: "Candidate identity consistency" },
           { label: "ATS Reconciliation", href: "/ats/reconciliation", icon: ic(CheckCircle), roles: ["admin","hr","super_admin"], description: "Recruitment reconciliation" },
           { label: "Form Config",       href: "/ats/form-config",              icon: ic(Settings2),                                               roles: ["admin","hr","super_admin"], description: "Interview form & branch aliases" },

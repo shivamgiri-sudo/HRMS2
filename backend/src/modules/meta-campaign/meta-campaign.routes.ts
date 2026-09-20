@@ -252,6 +252,45 @@ metaCampaignRouter.get(
   })
 );
 
+/**
+ * All leads across every campaign, paginated — backs the standalone All Leads page.
+ *
+ * Kept separate from /leads (which the campaign drawer uses, capped at 500) because this one
+ * returns a { rows, total } envelope for the pager and joins requisition/campaign so each row can
+ * name its source. Read roles, same as every other campaign read.
+ */
+metaCampaignRouter.get(
+  '/leads-all',
+  requireAuth,
+  requireRole(...CAMPAIGN_READ_ROLES),
+  h(async (req, res) => {
+    const limit = req.query.limit ? Number(req.query.limit) : 50;
+    const offset = req.query.offset ? Number(req.query.offset) : 0;
+    const data = await metaCampaignService.listAllLeads({
+      search: req.query.search as string | undefined,
+      screening: req.query.screening as string | undefined,
+      requisitionId: req.query.requisitionId as string | undefined,
+      limit: Number.isFinite(limit) ? limit : 50,
+      offset: Number.isFinite(offset) ? offset : 0,
+    });
+    return res.json({ success: true, data: data.rows, total: data.total });
+  })
+);
+
+/** Lead Gen forms on a Page, for discovery when linking a form to a requisition. */
+metaCampaignRouter.get(
+  '/page-forms/:pageId',
+  requireAuth,
+  requireRole(...CAMPAIGN_WRITE_ROLES),
+  h(async (req, res) => {
+    if (!isMetaConfigured()) {
+      return res.status(503).json({ success: false, message: 'META Graph API token is not configured' });
+    }
+    const data = await metaCampaignService.listPageForms(req.params.pageId!);
+    return res.json({ success: true, data });
+  })
+);
+
 metaCampaignRouter.post(
   '/campaigns',
   requireAuth,
@@ -282,6 +321,44 @@ metaCampaignRouter.post(
   requireRole(...CAMPAIGN_WRITE_ROLES),
   h(async (_req, res) => {
     const result = await metaCampaignService.syncAllCampaignMetrics();
+    return res.json({ success: true, data: result });
+  })
+);
+
+/**
+ * Import a campaign's historical leads from META (leads submitted before the webhook existed).
+ *
+ * Outreach is suppressed inside backfillFormLeads — this can pull months of leads and must never
+ * message anyone retroactively. Idempotent: re-running only imports leads not already stored.
+ */
+metaCampaignRouter.post(
+  '/campaigns/:id/backfill',
+  requireAuth,
+  requireRole(...CAMPAIGN_WRITE_ROLES),
+  h(async (req, res) => {
+    if (!isMetaConfigured()) {
+      return res.status(503).json({ success: false, message: 'META Graph API token is not configured' });
+    }
+    const campaign = await metaCampaignService.getCampaign(req.params.id!);
+    if (!campaign) return res.status(404).json({ success: false, message: 'Campaign not found' });
+    if (!campaign.metaFormId) {
+      return res.status(422).json({ success: false, message: 'This campaign has no Lead Gen Form ID linked, so there is nothing to import.' });
+    }
+    const result = await metaCampaignService.backfillFormLeads(campaign.metaFormId);
+    return res.json({ success: true, data: result });
+  })
+);
+
+/** Import historical leads for every linked form at once. Super admin / HR only. */
+metaCampaignRouter.post(
+  '/backfill-all',
+  requireAuth,
+  requireRole(...CAMPAIGN_WRITE_ROLES),
+  h(async (_req, res) => {
+    if (!isMetaConfigured()) {
+      return res.status(503).json({ success: false, message: 'META Graph API token is not configured' });
+    }
+    const result = await metaCampaignService.backfillAllLinkedForms();
     return res.json({ success: true, data: result });
   })
 );

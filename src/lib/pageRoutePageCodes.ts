@@ -8,6 +8,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/ats/dashboard-v2": "ATS_DASHBOARD",
   "/ats/sourcing-analysis": "ATS_DASHBOARD",
   "/ats/meta-campaigns": "ATS_META_CAMPAIGNS",
+  "/ats/meta-leads": "ATS_META_CAMPAIGNS",
   "/attendance-rules-master": "ATTENDANCE_RULES_MASTER",
   "/client-master": "CLIENT_MASTER",
   "/communication/dispatch": "COMM_DISPATCH",

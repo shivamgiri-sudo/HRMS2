@@ -21,7 +21,14 @@
 import { randomUUID } from 'crypto';
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
-import { fetchLeadDetail, fetchCampaignInsights, isMetaConfigured, MetaApiError } from './meta-api.client.js';
+import {
+  fetchLeadDetail,
+  fetchCampaignInsights,
+  fetchFormLeads,
+  fetchPageLeadForms,
+  isMetaConfigured,
+  MetaApiError,
+} from './meta-api.client.js';
 import { parseLead, normaliseMetaId } from './meta-lead.parser.js';
 import { screenLead } from './lead-screener.service.js';
 import { notifyQualifiedLead } from './lead-outreach.service.js';
@@ -367,6 +374,17 @@ export const metaCampaignService = {
     adId?: string | null;
     adgroupId?: string | null;
     campaignIdFromMeta?: string | null;
+    /**
+     * When true, the qualified-lead outreach (WhatsApp / voice) is NOT fired. Used by the
+     * historical backfill: pulling months of past leads must never blast messages to people who
+     * applied weeks ago. The ATS candidate is still created — only the outbound contact is skipped.
+     */
+    skipOutreach?: boolean;
+    /**
+     * A lead detail already fetched from Graph (backfill has it in hand from the /leads listing),
+     * so ingestLead need not spend a second Graph call per lead re-fetching what it was handed.
+     */
+    prefetchedDetail?: import('./meta-campaign.types.js').MetaLeadDetail;
   }): Promise<MetaLead | null> {
     // Normalise both ids before anything else. The live lead export prefixes them by type
     // (`f:27936517096019427`, `l:1735112467564611`) while the Graph webhook sends them bare, and a
@@ -398,7 +416,7 @@ export const metaCampaignService = {
 
     let detail;
     try {
-      detail = await fetchLeadDetail(leadgenId);
+      detail = args.prefetchedDetail ?? (await fetchLeadDetail(leadgenId));
     } catch (err) {
       // Store a stub so the lead is not lost, and so a token fix can be followed by a re-parse.
       const stubId = randomUUID();
@@ -477,13 +495,170 @@ export const metaCampaignService = {
       await this.createCandidateFromLead(id).catch((e: unknown) =>
         console.warn('[meta] createCandidateFromLead failed', e instanceof Error ? e.message : e)
       );
-      await notifyQualifiedLead(id).catch((e: unknown) =>
-        console.warn('[meta] notifyQualifiedLead failed', e instanceof Error ? e.message : e)
-      );
+      // Outreach is suppressed for backfilled leads — see skipOutreach. A live webhook lead
+      // (skipOutreach falsy) still fires immediately.
+      if (!args.skipOutreach) {
+        await notifyQualifiedLead(id).catch((e: unknown) =>
+          console.warn('[meta] notifyQualifiedLead failed', e instanceof Error ? e.message : e)
+        );
+      }
     }
 
     const [rows] = await db.execute<RowDataPacket[]>('SELECT * FROM meta_lead_raw WHERE id = ? LIMIT 1', [id]);
     return rows[0] ? toLead(rows[0]) : null;
+  },
+
+  /**
+   * Backfill every stored lead for one form by walking the Graph `/{form}/leads` pages.
+   *
+   * This is the historical import path. It reuses ingestLead for each lead, so parsing, screening,
+   * dedup (on meta_lead_id) and candidate creation are byte-for-byte identical to the live webhook
+   * path — the ONLY difference is skipOutreach, which is forced true so importing months of past
+   * leads never messages anyone. Re-running is safe: dedup makes an already-imported lead a no-op.
+   *
+   * Errors on individual leads are counted, not thrown, so one malformed lead cannot abandon the
+   * rest of a 1,000-lead form.
+   */
+  async backfillFormLeads(
+    formId: string,
+    opts: { maxPages?: number } = {}
+  ): Promise<{ formId: string; fetched: number; imported: number; duplicates: number; errors: number }> {
+    const normalisedForm = normaliseMetaId(formId) ?? formId;
+    const maxPages = opts.maxPages ?? 200; // 200 * 100 = 20k leads ceiling, well above any one form
+    let after: string | null = null;
+    let fetched = 0;
+    let imported = 0;
+    let duplicates = 0;
+    let errors = 0;
+
+    for (let page = 0; page < maxPages; page += 1) {
+      const { leads, nextAfter } = await fetchFormLeads(normalisedForm, after);
+      if (!leads.length) break;
+
+      for (const detail of leads) {
+        fetched += 1;
+        const leadgenId = String(detail.id);
+        try {
+          // Cheap pre-check so the "duplicates" counter is meaningful; ingestLead would also
+          // dedup, but it would report the lead as imported.
+          const [dupe] = await db.execute<RowDataPacket[]>(
+            'SELECT id FROM meta_lead_raw WHERE meta_lead_id = ? LIMIT 1',
+            [normaliseMetaId(leadgenId) ?? leadgenId]
+          );
+          if (dupe[0]) {
+            duplicates += 1;
+            continue;
+          }
+          await this.ingestLead({
+            formId: normalisedForm,
+            leadgenId,
+            adId: detail.ad_id ?? null,
+            adgroupId: detail.adgroup_id ?? null,
+            campaignIdFromMeta: detail.campaign_id ?? null,
+            skipOutreach: true,
+            prefetchedDetail: detail,
+          });
+          imported += 1;
+        } catch {
+          errors += 1;
+        }
+      }
+
+      after = nextAfter;
+      if (!after) break;
+    }
+
+    return { formId: normalisedForm, fetched, imported, duplicates, errors };
+  },
+
+  /**
+   * Backfill every linked campaign's form, or a given set of form IDs. Convenience wrapper over
+   * backfillFormLeads for the initial bulk import and the dashboard's "import history" action.
+   */
+  async backfillAllLinkedForms(): Promise<{
+    forms: Array<{ formId: string; fetched: number; imported: number; duplicates: number; errors: number }>;
+    totalImported: number;
+  }> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT meta_form_id FROM meta_campaign
+        WHERE meta_form_id IS NOT NULL AND meta_form_id <> ''`
+    );
+    const forms: Array<{ formId: string; fetched: number; imported: number; duplicates: number; errors: number }> = [];
+    let totalImported = 0;
+    for (const row of rows) {
+      const result = await this.backfillFormLeads(String(row.meta_form_id));
+      forms.push(result);
+      totalImported += result.imported;
+    }
+    return { forms, totalImported };
+  },
+
+  /** List the Lead Gen forms on the configured Page (discovery for form→requisition linking). */
+  async listPageForms(pageId: string): Promise<Array<{ id: string; name: string; status: string; leadsCount: number }>> {
+    return fetchPageLeadForms(pageId);
+  },
+
+  /**
+   * All leads across every campaign, paginated, for the standalone All-Leads page.
+   *
+   * Distinct from listLeads (which caps at 500 and is used for a single campaign's drawer): this
+   * supports offset paging, a free-text search over name/phone/email, and joins the requisition +
+   * campaign so each row can name where it came from. Returns rows + a total for the pager.
+   */
+  async listAllLeads(filters: {
+    search?: string;
+    screening?: string;
+    requisitionId?: string;
+    limit?: number;
+    offset?: number;
+  } = {}): Promise<{ rows: Array<MetaLead & { requisitionCode: string | null; designationName: string | null; branchName: string | null; campaignName: string | null }>; total: number }> {
+    const conds: string[] = [];
+    const params: unknown[] = [];
+    if (filters.screening && filters.screening !== 'all') {
+      conds.push('ml.screening_result = ?');
+      params.push(filters.screening);
+    }
+    if (filters.requisitionId) {
+      conds.push('ml.requisition_id = ?');
+      params.push(filters.requisitionId);
+    }
+    if (filters.search && filters.search.trim()) {
+      conds.push('(ml.parsed_name LIKE ? OR ml.parsed_phone LIKE ? OR ml.parsed_email LIKE ?)');
+      const like = `%${filters.search.trim()}%`;
+      params.push(like, like, like);
+    }
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+
+    const [countRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM meta_lead_raw ml ${where}`,
+      params
+    );
+    const total = Number(countRows[0]?.total ?? 0);
+
+    const limit = Math.min(Math.max(Number(filters.limit ?? 50), 1), 200);
+    const offset = Math.max(Number(filters.offset ?? 0), 0);
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ml.*, jr.requisition_code, jr.designation_name, jr.branch_name, mc.campaign_name
+         FROM meta_lead_raw ml
+         LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id
+         LEFT JOIN meta_campaign mc ON mc.id = ml.campaign_id
+         ${where}
+        ORDER BY ml.created_at DESC
+        LIMIT ${limit} OFFSET ${offset}`,
+      params
+    );
+
+    return {
+      rows: rows.map((r) => ({
+        ...toLead(r),
+        requisitionCode: (r.requisition_code as string | null) ?? null,
+        designationName: (r.designation_name as string | null) ?? null,
+        branchName: (r.branch_name as string | null) ?? null,
+        campaignName: (r.campaign_name as string | null) ?? null,
+      })),
+      total,
+    };
   },
 
   /**

@@ -79,6 +79,74 @@ export async function fetchLeadDetail(leadId: string): Promise<MetaLeadDetail> {
 }
 
 /**
+ * One page of a Lead Gen form's stored leads, plus the cursor to the next page.
+ *
+ * Unlike fetchLeadDetail (which the webhook path uses to resolve a single leadgen_id), this walks
+ * the form's entire lead history — the only way to backfill leads that were submitted before the
+ * webhook was ever subscribed. META still only serves leads for 90 days after creation, so this
+ * cannot recover anything older than that; what it returns is authoritative for the window it can.
+ */
+export async function fetchFormLeads(
+  formId: string,
+  after?: string | null,
+  limit = 100
+): Promise<{ leads: MetaLeadDetail[]; nextAfter: string | null }> {
+  if (!isMetaConfigured()) {
+    throw new MetaApiError('META_MARKETING_ACCESS_TOKEN is not configured', null, null);
+  }
+  try {
+    const params: Record<string, string | number> = {
+      access_token: token(),
+      fields: 'id,created_time,field_data,ad_id,adgroup_id,campaign_id,form_id',
+      limit,
+    };
+    if (after) params.after = after;
+    const { data } = await axios.get<{
+      data?: MetaLeadDetail[];
+      paging?: { cursors?: { after?: string }; next?: string };
+    }>(`${BASE}/${encodeURIComponent(formId)}/leads`, { params, timeout: 20000 });
+    return {
+      leads: data.data ?? [],
+      // A next cursor is only meaningful when there is a next page; META returns `paging.next`
+      // only while more remain, so gate the cursor on it rather than always echoing `after`.
+      nextAfter: data.paging?.next ? (data.paging?.cursors?.after ?? null) : null,
+    };
+  } catch (err) {
+    throw toMetaApiError(err, `fetchFormLeads(${formId})`);
+  }
+}
+
+/**
+ * List the Lead Gen forms on a Page, with their lead counts.
+ *
+ * Used by the backfill/seed tooling to discover which forms exist and how many leads each holds,
+ * so an operator linking a form to a requisition can see volume before committing.
+ */
+export async function fetchPageLeadForms(
+  pageId: string
+): Promise<Array<{ id: string; name: string; status: string; leadsCount: number }>> {
+  if (!isMetaConfigured()) {
+    throw new MetaApiError('META_MARKETING_ACCESS_TOKEN is not configured', null, null);
+  }
+  try {
+    const { data } = await axios.get<{
+      data?: Array<{ id: string; name?: string; status?: string; leads_count?: number }>;
+    }>(`${BASE}/${encodeURIComponent(pageId)}/leadgen_forms`, {
+      params: { access_token: token(), fields: 'id,name,status,leads_count', limit: 200 },
+      timeout: 20000,
+    });
+    return (data.data ?? []).map((f) => ({
+      id: f.id,
+      name: f.name ?? '',
+      status: f.status ?? '',
+      leadsCount: Number(f.leads_count ?? 0),
+    }));
+  } catch (err) {
+    throw toMetaApiError(err, `fetchPageLeadForms(${pageId})`);
+  }
+}
+
+/**
  * Pull insight counters for one campaign.
  *
  * `spend` comes back as the ad account's currency, NOT necessarily INR — the column is named
