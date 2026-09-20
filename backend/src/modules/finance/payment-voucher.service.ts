@@ -94,7 +94,7 @@ async function writeVoucherAudit(
  *  Sequence is a simple per-branch-per-month count; low-frequency path (vouchers, not
  *  attendance punches), so a UNIQUE-key collision is an acceptable, rare failure the caller
  *  simply retries rather than something this needs its own lock/loop for. */
-async function nextVoucherNumber(connection: PoolConnection, bankAccountId: string): Promise<string> {
+async function nextVoucherNumber(connection: PoolConnection, bankAccountId: string, voucherPrefix: "PV" | "RV" = "PV"): Promise<string> {
   const [[account]] = await connection.execute<RowDataPacket[]>(
     `SELECT b.branch_code
        FROM company_bank_account cba
@@ -104,7 +104,7 @@ async function nextVoucherNumber(connection: PoolConnection, bankAccountId: stri
   );
   const branchCode = String((account as any)?.branch_code ?? "HQ").replace(/[^A-Za-z0-9]/g, "").toUpperCase() || "HQ";
   const yyyymm = new Date().toISOString().slice(0, 7).replace("-", "");
-  const prefix = `PV/${branchCode}/${yyyymm}/`;
+  const prefix = `${voucherPrefix}/${branchCode}/${yyyymm}/`;
   const [[count]] = await connection.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS n FROM payment_voucher WHERE voucher_number LIKE ?`,
     [`${prefix}%`],
@@ -217,12 +217,14 @@ async function resolveExpenseClassification(
 }
 
 export interface RaiseVoucherInput {
-  sourceType: "vendor_grn" | "imprest_allocation" | "general" | "vendor_advance" | "vendor_advance_application";
+  sourceType: "vendor_grn" | "imprest_allocation" | "general" | "vendor_advance" | "vendor_advance_application" | "sales_receipt";
   bankAccountId: string;
   payableAccountId: string;
   /** Required when sourceType === 'general' — the free-text description a GRN/imprest name
    *  would otherwise supply (e.g. "March statutory PF challan", "Bank charges Q2"). */
   particulars?: string | null;
+  /** Party name for sales_receipt — the client/company who paid. Stored in particulars column. */
+  clientName?: string | null;
   /** Legacy single-GRN shape — still accepted; internally normalised into a one-row grnAllocations. */
   linkedVendorPaymentId?: string | null;
   /**
@@ -486,14 +488,15 @@ export const paymentVoucherService = {
   },
 
   async raise(input: RaiseVoucherInput, actorUserId: string, actorRole?: string) {
-    if ((input.sourceType as string) === "sales_receipt") {
-      throw new PaymentVoucherError("Sales-receipt vouchers are not available yet — vendor_grn, imprest_allocation and general only.");
-    }
-    if (!["vendor_grn", "imprest_allocation", "general", "vendor_advance", "vendor_advance_application"].includes(input.sourceType)) {
+    const isSalesReceipt = input.sourceType === "sales_receipt";
+    if (!["vendor_grn", "imprest_allocation", "general", "vendor_advance", "vendor_advance_application", "sales_receipt"].includes(input.sourceType)) {
       throw new PaymentVoucherError("Invalid source type");
     }
     if (input.sourceType === "general" && !input.particulars?.trim()) {
       throw new PaymentVoucherError("Particulars are required for a general payment (what this payment is for)");
+    }
+    if (isSalesReceipt && !input.clientName?.trim() && !input.particulars?.trim()) {
+      throw new PaymentVoucherError("Client name is required for a receipt voucher");
     }
     const amount = roundMoney(Number(input.amount));
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -571,8 +574,11 @@ export const paymentVoucherService = {
       // 'general' has no linkage to validate — Payable Account (already validated above) is the
       // category, and input.particulars (already required-checked above) is the description.
 
+      // sales_receipt has no vendor or imprest link — particulars carries the client/party name.
+      // The payable account (receivable type) is the Sundry Debtors ledger head for this receipt.
+
       id = randomUUID();
-      voucherNumber = await nextVoucherNumber(connection, input.bankAccountId);
+      voucherNumber = await nextVoucherNumber(connection, input.bankAccountId, isSalesReceipt ? "RV" : "PV");
 
       await connection.execute(
         `INSERT INTO payment_voucher
@@ -584,7 +590,7 @@ export const paymentVoucherService = {
         [
           id,
           voucherNumber,
-          input.voucherType ?? "payment",
+          isSalesReceipt ? "receipt" : (input.voucherType ?? "payment"),
           input.sourceType,
           input.bankAccountId,
           input.payableAccountId,
@@ -594,7 +600,7 @@ export const paymentVoucherService = {
           amount,
           input.remarks?.trim() || null,
           input.reason?.trim() || null,
-          input.particulars?.trim() || null,
+          input.sourceType === "sales_receipt" ? (input.clientName?.trim() ?? input.particulars?.trim() ?? null) : (input.particulars?.trim() || null),
           expenseClassification?.headCode ?? null,
           expenseClassification?.headName ?? null,
           expenseClassification?.subHeadCode ?? null,
