@@ -8,6 +8,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useWorkforceAccess } from '@/hooks/useUserRole';
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { FraudComparisonPanel } from "@/components/ats/FraudComparisonPanel";
+import { fraudReviewState, isBlocking, isUnresolved } from "@/lib/fraudReview";
+import { ReviewRequiredDialog } from "@/components/ats/fraud/ReviewRequiredDialog";
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -465,6 +467,13 @@ export default function NativeHROnboardingRequests() {
   const [fraudStatus, setFraudStatus] = useState<"idle" | "loading" | "ok" | "unknown">("idle");
   const [fraudAlertCount, setFraudAlertCount] = useState(0);
   const [fraudAcknowledged, setFraudAcknowledged] = useState(false);
+  // fraudAnyCount: every alert still waiting for a decision, of any severity.
+  // fraudPanelOpened: the reviewer has actually opened the Fraud & Identity Review section
+  // for this candidate — the photos and documents only appear once it is open.
+  const [fraudAnyCount, setFraudAnyCount] = useState(0);
+  const [fraudPanelOpened, setFraudPanelOpened] = useState(false);
+  const [showReviewDialog, setShowReviewDialog] = useState(false);
+  const fraudSectionRef = useRef<HTMLDivElement>(null);
   const [showFraudPanel, setShowFraudPanel] = useState(false);
 
   // ── Document preview state
@@ -984,6 +993,9 @@ export default function NativeHROnboardingRequests() {
     setFraudAlertCount(0);
     setFraudStatus("idle");
     setFraudAcknowledged(false);
+    setFraudAnyCount(0);
+    setFraudPanelOpened(false);
+    setShowReviewDialog(false);
     setShowFraudPanel(false);
     // Load all branch employees upfront for reporting manager dropdown
     void loadManagersByBranch(row.branch_id ?? '');
@@ -998,10 +1010,13 @@ export default function NativeHROnboardingRequests() {
       hrmsApi.get<any>(`/api/ats/fraud-alerts/candidate/${row.candidate_id}`)
         .then((r: any) => {
           const alerts: any[] = r?.alerts ?? [];
-          const blocking = alerts.filter((a: any) => (a.status === 'open' || a.status === 'under_review') && (a.severity === 'critical' || a.severity === 'high'));
+          const blocking = alerts.filter((a: any) => isBlocking(a));
+          const waiting = alerts.filter((a: any) => isUnresolved(a));
           setFraudAlertCount(blocking.length);
+          setFraudAnyCount(waiting.length);
           setFraudStatus("ok");
-          if (blocking.length > 0) setShowFraudPanel(true);
+          // Anything the system flagged opens the review for the reviewer; nothing flagged leaves it closed.
+          if (waiting.length > 0) setShowFraudPanel(true);
         })
         .catch(() => { setFraudAlertCount(0); setFraudStatus("unknown"); }),
     ]).finally(() => setDetailLoading(false));
@@ -1129,10 +1144,32 @@ export default function NativeHROnboardingRequests() {
     }
   };
 
+  // ── Fraud review gate
+  // When the system has flagged anything, the profile cannot be approved until the reviewer has
+  // looked at the review section, recorded a decision on every serious alert and confirmed.
+  // A profile with no flags is not affected. The server enforces the serious-alert part too.
+  useEffect(() => { if (showFraudPanel) setFraudPanelOpened(true); }, [showFraudPanel]);
+  const { needsReview: needsFraudReview, done: fraudReviewDone, pending: fraudReviewPending } = fraudReviewState({
+    anyUnresolved: fraudAnyCount,
+    blocking: fraudAlertCount,
+    opened: fraudPanelOpened,
+    acknowledged: fraudAcknowledged,
+  });
+
+  const openFraudSection = () => {
+    setShowReviewDialog(false);
+    setShowFraudPanel(true);
+    setTimeout(() => fraudSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+  };
+
   // ── Submit review
   const submitReview = async (status: 'approved' | 'hr_review') => {
     if (!selected) return;
     setReviewError(null);
+    if (status === 'approved' && fraudReviewPending) {
+      setShowReviewDialog(true);
+      return;
+    }
     if (status === 'hr_review' && !pushbackRemarks.trim()) {
       setReviewError('Push-back remarks are required.');
       return;
@@ -2316,7 +2353,7 @@ export default function NativeHROnboardingRequests() {
 
             {/* C-0 — Fraud Review Section (auto-expands when blocking alerts exist) */}
             {selected.profile_status !== 'onboarded' && (
-              <div className={`rounded-xl border shadow-sm overflow-hidden ${fraudAlertCount > 0 ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-white'}`}>
+              <div ref={fraudSectionRef} className={`rounded-xl border shadow-sm overflow-hidden ${fraudAlertCount > 0 ? 'border-red-300 bg-red-50' : needsFraudReview ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-white'}`}>
                 <button
                   type="button"
                   onClick={() => setShowFraudPanel(v => !v)}
@@ -2332,12 +2369,12 @@ export default function NativeHROnboardingRequests() {
                         {fraudAlertCount}
                       </span>
                     )}
-                    {fraudAlertCount > 0 && !fraudAcknowledged && (
+                    {fraudReviewPending && (
                       <span className="text-xs font-semibold text-red-700 bg-red-100 border border-red-200 px-2 py-0.5 rounded-full">
                         Review required before approving
                       </span>
                     )}
-                    {fraudAcknowledged && (
+                    {needsFraudReview && fraudReviewDone && (
                       <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
                         <CheckCircle2 className="h-3 w-3" /> Reviewed
                       </span>
@@ -2357,8 +2394,8 @@ export default function NativeHROnboardingRequests() {
                         hrmsApi.get<any>(`/api/ats/fraud-alerts/candidate/${selected.candidate_id}`)
                           .then((r: any) => {
                             const alerts: any[] = r?.alerts ?? [];
-                            const blocking = alerts.filter((a: any) => (a.status === 'open' || a.status === 'under_review') && (a.severity === 'critical' || a.severity === 'high'));
-                            setFraudAlertCount(blocking.length);
+                            setFraudAlertCount(alerts.filter((a: any) => isBlocking(a)).length);
+                            setFraudAnyCount(alerts.filter((a: any) => isUnresolved(a)).length);
                           })
                           .catch(() => {/* non-fatal */});
                       }}
@@ -2372,12 +2409,12 @@ export default function NativeHROnboardingRequests() {
             {selected.profile_status !== 'onboarded' && (
               <div className="rounded-xl border bg-white p-5 shadow-sm space-y-3">
                 <h3 className="font-bold text-slate-800">HR Review Decision</h3>
-                {fraudAlertCount > 0 && !fraudAcknowledged && (
+                {fraudReviewPending && (
                   <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800">
                     <ShieldAlert className="h-3.5 w-3.5 shrink-0 mt-0.5 text-red-600" />
                     <span>
-                      <strong>{fraudAlertCount} blocking fraud {fraudAlertCount === 1 ? 'alert' : 'alerts'} detected.</strong>{' '}
-                      Open the Fraud &amp; Identity Review section above, review each flag, and check the acknowledgement box to enable approval.
+                      <strong>The system flagged this profile ({fraudAnyCount} {fraudAnyCount === 1 ? 'alert' : 'alerts'}).</strong>{' '}
+                      Review the documents and the Fraud &amp; Identity Review section above, record a decision on each alert, and tick the box saying you have reviewed it. Approval stays locked until then.
                     </span>
                   </div>
                 )}
@@ -2406,16 +2443,26 @@ export default function NativeHROnboardingRequests() {
                   </Button>
                   <Button
                     type="button"
-                    disabled={reviewSaving || (fraudAlertCount > 0 && !fraudAcknowledged) || fraudStatus === "loading" || fraudStatus === "unknown"}
+                    disabled={reviewSaving || fraudStatus === "loading" || fraudStatus === "unknown"}
                     onClick={() => void submitReview('approved')}
-                    title={fraudStatus === "loading" ? 'Fraud check in progress' : fraudStatus === "unknown" ? 'Fraud check unavailable — approval blocked' : fraudAlertCount > 0 && !fraudAcknowledged ? 'Review fraud flags above before approving' : undefined}
-                    className={`min-h-[44px] flex-1 text-white transition-all ${(fraudAlertCount > 0 && !fraudAcknowledged) || fraudStatus === "loading" || fraudStatus === "unknown" ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+                    title={fraudStatus === "loading" ? 'Fraud check in progress' : fraudStatus === "unknown" ? 'Fraud check unavailable — approval blocked' : fraudReviewPending ? 'Review the flagged documents and fraud section first' : undefined}
+                    className={`min-h-[44px] flex-1 text-white transition-all ${fraudStatus === "loading" || fraudStatus === "unknown" ? 'bg-slate-300 cursor-not-allowed' : fraudReviewPending ? 'bg-slate-400 hover:bg-slate-500' : 'bg-emerald-600 hover:bg-emerald-700'}`}
                   >
                     {reviewSaving && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Approve Profile
                   </Button>
                 </div>
               </div>
             )}
+
+            {/* Shown when Approve is pressed on a profile the system flagged and the review is not finished */}
+            <ReviewRequiredDialog
+              open={showReviewDialog}
+              onOpenChange={setShowReviewDialog}
+              onGoToReview={openFraudSection}
+              panelOpened={fraudPanelOpened}
+              blockingCount={fraudAlertCount}
+              acknowledged={fraudAcknowledged}
+            />
 
             {/* D — Employment Offer form: hide when offer submitted/approved, show pending BH rejection or no offer yet */}
             {(selected.profile_status === 'profile_submitted' || selected.profile_status === 'hr_approved') && (() => {

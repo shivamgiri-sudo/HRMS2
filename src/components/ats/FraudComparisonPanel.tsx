@@ -33,8 +33,22 @@ import {
   ZoomIn,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { formatDecisionNote, type ResolutionOption } from "@/lib/fraudResolutions";
+import {
+  alertKind,
+  alertTitle,
+  buildPersonRows,
+  buildSelfRows,
+  computeVerdict,
+  isBlocking,
+  isUnresolved,
+  type AlertKind,
+  type IdentityComparison,
+} from "@/lib/fraudReview";
+import { DecisionCard } from "@/components/ats/fraud/DecisionCard";
+import { SideBySide } from "@/components/ats/fraud/SideBySide";
+import { VerdictCard } from "@/components/ats/fraud/VerdictCard";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -101,6 +115,8 @@ interface NameDetail {
 
 interface ComparisonData {
   alerts: FraudAlert[];
+  /** Who the blocking alert matched, and what each side says about themselves. Absent on older servers. */
+  identity?: IdentityComparison | null;
   faceMatches: FaceMatch[];
   docs: DocRow[];
   profile: { employee_name?: string; aadhaar_number_masked?: string; pan_number_masked?: string } | null;
@@ -128,80 +144,6 @@ interface FaceBbox {
   imageWidth: number;
   imageHeight: number;
 }
-
-// ── Resolution options, keyed by what the alert actually checked ─────────────
-//
-// These used to be one fixed list for every alert type, worded entirely around
-// name spelling ("written differently", "changed after marriage"). That fits a
-// shared-identity duplicate, but makes no sense for a face-photo mismatch or a
-// bare account-number/document-number mismatch — a reviewer clearing one of
-// those had no honest option to pick. Split by what the alert is actually
-// about instead.
-
-type ResolutionOption = {
-  value: "resolved_false_positive" | "resolved_fraud" | "dismissed";
-  code: string;
-  label: string;
-  hint: string;
-};
-
-// DUPLICATE_AADHAAR / DUPLICATE_PAN / DUPLICATE_BANK_ACCOUNT / REPEAT_APPLICANT:
-// the question is whether this is the same person re-applying under a name
-// variant, or a genuinely different person sharing someone else's identifier.
-const IDENTITY_DUPLICATE_RESOLUTIONS: ResolutionOption[] = [
-  { value: "resolved_false_positive", code: "name_variance",  label: "Same person — name written differently",  hint: "Initials, added/dropped middle name, regional ordering" },
-  { value: "resolved_false_positive", code: "married_name",   label: "Name changed after marriage",             hint: "Supporting document seen" },
-  { value: "resolved_false_positive", code: "data_entry",     label: "Our data was wrong",                     hint: "OCR misread or a typo in the record" },
-  { value: "resolved_fraud",          code: "confirmed_fraud", label: "Confirmed — different person",           hint: "Candidate rejected" },
-  { value: "dismissed",               code: "not_applicable",  label: "Not applicable",                         hint: "Raised in error or duplicate alert" },
-];
-
-// FACE_MISMATCH: a photo comparison, not a name or number.
-const FACE_MISMATCH_RESOLUTIONS: ResolutionOption[] = [
-  { value: "resolved_false_positive", code: "image_quality",  label: "Same person — image quality issue",  hint: "Lighting, angle, blur, or a low-resolution scan" },
-  { value: "resolved_false_positive", code: "wrong_photo",    label: "Wrong photo was compared",           hint: "Document or selfie was mismatched; corrected" },
-  { value: "resolved_fraud",          code: "confirmed_fraud", label: "Confirmed — different person",      hint: "Candidate rejected" },
-  { value: "dismissed",               code: "not_applicable",  label: "Not applicable",                    hint: "Raised in error or duplicate alert" },
-];
-
-// DOCUMENT_NUMBER_MISMATCH / CHEQUE_ACCOUNT_MISMATCH: a bare digit-string
-// comparison — there is no name and no photo involved.
-const NUMBER_MISMATCH_RESOLUTIONS: ResolutionOption[] = [
-  { value: "resolved_false_positive", code: "ocr_misread",    label: "OCR misread the document",             hint: "Number confirmed correct on manual review" },
-  { value: "resolved_false_positive", code: "data_entry",     label: "Candidate's entered number was wrong", hint: "Corrected the record to match the document" },
-  { value: "resolved_fraud",          code: "confirmed_fraud", label: "Confirmed — number does not match",   hint: "Candidate could not produce a matching document" },
-  { value: "dismissed",               code: "not_applicable",  label: "Not applicable",                      hint: "Raised in error or duplicate alert" },
-];
-
-const RESOLUTIONS_BY_ALERT_TYPE: Record<string, ResolutionOption[]> = {
-  DUPLICATE_AADHAAR: IDENTITY_DUPLICATE_RESOLUTIONS,
-  DUPLICATE_PAN: IDENTITY_DUPLICATE_RESOLUTIONS,
-  DUPLICATE_BANK_ACCOUNT: IDENTITY_DUPLICATE_RESOLUTIONS,
-  REPEAT_APPLICANT: IDENTITY_DUPLICATE_RESOLUTIONS,
-  FACE_MISMATCH: FACE_MISMATCH_RESOLUTIONS,
-  DOCUMENT_NUMBER_MISMATCH: NUMBER_MISMATCH_RESOLUTIONS,
-  CHEQUE_ACCOUNT_MISMATCH: NUMBER_MISMATCH_RESOLUTIONS,
-};
-
-function resolutionsForAlertType(alertType: string): ResolutionOption[] {
-  return RESOLUTIONS_BY_ALERT_TYPE[alertType] ?? IDENTITY_DUPLICATE_RESOLUTIONS;
-}
-
-// ── Severity styles ───────────────────────────────────────────────────────────
-
-const SEVERITY_BG: Record<string, string> = {
-  critical: "bg-red-100 text-red-800 border-red-300",
-  high:     "bg-orange-100 text-orange-800 border-orange-300",
-  medium:   "bg-amber-100 text-amber-800 border-amber-300",
-  low:      "bg-slate-100 text-slate-700 border-slate-300",
-};
-
-const SEVERITY_BORDER: Record<string, string> = {
-  critical: "border-red-300 bg-red-50",
-  high:     "border-orange-300 bg-orange-50",
-  medium:   "border-amber-200 bg-amber-50",
-  low:      "border-slate-200 bg-slate-50",
-};
 
 // ── Face Photo Cell with canvas-based face alignment ─────────────────────────
 
@@ -521,6 +463,8 @@ interface FraudComparisonPanelProps {
   showActions?: boolean;
   /** Called when HR acknowledges fraud review — unblocks the Approve button */
   onAcknowledged?: (acknowledged: boolean) => void;
+  /** Show the "I have reviewed" box. Only the profile-approval screen needs it; the alert queue does not. */
+  showAcknowledgement?: boolean;
   /** Called when any alert is resolved (triggers reload in parent) */
   onAlertResolved?: () => void;
 }
@@ -529,6 +473,7 @@ export function FraudComparisonPanel({
   candidateId,
   candidateName,
   showActions = true,
+  showAcknowledgement = true,
   onAcknowledged,
   onAlertResolved,
 }: FraudComparisonPanelProps) {
@@ -536,11 +481,8 @@ export function FraudComparisonPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
 
-  // Resolution state per alert
-  const [choice, setChoice]   = useState<Record<string, number>>({});
-  const [notes, setNotes]     = useState<Record<string, string>>({});
+  // Which alert is currently being saved
   const [savingId, setSavingId] = useState<string | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Acknowledgement gate
   const [acknowledged, setAcknowledged] = useState(false);
@@ -574,26 +516,18 @@ export function FraudComparisonPanel({
     onAcknowledged?.(checked);
   };
 
-  const resolveAlert = async (alert: FraudAlert) => {
-    const picked = resolutionsForAlertType(alert.alert_type)[choice[alert.id] ?? -1];
-    const reason = (notes[alert.id] ?? "").trim();
-    if (!picked) { setSaveError("Choose what you found before clearing this alert."); return; }
-    // None of the resolutionsForAlertType() lists has an "under_review" option —
-    // every real choice here already requires a note, so this was already
-    // unconditional at runtime. Simplified rather than widening the option
-    // type just to keep a comparison that could never be true.
-    if (!reason) { setSaveError("Add a note — it becomes the audit record."); return; }
+  // The stored status and the "[code] reason" audit note are exactly what the older
+  // form wrote; only the screen that collects them changed. Throws on failure so the
+  // decision card can show its own message and keep what the reviewer typed.
+  const saveDecision = async (alert: FraudAlert, option: ResolutionOption, note: string) => {
     setSavingId(alert.id);
-    setSaveError(null);
     try {
       await hrmsApi.patch(`/api/ats/fraud-alerts/${alert.id}/review`, {
-        status: picked.value,
-        notes: `[${picked.code}] ${reason}`,
+        status: option.value,
+        notes: formatDecisionNote(option, note),
       });
       onAlertResolved?.();
       await load();
-    } catch {
-      setSaveError("Could not save decision. Nothing was changed.");
     } finally {
       setSavingId(null);
     }
@@ -721,41 +655,72 @@ export function FraudComparisonPanel({
   const panEntered  = profile?.pan_number_masked;
   const panBgvCheck = bgvNames.find(b => b.check_type === "pan");
 
+  // ── Plain-language summary of what the system found ─────────────────────────
+  const identity = data.identity ?? null;
+  const primaryAlert = openAlerts.find(a => isBlocking(a)) ?? openAlerts[0] ?? alerts[0] ?? null;
+  const primaryKind: AlertKind = primaryAlert ? alertKind(primaryAlert.alert_type) : "other";
+  const otherPerson = identity?.other ?? null;
+  const otherLabel = otherPerson ? (otherPerson.employee?.name ?? otherPerson.displayName ?? otherPerson.name ?? null) : null;
+  const otherName = primaryAlert?.matched_candidate_name ?? otherLabel;
+  // Only claim "probably a misread" when an official PAN check confirmed the typed PAN;
+  // numbers read off a photo by machine are never proof either way.
+  const alertText = (primaryAlert ? (getAlertMessage(primaryAlert.details) ?? "") : "").toLowerCase();
+  const numberVerifiedByProvider =
+    /pan/.test(alertText) && bgvNames.some(b => b.check_type === "pan" && b.status === "verified");
+  const verdict = computeVerdict(identity, {
+    kind: primaryKind,
+    faceScore: primaryMatch?.match_score ?? null,
+    numberVerifiedByProvider,
+  });
+  const sideRows = otherPerson && identity ? buildPersonRows(identity) : identity?.subject.govt ? buildSelfRows(identity.subject) : [];
+  const sideHeaders = otherPerson
+    ? {
+        left: { title: "This candidate", sub: candidateName ?? identity?.subject.name ?? undefined },
+        right: {
+          title: otherPerson.employee ? `Employee ${otherPerson.employee.code}` : `Candidate ${otherPerson.code ?? ""}`.trim(),
+          sub: `${otherLabel ?? ""}${otherPerson.employee?.status ? ` · ${otherPerson.employee.status}` : ""}`.trim() || undefined,
+        },
+      }
+    : { left: { title: "Typed by candidate" }, right: { title: "Government record", sub: "DigiLocker" } };
+
   return (
     <div className="space-y-5">
 
-      {/* ── Alert Summary Banner ──────────────────────────────────────────── */}
+      {/* ── What is wrong, in words ───────────────────────────────────────── */}
       <div className={`rounded-xl border p-4 ${blockingAlerts.length > 0 ? "border-red-300 bg-red-50" : openAlerts.length > 0 ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-start gap-3">
           {blockingAlerts.length > 0
-            ? <ShieldAlert className="h-5 w-5 text-red-600 shrink-0" />
+            ? <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
             : openAlerts.length > 0
-              ? <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
-              : <ShieldCheck className="h-5 w-5 text-emerald-600 shrink-0" />
-          }
-          <div className="flex-1 min-w-0">
-            {openAlerts.length === 0
-              ? <p className="text-sm font-bold text-emerald-800">No open fraud alerts — candidate cleared</p>
-              : <>
-                  <p className="text-sm font-bold text-slate-900">
-                    {openAlerts.length} open fraud {openAlerts.length === 1 ? "alert" : "alerts"}
-                    {blockingAlerts.length > 0 && <span className="ml-1 text-red-700">· {blockingAlerts.length} blocking employee creation</span>}
+              ? <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+              : <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />}
+          <div className="min-w-0 flex-1">
+            {openAlerts.length === 0 ? (
+              <p className="text-sm font-bold text-emerald-800">No open alerts. Nothing needs your decision here.</p>
+            ) : (
+              <>
+                <p className="text-base font-bold text-slate-900">{primaryAlert ? alertTitle(primaryAlert.alert_type, otherName) : "The system flagged this profile"}</p>
+                {otherPerson?.employee && (
+                  <p className="mt-0.5 text-sm text-slate-700">
+                    {otherPerson.employee.name ?? "That person"} is {otherPerson.employee.status ? `an ${otherPerson.employee.status.toLowerCase()} employee` : "an employee"} ({otherPerson.employee.code}).
                   </p>
-                  <p className="text-xs text-slate-600 mt-0.5">
-                    Indian name rules applied: shuffle, initials and dropped middle words are acceptable. Review each flag below.
-                  </p>
-                </>
-            }
+                )}
+                <p className="mt-1 text-xs text-slate-600">
+                  {blockingAlerts.length > 0
+                    ? "Approval and hiring wait until you record a decision below."
+                    : "This alert does not stop hiring, but please look at it."}
+                  {openAlerts.length > 1 && ` ${openAlerts.length} alerts need a decision.`}
+                </p>
+              </>
+            )}
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {openAlerts.map(a => (
-              <Badge key={a.id} className={`border text-[10px] font-bold ${SEVERITY_BG[a.severity]}`}>
-                {a.alert_type.replace(/_/g, " ")}
-              </Badge>
-            ))}
-          </div>
+          {blockingAlerts.length > 0 && (
+            <Badge className="border border-red-300 bg-red-100 text-[11px] font-bold text-red-800">Blocks hiring</Badge>
+          )}
         </div>
       </div>
+
+      {openAlerts.length > 0 && <VerdictCard verdict={verdict} />}
 
       {/* ── Face Comparison Grid ─────────────────────────────────────────── */}
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
@@ -766,7 +731,7 @@ export function FraudComparisonPanel({
         >
           <div className="flex items-center gap-2">
             <Eye className="h-4 w-4 text-blue-600" />
-            <span className="text-sm font-bold text-slate-800">Face Comparison</span>
+            <span className="text-sm font-bold text-slate-800">Photos: do these look like the same person?</span>
             {primaryMatch && (
               <MatchScoreBadge score={primaryMatch.match_score} status={primaryMatch.match_status} />
             )}
@@ -777,7 +742,7 @@ export function FraudComparisonPanel({
         {showFaces && (
           <div className="border-t border-slate-100 p-4 space-y-4">
             <p className="text-[11px] text-slate-500">
-              All faces are auto-detected and vertically aligned for comparison. The DigiLocker source is government-verified (ground truth). Face match score is selfie vs DigiLocker.
+              Click a photo to enlarge it. The DigiLocker photo comes from the government record, so it is the one to trust most. The score compares the selfie with that photo.
             </p>
 
             {/*
@@ -830,6 +795,30 @@ export function FraudComparisonPanel({
                 />
               </div>
             </div>
+
+            {otherPerson && (
+              <div className="border-t border-slate-100 pt-4">
+                <SectionHeader>The other person{otherLabel ? `: ${otherLabel}` : ""}</SectionHeader>
+                <div className="flex flex-wrap justify-start gap-6">
+                  <FacePhotoCell
+                    documentId={otherPerson.selfieDocId}
+                    label="Live Selfie"
+                    subLabel={otherLabel ?? undefined}
+                    noFaceText="No selfie uploaded"
+                  />
+                  {otherPerson.hasDigilockerPhoto && (
+                    <FacePhotoCell
+                      documentId={null}
+                      photoUrl={`/api/ats/fraud-alerts/documents/digilocker-face-photo/${otherPerson.candidateId}`}
+                      label="DigiLocker Aadhaar"
+                      subLabel="Govt-verified · ground truth"
+                      isTrusted
+                      noFaceText="DigiLocker photo not available"
+                    />
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* PAN comparison if PAN docs exist */}
             {(panDigi?.id || panManual?.id || showDigilockerForPan) && (
@@ -913,6 +902,33 @@ export function FraudComparisonPanel({
         )}
       </div>
 
+      {sideRows.length > 0 && openAlerts.length > 0 && (
+        <SideBySide left={sideHeaders.left} right={sideHeaders.right} rows={sideRows} />
+      )}
+
+      {/* ── Decision comes first; the full source tables stay available below ── */}
+      {showActions && openAlerts.length > 0 && (
+        <div className="space-y-3">
+          {openAlerts.map(alert => (
+            <DecisionCard
+              key={alert.id}
+              alertId={alert.id}
+              alertType={alert.alert_type}
+              kind={alertKind(alert.alert_type)}
+              title={alertTitle(alert.alert_type, alert.matched_candidate_name ?? otherName)}
+              verdict={verdict}
+              saving={savingId === alert.id}
+              onSave={(option, note) => saveDecision(alert, option, note)}
+            />
+          ))}
+        </div>
+      )}
+
+      <details className="group rounded-xl border border-slate-200 bg-white">
+        <summary className="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-slate-800">
+          More evidence: name sources and document numbers
+        </summary>
+        <div className="space-y-5 border-t border-slate-100 p-4">
       {/* ── Name Comparison Table ─────────────────────────────────────────── */}
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
         <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100">
@@ -1074,83 +1090,15 @@ export function FraudComparisonPanel({
         </div>
       </div>
 
-      {/* ── Alert Resolution + Acknowledgement Gate ───────────────────────── */}
-      {showActions && openAlerts.length > 0 && (
-        <div className="space-y-3">
-          {saveError && (
-            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" /> {saveError}
-            </div>
-          )}
-
-          {openAlerts.map(alert => (
-            <div key={alert.id} className={`rounded-xl border p-4 space-y-3 ${SEVERITY_BORDER[alert.severity]}`}>
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge className={`border text-[10px] font-bold ${SEVERITY_BG[alert.severity]}`}>{alert.severity}</Badge>
-                <span className="font-mono text-xs font-bold text-slate-700">{alert.alert_type.replace(/_/g, " ")}</span>
-                {alert.matched_candidate_id && (
-                  <span className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border border-violet-200 bg-violet-50 text-violet-700">
-                    Matched: {alert.matched_candidate_name ?? alert.matched_candidate_id}
-                  </span>
-                )}
-                {alert.created_at && (
-                  <span className="text-xs text-slate-400 ml-auto">{String(alert.created_at).slice(0, 10)}</span>
-                )}
-              </div>
-
-              {getAlertMessage(alert.details) && (
-                <p className="text-xs text-slate-600 bg-white/60 border border-slate-200 rounded-lg px-3 py-2">
-                  {getAlertMessage(alert.details)}
-                </p>
-              )}
-
-              {/* Resolution choices */}
-              <div className="grid gap-1.5">
-                {resolutionsForAlertType(alert.alert_type).map((opt, idx) => (
-                  <label
-                    key={`${alert.id}-${opt.code}`}
-                    className={`flex items-start gap-2.5 rounded-lg border p-2.5 cursor-pointer text-xs transition-colors ${
-                      choice[alert.id] === idx ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white hover:border-slate-300"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name={`resolution-${alert.id}`}
-                      checked={choice[alert.id] === idx}
-                      onChange={() => setChoice(prev => ({ ...prev, [alert.id]: idx }))}
-                      className="mt-0.5 accent-blue-600"
-                    />
-                    <span>
-                      <span className="font-semibold text-slate-900">{opt.label}</span>
-                      <span className="block text-slate-500">{opt.hint}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-
-              <textarea
-                value={notes[alert.id] ?? ""}
-                onChange={e => setNotes(prev => ({ ...prev, [alert.id]: e.target.value }))}
-                placeholder="What did you check and what did it show? This is the audit record."
-                rows={2}
-                className="w-full rounded-lg border border-slate-300 p-2.5 text-xs focus:border-blue-400 focus:outline-none resize-none"
-              />
-
-              <Button
-                onClick={() => void resolveAlert(alert)}
-                disabled={savingId === alert.id}
-                size="sm"
-                className="bg-blue-600 hover:bg-blue-700 min-h-[36px]"
-              >
-                {savingId === alert.id ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> Saving…</> : "Record decision"}
-              </Button>
-            </div>
-          ))}
         </div>
-      )}
+      </details>
 
-      {/* ── Acknowledgement Gate (unblocks Approve button in parent) ─────── */}
-      {showActions && (
+      {/* ── Acknowledgement Gate ──────────────────────────────────────────
+          Only shown when the system actually flagged something — a clean
+          candidate's "No open alerts" banner above is already the whole
+          story, and a checkbox claiming to "enable" an already-enabled
+          Approve button would be describing a gate that isn't there. */}
+      {showActions && showAcknowledgement && openAlerts.length > 0 && (
         <label className={`flex items-start gap-3 rounded-xl border p-4 cursor-pointer transition-colors ${acknowledged ? "border-emerald-300 bg-emerald-50" : "border-blue-200 bg-blue-50/60 hover:border-blue-300"}`}>
           <input
             type="checkbox"
@@ -1161,10 +1109,9 @@ export function FraudComparisonPanel({
           <div>
             <p className="text-sm font-bold text-slate-900">I have reviewed all fraud flags for {candidateName ?? "this candidate"}</p>
             <p className="text-xs text-slate-600 mt-0.5">
-              Checking this box records your review and enables the Approve Profile button.
-              {blockingAlerts.length > 0 && openAlerts.some(a => a.status === "open") && (
-                <span className="text-red-700 font-semibold"> Blocking alerts must be resolved first.</span>
-              )}
+              {blockingAlerts.length > 0
+                ? "This profile is flagged. Decide each alert above, then check this box to confirm your review — approval stays locked until you do."
+                : "Checking this box confirms you reviewed the flag above, even though it doesn't block approval."}
             </p>
           </div>
         </label>
