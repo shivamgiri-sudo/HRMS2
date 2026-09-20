@@ -277,6 +277,18 @@ metaCampaignRouter.get(
   })
 );
 
+/** One lead with its full raw form answers — backs the All Leads drill-down drawer. */
+metaCampaignRouter.get(
+  '/leads/:id',
+  requireAuth,
+  requireRole(...CAMPAIGN_READ_ROLES),
+  h(async (req, res) => {
+    const data = await metaCampaignService.getLeadDetail(req.params.id!);
+    if (!data) return res.status(404).json({ success: false, message: 'Lead not found' });
+    return res.json({ success: true, data });
+  })
+);
+
 /** Lead Gen forms on a Page, for discovery when linking a form to a requisition. */
 metaCampaignRouter.get(
   '/page-forms/:pageId',

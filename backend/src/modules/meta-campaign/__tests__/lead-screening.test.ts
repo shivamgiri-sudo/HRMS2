@@ -8,7 +8,15 @@
  * through to qualified, never to rejected.
  */
 import { describe, expect, it } from 'vitest';
-import { parseLead, normalisePhone, deriveAge, deriveExperienceYears, normaliseMetaId } from '../meta-lead.parser.js';
+import {
+  parseLead,
+  normalisePhone,
+  deriveAge,
+  deriveExperienceYears,
+  normaliseMetaId,
+  normaliseRoutingCode,
+  extractRoutingCode,
+} from '../meta-lead.parser.js';
 import { screenLead, eduRank } from '../lead-screener.service.js';
 import type { MetaLeadDetail } from '../meta-campaign.types.js';
 
@@ -61,6 +69,47 @@ describe('parseLead', () => {
     // ats.service.ts documents that recruiters enter junk like "0" and "AN" where a candidate has
     // no email; storing that as an address would poison dedup on the ATS side.
     expect(parseLead(detail([['email', '0']])).email).toBeNull();
+  });
+
+  it('surfaces a hidden requisition_code as routingCode', () => {
+    const parsed = parseLead(
+      detail([
+        ['full_name', 'Routed Person'],
+        ['requisition_code', 'REQ-2609-K7BK'],
+      ])
+    );
+    expect(parsed.routingCode).toBe('REQ-2609-K7BK');
+  });
+
+  it('leaves routingCode null when the form carries no routing field', () => {
+    expect(parseLead(detail([['full_name', 'No Code']])).routingCode).toBeNull();
+  });
+});
+
+describe('normaliseRoutingCode', () => {
+  it('uppercases, trims and strips wrapping quotes without touching hyphens', () => {
+    expect(normaliseRoutingCode('  req-2609-k7bk ')).toBe('REQ-2609-K7BK');
+    expect(normaliseRoutingCode('"REQ-2609-K7BK"')).toBe('REQ-2609-K7BK');
+    expect(normaliseRoutingCode('REQ 2609 K7BK')).toBe('REQ2609K7BK');
+  });
+
+  it('rejects non-codes so they never become a lookup that quietly matches nothing', () => {
+    expect(normaliseRoutingCode('N/A')).toBeNull(); // collapses to "NA", under the 3-char floor
+    expect(normaliseRoutingCode('-')).toBeNull();
+    expect(normaliseRoutingCode('')).toBeNull();
+    expect(normaliseRoutingCode(null)).toBeNull();
+  });
+});
+
+describe('extractRoutingCode', () => {
+  it('reads the code under any of the accepted aliases', () => {
+    expect(extractRoutingCode(detail([['batch_requisition_id', 'REQ-1']]))).toBe('REQ-1');
+    expect(extractRoutingCode(detail([['req_code', 'req-2']]))).toBe('REQ-2');
+    expect(extractRoutingCode(detail([['hrms_requisition_code_do_not_edit', 'REQ-3']]))).toBe('REQ-3');
+  });
+
+  it('returns null when no routing field is present', () => {
+    expect(extractRoutingCode(detail([['full_name', 'X'], ['phone_number', '9']]))).toBeNull();
   });
 });
 

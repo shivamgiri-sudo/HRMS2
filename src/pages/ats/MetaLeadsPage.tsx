@@ -11,6 +11,10 @@
  * email, screening is a server-side filter, both reset the offset to 0 on change (a stale offset
  * against a smaller filtered set would land on an empty page).
  *
+ * Clicking a row opens a drill-down drawer that fetches GET /api/meta/leads/:id — the single-lead
+ * endpoint that carries the raw form answers (every question META delivered, including the hidden
+ * requisition_code), which the list endpoint omits to keep the 2,600-row table light.
+ *
  * Every value shown is a stored, parsed lead field or a joined requisition/campaign name. There are
  * no client-side computed metrics here, so nothing on this page can drift from the database.
  */
@@ -20,6 +24,8 @@ import {
   ChevronRight,
   Download,
   Filter,
+  Mail,
+  Phone,
   RefreshCcw,
   Search,
   Users,
@@ -27,6 +33,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { EmptyState, num } from "@/components/analytics/analytics-kit";
 
 type Lead = {
@@ -54,6 +61,11 @@ type Lead = {
   campaignName: string | null;
 };
 
+type LeadDetail = Lead & {
+  routingCode: string | null;
+  fields: Array<{ name: string; value: string }>;
+};
+
 const SCREENING_BADGE: Record<Lead["screeningResult"], string> = {
   qualified: "bg-emerald-100 text-emerald-700",
   disqualified: "bg-rose-100 text-rose-700",
@@ -75,6 +87,15 @@ function fmtDateTime(value: string | null): string {
   });
 }
 
+/** Pretty-print a raw META field name (snake_case question) into a readable label. */
+function humaniseFieldName(name: string): string {
+  return name
+    .replace(/[_?]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function csvCell(value: unknown): string {
   const s = value == null ? "" : String(value);
   // Quote and escape any cell that could break CSV structure or trigger formula injection.
@@ -94,6 +115,12 @@ export default function MetaLeadsPage() {
   const [searchInput, setSearchInput] = useState("");
   const [screening, setScreening] = useState<string>("all");
   const [offset, setOffset] = useState(0);
+
+  // Drill-down drawer
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [detail, setDetail] = useState<LeadDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
 
   const load = useCallback(
     async (isRefresh = false) => {
@@ -134,6 +161,23 @@ export default function MetaLeadsPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
+  const openLead = useCallback(async (lead: Lead) => {
+    setDrawerOpen(true);
+    setDetailLoading(true);
+    setDetailError("");
+    // Seed the drawer from the row we already have, so the header renders instantly while the
+    // full field data loads.
+    setDetail({ ...lead, routingCode: null, fields: [] });
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: LeadDetail }>(`/api/meta/leads/${lead.id}`);
+      setDetail(res.data);
+    } catch (err: unknown) {
+      setDetailError((err as { message?: string })?.message || "Unable to load lead detail");
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
   const page = Math.floor(offset / PAGE_SIZE) + 1;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const showingFrom = total === 0 ? 0 : offset + 1;
@@ -173,10 +217,10 @@ export default function MetaLeadsPage() {
       <div className="space-y-4">
         <header className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3.5 shadow-sm">
           <div className="min-w-0">
-            <h1 className="flex items-center gap-2 text-lg font-bold text-slate-900">
-              <Users className="h-5 w-5 text-blue-600" /> META Leads
+            <h1 className="flex items-center gap-2 text-xl font-bold text-slate-900">
+              <Users className="h-6 w-6 text-blue-600" /> META Leads
             </h1>
-            <p className="mt-0.5 text-[12px] text-slate-500">
+            <p className="mt-1 text-sm text-slate-500">
               Every lead captured from META Lead Gen forms across all campaigns. {num(total)} total.
             </p>
           </div>
@@ -186,14 +230,14 @@ export default function MetaLeadsPage() {
               disabled={rows.length === 0}
               className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
             >
-              <Download className="h-3.5 w-3.5" /> Export page
+              <Download className="h-4 w-4" /> Export page
             </button>
             <button
               onClick={() => void load(true)}
               disabled={refreshing}
               className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg bg-slate-900 px-3 text-sm font-semibold text-white transition-colors hover:bg-slate-700 disabled:opacity-60"
             >
-              <RefreshCcw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              <RefreshCcw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
               {refreshing ? "Loading…" : "Refresh"}
             </button>
           </div>
@@ -207,13 +251,13 @@ export default function MetaLeadsPage() {
 
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
           <div className="relative flex-1 min-w-[220px]">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               aria-label="Search leads by name, phone or email"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               placeholder="Search name, phone or email"
-              className="h-9 w-full rounded-lg border border-slate-200 pl-8 pr-8 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              className="h-10 w-full rounded-lg border border-slate-200 pl-9 pr-8 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             />
             {searchInput && (
               <button
@@ -221,12 +265,12 @@ export default function MetaLeadsPage() {
                 onClick={() => setSearchInput("")}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
               >
-                <X className="h-3.5 w-3.5" />
+                <X className="h-4 w-4" />
               </button>
             )}
           </div>
           <div className="relative">
-            <Filter className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            <Filter className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <select
               aria-label="Filter by screening result"
               value={screening}
@@ -234,7 +278,7 @@ export default function MetaLeadsPage() {
                 setOffset(0);
                 setScreening(e.target.value);
               }}
-              className="h-9 rounded-lg border border-slate-200 pl-7 pr-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-500"
+              className="h-10 rounded-lg border border-slate-200 pl-8 pr-2 text-sm font-semibold text-slate-700 outline-none focus:border-blue-500"
             >
               {[
                 ["all", "All screening"],
@@ -254,7 +298,7 @@ export default function MetaLeadsPage() {
           {loading ? (
             <div className="space-y-2 p-4">
               {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="h-11 animate-pulse rounded-lg bg-slate-100" />
+                <div key={i} className="h-12 animate-pulse rounded-lg bg-slate-100" />
               ))}
             </div>
           ) : rows.length === 0 ? (
@@ -274,7 +318,7 @@ export default function MetaLeadsPage() {
                 <thead className="sticky top-0 z-10 bg-slate-50 text-left">
                   <tr className="border-b border-slate-200">
                     {["Lead", "Age", "Location", "Education / Exp", "Screening", "Requisition", "Source Form", "ATS", "Received"].map((h) => (
-                      <th key={h} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      <th key={h} className="px-3 py-3 text-xs font-bold uppercase tracking-wider text-slate-500">
                         {h}
                       </th>
                     ))}
@@ -282,49 +326,53 @@ export default function MetaLeadsPage() {
                 </thead>
                 <tbody>
                   {rows.map((l) => (
-                    <tr key={l.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/70">
-                      <td className="px-3 py-2">
-                        <div className="text-xs font-semibold text-slate-900">{l.parsedName ?? "—"}</div>
-                        <div className="text-[10px] text-slate-400">{l.parsedPhone ?? "no phone"}</div>
-                        {l.parsedEmail && <div className="text-[10px] text-slate-400">{l.parsedEmail}</div>}
+                    <tr
+                      key={l.id}
+                      onClick={() => void openLead(l)}
+                      className="cursor-pointer border-b border-slate-100 last:border-0 hover:bg-blue-50/60"
+                    >
+                      <td className="px-3 py-2.5">
+                        <div className="text-sm font-semibold text-slate-900">{l.parsedName ?? "—"}</div>
+                        <div className="text-xs text-slate-500">{l.parsedPhone ?? "no phone"}</div>
+                        {l.parsedEmail && <div className="text-xs text-slate-400">{l.parsedEmail}</div>}
                       </td>
-                      <td className="px-3 py-2 text-[11px] text-slate-600">{l.parsedAge != null ? `${l.parsedAge}` : "—"}</td>
-                      <td className="px-3 py-2 text-[11px] text-slate-600">{l.parsedLocation ?? "—"}</td>
-                      <td className="px-3 py-2 text-[11px] text-slate-600">
+                      <td className="px-3 py-2.5 text-sm text-slate-600">{l.parsedAge != null ? `${l.parsedAge}` : "—"}</td>
+                      <td className="px-3 py-2.5 text-sm text-slate-600">{l.parsedLocation ?? "—"}</td>
+                      <td className="px-3 py-2.5 text-sm text-slate-600">
                         <div>{l.parsedEducation ?? "—"}</div>
-                        <div className="text-[10px] text-slate-400">
+                        <div className="text-xs text-slate-400">
                           {l.parsedExperienceYr != null ? `${l.parsedExperienceYr} yrs exp` : "exp —"}
                         </div>
                       </td>
-                      <td className="px-3 py-2">
-                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${SCREENING_BADGE[l.screeningResult]}`}>
+                      <td className="px-3 py-2.5">
+                        <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-bold ${SCREENING_BADGE[l.screeningResult]}`}>
                           {l.screeningResult}
                         </span>
                         {l.disqualificationReason && (
-                          <div className="mt-1 max-w-[180px] text-[10px] leading-snug text-slate-500">{l.disqualificationReason}</div>
+                          <div className="mt-1 max-w-[190px] text-xs leading-snug text-slate-500">{l.disqualificationReason}</div>
                         )}
                       </td>
-                      <td className="px-3 py-2">
-                        <div className="font-mono text-[11px] text-slate-700">{l.requisitionCode ?? "—"}</div>
-                        <div className="text-[10px] text-slate-400">
+                      <td className="px-3 py-2.5">
+                        <div className="font-mono text-sm text-slate-700">{l.requisitionCode ?? "—"}</div>
+                        <div className="text-xs text-slate-400">
                           {l.designationName ?? (l.requisitionId ? "—" : "unlinked form")}
                           {l.branchName ? ` · ${l.branchName}` : ""}
                         </div>
                       </td>
-                      <td className="px-3 py-2">
-                        <div className="max-w-[200px] truncate text-[11px] text-slate-600" title={l.campaignName ?? ""}>
+                      <td className="px-3 py-2.5">
+                        <div className="max-w-[210px] truncate text-sm text-slate-600" title={l.campaignName ?? ""}>
                           {l.campaignName ?? "—"}
                         </div>
-                        <div className="font-mono text-[10px] text-slate-400">form {l.metaFormId}</div>
+                        <div className="font-mono text-xs text-slate-400">form {l.metaFormId}</div>
                       </td>
-                      <td className="px-3 py-2 text-[11px]">
+                      <td className="px-3 py-2.5 text-sm">
                         {l.atsCandidateId ? (
                           <span className="font-semibold text-emerald-600">created</span>
                         ) : (
                           <span className="text-slate-400">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-[10px] text-slate-400">{fmtDateTime(l.createdAt)}</td>
+                      <td className="px-3 py-2.5 text-xs text-slate-400">{fmtDateTime(l.createdAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -335,7 +383,7 @@ export default function MetaLeadsPage() {
           {/* Pager */}
           {!loading && total > 0 && (
             <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
-              <p className="text-[12px] text-slate-500">
+              <p className="text-sm text-slate-500">
                 Showing <span className="font-semibold text-slate-700">{num(showingFrom)}</span>–
                 <span className="font-semibold text-slate-700">{num(showingTo)}</span> of{" "}
                 <span className="font-semibold text-slate-700">{num(total)}</span>
@@ -344,25 +392,150 @@ export default function MetaLeadsPage() {
                 <button
                   onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
                   disabled={offset === 0}
-                  className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 px-2.5 text-xs font-semibold text-slate-700 disabled:opacity-40"
+                  className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-700 disabled:opacity-40"
                 >
-                  <ChevronLeft className="h-3.5 w-3.5" /> Prev
+                  <ChevronLeft className="h-4 w-4" /> Prev
                 </button>
-                <span className="text-[12px] font-semibold text-slate-600">
+                <span className="text-sm font-semibold text-slate-600">
                   Page {num(page)} / {num(pageCount)}
                 </span>
                 <button
                   onClick={() => setOffset(offset + PAGE_SIZE)}
                   disabled={page >= pageCount}
-                  className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 px-2.5 text-xs font-semibold text-slate-700 disabled:opacity-40"
+                  className="inline-flex h-9 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-700 disabled:opacity-40"
                 >
-                  Next <ChevronRight className="h-3.5 w-3.5" />
+                  Next <ChevronRight className="h-4 w-4" />
                 </button>
               </div>
             </div>
           )}
         </div>
       </div>
+
+      {/* Drill-down drawer */}
+      <Sheet
+        open={drawerOpen}
+        onOpenChange={(open) => {
+          setDrawerOpen(open);
+          if (!open) {
+            setDetail(null);
+            setDetailError("");
+          }
+        }}
+      >
+        <SheetContent side="right" className="flex w-full flex-col overflow-hidden p-0 sm:max-w-xl">
+          <SheetHeader className="border-b border-slate-100 px-5 py-4">
+            <SheetTitle className="text-lg font-bold text-slate-900">{detail?.parsedName ?? "Lead"}</SheetTitle>
+            <div className="mt-1 flex flex-wrap items-center gap-3 text-sm text-slate-500">
+              {detail?.parsedPhone && (
+                <span className="inline-flex items-center gap-1">
+                  <Phone className="h-3.5 w-3.5" /> {detail.parsedPhone}
+                </span>
+              )}
+              {detail?.parsedEmail && (
+                <span className="inline-flex items-center gap-1">
+                  <Mail className="h-3.5 w-3.5" /> {detail.parsedEmail}
+                </span>
+              )}
+            </div>
+          </SheetHeader>
+
+          <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+            {detailError && (
+              <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+                {detailError}
+              </div>
+            )}
+
+            {/* Screening + routing summary */}
+            {detail && (
+              <section className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Screening</p>
+                  <span className={`mt-1 inline-flex rounded-full px-2.5 py-0.5 text-sm font-bold ${SCREENING_BADGE[detail.screeningResult]}`}>
+                    {detail.screeningResult}
+                  </span>
+                  {detail.disqualificationReason && (
+                    <p className="mt-1.5 text-xs leading-snug text-slate-500">{detail.disqualificationReason}</p>
+                  )}
+                </div>
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">ATS Candidate</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-700">
+                    {detail.atsCandidateId ? "Created" : "Not created"}
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    {detail.notificationSentAt ? `Notified ${fmtDateTime(detail.notificationSentAt)}` : "Not notified"}
+                  </p>
+                </div>
+              </section>
+            )}
+
+            {/* Routing */}
+            {detail && (
+              <section>
+                <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Routing</h3>
+                <dl className="mt-2 space-y-1.5 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-slate-500">Requisition</dt>
+                    <dd className="text-right font-mono text-slate-800">{detail.requisitionCode ?? "unlinked"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-slate-500">Designation</dt>
+                    <dd className="text-right text-slate-800">
+                      {detail.designationName ?? "—"}
+                      {detail.branchName ? ` · ${detail.branchName}` : ""}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-slate-500">Campaign</dt>
+                    <dd className="text-right text-slate-800">{detail.campaignName ?? "—"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-slate-500">Source form</dt>
+                    <dd className="text-right font-mono text-slate-700">{detail.metaFormId}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-slate-500">Hidden routing code</dt>
+                    <dd className="text-right font-mono text-slate-800">{detail.routingCode ?? "none"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-slate-500">Received</dt>
+                    <dd className="text-right text-slate-700">{fmtDateTime(detail.createdAt)}</dd>
+                  </div>
+                </dl>
+              </section>
+            )}
+
+            {/* Raw form answers */}
+            <section>
+              <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                Form Answers {detail?.fields?.length ? `(${detail.fields.length})` : ""}
+              </h3>
+              {detailLoading ? (
+                <div className="mt-2 space-y-2">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="h-9 animate-pulse rounded-lg bg-slate-100" />
+                  ))}
+                </div>
+              ) : detail?.fields?.length ? (
+                <dl className="mt-2 divide-y divide-slate-100 rounded-lg border border-slate-200">
+                  {detail.fields.map((f, i) => (
+                    <div key={`${f.name}-${i}`} className="grid grid-cols-2 gap-3 px-3 py-2">
+                      <dt className="text-sm text-slate-500">{humaniseFieldName(f.name)}</dt>
+                      <dd className="text-right text-sm font-medium text-slate-800">{f.value || "—"}</dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : (
+                <p className="mt-2 text-sm text-slate-400">
+                  No raw form answers stored (this lead may be a fetch stub).
+                </p>
+              )}
+            </section>
+          </div>
+        </SheetContent>
+      </Sheet>
     </DashboardLayout>
   );
 }
