@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * LP's "9. Leads" (per its own SOP: "Open BPO Panel... Select BPO Leads
@@ -124,8 +125,8 @@ async function importBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -137,7 +138,6 @@ async function importBatch(
       const msg = `Row ${row.row_no}: no "Lawyer Panel" process found to attach this row to`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -149,7 +149,6 @@ async function importBatch(
       const msg = `Row ${row.row_no}: "Name" and "Phone" are required — they are part of the row's identity`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -158,78 +157,88 @@ async function importBatch(
       const msg = `Row ${row.row_no}: "Date" is required and could not be read`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO lp_leads_raw
-           (id, process_id, dashboard_label, lead_name, phone_masked, email_masked, campaign,
-            city, card_range, pl_amount, unsecured_loan_amount, income_band, lead_date,
-            status, sub_status, lead_by, allocated_on, harassment_note, last_amount,
-            bpo_name, attempt, disposition, sub_disposition, cr_download, token_amount,
-            ls_amount, followup, report_date, data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
-            email_masked = VALUES(email_masked),
-            city = VALUES(city),
-            card_range = VALUES(card_range),
-            pl_amount = VALUES(pl_amount),
-            unsecured_loan_amount = VALUES(unsecured_loan_amount),
-            income_band = VALUES(income_band),
-            lead_date = VALUES(lead_date),
-            status = VALUES(status),
-            sub_status = VALUES(sub_status),
-            lead_by = VALUES(lead_by),
-            harassment_note = VALUES(harassment_note),
-            last_amount = VALUES(last_amount),
-            bpo_name = VALUES(bpo_name),
-            attempt = VALUES(attempt),
-            disposition = VALUES(disposition),
-            sub_disposition = VALUES(sub_disposition),
-            cr_download = VALUES(cr_download),
-            token_amount = VALUES(token_amount),
-            ls_amount = VALUES(ls_amount),
-            followup = VALUES(followup),
-            report_date = VALUES(report_date)`,
-        [
-          randomUUID(), processId, dashboardLabel, leadName, phone,
-          String(data["Email"] ?? "").trim() || null,
-          campaign,
-          String(data["city"] ?? "").trim() || null,
-          String(data["Card"] ?? "").trim() || null,
-          parseNullableAmount(data["PL"]),
-          parseNullableAmount(data["Unsecured_Loan"]),
-          String(data["Income"] ?? "").trim() || null,
-          parseDate(data["Date"]),
-          String(data["Status"] ?? "").trim() || null,
-          String(data["SubStatus"] ?? "").trim() || null,
-          String(data["Lead_By"] ?? "").trim() || null,
-          allocatedOn,
-          String(data["Harassment"] ?? "").trim() || null,
-          parseNullableAmount(data["Last_Amount"]),
-          String(data["Bpo_Name"] ?? "").trim() || null,
-          parseNullableInt(data["Attempt"]),
-          String(data["Disposition"] ?? "").trim() || null,
-          String(data["Sub_Disposition"] ?? "").trim() || null,
-          String(data["CR_Download"] ?? "").trim() || null,
-          String(data["token_amount"] ?? "").trim() || null,
-          String(data["LS_Amount"] ?? "").trim() || null,
-          String(data["Followup"] ?? "").trim() || null,
-          reportDate,
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, dashboardLabel, leadName, phone,
+        String(data["Email"] ?? "").trim() || null,
+        campaign,
+        String(data["city"] ?? "").trim() || null,
+        String(data["Card"] ?? "").trim() || null,
+        parseNullableAmount(data["PL"]),
+        parseNullableAmount(data["Unsecured_Loan"]),
+        String(data["Income"] ?? "").trim() || null,
+        parseDate(data["Date"]),
+        String(data["Status"] ?? "").trim() || null,
+        String(data["SubStatus"] ?? "").trim() || null,
+        String(data["Lead_By"] ?? "").trim() || null,
+        allocatedOn,
+        String(data["Harassment"] ?? "").trim() || null,
+        parseNullableAmount(data["Last_Amount"]),
+        String(data["Bpo_Name"] ?? "").trim() || null,
+        parseNullableInt(data["Attempt"]),
+        String(data["Disposition"] ?? "").trim() || null,
+        String(data["Sub_Disposition"] ?? "").trim() || null,
+        String(data["CR_Download"] ?? "").trim() || null,
+        String(data["token_amount"] ?? "").trim() || null,
+        String(data["LS_Amount"] ?? "").trim() || null,
+        String(data["Followup"] ?? "").trim() || null,
+        reportDate,
+        batchId,
+        importedByUserId,
+      ],
+    });
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO lp_leads_raw
+       (id, process_id, dashboard_label, lead_name, phone_masked, email_masked, campaign,
+        city, card_range, pl_amount, unsecured_loan_amount, income_band, lead_date,
+        status, sub_status, lead_by, allocated_on, harassment_note, last_amount,
+        bpo_name, attempt, disposition, sub_disposition, cr_download, token_amount,
+        ls_amount, followup, report_date, data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
+        email_masked = VALUES(email_masked),
+        city = VALUES(city),
+        card_range = VALUES(card_range),
+        pl_amount = VALUES(pl_amount),
+        unsecured_loan_amount = VALUES(unsecured_loan_amount),
+        income_band = VALUES(income_band),
+        lead_date = VALUES(lead_date),
+        status = VALUES(status),
+        sub_status = VALUES(sub_status),
+        lead_by = VALUES(lead_by),
+        harassment_note = VALUES(harassment_note),
+        last_amount = VALUES(last_amount),
+        bpo_name = VALUES(bpo_name),
+        attempt = VALUES(attempt),
+        disposition = VALUES(disposition),
+        sub_disposition = VALUES(sub_disposition),
+        cr_download = VALUES(cr_download),
+        token_amount = VALUES(token_amount),
+        ls_amount = VALUES(ls_amount),
+        followup = VALUES(followup),
+        report_date = VALUES(report_date)`,
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
+
+  const failedIds = new Set(inserted.errorUpdates.map((u) => u.rowId));
+  const importedIds = toInsert.filter((r) => !failedIds.has(r.rowId)).map((r) => r.rowId);
+  for (let i = 0; i < importedIds.length; i += 1000) {
+    const slice = importedIds.slice(i, i + 1000);
+    await db.execute(
+      `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${slice.map(() => "?").join(",")})`,
+      slice,
+    );
   }
 
   if (errorUpdates.length) {

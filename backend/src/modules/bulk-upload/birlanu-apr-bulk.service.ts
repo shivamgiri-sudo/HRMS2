@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * birlanu_apr -- writes into db_masmis.birlanu_apr (sql/1770). Source: Birlanu APR.xlsx (APR sheet).
@@ -51,11 +52,10 @@ export async function importBirlanuAprBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
+  const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
     const data =
       typeof row.normalized_data === "string"
@@ -65,56 +65,58 @@ export async function importBirlanuAprBatch(
     const requiredVal = getByColumn(data, "ID");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "ID" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.birlanu_apr
-           (report_date, agent_name, mas_id, total_calls, time_clock, login_time, wait_time, wait_pct, talk_time, talk_time_pct, dispo_time, dispo_time_pct, pause_time, pause_time_pct, dead_time, dead_time_pct, customer_pct, login_pct, logout_count, acht, aom, bio, lagged, login_lagged, lunch, meet, tea, total_break, net_login, attendance, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          n(data, "Date"),
-          n(data, "Agent Name"),
-          requiredVal,
-          n(data, "Total"),
-          n(data, "TIME CLOCK"),
-          n(data, "LOGIN TIME"),
-          n(data, "WAIT"),
-          n(data, "WAIT %"),
-          n(data, "TALK"),
-          n(data, "TALK TIME %"),
-          n(data, "DISPO"),
-          n(data, "DISPOTIME %"),
-          n(data, "PAUSE"),
-          n(data, "PAUSETIME %"),
-          n(data, "DEAD"),
-          n(data, "DEAD TIME %"),
-          n(data, "CUSTOMER"),
-          exact(data, "Login"),
-          n(data, "Logout"),
-          n(data, "ACHT"),
-          n(data, "AOM"),
-          n(data, "BIO"),
-          n(data, "LAGGED"),
-          exact(data, "LOGIN"),
-          n(data, "Lunch"),
-          n(data, "Meet"),
-          n(data, "TEA"),
-          n(data, "Total break"),
-          n(data, "Net login"),
-          n(data, "Attandance"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        n(data, "Date"),
+        n(data, "Agent Name"),
+        requiredVal,
+        n(data, "Total"),
+        n(data, "TIME CLOCK"),
+        n(data, "LOGIN TIME"),
+        n(data, "WAIT"),
+        n(data, "WAIT %"),
+        n(data, "TALK"),
+        n(data, "TALK TIME %"),
+        n(data, "DISPO"),
+        n(data, "DISPOTIME %"),
+        n(data, "PAUSE"),
+        n(data, "PAUSETIME %"),
+        n(data, "DEAD"),
+        n(data, "DEAD TIME %"),
+        n(data, "CUSTOMER"),
+        exact(data, "Login"),
+        n(data, "Logout"),
+        n(data, "ACHT"),
+        n(data, "AOM"),
+        n(data, "BIO"),
+        n(data, "LAGGED"),
+        exact(data, "LOGIN"),
+        n(data, "Lunch"),
+        n(data, "Meet"),
+        n(data, "TEA"),
+        n(data, "Total break"),
+        n(data, "Net login"),
+        n(data, "Attandance"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.birlanu_apr
+           (report_date, agent_name, mas_id, total_calls, time_clock, login_time, wait_time, wait_pct, talk_time, talk_time_pct, dispo_time, dispo_time_pct, pause_time, pause_time_pct, dead_time, dead_time_pct, customer_pct, login_pct, logout_count, acht, aom, bio, lagged, login_lagged, lunch, meet, tea, total_break, net_login, attendance, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

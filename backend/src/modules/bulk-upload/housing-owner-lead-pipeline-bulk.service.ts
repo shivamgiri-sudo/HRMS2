@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Housing Owner's own "Look up Data" sheet -- a CRM lead/opportunity
@@ -116,8 +117,7 @@ export async function importHousingOwnerLeadPipelineBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -127,73 +127,73 @@ export async function importHousingOwnerLeadPipelineBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Housing Owner" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const caseId = cleanText(data["caseId"]);
     const reportDate = parseDate(data["Date"]);
     if (!caseId || !reportDate) {
       const msg = `Row ${row.row_no}: "caseId" and "Date" are both required -- together with callId/disposition/createdAt they are this row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO housing_owner_lead_pipeline_raw
-           (id, process_id, report_date, case_id, call_id, call_type, agent_id, agent_name,
-            agent_number, customer_name, customer_phone, alternate_phone, tl_id, tl_name,
-            opportunity_id, account_id, opportunity_stage, opportunity_type, case_created_at,
-            assigned_at, call_start_time, call_end_time, talk_time_seconds, had_wrapup,
-            call_status, disposition, notes, followup_time, recording_url, is_fresh_lead,
-            lead_temperature, data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
-            opportunity_stage = VALUES(opportunity_stage),
-            call_status = VALUES(call_status),
-            disposition = VALUES(disposition)`,
-        [
-          randomUUID(), processId, reportDate, caseId,
-          cleanText(data["callId"]),
-          cleanText(data["callType"]),
-          cleanText(data["agentId"]),
-          cleanText(data["agentName"]),
-          cleanText(data["agentNumber"]),
-          cleanText(data["customerName"]),
-          cleanText(data["customerPhone"]),
-          cleanText(data["alternatePhone"]),
-          cleanText(data["tlId"]),
-          cleanText(data["tlName"]),
-          cleanText(data["opportunityId"]),
-          cleanText(data["accountId"]),
-          cleanText(data["ownerOpportunityStageName"]),
-          cleanText(data["opportunityType"]),
-          parseDateTime(data["createdAt"]),
-          parseDateTime(data["assignedAt"]),
-          parseDateTime(data["callStartTime"]),
-          parseDateTime(data["callEndTime"]),
-          parseDurationSeconds(data["talkTime"]),
-          parseBoolFlag(data["wrapupTime"]),
-          cleanText(data["callStatus"]),
-          cleanText(data["disposition"]),
-          cleanText(data["notes"]),
-          parseDateTime(data["followupTime"]),
-          cleanText(data["recordingURL"]),
-          data["Fresh"] === "Fresh" ? 1 : data["Fresh"] === "No" ? 0 : null,
-          cleanText(data["Hot Leads"]),
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, reportDate, caseId,
+        cleanText(data["callId"]),
+        cleanText(data["callType"]),
+        cleanText(data["agentId"]),
+        cleanText(data["agentName"]),
+        cleanText(data["agentNumber"]),
+        cleanText(data["customerName"]),
+        cleanText(data["customerPhone"]),
+        cleanText(data["alternatePhone"]),
+        cleanText(data["tlId"]),
+        cleanText(data["tlName"]),
+        cleanText(data["opportunityId"]),
+        cleanText(data["accountId"]),
+        cleanText(data["ownerOpportunityStageName"]),
+        cleanText(data["opportunityType"]),
+        parseDateTime(data["createdAt"]),
+        parseDateTime(data["assignedAt"]),
+        parseDateTime(data["callStartTime"]),
+        parseDateTime(data["callEndTime"]),
+        parseDurationSeconds(data["talkTime"]),
+        parseBoolFlag(data["wrapupTime"]),
+        cleanText(data["callStatus"]),
+        cleanText(data["disposition"]),
+        cleanText(data["notes"]),
+        parseDateTime(data["followupTime"]),
+        cleanText(data["recordingURL"]),
+        data["Fresh"] === "Fresh" ? 1 : data["Fresh"] === "No" ? 0 : null,
+        cleanText(data["Hot Leads"]),
+        batchId,
+        importedByUserId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO housing_owner_lead_pipeline_raw
+       (id, process_id, report_date, case_id, call_id, call_type, agent_id, agent_name,
+        agent_number, customer_name, customer_phone, alternate_phone, tl_id, tl_name,
+        opportunity_id, account_id, opportunity_stage, opportunity_type, case_created_at,
+        assigned_at, call_start_time, call_end_time, talk_time_seconds, had_wrapup,
+        call_status, disposition, notes, followup_time, recording_url, is_fresh_lead,
+        lead_temperature, data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
+       opportunity_stage = VALUES(opportunity_stage),
+       call_status = VALUES(call_status),
+       disposition = VALUES(disposition)`,
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

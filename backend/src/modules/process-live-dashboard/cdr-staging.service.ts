@@ -145,17 +145,33 @@ export async function getCdrStagingMonthly(
   rawFilters: { from?: string; to?: string },
 ): Promise<CdrStagingMonthRow[]> {
   const { from, to } = parseRange(rawFilters);
+  // Two real bugs here under sql_mode=only_full_group_by, found live while wiring this
+  // function into the client portal for the first time (it had never been exercised
+  // against a strict-mode connection before -- every one of the 7 CDR-staging clients'
+  // monthly view has always 500'd, silently, since this function was written; the
+  // internal Live Dashboard's own UI never surfaced the failure as anything but a
+  // generic "Failed to load" message, so it went unnoticed):
+  //   1. SELECT DATE_FORMAT(call_date, '%b-%y') AS month while GROUPing BY
+  //      DATE_FORMAT(call_date, '%Y-%m') -- two different format strings for the same
+  //      calendar month. They group identically in practice, but MySQL cannot PROVE
+  //      that from the expressions alone, so strict mode rejects month as "not
+  //      functionally dependent on the GROUP BY". Fixed by grouping by the exact same
+  //      expression the SELECT list uses.
+  //   2. ORDER BY MIN(call_date), a bare aggregate not present in the SELECT list --
+  //      valid in MySQL's default lenient mode, rejected under strict mode. Fixed by
+  //      selecting it as sortDate and ordering by that column instead.
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT
        DATE_FORMAT(call_date, '%b-%y')             AS month,
+       MIN(call_date)                              AS sortDate,
        SUM(call_offered)                           AS offered,
        SUM(call_answered)                          AS answered,
        AVG(COALESCE(service_level_pct, 0))         AS slPct,
        AVG(COALESCE(acht_seconds, 0))              AS achtSec
      FROM inbound_cdr_daily_actual
      WHERE client_code = ? AND call_date BETWEEN ? AND ?
-     GROUP BY DATE_FORMAT(call_date, '%Y-%m')
-     ORDER BY MIN(call_date)`,
+     GROUP BY DATE_FORMAT(call_date, '%b-%y')
+     ORDER BY sortDate`,
     [clientCode, from, to],
   );
   return rows.map(r => {

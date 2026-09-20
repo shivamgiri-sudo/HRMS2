@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Housing Premium's "Sale Raw" (per its own SOP: "Open the Sale Raw Google
@@ -120,8 +121,7 @@ export async function importHousingPremiumSaleRawBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -133,7 +133,6 @@ export async function importHousingPremiumSaleRawBatch(
       const msg = `Row ${row.row_no}: no active "Housing Premium" process found to attach this row to`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -142,7 +141,6 @@ export async function importHousingPremiumSaleRawBatch(
       const msg = `Row ${row.row_no}: "Order_ID" is required — it is the row's identity`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -151,49 +149,49 @@ export async function importHousingPremiumSaleRawBatch(
       const msg = `Row ${row.row_no}: "Date" is required and could not be read`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO housing_premium_sale_raw
-           (id, process_id, order_id, report_date, created_at_orig, agent_name, tl_name,
-            partner_name, amount, order_value, target, week_label,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
-            created_at_orig = VALUES(created_at_orig),
-            agent_name = VALUES(agent_name),
-            tl_name = VALUES(tl_name),
-            partner_name = VALUES(partner_name),
-            amount = VALUES(amount),
-            order_value = VALUES(order_value),
-            target = VALUES(target),
-            week_label = VALUES(week_label)`,
-        [
-          randomUUID(), processId, orderId, reportDate,
-          parseDate(data["Created_At"]),
-          String(data["Agent_Name"] ?? "").trim() || null,
-          String(data["TL_Name"] ?? "").trim() || null,
-          String(data["Partner_Name"] ?? "").trim() || null,
-          parseAmount(data["Amount"]),
-          parseNullableAmount(data["Order_Value"]),
-          parseNullableAmount(data["Target"]),
-          String(data["Week"] ?? "").trim() || null,
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, orderId, reportDate,
+        parseDate(data["Created_At"]),
+        String(data["Agent_Name"] ?? "").trim() || null,
+        String(data["TL_Name"] ?? "").trim() || null,
+        String(data["Partner_Name"] ?? "").trim() || null,
+        parseAmount(data["Amount"]),
+        parseNullableAmount(data["Order_Value"]),
+        parseNullableAmount(data["Target"]),
+        String(data["Week"] ?? "").trim() || null,
+        batchId,
+        importedByUserId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO housing_premium_sale_raw
+       (id, process_id, order_id, report_date, created_at_orig, agent_name, tl_name,
+        partner_name, amount, order_value, target, week_label,
+        data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
+       created_at_orig = VALUES(created_at_orig),
+       agent_name = VALUES(agent_name),
+       tl_name = VALUES(tl_name),
+       partner_name = VALUES(partner_name),
+       amount = VALUES(amount),
+       order_value = VALUES(order_value),
+       target = VALUES(target),
+       week_label = VALUES(week_label)`,
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

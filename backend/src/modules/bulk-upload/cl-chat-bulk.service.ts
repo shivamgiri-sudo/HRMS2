@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
 Clovia's Chat transcript export (cl_chat.xlsx, 31 real columns).
@@ -50,11 +51,10 @@ export async function importClChatBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
+  const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
     const data =
       typeof row.normalized_data === "string"
@@ -64,57 +64,53 @@ export async function importClChatBatch(
     const requiredVal = getByColumn(data, "Chat_Id");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "Chat_Id" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.cl_chat
-           (report_date, uid, chat_id, phone_number, chat_transcript, username, name, surname, channel, dept, chat_flow, date_time, chat_duration, accepted_time, wait_time, star_rating_value, issue_solved, total_chat, web, wp, rating_received, response_rcv, issue_resolved_yes, issue_resolved_no, actual_agent_on_chat, tl_name, week, mas_id, user_name, hours, min_slot_15, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          n(data, "Date"),
-          n(data, "UID"),
-          requiredVal,
-          n(data, "Phone_Number"),
-          n(data, "Chat"),
-          n(data, "Username"),
-          n(data, "Name"),
-          n(data, "Surname"),
-          n(data, "Channel"),
-          n(data, "Dept"),
-          n(data, "Chat Flow"),
-          n(data, "Date & Time"),
-          n(data, "chat_duration"),
-          n(data, "accepted_time"),
-          n(data, "wait_time"),
-          n(data, "star_rating_value"),
-          n(data, "issue_solved"),
-          n(data, "Total Chat"),
-          n(data, "WEB"),
-          n(data, "WP"),
-          n(data, "Rating Received (Yes/No)"),
-          n(data, "Response Rcv"),
-          n(data, "Issue Resolved (Yes)"),
-          n(data, "Issue Resolved (No)"),
-          n(data, "Actual Agent on Chat"),
-          n(data, "TL Name"),
-          n(data, "Week"),
-          n(data, "Mas id"),
-          n(data, "User Name"),
-          n(data, "Hours"),
-          n(data, "15 Min Slot"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({ rowId: row.id, rowNo: row.row_no, values: [
+      n(data, "Date"),
+      n(data, "UID"),
+      requiredVal,
+      n(data, "Phone_Number"),
+      n(data, "Chat"),
+      n(data, "Username"),
+      n(data, "Name"),
+      n(data, "Surname"),
+      n(data, "Channel"),
+      n(data, "Dept"),
+      n(data, "Chat Flow"),
+      n(data, "Date & Time"),
+      n(data, "chat_duration"),
+      n(data, "accepted_time"),
+      n(data, "wait_time"),
+      n(data, "star_rating_value"),
+      n(data, "issue_solved"),
+      n(data, "Total Chat"),
+      n(data, "WEB"),
+      n(data, "WP"),
+      n(data, "Rating Received (Yes/No)"),
+      n(data, "Response Rcv"),
+      n(data, "Issue Resolved (Yes)"),
+      n(data, "Issue Resolved (No)"),
+      n(data, "Actual Agent on Chat"),
+      n(data, "TL Name"),
+      n(data, "Week"),
+      n(data, "Mas id"),
+      n(data, "User Name"),
+      n(data, "Hours"),
+      n(data, "15 Min Slot"),
+      uploadedByInt, batchId,
+    ] });
   }
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.cl_chat (report_date, uid, chat_id, phone_number, chat_transcript, username, name, surname, channel, dept, chat_flow, date_time, chat_duration, accepted_time, wait_time, star_rating_value, issue_solved, total_chat, web, wp, rating_received, response_rcv, issue_resolved_yes, issue_resolved_no, actual_agent_on_chat, tl_name, week, mas_id, user_name, hours, min_slot_15, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

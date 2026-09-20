@@ -53,6 +53,23 @@ export async function importDeductionBatch(
   const { branchId, error: branchError } = resolveSingleBranch(matched);
   if (branchError) throw new BulkUploadError(branchError, 400);
 
+  // Pre-fetch all duplicate entries for the batch in one query instead of one SELECT per row.
+  // Keyed as "employeeId|TYPE_CODE|YYYY-MM" for O(1) lookup in the loop below.
+  const employeeIds = [...new Set(matched.map((e) => e.id))];
+  const existingDupKeys = new Set<string>();
+  if (employeeIds.length > 0) {
+    const ph = employeeIds.map(() => "?").join(",");
+    const [dupRows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_id, deduction_type_code, run_month
+         FROM employee_deduction_entries
+        WHERE employee_id IN (${ph}) AND status NOT IN ('inactive','rejected')`,
+      employeeIds,
+    );
+    for (const r of dupRows as RowDataPacket[]) {
+      existingDupKeys.add(`${r.employee_id}|${String(r.deduction_type_code).toUpperCase()}|${r.run_month}`);
+    }
+  }
+
   for (const row of rows) {
     const d = row.data;
     const emp = employees.get((d.employee_code ?? "").toUpperCase());
@@ -79,16 +96,9 @@ export async function importDeductionBatch(
 
     if (!validationError) d.run_month = normalizeMonth(d.run_month) as string;
 
-    // Duplicate guard: same employee + deduction code + run month already active/pending
+    // O(1) Map lookup instead of a per-row SELECT
     if (!validationError && emp) {
-      const [dupRows] = await db.execute<RowDataPacket[]>(
-        `SELECT id FROM employee_deduction_entries
-          WHERE employee_id = ? AND deduction_type_code = ? AND run_month = ?
-            AND status NOT IN ('inactive','rejected')
-          LIMIT 1`,
-        [emp.id, typeCode, d.run_month],
-      );
-      if ((dupRows as RowDataPacket[]).length > 0) {
+      if (existingDupKeys.has(`${emp.id}|${typeCode}|${d.run_month}`)) {
         validationError = `Duplicate: deduction ${d.deduction_type_code} for ${d.employee_code} in ${d.run_month} already exists`;
       }
     }

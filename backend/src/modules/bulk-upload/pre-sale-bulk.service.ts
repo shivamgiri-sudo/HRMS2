@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Housing Premium's "Premium Sale" export -- writes into the NEW
@@ -90,8 +91,7 @@ export async function importPreSaleBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -104,35 +104,36 @@ export async function importPreSaleBatch(
     const orderId = getByColumn(data, "Order ID", "Order_ID", "order_id");
     if (!orderId) {
       const msg = `Row ${row.row_no}: "Order ID" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.pre_sale
-           (order_id, report_date, created_date, agent_name, tl_name, partner_name,
-            amount, order_value, target, week, month, day, am, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          orderId, parseDate(getByColumn(data, "Date", "report_date")),
-          parseDate(getByColumn(data, "Created At", "Created_At", "created_date")),
-          n(data, "Agent Name", "Agent_Name", "agent_name"), n(data, "TL Name", "TL_Name", "tl_name"),
-          n(data, "Partner Name", "Partner_Name", "partner_name"),
-          parseAmount(getByColumn(data, "Amount", "amount")),
-          parseNullableAmount(getByColumn(data, "Order Value", "Order_Value", "order_value")),
-          parseNullableAmount(getByColumn(data, "Target", "target")),
-          n(data, "Week", "week"), n(data, "Month", "month"), n(data, "Day", "day"), n(data, "AM", "am"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id, rowNo: row.row_no,
+      values: [
+        orderId, parseDate(getByColumn(data, "Date", "report_date")),
+        parseDate(getByColumn(data, "Created At", "Created_At", "created_date")),
+        n(data, "Agent Name", "Agent_Name", "agent_name"), n(data, "TL Name", "TL_Name", "tl_name"),
+        n(data, "Partner Name", "Partner_Name", "partner_name"),
+        parseAmount(getByColumn(data, "Amount", "amount")),
+        parseNullableAmount(getByColumn(data, "Order Value", "Order_Value", "order_value")),
+        parseNullableAmount(getByColumn(data, "Target", "target")),
+        n(data, "Week", "week"), n(data, "Month", "month"), n(data, "Day", "day"), n(data, "AM", "am"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.pre_sale
+       (order_id, report_date, created_date, agent_name, tl_name, partner_name,
+        amount, order_value, target, week, month, day, am, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

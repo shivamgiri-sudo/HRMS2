@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { ProcessCard, HeadlineMetric, PortalRag } from "./portal.types.js";
 import { getKpiScorecardsForProcessId } from "../process-performance/kpi-scorecard.service.js";
+import { portalKpiEngine } from "./portal.kpi-engine.service.js";
 
 const HEADLINE_METRICS = ["CSAT", "AHT", "FCR"];
 
@@ -205,6 +206,46 @@ export const portalOverviewService = {
           rag,
         });
         escalate(card, rag);
+      }
+    }
+
+    // Fourth: portal.kpi-engine.service.ts -- the same real, generalizable engine now
+    // powering the Performance tab (portal.kpi.service.ts's tryKpiEngine) for every
+    // process outside the 4-process registry above. Without this pass, a process like
+    // Onfido would show real KPI scorecards on its own Performance tab (computed by this
+    // exact engine) while its Overview card stayed stuck on "no_data" forever, because
+    // this file's two enrichment passes above only ever look at the dead
+    // kpi_assignment/kpi_template_metric path and the 4-process registry -- the same class
+    // of "two pages of the same portal disagreeing" bug this file's own escalate()/window
+    // comments already document and fixed once before. Uses computeHeadlineMetrics
+    // (worst-RAG-first, built for exactly this) rather than the full metric set, since a
+    // card only has room for a small headline, same as the registry pass above.
+    //
+    // Deliberately does NOT gate on whether the registry pass already found something for
+    // this process: a process could have BOTH a registry entry that itself supplies no
+    // headline metrics for the current window (registry entries with notTrackedNote, or a
+    // gap in that specific pipeline) and real engine-computed data, and the card should
+    // show whichever pass found something real, following the same non-destructive
+    // escalate() merge every earlier pass in this function already uses.
+    const engineResults = await Promise.all(
+      processIdList.map((processId) => portalKpiEngine.computeHeadlineMetrics(processId, currentPeriod).catch(() => null)),
+    );
+    for (let i = 0; i < processIdList.length; i++) {
+      const metrics = engineResults[i];
+      if (!metrics) continue;
+      const card = processMap.get(processIdList[i])!;
+      for (const m of metrics) {
+        if (m.rag === "no_data" || m.actual == null) continue; // no real reading -- must not move the card
+        card.headline_metrics.push({
+          metric_code: m.metric_code,
+          metric_name: m.metric_name,
+          unit: m.unit,
+          actual: m.actual,
+          target: m.target,
+          achievement_pct: m.achievement_pct,
+          rag: m.rag,
+        });
+        escalate(card, m.rag);
       }
     }
 

@@ -32,11 +32,41 @@ export async function importRosterAssignmentBatch(
       [batchId]
     );
 
-    for (const batchRow of batchRows as RowDataPacket[]) {
-      const raw = (typeof batchRow.normalized_data === "string"
-        ? JSON.parse(batchRow.normalized_data)
-        : batchRow.normalized_data) as Record<string, string>;
+    // Pre-fetch all employee and shift lookups for the entire batch in two queries
+    // instead of one SELECT per row (N+1 eliminated: 500 rows → 2 queries vs 1000).
+    const parsedRows = (batchRows as RowDataPacket[]).map(r => ({
+      batchRow: r,
+      raw: (typeof r.normalized_data === "string" ? JSON.parse(r.normalized_data) : r.normalized_data) as Record<string, string>,
+    }));
 
+    const allEmpCodes = [...new Set(parsedRows.map(p => p.raw.employee_code).filter(Boolean))];
+    const allShiftCodes = [...new Set(parsedRows.map(p => p.raw.shift_code).filter(Boolean))];
+
+    const empMap = new Map<string, { id: string; process_id: string | null; branch_id: string | null }>();
+    if (allEmpCodes.length) {
+      const ph = allEmpCodes.map(() => "?").join(",");
+      const [empBulk] = await conn.execute<RowDataPacket[]>(
+        `SELECT id, employee_code, process_id, branch_id FROM employees WHERE employee_code IN (${ph}) AND employment_status = 'active'`,
+        allEmpCodes
+      );
+      for (const e of empBulk as RowDataPacket[]) {
+        empMap.set(String(e.employee_code), { id: String(e.id), process_id: e.process_id ?? null, branch_id: e.branch_id ?? null });
+      }
+    }
+
+    const shiftMap = new Map<string, { id: string; start_time: string; end_time: string }>();
+    if (allShiftCodes.length) {
+      const ph = allShiftCodes.map(() => "?").join(",");
+      const [shiftBulk] = await conn.execute<RowDataPacket[]>(
+        `SELECT id, shift_code, start_time, end_time FROM wfm_shift_template WHERE shift_code IN (${ph}) AND active_status = 1`,
+        allShiftCodes
+      );
+      for (const s of shiftBulk as RowDataPacket[]) {
+        shiftMap.set(String(s.shift_code), { id: String(s.id), start_time: String(s.start_time), end_time: String(s.end_time) });
+      }
+    }
+
+    for (const { batchRow, raw } of parsedRows) {
       const { cycle_id, employee_code, roster_date, shift_code, is_week_off, notes } = raw;
 
       if (!cycle_id || !employee_code || !roster_date) {
@@ -50,13 +80,9 @@ export async function importRosterAssignmentBatch(
         continue;
       }
 
-      // Resolve employee_id from code (process_id/branch_id pulled here too, for
-      // the Area 2 rest-policy scope resolution below — avoids a second round trip)
-      const [empRows] = await conn.execute<RowDataPacket[]>(
-        "SELECT id, process_id, branch_id FROM employees WHERE employee_code = ? AND employment_status = 'active' LIMIT 1",
-        [employee_code]
-      );
-      if (!(empRows as RowDataPacket[]).length) {
+      // O(1) Map lookup — replaces the per-row SELECT on employees
+      const employeeRow = empMap.get(employee_code);
+      if (!employeeRow) {
         const msg = `Row ${batchRow.row_no}: employee_code '${employee_code}' not found or inactive`;
         errors.push(msg);
         await conn.execute(
@@ -66,8 +92,7 @@ export async function importRosterAssignmentBatch(
         skipped++;
         continue;
       }
-      const employeeRow = (empRows as RowDataPacket[])[0];
-      const employeeId = employeeRow.id as string;
+      const employeeId = employeeRow.id;
 
       // Resolve shift_template_id from code (if not week-off). wfm_shift_template
       // is already an append-only/versioned table (no UPDATE route has ever
@@ -82,11 +107,9 @@ export async function importRosterAssignmentBatch(
       let shiftEndTime: string | null = null;
       const isWeekOff = is_week_off === "1" || is_week_off === "true";
       if (!isWeekOff && shift_code) {
-        const [shiftRows] = await conn.execute<RowDataPacket[]>(
-          "SELECT id, start_time, end_time FROM wfm_shift_template WHERE shift_code = ? AND active_status = 1 LIMIT 1",
-          [shift_code]
-        );
-        if (!(shiftRows as RowDataPacket[]).length) {
+        // O(1) Map lookup — replaces the per-row SELECT on wfm_shift_template
+        const shiftRow = shiftMap.get(shift_code);
+        if (!shiftRow) {
           const msg = `Row ${batchRow.row_no}: shift_code '${shift_code}' not found`;
           errors.push(msg);
           await conn.execute(
@@ -96,21 +119,14 @@ export async function importRosterAssignmentBatch(
           skipped++;
           continue;
         }
-        const shiftRow = (shiftRows as RowDataPacket[])[0];
-        shiftTemplateId = shiftRow.id as string;
+        shiftTemplateId = shiftRow.id;
         // wfm_roster_assignment.shift_start_time/shift_end_time are varchar(5)
         // ("HH:MM"), but wfm_shift_template.start_time/end_time come back from
         // mysql2 as the full "HH:MM:SS" TIME string (8 chars). Truncated here, once,
         // so every use below — the rest-policy check, computeScheduledMinutes, and
         // the INSERT itself — sees the same 5-char value the column actually holds.
-        // Before this every row with a resolved shift died with "Data too long for
-        // column 'shift_start_time'" (ER_DATA_TOO_LONG) — live-reproduced directly
-        // against importRosterAssignmentBatch, 0 successful imports with a shift
-        // assigned. The other .slice(0, 5) calls downstream become no-ops now, kept
-        // as-is rather than removed — cheap, and correct even if this ever reads a
-        // value that isn't already 5 characters.
-        shiftStartTime = String(shiftRow.start_time).slice(0, 5);
-        shiftEndTime = String(shiftRow.end_time).slice(0, 5);
+        shiftStartTime = shiftRow.start_time.slice(0, 5);
+        shiftEndTime = shiftRow.end_time.slice(0, 5);
       }
       const scheduledMinutes = shiftStartTime && shiftEndTime
         ? computeScheduledMinutes(String(shiftStartTime).slice(0, 5), String(shiftEndTime).slice(0, 5))

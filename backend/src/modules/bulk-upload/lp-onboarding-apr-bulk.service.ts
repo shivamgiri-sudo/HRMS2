@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * lp_onboarding_apr -- writes into db_masmis.lp_onboarding_apr (sql/1772). Source: LP Onboarding APR.xlsx.
@@ -43,10 +44,10 @@ export async function importLpOnboardingAprBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
+
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -57,57 +58,59 @@ export async function importLpOnboardingAprBatch(
     const requiredVal = getByColumn(data, "LoginId");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "LoginId" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.lp_onboarding_apr
-           (report_date, interval_val, agent, login_id, total_calls, dialer_calls, outbound_calls, manual_calls, transfered_calls, login_time, net_login_time, break_count, tea, lunch, meeting, bio_break, unsolicited, total_break_duration, handle_duration, avg_handle_duration, idle_duration, avg_idle_duration, idle_block_duration, ring_duration, avg_ring_duration, talk_duration, avg_talk_duration, hold_duration, avg_hold_duration, wrapup_duration, avg_wrapup_duration, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          n(data, "CalLDate"),
-          n(data, "Interval"),
-          n(data, "Agent"),
-          requiredVal,
-          n(data, "Total_Calls"),
-          n(data, "Dialer_Calls"),
-          n(data, "Outbound_Calls"),
-          n(data, "Manual_Calls"),
-          n(data, "Transfered_Calls"),
-          n(data, "Login_Time"),
-          n(data, "Net_LoginTime"),
-          n(data, "Break_Count"),
-          n(data, "Tea"),
-          n(data, "Lunch"),
-          n(data, "Meeting"),
-          n(data, "BIO_Break"),
-          n(data, "Unsolicted"),
-          n(data, "Total_Break_Duration"),
-          n(data, "Handle_Duration"),
-          n(data, "Average_Handle_Duration"),
-          n(data, "Idle_Duration"),
-          n(data, "Average_Idle_Duration"),
-          n(data, "Idle_Block_Duration"),
-          n(data, "Ring_Duration"),
-          n(data, "Average_Ring_Duration"),
-          n(data, "Talk_Duration"),
-          n(data, "Average_Talk_Duration"),
-          n(data, "Hold_Duration"),
-          n(data, "Average_Hold_Duration"),
-          n(data, "Wrapup_Duration"),
-          n(data, "Average_Wrapup_Duration"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        n(data, "CalLDate"),
+        n(data, "Interval"),
+        n(data, "Agent"),
+        requiredVal,
+        n(data, "Total_Calls"),
+        n(data, "Dialer_Calls"),
+        n(data, "Outbound_Calls"),
+        n(data, "Manual_Calls"),
+        n(data, "Transfered_Calls"),
+        n(data, "Login_Time"),
+        n(data, "Net_LoginTime"),
+        n(data, "Break_Count"),
+        n(data, "Tea"),
+        n(data, "Lunch"),
+        n(data, "Meeting"),
+        n(data, "BIO_Break"),
+        n(data, "Unsolicted"),
+        n(data, "Total_Break_Duration"),
+        n(data, "Handle_Duration"),
+        n(data, "Average_Handle_Duration"),
+        n(data, "Idle_Duration"),
+        n(data, "Average_Idle_Duration"),
+        n(data, "Idle_Block_Duration"),
+        n(data, "Ring_Duration"),
+        n(data, "Average_Ring_Duration"),
+        n(data, "Talk_Duration"),
+        n(data, "Average_Talk_Duration"),
+        n(data, "Hold_Duration"),
+        n(data, "Average_Hold_Duration"),
+        n(data, "Wrapup_Duration"),
+        n(data, "Average_Wrapup_Duration"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.lp_onboarding_apr
+       (report_date, interval_val, agent, login_id, total_calls, dialer_calls, outbound_calls, manual_calls, transfered_calls, login_time, net_login_time, break_count, tea, lunch, meeting, bio_break, unsolicited, total_break_duration, handle_duration, avg_handle_duration, idle_duration, avg_idle_duration, idle_block_duration, ring_duration, avg_ring_duration, talk_duration, avg_talk_duration, hold_duration, avg_hold_duration, wrapup_duration, avg_wrapup_duration, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

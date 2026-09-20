@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
 Clovia's Inbound CDR export (cl_ib_cdr.xlsx, 29 real columns).
@@ -53,11 +54,10 @@ export async function importClIbCdrBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
+  const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
     const data =
       typeof row.normalized_data === "string"
@@ -67,55 +67,51 @@ export async function importClIbCdrBatch(
     const requiredVal = getByColumn(data, "Agent Id");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "Agent Id" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.cl_ib_cdr
-           (call_date, time_val, call_time, agent_id, name, call_type, camp_name, phone_number, disposition, disconn_by, call_duration, queue_duration, hold_time, acw_duration, hours_slot, total_handled_time, call_20_sec_sl, end_time, status, count_val, unique_repeat, call_10_sec_sl, abn, short_calls, slot_time, count1, min_slot_15, count_2, u_r, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          n(data, "CallDate"),
-          n(data, "Time"),
-          n(data, "CallTime"),
-          requiredVal,
-          n(data, "Name"),
-          n(data, "Calltype"),
-          n(data, "Campname"),
-          n(data, "Phone Number"),
-          n(data, "Disposition"),
-          n(data, "Disconn.By"),
-          n(data, "Callduration"),
-          n(data, "Queue Duration"),
-          n(data, "Hold Time"),
-          n(data, "Acwduration (Wrapup or Dispo time)"),
-          n(data, "Hours Slot"),
-          n(data, "Total Handled Time"),
-          n(data, "Call 20 Sec (SL)"),
-          n(data, "End Time"),
-          n(data, "Status"),
-          n(data, "Count"),
-          n(data, "Unique/Repeat"),
-          n(data, "Call 10 Sec (SL)"),
-          n(data, "Abn"),
-          n(data, "Short Calls"),
-          n(data, "Slot Time"),
-          n(data, "Count1"),
-          n(data, "15 Min Slot"),
-          n(data, "Count_1"),
-          n(data, "U/R"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({ rowId: row.id, rowNo: row.row_no, values: [
+      n(data, "CallDate"),
+      n(data, "Time"),
+      n(data, "CallTime"),
+      requiredVal,
+      n(data, "Name"),
+      n(data, "Calltype"),
+      n(data, "Campname"),
+      n(data, "Phone Number"),
+      n(data, "Disposition"),
+      n(data, "Disconn.By"),
+      n(data, "Callduration"),
+      n(data, "Queue Duration"),
+      n(data, "Hold Time"),
+      n(data, "Acwduration (Wrapup or Dispo time)"),
+      n(data, "Hours Slot"),
+      n(data, "Total Handled Time"),
+      n(data, "Call 20 Sec (SL)"),
+      n(data, "End Time"),
+      n(data, "Status"),
+      n(data, "Count"),
+      n(data, "Unique/Repeat"),
+      n(data, "Call 10 Sec (SL)"),
+      n(data, "Abn"),
+      n(data, "Short Calls"),
+      n(data, "Slot Time"),
+      n(data, "Count1"),
+      n(data, "15 Min Slot"),
+      n(data, "Count_1"),
+      n(data, "U/R"),
+      uploadedByInt, batchId,
+    ] });
   }
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.cl_ib_cdr (call_date, time_val, call_time, agent_id, name, call_type, camp_name, phone_number, disposition, disconn_by, call_duration, queue_duration, hold_time, acw_duration, hours_slot, total_handled_time, call_20_sec_sl, end_time, status, count_val, unique_repeat, call_10_sec_sl, abn, short_calls, slot_time, count1, min_slot_15, count_2, u_r, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

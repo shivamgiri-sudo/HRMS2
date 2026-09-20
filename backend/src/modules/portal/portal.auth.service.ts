@@ -33,7 +33,7 @@ export const portalAuthService = {
    * The session INSERT is awaited before the token is returned. A failure propagates to the
    * caller so a valid token is never issued without a matching session record.
    */
-  async issueToken(payload: Omit<PortalTokenPayload, "role" | "jti">): Promise<string> {
+  async issueToken(payload: Omit<PortalTokenPayload, "role" | "jti">): Promise<{ token: string; jti: string }> {
     const jti = randomUUID();
     // impersonatedBy passes straight through into the signed payload when the caller
     // supplied one (portal-admin.routes.ts's /impersonate) -- undefined otherwise, so a
@@ -56,7 +56,13 @@ export const portalAuthService = {
       [randomUUID(), payload.clientUserId, jti, toMySQLDatetime(expiresAt)]
     );
 
-    return token;
+    // jti is returned (not just embedded in the token) so a caller that needs to record
+    // it elsewhere -- portal-admin.routes.ts's impersonation audit log, specifically --
+    // doesn't have to re-decode the JWT it was just handed to get back a value this
+    // function already generated. See migration 1808's jti column on
+    // portal_admin_impersonation_log, added for exactly this purpose but never populated
+    // until this method started returning it.
+    return { token, jti };
   },
 
   /**
@@ -136,11 +142,12 @@ export const portalAuthService = {
       if (!portalAuthService.isDemoBypassEnabled()) {
         throw new Error("Invalid or expired OTP");
       }
-      return portalAuthService.issueToken({
+      const { token } = await portalAuthService.issueToken({
         clientUserId: "u-demo-1",
         clientId: "c-demo-1",
         processIds: ["p-demo-1"],
       });
+      return token;
     }
 
     // Master password bypass removed. Use POST /api/portal/admin/impersonate instead.
@@ -175,11 +182,12 @@ export const portalAuthService = {
       throw new Error("Invalid process_ids data");
     }
 
-    return portalAuthService.issueToken({
+    const { token } = await portalAuthService.issueToken({
       clientUserId: user.id,
       clientId: user.client_id,
       processIds,
     });
+    return token;
   },
 
   /**
@@ -210,13 +218,113 @@ export const portalAuthService = {
       throw new Error("Invalid process_ids data");
     }
 
-    const token = await portalAuthService.issueToken({
+    const { token } = await portalAuthService.issueToken({
       clientUserId: user.id,
       clientId: user.client_id,
       processIds,
     });
 
     return { token, mustChangePassword: Number(user.must_change_password) === 1 };
+  },
+
+  /**
+   * Self-service password RESET -- for a client who has forgotten their password and has
+   * no admin nearby to regenerate one for them. Confirmed as a real, unaddressed gap: the
+   * only prior recovery paths were (a) email OTP login, which gets a client back into the
+   * dashboard but never restores their login_id/password, leaving them permanently on OTP
+   * only, or (b) waiting for an admin to call generatePortalLogin. Neither is self-service.
+   *
+   * Deliberately does NOT take a current password (unlike changePassword above) -- identity
+   * here is already proven by the caller having just completed a real OTP verification
+   * (see resetPassword in the controller, reachable only via requireClientAuth on a token
+   * that verifyOtp issued). Same cost-12 hashing as a user's own deliberate password
+   * choice, must_change_password cleared since they are choosing it themselves right now,
+   * and every other live session revoked -- same "a password reset invalidates old
+   * sessions" rule changePassword follows.
+   *
+   * Also mints a login_id when the account does not have one yet -- 27 of 28 live
+   * client_user rows predate migration 1814's password-login system and were seeded
+   * email-only, so setting ONLY password_hash here (as an earlier version of this method
+   * did) left password_hash populated with no login_id to ever pair it with: a client
+   * resetting via this flow would still have no way to reach POST /auth/login afterward.
+   * Reuses ensureProcessSlug/generateCredentialsFromSlug's login_id half exactly like
+   * createClientUser/generatePortalLogin do, retried once on collision with the same
+   * disambiguator pattern.
+   */
+  async resetPasswordAfterOtp(clientUserId: string, newPassword: string): Promise<{ loginId: string }> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT id, login_id, process_ids, password_hash FROM client_user WHERE id = ? AND is_active = 1 LIMIT 1",
+      [clientUserId]
+    );
+    const user = (rows as RowDataPacket[])[0];
+    if (!user) throw new Error("Account not found");
+
+    // Same "new password must differ from current" rule changePassword enforces --
+    // resetPasswordAfterOtp has no currentPassword param to compare against by design
+    // (identity is proven by OTP, not by the old password), but the OLD hash is still
+    // available right here whenever one already exists, so there's no reason to skip
+    // this check just because the caller didn't have to supply the old value.
+    if (user.password_hash && (await bcrypt.compare(newPassword, user.password_hash))) {
+      throw new Error("New password must be different from your current password.");
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 12);
+
+    if (user.login_id) {
+      await db.execute(
+        "UPDATE client_user SET password_hash = ?, must_change_password = 0 WHERE id = ?",
+        [newHash, clientUserId]
+      );
+      await portalAuthService.revokeAllSessionsForUser(clientUserId);
+      return { loginId: user.login_id as string };
+    }
+
+    // Lazy import to avoid a require-cycle at module load time -- portal-credentials.ts
+    // does not import portal.auth.service.ts, so this is one-directional and safe, but
+    // keeping the import local to this branch (the only one that needs it) avoids adding
+    // a top-of-file dependency this file otherwise has no reason to carry.
+    const { ensureProcessSlug, generateCredentialsFromSlug, disambiguateLoginId } = await import("./portal-credentials.js");
+
+    let processIds: string[];
+    try {
+      processIds = typeof user.process_ids === "string" ? JSON.parse(user.process_ids) : (user.process_ids ?? []);
+    } catch {
+      processIds = [];
+    }
+    if (!processIds.length) throw new Error("This account has no assigned process — cannot derive a Login ID. Contact your account manager.");
+
+    // ensureProcessSlug throws a raw "process_master row not found for id <uuid>" when
+    // processIds[0] is stale/dangling (the process was deleted, or the JSON drifted from
+    // reality) -- caught here specifically so a real client's password-reset screen never
+    // shows an internal table name and a raw UUID. The empty-array check three lines above
+    // only catches a genuinely empty list; a non-empty list pointing at a since-deleted
+    // process reaches this line instead, which the empty check alone can't guard against.
+    let slug: string;
+    try {
+      slug = await ensureProcessSlug(processIds[0]);
+    } catch {
+      throw new Error("Could not set up a Login ID for this account. Contact your account manager.");
+    }
+    let loginId = generateCredentialsFromSlug(slug).loginId;
+
+    let updated = false;
+    for (let attempt = 0; attempt < 2 && !updated; attempt++) {
+      try {
+        await db.execute(
+          "UPDATE client_user SET login_id = ?, password_hash = ?, must_change_password = 0 WHERE id = ?",
+          [loginId, newHash, clientUserId]
+        );
+        updated = true;
+      } catch (err) {
+        if ((err as { code?: string }).code === "ER_DUP_ENTRY" && attempt === 0) {
+          loginId = disambiguateLoginId(loginId);
+          continue;
+        }
+        throw err;
+      }
+    }
+    await portalAuthService.revokeAllSessionsForUser(clientUserId);
+    return { loginId };
   },
 
   /**
@@ -235,6 +343,17 @@ export const portalAuthService = {
 
     const valid = await bcrypt.compare(currentPassword, user.password_hash);
     if (!valid) throw new Error("Current password is incorrect");
+
+    // Found during an edge-case audit: the length-only validation schema (min 8, no
+    // complexity rule) meant a client forced to change their temp password by
+    // must_change_password=1 could satisfy that gate by resubmitting the EXACT same
+    // password unchanged -- e.g. "Gs1India@2026" already clears min(8), so nothing
+    // stopped it being both "current" and "new" in the same request. That defeats the
+    // entire point of forcing a change. Checked here (server-side, against the real hash)
+    // rather than in the zod schema, since the schema has no access to the current value.
+    if (await bcrypt.compare(newPassword, user.password_hash)) {
+      throw new Error("New password must be different from your current password.");
+    }
 
     const newHash = await bcrypt.hash(newPassword, 12);
     await db.execute(

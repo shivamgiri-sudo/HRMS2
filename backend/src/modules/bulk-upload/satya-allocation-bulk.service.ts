@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * satya_allocation -- writes into db_masmis.satya_allocation (sql/1770). Source: Satya Allocation.xlsx (Allocation sheet).
@@ -51,8 +52,7 @@ export async function importSatyaAllocationBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -65,48 +65,49 @@ export async function importSatyaAllocationBatch(
     const requiredVal = getByColumn(data, "UID");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "UID" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.satya_allocation
-           (roster, warehouse, beat_name, shop_name, shop_phone, mas_id, report_date, uid, number_val, unique_flag, all_date, agent_id, disposition, sub_disposition, attempt, dd_val, same_day_connected, agent_name, order_value, call_type, order_match_filtered, agent_name_2, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          n(data, "Roster"),
-          n(data, "Warehouse"),
-          n(data, "Beatname"),
-          n(data, "Shop Name"),
-          n(data, "Shop Phone"),
-          n(data, "MASID"),
-          n(data, "Date"),
-          requiredVal,
-          n(data, "Number"),
-          n(data, "Unique"),
-          n(data, "All Date"),
-          n(data, "Agent ID"),
-          n(data, "Disposition"),
-          n(data, "Sub-Disposition"),
-          n(data, "Attempt"),
-          n(data, "dd"),
-          n(data, "Same Day Connected"),
-          n(data, "Agent Name"),
-          n(data, "Order Value"),
-          n(data, "Call Type"),
-          n(data, "Order Match (filtered)"),
-          n(data, "Agent Name_1"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        n(data, "Roster"),
+        n(data, "Warehouse"),
+        n(data, "Beatname"),
+        n(data, "Shop Name"),
+        n(data, "Shop Phone"),
+        n(data, "MASID"),
+        n(data, "Date"),
+        requiredVal,
+        n(data, "Number"),
+        n(data, "Unique"),
+        n(data, "All Date"),
+        n(data, "Agent ID"),
+        n(data, "Disposition"),
+        n(data, "Sub-Disposition"),
+        n(data, "Attempt"),
+        n(data, "dd"),
+        n(data, "Same Day Connected"),
+        n(data, "Agent Name"),
+        n(data, "Order Value"),
+        n(data, "Call Type"),
+        n(data, "Order Match (filtered)"),
+        n(data, "Agent Name_1"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.satya_allocation (roster, warehouse, beat_name, shop_name, shop_phone, mas_id, report_date, uid, number_val, unique_flag, all_date, agent_id, disposition, sub_disposition, attempt, dd_val, same_day_connected, agent_name, order_value, call_type, order_match_filtered, agent_name_2, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

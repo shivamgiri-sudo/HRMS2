@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Bla Bli Blu's real "Auto Call Back CDR Inbound.xls" export -- see
@@ -82,9 +83,8 @@ export async function importBlaBliBluAutoCallbackBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
 
+  const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
     const data =
       typeof row.normalized_data === "string"
@@ -93,7 +93,7 @@ export async function importBlaBliBluAutoCallbackBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Bla Bli Blu" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const agent = cleanText(data["Agent"]);
@@ -101,40 +101,50 @@ export async function importBlaBliBluAutoCallbackBatch(
     const startTime = parseDateTime(data["Start Time"]);
     if (!agent || !phone || !startTime) {
       const msg = `Row ${row.row_no}: "Agent", "Phone Number" and "Start Time" are all required -- together they are this row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO bla_bli_blu_auto_callback_raw
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, agent, phone,
+        parseDateOnly(data["Call Date"]),
+        cleanText(data["Call Code"]),
+        startTime,
+        parseDateTime(data["End Time"]),
+        parseNullableInt(data["Length (Sec)"]),
+        cleanText(data["Campaign"]),
+        cleanText(data["Reason"]),
+        batchId,
+        importedByUserId,
+      ],
+    });
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO bla_bli_blu_auto_callback_raw
            (id, process_id, agent_code, phone_number, call_date, call_code, start_time, end_time,
-            length_seconds, campaign, reason, data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
+            length_seconds, campaign, reason, data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
             call_code = VALUES(call_code),
             end_time = VALUES(end_time),
             length_seconds = VALUES(length_seconds)`,
-        [
-          randomUUID(), processId, agent, phone,
-          parseDateOnly(data["Call Date"]),
-          cleanText(data["Call Code"]),
-          startTime,
-          parseDateTime(data["End Time"]),
-          parseNullableInt(data["Length (Sec)"]),
-          cleanText(data["Campaign"]),
-          cleanText(data["Reason"]),
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
+
+  if (importedRows > 0) {
+    const failedRowIds = new Set(inserted.errorUpdates.map((e) => e.rowId));
+    const successRowIds = toInsert.filter((r) => !failedRowIds.has(r.rowId)).map((r) => r.rowId);
+    await db.execute(
+      `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${successRowIds.map(() => "?").join(",")})`,
+      successRowIds as never[],
+    );
   }
 
   if (errorUpdates.length) {

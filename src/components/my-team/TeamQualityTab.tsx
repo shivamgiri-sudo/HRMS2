@@ -5,6 +5,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { AlertCircle, Star, Phone, Users, TrendingUp, Award, TrendingDown } from "lucide-react";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Cell } from "recharts";
+import TeamQualityLearningPanel from "./TeamQualityLearningPanel";
 
 interface AgentBreakdown {
   agent_code: string;
@@ -107,10 +108,13 @@ export default function TeamQualityTab() {
   );
 
   if (!qd || !summary) return (
-    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white py-16">
-      <Star className="h-8 w-8 text-slate-300 mb-2" />
-      <p className="text-sm text-slate-500">No quality data available for your team.</p>
-      <p className="text-xs text-slate-400 mt-1">Data comes from the quality audit system</p>
+    <div className="space-y-6">
+      <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white py-16">
+        <Star className="h-8 w-8 text-slate-300 mb-2" />
+        <p className="text-sm text-slate-500">No quality data available for your team.</p>
+        <p className="text-xs text-slate-400 mt-1">Data comes from the quality audit system</p>
+      </div>
+      <TeamQualityLearningPanel />
     </div>
   );
 
@@ -234,6 +238,8 @@ export default function TeamQualityTab() {
           </Table>
         </div>
       )}
+
+      <TeamQualityLearningPanel />
     </div>
   );
 }

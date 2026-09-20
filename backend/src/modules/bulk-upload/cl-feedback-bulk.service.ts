@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
 Clovia's Feedback (IVR CSAT) export (cl_feedback.xlsx, 8 real
@@ -50,11 +51,10 @@ export async function importClFeedbackBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
+  const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
     const data =
       typeof row.normalized_data === "string"
@@ -64,34 +64,30 @@ export async function importClFeedbackBatch(
     const requiredVal = getByColumn(data, "Unique");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "Unique" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.cl_feedback
-           (unique_id, report_date, advisor_id, phone_number, language, option_val, call_date, csat_dsat, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          requiredVal,
-          n(data, "Date"),
-          n(data, "Advisor Id"),
-          n(data, "Phone Number"),
-          n(data, "Language"),
-          n(data, "Option"),
-          n(data, "Call Date"),
-          n(data, "C-SAT/D-SAT"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({ rowId: row.id, rowNo: row.row_no, values: [
+      requiredVal,
+      n(data, "Date"),
+      n(data, "Advisor Id"),
+      n(data, "Phone Number"),
+      n(data, "Language"),
+      n(data, "Option"),
+      n(data, "Call Date"),
+      n(data, "C-SAT/D-SAT"),
+      uploadedByInt, batchId,
+    ] });
   }
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.cl_feedback (unique_id, report_date, advisor_id, phone_number, language, option_val, call_date, csat_dsat, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

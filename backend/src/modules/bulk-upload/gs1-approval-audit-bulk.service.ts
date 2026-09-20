@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * GS1 India — Approval/Audit quality review raw log.
@@ -138,8 +139,7 @@ export async function importGs1ApprovalAuditBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -151,7 +151,6 @@ export async function importGs1ApprovalAuditBatch(
       const msg = `Row ${row.row_no}: no active GS1 process found in process_master`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -163,7 +162,6 @@ export async function importGs1ApprovalAuditBatch(
       const msg = `Row ${row.row_no}: an audit date ("Audit Date" or "Date of Completion") is required and could not be parsed`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -174,7 +172,6 @@ export async function importGs1ApprovalAuditBatch(
       const msg = `Row ${row.row_no}: an auditee ("Auditee Name" or "Name") is required`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -184,7 +181,6 @@ export async function importGs1ApprovalAuditBatch(
       const msg = `Row ${row.row_no}: an auditor ("Auditor Name" or "Auditor") is required`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -205,42 +201,43 @@ export async function importGs1ApprovalAuditBatch(
     // on the same day collapses into one row via ON DUPLICATE KEY UPDATE.
     const gtin = String(data["GTIN"] ?? "").trim() || null;
 
-    try {
-      await db.execute(
-        `INSERT INTO gs1_approval_audit_raw
-           (id, process_id, audit_date, auditee_name, auditor_name,
-            audit_result, error_category, error_flag, gcp_code, company_name, gtin, sku_count,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
-            audit_result   = VALUES(audit_result),
-            error_category = VALUES(error_category),
-            error_flag     = VALUES(error_flag),
-            gcp_code       = VALUES(gcp_code),
-            company_name   = VALUES(company_name),
-            sku_count      = VALUES(sku_count)`,
-        [
-          randomUUID(), processId, auditDate, auditeeName, auditorName,
-          auditResult,
-          String(data["Error Category"] ?? "").trim() || null,
-          errorFlag,
-          gcpCode,
-          String(data["Company Name"] ?? "").trim() || null,
-          gtin,
-          skuCount,
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id, rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, auditDate, auditeeName, auditorName,
+        auditResult,
+        String(data["Error Category"] ?? "").trim() || null,
+        errorFlag,
+        gcpCode,
+        String(data["Company Name"] ?? "").trim() || null,
+        gtin,
+        skuCount,
+        'bulk_upload',
+        batchId,
+        importedByUserId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO gs1_approval_audit_raw
+       (id, process_id, audit_date, auditee_name, auditor_name,
+        audit_result, error_category, error_flag, gcp_code, company_name, gtin, sku_count,
+        data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
+       audit_result   = VALUES(audit_result),
+       error_category = VALUES(error_category),
+       error_flag     = VALUES(error_flag),
+       gcp_code       = VALUES(gcp_code),
+       company_name   = VALUES(company_name),
+       sku_count      = VALUES(sku_count)`,
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

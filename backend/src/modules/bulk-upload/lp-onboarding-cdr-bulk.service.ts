@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * lp_onboarding_cdr -- writes into db_masmis.lp_onboarding_cdr (sql/1772). Source: LP Onboarding CDR.xlsx.
@@ -43,10 +44,10 @@ export async function importLpOnboardingCdrBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
+
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -57,57 +58,59 @@ export async function importLpOnboardingCdrBatch(
     const requiredVal = getByColumn(data, "Call_Number");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "Call_Number" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.lp_onboarding_cdr
-           (s_no, report_date, interval_val, call_number, service, agent, login_id, start_time, end_time, extension, remarks, dni, cli, disposition, lead_id, batch, dialer_type, duration, ivr_duration, ring_duration, talk_duration, wrapup_duration, hold_duration, call_status, hangup_by, child_call_number, ivr_terminal, unique_flag, disposition_status, attempt, service_2, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          n(data, "S_No"),
-          n(data, "Date"),
-          n(data, "Interval"),
-          requiredVal,
-          n(data, "Service"),
-          n(data, "Agent"),
-          n(data, "Login_Id"),
-          n(data, "Start_Time"),
-          n(data, "End_Time"),
-          n(data, "Extension"),
-          n(data, "Remarks"),
-          n(data, "Dni"),
-          n(data, "Cli"),
-          n(data, "Desposition"),
-          n(data, "Lead_Id"),
-          n(data, "Batch"),
-          n(data, "Dialer_Type"),
-          n(data, "Duration"),
-          n(data, "Ivr_Duration"),
-          n(data, "Ring_Duration"),
-          n(data, "Talk_Duration"),
-          n(data, "Wrapup_Duration"),
-          n(data, "Hold_Duration"),
-          n(data, "Call_Status"),
-          n(data, "Hangup_By"),
-          n(data, "Child_CallNumbr"),
-          n(data, "Ivr_Terminal"),
-          n(data, "Unque"),
-          n(data, "Disposition Status"),
-          n(data, "Attempt"),
-          n(data, "Service_1"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        n(data, "S_No"),
+        n(data, "Date"),
+        n(data, "Interval"),
+        requiredVal,
+        n(data, "Service"),
+        n(data, "Agent"),
+        n(data, "Login_Id"),
+        n(data, "Start_Time"),
+        n(data, "End_Time"),
+        n(data, "Extension"),
+        n(data, "Remarks"),
+        n(data, "Dni"),
+        n(data, "Cli"),
+        n(data, "Desposition"),
+        n(data, "Lead_Id"),
+        n(data, "Batch"),
+        n(data, "Dialer_Type"),
+        n(data, "Duration"),
+        n(data, "Ivr_Duration"),
+        n(data, "Ring_Duration"),
+        n(data, "Talk_Duration"),
+        n(data, "Wrapup_Duration"),
+        n(data, "Hold_Duration"),
+        n(data, "Call_Status"),
+        n(data, "Hangup_By"),
+        n(data, "Child_CallNumbr"),
+        n(data, "Ivr_Terminal"),
+        n(data, "Unque"),
+        n(data, "Disposition Status"),
+        n(data, "Attempt"),
+        n(data, "Service_1"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.lp_onboarding_cdr
+       (s_no, report_date, interval_val, call_number, service, agent, login_id, start_time, end_time, extension, remarks, dni, cli, disposition, lead_id, batch, dialer_type, duration, ivr_duration, ring_duration, talk_duration, wrapup_duration, hold_duration, call_status, hangup_by, child_call_number, ivr_terminal, unique_flag, disposition_status, attempt, service_2, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Bellavita's real "Repeat Allocation" export -- writes into the SAME
@@ -55,9 +56,8 @@ export async function importBvoRepeatAllocationMasmisBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
 
+  const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
     const data =
       typeof row.normalized_data === "string"
@@ -67,34 +67,36 @@ export async function importBvoRepeatAllocationMasmisBatch(
     const mobile = get(data, "mobile_no");
     if (!mobile) {
       const msg = `Row ${row.row_no}: "mobile_no" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.bvo_repeat_allocation
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        get(data, "unique_id") || null, mobile,
+        get(data, "payment_mode") || null, get(data, "email") || null,
+        parseNullableDecimal(get(data, "order_invoice_amount")),
+        get(data, "order_id") || null, get(data, "product_name") || null,
+        get(data, "shipping_customer_name") || null,
+        get(data, "previous_order_creation_date") || null,
+        null, batchId,
+      ],
+    });
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.bvo_repeat_allocation
            (unique_id, mobile_no, payment_mode, email, order_invoice_amount, order_id,
             product_name, shipping_customer_name, previous_order_creation_date,
-            uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          get(data, "unique_id") || null, mobile,
-          get(data, "payment_mode") || null, get(data, "email") || null,
-          parseNullableDecimal(get(data, "order_invoice_amount")),
-          get(data, "order_id") || null, get(data, "product_name") || null,
-          get(data, "shipping_customer_name") || null,
-          get(data, "previous_order_creation_date") || null,
-          null, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
-  }
+            uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

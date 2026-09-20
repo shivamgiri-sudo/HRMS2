@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * DU Digital's Korea/Thailand "Team Details" sheet: Agent ID -> MAS employee
@@ -52,8 +53,7 @@ async function importBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -63,40 +63,42 @@ async function importBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "DU Digital" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const agentId = normalizeAgentId(data["Agent_ID"]);
     if (!agentId) {
       const msg = `Row ${row.row_no}: "Agent_ID" is required — it is the row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO du_team_mapping
-           (id, process_id, dashboard_label, agent_id, agent_name, mas_employee_code,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
-            agent_name = VALUES(agent_name),
-            mas_employee_code = VALUES(mas_employee_code)`,
-        [
-          randomUUID(), processId, dashboardLabel, agentId,
-          String(data["Agent_Name"] ?? "").trim() || null,
-          String(data["MAS_ID"] ?? "").trim() || null,
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, dashboardLabel, agentId,
+        String(data["Agent_Name"] ?? "").trim() || null,
+        String(data["MAS_ID"] ?? "").trim() || null,
+        batchId,
+        importedByUserId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO du_team_mapping
+       (id, process_id, dashboard_label, agent_id, agent_name, mas_employee_code,
+        data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
+       agent_name = VALUES(agent_name),
+       mas_employee_code = VALUES(mas_employee_code)`,
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Housing Premium's own "Team Details" sheet -- found while auditing every
@@ -116,8 +117,7 @@ export async function importHousingPremiumAgentTargetBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -127,59 +127,60 @@ export async function importHousingPremiumAgentTargetBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Housing Premium" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const empId = String(data["Emp_ID"] ?? "").trim();
     const reportPeriod = parseReportPeriod(data["Report_Period"]);
     if (!empId || !reportPeriod) {
       const msg = `Row ${row.row_no}: "Emp_ID" and "Report_Period" (YYYY-MM) are both required — together they are the row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO housing_premium_agent_target
-           (id, process_id, report_period, mas_employee_code, agent_name, tl_name, center,
-            doj, tenure_days, tenure_bucket, target_amount, achievement_amount, achievement_pct,
-            status, data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
-            agent_name = VALUES(agent_name),
-            tl_name = VALUES(tl_name),
-            center = VALUES(center),
-            doj = VALUES(doj),
-            tenure_days = VALUES(tenure_days),
-            tenure_bucket = VALUES(tenure_bucket),
-            target_amount = VALUES(target_amount),
-            achievement_amount = VALUES(achievement_amount),
-            achievement_pct = VALUES(achievement_pct),
-            status = VALUES(status)`,
-        [
-          randomUUID(), processId, reportPeriod, empId,
-          String(data["Agent_Name"] ?? "").trim() || null,
-          String(data["TL_Name"] ?? "").trim() || null,
-          String(data["Center"] ?? "").trim() || null,
-          parseDate(data["DOJ"]),
-          parseNullableInt(data["Tenure"]),
-          String(data["Tenure_Bucket"] ?? "").trim() || null,
-          parseNullableAmount(data["Target"]),
-          parseNullableAmount(data["Achievement"]),
-          parseAchPct(data["Ach_Pct"]),
-          String(data["Status"] ?? "").trim() || null,
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, reportPeriod, empId,
+        String(data["Agent_Name"] ?? "").trim() || null,
+        String(data["TL_Name"] ?? "").trim() || null,
+        String(data["Center"] ?? "").trim() || null,
+        parseDate(data["DOJ"]),
+        parseNullableInt(data["Tenure"]),
+        String(data["Tenure_Bucket"] ?? "").trim() || null,
+        parseNullableAmount(data["Target"]),
+        parseNullableAmount(data["Achievement"]),
+        parseAchPct(data["Ach_Pct"]),
+        String(data["Status"] ?? "").trim() || null,
+        batchId,
+        importedByUserId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO housing_premium_agent_target
+       (id, process_id, report_period, mas_employee_code, agent_name, tl_name, center,
+        doj, tenure_days, tenure_bucket, target_amount, achievement_amount, achievement_pct,
+        status, data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
+       agent_name = VALUES(agent_name),
+       tl_name = VALUES(tl_name),
+       center = VALUES(center),
+       doj = VALUES(doj),
+       tenure_days = VALUES(tenure_days),
+       tenure_bucket = VALUES(tenure_bucket),
+       target_amount = VALUES(target_amount),
+       achievement_amount = VALUES(achievement_amount),
+       achievement_pct = VALUES(achievement_pct),
+       status = VALUES(status)`,
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

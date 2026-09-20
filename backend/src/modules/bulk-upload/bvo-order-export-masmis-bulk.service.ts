@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Bellavita's real Shopify "Order Export" -- writes into the SAME already-
@@ -57,9 +58,8 @@ export async function importBvoOrderExportMasmisBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
 
+  const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
     const data =
       typeof row.normalized_data === "string"
@@ -69,33 +69,35 @@ export async function importBvoOrderExportMasmisBatch(
     const shippingPhone = get(data, "shipping_phone", "Shipping Phone");
     if (!shippingPhone) {
       const msg = `Row ${row.row_no}: "shipping_phone" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.bvo_order_export
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        shippingPhone, n(data, "name"), n(data, "shipping_phone_2"), n(data, "email"),
+        n(data, "financial_status"), parseNullableDecimal(get(data, "total")),
+        n(data, "name_2"), n(data, "discount_code"), n(data, "created_at_raw"),
+        n(data, "lineitem_name"), n(data, "shipping_name"), n(data, "shipping_zip"),
+        n(data, "tags"), n(data, "shipping_city"), n(data, "shipping_province_name"),
+        n(data, "order_date"), null, batchId,
+      ],
+    });
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.bvo_order_export
            (shipping_phone, name, shipping_phone_2, email, financial_status, total, name_2,
             discount_code, created_at_raw, lineitem_name, shipping_name, shipping_zip, tags,
-            shipping_city, shipping_province_name, order_date, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          shippingPhone, n(data, "name"), n(data, "shipping_phone_2"), n(data, "email"),
-          n(data, "financial_status"), parseNullableDecimal(get(data, "total")),
-          n(data, "name_2"), n(data, "discount_code"), n(data, "created_at_raw"),
-          n(data, "lineitem_name"), n(data, "shipping_name"), n(data, "shipping_zip"),
-          n(data, "tags"), n(data, "shipping_city"), n(data, "shipping_province_name"),
-          n(data, "order_date"), null, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
-  }
+            shipping_city, shipping_province_name, order_date, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

@@ -25,7 +25,7 @@ import { db } from "../db/mysql.js";
 import { beat, clearBeat, HEARTBEAT_MS, JOB_OWNER } from "../modules/bulk-upload/batch-job.js";
 import { dispatchImport } from "../modules/bulk-upload/bulk-dispatch.js";
 
-const POLL_MS = 3_000;
+const POLL_MS = 500;
 
 interface QueueRow extends RowDataPacket {
   id: string;

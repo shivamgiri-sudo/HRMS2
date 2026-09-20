@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Clovia's Email Dashboard, daily per-agent.
@@ -92,8 +93,7 @@ export async function importCloviaEmailDailyBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -105,7 +105,6 @@ export async function importCloviaEmailDailyBatch(
       const msg = `Row ${row.row_no}: no active "Clovia" process found to attach this row to`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -116,7 +115,6 @@ export async function importCloviaEmailDailyBatch(
       const msg = `Row ${row.row_no}: "AgentName" is required — it is part of the row's identity`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -125,20 +123,37 @@ export async function importCloviaEmailDailyBatch(
       const msg = `Row ${row.row_no}: "Date" is required and could not be read`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
     const weekLabel = String(data["Week"] ?? "").trim() || null;
 
-    try {
-      await db.execute(
-        `INSERT INTO clovia_email_daily_actual
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, agentName, reportDate, weekLabel,
+        parseCount(data["Open Email"]),
+        parseCount(data["In Process"]),
+        parseCount(data["Re-Open"]),
+        parseCount(data["Total Mail Assigned"]),
+        parseCount(data["Total Touched Email"]),
+        parseCount(data["Closed Email"]),
+        parseCount(data["JunkMail"]),
+        'bulk_upload',
+        batchId,
+        importedByUserId,
+      ],
+    });
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO clovia_email_daily_actual
            (id, process_id, agent_name, report_date, week_label, open_email, in_process, re_open,
             total_mail_assigned, total_touched_email, closed_email, junk_mail,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
+            data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
             week_label = VALUES(week_label),
             open_email = VALUES(open_email),
             in_process = VALUES(in_process),
@@ -147,27 +162,12 @@ export async function importCloviaEmailDailyBatch(
             total_touched_email = VALUES(total_touched_email),
             closed_email = VALUES(closed_email),
             junk_mail = VALUES(junk_mail)`,
-        [
-          randomUUID(), processId, agentName, reportDate, weekLabel,
-          parseCount(data["Open Email"]),
-          parseCount(data["In Process"]),
-          parseCount(data["Re-Open"]),
-          parseCount(data["Total Mail Assigned"]),
-          parseCount(data["Total Touched Email"]),
-          parseCount(data["Closed Email"]),
-          parseCount(data["JunkMail"]),
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
-  }
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

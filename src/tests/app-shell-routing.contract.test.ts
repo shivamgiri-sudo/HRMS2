@@ -330,22 +330,6 @@ describe("application shell routing contracts", () => {
       // (d1) Redirects. `<Navigate to=... replace />` shims onto a tab of a page that IS in the
       // menu — exactly the "redirect" category this list's own header names. Nothing orphaned.
       //   salary-disputes/{queue,team} -> /payroll/salary-disputes?tab=... (in navConfig)
-      //   finance.routes.tsx <Navigate>s onto tabs of /finance/ledger (in navConfig). Redirect
-      //   shims for the old per-screen URLs; nothing orphaned.
-      "/finance/bank-accounts",
-      "/finance/bank-directory",
-      "/finance/bank-ledger",
-      "/finance/bank-reconciliation",
-      "/finance/ledger-heads",
-      "/finance/ledger-reports",
-      "/finance/payment-vouchers",
-      "/finance/vendor-payment-tracking",
-      // Client-portal user's own change-password screen, reached from the portal login flow —
-      // portal users have no HRMS sidebar.
-      "/portal/change-password",
-      // Super Admin/Admin-only screen with no in-app link yet; reachable by URL only. Whether it
-      // belongs in the sidebar is a navigation decision, not something this contract can answer.
-      "/super-admin/client-portal-access",
       "/payroll/salary-disputes/queue",
       "/payroll/salary-disputes/team",
       "/payroll/salary-package-manager",

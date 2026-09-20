@@ -1,10 +1,12 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import type { KpiScorecard } from "./portal.types.js";
+import type { KpiScorecard, PortalKpiMetric } from "./portal.types.js";
 import { maskPortalEmployee } from "../../shared/portalMask.js";
 import { getKpiScorecardsForProcessId } from "../process-performance/kpi-scorecard.service.js";
+import { portalKpiEngine } from "./portal.kpi-engine.service.js";
+import { getProcessOperationsForPortal } from "../process-operations/process-operations.service.js";
 
-const UNIT_LABEL: Record<string, string> = { percent: "%", seconds: "s", currency: "₹", count: "", ratio: "x" };
+const UNIT_LABEL: Record<string, string> = { percent: "%", percentage: "%", seconds: "s", currency: "₹", count: "", ratio: "x" };
 
 /** 'YYYY-MM' -> the {from, to} range this metric family's real source
  * (kpi_daily_actual) understands: the period's own month plus 6 months back,
@@ -19,6 +21,97 @@ function periodToRange(period: string): { from: string; to: string } {
 }
 
 export const portalKpiService = {
+  /**
+   * Adapts portal.kpi-engine.service.ts's PortalKpiMetric[] into this file's KpiScorecard[]
+   * shape so the Performance tab's existing rendering (KpiScorecardGrid.tsx,
+   * PerformanceKpiStrip in PortalProcessDashboard.tsx) needs no changes at all.
+   *
+   * metric_id has no real UUID counterpart in the engine's world (it computes from
+   * attendance/leave/employees, not from kpi_metric_master), so metric_code is used as
+   * metric_id too -- it is unique per process's result set and stable across requests,
+   * which is all the frontend actually needs it for (a React key, and Sparkline's
+   * fallback-to-metric_code already anticipates exactly this).
+   *
+   * Never throws: a schema difference (e.g. attendance_daily_record missing a column on
+   * some environment) must fall through to the legacy path below, not break the whole
+   * Performance tab. Returns null on any failure so the caller's `if (engineMetrics)`
+   * check treats it the same as "engine had nothing to say", not "engine succeeded with
+   * zero metrics" (an empty array IS a meaningful engine result -- see the achievement_pct
+   * mapping below for why null/no_data still produces a real row, not an omitted one).
+   */
+  async tryKpiEngine(processId: string, period: string): Promise<KpiScorecard[] | null> {
+    try {
+      const metrics: PortalKpiMetric[] = await portalKpiEngine.computeKpisForProcess(processId, period);
+      return metrics.map((m): KpiScorecard => ({
+        metric_id: m.metric_code,
+        metric_code: m.metric_code,
+        metric_name: m.metric_name,
+        unit: UNIT_LABEL[m.unit] ?? m.unit,
+        direction: m.direction,
+        target: m.target,
+        actual: m.actual,
+        achievement_pct: m.achievement_pct,
+        rag: m.rag,
+        sparkline: m.sparkline,
+      }));
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * Pulls real, already-computed operational/quality metrics (AHT, QA_QUALITY_PCT,
+   * SLA%, funnel/conversion rates, etc.) from process-operations.service.ts's
+   * "operations"/"conversion"/"quality"/"risk"/"conduct" sections into the Performance
+   * tab as ADDITIONAL scorecards, alongside (never replacing) the 7 attendance-derived
+   * ones from tryKpiEngine above.
+   *
+   * Found during a follow-up audit: the internal ProcessOperationsPage.tsx shows ~57
+   * real metric codes for every process, but only the 7 attendance ones ever reached the
+   * client's KPI/Performance scorecard -- everything else was visible only as a flat tile
+   * on the Operations/Quality tabs, never as a scored, RAG'd, target-tracked KPI. A client
+   * asking "why doesn't my Performance tab show QA scores" had no wrong answer to give.
+   *
+   * Only metrics with BOTH a real value AND a real configured target are included --
+   * KpiScorecard.target is non-nullable by design (see its own comment: a fabricated
+   * target is worse than omitting the row), and the Operations/Quality tabs already show
+   * every metric including the "no target set" ones, so nothing is lost by excluding them
+   * here specifically. Never throws, same reason tryKpiEngine doesn't: a schema hiccup on
+   * process-operations' side must never break the whole Performance tab.
+   */
+  async tryOperationsMetrics(processId: string): Promise<KpiScorecard[]> {
+    try {
+      const result = await getProcessOperationsForPortal(processId, 180);
+      if (!result) return [];
+      const eligibleKeys = new Set(["operations", "conversion", "quality", "risk", "conduct"]);
+      const readings = result.sections
+        .filter((s) => eligibleKeys.has(s.key))
+        .flatMap((s) => s.metrics)
+        .filter((m) => m.value != null && m.targetValue != null);
+
+      return readings.map((m): KpiScorecard => {
+        const direction = (m.direction === "lower_is_better" ? "lower_is_better" : "higher_is_better") as "higher_is_better" | "lower_is_better";
+        const ach = portalKpiService.computeAchievement(m.value!, m.targetValue!, direction);
+        return {
+          metric_id: m.metricKey,
+          metric_code: m.metricKey,
+          metric_name: m.label,
+          unit: UNIT_LABEL[m.unit ?? ""] ?? (m.unit ?? ""),
+          direction,
+          target: m.targetValue!,
+          actual: m.value,
+          achievement_pct: ach,
+          rag: portalKpiService.ragFromAchievement(ach),
+          sparkline: m.trend
+            .filter((p): p is { date: string; value: number; numerator: number | null; denominator: number | null } => p.value != null)
+            .map((p) => ({ period: p.date, value: p.value })),
+        };
+      });
+    } catch {
+      return [];
+    }
+  },
+
   computeAchievement(actual: number, target: number, direction: string): number {
     if (target === 0) return 0;
     const raw = direction === "higher_is_better" ? (actual / target) * 100 : (target / actual) * 100;
@@ -84,7 +177,7 @@ export const portalKpiService = {
     // behaviour is untouched.
     const registryRows = await getKpiScorecardsForProcessId(processId, periodToRange(period));
     if (registryRows) {
-      return registryRows.map((r): KpiScorecard => {
+      const registryScorecards = registryRows.map((r): KpiScorecard => {
         // availability !== 'ok' means no real reading -- rag "no_data" and a null
         // achievement, never a fabricated 0%, which a client cannot tell apart
         // from a metric that IS measured and IS failing badly.
@@ -106,6 +199,34 @@ export const portalKpiService = {
             .filter((p): p is { period: string; value: number } => p.value != null),
         };
       });
+      // Additive merge: real operational/quality metrics (AHT, QA_QUALITY_PCT, etc.)
+      // alongside the registry's own KPIs, deduped by metric_code so an operations
+      // metric can never silently overwrite one the registry already scored.
+      const opsScorecards = await portalKpiService.tryOperationsMetrics(processId);
+      const seenCodes = new Set(registryScorecards.map((s) => s.metric_code));
+      return [...registryScorecards, ...opsScorecards.filter((s) => !seenCodes.has(s.metric_code))];
+    }
+
+    // portal.kpi-engine.service.ts computes real KPIs (attendance, absenteeism, lateness,
+    // leave, retention, data-completeness) straight from attendance_daily_record/
+    // leave_request/employees -- tables verified populated for every real client, unlike
+    // the registry above (hardcoded to 4 named processes) or the kpi_template/
+    // kpi_template_metric path below (both tables have ZERO rows for every client on this
+    // database, confirmed live 2026-09-19 -- that path has therefore always returned []
+    // for every process not in the 4-process registry, silently, since the day it shipped).
+    //
+    // Tried here, after the registry and before the legacy path, so a process already
+    // served correctly by either of those is completely unaffected: the legacy path below
+    // is unreachable dead code today (kpi_template_metric is empty), so trying the engine
+    // first can only ever turn an existing "always empty" result into real data, never
+    // regress a process that currently shows something.
+    const engineMetrics = await portalKpiService.tryKpiEngine(processId, period);
+    if (engineMetrics && engineMetrics.length > 0) {
+      // Same additive merge as the registry branch above -- real operational/quality
+      // metrics alongside the engine's 7 attendance-derived ones, deduped by metric_code.
+      const opsScorecards = await portalKpiService.tryOperationsMetrics(processId);
+      const seenCodes = new Set(engineMetrics.map((s) => s.metric_code));
+      return [...engineMetrics, ...opsScorecards.filter((s) => !seenCodes.has(s.metric_code))];
     }
 
     // Fetch process name first to build a safe parameterized LIKE

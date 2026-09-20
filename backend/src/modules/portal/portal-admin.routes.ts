@@ -76,18 +76,22 @@ router.post(
     // impersonatedBy } and writes the matching portal_user_sessions row requireClientAuth
     // checks. impersonatedBy shortens the token to 2h (vs a real login's 7d) and is what
     // the frontend's persistent "you are viewing as X" banner keys off of.
-    const token = await portalAuthService.issueToken({
+    const { token, jti } = await portalAuthService.issueToken({
       clientUserId: portalUser.id,
       clientId: portalUser.client_id,
       processIds,
       impersonatedBy: req.authUser?.id,
     });
 
+    // jti links this audit row to its exact portal_user_sessions row (migration 1808
+    // added the column for this) -- without it, an auditor can see THAT an admin
+    // impersonated a client but can't tell which session that was, whether it's still
+    // live, or revoke it directly from the audit log.
     await db.execute(
       `INSERT INTO portal_admin_impersonation_log
-         (admin_user_id, portal_user_id, client_email, reason, created_at)
-       VALUES (?, ?, ?, ?, NOW())`,
-      [req.authUser?.id, portalUser.id, portalUser.email, reason.trim()]
+         (admin_user_id, portal_user_id, client_email, reason, jti, created_at)
+       VALUES (?, ?, ?, ?, ?, NOW())`,
+      [req.authUser?.id, portalUser.id, portalUser.email, reason.trim(), jti]
     );
 
     return res.json({

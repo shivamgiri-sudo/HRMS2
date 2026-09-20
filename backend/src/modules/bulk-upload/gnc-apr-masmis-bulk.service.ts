@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * GNC's daily Agent Productivity Report (APR) — writes into db_masmis.gnc_apr,
@@ -72,8 +73,8 @@ export async function importGncAprMasmisBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -86,7 +87,7 @@ export async function importGncAprMasmisBatch(
     const reportDate = parseReportDate(get(data, "Date", "report_date"));
     if (!userName || !reportDate) {
       const msg = `Row ${row.row_no}: "USER" (agent name) and "Date" (report date) are both required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     // UID: if not supplied, synthesise from emp_id + date serial (matches existing rows)
@@ -97,61 +98,63 @@ export async function importGncAprMasmisBatch(
       : null;
     const uid = getOrNull(data, "UID", "uid") ?? syntheticUid;
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.gnc_apr
-           (uid, report_date, user_name, emp_id, tl_name, calls, process_type,
-            login_time, wait_time, talk_time, dispo_time, pause_time, login_duration,
-            logout_time, acht, aoc, bio, bre, briefing, down_time, lunch, meet, qa, sb,
-            tea_break, training_break, wash, net_login, break_time, tra_qa, downtime,
-            atten, capping, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          uid,
-          reportDate,
-          userName,
-          empId,
-          getOrNull(data, "TL Name", "tl_name"),
-          parseNullableInt(get(data, "CALLS", "calls")),
-          getOrNull(data, "Process Type", "process_type"),
-          getOrNull(data, "Login Time", "login_time"),
-          getOrNull(data, "WAIT", "wait_time"),
-          getOrNull(data, "TALK", "talk_time"),
-          getOrNull(data, "DISPO", "dispo_time"),
-          getOrNull(data, "PAUSE", "pause_time"),
-          getOrNull(data, "Login", "login_duration"),
-          getOrNull(data, "Logout", "logout_time"),
-          parseNullableInt(get(data, "ACHT", "acht")),
-          getOrNull(data, "AOC", "aoc"),
-          getOrNull(data, "BIO", "bio"),
-          getOrNull(data, "Bre", "bre"),
-          getOrNull(data, "Briefing", "briefing"),
-          getOrNull(data, "DOWN", "down_time"),
-          getOrNull(data, "Lunch", "lunch"),
-          getOrNull(data, "Meet", "meet"),
-          getOrNull(data, "QA", "qa"),
-          getOrNull(data, "SB", "sb"),
-          getOrNull(data, "Tea break", "tea_break"),
-          getOrNull(data, "Training break", "training_break"),
-          getOrNull(data, "Wash", "wash"),
-          getOrNull(data, "Net Login", "net_login"),
-          getOrNull(data, "Break", "break_time"),
-          getOrNull(data, "TRA+QA", "tra_qa"),
-          getOrNull(data, "Downtime", "downtime"),
-          parseNullableInt(get(data, "Atten", "atten")),
-          getOrNull(data, "Capping", "capping"),
-          null, // uploaded_by: HRMS user IDs are UUIDs, gnc_apr.uploaded_by is int
-          batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        uid,
+        reportDate,
+        userName,
+        empId,
+        getOrNull(data, "TL Name", "tl_name"),
+        parseNullableInt(get(data, "CALLS", "calls")),
+        getOrNull(data, "Process Type", "process_type"),
+        getOrNull(data, "Login Time", "login_time"),
+        getOrNull(data, "WAIT", "wait_time"),
+        getOrNull(data, "TALK", "talk_time"),
+        getOrNull(data, "DISPO", "dispo_time"),
+        getOrNull(data, "PAUSE", "pause_time"),
+        getOrNull(data, "Login", "login_duration"),
+        getOrNull(data, "Logout", "logout_time"),
+        parseNullableInt(get(data, "ACHT", "acht")),
+        getOrNull(data, "AOC", "aoc"),
+        getOrNull(data, "BIO", "bio"),
+        getOrNull(data, "Bre", "bre"),
+        getOrNull(data, "Briefing", "briefing"),
+        getOrNull(data, "DOWN", "down_time"),
+        getOrNull(data, "Lunch", "lunch"),
+        getOrNull(data, "Meet", "meet"),
+        getOrNull(data, "QA", "qa"),
+        getOrNull(data, "SB", "sb"),
+        getOrNull(data, "Tea break", "tea_break"),
+        getOrNull(data, "Training break", "training_break"),
+        getOrNull(data, "Wash", "wash"),
+        getOrNull(data, "Net Login", "net_login"),
+        getOrNull(data, "Break", "break_time"),
+        getOrNull(data, "TRA+QA", "tra_qa"),
+        getOrNull(data, "Downtime", "downtime"),
+        parseNullableInt(get(data, "Atten", "atten")),
+        getOrNull(data, "Capping", "capping"),
+        null, // uploaded_by: HRMS user IDs are UUIDs, gnc_apr.uploaded_by is int
+        batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.gnc_apr
+       (uid, report_date, user_name, emp_id, tl_name, calls, process_type,
+        login_time, wait_time, talk_time, dispo_time, pause_time, login_duration,
+        logout_time, acht, aoc, bio, bre, briefing, down_time, lunch, meet, qa, sb,
+        tea_break, training_break, wash, net_login, break_time, tra_qa, downtime,
+        atten, capping, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     try {

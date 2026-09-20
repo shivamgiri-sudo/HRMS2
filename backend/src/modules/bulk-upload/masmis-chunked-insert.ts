@@ -32,8 +32,10 @@ export async function chunkedMasmisInsert(params: {
   placeholderGroup: string;
   rows: ChunkInsertRow[];
   chunkSize?: number;
+  /** Optional SQL appended after the VALUES list — used for ON DUPLICATE KEY UPDATE clauses. */
+  insertSuffix?: string;
 }): Promise<{ importedRows: number; errorUpdates: Array<{ rowId: string; message: string }> }> {
-  const { insertPrefix, placeholderGroup, rows, chunkSize = 300 } = params;
+  const { insertPrefix, placeholderGroup, rows, chunkSize = 300, insertSuffix = "" } = params;
   let importedRows = 0;
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
 
@@ -42,7 +44,7 @@ export async function chunkedMasmisInsert(params: {
     try {
       await withDeadlockRetry(() =>
         db.execute(
-          `${insertPrefix} VALUES ${chunk.map(() => placeholderGroup).join(", ")}`,
+          `${insertPrefix} VALUES ${chunk.map(() => placeholderGroup).join(", ")}${insertSuffix ? ` ${insertSuffix}` : ""}`,
           chunk.flatMap((r) => r.values) as never[],
         ),
       );
@@ -51,7 +53,7 @@ export async function chunkedMasmisInsert(params: {
       for (const row of chunk) {
         try {
           await withDeadlockRetry(() =>
-            db.execute(`${insertPrefix} VALUES ${placeholderGroup}`, row.values as never[]),
+            db.execute(`${insertPrefix} VALUES ${placeholderGroup}${insertSuffix ? ` ${insertSuffix}` : ""}`, row.values as never[]),
           );
           importedRows++;
         } catch (err: unknown) {

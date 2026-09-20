@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Bla Bli Blu's real Smartping CDR export -- captures ONLY the outcome
@@ -78,9 +79,8 @@ export async function importBlaBliBluCallDispositionBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
 
+  const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
     const data =
       typeof row.normalized_data === "string"
@@ -89,66 +89,76 @@ export async function importBlaBliBluCallDispositionBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Bla Bli Blu" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const callUuid = cleanText(data["Session Id"]);
     if (!callUuid) {
       const msg = `Row ${row.row_no}: "Session Id" is required -- it is this row's identity (matches dialer_db.cdr_bla_bli_blu.call_uuid)`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO bla_bli_blu_call_disposition_raw
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, callUuid,
+        parseDateTime(data["Date & Time"]),
+        cleanText(data["Customer Number"]),
+        cleanText(data["Agent ID"]),
+        cleanText(data["Agent Name"]),
+        cleanText(data["Campaign Name"]),
+        cleanText(data["Queue"]),
+        cleanText(data["Campaign Type"]),
+        cleanText(data["Disposition - L1"]),
+        cleanText(data["Disposition - L2"]),
+        cleanText(data["Disposition - L3"]),
+        cleanText(data["Disposition - L4"]),
+        cleanText(data["Remarks"]),
+        cleanText(data["Recording"]),
+        cleanText(data["Team Lead"]),
+        cleanText(data["Call Rating"]),
+        cleanText(data["Recording Rating"]),
+        cleanText(data["Recording Remarks"]),
+        cleanText(data["Evaluation Form"]),
+        cleanText(data["Script"]),
+        cleanText(data["Knowledge Base"]),
+        cleanText(data["CRM Form"]),
+        batchId,
+        importedByUserId,
+      ],
+    });
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO bla_bli_blu_call_disposition_raw
            (id, process_id, call_uuid, call_date_time, customer_number, agent_code, agent_name,
             campaign_name, queue_name, campaign_type, disposition_l1, disposition_l2, disposition_l3,
             disposition_l4, remarks, recording_url, team_lead, call_rating, recording_rating,
             recording_remarks, evaluation_form, script, knowledge_base, crm_form,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
+            data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
             disposition_l1 = VALUES(disposition_l1),
             disposition_l2 = VALUES(disposition_l2),
             disposition_l3 = VALUES(disposition_l3),
             disposition_l4 = VALUES(disposition_l4),
             remarks = VALUES(remarks),
             call_rating = VALUES(call_rating)`,
-        [
-          randomUUID(), processId, callUuid,
-          parseDateTime(data["Date & Time"]),
-          cleanText(data["Customer Number"]),
-          cleanText(data["Agent ID"]),
-          cleanText(data["Agent Name"]),
-          cleanText(data["Campaign Name"]),
-          cleanText(data["Queue"]),
-          cleanText(data["Campaign Type"]),
-          cleanText(data["Disposition - L1"]),
-          cleanText(data["Disposition - L2"]),
-          cleanText(data["Disposition - L3"]),
-          cleanText(data["Disposition - L4"]),
-          cleanText(data["Remarks"]),
-          cleanText(data["Recording"]),
-          cleanText(data["Team Lead"]),
-          cleanText(data["Call Rating"]),
-          cleanText(data["Recording Rating"]),
-          cleanText(data["Recording Remarks"]),
-          cleanText(data["Evaluation Form"]),
-          cleanText(data["Script"]),
-          cleanText(data["Knowledge Base"]),
-          cleanText(data["CRM Form"]),
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
+
+  if (importedRows > 0) {
+    const failedRowIds = new Set(inserted.errorUpdates.map((e) => e.rowId));
+    const successRowIds = toInsert.filter((r) => !failedRowIds.has(r.rowId)).map((r) => r.rowId);
+    await db.execute(
+      `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${successRowIds.map(() => "?").join(",")})`,
+      successRowIds as never[],
+    );
   }
 
   if (errorUpdates.length) {

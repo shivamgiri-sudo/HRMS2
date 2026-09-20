@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * GS1 India — DataKart task processing daily actuals.
@@ -166,33 +167,51 @@ export async function importGs1DatakartDailyBatch(
     }
   }
 
-  let importedRows = 0;
-  const importedRowIds: string[] = [];
-
+  // One insert per analyst-day group (already collapsed from raw rows).
+  // Convert to chunkedMasmisInsert so all groups go in one multi-row INSERT pass.
+  const toInsert: ChunkInsertRow[] = [];
+  const groupKeys: string[] = [];
   for (const [key, g] of groups) {
     const tatPct = g.tatKnown > 0 ? Math.round((g.tatHits / g.tatKnown) * 100) : 0;
-    try {
-      await db.execute(
-        `INSERT INTO gs1_datakart_daily_actual
+    // rowId is the first raw row of the group — used by chunkedMasmisInsert for error attribution
+    toInsert.push({
+      rowId: rowIdsByGroup.get(key)?.[0] ?? "",
+      rowNo: g.rowNos[0] ?? 0,
+      values: [
+        randomUUID(), processId, g.taskDate, g.analystName, g.taskDate,
+        g.taskCount, g.gtinTotal, tatPct,
+        batchId, importedByUserId,
+      ],
+    });
+    groupKeys.push(key);
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO gs1_datakart_daily_actual
            (id, process_id, report_date, analyst_name, task_date,
-            task_count, gtin_count, within_tat, data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
+            task_count, gtin_count, within_tat, data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
             task_count = VALUES(task_count),
             gtin_count = VALUES(gtin_count),
             within_tat = VALUES(within_tat)`,
-        [
-          randomUUID(), processId, g.taskDate, g.analystName, g.taskDate,
-          g.taskCount, g.gtinTotal, tatPct,
-          batchId, importedByUserId,
-        ] as never[],
-      );
-      importedRows += g.taskCount;
-      importedRowIds.push(...(rowIdsByGroup.get(key) ?? []));
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      for (const rowId of rowIdsByGroup.get(key) ?? []) {
-        errors.push(`Row group ${g.taskDate}/${g.analystName}: ${msg}`);
+    rows: toInsert,
+  });
+
+  // Map any insert-level errors back to all raw rowIds in the failed group
+  const failedFirstRowIds = new Set(inserted.errorUpdates.map((u) => u.rowId));
+  const importedRowIds: string[] = [];
+  let importedRows = 0;
+  for (let i = 0; i < groupKeys.length; i++) {
+    const key = groupKeys[i];
+    const groupRowIds = rowIdsByGroup.get(key) ?? [];
+    if (!failedFirstRowIds.has(toInsert[i].rowId)) {
+      importedRows += groups.get(key)!.taskCount;
+      importedRowIds.push(...groupRowIds);
+    } else {
+      const msg = inserted.errorUpdates.find((u) => u.rowId === toInsert[i].rowId)?.message ?? "insert failed";
+      for (const rowId of groupRowIds) {
+        errors.push(`Row group ${key}: ${msg}`);
         errorUpdates.push({ rowId, message: msg.slice(0, 500) });
         errorRows++;
       }

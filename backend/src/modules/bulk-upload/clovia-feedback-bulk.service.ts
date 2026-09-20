@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Clovia's own "Feedback" sheet -- found while auditing every sheet of the
@@ -102,8 +103,7 @@ export async function importCloviaFeedbackBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -113,7 +113,7 @@ export async function importCloviaFeedbackBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Clovia" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const uniqueRef = String(data["Unique"] ?? "").trim();
@@ -121,41 +121,43 @@ export async function importCloviaFeedbackBatch(
     const reportDate = parseDate(data["Date"]) ?? callDate?.slice(0, 10) ?? null;
     if (!uniqueRef || !callDate || !reportDate) {
       const msg = `Row ${row.row_no}: "Unique", "Call_Date" and "Date" are all required — together they are the row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO clovia_feedback_raw
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, reportDate, callDate, uniqueRef,
+        String(data["Advisor Id"] ?? "").trim() || null,
+        String(data["Phone Number"] ?? "").trim() || null,
+        String(data["Language"] ?? "").trim() || null,
+        String(data["Option"] ?? "").trim() || null,
+        parseNullableFlag(data["C-SAT/D-SAT"]),
+        'bulk_upload',
+        batchId,
+        importedByUserId,
+      ],
+    });
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO clovia_feedback_raw
            (id, process_id, report_date, call_date, unique_ref, advisor_id, phone_number,
-            language, survey_option, csat_flag, data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
+            language, survey_option, csat_flag, data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
             advisor_id = VALUES(advisor_id),
             phone_number = VALUES(phone_number),
             language = VALUES(language),
             survey_option = VALUES(survey_option),
             csat_flag = VALUES(csat_flag)`,
-        [
-          randomUUID(), processId, reportDate, callDate, uniqueRef,
-          String(data["Advisor Id"] ?? "").trim() || null,
-          String(data["Phone Number"] ?? "").trim() || null,
-          String(data["Language"] ?? "").trim() || null,
-          String(data["Option"] ?? "").trim() || null,
-          parseNullableFlag(data["C-SAT/D-SAT"]),
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
-  }
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

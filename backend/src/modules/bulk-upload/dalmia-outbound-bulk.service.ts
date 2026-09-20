@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Dalmia Cement's own "Outbound " sheet -- website/careers enquiry log for
@@ -81,9 +82,8 @@ export async function importDalmiaOutboundBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
 
+  const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
     const data =
       typeof row.normalized_data === "string"
@@ -92,48 +92,50 @@ export async function importDalmiaOutboundBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Dalmia Cement" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const sourceRowId = parseNullableInt(data["ID"]);
     const callingDate = parseDate(data["Calling Date"]);
     if (sourceRowId === null || !callingDate) {
       const msg = `Row ${row.row_no}: "ID" and "Calling Date" are both required -- ID is this row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
+    toInsert.push({ rowId: row.id, rowNo: row.row_no, values: [
+      randomUUID(), processId, sourceRowId, callingDate,
+      cleanText(data["Name"]),
+      cleanText(data["Email"]),
+      cleanText(data["Mobile"]),
+      cleanText(data["Enquiry For"]),
+      cleanText(data["Message"]),
+      cleanText(data["Date"]),
+      cleanText(data["Status"]),
+      cleanText(data["Remarks"]),
+      cleanText(data["Source of lead"]),
+      batchId,
+      importedByUserId,
+    ] });
+  }
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO dalmia_outbound_raw (id, process_id, source_row_id, report_date, customer_name, email, mobile, enquiry_for, message, enquiry_date, status, remarks, source_of_lead, data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE status = VALUES(status), remarks = VALUES(remarks)`,
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
+
+  if (importedRows > 0) {
+    const failedRowIds = new Set(inserted.errorUpdates.map((u) => u.rowId));
+    const successRowIds = toInsert.filter((r) => !failedRowIds.has(r.rowId)).map((r) => r.rowId);
+    if (successRowIds.length) {
       await db.execute(
-        `INSERT INTO dalmia_outbound_raw
-           (id, process_id, source_row_id, report_date, customer_name, email, mobile,
-            enquiry_for, message, enquiry_date, status, remarks, source_of_lead,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
-            status = VALUES(status),
-            remarks = VALUES(remarks)`,
-        [
-          randomUUID(), processId, sourceRowId, callingDate,
-          cleanText(data["Name"]),
-          cleanText(data["Email"]),
-          cleanText(data["Mobile"]),
-          cleanText(data["Enquiry For"]),
-          cleanText(data["Message"]),
-          cleanText(data["Date"]),
-          cleanText(data["Status"]),
-          cleanText(data["Remarks"]),
-          cleanText(data["Source of lead"]),
-          batchId,
-          importedByUserId,
-        ] as never[],
+        `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${successRowIds.map(() => "?").join(",")})`,
+        successRowIds,
       );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
     }
   }
 

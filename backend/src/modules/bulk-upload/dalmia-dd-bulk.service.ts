@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Dalmia Cement's own "DD Raw" (Disposition Detail) sheet -- a dealer/
@@ -85,9 +86,8 @@ export async function importDalmiaDdBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
 
+  const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
     const data =
       typeof row.normalized_data === "string"
@@ -96,78 +96,74 @@ export async function importDalmiaDdBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Dalmia Cement" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const callId = parseNullableInt(data["Call Id"]);
     const callDate = parseDateTime(data["CallDate"]);
     if (callId === null || !callDate) {
       const msg = `Row ${row.row_no}: "Call Id" and "CallDate" are both required -- Call Id is this row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
+    toInsert.push({ rowId: row.id, rowNo: row.row_no, values: [
+      randomUUID(), processId, callId, callDate.slice(0, 10),
+      cleanText(data["IN CALL FROM"]),
+      cleanText(data["SCENARIO"]),
+      cleanText(data["SUB SCENARIO 1"]),
+      cleanText(data["SUB SCENARIO 2"]),
+      cleanText(data["SUB SCENARIO 3"]),
+      cleanText(data["Caller Type"]),
+      cleanText(data["Suggestion/Feedback"]),
+      cleanText(data["Status"]),
+      cleanText(data["NFTR/FTR"]),
+      cleanText(data["Source of Lead"]),
+      cleanText(data["Mobile No"]),
+      cleanText(data["Alternate Number"]),
+      cleanText(data["Pincode"]),
+      cleanText(data["No. Of Bags"]),
+      cleanText(data["Region"]),
+      cleanText(data["Customer Name"]),
+      cleanText(data["Firm Name"]),
+      cleanText(data["GSTIN NUMBER"]),
+      cleanText(data["City"]),
+      cleanText(data["District"]),
+      cleanText(data["State"]),
+      cleanText(data["Customer Remarks"]),
+      cleanText(data["E-Mail ID"]),
+      cleanText(data["When cement is Required"]),
+      callDate,
+      cleanText(data["Call Action"]),
+      parseDateTime(data["Closer Date"]),
+      cleanText(data["Call Created"]),
+      parseDateTime(data["Closer Time"]),
+      cleanText(data["Type Of Leads"]),
+      cleanText(data["Leads"]),
+      cleanText(data["MT"]),
+      cleanText(data["Converted"]),
+      batchId,
+      importedByUserId,
+    ] });
+  }
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO dalmia_dd_raw (id, process_id, call_id, report_date, in_call_from, scenario, sub_scenario_1, sub_scenario_2, sub_scenario_3, caller_type, suggestion_feedback, status, nftr_ftr, source_of_lead, mobile_no, alternate_number, pincode, no_of_bags, region, customer_name, firm_name, gstin_number, city, district, state, customer_remarks, email_id, when_cement_required, call_date, call_action, closer_date, call_created, closer_time, type_of_leads, leads, mt, converted, data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE status = VALUES(status), call_action = VALUES(call_action), closer_date = VALUES(closer_date)`,
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
+
+  if (importedRows > 0) {
+    const failedRowIds = new Set(inserted.errorUpdates.map((u) => u.rowId));
+    const successRowIds = toInsert.filter((r) => !failedRowIds.has(r.rowId)).map((r) => r.rowId);
+    if (successRowIds.length) {
       await db.execute(
-        `INSERT INTO dalmia_dd_raw
-           (id, process_id, call_id, report_date, in_call_from, scenario, sub_scenario_1,
-            sub_scenario_2, sub_scenario_3, caller_type, suggestion_feedback, status, nftr_ftr,
-            source_of_lead, mobile_no, alternate_number, pincode, no_of_bags, region,
-            customer_name, firm_name, gstin_number, city, district, state, customer_remarks,
-            email_id, when_cement_required, call_date, call_action, closer_date, call_created,
-            closer_time, type_of_leads, leads, mt, converted,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
-            status = VALUES(status),
-            call_action = VALUES(call_action),
-            closer_date = VALUES(closer_date)`,
-        [
-          randomUUID(), processId, callId, callDate.slice(0, 10),
-          cleanText(data["IN CALL FROM"]),
-          cleanText(data["SCENARIO"]),
-          cleanText(data["SUB SCENARIO 1"]),
-          cleanText(data["SUB SCENARIO 2"]),
-          cleanText(data["SUB SCENARIO 3"]),
-          cleanText(data["Caller Type"]),
-          cleanText(data["Suggestion/Feedback"]),
-          cleanText(data["Status"]),
-          cleanText(data["NFTR/FTR"]),
-          cleanText(data["Source of Lead"]),
-          cleanText(data["Mobile No"]),
-          cleanText(data["Alternate Number"]),
-          cleanText(data["Pincode"]),
-          cleanText(data["No. Of Bags"]),
-          cleanText(data["Region"]),
-          cleanText(data["Customer Name"]),
-          cleanText(data["Firm Name"]),
-          cleanText(data["GSTIN NUMBER"]),
-          cleanText(data["City"]),
-          cleanText(data["District"]),
-          cleanText(data["State"]),
-          cleanText(data["Customer Remarks"]),
-          cleanText(data["E-Mail ID"]),
-          cleanText(data["When cement is Required"]),
-          callDate,
-          cleanText(data["Call Action"]),
-          parseDateTime(data["Closer Date"]),
-          cleanText(data["Call Created"]),
-          parseDateTime(data["Closer Time"]),
-          cleanText(data["Type Of Leads"]),
-          cleanText(data["Leads"]),
-          cleanText(data["MT"]),
-          cleanText(data["Converted"]),
-          batchId,
-          importedByUserId,
-        ] as never[],
+        `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${successRowIds.map(() => "?").join(",")})`,
+        successRowIds,
       );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
     }
   }
 

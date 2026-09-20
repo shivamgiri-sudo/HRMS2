@@ -129,9 +129,17 @@ export default function PortalOverview() {
     },
   ];
 
-  function handleLogout() {
-    clearPortalToken();
-    navigate("/portal/login");
+  // Revokes this session's jti server-side before clearing the local token, so a copied
+  // or leaked token can't keep working after the user believes they've signed out.
+  // clearPortalToken/navigate still run even if the revoke call fails -- a network
+  // failure here must not trap someone in a session they clicked "Sign Out" to leave.
+  async function handleLogout() {
+    try {
+      await portalApi.logout();
+    } finally {
+      clearPortalToken();
+      navigate("/portal/login");
+    }
   }
 
   const { isImpersonating } = getImpersonationInfo();
@@ -219,15 +227,31 @@ export default function PortalOverview() {
             </div>
           </div>
         ) : error ? (
-          <div className="flex items-center justify-center min-h-[50vh] text-red-400">
-            Failed to load: {(error as Error).message}
+          // Previously showed the raw error message with no next step at all -- a client
+          // hitting this had no way to know whether to retry, wait, or escalate. There is
+          // no dedicated client-support inbox anywhere in this codebase to link to (only
+          // internal-facing fallbacks like hr@teammas.in exist, which would misdirect a
+          // real client's issue to the wrong team) -- pointing them at their own account
+          // manager, the same relationship the empty-state below already uses, is the
+          // honest option rather than fabricating a support channel.
+          <div className="flex flex-col items-center justify-center min-h-[50vh] text-center px-4">
+            <AlertTriangle className="w-16 h-16 text-red-500/60 mb-4" />
+            <h2 className="text-xl font-bold text-slate-300 mb-2">Couldn't Load Your Dashboard</h2>
+            <p className="text-slate-500 text-sm max-w-md">
+              Something went wrong while loading your account overview. Please try refreshing
+              the page. If this keeps happening, contact your MAS account manager and mention
+              the error below.
+            </p>
+            <p className="text-red-400/70 text-xs mt-3 font-mono max-w-md break-words">
+              {(error as Error).message}
+            </p>
           </div>
         ) : processes.length === 0 ? (
           <div className="flex flex-col items-center justify-center min-h-[50vh] text-center">
             <Building2 className="w-16 h-16 text-slate-700 mb-4" />
             <h2 className="text-xl font-bold text-slate-300 mb-2">No Active Processes</h2>
             <p className="text-slate-500 text-sm max-w-xs">
-              Your account has no active processes mapped yet. Please contact your MAS operations partner.
+              Your account has no active processes mapped yet. Please contact your MAS account manager.
             </p>
           </div>
         ) : (

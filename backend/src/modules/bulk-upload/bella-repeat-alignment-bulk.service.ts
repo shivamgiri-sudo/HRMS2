@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Bella Vita Repeat LOB's own "Alignment" sheet -- found while auditing
@@ -55,8 +56,8 @@ export async function importBellaRepeatAlignmentBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -66,46 +67,48 @@ export async function importBellaRepeatAlignmentBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Bella-Vita Organic" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const masId = String(data["MAS_ID"] ?? "").trim();
     if (!masId) {
       const msg = `Row ${row.row_no}: "MAS_ID" is required — it is the row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO bella_repeat_alignment
-           (id, process_id, mas_employee_code, agent_name, team_leader, doj, agent_period, status,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
-            agent_name = VALUES(agent_name),
-            team_leader = VALUES(team_leader),
-            doj = VALUES(doj),
-            agent_period = VALUES(agent_period),
-            status = VALUES(status)`,
-        [
-          randomUUID(), processId, masId,
-          String(data["Agent_Name"] ?? "").trim() || null,
-          String(data["TL"] ?? "").trim() || null,
-          parseDate(data["DOJ"]),
-          String(data["Agent_Period"] ?? "").trim() || null,
-          String(data["Status"] ?? "").trim() || null,
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, masId,
+        String(data["Agent_Name"] ?? "").trim() || null,
+        String(data["TL"] ?? "").trim() || null,
+        parseDate(data["DOJ"]),
+        String(data["Agent_Period"] ?? "").trim() || null,
+        String(data["Status"] ?? "").trim() || null,
+        batchId,
+        importedByUserId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO bella_repeat_alignment
+       (id, process_id, mas_employee_code, agent_name, team_leader, doj, agent_period, status,
+        data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
+        agent_name = VALUES(agent_name),
+        team_leader = VALUES(team_leader),
+        doj = VALUES(doj),
+        agent_period = VALUES(agent_period),
+        status = VALUES(status)`,
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

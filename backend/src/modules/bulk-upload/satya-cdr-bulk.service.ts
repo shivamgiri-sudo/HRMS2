@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * satya_cdr -- writes into db_masmis.satya_cdr (sql/1770). Source: Satya CDR.xlsx (Sheet1).
@@ -51,8 +52,7 @@ export async function importSatyaCdrBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
@@ -65,54 +65,55 @@ export async function importSatyaCdrBatch(
     const requiredVal = getByColumn(data, "Call Id");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "Call Id" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.satya_cdr
-           (number_val, in_call_from, call_id, scenario, sub_scenario_1, amount, beat_name, shop_name, warehouse, remarks, roster, call_date, call_action, call_sub_action, call_action_remarks, closer_date, follow_up_date, case_close_by, tat, due_date, call_created, call_status, connected, closer_time, report_date, attempt, agent_name, uid, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          n(data, "Numner"),
-          n(data, "IN CALL FROM"),
-          requiredVal,
-          n(data, "SCENARIO"),
-          n(data, "SUB SCENARIO 1"),
-          n(data, "Amount"),
-          n(data, "Beatname"),
-          n(data, "Shop Name"),
-          n(data, "Warehouse"),
-          n(data, "Remarks"),
-          n(data, "Roster"),
-          n(data, "CallDate"),
-          n(data, "Call Action"),
-          n(data, "Call Sub Action"),
-          n(data, "Call Action Remarks"),
-          n(data, "Closer Date"),
-          n(data, "Follow Up Date"),
-          n(data, "Case Close By"),
-          n(data, "TAT"),
-          n(data, "Due Date"),
-          n(data, "Call Created"),
-          n(data, "Call Status"),
-          n(data, "Connected"),
-          n(data, "Closer Time"),
-          n(data, "Date"),
-          n(data, "Attempt"),
-          n(data, "Agent Name"),
-          n(data, "UID"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        n(data, "Numner"),
+        n(data, "IN CALL FROM"),
+        requiredVal,
+        n(data, "SCENARIO"),
+        n(data, "SUB SCENARIO 1"),
+        n(data, "Amount"),
+        n(data, "Beatname"),
+        n(data, "Shop Name"),
+        n(data, "Warehouse"),
+        n(data, "Remarks"),
+        n(data, "Roster"),
+        n(data, "CallDate"),
+        n(data, "Call Action"),
+        n(data, "Call Sub Action"),
+        n(data, "Call Action Remarks"),
+        n(data, "Closer Date"),
+        n(data, "Follow Up Date"),
+        n(data, "Case Close By"),
+        n(data, "TAT"),
+        n(data, "Due Date"),
+        n(data, "Call Created"),
+        n(data, "Call Status"),
+        n(data, "Connected"),
+        n(data, "Closer Time"),
+        n(data, "Date"),
+        n(data, "Attempt"),
+        n(data, "Agent Name"),
+        n(data, "UID"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.satya_cdr (number_val, in_call_from, call_id, scenario, sub_scenario_1, amount, beat_name, shop_name, warehouse, remarks, roster, call_date, call_action, call_sub_action, call_action_remarks, closer_date, follow_up_date, case_close_by, tat, due_date, call_created, call_status, connected, closer_time, report_date, attempt, agent_name, uid, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

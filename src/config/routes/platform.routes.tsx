@@ -43,6 +43,7 @@ const NativeBenefitsClaims          = lazy(() => import("@/pages/NativeBenefitsC
 const NativeIntegrationHub          = lazy(() => import("@/pages/NativeIntegrationHub"));
 const EnhancedClientMaster          = lazy(() => import("@/pages/EnhancedClientMaster"));
 const SuperAdminClientPortalAccess  = lazy(() => import("@/pages/portal/SuperAdminClientPortalAccess"));
+const PortalContentAdmin            = lazy(() => import("@/pages/portal/PortalContentAdmin"));
 const NativeCustomizationManager    = lazy(() => import("@/pages/customization/NativeCustomizationManager"));
 const NativeCustomizationRuleEditor = lazy(() => import("@/pages/customization/NativeCustomizationRuleEditor"));
 const NativeMigrationConsole        = lazy(() => import("@/pages/NativeMigrationConsole"));
@@ -214,6 +215,10 @@ export const platformRouteElements = (
           Backend independently enforces requireRole("super_admin","admin") on the API this
           calls, so the role gate here is a UX convenience, not the actual security boundary. */}
       <Route path="/super-admin/client-portal-access" element={<ProtectedRoute roles={['super_admin','admin']}><SuperAdminClientPortalAccess /></ProtectedRoute>} />
+      {/* Admin content for the client portal's Action Plans / Glide Paths / Commentary tabs.
+          Backend independently enforces requireRole(admin,hr,finance_head,operations_manager,ceo)
+          on every /internal/* write this page calls -- same convention as client-portal-access above. */}
+      <Route path="/portal/content-admin" element={<ProtectedRoute roles={['admin','hr','finance_head','operations_manager','ceo','super_admin']}><PortalContentAdmin /></ProtectedRoute>} />
 
       {/* Integration / migration / audit */}
       <Route path="/integration-hub"              element={<ProtectedRoute><Gate pageCode="INTEGRATION_HUB"><NativeIntegrationHub /></Gate></ProtectedRoute>} />

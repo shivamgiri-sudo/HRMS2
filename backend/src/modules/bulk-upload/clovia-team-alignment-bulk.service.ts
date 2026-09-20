@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Clovia's own "Team Allignment" sheet -- found while auditing every sheet
@@ -76,8 +77,7 @@ export async function importCloviaTeamAlignmentBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -87,22 +87,40 @@ export async function importCloviaTeamAlignmentBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Clovia" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const empCode = String(data["EMP"] ?? "").trim();
     if (!empCode) {
       const msg = `Row ${row.row_no}: "EMP" is required — it is the row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO clovia_team_alignment
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, empCode,
+        String(data["Email_ID"] ?? "").trim() || null,
+        String(data["Agent_Name"] ?? "").trim() || null,
+        String(data["Team_Leader"] ?? "").trim() || null,
+        String(data["LOB"] ?? "").trim() || null,
+        String(data["PTO"] ?? "").trim() || null,
+        parseDate(data["DOJ"]),
+        String(data["Status"] ?? "").trim() || null,
+        'bulk_upload',
+        batchId,
+        importedByUserId,
+      ],
+    });
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO clovia_team_alignment
            (id, process_id, mas_employee_code, email, agent_name, team_leader, lob,
-            employment_type, doj, status, data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
+            employment_type, doj, status, data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
             email = VALUES(email),
             agent_name = VALUES(agent_name),
             team_leader = VALUES(team_leader),
@@ -110,28 +128,12 @@ export async function importCloviaTeamAlignmentBatch(
             employment_type = VALUES(employment_type),
             doj = VALUES(doj),
             status = VALUES(status)`,
-        [
-          randomUUID(), processId, empCode,
-          String(data["Email_ID"] ?? "").trim() || null,
-          String(data["Agent_Name"] ?? "").trim() || null,
-          String(data["Team_Leader"] ?? "").trim() || null,
-          String(data["LOB"] ?? "").trim() || null,
-          String(data["PTO"] ?? "").trim() || null,
-          parseDate(data["DOJ"]),
-          String(data["Status"] ?? "").trim() || null,
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
-  }
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

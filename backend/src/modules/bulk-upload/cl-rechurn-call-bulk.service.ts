@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
 Clovia's Rechurn Call export (cl_rechurn_call.xlsx, 6 real
@@ -50,11 +51,10 @@ export async function importClRechurnCallBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
 
+  const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
     const data =
       typeof row.normalized_data === "string"
@@ -64,32 +64,28 @@ export async function importClRechurnCallBatch(
     const requiredVal = getByColumn(data, "Agent");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "Agent" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.cl_rechurn_call
-           (agent, phone_number, call_date, abandoned_date, status, report_date, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          requiredVal,
-          n(data, "Phone Number"),
-          n(data, "Call Date"),
-          n(data, "Abandoned Date"),
-          n(data, "Status"),
-          n(data, "Date"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({ rowId: row.id, rowNo: row.row_no, values: [
+      requiredVal,
+      n(data, "Phone Number"),
+      n(data, "Call Date"),
+      n(data, "Abandoned Date"),
+      n(data, "Status"),
+      n(data, "Date"),
+      uploadedByInt, batchId,
+    ] });
   }
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.cl_rechurn_call (agent, phone_number, call_date, abandoned_date, status, report_date, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

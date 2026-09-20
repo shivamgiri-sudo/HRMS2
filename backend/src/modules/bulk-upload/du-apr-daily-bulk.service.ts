@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * DU Digital's "6. DU Korea" / "6. DU Thailand" (per its own SOP: "Open DU
@@ -122,8 +123,7 @@ async function importBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -135,7 +135,6 @@ async function importBatch(
       const msg = `Row ${row.row_no}: no active "DU Digital" process found to attach this row to`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -144,7 +143,6 @@ async function importBatch(
       const msg = `Row ${row.row_no}: "Agent" is required — it is part of the row's identity`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -153,56 +151,57 @@ async function importBatch(
       const msg = `Row ${row.row_no}: "Date" is required and could not be read`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO du_apr_daily_actual
-           (id, process_id, dashboard_label, agent_name, agent_code, call_date, total_calls,
-            login_seconds, net_login_seconds, talk_seconds, idle_seconds, wrapup_seconds,
-            break_seconds, dead_seconds, utilization_pct, week_label,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
-            agent_code = VALUES(agent_code),
-            total_calls = VALUES(total_calls),
-            login_seconds = VALUES(login_seconds),
-            net_login_seconds = VALUES(net_login_seconds),
-            talk_seconds = VALUES(talk_seconds),
-            idle_seconds = VALUES(idle_seconds),
-            wrapup_seconds = VALUES(wrapup_seconds),
-            break_seconds = VALUES(break_seconds),
-            dead_seconds = VALUES(dead_seconds),
-            utilization_pct = VALUES(utilization_pct),
-            week_label = VALUES(week_label)`,
-        [
-          randomUUID(), processId, dashboardLabel, agentName,
-          String(data["Agent_ID"] ?? "").trim() || null,
-          callDate,
-          parseCount(data["Calls"]),
-          parseSecondsFlexible(data["Login_Seconds"]),
-          parseSecondsFlexible(data["Net_Login_Seconds"]),
-          parseSecondsFlexible(data["Talk_Seconds"]),
-          parseSecondsFlexible(data["Idle_Seconds"]),
-          parseSecondsFlexible(data["Wrapup_Seconds"]),
-          parseSecondsFlexible(data["Break_Seconds"]),
-          parseSecondsFlexible(data["Dead_Seconds"]),
-          parseUtilizationPct(data["Utilization_Pct"]),
-          String(data["Week"] ?? "").trim() || null,
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, dashboardLabel, agentName,
+        String(data["Agent_ID"] ?? "").trim() || null,
+        callDate,
+        parseCount(data["Calls"]),
+        parseSecondsFlexible(data["Login_Seconds"]),
+        parseSecondsFlexible(data["Net_Login_Seconds"]),
+        parseSecondsFlexible(data["Talk_Seconds"]),
+        parseSecondsFlexible(data["Idle_Seconds"]),
+        parseSecondsFlexible(data["Wrapup_Seconds"]),
+        parseSecondsFlexible(data["Break_Seconds"]),
+        parseSecondsFlexible(data["Dead_Seconds"]),
+        parseUtilizationPct(data["Utilization_Pct"]),
+        String(data["Week"] ?? "").trim() || null,
+        batchId,
+        importedByUserId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO du_apr_daily_actual
+       (id, process_id, dashboard_label, agent_name, agent_code, call_date, total_calls,
+        login_seconds, net_login_seconds, talk_seconds, idle_seconds, wrapup_seconds,
+        break_seconds, dead_seconds, utilization_pct, week_label,
+        data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
+       agent_code = VALUES(agent_code),
+       total_calls = VALUES(total_calls),
+       login_seconds = VALUES(login_seconds),
+       net_login_seconds = VALUES(net_login_seconds),
+       talk_seconds = VALUES(talk_seconds),
+       idle_seconds = VALUES(idle_seconds),
+       wrapup_seconds = VALUES(wrapup_seconds),
+       break_seconds = VALUES(break_seconds),
+       dead_seconds = VALUES(dead_seconds),
+       utilization_pct = VALUES(utilization_pct),
+       week_label = VALUES(week_label)`,
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

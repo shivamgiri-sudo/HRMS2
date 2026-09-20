@@ -418,6 +418,20 @@ export const ACTION_ITEM_REGISTRY: ActionItemDefinition[] = [
     deeplinkPattern:   "/control-tower?tatId={entityId}",
     requiresScope:     false,
   },
+  // ── Quality-Learning Governance ───────────────────────────────────────────────
+  {
+    itemType:          "TRAINING_DIALER_HOLD",
+    displayName:       "Critical training breach — pause agent in dialer",
+    module:            "GOVERNANCE",
+    entityType:        "training_dialer_hold",
+    // WFM/Ops hold the actual Vicidial admin access this item asks them to act on;
+    // branch_head is included as the escalation-visible role for the branch.
+    defaultAssigneeRoles: ["wfm", "operations_head", "branch_head"],
+    defaultPriority:   ACTION_PRIORITY.CRITICAL,
+    defaultTtlHours:   4,
+    deeplinkPattern:   "/quality-learning/dialer-holds?holdId={entityId}",
+    requiresScope:     true,
+  },
   // ── Exit (discussion sub-types) ───────────────────────────────────────────────
   {
     itemType:          "RESIGNATION_MANAGER_DISCUSSION",

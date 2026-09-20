@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * GNC's daily Agent Productivity Report (APR).
@@ -102,8 +103,8 @@ export async function importGncAprBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -115,7 +116,6 @@ export async function importGncAprBatch(
       const msg = `Row ${row.row_no}: no active "GNC" process found to attach this row to`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -124,7 +124,6 @@ export async function importGncAprBatch(
       const msg = `Row ${row.row_no}: "user_name" is required — it is part of the row's identity`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -133,60 +132,61 @@ export async function importGncAprBatch(
       const msg = `Row ${row.row_no}: "report_date" is required and could not be read`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO gnc_apr_daily_actual
-           (id, process_id, uid, report_date, user_name, agent_code, tl_name, process_type,
-            total_calls, login_seconds, wait_seconds, talk_seconds, dispo_seconds, pause_seconds,
-            net_login_seconds, break_seconds, acht_seconds, attendance, data_source, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?)
-         ON DUPLICATE KEY UPDATE
-            uid = VALUES(uid),
-            agent_code = VALUES(agent_code),
-            tl_name = VALUES(tl_name),
-            process_type = VALUES(process_type),
-            total_calls = VALUES(total_calls),
-            login_seconds = VALUES(login_seconds),
-            wait_seconds = VALUES(wait_seconds),
-            talk_seconds = VALUES(talk_seconds),
-            dispo_seconds = VALUES(dispo_seconds),
-            pause_seconds = VALUES(pause_seconds),
-            net_login_seconds = VALUES(net_login_seconds),
-            break_seconds = VALUES(break_seconds),
-            acht_seconds = VALUES(acht_seconds),
-            attendance = VALUES(attendance)`,
-        [
-          randomUUID(), processId,
-          String(data["uid"] ?? "").trim() || null,
-          reportDate, userName,
-          String(data["emp_id"] ?? "").trim() || null,
-          String(data["tl_name"] ?? "").trim() || null,
-          String(data["process_type"] ?? "").trim() || null,
-          parseCallCount(data["calls"]),
-          parseDurationSeconds(data["login_time"]),
-          parseDurationSeconds(data["wait_time"]),
-          parseDurationSeconds(data["talk_time"]),
-          parseDurationSeconds(data["dispo_time"]),
-          parseDurationSeconds(data["pause_time"]),
-          parseDurationSeconds(data["net_login"]),
-          parseDurationSeconds(data["break_time"]),
-          parseDurationSecondsOrNull(data["acht"]),
-          String(data["atten"] ?? "").trim() || null,
-          importedByUserId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId,
+        String(data["uid"] ?? "").trim() || null,
+        reportDate, userName,
+        String(data["emp_id"] ?? "").trim() || null,
+        String(data["tl_name"] ?? "").trim() || null,
+        String(data["process_type"] ?? "").trim() || null,
+        parseCallCount(data["calls"]),
+        parseDurationSeconds(data["login_time"]),
+        parseDurationSeconds(data["wait_time"]),
+        parseDurationSeconds(data["talk_time"]),
+        parseDurationSeconds(data["dispo_time"]),
+        parseDurationSeconds(data["pause_time"]),
+        parseDurationSeconds(data["net_login"]),
+        parseDurationSeconds(data["break_time"]),
+        parseDurationSecondsOrNull(data["acht"]),
+        String(data["atten"] ?? "").trim() || null,
+        importedByUserId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO gnc_apr_daily_actual
+       (id, process_id, uid, report_date, user_name, agent_code, tl_name, process_type,
+        total_calls, login_seconds, wait_seconds, talk_seconds, dispo_seconds, pause_seconds,
+        net_login_seconds, break_seconds, acht_seconds, attendance, data_source, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
+        uid = VALUES(uid),
+        agent_code = VALUES(agent_code),
+        tl_name = VALUES(tl_name),
+        process_type = VALUES(process_type),
+        total_calls = VALUES(total_calls),
+        login_seconds = VALUES(login_seconds),
+        wait_seconds = VALUES(wait_seconds),
+        talk_seconds = VALUES(talk_seconds),
+        dispo_seconds = VALUES(dispo_seconds),
+        pause_seconds = VALUES(pause_seconds),
+        net_login_seconds = VALUES(net_login_seconds),
+        break_seconds = VALUES(break_seconds),
+        acht_seconds = VALUES(acht_seconds),
+        attendance = VALUES(attendance)`,
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

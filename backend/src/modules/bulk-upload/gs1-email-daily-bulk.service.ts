@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * GS1 India — Email-based GTIN processing daily actuals.
@@ -160,34 +161,48 @@ export async function importGs1EmailDailyBatch(
     }
   }
 
-  let importedRows = 0;
-  const importedRowIds: string[] = [];
-
+  const toInsert: ChunkInsertRow[] = [];
+  const groupKeys: string[] = [];
   for (const [key, g] of groups) {
     const slaPct = g.ticketCount > 0 ? Math.round((g.slaHits / g.ticketCount) * 100) : 0;
-    try {
-      await db.execute(
-        `INSERT INTO gs1_email_daily_actual
+    toInsert.push({
+      rowId: rowIdsByGroup.get(key)?.[0] ?? "",
+      rowNo: 0,
+      values: [
+        randomUUID(), processId, g.mailDate, g.analystName, g.mailDate,
+        g.ticketCount, g.gtinTotal, g.imageTotal, slaPct,
+        batchId, importedByUserId,
+      ],
+    });
+    groupKeys.push(key);
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO gs1_email_daily_actual
            (id, process_id, report_date, analyst_name, mail_date, mail_received,
-            gtin_processed, image_count, sla_within_15min, data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
+            gtin_processed, image_count, sla_within_15min, data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
             mail_received     = VALUES(mail_received),
             gtin_processed    = VALUES(gtin_processed),
             image_count       = VALUES(image_count),
             sla_within_15min  = VALUES(sla_within_15min)`,
-        [
-          randomUUID(), processId, g.mailDate, g.analystName, g.mailDate,
-          g.ticketCount, g.gtinTotal, g.imageTotal, slaPct,
-          batchId, importedByUserId,
-        ] as never[],
-      );
-      importedRows += g.ticketCount;
-      importedRowIds.push(...(rowIdsByGroup.get(key) ?? []));
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      for (const rowId of rowIdsByGroup.get(key) ?? []) {
-        errors.push(`Row group ${g.mailDate}/${g.analystName}: ${msg}`);
+    rows: toInsert,
+  });
+
+  const failedFirstRowIds = new Set(inserted.errorUpdates.map((u) => u.rowId));
+  const importedRowIds: string[] = [];
+  let importedRows = 0;
+  for (let i = 0; i < groupKeys.length; i++) {
+    const key = groupKeys[i];
+    const groupRowIds = rowIdsByGroup.get(key) ?? [];
+    if (!failedFirstRowIds.has(toInsert[i].rowId)) {
+      importedRows += groups.get(key)!.ticketCount;
+      importedRowIds.push(...groupRowIds);
+    } else {
+      const msg = inserted.errorUpdates.find((u) => u.rowId === toInsert[i].rowId)?.message ?? "insert failed";
+      for (const rowId of groupRowIds) {
+        errors.push(`Row group ${key}: ${msg}`);
         errorUpdates.push({ rowId, message: msg.slice(0, 500) });
         errorRows++;
       }

@@ -50,21 +50,45 @@ function guardedPrefixes(guard: string): string[] {
   return out;
 }
 
-/** Every route path declared on the portal router, including multi-line declarations. */
-function declaredRoutes(): string[] {
-  const out: string[] = [];
-  for (const m of SRC.matchAll(/router\.(?:get|post|put|patch|delete)\s*\(\s*"([^"]+)"/g)) {
-    out.push(m[1]);
+/**
+ * Every route path declared on the portal router, including multi-line declarations, plus
+ * whether that SAME declaration also names a guard inline as one of its own middleware
+ * arguments (e.g. `router.post("/auth/logout", requireClientAuth, h(c.logout))`).
+ *
+ * The original version of this helper only recorded the path, so a route guarded
+ * per-route rather than via a `router.use(prefix, guard)` block (both real, both used in
+ * this file — /auth/change-password predates this test and already used the inline form)
+ * was invisible to `coveredBy` below and always counted as unguarded. Found live: adding
+ * /auth/logout and /auth/reset-password (both correctly `requireClientAuth`-gated inline,
+ * confirmed working end-to-end against the real DB) failed this test, and checking
+ * revealed /auth/change-password would have failed it too had anyone run it before.
+ */
+function declaredRoutes(): Array<{ path: string; inlineGuards: string[] }> {
+  const out: Array<{ path: string; inlineGuards: string[] }> = [];
+  // Capture from the opening `router.<verb>(` through the matching top-level `)` so a
+  // multi-line declaration's later arguments (the guard, the handler) are visible too.
+  // Non-greedy up to the first `);` at the start of a line keeps this from swallowing
+  // past the end of one route declaration into the next.
+  for (const m of SRC.matchAll(/router\.(?:get|post|put|patch|delete)\s*\(\s*"([^"]+)"([\s\S]*?)\n\);/g)) {
+    const path = m[1];
+    const rest = m[2];
+    const inlineGuards = [...rest.matchAll(/\b(requireClientAuth|requireAuth)\b/g)].map((g) => g[1]);
+    out.push({ path, inlineGuards });
   }
   return out;
 }
 
 const CLIENT_PREFIXES = guardedPrefixes("requireClientAuth");
 const STAFF_PREFIXES = guardedPrefixes("requireAuth");
-const ROUTES = declaredRoutes();
+const ROUTES_DETAILED = declaredRoutes();
+const ROUTES = ROUTES_DETAILED.map((r) => r.path);
 
-const coveredBy = (path: string, prefixes: string[]): boolean =>
+const coveredByPrefix = (path: string, prefixes: string[]): boolean =>
   prefixes.some((p) => path === p || path.startsWith(p.endsWith("/") ? p : `${p}/`));
+
+const coveredBy = (path: string, prefixes: string[], guardName: "requireClientAuth" | "requireAuth"): boolean =>
+  coveredByPrefix(path, prefixes) ||
+  ROUTES_DETAILED.some((r) => r.path === path && r.inlineGuards.includes(guardName));
 
 describe("client portal — every route sits behind an auth boundary", () => {
   it("parses the router (guards the guard)", () => {
@@ -85,8 +109,8 @@ describe("client portal — every route sits behind an auth boundary", () => {
     const unguarded = ROUTES.filter(
       (path) =>
         !PUBLIC_BY_DESIGN.has(path) &&
-        !coveredBy(path, CLIENT_PREFIXES) &&
-        !coveredBy(path, STAFF_PREFIXES),
+        !coveredBy(path, CLIENT_PREFIXES, "requireClientAuth") &&
+        !coveredBy(path, STAFF_PREFIXES, "requireAuth"),
     );
     expect(
       [...new Set(unguarded)].sort(),

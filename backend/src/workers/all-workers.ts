@@ -35,6 +35,7 @@ import { startDailyGamesScheduler, stopDailyGamesScheduler } from "../modules/en
 import { startCommunicationCleanup, stopCommunicationCleanup } from "../modules/communication/cleanup.cron.js";
 import { startAttendanceEngineScheduler, stopAttendanceEngineScheduler } from "../modules/wfm/attendance-engine.cron.js";
 import { startITProvisioningLockScheduler, stopITProvisioningLockScheduler } from "../modules/it-provisioning/it-provisioning.cron.js";
+import { startPortalSessionCleanupScheduler, stopPortalSessionCleanupScheduler } from "../modules/portal/portal-session-cleanup.cron.js";
 import { startEmployeeLifecycleWorker, stopEmployeeLifecycleWorker } from "./employee-lifecycle.worker.js";
 // These five were registered in server.ts ONLY. Production runs both processes
 // with WORKERS_PROCESS unset, so the API was starting every worker alongside this
@@ -74,6 +75,7 @@ import { startReportGenerationWorker, stopReportGenerationWorker } from "./repor
 import { startReportEmailDeliveryWorker, stopReportEmailDeliveryWorker } from "./report-email-delivery.worker.js";
 import { startReportStaleRecoveryWorker, stopReportStaleRecoveryWorker } from "./report-stale-recovery.worker.js";
 import { startTatEscalationWorker, stopTatEscalationWorker } from "./tat-escalation.worker.js";
+import { startQualityGapDetectorWorker, stopQualityGapDetectorWorker } from "./quality-gap-detector.worker.js";
 import { startLeaveApprovalReminderWorker, stopLeaveApprovalReminderWorker } from "./leave-approval-reminder.worker.js";
 import { startGrnApprovalReminderWorker, stopGrnApprovalReminderWorker } from "./grn-approval-reminder.worker.js";
 import { startReportSubscriptionWorker, stopReportSubscriptionWorker } from "./report-subscription.worker.js";
@@ -153,6 +155,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "it-provisioning-lock",
     start: () => { startITProvisioningLockScheduler(); return Promise.resolve(); },
+  },
+  {
+    name: "portal-session-cleanup",
+    start: () => { startPortalSessionCleanupScheduler(); return Promise.resolve(); },
   },
   {
     name: "leave-monthly-credit",
@@ -406,6 +412,13 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startTatEscalationWorker(); return Promise.resolve(); },
   },
   {
+    // Produces training_assignment + task_tat_instance rows for QA skill gaps (Quality-
+    // Learning Governance). Sends no notification itself — tat-escalation above (same
+    // WORKERS array) drives TAT/escalation for the task_type this worker creates.
+    name: "quality-gap-detector",
+    start: () => { startQualityGapDetectorWorker(); return Promise.resolve(); },
+  },
+  {
     // Owner directive 2026-09-16: every pending/actionable item must generate a reminder
     // if it stays unresolved. Registered in BOTH this file and server.ts from the start —
     // see the note by its server.ts call site on noc-sla-reminder.worker.ts, whose start
@@ -571,6 +584,7 @@ function shutdown(): void {
   stopAprVicidialSyncWorker();
   stopMolecularEmailSyncWorker();
   stopITProvisioningLockScheduler();
+  stopPortalSessionCleanupScheduler();
   stopPayrollWindowClosureScheduler();
   stopBreachSlaCron();
   stopWalkinSlaCron();
@@ -583,6 +597,7 @@ function shutdown(): void {
   stopReportEmailDeliveryWorker();
   stopReportStaleRecoveryWorker();
   stopTatEscalationWorker();
+  stopQualityGapDetectorWorker();
   stopAtsDailyReportScheduler();
   stopReportSubscriptionWorker();
   stopAutoRosterSchedulerWorker();

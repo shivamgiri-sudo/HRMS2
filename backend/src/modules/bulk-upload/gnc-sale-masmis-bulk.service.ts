@@ -2,6 +2,7 @@ import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
 import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
 
 /**
  * GNC's real "Date & Camp wise Overall Sale" sheet -- written straight into
@@ -248,8 +249,8 @@ export async function importGncSaleMasmisBatch(
     values: toInsertValues(r, batchId),
   }));
 
-  let updatedRows = 0;
-  for (const r of toUpdate) {
+  // Concurrent UPDATEs — independent per row, bounded by pool size.
+  const updateOutcomes = await mapWithConcurrency(toUpdate, BULK_ROW_CONCURRENCY, async (r) => {
     const existingId = existingByOrderId.get(r.orderId)!;
     try {
       await withDeadlockRetry(() =>
@@ -267,13 +268,16 @@ export async function importGncSaleMasmisBatch(
           ],
         ),
       );
-      updatedRows++;
+      return { ok: true as const };
     } catch (err: unknown) {
       const rawMsg = err instanceof Error ? err.message : String(err);
-      const msg = `Row ${r.rowNo}: ${rawMsg}`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: r.rowId, message: msg.slice(0, 500) });
+      return { ok: false as const, msg: `Row ${r.rowNo}: ${rawMsg}`, rowId: r.rowId };
     }
+  });
+  let updatedRows = 0;
+  for (const o of updateOutcomes) {
+    if (o.ok) { updatedRows++; }
+    else { errors.push(o.msg); errorUpdates.push({ rowId: o.rowId, message: o.msg.slice(0, 500) }); }
   }
 
   const inserted = await chunkedMasmisInsert({

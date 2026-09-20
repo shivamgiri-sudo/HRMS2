@@ -90,3 +90,13 @@ export function generateCredentialsFromSlug(slug: string): GeneratedCredentials 
 export function disambiguateLoginId(loginId: string): string {
   return `${loginId}${randomUUID().slice(0, 4)}`;
 }
+
+/**
+ * Owner-specified per-process portal URL: mcnhrms.teammas.in/processname_clientportal
+ * (see PortalSlugRoute.tsx, which enforces this exact "_clientportal" suffix on the
+ * frontend side of the same convention). Built from the slug, not process_name, for the
+ * same never-drift-on-rename reason ensureProcessSlug exists.
+ */
+export function portalUrlFromSlug(slug: string): string {
+  return `https://mcnhrms.teammas.in/${slug}_clientportal`;
+}

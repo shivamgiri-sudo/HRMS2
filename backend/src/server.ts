@@ -18,6 +18,7 @@ import { startMcnmeetCron, stopMcnmeetCron } from "./modules/mcnmeet/mcnmeet.cro
 import { startSocialFeedCron } from "./modules/social-feed/social-feed.cron.js";
 import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-db.service.js";
 import { startITProvisioningLockScheduler } from "./modules/it-provisioning/it-provisioning.cron.js";
+import { startPortalSessionCleanupScheduler } from "./modules/portal/portal-session-cleanup.cron.js";
 import { startPayrollWindowClosureScheduler } from "./modules/payroll/payroll-window.cron.js";
 import { startDashboardSnapshotScheduler } from "./modules/dashboards/dashboard-snapshot.cron.js";
 import { startPerformanceScorecardSnapshotScheduler } from "./modules/performance-scorecard/performance-scorecard-snapshot.cron.js";
@@ -62,6 +63,7 @@ import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js"
 import { startAtsDailyReportScheduler } from "./modules/ats/ats-daily-report.cron.js";
 import { startEmployeeLifecycleWorker } from "./workers/employee-lifecycle.worker.js";
 import { startTatEscalationWorker } from "./workers/tat-escalation.worker.js";
+import { startQualityGapDetectorWorker } from "./workers/quality-gap-detector.worker.js";
 import { startReportSubscriptionWorker } from "./workers/report-subscription.worker.js";
 import { startLeaveApprovalReminderWorker } from "./workers/leave-approval-reminder.worker.js";
 import { startGrnApprovalReminderWorker } from "./workers/grn-approval-reminder.worker.js";
@@ -249,6 +251,10 @@ function startServer() {
         startAccessExpiryScheduler();
         startMobilityTransferWorker();
         startITProvisioningLockScheduler();
+        // Deletes stale/revoked/expired client-portal session rows so portal_user_sessions
+        // (an insert-only table until now — nothing anywhere ever DELETEd from it) does not
+        // grow unbounded forever. See portal-session-cleanup.cron.ts for the full reasoning.
+        startPortalSessionCleanupScheduler();
         startLeaveMonthlyWorker();
         startAnnualLeaveWorker();
         startPayrollWindowClosureScheduler();
@@ -303,6 +309,10 @@ function startServer() {
         // other topology, which is exactly what happened to ats-reminders.
         // Gated by worker_config.enabled (0 by default) regardless of which starts it.
         startTatEscalationWorker();
+        // Same dual registration. Produces training_assignment/task_tat_instance rows for
+        // QA skill gaps; tat-escalation above drives TAT/escalation for the task_type it
+        // creates, so this worker sends no notification of its own.
+        startQualityGapDetectorWorker();
         // Same dual registration. This one was in NEITHER file: the worker was written
         // and the report_subscription table shipped, but nothing ever imported it, so a
         // scheduled report could never have run however it was configured. Gated by
@@ -509,10 +519,24 @@ async function handleMigrations(): Promise<void> {
 handleMigrations()
   .then(initializeRuntime)
   .catch(async (error) => {
-    console.error(
-      "[startup] migration/schema verification failed:",
-      error instanceof Error ? error.message : error,
-    );
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error("[startup] migration/schema verification failed:", msg);
+
+    // Lock contention (another instance already holds the advisory lock) is safe to
+    // ignore at startup — the schema is already complete; we just couldn't re-verify it.
+    // Crashing the server here causes a PM2 restart loop that takes the whole service
+    // down under heavy traffic. Warn and continue instead.
+    const isLockContention =
+      /lock wait timeout|advisory lock|could not acquire migration lock/i.test(msg) ||
+      (error as NodeJS.ErrnoException)?.code === "ER_LOCK_WAIT_TIMEOUT";
+
+    if (isLockContention) {
+      console.warn(
+        "[startup] migration lock was held by another process — schema assumed current, starting anyway.",
+      );
+      await initializeRuntime();
+      return;
+    }
 
     if (env.NODE_ENV === "production") {
       console.error(

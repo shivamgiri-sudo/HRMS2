@@ -84,7 +84,7 @@ export function getImpersonationInfo(): { isImpersonating: boolean; adminUserId:
   }
 }
 
-async function portalRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function portalRequest<T>(method: string, path: string, body?: unknown, timeoutMs?: number): Promise<T> {
   const token = getPortalToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -93,6 +93,11 @@ async function portalRequest<T>(method: string, path: string, body?: unknown): P
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    // Only set when the caller opts in (see logout() below) -- a bare fetch() has no
+    // timeout at all by default, and most portal calls should keep waiting through a slow
+    // network rather than fail early. logout() is the one call where "must finish fast or
+    // give up" is an actual requirement (CP-09's "immediate exit"), not a UX preference.
+    signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
   });
   const json = await res.json();
   if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
@@ -119,8 +124,25 @@ export const portalApi = {
     portalRequest<{ token: string }>("POST", "/api/portal/auth/verify-otp", { email, otp }),
   loginWithPassword: (loginId: string, password: string) =>
     portalRequest<{ token: string; mustChangePassword: boolean }>("POST", "/api/portal/auth/login", { loginId, password }),
+  // Forgot-password recovery: usable right after a fresh OTP-issued token, no current
+  // password needed. See backend's resetClientPasswordSchema for the reasoning.
+  // loginId is always present in the response -- either the account's existing one, or a
+  // newly-minted one when the account never had one before (see resetPasswordAfterOtp).
+  resetPassword: (newPassword: string) =>
+    portalRequest<{ ok: boolean; loginId: string }>("POST", "/api/portal/auth/reset-password", { newPassword }),
   changePassword: (currentPassword: string, newPassword: string) =>
     portalRequest<{ ok: boolean }>("POST", "/api/portal/auth/change-password", { currentPassword, newPassword }),
+  // Revokes the current session server-side. Callers should still clear the local token
+  // themselves afterward (or on failure) -- this is the server-side half of sign-out, not
+  // a replacement for clearPortalToken.
+  //
+  // 5s timeout: every "Exit"/"Sign Out" caller wraps this in try/finally and clears the
+  // local token regardless of outcome, but before this fix the underlying fetch() had no
+  // timeout at all -- a genuinely hung (not fast-failing) backend request left the button's
+  // loading spinner stuck forever, since the awaited promise never settled and the finally
+  // block never ran. "Exit" is supposed to be immediate (CP-09); a slow revoke should not
+  // block the actual exit.
+  logout: () => portalRequest<{ ok: boolean }>("POST", "/api/portal/auth/logout", {}, 5000),
   getProcessBySlug: (slug: string) =>
     portalRequest<{ data: { process_id: string; process_name: string; client_name: string } }>(
       "GET", `/api/portal/process-by-slug/${encodeURIComponent(slug)}`
@@ -137,14 +159,24 @@ export const portalApi = {
     const q = new URLSearchParams(params as Record<string, string>).toString();
     return portalRequest<{ data: any[] }>("GET", `/api/portal/processes/${processId}/action-plans${q ? `?${q}` : ""}`);
   },
+  getGovernance: (processId: string, period?: string) =>
+    portalRequest<{ data: any[] }>("GET", `/api/portal/processes/${processId}/governance${period ? `?period=${period}` : ""}`),
   getOperations: (processId: string, period?: string) =>
     portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/operations${period ? `?period=${period}` : ""}`),
+  getMetricDrilldown: (processId: string, metricKey: string, period?: string) =>
+    portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/metrics/${metricKey}/drilldown${period ? `?period=${period}` : ""}`),
+  getLiveDashboard: (processId: string, params?: { from?: string; to?: string }) => {
+    const q = new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v) as [string, string][]).toString();
+    return portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/live-dashboard${q ? `?${q}` : ""}`);
+  },
   getQuality: (processId: string, period?: string) =>
     portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/quality${period ? `?period=${period}` : ""}`),
   getWorkforce: (processId: string) =>
     portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/workforce`),
   getAttrition: (processId: string, period?: string) =>
     portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/attrition${period ? `?period=${period}` : ""}`),
+  getTrainingCompliance: (processId: string, period?: string) =>
+    portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/training-compliance${period ? `?period=${period}` : ""}`),
   getCommentary: (processId: string, period?: string) =>
     portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/commentary${period ? `?period=${period}` : ""}`),
   acknowledgeCommentary: (commentaryId: string) =>

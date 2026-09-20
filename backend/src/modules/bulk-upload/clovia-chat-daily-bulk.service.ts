@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Clovia's Chat dashboard (Botlytics chat dump, per its own SOP -- no DB
@@ -84,8 +85,7 @@ export async function importCloviaChatDailyBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -97,7 +97,6 @@ export async function importCloviaChatDailyBatch(
       const msg = `Row ${row.row_no}: no active "Clovia" process found to attach this row to`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -106,37 +105,39 @@ export async function importCloviaChatDailyBatch(
       const msg = `Row ${row.row_no}: "Date" is required and could not be read`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO clovia_chat_daily_actual
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, reportDate,
+        parseCount(data["Total Chat"]),
+        parseCount(data["Total Response"]),
+        parseCount(data["C-Sat Count"]),
+        'bulk_upload',
+        batchId,
+        importedByUserId,
+      ],
+    });
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO clovia_chat_daily_actual
            (id, process_id, report_date, total_chat, total_response, csat_count,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
+            data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
             total_chat = VALUES(total_chat),
             total_response = VALUES(total_response),
             csat_count = VALUES(csat_count)`,
-        [
-          randomUUID(), processId, reportDate,
-          parseCount(data["Total Chat"]),
-          parseCount(data["Total Response"]),
-          parseCount(data["C-Sat Count"]),
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
-  }
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

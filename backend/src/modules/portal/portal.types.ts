@@ -76,7 +76,11 @@ export interface GlidePoint {
   month: string;
   actual: number | null;
   committed: number | null;
-  target: number;
+  // null, not a guessed number -- kpi_template_metric (the table that would carry a real
+  // target_value per process+metric) has zero rows for every client, so there is
+  // currently no real target source for a glide path point at all. See
+  // portal.glide.service.ts's own comment on getGlidePaths for the full reasoning.
+  target: number | null;
 }
 
 export interface GlidePath {
@@ -85,7 +89,7 @@ export interface GlidePath {
   metric_name: string;
   unit: string;
   direction: "higher_is_better" | "lower_is_better";
-  target: number;
+  target: number | null;
   points: GlidePoint[];
   behind_commitment: boolean;
 }
@@ -134,9 +138,33 @@ export interface AttritionData {
   /** null when no workforce_mandate row is configured for this process yet --
    *  must render as "not configured", never silently fall back to headcount. */
   sanctioned_strength: number | null;
-  open_positions: number;
+  /** max(0, sanctioned_strength - headcount), or null when no workforce_mandate row is
+   *  configured for this process yet (mirrors sanctioned_strength's own null case) --
+   *  must render as "not configured", never as a fabricated 0 that reads as "fully staffed". */
+  open_positions: number | null;
   avg_tenure_months: number;
   top_exit_reasons: Array<{ reason: string; count: number }>;
+}
+
+/**
+ * Client-facing training compliance rollup for a process — aggregate only, per this
+ * portal's own precedent (CLIENT_PORTAL_BLOCKED_DATA in role.catalog.ts, and
+ * process-operations.service.ts's "no agent-level attribution" rule for other metrics).
+ * No employee name, code, or per-agent breakdown is ever included here — see
+ * portal.training-compliance.service.ts's header for the full rationale.
+ */
+export interface TrainingComplianceData {
+  period: string;
+  /** Percentage of pending/breached training_assignment rows already resolved, this
+   *  process. null when the process has never had a single QA-triggered assignment --
+   *  distinct from 0%, which would mean "has assignments, all still outstanding". */
+  compliance_pct: number | null;
+  active_assignment_count: number;
+  pending_mandatory_count: number;
+  breached_count: number;
+  /** null when nothing has ever been completed in this process — never a fabricated 0h. */
+  avg_completion_hours: number | null;
+  by_severity: Array<{ severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"; active_count: number }>;
 }
 
 export interface Commentary {

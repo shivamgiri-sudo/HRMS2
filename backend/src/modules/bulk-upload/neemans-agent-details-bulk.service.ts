@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { addNeemansAgentDetail } from "../sales-upload/sales-upload.service.js";
+import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
 
 /**
  * Neemans agent-roster upload -- unlike the other 11 uploaders bridged
@@ -60,7 +61,7 @@ export async function importNeemansAgentDetailsBatch(
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
   const importedIds: string[] = [];
 
-  for (const row of batchRows) {
+  const outcomes = await mapWithConcurrency(batchRows, BULK_ROW_CONCURRENCY, async (row) => {
     const data =
       typeof row.normalized_data === "string"
         ? JSON.parse(row.normalized_data)
@@ -70,9 +71,7 @@ export async function importNeemansAgentDetailsBatch(
     const agentName = get(data, "agentName", "agent_name", "name");
     if (!agentId && !agentName) {
       const msg = `Row ${row.row_no}: "agentId" or "agentName" is required`;
-      errors.push(msg);
-      errorUpdates.push({ rowId: row.id, message: msg });
-      continue;
+      return { ok: false as const, rowId: row.id, msg };
     }
 
     try {
@@ -82,12 +81,16 @@ export async function importNeemansAgentDetailsBatch(
         team: get(data, "team", "tl"),
         doj: get(data, "doj", "dateOfJoining", "date_of_joining"),
       });
-      importedIds.push(row.id);
+      return { ok: true as const, rowId: row.id };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
+      return { ok: false as const, rowId: row.id, msg: `Row ${row.row_no}: ${msg}` };
     }
+  });
+
+  for (const o of outcomes) {
+    if (o.ok) { importedIds.push(o.rowId); }
+    else { errors.push(o.msg); errorUpdates.push({ rowId: o.rowId, message: o.msg.slice(0, 500) }); }
   }
 
   if (importedIds.length) {

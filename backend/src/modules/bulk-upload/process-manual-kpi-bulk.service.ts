@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Manual/upload feed for KPI Studio's process-grain sources.
@@ -131,8 +132,10 @@ export async function importProcessManualKpiBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  // Each CSV row expands to N KPI field inserts; all collected here for one chunked pass.
+  const toInsert: ChunkInsertRow[] = [];
+  // Rows that passed validation — needed to batch-mark them 'imported' after the insert.
+  const validRowIds: string[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -146,7 +149,6 @@ export async function importProcessManualKpiBatch(
       const msg = `Row ${row.row_no}: no active process with code "${code || "(blank)"}"`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -155,7 +157,6 @@ export async function importProcessManualKpiBatch(
       const msg = `Row ${row.row_no}: "Date" is required and must be readable`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -170,30 +171,46 @@ export async function importProcessManualKpiBatch(
       const msg = `Row ${row.row_no}: no recognised metric column had a numeric value`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
-    try {
-      for (const f of present) {
-        await db.execute(
-          `INSERT INTO kpi_studio_process_manual_value
-             (id, process_id, field_name, value_date, field_value, entry_source, upload_batch_id, created_by)
-           VALUES (?, ?, ?, ?, ?, 'upload', ?, ?)
-           ON DUPLICATE KEY UPDATE
+    // One ChunkInsertRow per field — each has the same rowId so any chunk error maps back.
+    for (const f of present) {
+      toInsert.push({
+        rowId: row.id,
+        rowNo: row.row_no,
+        values: [randomUUID(), processId, f.field, date, f.value, batchId, importedByUserId],
+      });
+    }
+    validRowIds.push(row.id);
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO kpi_studio_process_manual_value
+             (id, process_id, field_name, value_date, field_value, entry_source, upload_batch_id, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, 'upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
              field_value = VALUES(field_value),
              upload_batch_id = VALUES(upload_batch_id),
              updated_at = NOW()`,
-          [randomUUID(), processId, f.field, date, f.value, batchId, importedByUserId],
-        );
-      }
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+
+  // Deduplicate rowIds that had insert errors, then mark valid rows 'imported' in one pass.
+  const errorRowIds = new Set(inserted.errorUpdates.map((u) => u.rowId));
+  const importedRowIds = validRowIds.filter((id) => !errorRowIds.has(id));
+  const importedRows = importedRowIds.length;
+  const errorRows = errorUpdates.length;
+
+  if (importedRowIds.length > 0) {
+    for (let i = 0; i < importedRowIds.length; i += 500) {
+      const chunk = importedRowIds.slice(i, i + 500);
+      await db.execute(
+        `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${chunk.map(() => "?").join(",")})`,
+        chunk,
+      );
     }
   }
 

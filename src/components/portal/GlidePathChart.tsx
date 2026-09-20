@@ -2,8 +2,15 @@ import { Target, Calendar, BarChart2 } from "lucide-react";
 import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 
 export function GlidePathChart({ path }: { path: any }) {
-  const points = path.points as Array<{ month: string; actual: number | null; committed: number | null; target: number }>;
+  const points = path.points as Array<{ month: string; actual: number | null; committed: number | null; target: number | null }>;
   if (!points || points.length === 0) return null;
+
+  // target is null on every point today -- kpi_template_metric (the table that would
+  // carry a real target_value per process+metric) has zero rows for every client, so
+  // there is no real target source yet. hasTarget gates every bit of target-line
+  // rendering below so this degrades to "actual vs committed" instead of drawing a
+  // fabricated flat line at 0.
+  const hasTarget = points.some(p => p.target != null);
 
   const allVals = points.flatMap(p => [p.actual, p.committed, p.target].filter(v => v != null) as number[]);
   const minV = Math.min(...allVals), maxV = Math.max(...allVals);
@@ -17,7 +24,14 @@ export function GlidePathChart({ path }: { path: any }) {
   const W = 600, H = 220, PAD_X = 50, PAD_Y = 35;
   const iW = W - PAD_X * 2, iH = H - PAD_Y * 2;
 
-  const x = (i: number) => PAD_X + (i / (points.length - 1)) * iW;
+  // `|| 1` guards a single-point array: points.length - 1 would be 0, making i/0 = NaN
+  // (0/0, not Infinity, since i is also 0 for the only point) and silently breaking every
+  // x-coordinate in the chart (grid lines, the today-marker, the lone data point, its
+  // label -- SVG just omits elements with a NaN coordinate rather than throwing, so this
+  // rendered as an empty-looking chart with no visible error). Not reachable today --
+  // buildMonthRange always produces a fixed 7-month window -- but cheap to guard against
+  // a future change to that assumption.
+  const x = (i: number) => PAD_X + (i / (points.length - 1 || 1)) * iW;
   const y = (v: number) => PAD_Y + iH - ((v - minVBound) / range) * iH;
 
   const linePts = (getter: (p: typeof points[0]) => number | null) =>
@@ -98,9 +112,11 @@ export function GlidePathChart({ path }: { path: any }) {
             </text>
           </g>
 
-          {/* Target Glide line */}
-          <path d={`M ${linePts(p => p.target)}`} fill="none" stroke="#10b981" strokeWidth="1.5" strokeDasharray="4,4" className="opacity-80" />
-          
+          {/* Target Glide line -- only when a real target exists */}
+          {hasTarget && (
+            <path d={`M ${linePts(p => p.target)}`} fill="none" stroke="#10b981" strokeWidth="1.5" strokeDasharray="4,4" className="opacity-80" />
+          )}
+
           {/* Committed Glide line */}
           <path d={`M ${linePts(p => p.committed)}`} fill="none" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="6,3" className="opacity-80" />
 
@@ -111,12 +127,12 @@ export function GlidePathChart({ path }: { path: any }) {
           {points.map((p, i) => {
             const actY = p.actual != null ? y(p.actual) : null;
             const comY = p.committed != null ? y(p.committed) : null;
-            const trgY = y(p.target);
-            
+            const trgY = p.target != null ? y(p.target) : null;
+
             return (
               <g key={i}>
-                {/* Target node */}
-                <circle cx={x(i)} cy={trgY} r="3" fill="#10b981" />
+                {/* Target node -- only when a real target exists */}
+                {trgY != null && <circle cx={x(i)} cy={trgY} r="3" fill="#10b981" />}
                 {/* Committed node */}
                 {comY != null && <circle cx={x(i)} cy={comY} r="3" fill="#f59e0b" />}
                 {/* Actual node */}
@@ -158,10 +174,12 @@ export function GlidePathChart({ path }: { path: any }) {
             <span className="w-3.5 h-0.5 bg-amber-500 inline-block border-dashed rounded-full" style={{ borderStyle: "dashed" }} />
             Committed Glide Path
           </span>
-          <span className="flex items-center gap-1.5 font-medium text-slate-300">
-            <span className="w-3.5 h-0.5 bg-emerald-500 inline-block border-dotted rounded-full" style={{ borderStyle: "dotted" }} />
-            SLA / Target
-          </span>
+          {hasTarget && (
+            <span className="flex items-center gap-1.5 font-medium text-slate-300">
+              <span className="w-3.5 h-0.5 bg-emerald-500 inline-block border-dotted rounded-full" style={{ borderStyle: "dotted" }} />
+              SLA / Target
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-1 text-slate-500">

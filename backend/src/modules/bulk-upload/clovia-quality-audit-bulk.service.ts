@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Clovia's own "Quality Raw" sheet -- found while auditing every sheet of
@@ -67,8 +68,7 @@ export async function importCloviaQualityAuditBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -78,7 +78,7 @@ export async function importCloviaQualityAuditBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Clovia" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const uniqueRef = String(data["Unique"] ?? "").trim();
@@ -86,20 +86,51 @@ export async function importCloviaQualityAuditBatch(
     const reportDate = parseDate(data["Chat_Mail_Date"]);
     if (!uniqueRef || !chatId || !reportDate) {
       const msg = `Row ${row.row_no}: "Unique", "Chat_ID" and "Chat_Mail_Date" are all required — together they are the row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO clovia_quality_audit_raw
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, reportDate, reportDate,
+        parseDate(data["Audit_Date"]),
+        uniqueRef, chatId,
+        String(data["Emp_ID"] ?? "").trim() || null,
+        String(data["Emp_Name"] ?? "").trim() || null,
+        String(data["TL"] ?? "").trim() || null,
+        String(data["Chat_Source"] ?? "").trim() || null,
+        String(data["Cx_Query"] ?? "").trim() || null,
+        parseNullableDecimal(data["FRT_Score"]),
+        parseNullableDecimal(data["Correct_Info_Score"]),
+        parseNullableDecimal(data["Soft_Skills_Score"]),
+        parseNullableDecimal(data["Reminder_Score"]),
+        parseNullableDecimal(data["Concern_Resolved_Score"]),
+        parseNullableDecimal(data["Tagging_Score"]),
+        String(data["AOI"] ?? "").trim() || null,
+        String(data["LOB"] ?? "").trim() || null,
+        String(data["Week"] ?? "").trim() || null,
+        parseNullableDecimal(data["CQ_Score"]),
+        String(data["Fatal"] ?? "").trim() || null,
+        String(data["ACPT"] ?? "").trim() || null,
+        String(data["ACPT_Reason"] ?? "").trim() || null,
+        'bulk_upload',
+        batchId,
+        importedByUserId,
+      ],
+    });
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO clovia_quality_audit_raw
            (id, process_id, report_date, chat_mail_date, audit_date, unique_ref, chat_id,
             mas_employee_code, agent_name, tl_name, chat_source, cx_query,
             frt_shared_score, correct_info_score, soft_skills_score, reminder_shared_score,
             concern_resolved_score, tagging_shared_score, aoi, lob, week_label,
             cq_score, fatal, acpt, acpt_reason,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
+            data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
             chat_mail_date = VALUES(chat_mail_date),
             audit_date = VALUES(audit_date),
             mas_employee_code = VALUES(mas_employee_code),
@@ -120,40 +151,12 @@ export async function importCloviaQualityAuditBatch(
             fatal = VALUES(fatal),
             acpt = VALUES(acpt),
             acpt_reason = VALUES(acpt_reason)`,
-        [
-          randomUUID(), processId, reportDate, reportDate,
-          parseDate(data["Audit_Date"]),
-          uniqueRef, chatId,
-          String(data["Emp_ID"] ?? "").trim() || null,
-          String(data["Emp_Name"] ?? "").trim() || null,
-          String(data["TL"] ?? "").trim() || null,
-          String(data["Chat_Source"] ?? "").trim() || null,
-          String(data["Cx_Query"] ?? "").trim() || null,
-          parseNullableDecimal(data["FRT_Score"]),
-          parseNullableDecimal(data["Correct_Info_Score"]),
-          parseNullableDecimal(data["Soft_Skills_Score"]),
-          parseNullableDecimal(data["Reminder_Score"]),
-          parseNullableDecimal(data["Concern_Resolved_Score"]),
-          parseNullableDecimal(data["Tagging_Score"]),
-          String(data["AOI"] ?? "").trim() || null,
-          String(data["LOB"] ?? "").trim() || null,
-          String(data["Week"] ?? "").trim() || null,
-          parseNullableDecimal(data["CQ_Score"]),
-          String(data["Fatal"] ?? "").trim() || null,
-          String(data["ACPT"] ?? "").trim() || null,
-          String(data["ACPT_Reason"] ?? "").trim() || null,
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
-  }
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

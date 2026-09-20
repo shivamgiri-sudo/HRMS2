@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Clovia's own "Rechurn Calls" sheet -- found while auditing every sheet of
@@ -75,8 +76,7 @@ export async function importCloviaRechurnCallsBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -86,7 +86,7 @@ export async function importCloviaRechurnCallsBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Clovia" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const phoneNumber = String(data["Phone_Number"] ?? "").trim();
@@ -94,38 +94,41 @@ export async function importCloviaRechurnCallsBatch(
     const reportDate = parseDate(data["Date"]) ?? abandonedDate?.slice(0, 10) ?? null;
     if (!phoneNumber || !abandonedDate || !reportDate) {
       const msg = `Row ${row.row_no}: "Phone_Number", "Abandoned_Date" and "Date" are all required — together they are the row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO clovia_rechurn_calls_raw
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, reportDate,
+        String(data["Agent"] ?? "").trim() || null,
+        phoneNumber,
+        parseDateTime(data["Call_Date"]),
+        abandonedDate,
+        String(data["Status"] ?? "").trim() || null,
+        'bulk_upload',
+        batchId,
+        importedByUserId,
+      ],
+    });
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO clovia_rechurn_calls_raw
            (id, process_id, report_date, agent_code, phone_number, call_date, abandoned_date,
-            status, data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
+            status, data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
             agent_code = VALUES(agent_code),
             call_date = VALUES(call_date),
             status = VALUES(status)`,
-        [
-          randomUUID(), processId, reportDate,
-          String(data["Agent"] ?? "").trim() || null,
-          phoneNumber,
-          parseDateTime(data["Call_Date"]),
-          abandonedDate,
-          String(data["Status"] ?? "").trim() || null,
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
-  }
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

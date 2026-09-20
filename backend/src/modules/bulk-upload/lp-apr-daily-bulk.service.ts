@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * LP (Lawyer Panel) WebConsole "Agent Wise Performance" APR, daily.
@@ -141,8 +142,8 @@ export async function importLpAprDailyBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -154,7 +155,6 @@ export async function importLpAprDailyBatch(
       const msg = `Row ${row.row_no}: no "Lawyer Panel" process found to attach this row to`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -163,7 +163,6 @@ export async function importLpAprDailyBatch(
       const msg = `Row ${row.row_no}: "Agent" is required — it is part of the row's identity`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -175,48 +174,58 @@ export async function importLpAprDailyBatch(
       const msg = `Row ${row.row_no}: "Call Date" is required and could not be read`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO lp_apr_daily_actual
-           (id, process_id, agent_name, call_date, total_calls, login_seconds, net_login_seconds,
-            total_break_seconds, idle_seconds, talk_seconds, wrapup_seconds,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
-            total_calls = VALUES(total_calls),
-            login_seconds = VALUES(login_seconds),
-            net_login_seconds = VALUES(net_login_seconds),
-            total_break_seconds = VALUES(total_break_seconds),
-            idle_seconds = VALUES(idle_seconds),
-            talk_seconds = VALUES(talk_seconds),
-            wrapup_seconds = VALUES(wrapup_seconds)`,
-        [
-          randomUUID(), processId, agentName, callDate,
-          parseCallCount(data["[Total_Calls]"] ?? data["[Total Calls]"] ?? data["Total Calls"]),
-          parseDurationSeconds(data["[Login_Time]"] ?? data["[Login Time]"] ?? data["Login Time"]),
-          parseDurationSeconds(data["[Net_LoginTime]"] ?? data["[Net LoginTime]"] ?? data["Net LoginTime"]),
-          parseDurationSeconds(data["[Total_Break_Duration]"] ?? data["[Total Break Duration]"] ?? data["Total Break Duration"]),
-          parseDurationSeconds(data["[Idle_Duration]"] ?? data["[Idle Duration]"] ?? data["Idle Duration"]),
-          parseDurationSeconds(data["[Talk_Duration]"] ?? data["[Talk Duration]"] ?? data["Talk Duration"]),
-          parseDurationSeconds(data["[Wrapup_Duration]"] ?? data["[Wrapup Duration]"] ?? data["Wrapup Duration"]),
-          // source_reference is part of the unique key, so a re-upload of the
-          // same agent+day from a different batch does not silently collide.
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, agentName, callDate,
+        parseCallCount(data["[Total_Calls]"] ?? data["[Total Calls]"] ?? data["Total Calls"]),
+        parseDurationSeconds(data["[Login_Time]"] ?? data["[Login Time]"] ?? data["Login Time"]),
+        parseDurationSeconds(data["[Net_LoginTime]"] ?? data["[Net LoginTime]"] ?? data["Net LoginTime"]),
+        parseDurationSeconds(data["[Total_Break_Duration]"] ?? data["[Total Break Duration]"] ?? data["Total Break Duration"]),
+        parseDurationSeconds(data["[Idle_Duration]"] ?? data["[Idle Duration]"] ?? data["Idle Duration"]),
+        parseDurationSeconds(data["[Talk_Duration]"] ?? data["[Talk Duration]"] ?? data["Talk Duration"]),
+        parseDurationSeconds(data["[Wrapup_Duration]"] ?? data["[Wrapup Duration]"] ?? data["Wrapup Duration"]),
+        // source_reference is part of the unique key, so a re-upload of the
+        // same agent+day from a different batch does not silently collide.
+        batchId,
+        importedByUserId,
+      ],
+    });
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO lp_apr_daily_actual
+       (id, process_id, agent_name, call_date, total_calls, login_seconds, net_login_seconds,
+        total_break_seconds, idle_seconds, talk_seconds, wrapup_seconds,
+        data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
+        total_calls = VALUES(total_calls),
+        login_seconds = VALUES(login_seconds),
+        net_login_seconds = VALUES(net_login_seconds),
+        total_break_seconds = VALUES(total_break_seconds),
+        idle_seconds = VALUES(idle_seconds),
+        talk_seconds = VALUES(talk_seconds),
+        wrapup_seconds = VALUES(wrapup_seconds)`,
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
+
+  const failedIds = new Set(inserted.errorUpdates.map((u) => u.rowId));
+  const importedIds = toInsert.filter((r) => !failedIds.has(r.rowId)).map((r) => r.rowId);
+  for (let i = 0; i < importedIds.length; i += 1000) {
+    const slice = importedIds.slice(i, i + 1000);
+    await db.execute(
+      `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${slice.map(() => "?").join(",")})`,
+      slice,
+    );
   }
 
   if (errorUpdates.length) {

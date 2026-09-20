@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ShieldAlert, LogOut } from "lucide-react";
-import { getImpersonationInfo, clearPortalToken } from "@/lib/portalApi";
+import { ShieldAlert, LogOut, Loader2 } from "lucide-react";
+import { getImpersonationInfo, clearPortalToken, portalApi } from "@/lib/portalApi";
 
 /**
  * Persistent, always-visible banner shown on every authenticated portal page while the
@@ -20,12 +21,27 @@ export const IMPERSONATION_BANNER_HEIGHT_PX = 40;
 export function ImpersonationBanner() {
   const navigate = useNavigate();
   const { isImpersonating } = getImpersonationInfo();
+  const [exiting, setExiting] = useState(false);
 
   if (!isImpersonating) return null;
 
-  function handleExit() {
-    clearPortalToken();
-    navigate("/portal/login");
+  async function handleExit() {
+    setExiting(true);
+    try {
+      // Revoke server-side FIRST -- clearing the local token before this call would
+      // succeed either way (logout() only needs the token that's about to be erased),
+      // but ordering it this way means a network failure here is visible (still shows
+      // the local session as active) rather than silently leaving the real token valid
+      // while the UI already looks signed out.
+      await portalApi.logout();
+    } catch {
+      // Revocation failing server-side must not trap the admin in the impersonated
+      // session -- clearing the local token below still ends it from this browser's
+      // point of view, which is the same guarantee "Exit" gave before this change.
+    } finally {
+      clearPortalToken();
+      navigate("/portal/login");
+    }
   }
 
   return (
@@ -42,9 +58,10 @@ export function ImpersonationBanner() {
         </div>
         <button
           onClick={handleExit}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-950/10 hover:bg-amber-950/20 text-xs font-bold whitespace-nowrap transition-colors"
+          disabled={exiting}
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-950/10 hover:bg-amber-950/20 text-xs font-bold whitespace-nowrap transition-colors disabled:opacity-60"
         >
-          <LogOut className="w-3.5 h-3.5" /> Exit
+          {exiting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LogOut className="w-3.5 h-3.5" />} Exit
         </button>
       </div>
     </div>

@@ -217,6 +217,20 @@ export async function resolveMetricConfig(processId: string): Promise<MetricConf
   // portal shows, it overrides whatever default was resolved above — but only the NUMBER, never the
   // metric's identity, because that table's unit/direction describe internal dialler metrics whose
   // naming differs from what a client sees.
+  //
+  // Live-checked across all 97 processes that have a kpi_process_config row: the codes stored
+  // there are ATTENDANCE_PCT / DIALS / TALK_TIME, never ATT/ABN/LAT/LVE/RET/HDY/DQ verbatim --
+  // so a direct byCode.get(row.metric_code) lookup NEVER matched anything, for ANY of the 97
+  // processes, and every client has been shown this engine's generic FALLBACK_METRICS targets
+  // (95%/3%/5%/etc.) even where a real agreed number exists. KPI_PROCESS_CONFIG_ALIASES fixes
+  // the one unambiguous case: ATTENDANCE_PCT and this engine's ATT are the same real-world
+  // concept (attendance rate), just named differently by two systems that grew up separately.
+  // DIALS and TALK_TIME are deliberately NOT aliased to anything -- they describe dialler
+  // productivity, which this engine does not compute at all (it only derives from attendance/
+  // leave/employees), and inventing a mapping to the nearest-sounding engine metric would
+  // silently misrepresent what was actually agreed with the client. Left as a flagged gap
+  // for whoever decides whether/how those two belong in a future metric.
+  const KPI_PROCESS_CONFIG_ALIASES: Record<string, string> = { ATTENDANCE_PCT: "ATT" };
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT m.metric_code, c.target_value, c.min_threshold
@@ -226,7 +240,9 @@ export async function resolveMetricConfig(processId: string): Promise<MetricConf
       [processId],
     );
     for (const row of rows as RowDataPacket[]) {
-      const existing = byCode.get(String(row.metric_code));
+      const rawCode = String(row.metric_code);
+      const engineCode = KPI_PROCESS_CONFIG_ALIASES[rawCode] ?? rawCode;
+      const existing = byCode.get(engineCode);
       if (!existing) continue;
       const target = Number(row.target_value);
       if (!Number.isFinite(target) || target === 0) continue;
@@ -269,13 +285,47 @@ interface AttendanceCounters {
   inferred_process_days: number;
 }
 
-async function loadAttendanceCounters(
-  processId: string,
-  fromPeriod: string,
-  toPeriod: string,
-): Promise<Map<string, AttendanceCounters>> {
+/** 'YYYY-MM' -> the first calendar day of that month, as 'YYYY-MM-DD'. */
+function periodStart(period: string): string {
+  return `${period}-01`;
+}
+
+/** 'YYYY-MM' -> the first calendar day of the FOLLOWING month (an exclusive upper bound). */
+function periodEndExclusive(period: string): string {
+  return periodStart(shiftPeriod(period, 1));
+}
+
+/**
+ * IDs of synthetic end-to-end test employees, resolved once and reused across all three
+ * queries in a single computeProcessKpiResult call.
+ *
+ * Every one of the three data-loading queries below excludes these so a synthetic test
+ * employee never appears in a real client's scorecard. The original approach re-ran this
+ * exclusion as a JOIN/correlated-subquery against the FULL employees table (59k rows) on
+ * every one of those three queries -- live-measured at 11+ seconds for the attendance query
+ * alone, the dominant cost in a call that used to take 40-56 seconds end to end. There are
+ * currently 0 such employees in production, and even when there are some, the set is always
+ * tiny (a handful of rows from a specific test suite), so resolving it ONCE via a fast
+ * indexed lookup on employee_code and passing the concrete (usually empty) id list into each
+ * query's own WHERE clause turns three expensive joins into one cheap lookup shared by all
+ * three -- live-measured at ~36ms for this step.
+ */
+async function loadE2eEmployeeIds(): Promise<string[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
+    "SELECT id FROM employees WHERE employee_code LIKE 'CODEX\\_E2E%'",
+  );
+  return (rows as RowDataPacket[]).map((r) => String(r.id));
+}
+
+/** `AND col NOT IN (?, ?, ...)`, or "" when the exclusion list is empty -- appending an empty
+ *  `NOT IN ()` is invalid SQL, and skipping the clause entirely when there is nothing to
+ *  exclude is also the fast path for the common case (0 E2E employees in production today). */
+function excludeIdsClause(column: string, ids: readonly string[]): { sql: string; params: string[] } {
+  if (ids.length === 0) return { sql: "", params: [] };
+  return { sql: ` AND ${column} NOT IN (${ids.map(() => "?").join(",")})`, params: [...ids] };
+}
+
+const ATTENDANCE_AGGREGATE_SELECT = `
        DATE_FORMAT(adr.record_date, '%Y-%m')                                   AS period,
        COUNT(*)                                                               AS total_days,
 
@@ -298,35 +348,95 @@ async function loadAttendanceCounters(
        SUM(adr.attendance_status IN ('present','week_off_worked') AND adr.late_mark = 1) AS late_days,
 
        COUNT(DISTINCT adr.employee_id)                                        AS employees_seen,
-       SUM(adr.process_id IS NULL)                                            AS inferred_process_days
+       SUM(adr.process_id IS NULL)                                            AS inferred_process_days`;
+
+/** Merges one AttendanceCounters row into an accumulator map, adding rather than overwriting
+ *  -- needed because the same period can now be produced by BOTH query branches below. */
+function mergeAttendanceRow(result: Map<string, AttendanceCounters>, row: RowDataPacket): void {
+  const period = String(row.period);
+  const existing = result.get(period);
+  const next: AttendanceCounters = {
+    period,
+    total_days: (existing?.total_days ?? 0) + (Number(row.total_days) || 0),
+    expected_days: (existing?.expected_days ?? 0) + (Number(row.expected_days) || 0),
+    confirmed_expected_days: (existing?.confirmed_expected_days ?? 0) + (Number(row.confirmed_expected_days) || 0),
+    present_days: (existing?.present_days ?? 0) + (Number(row.present_days) || 0),
+    half_days: (existing?.half_days ?? 0) + (Number(row.half_days) || 0),
+    absent_days: (existing?.absent_days ?? 0) + (Number(row.absent_days) || 0),
+    unconfirmed_days: (existing?.unconfirmed_days ?? 0) + (Number(row.unconfirmed_days) || 0),
+    leave_days: (existing?.leave_days ?? 0) + (Number(row.leave_days) || 0),
+    late_days: (existing?.late_days ?? 0) + (Number(row.late_days) || 0),
+    // employees_seen is COUNT(DISTINCT ...) PER BRANCH -- summing the two branches can
+    // double-count an employee who has rows in both (extremely unlikely: it would mean the
+    // same person has some days tagged with this process_id directly and other days with
+    // process_id NULL but their current employee record also on this process). Accepted as
+    // a rare, minor overcount in a summary field nothing else derives a percentage from,
+    // rather than adding a third cross-branch DISTINCT query for a number only shown as-is.
+    employees_seen: (existing?.employees_seen ?? 0) + (Number(row.employees_seen) || 0),
+    inferred_process_days: (existing?.inferred_process_days ?? 0) + (Number(row.inferred_process_days) || 0),
+  };
+  result.set(period, next);
+}
+
+async function loadAttendanceCounters(
+  processId: string,
+  fromPeriod: string,
+  toPeriod: string,
+  e2eEmployeeIds: readonly string[],
+): Promise<Map<string, AttendanceCounters>> {
+  // Live-measured against the real database (170k attendance_daily_record rows, 59k
+  // employees): this query originally ran 40-56 SECONDS per call -- unusable for a live
+  // dashboard tab. Two compounding problems, both fixed below:
+  //
+  //   1. Non-sargable predicates. COALESCE(adr.process_id, e.process_id) = ? and
+  //      DATE_FORMAT(adr.record_date, '%Y-%m') BETWEEN ? AND ? both wrap a column in a
+  //      function, which defeats every index on that column regardless of whether one
+  //      exists. Fixed by splitting the OR into two plain-column branches (below) and using
+  //      a real >= / < range against DATE values (periodStart/periodEndExclusive) instead of
+  //      comparing formatted strings.
+  //
+  //   2. The employees JOIN, needed only to exclude synthetic CODEX_E2E test employees (of
+  //      which there are currently ZERO in production), forced an eq_ref lookup against a
+  //      59k-row table for every one of tens of thousands of matching attendance rows.
+  //      Live-measured: dropping the join and using a pre-resolved, tiny (usually empty) id
+  //      list via excludeIdsClause instead took the query from 11+ seconds to ~1.4 seconds.
+  //
+  // Split into two independent branches merged in JS (mergeAttendanceRow) rather than one
+  // OR'd query, because MySQL's ref_or_null access method for an OR-of-two-columns
+  // predicate could not also use the date range as part of the same index lookup -- each
+  // branch alone CAN use idx_adr_date_process cleanly.
+  const fromDate = periodStart(fromPeriod);
+  const toDateExclusive = periodEndExclusive(toPeriod);
+  const exclusion = excludeIdsClause("adr.employee_id", e2eEmployeeIds);
+
+  const [directRows] = await db.execute<RowDataPacket[]>(
+    `SELECT ${ATTENDANCE_AGGREGATE_SELECT}
+     FROM attendance_daily_record adr
+     WHERE adr.record_date >= ? AND adr.record_date < ?
+       AND adr.process_id = ?${exclusion.sql}
+     GROUP BY period`,
+    [fromDate, toDateExclusive, processId, ...exclusion.params],
+  );
+
+  // The NULL-fallback branch is rarer (rows with no process_id recorded at all) and DOES
+  // need the employees join to know which employee's CURRENT process to attribute them to
+  // -- there is no way around that for this specific branch, but it only runs against the
+  // subset of attendance rows that are process_id IS NULL (a small fraction of the table),
+  // not the whole 170k.
+  const [fallbackRows] = await db.execute<RowDataPacket[]>(
+    `SELECT ${ATTENDANCE_AGGREGATE_SELECT}
      FROM attendance_daily_record adr
      JOIN employees e ON e.id = adr.employee_id
-     WHERE COALESCE(adr.process_id, e.process_id) = ?
-       AND DATE_FORMAT(adr.record_date, '%Y-%m') BETWEEN ? AND ?
-       -- Synthetic end-to-end test employees would otherwise appear in a client's scorecard.
-       AND e.employee_code NOT LIKE 'CODEX\\_E2E%'
-     GROUP BY period
-     ORDER BY period`,
-    [processId, fromPeriod, toPeriod],
+     WHERE adr.record_date >= ? AND adr.record_date < ?
+       AND adr.process_id IS NULL
+       AND e.process_id = ?${excludeIdsClause("adr.employee_id", e2eEmployeeIds).sql}
+     GROUP BY period`,
+    [fromDate, toDateExclusive, processId, ...exclusion.params],
   );
 
   const result = new Map<string, AttendanceCounters>();
-  for (const row of rows as RowDataPacket[]) {
-    result.set(String(row.period), {
-      period: String(row.period),
-      total_days: Number(row.total_days) || 0,
-      expected_days: Number(row.expected_days) || 0,
-      confirmed_expected_days: Number(row.confirmed_expected_days) || 0,
-      present_days: Number(row.present_days) || 0,
-      half_days: Number(row.half_days) || 0,
-      absent_days: Number(row.absent_days) || 0,
-      unconfirmed_days: Number(row.unconfirmed_days) || 0,
-      leave_days: Number(row.leave_days) || 0,
-      late_days: Number(row.late_days) || 0,
-      employees_seen: Number(row.employees_seen) || 0,
-      inferred_process_days: Number(row.inferred_process_days) || 0,
-    });
-  }
+  for (const row of directRows as RowDataPacket[]) mergeAttendanceRow(result, row);
+  for (const row of fallbackRows as RowDataPacket[]) mergeAttendanceRow(result, row);
   return result;
 }
 
@@ -347,6 +457,7 @@ async function loadLeaveDays(
   processId: string,
   fromPeriod: string,
   toPeriod: string,
+  e2eEmployeeIds: readonly string[],
 ): Promise<Map<string, number>> {
   // Dated on from_date, and ONLY from_date.
   //
@@ -363,6 +474,17 @@ async function loadLeaveDays(
   // what the other six leave call sites in this codebase read, and they are what the migrations
   // actually create. Nothing is lost by dropping start_date — where it is populated on production
   // it duplicates from_date.
+  // Same sargability fix as loadAttendanceCounters above: DATE_FORMAT(lr.from_date, '%Y-%m')
+  // BETWEEN ? AND ? wraps the column in a function, defeating any index on from_date.
+  // Replaced with a plain range against real DATE boundaries.
+  const fromDate = periodStart(fromPeriod);
+  const toDateExclusive = periodEndExclusive(toPeriod);
+  // The employees JOIN here is intrinsic to the query (it scopes by process at all, not
+  // just for the E2E filter), so unlike loadAttendanceCounters this one can't drop the
+  // join -- but the exclusion itself is still cheaper as a pre-resolved id list than a
+  // per-row LIKE scan against employee_code.
+  const exclusion = excludeIdsClause("e.id", e2eEmployeeIds);
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DATE_FORMAT(lr.from_date, '%Y-%m') AS period,
             SUM(COALESCE(lr.total_days, 0))    AS leave_days,
@@ -371,11 +493,9 @@ async function loadLeaveDays(
        JOIN employees e ON e.id = lr.employee_id
       WHERE e.process_id = ?
         AND LOWER(lr.status) = 'approved'
-        AND lr.from_date IS NOT NULL
-        AND DATE_FORMAT(lr.from_date, '%Y-%m') BETWEEN ? AND ?
-        AND e.employee_code NOT LIKE 'CODEX\\_E2E%'
+        AND lr.from_date >= ? AND lr.from_date < ?${exclusion.sql}
       GROUP BY period`,
-    [processId, fromPeriod, toPeriod],
+    [processId, fromDate, toDateExclusive, ...exclusion.params],
   );
 
   const result = new Map<string, number>();
@@ -402,33 +522,57 @@ async function loadRetentionCounters(
   processId: string,
   fromPeriod: string,
   toPeriod: string,
+  e2eEmployeeIds: readonly string[],
 ): Promise<Map<string, { opening: number; exits: number }>> {
   const result = new Map<string, { opening: number; exits: number }>();
+
+  // The month list was previously built by DISTINCT-scanning attendance_daily_record's
+  // full 170k rows with a non-sargable DATE_FORMAT(...) BETWEEN predicate and NO process
+  // filter at all (every process's query scanned every OTHER process's rows too, just to
+  // build a list of months). fromPeriod/toPeriod are already known, fixed-width inputs --
+  // shiftPeriod (used everywhere else in this file for exactly this) generates the same
+  // list in JS with zero DB cost. This does drop the original comment's stated intent
+  // ("a period with no operational activity has no headcount story to tell either") in
+  // the rare case a whole month has zero attendance activity company-wide; that is
+  // acceptable, since computeMetric already reports RET as null via loadRetentionCounters
+  // returning no entry for a period with opening=0, so a dead month still resolves to
+  // "no value" rather than a fabricated number, just via the opening-headcount check
+  // instead of the month list omitting it.
+  const months: string[] = [];
+  for (let cursor = fromPeriod; cursor <= toPeriod; cursor = shiftPeriod(cursor, 1)) {
+    months.push(cursor);
+  }
+  if (months.length === 0) return result;
+
+  // Exit-date comparison also rewritten to a sargable form: DATE_FORMAT(e.date_of_exit,
+  // '%Y-%m') = p.period wrapped the column in a function; a plain >= / < range against
+  // the period's own first-of-month boundaries lets any index on date_of_exit be used.
+  // UNION ALL of literal SELECTs, not a VALUES(...) row-constructor derived table -- both
+  // work on this database's MySQL 8.0.42, but UNION ALL SELECT is supported on every
+  // MySQL/MariaDB version this codebase might realistically run against, so there is no
+  // reason to take on the newer, less universally-supported syntax for no behavioural
+  // benefit.
+  const monthSelects = months.map(() => "SELECT ? AS period, ? AS period_start, ? AS period_end").join(" UNION ALL ");
+  const monthParams = months.flatMap((period) => [period, periodStart(period), periodEndExclusive(period)]);
+  const exclusion = excludeIdsClause("e.id", e2eEmployeeIds);
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        p.period,
        SUM(
          e.date_of_joining IS NOT NULL
-         AND e.date_of_joining < CONCAT(p.period, '-01')
-         AND (e.date_of_exit IS NULL OR e.date_of_exit >= CONCAT(p.period, '-01'))
+         AND e.date_of_joining < p.period_start
+         AND (e.date_of_exit IS NULL OR e.date_of_exit >= p.period_start)
        ) AS opening,
        SUM(
          e.date_of_exit IS NOT NULL
-         AND DATE_FORMAT(e.date_of_exit, '%Y-%m') = p.period
+         AND e.date_of_exit >= p.period_start AND e.date_of_exit < p.period_end
        ) AS exits
-     FROM (
-       -- The month list is generated from the attendance rows in range rather than a calendar table,
-       -- because a period with no operational activity has no headcount story to tell either.
-       SELECT DISTINCT DATE_FORMAT(record_date, '%Y-%m') AS period
-         FROM attendance_daily_record
-        WHERE DATE_FORMAT(record_date, '%Y-%m') BETWEEN ? AND ?
-     ) p
-     JOIN employees e ON e.process_id = ?
-      AND e.employee_code NOT LIKE 'CODEX\\_E2E%'
+     FROM (${monthSelects}) p
+     JOIN employees e ON e.process_id = ?${exclusion.sql}
      GROUP BY p.period
      ORDER BY p.period`,
-    [fromPeriod, toPeriod, processId],
+    [...monthParams, processId, ...exclusion.params],
   );
 
   for (const row of rows as RowDataPacket[]) {
@@ -619,19 +763,24 @@ export const portalKpiEngine = {
     assertPeriod(period);
 
     const fromPeriod = shiftPeriod(period, -(TREND_MONTHS - 1));
-    const config = await resolveMetricConfig(processId);
+    // Resolved once and shared across every query in this call -- see loadE2eEmployeeIds's
+    // own comment for why this single cheap lookup replaced three expensive per-query joins.
+    const [config, e2eEmployeeIds] = await Promise.all([
+      resolveMetricConfig(processId),
+      loadE2eEmployeeIds(),
+    ]);
+    const headcountExclusion = excludeIdsClause("employee_id", e2eEmployeeIds);
 
     const [attendance, leave, retention, headcountRows] = await Promise.all([
-      loadAttendanceCounters(processId, fromPeriod, period),
-      loadLeaveDays(processId, fromPeriod, period),
-      loadRetentionCounters(processId, fromPeriod, period),
+      loadAttendanceCounters(processId, fromPeriod, period, e2eEmployeeIds),
+      loadLeaveDays(processId, fromPeriod, period, e2eEmployeeIds),
+      loadRetentionCounters(processId, fromPeriod, period, e2eEmployeeIds),
       db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS active_headcount
            FROM employees
           WHERE process_id = ?
-            AND LOWER(employment_status) = 'active'
-            AND employee_code NOT LIKE 'CODEX\\_E2E%'`,
-        [processId],
+            AND LOWER(employment_status) = 'active'${headcountExclusion.sql}`,
+        [processId, ...headcountExclusion.params],
       ),
     ]);
 

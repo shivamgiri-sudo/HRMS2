@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * gnc_chat -- writes into db_masmis.gnc_chat (sql/1774). Source: GNC Chat.xlsx
@@ -44,10 +45,10 @@ export async function importGncChatBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
+
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -58,109 +59,111 @@ export async function importGncChatBatch(
     const requiredVal = getByColumn(data, "TicketId");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "TicketId" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.gnc_chat
-           (ticket_id, ticket_status, channel, inbox_name, agent_name, customer_email, customer_phone, customer_name, first_agent_name, first_assigned_at, first_agent_message_time, last_agent_message_time, first_bot_message_time, last_bot_message_time, first_customer_message_time, last_customer_message_time, last_resolution_agent_name, last_resolution_time, agent_frt_s, bot_frt_s, bot_turns, agent_turns, customer_turns, is_handled_by_bot, is_handoff, is_resolved, is_closed, is_escalated, ticket_closed_at, ticket_queued_at, first_queued_at, ticket_to_waiting_at, queue_time_s, wait_time_s, is_checkout_created, query_text, query_category, error_instance, error_at, code_error, tags, customer_tags, bot_failure_instances, query_resolved, company_resolution_time_min, customer_frt_min, customer_resolution_time_min, chat_flow, last_customer_message, last_customer_intent, first_customer_message, first_customer_intent, created_at_src, updated_at_src, response_time_hrs, reopen_count, contextualisation, contextualisation_category, follow_up_time_min, csat_rating, csat_review, csat_created_at, csat_updated_at, overall_sentiment, primary_category, secondary_category, churn_risk, urgency_level, product_name, payment_method, order_amount, order_id, price_sensitivity, resolution_confidence, ai_summary, ticket_link, ticket_in_office_hours, phone_number, report_date, unique_flag, frt_in_tat, qrc, response_in_tat, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          requiredVal,
-          n(data, "TicketStatus"),
-          n(data, "Channel"),
-          n(data, "InboxName"),
-          n(data, "AgentName"),
-          n(data, "CustomerEmail"),
-          n(data, "CustomerPhone"),
-          n(data, "CustomerName"),
-          n(data, "FirstAgentName"),
-          n(data, "FirstAssignedAt"),
-          n(data, "FirstAgentMessageTime"),
-          n(data, "LastAgentMessageTime"),
-          n(data, "FirstBotMessageTime"),
-          n(data, "LastBotMessageTime"),
-          n(data, "FirstCustomerMessageTime"),
-          n(data, "LastCustomerMessageTime"),
-          n(data, "LastResolutionAgentName"),
-          n(data, "LastResolutionTime"),
-          n(data, "AgentFRT (s)"),
-          n(data, "BotFRT (s)"),
-          n(data, "BotTurns"),
-          n(data, "AgentTurns"),
-          n(data, "CustomerTurns"),
-          n(data, "IsHandledByBot"),
-          n(data, "IsHandoff"),
-          n(data, "IsResolved"),
-          n(data, "IsClosed"),
-          n(data, "IsEscalated"),
-          n(data, "TicketClosedAt"),
-          n(data, "TicketQueuedAt"),
-          n(data, "FirstQueuedAt"),
-          n(data, "TicketToWaitingAt"),
-          n(data, "QueueTime (s)"),
-          n(data, "WaitTime (s)"),
-          n(data, "IsCheckoutCreated"),
-          n(data, "Query"),
-          n(data, "QueryCategory"),
-          n(data, "ErrorInstance"),
-          n(data, "ErrorAt"),
-          n(data, "CodeError"),
-          n(data, "Tags"),
-          n(data, "CustomerTags"),
-          n(data, "BotFailureInstances"),
-          n(data, "QueryResolved"),
-          n(data, "CompanyResolutionTime (min)"),
-          n(data, "CustomerFRT (min)"),
-          n(data, "CustomerResolutionTime (min)"),
-          n(data, "ChatFlow"),
-          n(data, "LastCustomerMessage"),
-          n(data, "LastCustomerIntent"),
-          n(data, "FirstCustomerMessage"),
-          n(data, "FirstCustomerIntent"),
-          n(data, "CreatedAt"),
-          n(data, "UpdatedAt"),
-          n(data, "ResponseTime (hrs)"),
-          n(data, "ReopenCount"),
-          n(data, "Contextualisation"),
-          n(data, "ContextualisationCategory"),
-          n(data, "FollowUpTime (min)"),
-          n(data, "CSATRating"),
-          n(data, "CSATReview"),
-          n(data, "CSATCreatedAt"),
-          n(data, "CSATUpdatedAt"),
-          n(data, "OverallSentiment"),
-          n(data, "PrimaryCategory"),
-          n(data, "SecondaryCategory"),
-          n(data, "ChurnRisk"),
-          n(data, "UrgencyLevel"),
-          n(data, "ProductName"),
-          n(data, "PaymentMethod"),
-          n(data, "OrderAmount"),
-          n(data, "OrderId"),
-          n(data, "PriceSensitivity"),
-          n(data, "ResolutionConfidence"),
-          n(data, "AISummary"),
-          n(data, "TicketLink"),
-          n(data, "TicketInOfficeHours"),
-          n(data, "Phone Number"),
-          n(data, "Date"),
-          n(data, "Unique"),
-          n(data, "FRT (IN TAT)"),
-          n(data, "QRC"),
-          n(data, "Response (IN TAT)"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        requiredVal,
+        n(data, "TicketStatus"),
+        n(data, "Channel"),
+        n(data, "InboxName"),
+        n(data, "AgentName"),
+        n(data, "CustomerEmail"),
+        n(data, "CustomerPhone"),
+        n(data, "CustomerName"),
+        n(data, "FirstAgentName"),
+        n(data, "FirstAssignedAt"),
+        n(data, "FirstAgentMessageTime"),
+        n(data, "LastAgentMessageTime"),
+        n(data, "FirstBotMessageTime"),
+        n(data, "LastBotMessageTime"),
+        n(data, "FirstCustomerMessageTime"),
+        n(data, "LastCustomerMessageTime"),
+        n(data, "LastResolutionAgentName"),
+        n(data, "LastResolutionTime"),
+        n(data, "AgentFRT (s)"),
+        n(data, "BotFRT (s)"),
+        n(data, "BotTurns"),
+        n(data, "AgentTurns"),
+        n(data, "CustomerTurns"),
+        n(data, "IsHandledByBot"),
+        n(data, "IsHandoff"),
+        n(data, "IsResolved"),
+        n(data, "IsClosed"),
+        n(data, "IsEscalated"),
+        n(data, "TicketClosedAt"),
+        n(data, "TicketQueuedAt"),
+        n(data, "FirstQueuedAt"),
+        n(data, "TicketToWaitingAt"),
+        n(data, "QueueTime (s)"),
+        n(data, "WaitTime (s)"),
+        n(data, "IsCheckoutCreated"),
+        n(data, "Query"),
+        n(data, "QueryCategory"),
+        n(data, "ErrorInstance"),
+        n(data, "ErrorAt"),
+        n(data, "CodeError"),
+        n(data, "Tags"),
+        n(data, "CustomerTags"),
+        n(data, "BotFailureInstances"),
+        n(data, "QueryResolved"),
+        n(data, "CompanyResolutionTime (min)"),
+        n(data, "CustomerFRT (min)"),
+        n(data, "CustomerResolutionTime (min)"),
+        n(data, "ChatFlow"),
+        n(data, "LastCustomerMessage"),
+        n(data, "LastCustomerIntent"),
+        n(data, "FirstCustomerMessage"),
+        n(data, "FirstCustomerIntent"),
+        n(data, "CreatedAt"),
+        n(data, "UpdatedAt"),
+        n(data, "ResponseTime (hrs)"),
+        n(data, "ReopenCount"),
+        n(data, "Contextualisation"),
+        n(data, "ContextualisationCategory"),
+        n(data, "FollowUpTime (min)"),
+        n(data, "CSATRating"),
+        n(data, "CSATReview"),
+        n(data, "CSATCreatedAt"),
+        n(data, "CSATUpdatedAt"),
+        n(data, "OverallSentiment"),
+        n(data, "PrimaryCategory"),
+        n(data, "SecondaryCategory"),
+        n(data, "ChurnRisk"),
+        n(data, "UrgencyLevel"),
+        n(data, "ProductName"),
+        n(data, "PaymentMethod"),
+        n(data, "OrderAmount"),
+        n(data, "OrderId"),
+        n(data, "PriceSensitivity"),
+        n(data, "ResolutionConfidence"),
+        n(data, "AISummary"),
+        n(data, "TicketLink"),
+        n(data, "TicketInOfficeHours"),
+        n(data, "Phone Number"),
+        n(data, "Date"),
+        n(data, "Unique"),
+        n(data, "FRT (IN TAT)"),
+        n(data, "QRC"),
+        n(data, "Response (IN TAT)"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.gnc_chat
+       (ticket_id, ticket_status, channel, inbox_name, agent_name, customer_email, customer_phone, customer_name, first_agent_name, first_assigned_at, first_agent_message_time, last_agent_message_time, first_bot_message_time, last_bot_message_time, first_customer_message_time, last_customer_message_time, last_resolution_agent_name, last_resolution_time, agent_frt_s, bot_frt_s, bot_turns, agent_turns, customer_turns, is_handled_by_bot, is_handoff, is_resolved, is_closed, is_escalated, ticket_closed_at, ticket_queued_at, first_queued_at, ticket_to_waiting_at, queue_time_s, wait_time_s, is_checkout_created, query_text, query_category, error_instance, error_at, code_error, tags, customer_tags, bot_failure_instances, query_resolved, company_resolution_time_min, customer_frt_min, customer_resolution_time_min, chat_flow, last_customer_message, last_customer_intent, first_customer_message, first_customer_intent, created_at_src, updated_at_src, response_time_hrs, reopen_count, contextualisation, contextualisation_category, follow_up_time_min, csat_rating, csat_review, csat_created_at, csat_updated_at, overall_sentiment, primary_category, secondary_category, churn_risk, urgency_level, product_name, payment_method, order_amount, order_id, price_sensitivity, resolution_confidence, ai_summary, ticket_link, ticket_in_office_hours, phone_number, report_date, unique_flag, frt_in_tat, qrc, response_in_tat, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

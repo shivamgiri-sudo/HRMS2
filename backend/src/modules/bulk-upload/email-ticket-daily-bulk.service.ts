@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Molecular Email / Reginald Men Email dashboard daily actuals.
@@ -125,8 +126,7 @@ export async function importEmailTicketDailyBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -138,7 +138,6 @@ export async function importEmailTicketDailyBatch(
       const msg = `Row ${row.row_no}: no active "Reginald" process found to attach this row to`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -147,7 +146,6 @@ export async function importEmailTicketDailyBatch(
       const msg = `Row ${row.row_no}: "Dashboard" must be "Molecular Email" or "Reginald Men Email"`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -156,42 +154,42 @@ export async function importEmailTicketDailyBatch(
       const msg = `Row ${row.row_no}: "Date" is required and could not be read`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO email_ticket_daily_actual
-           (id, process_id, dashboard_label, report_date, total_tickets, email_closed,
-            open_pending, email_reopen, opening_pending, data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
-            total_tickets = VALUES(total_tickets),
-            email_closed = VALUES(email_closed),
-            open_pending = VALUES(open_pending),
-            email_reopen = VALUES(email_reopen),
-            opening_pending = VALUES(opening_pending)`,
-        [
-          randomUUID(), processId, dashboardLabel, reportDate,
-          parseCount(data["Total Tickets"]), parseCount(data["Email Closure"]),
-          parseCount(data["Open/Pending"]), parseCount(data["Reopen"]),
-          parseOpeningPending(data["Opening Pending"]),
-          // source_reference is part of the unique key, so a re-upload of the same
-          // day from a different batch does not silently collide with the first.
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, dashboardLabel, reportDate,
+        parseCount(data["Total Tickets"]), parseCount(data["Email Closure"]),
+        parseCount(data["Open/Pending"]), parseCount(data["Reopen"]),
+        parseOpeningPending(data["Opening Pending"]),
+        // source_reference is part of the unique key, so a re-upload of the same
+        // day from a different batch does not silently collide with the first.
+        batchId,
+        importedByUserId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO email_ticket_daily_actual
+       (id, process_id, dashboard_label, report_date, total_tickets, email_closed,
+        open_pending, email_reopen, opening_pending, data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
+       total_tickets = VALUES(total_tickets),
+       email_closed = VALUES(email_closed),
+       open_pending = VALUES(open_pending),
+       email_reopen = VALUES(email_reopen),
+       opening_pending = VALUES(opening_pending)`,
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

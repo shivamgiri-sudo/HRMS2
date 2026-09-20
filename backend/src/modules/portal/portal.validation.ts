@@ -23,6 +23,14 @@ export const changeClientPasswordSchema = z.object({
   newPassword: z.string().min(8).max(100),
 });
 
+// No currentPassword field: this backs the forgot-password recovery flow, where the
+// caller does not know their current password by definition -- identity is proven by
+// the OTP verification that issued the token this request is authenticated with, not by
+// the old password. See portalAuthService.resetPasswordAfterOtp for the full reasoning.
+export const resetClientPasswordSchema = z.object({
+  newPassword: z.string().min(8).max(100),
+});
+
 export const periodSchema = z.string().regex(/^\d{4}-\d{2}$/, "Period must be YYYY-MM");
 
 export const processParamSchema = z.object({

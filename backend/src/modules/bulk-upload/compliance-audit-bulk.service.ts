@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Floor compliance audit import.
@@ -161,9 +162,8 @@ export async function importComplianceAuditBatch(
   const update = [...cols, "raw_data"].map((c) => `${c} = VALUES(${c})`).join(", ");
 
   const errors: string[] = [];
-  let importedRows = 0;
-  let errorRows = 0;
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
+  const toInsert: ChunkInsertRow[] = [];
   const occurrence = new Map<string, number>();
 
   for (const row of batchRows) {
@@ -180,7 +180,6 @@ export async function importComplianceAuditBatch(
       const msg = `Row ${row.row_no}: "Date" and "Analyst Name" are both required to identify an audit`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
     const auditKey = parts.join("|");
@@ -188,31 +187,31 @@ export async function importComplianceAuditBatch(
     occurrence.set(auditKey, n);
     const id = `compliance_audit:${auditKey}${n > 1 ? `:${n}` : ""}`.slice(0, 191);
 
-    const values = [
-      id,
-      auditKey,
-      ...COLUMNS.map((c) => coerce(c.type, data[c.header])),
-      JSON.stringify(data),
-      batchId,
-      row.row_no,
-      importedByUserId,
-    ];
-
-    try {
-      await db.execute(
-        `INSERT INTO compliance_audit_response (${insertCols.join(",")})
-         VALUES ${placeholders}
-         ON DUPLICATE KEY UPDATE ${update}`,
-        values as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        id,
+        auditKey,
+        ...COLUMNS.map((c) => coerce(c.type, data[c.header])),
+        JSON.stringify(data),
+        batchId,
+        row.row_no,
+        importedByUserId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO compliance_audit_response (${insertCols.join(",")})`,
+    placeholderGroup: placeholders,
+    insertSuffix: `ON DUPLICATE KEY UPDATE ${update}`,
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

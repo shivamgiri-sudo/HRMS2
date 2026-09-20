@@ -27,6 +27,11 @@ export default function PortalLogin() {
   const { portalSlug } = useParams<{ portalSlug?: string }>();
 
   const [mode, setMode] = useState<Mode>("password");
+  // Distinguishes "sign in by email" (a plain alternative to password login, existing
+  // behaviour) from "forgot my password" (the recovery gap this flag closes) -- both
+  // reuse the exact same OTP request/verify calls, only the post-verification
+  // destination differs. See handleVerifyOtp.
+  const [isRecovery, setIsRecovery] = useState(false);
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
   const [email, setEmail] = useState("");
@@ -90,7 +95,11 @@ export default function PortalLogin() {
       const { token } = await portalApi.verifyOtp(email, otp);
       savePortalToken(token);
       setMustChangePasswordFlag(false);
-      navigate("/portal");
+      // Recovery intent (came in via "Forgot your password?") routes to the reset-password
+      // screen instead of straight to the dashboard -- the whole point of this path is
+      // that the client gets their login_id/password back, not just one-off dashboard
+      // access via OTP again next time. See PortalChangePassword's own header comment.
+      navigate(isRecovery ? "/portal/change-password?mode=recovery" : "/portal");
     } catch (err: any) {
       setError(err.message || "Invalid OTP code. Please try again.");
     } finally {
@@ -123,11 +132,17 @@ export default function PortalLogin() {
 
           <CardHeader className="space-y-1 pb-4">
             <CardTitle className="text-center text-xl font-bold text-white">
-              {mode === "password" ? "Client Sign In" : mode === "otp-email" ? "Sign In by Email" : "Verify Code"}
+              {mode === "password"
+                ? "Client Sign In"
+                : mode === "otp-email"
+                ? isRecovery ? "Reset Your Password" : "Sign In by Email"
+                : "Verify Code"}
             </CardTitle>
             <CardDescription className="text-center text-sm text-slate-400">
               {mode === "otp-code"
                 ? `We've sent a 6-digit confirmation code to ${email}`
+                : mode === "otp-email" && isRecovery
+                ? "Enter the email on file for your portal account"
                 : "Use your Login ID and password, or sign in by email instead"}
             </CardDescription>
           </CardHeader>
@@ -192,19 +207,34 @@ export default function PortalLogin() {
                   )}
                 </Button>
 
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="h-9 w-full text-xs text-slate-400 hover:text-white"
-                  onClick={() => { setMode("otp-email"); setError(null); }}
-                >
-                  Sign in by email instead
-                </Button>
+                <div className="flex items-center justify-between gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-9 flex-1 text-xs text-slate-400 hover:text-white"
+                    onClick={() => { setMode("otp-email"); setIsRecovery(false); setError(null); }}
+                  >
+                    Sign in by email instead
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-9 flex-1 text-xs text-slate-400 hover:text-white"
+                    onClick={() => { setMode("otp-email"); setIsRecovery(true); setError(null); }}
+                  >
+                    Forgot your password?
+                  </Button>
+                </div>
               </form>
             )}
 
             {mode === "otp-email" && (
               <form onSubmit={handleRequestOtp} className="space-y-4">
+                {isRecovery && (
+                  <p className="text-xs text-slate-400 -mt-1">
+                    We'll email you a code to confirm it's you, then let you set a brand new password.
+                  </p>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor="email" className="text-xs font-semibold uppercase tracking-wide text-slate-300">
                     Email address
@@ -249,7 +279,7 @@ export default function PortalLogin() {
                   type="button"
                   variant="ghost"
                   className="h-9 w-full text-xs text-slate-400 hover:text-white"
-                  onClick={() => { setMode("password"); setError(null); }}
+                  onClick={() => { setMode("password"); setIsRecovery(false); setError(null); }}
                 >
                   Use Login ID and password instead
                 </Button>

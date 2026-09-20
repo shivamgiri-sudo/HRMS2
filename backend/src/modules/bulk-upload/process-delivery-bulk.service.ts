@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Per-process delivery actuals.
@@ -137,10 +138,22 @@ export async function importProcessDeliveryBatch(
   );
   const lobByKey = new Map(lobRows.map((r) => [r.k, r.id]));
 
+  // Pre-compute INSERT SQL once — NUMERIC drives column list and placeholder count.
+  const insertPrefix = `INSERT INTO process_delivery_actual
+           (id, process_id, process_lob_id, period_code, activity_date, metric_key,
+            ${NUMERIC.map((n) => n.column).join(", ")},
+            quality_score, sla_score, data_source, source_reference, status, created_by, updated_by)`;
+  const insertSuffix = `ON DUPLICATE KEY UPDATE
+            activity_date = VALUES(activity_date),
+            ${NUMERIC.map((n) => `${n.column} = VALUES(${n.column})`).join(", ")},
+            quality_score = VALUES(quality_score),
+            sla_score = VALUES(sla_score),
+            updated_by = VALUES(updated_by)`;
+  const placeholderGroup = `(?, ?, ?, ?, ?, ?, ${NUMERIC.map(() => "?").join(", ")}, ?, ?, 'bulk_upload', ?, 'draft', ?, ?)`;
+
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -154,7 +167,6 @@ export async function importProcessDeliveryBatch(
       const msg = `Row ${row.row_no}: no active process with code "${code || "(blank)"}"`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -163,7 +175,6 @@ export async function importProcessDeliveryBatch(
       const msg = `Row ${row.row_no}: "Metric" is required — it is part of the row's identity`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -173,46 +184,31 @@ export async function importProcessDeliveryBatch(
       const msg = `Row ${row.row_no}: needs a "Period" (YYYY-MM) or a readable "Activity Date"`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
     const lobName = String(data["LOB"] ?? "").trim().toUpperCase();
     const lobId = lobName ? (lobByKey.get(`${processId}|${lobName}`) ?? null) : null;
-
     const units = NUMERIC.map((n) => parseUnits(data[n.header]));
 
-    try {
-      await db.execute(
-        `INSERT INTO process_delivery_actual
-           (id, process_id, process_lob_id, period_code, activity_date, metric_key,
-            ${NUMERIC.map((n) => n.column).join(", ")},
-            quality_score, sla_score, data_source, source_reference, status, created_by, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ${NUMERIC.map(() => "?").join(", ")}, ?, ?, 'bulk_upload', ?, 'draft', ?, ?)
-         ON DUPLICATE KEY UPDATE
-            activity_date = VALUES(activity_date),
-            ${NUMERIC.map((n) => `${n.column} = VALUES(${n.column})`).join(", ")},
-            quality_score = VALUES(quality_score),
-            sla_score = VALUES(sla_score),
-            updated_by = VALUES(updated_by)`,
-        [
-          randomUUID(), processId, lobId, period, activityDate, metric,
-          ...units,
-          parseScore(data["Quality Score"]), parseScore(data["SLA Score"]),
-          // source_reference is part of the unique key, so the batch id keeps one
-          // upload from overwriting another's rows for the same process and metric.
-          batchId,
-          importedByUserId, importedByUserId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, lobId, period, activityDate, metric,
+        ...units,
+        parseScore(data["Quality Score"]), parseScore(data["SLA Score"]),
+        batchId,
+        importedByUserId, importedByUserId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({ insertPrefix, placeholderGroup, insertSuffix, rows: toInsert });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

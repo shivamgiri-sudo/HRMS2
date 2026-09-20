@@ -32,6 +32,7 @@ import {
   X, Zap,
 } from "lucide-react";
 import { PWAInstallBanner } from "@/components/layout/PWAInstallBanner";
+import { MandatoryTrainingPopup } from "@/components/quality-learning/MandatoryTrainingPopup";
 import { TopBar } from "@/components/layout/TopBar";
 import { SidebarNav } from "@/components/layout/SidebarNav";
 import { navGroups } from "@/components/layout/navConfig";
@@ -265,6 +266,7 @@ function DashboardLayoutShell({ children, subheader }: Props) {
     <InsideDashboardLayout.Provider value={true}>
     <div className="min-h-dvh" style={{ background: "var(--surface-page)" }}>
       <PWAInstallBanner />
+      <MandatoryTrainingPopup />
 
       {/* Mobile overlay — glass blur backdrop */}
       {sidebarOpen && (

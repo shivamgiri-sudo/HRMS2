@@ -639,7 +639,32 @@ export async function getMetricDrilldown(
 ): Promise<MetricDrilldown | null> {
   const allowed = await readableProcessIds(userId);
   if (!allowed.has(processId)) return null;
+  return computeMetricDrilldown(processId, metricKey, windowDays, period);
+}
 
+/**
+ * Client Portal entry point. No `readableProcessIds(userId)` call -- same reasoning as
+ * getProcessOperationsForPortal above: the portal's own token-scoped process_ids boundary
+ * has already authorized this exact processId before this is ever called, and no client_user
+ * holds an internal user_roles row for the internal check to even resolve against.
+ *
+ * Returns exactly what getMetricDrilldown returns -- formula, data source metadata, and the
+ * metric's own daily readings. No agent-level attribution, no raw source rows, no PII: those
+ * live in getMetricRawRows/getMetricAnalystBreakdown, which stay internal-only, un-mirrored
+ * here, until someone makes an explicit decision that a client should see analyst-level
+ * detail about their own account (a real scoping call, not a default to assume).
+ */
+export async function getMetricDrilldownForPortal(
+  processId: string, metricKey: string, windowDays = 30,
+  period: ReportPeriod = "trend",
+): Promise<MetricDrilldown | null> {
+  return computeMetricDrilldown(processId, metricKey, windowDays, period);
+}
+
+async function computeMetricDrilldown(
+  processId: string, metricKey: string, windowDays: number,
+  period: ReportPeriod,
+): Promise<MetricDrilldown | null> {
   // A period other than the plain trend fetches the wider window a
   // WTD/MTD range plus its comparison period needs, THEN trims the returned
   // readings to the exact range the card above is showing -- so opening a

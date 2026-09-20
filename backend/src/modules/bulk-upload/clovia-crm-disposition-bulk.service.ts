@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Clovia's CRM Disposition data (per its own SOP: "Downloaded from CRM:
@@ -112,8 +113,7 @@ export async function importCloviaCrmDispositionBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -125,7 +125,6 @@ export async function importCloviaCrmDispositionBatch(
       const msg = `Row ${row.row_no}: no active "Clovia" process found to attach this row to`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -134,7 +133,6 @@ export async function importCloviaCrmDispositionBatch(
       const msg = `Row ${row.row_no}: "Ticket No" is required — it is the row's identity`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -143,7 +141,6 @@ export async function importCloviaCrmDispositionBatch(
       const msg = `Row ${row.row_no}: "Date" is required and could not be read`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
-      errorRows++;
       continue;
     }
 
@@ -154,14 +151,26 @@ export async function importCloviaCrmDispositionBatch(
     const campaign = String(data["Campaign"] ?? "").trim() || null;
     const weekLabel = String(data["WEEKS"] ?? "").trim() || null;
 
-    try {
-      await db.execute(
-        `INSERT INTO clovia_crm_disposition
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, ticketNo, reportDate, empName, reason, subReason,
+        parseFtrFlag(data["FTR"]), repeatOrFtr, campaign, weekLabel,
+        'bulk_upload',
+        batchId,
+        importedByUserId,
+      ],
+    });
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO clovia_crm_disposition
            (id, process_id, ticket_no, report_date, emp_name, reason, sub_reason,
             ftr_flag, repeat_or_ftr, campaign, week_label,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
+            data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
             emp_name = VALUES(emp_name),
             reason = VALUES(reason),
             sub_reason = VALUES(sub_reason),
@@ -169,22 +178,12 @@ export async function importCloviaCrmDispositionBatch(
             repeat_or_ftr = VALUES(repeat_or_ftr),
             campaign = VALUES(campaign),
             week_label = VALUES(week_label)`,
-        [
-          randomUUID(), processId, ticketNo, reportDate, empName, reason, subReason,
-          parseFtrFlag(data["FTR"]), repeatOrFtr, campaign, weekLabel,
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
-  }
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

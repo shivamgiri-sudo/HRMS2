@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Bellavita's real "Repeat CDR" export -- writes into the SAME already-
@@ -47,9 +48,8 @@ export async function importBvoRepeatCdrMasmisBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
 
+  const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
     const data =
       typeof row.normalized_data === "string"
@@ -59,23 +59,25 @@ export async function importBvoRepeatCdrMasmisBatch(
     const phone = get(data, "PhoneNumber");
     if (!phone) {
       const msg = `Row ${row.row_no}: "PhoneNumber" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.bvo_Repeat_cdr (PhoneNumber, CallStatus, Agent, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?)`,
-        [phone, get(data, "CallStatus") || null, get(data, "Agent") || null, null, batchId] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [phone, get(data, "CallStatus") || null, get(data, "Agent") || null, null, batchId],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.bvo_Repeat_cdr (PhoneNumber, CallStatus, Agent, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

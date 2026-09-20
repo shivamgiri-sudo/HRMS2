@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Domestic Billing Approved Headcount bulk upload.
@@ -112,8 +113,7 @@ export async function importDomesticBillingApprovedHcBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+  const toInsert: ChunkInsertRow[] = [];
   let skippedRows = 0;
 
   for (const row of batchRows) {
@@ -134,19 +134,19 @@ export async function importDomesticBillingApprovedHcBatch(
     // --- Validation ---
     if (!month) {
       const msg = `Row ${row.row_no}: "Month" is required and could not be parsed (got: ${String(data["Month"] ?? "")})`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
     if (!process) {
       const msg = `Row ${row.row_no}: "Process" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
     if (!lob) {
       const msg = `Row ${row.row_no}: "LOB" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
     if (approvedHc === null || approvedHc < 0) {
       const msg = `Row ${row.row_no}: "Approved Headcount" must be a non-negative integer`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     // --- Skip rule: Approved Headcount <= 0 when Active = 0 ---
@@ -159,43 +159,41 @@ export async function importDomesticBillingApprovedHcBatch(
       continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO domestic_billing_approved_hc
-           (id, month, process, lob, approved_headcount, fte_rate, planning_rule, active,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
-           approved_headcount = VALUES(approved_headcount),
-           fte_rate           = VALUES(fte_rate),
-           planning_rule      = VALUES(planning_rule),
-           active             = VALUES(active),
-           updated_at         = NOW()`,
-        [
-          randomUUID(),
-          month,
-          process,
-          lob,
-          approvedHc,
-          fteRate ?? null,
-          planningRule,
-          active,
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      await db.execute(
-        `UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`,
-        [row.id],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(),
+        month,
+        process,
+        lob,
+        approvedHc,
+        fteRate ?? null,
+        planningRule,
+        active,
+        batchId,
+        importedByUserId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO domestic_billing_approved_hc
+       (id, month, process, lob, approved_headcount, fte_rate, planning_rule, active,
+        data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
+      approved_headcount = VALUES(approved_headcount),
+      fte_rate           = VALUES(fte_rate),
+      planning_rule      = VALUES(planning_rule),
+      active             = VALUES(active),
+      updated_at         = NOW()`,
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

@@ -22,6 +22,20 @@ router.get ("/process-by-slug/:slug", h(c.getProcessBySlug));
 
 // ── Client-authenticated: self-service password change ──────────────────────
 router.post("/auth/change-password", requireClientAuth, h(c.changePassword));
+// Forgot-password recovery: same auth guard as change-password above, but reachable with
+// only an OTP-issued token (no current password needed) -- closes the gap where a client
+// who forgot their login_id/password and has no admin nearby had no self-service way back
+// into the password-login system, only email OTP forever. See resetClientPasswordSchema's
+// own comment for why no currentPassword field exists here.
+router.post("/auth/reset-password",  requireClientAuth, h(c.resetPassword));
+// Sign-out: revokes THIS session's own jti server-side before the frontend clears its
+// local token. Previously "Exit" on the impersonation banner (and any future explicit
+// sign-out) only cleared localStorage -- the JWT and its portal_user_sessions row stayed
+// genuinely valid until natural expiry (up to 2h for an impersonation session, 7d for a
+// real login), so a copied or leaked token kept working after the user believed they had
+// signed out. Defense in depth, not a fix for an exploited bug: nothing in this session
+// found evidence of a leaked token being reused, but "Exit" should mean exit.
+router.post("/auth/logout",          requireClientAuth, h(c.logout));
 
 // ── Internal ops (internal staff JWT) ── MUST be before requireClientAuth middleware ──
 router.use("/internal", requireAuth);
@@ -44,9 +58,11 @@ const PORTAL_CONTENT_ROLES = ["admin", "hr", "finance_head", "operations_manager
 router.post("/internal/glide-paths",          requireRole(...PORTAL_CONTENT_ROLES), h(c.setGlideCommitment));
 router.post("/internal/action-plans",         requireRole(...PORTAL_CONTENT_ROLES), h(c.createActionPlan));
 router.put ("/internal/action-plans/:id",     requireRole(...PORTAL_CONTENT_ROLES), h(c.updateActionPlan));
+router.post("/internal/governance",           requireRole(...PORTAL_CONTENT_ROLES), h(c.updateGovernance));
 router.post("/internal/commentary",           requireRole(...PORTAL_CONTENT_ROLES), h(c.createCommentary));
 router.get ("/internal/client-users",         requireRole("admin", "hr"), h(c.listClientUsers));
 router.post("/internal/client-users",         requireRole("admin", "hr"), h(c.createClientUser));
+router.post("/internal/client-users/:id/generate-login", requireRole("admin", "hr"), h(c.generatePortalLogin));
 
 // ── Internal: Snapshot approval workflow ─────────────────────────────────────
 router.post(
@@ -122,6 +138,42 @@ router.get(
     const dbMod = await import("../../db/mysql.js");
     const [rows] = await dbMod.db.execute(
       `SELECT id, template_name FROM kpi_template WHERE active_status = 1 ORDER BY template_name`
+    );
+    return res.json({ data: rows });
+  })
+);
+
+/**
+ * Metrics available for a given process.
+ *
+ * Originally scoped through the same "template_name LIKE process_name" join
+ * portal.kpi.service.ts / portal.glide.service.ts use to resolve a process's scorecard --
+ * but a live check found kpi_template_metric (the join table linking a template to its
+ * metrics) has ZERO rows on this database, for every client, despite kpi_metric_master
+ * itself holding 292 real metric definitions. That join can therefore never return a
+ * single row today, for any process, which would have made this endpoint permanently
+ * empty and the Action Plans / Glide Path admin forms it feeds unusable.
+ *
+ * kpi_metric_master also carries no process_id or other FK back to process_master --
+ * some metric_codes are process-specific by NAMING convention only (HOUSING_PREMIUM_*,
+ * REGINALD_*), not by any structural relationship, so there is no real way to scope this
+ * list to "this process's metrics" today. Returning every active metric, unscoped, is
+ * therefore the honest option: it lets an admin pick a real metric_id that actually
+ * exists, rather than presenting a fake empty state that misrepresents 292 real,
+ * unconfigured metrics as "nothing exists for this process". The :id param is kept (and
+ * intentionally unused) so this can be re-scoped later without a route/URL change, the
+ * day kpi_template_metric or a metric-to-process link is actually populated.
+ */
+router.get(
+  "/internal/processes/:id/metrics",
+  requireRole("admin", "hr", "finance_head", "operations_manager", "ceo"),
+  h(async (_req, res) => {
+    const dbMod = await import("../../db/mysql.js");
+    const [rows] = await dbMod.db.execute(
+      `SELECT id, metric_code, metric_name, unit, direction
+         FROM kpi_metric_master
+        WHERE active_status = 1
+        ORDER BY metric_name`
     );
     return res.json({ data: rows });
   })
@@ -250,10 +302,14 @@ router.get ("/processes/:id/info",                    h(c.getProcessInfo));
 router.get ("/processes/:id/kpis",                    h(c.getKpis));
 router.get ("/processes/:id/glide-paths",             h(c.getGlidePaths));
 router.get ("/processes/:id/action-plans",            h(c.getActionPlans));
+router.get ("/processes/:id/governance",              h(c.getGovernance));
 router.get ("/processes/:id/operations",              h(c.getOperations));
+router.get ("/processes/:id/metrics/:metricKey/drilldown", h(c.getMetricDrilldown));
+router.get ("/processes/:id/live-dashboard",          h(c.getLiveDashboard));
 router.get ("/processes/:id/quality",                 h(c.getQuality));
 router.get ("/processes/:id/workforce",               h(c.getWorkforce));
 router.get ("/processes/:id/attrition",               h(c.getAttrition));
+router.get ("/processes/:id/training-compliance",     h(c.getTrainingCompliance));
 router.get ("/processes/:id/commentary",              h(c.getCommentary));
 router.post("/commentary/:id/acknowledge",            h(c.acknowledgeCommentary));
 router.post("/commentary/:id/reply",                  h(c.replyCommentary));

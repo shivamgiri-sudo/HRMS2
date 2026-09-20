@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * LP's "10. CR Reports" (per its own SOP: "Open BPO Panel... Select
@@ -111,8 +112,8 @@ async function importCrReportBatch(
   const processId = await resolveLpProcessId();
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -122,7 +123,7 @@ async function importCrReportBatch(
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no "Lawyer Panel" process found to attach this row to`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
     const name = String(data["Name"] ?? "").trim();
@@ -130,41 +131,52 @@ async function importCrReportBatch(
     const createdOn = parseDate(data["CreatedOn"]);
     if (!name || !mobile || !createdOn) {
       const msg = `Row ${row.row_no}: "Name", "Mobile" and "CreatedOn" are all required — together they are the row's identity`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO lp_cr_report_raw
-           (id, process_id, dashboard_label, lead_name, email_masked, mobile_masked,
-            status, unsecured_loan_amount, agent_name, created_on,
-            data_source, source_reference, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)
-         ON DUPLICATE KEY UPDATE
-            email_masked = VALUES(email_masked),
-            status = VALUES(status),
-            unsecured_loan_amount = VALUES(unsecured_loan_amount),
-            agent_name = VALUES(agent_name)`,
-        [
-          randomUUID(), processId, dashboardLabel, name,
-          String(data["Email"] ?? "").trim() || null,
-          mobile,
-          String(data["Status"] ?? "").trim() || null,
-          parseNullableAmount(data["Unsecured_Loan"]),
-          String(data["AgentName"] ?? "").trim() || null,
-          createdOn,
-          batchId,
-          importedByUserId,
-        ] as never[],
-      );
-      await db.execute(`UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`, [row.id]);
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, dashboardLabel, name,
+        String(data["Email"] ?? "").trim() || null,
+        mobile,
+        String(data["Status"] ?? "").trim() || null,
+        parseNullableAmount(data["Unsecured_Loan"]),
+        String(data["AgentName"] ?? "").trim() || null,
+        createdOn,
+        batchId,
+        importedByUserId,
+      ],
+    });
+  }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO lp_cr_report_raw
+       (id, process_id, dashboard_label, lead_name, email_masked, mobile_masked,
+        status, unsecured_loan_amount, agent_name, created_on,
+        data_source, source_reference, created_by)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
+    insertSuffix: `ON DUPLICATE KEY UPDATE
+        email_masked = VALUES(email_masked),
+        status = VALUES(status),
+        unsecured_loan_amount = VALUES(unsecured_loan_amount),
+        agent_name = VALUES(agent_name)`,
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
+
+  const failedIds = new Set(inserted.errorUpdates.map((u) => u.rowId));
+  const importedIds = toInsert.filter((r) => !failedIds.has(r.rowId)).map((r) => r.rowId);
+  for (let i = 0; i < importedIds.length; i += 1000) {
+    const slice = importedIds.slice(i, i + 1000);
+    await db.execute(
+      `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${slice.map(() => "?").join(",")})`,
+      slice,
+    );
   }
 
   await writeErrors(errorUpdates);

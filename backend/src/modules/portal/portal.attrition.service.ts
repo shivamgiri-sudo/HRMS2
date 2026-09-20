@@ -89,6 +89,14 @@ export const portalAttritionService = {
     const mandatedHc = (mandateRows as RowDataPacket[])[0]?.mandated_hc;
 
     const headcount = Number(hc.headcount) || 0;
+    // open_positions is derived from the same mandate as sanctioned_strength, so it must
+    // share its "not configured" semantics: 0 here would be indistinguishable from "fully
+    // staffed", which is a different claim than "we don't know the mandate". Falls back to
+    // null (not 0) when no mandate is configured, same rule sanctioned_strength already
+    // follows -- and clamped at 0 (never negative) when a mandate exists but headcount
+    // already exceeds it, since "negative open positions" isn't a real staffing state.
+    const sanctionedForGap = mandatedHc != null ? Number(mandatedHc) : null;
+    const open_positions = sanctionedForGap != null ? Math.max(0, sanctionedForGap - headcount) : null;
     const totalExits = Number(exits.total_exits) || 0;
     const attrition_pct = headcount > 0
       ? Math.round((totalExits / headcount) * 100 * 100) / 100
@@ -104,7 +112,7 @@ export const portalAttritionService = {
       // capacity" that only holds because we copied the numerator into the
       // denominator is worse than admitting the mandate isn't set up yet.
       sanctioned_strength: mandatedHc != null ? Number(mandatedHc) : null,
-      open_positions: 0,
+      open_positions,
       avg_tenure_months: Math.round(Number(hc.avg_tenure) || 0),
       top_exit_reasons: (reasonRows as RowDataPacket[]).map(r => ({ reason: r.reason, count: Number(r.cnt) })),
     };

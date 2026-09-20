@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * neemans_chat -- writes into db_masmis.neemans_chat (sql/1776). Source:
@@ -45,10 +46,10 @@ export async function importNeemansChatBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
 
   const uploadedByInt = /^\d+$/.test(importedByUserId) ? Number(importedByUserId) : null;
+
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -59,57 +60,59 @@ export async function importNeemansChatBatch(
     const requiredVal = getByColumn(data, "Ticket ID");
     if (!requiredVal) {
       const msg = `Row ${row.row_no}: "Ticket ID" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.neemans_chat
-           (ticket_id, inbox_id, inbox_name, identifier, ticket_status, agent_name, email, phone_number, instagram_username, created_at_src, assigned_at, agent_frt_at, frt, resolution_time_at, resolution_time, avg_wait_time, avg_handled_time, csat_rating, agent_message_blocks, is_resolved, is_outside_working_hours, frt_in_sec, resolution_time_in_min, frt_tat, resolution_tat, report_date, time_slot, emp_id, lob, week, hour_val, uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          requiredVal,
-          n(data, "Inbox ID"),
-          n(data, "Inbox Name"),
-          n(data, "Identifier"),
-          n(data, "Ticket Status"),
-          n(data, "Agent Name"),
-          n(data, "Email"),
-          n(data, "Phone Number"),
-          n(data, "Instagram Username"),
-          n(data, "Created At"),
-          n(data, "Assigned At"),
-          n(data, "Agent FRT At"),
-          n(data, "FRT"),
-          n(data, "Resolution Time At"),
-          n(data, "Resolution Time"),
-          n(data, "Average Wait Time"),
-          n(data, "Average Handled Time"),
-          n(data, "CSAT Rating"),
-          n(data, "Agent Message Blocks"),
-          n(data, "Is Resolved?"),
-          n(data, "Is Outside Working Hours"),
-          n(data, "FRT (IN Sec)"),
-          n(data, "Resolution Time (In Min)"),
-          n(data, "FRT TAT"),
-          n(data, "Resolution TAT"),
-          n(data, "Date"),
-          n(data, "Time Slot"),
-          n(data, "EMP ID"),
-          n(data, "LOB"),
-          n(data, "Week"),
-          n(data, "Hour"),
-          uploadedByInt, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        requiredVal,
+        n(data, "Inbox ID"),
+        n(data, "Inbox Name"),
+        n(data, "Identifier"),
+        n(data, "Ticket Status"),
+        n(data, "Agent Name"),
+        n(data, "Email"),
+        n(data, "Phone Number"),
+        n(data, "Instagram Username"),
+        n(data, "Created At"),
+        n(data, "Assigned At"),
+        n(data, "Agent FRT At"),
+        n(data, "FRT"),
+        n(data, "Resolution Time At"),
+        n(data, "Resolution Time"),
+        n(data, "Average Wait Time"),
+        n(data, "Average Handled Time"),
+        n(data, "CSAT Rating"),
+        n(data, "Agent Message Blocks"),
+        n(data, "Is Resolved?"),
+        n(data, "Is Outside Working Hours"),
+        n(data, "FRT (IN Sec)"),
+        n(data, "Resolution Time (In Min)"),
+        n(data, "FRT TAT"),
+        n(data, "Resolution TAT"),
+        n(data, "Date"),
+        n(data, "Time Slot"),
+        n(data, "EMP ID"),
+        n(data, "LOB"),
+        n(data, "Week"),
+        n(data, "Hour"),
+        uploadedByInt, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.neemans_chat
+       (ticket_id, inbox_id, inbox_name, identifier, ticket_status, agent_name, email, phone_number, instagram_username, created_at_src, assigned_at, agent_frt_at, frt, resolution_time_at, resolution_time, avg_wait_time, avg_handled_time, csat_rating, agent_message_blocks, is_resolved, is_outside_working_hours, frt_in_sec, resolution_time_in_min, frt_tat, resolution_tat, report_date, time_slot, emp_id, lob, week, hour_val, uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(

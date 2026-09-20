@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
  * Neemans' real "Cart" export -- writes into the SAME already-live
@@ -57,8 +58,8 @@ export async function importNeemansCartMasmisBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
-  let importedRows = 0;
-  let errorRows = 0;
+
+  const toInsert: ChunkInsertRow[] = [];
 
   for (const row of batchRows) {
     const data =
@@ -69,41 +70,43 @@ export async function importNeemansCartMasmisBatch(
     const cartId = get(data, "cartId", "cart_id");
     if (!cartId) {
       const msg = `Row ${row.row_no}: "cartId" is required`;
-      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); errorRows++; continue;
+      errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    try {
-      await db.execute(
-        `INSERT INTO db_masmis.neemans_cart
-           (sno, cart_id, created_at, updated_at, customer_name, phone_number, email_id,
-            line_items, amount, agent, disposition, sub_disposition, call_date, status,
-            uploaded_by, upload_batch_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          parseNullableInt(get(data, "sno", "s_no", "serial")), cartId,
-          n(data, "createdAt", "created_at", "created_date", "createdat"),
-          n(data, "updatedAt", "updated_at", "updated_date", "updatedat"),
-          n(data, "customerName", "customer_name", "customername", "name"),
-          n(data, "phoneNumber", "phone_number", "phonenumber", "phone", "mobile"),
-          n(data, "emailId", "email_id", "email", "emailid"),
-          n(data, "lineItems", "line_items", "lineitems", "items", "products", "product"),
-          parseNullableDecimal(get(data, "amount", "cart_value", "value", "total")),
-          n(data, "agent", "agent_name", "agentname"),
-          n(data, "disposition", "disp"),
-          n(data, "subDisposition", "sub_disposition", "subdisposition", "sub_disp"),
-          n(data, "callDate", "call_date", "calldate", "date"),
-          n(data, "status"),
-          null, batchId,
-        ] as never[],
-      );
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Row ${row.row_no}: ${msg}`);
-      errorUpdates.push({ rowId: row.id, message: msg.slice(0, 500) });
-      errorRows++;
-    }
+    toInsert.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        parseNullableInt(get(data, "sno", "s_no", "serial")), cartId,
+        n(data, "createdAt", "created_at", "created_date", "createdat"),
+        n(data, "updatedAt", "updated_at", "updated_date", "updatedat"),
+        n(data, "customerName", "customer_name", "customername", "name"),
+        n(data, "phoneNumber", "phone_number", "phonenumber", "phone", "mobile"),
+        n(data, "emailId", "email_id", "email", "emailid"),
+        n(data, "lineItems", "line_items", "lineitems", "items", "products", "product"),
+        parseNullableDecimal(get(data, "amount", "cart_value", "value", "total")),
+        n(data, "agent", "agent_name", "agentname"),
+        n(data, "disposition", "disp"),
+        n(data, "subDisposition", "sub_disposition", "subdisposition", "sub_disp"),
+        n(data, "callDate", "call_date", "calldate", "date"),
+        n(data, "status"),
+        null, batchId,
+      ],
+    });
   }
+
+  const inserted = await chunkedMasmisInsert({
+    insertPrefix: `INSERT INTO db_masmis.neemans_cart
+       (sno, cart_id, created_at, updated_at, customer_name, phone_number, email_id,
+        line_items, amount, agent, disposition, sub_disposition, call_date, status,
+        uploaded_by, upload_batch_id)`,
+    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    rows: toInsert,
+  });
+  errorUpdates.push(...inserted.errorUpdates);
+  for (const u of inserted.errorUpdates) errors.push(u.message);
+  const importedRows = inserted.importedRows;
+  const errorRows = errorUpdates.length;
 
   if (importedRows > 0) {
     await db.execute(
