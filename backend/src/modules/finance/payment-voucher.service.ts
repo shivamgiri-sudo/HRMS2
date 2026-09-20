@@ -1435,6 +1435,33 @@ export const paymentVoucherService = {
             id, `Applied against ${applicationAllocations.length} GRN due(s) — voucher ${v.voucher_number}`, actorUserId,
           ],
         );
+      } else if (v.source_type === "sales_receipt") {
+        // Receipt lane — money coming IN. credit_amount = amount, debit_amount = 0.
+        // Running balance INCREASES (opposite of every payment lane above).
+        // No vendor GRN or imprest link to update. particulars carries the client/party name.
+        branchCandidate = narrow(branchCandidate, (bankAccount as any).branch_id ?? null);
+        runningBalance = roundMoney(runningBalance + amount);
+        await connection.execute(
+          `INSERT INTO bank_account_ledger_entry
+             (id, bank_account_id, entry_date, voucher_id, debit_amount, credit_amount,
+              payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            randomUUID(),          // [0] id
+            v.bank_account_id,     // [1] bank_account_id
+            paymentDate,           // [2] entry_date
+            id,                    // [3] voucher_id
+            0,                     // [4] debit_amount — receipts have no debit
+            amount,                // [5] credit_amount — money coming IN
+            v.payable_account_id,  // [6] payable_account_id
+            `${v.particulars ?? "Client receipt"} — voucher ${v.voucher_number}`, // [7] narration
+            transactionRef,        // [8] instrument_ref
+            runningBalance,        // [9] running_balance
+            "voucher",             // [10] source_type
+            actorUserId,           // [11] created_by
+          ],
+        );
+        // No journal lines required for the receipt lane — journalLines stays empty.
       } else {
         // 'general' lane — no vendor GRN or imprest manager to update, just the bank debit
         // against whatever Payable Account (Salary Payable / Statutory Dues / Bank Charges /
@@ -1482,7 +1509,7 @@ export const paymentVoucherService = {
       // convention; a real shortfall is never that small. Checked here, before ANY row commits
       // (still inside this transaction — connection.rollback() in the catch below undoes
       // everything above on throw).
-      if (v.source_type !== "vendor_advance_application" && runningBalance < -0.01) {
+      if (v.source_type !== "vendor_advance_application" && v.source_type !== "sales_receipt" && runningBalance < -0.01) {
         throw new PaymentVoucherError(
           `This release would take the account's recorded balance to ₹${roundMoney(runningBalance)} — below zero. Refusing to release rather than silently overdraw the account.`,
           409,

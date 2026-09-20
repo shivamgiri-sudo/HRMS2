@@ -88,3 +88,54 @@ describe("receipt voucher — raise()", () => {
     ).rejects.toThrow("Invalid source type");
   });
 });
+
+describe("receipt voucher — release()", () => {
+  const RECEIPT_VOUCHER_ROW = {
+    id: "pv-r1", voucher_number: "RV/HQ/202609/0001", source_type: "sales_receipt",
+    voucher_type: "receipt", bank_account_id: "acct-1", payable_account_id: "pam-r1",
+    linked_vendor_payment_id: null, amount: "50000.00", status: "ceo_approved",
+    raised_by: "fh-1", ceo_approved_by: "ceo-1", released_by: null,
+    particulars: "Vodafone India",
+  };
+
+  it("posts credit_amount to bank_account_ledger_entry and increases running balance", async () => {
+    const conn = mockConn();
+    getConnection.mockResolvedValueOnce(conn);
+    // FOR UPDATE voucher lock
+    conn.execute.mockResolvedValueOnce([[RECEIPT_VOUCHER_ROW]]);
+    // bank account FOR UPDATE
+    conn.execute.mockResolvedValueOnce([[{ id: "acct-1", bank_id: "b1", branch_id: "br1", opening_balance: "0.00", active_status: 1 }]]);
+    // assertNotInClosedPeriod query — empty = no closed period found
+    conn.execute.mockResolvedValueOnce([[]]);
+    // last bank_account_ledger_entry (prior balance = 100000)
+    conn.execute.mockResolvedValueOnce([[{ running_balance: "100000.00" }]]);
+    // INSERT bank_account_ledger_entry
+    conn.execute.mockResolvedValueOnce([{ affectedRows: 1 }]);
+    // UPDATE payment_voucher status
+    conn.execute.mockResolvedValueOnce([{ affectedRows: 1 }]);
+    // recordFinanceApprovalEvent INSERT
+    conn.execute.mockResolvedValueOnce([{}]);
+    // writeVoucherAudit INSERT
+    conn.execute.mockResolvedValueOnce([{}]);
+    // post-commit get(): main voucher, audit log, GRN allocs, last ledger entry, bank opening balance, resolveActorNames
+    execute.mockResolvedValueOnce([[{ ...RECEIPT_VOUCHER_ROW, status: "released" }]]);
+    execute.mockResolvedValueOnce([[]]); // audit log
+    execute.mockResolvedValueOnce([[]]); // GRN allocations
+    execute.mockResolvedValueOnce([[]]); // last ledger entry (bank_account_id = "acct-1")
+    execute.mockResolvedValueOnce([[]]); // bank opening balance
+    execute.mockResolvedValueOnce([[]]); // resolveActorNames
+
+    await paymentVoucherService.release("pv-r1", "fh-1", "finance_head", { paymentMode: "RTGS", paymentDate: "2026-09-20", transactionRef: "UTR1234" });
+
+    const insertCall = conn.execute.mock.calls.find((c: any[]) =>
+      String(c[0]).includes("INSERT INTO bank_account_ledger_entry"),
+    );
+    expect(insertCall).toBeDefined();
+    const args: any[] = insertCall![1] as any[];
+    // credit_amount = 50000, debit_amount = 0
+    expect(args[4]).toBe(0);       // debit_amount position
+    expect(args[5]).toBe(50000);   // credit_amount position
+    // running_balance = 100000 + 50000 = 150000
+    expect(args[9]).toBe(150000);
+  });
+});
