@@ -33,7 +33,7 @@ export function ClapBreakdown({ processId }: Props) {
     queryKey: ["clap-voc", processId],
     queryFn: () =>
       hrmsApi
-        .get(`/api/process-kpi-dashboard/${processId}/voice-of-customer`)
+        .get(`/api/process-operations/${processId}/voice-of-customer`)
         .then((r) => r.data?.data ?? r.data),
     enabled: !!processId,
     staleTime: 120_000,

@@ -43,14 +43,15 @@ type Props = {
 export function AhtTrendChart({ refetchInterval, targetAht, compactMode = false }: Props) {
   const [selectedDay, setSelectedDay] = useState<AprRow | null>(null);
 
-  const { data: rawRows, isLoading } = useQuery<AprRow[]>({
-    queryKey: ["aht-trend"],
-    queryFn: () => hrmsApi.get("/api/quality-dashboard/apr").then((r) => {
+  const { data: rawRows, isLoading, error } = useQuery<AprRow[]>({
+    queryKey: ["agent-aht-trend"],
+    queryFn: () => hrmsApi.get("/api/agent/apr").then((r) => {
       const d = r.data?.data ?? r.data;
       return Array.isArray(d) ? d : [];
     }),
     refetchInterval,
     staleTime: refetchInterval ? refetchInterval * 0.8 : 60_000,
+    retry: 1,
   });
 
   const rows = (rawRows ?? [])
@@ -71,10 +72,18 @@ export function AhtTrendChart({ refetchInterval, targetAht, compactMode = false 
     );
   }
 
+  if (error) {
+    return (
+      <div className={`bg-slate-50 rounded-xl border border-slate-200 shadow-sm ${compactMode ? "p-3" : "p-5"} flex items-center gap-3`}>
+        <p className="text-xs text-slate-400">AHT trend unavailable — data syncs every 24h from the dialler.</p>
+      </div>
+    );
+  }
+
   if (!rows.length) {
     return (
       <div className={`bg-white rounded-xl border border-slate-200 shadow-sm ${compactMode ? "p-3" : "p-5"} text-center`}>
-        <p className="text-xs text-slate-400">No AHT data available</p>
+        <p className="text-xs text-slate-400">No call data for the last 30 days. AHT trend appears once calls are logged.</p>
       </div>
     );
   }

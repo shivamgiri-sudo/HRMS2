@@ -83,10 +83,14 @@ const TNI_LABELS: Record<string, string> = {
   call_closure: "Call Closure",
 };
 
+// ── Types ──────────────────────────────────────────────────────────────────
+
+type Course = NonNullable<LmsData["courses"]>[number];
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 export function MyLearningSection() {
-  const [selectedCourse, setSelectedCourse] = useState<LmsData["courses"] extends Array<infer T> ? T : never | null>(null);
+  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
 
   const { data: lmsData, isLoading: lmsLoading } = useQuery<LmsData>({
     queryKey: ["lms-employee"],
@@ -104,15 +108,21 @@ export function MyLearningSection() {
     staleTime: 60_000,
   });
 
-  const { data: tniRows } = useQuery<TniRow[]>({
-    queryKey: ["my-tni"],
-    queryFn: () =>
-      hrmsApi.get("/api/quality-dashboard/tni-analysis").then((r) => {
-        const d = r.data?.data ?? r.data;
-        return Array.isArray(d?.agents) ? d.agents : Array.isArray(d) ? d : [];
-      }),
+  // TNI: try the dedicated endpoint first; fall back to weakness-detail which is self-scoped
+  const { data: weaknessForTni } = useQuery<Array<{ category: string; score: number; peer_avg: number; gap: number }>>({
+    queryKey: ["weakness-detail"],
+    queryFn: () => hrmsApi.get("/api/agent/weakness-detail").then((r) => r.data?.data ?? r.data ?? []),
     staleTime: 120_000,
   });
+
+  // Map weakness areas to TniRow shape — gap < -10pp is a flagged TNI need
+  const tniRows: TniRow[] = (weaknessForTni ?? []).map((w) => ({
+    parameter_key: w.category,
+    pass_rate: w.score,
+    org_baseline: w.peer_avg,
+    gap: w.gap,
+    call_count: 0,
+  }));
 
   const courses = lmsData?.courses ?? [];
   const pendingAssignments = (assignments ?? []).filter((a) =>
@@ -176,7 +186,7 @@ export function MyLearningSection() {
                   <div
                     key={c.course_id ?? i}
                     className="rounded-lg border border-slate-100 p-3 cursor-pointer hover:border-blue-200 hover:bg-blue-50/30 transition-colors group"
-                    onClick={() => setSelectedCourse(c as never)}
+                    onClick={() => setSelectedCourse(c)}
                   >
                     <div className="flex items-center justify-between gap-2 mb-1.5">
                       <p className="text-sm font-semibold text-slate-900 truncate flex-1">{c.course_name ?? "Course"}</p>
@@ -281,28 +291,28 @@ export function MyLearningSection() {
         <DrillDownDrawer
           open={!!selectedCourse}
           onClose={() => setSelectedCourse(null)}
-          title={(selectedCourse as { course_name?: string }).course_name ?? "Course Detail"}
+          title={selectedCourse.course_name ?? "Course Detail"}
           badge={
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${statusBadge((selectedCourse as { status?: string }).status)}`}>
-              {(selectedCourse as { status?: string }).status ?? "—"}
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${statusBadge(selectedCourse.status)}`}>
+              {selectedCourse.status ?? "—"}
             </span>
           }
         >
           <DrawerSection label="Progress">
-            <DrawerKV label="Completion" value={`${Math.round((selectedCourse as { completion_pct?: number }).completion_pct ?? 0)}%`} />
+            <DrawerKV label="Completion" value={`${Math.round(selectedCourse.completion_pct ?? 0)}%`} />
             <DrawerKV label="Modules" value={
-              (selectedCourse as { modules_completed?: number; modules_total?: number }).modules_total
-                ? `${(selectedCourse as { modules_completed?: number }).modules_completed ?? 0} / ${(selectedCourse as { modules_total?: number }).modules_total}`
+              selectedCourse.modules_total
+                ? `${selectedCourse.modules_completed ?? 0} / ${selectedCourse.modules_total}`
                 : "—"
             } />
-            <DrawerKV label="MCQ Score" value={(selectedCourse as { mcq_score?: number }).mcq_score != null ? `${Math.round((selectedCourse as { mcq_score?: number }).mcq_score!)}%` : "—"} />
-            <DrawerKV label="Assigned" value={fmtDate((selectedCourse as { assigned_at?: string }).assigned_at)} />
-            <DrawerKV label="Completed" value={fmtDate((selectedCourse as { completed_at?: string | null }).completed_at)} />
+            <DrawerKV label="MCQ Score" value={selectedCourse.mcq_score != null ? `${Math.round(selectedCourse.mcq_score)}%` : "—"} />
+            <DrawerKV label="Assigned" value={fmtDate(selectedCourse.assigned_at)} />
+            <DrawerKV label="Completed" value={fmtDate(selectedCourse.completed_at)} />
           </DrawerSection>
-          {(selectedCourse as { certificate_url?: string | null }).certificate_url && (
+          {selectedCourse.certificate_url && (
             <DrawerSection label="Certificate">
               <a
-                href={(selectedCourse as { certificate_url?: string | null }).certificate_url!}
+                href={selectedCourse.certificate_url}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 text-sm text-blue-600 font-semibold hover:underline"

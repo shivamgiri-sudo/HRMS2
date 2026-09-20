@@ -52,10 +52,11 @@ export function RealTimeGuidePanel({ refetchInterval = 30_000 }: Props) {
   });
 
   const { data: liveScore, dataUpdatedAt } = useQuery<LiveNumbers>({
-    queryKey: ["live-cq-score"],
+    queryKey: ["live-cq-score", "1d"],
     queryFn: () => hrmsApi.get("/api/agent/cq-score?daysBack=1").then((r) => r.data?.data ?? r.data),
     refetchInterval,
     staleTime: refetchInterval * 0.8,
+    retry: 1,
   });
 
   const topWeaknesses = (weaknesses ?? [])

@@ -21,10 +21,11 @@ type Props = {
 
 export function LiveCallScoreStrip({ refetchInterval = 30_000, showLiveBadge = false }: Props) {
   const { data, isLoading, error } = useQuery<CqScoreData>({
-    queryKey: ["live-cq-score"],
+    queryKey: ["live-cq-score", "7d"],
     queryFn: () => hrmsApi.get("/api/agent/cq-score?daysBack=7").then((r) => r.data?.data ?? r.data),
     refetchInterval,
     staleTime: 25_000,
+    retry: 1,
   });
 
   if (isLoading) {
@@ -36,12 +37,33 @@ export function LiveCallScoreStrip({ refetchInterval = 30_000, showLiveBadge = f
     );
   }
 
-  if (error || !data) return null;
+  if (error) {
+    return (
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex items-center gap-3">
+        <Activity size={16} className="text-slate-400 flex-shrink-0" />
+        <p className="text-xs text-slate-500">Call quality data unavailable — contact your quality team.</p>
+      </div>
+    );
+  }
 
-  const score = data.cq_score_current ?? data.cq_score_7day_avg ?? 0;
+  const score = data?.cq_score_current ?? data?.cq_score_7day_avg ?? null;
+  const hasNoData = score === null || score === 0;
+
+  if (!data || hasNoData) {
+    return (
+      <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-center gap-3">
+        <Activity size={16} className="text-blue-400 flex-shrink-0" />
+        <p className="text-xs text-blue-600">
+          {showLiveBadge && <span className="inline-flex items-center gap-1 mr-2"><span className="h-2 w-2 rounded-full bg-blue-400 animate-pulse" />LIVE </span>}
+          No scored calls yet for this period. Quality scores appear once your team completes call audits.
+        </p>
+      </div>
+    );
+  }
+
   const target = data.target ?? 80;
   const gap = data.gap_pct ?? 0;
-  const trend = data.trend_7day ?? 0;
+  const trend = (data as { trend_7day?: { change_pct?: number } | null }).trend_7day?.change_pct ?? 0;
   const isOnTarget = score >= target;
   const isCritical = score < target * 0.85;
 

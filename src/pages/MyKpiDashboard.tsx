@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Loader,
   RefreshCcw,
@@ -150,6 +151,7 @@ function LightSkeleton() {
 
 export default function MyKpiDashboard() {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
 
   // KPI state
   const [period, setPeriod] = useState<Period>("day");
@@ -172,10 +174,11 @@ export default function MyKpiDashboard() {
     setNoKpis(false);
     try {
       const dateQuery = p === "day" ? `&date=${selectedDate}` : "";
-      const res = await hrmsApi.get<{ success: boolean; data: LivePerformanceData }>(
-        `/api/kpi-master/live?period=${p}${dateQuery}`
-      );
-      const d = (res.data as { data?: LivePerformanceData })?.data ?? res.data as unknown as LivePerformanceData;
+      const res = await hrmsApi.get<unknown>(`/api/kpi-master/live?period=${p}${dateQuery}`);
+      const envelope = res.data as { success?: boolean; data?: LivePerformanceData } | LivePerformanceData | null;
+      const d: LivePerformanceData | null = envelope && typeof envelope === "object" && "data" in envelope
+        ? (envelope as { data?: LivePerformanceData }).data ?? null
+        : (envelope as LivePerformanceData | null);
       if (!d?.metrics?.length) {
         setNoKpis(true);
         setData(null);
@@ -270,7 +273,15 @@ export default function MyKpiDashboard() {
               </div>
             </div>
             <button
-              onClick={() => loadData(period)}
+              onClick={() => {
+                loadData(period);
+                qualityRefetch();
+                queryClient.invalidateQueries({ queryKey: ["live-cq-score"] });
+                queryClient.invalidateQueries({ queryKey: ["weakness-detail"] });
+                queryClient.invalidateQueries({ queryKey: ["agent-aht-trend"] });
+                queryClient.invalidateQueries({ queryKey: ["my-assignments"] });
+                queryClient.invalidateQueries({ queryKey: ["lms-employee"] });
+              }}
               className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-blue-600 transition-colors px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50"
             >
               <RefreshCcw size={13} />
