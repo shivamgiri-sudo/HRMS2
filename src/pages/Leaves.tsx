@@ -854,41 +854,43 @@ const Leaves = () => {
       <div className="space-y-5">
         <LeaveConsentBanner />
 
-        {/* Hero Header */}
-        <section className="relative overflow-hidden rounded-2xl bg-white border border-slate-200 shadow-sm">
-          <div className="h-1 bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-500 absolute top-0 left-0 right-0" />
-          <div className="relative p-6 sm:p-8 pt-7">
+        {/* Hero Header — MAS HRMS gradient pattern: Request Leave = pink-to-purple */}
+        <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-pink-500 via-purple-500 to-purple-600 text-white shadow-lg shadow-purple-500/20">
+          {/* Subtle spotlight orb */}
+          <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-white/10 blur-3xl" />
+          <div className="pointer-events-none absolute bottom-0 left-1/4 h-32 w-32 rounded-full bg-pink-300/20 blur-2xl" />
+          <div className="relative p-6 sm:p-8">
             <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[#5aa0dd]">
+                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-white/70">
                   Leave Management
                 </p>
-                <h1 className="mt-2 text-2xl font-black tracking-tight text-slate-900">
+                <h1 className="mt-2 text-2xl font-black tracking-tight text-white">
                   Leave Requests
                 </h1>
-                <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500">
+                <p className="mt-2 max-w-xl text-sm leading-6 text-white/80">
                   Apply for leave, track approvals and manage team leave requests.
                 </p>
                 <div className="mt-4 flex flex-wrap gap-2.5">
-                  <div className="flex items-center gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 transition-colors hover:shadow-sm">
-                    <span className="rounded-lg bg-amber-100 p-1.5 text-amber-600"><Clock className="h-4 w-4" /></span>
+                  <div className="flex items-center gap-2.5 rounded-xl border border-white/20 bg-white/15 px-4 py-2.5 backdrop-blur-sm transition-all hover:bg-white/20">
+                    <span className="rounded-lg bg-amber-400/30 p-1.5 text-amber-200"><Clock className="h-4 w-4" /></span>
                     <div>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-amber-600/70">Pending</p>
-                      <p className="text-lg font-black leading-tight text-amber-700">{stats?.pending ?? 0}</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-white/60">Pending</p>
+                      <p className="text-lg font-black leading-tight text-amber-200">{stats?.pending ?? 0}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 transition-colors hover:shadow-sm">
-                    <span className="rounded-lg bg-emerald-100 p-1.5 text-emerald-600"><CheckCircle className="h-4 w-4" /></span>
+                  <div className="flex items-center gap-2.5 rounded-xl border border-white/20 bg-white/15 px-4 py-2.5 backdrop-blur-sm transition-all hover:bg-white/20">
+                    <span className="rounded-lg bg-emerald-400/30 p-1.5 text-emerald-200"><CheckCircle className="h-4 w-4" /></span>
                     <div>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600/70">Approved</p>
-                      <p className="text-lg font-black leading-tight text-emerald-700">{stats?.approved ?? 0}</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-white/60">Approved</p>
+                      <p className="text-lg font-black leading-tight text-emerald-200">{stats?.approved ?? 0}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2.5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 transition-colors hover:shadow-sm">
-                    <span className="rounded-lg bg-rose-100 p-1.5 text-rose-600"><XCircle className="h-4 w-4" /></span>
+                  <div className="flex items-center gap-2.5 rounded-xl border border-white/20 bg-white/15 px-4 py-2.5 backdrop-blur-sm transition-all hover:bg-white/20">
+                    <span className="rounded-lg bg-rose-400/30 p-1.5 text-rose-200"><XCircle className="h-4 w-4" /></span>
                     <div>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-rose-600/70">Rejected</p>
-                      <p className="text-lg font-black leading-tight text-rose-700">{stats?.rejected ?? 0}</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-white/60">Rejected</p>
+                      <p className="text-lg font-black leading-tight text-rose-200">{stats?.rejected ?? 0}</p>
                     </div>
                   </div>
                 </div>
@@ -896,7 +898,7 @@ const Leaves = () => {
               <div className="flex shrink-0 flex-wrap gap-2">
                 <Button
                   onClick={() => setIsNewRequestOpen(true)}
-                  className="rounded-xl bg-[#1B6AB5] px-5 font-bold text-white shadow-lg shadow-[#1B6AB5]/25 transition-all duration-200 hover:bg-[#155e9f] hover:shadow-xl hover:shadow-[#1B6AB5]/30"
+                  className="rounded-xl bg-white/20 backdrop-blur-sm border border-white/30 px-5 font-bold text-white shadow-lg transition-all duration-200 hover:bg-white/30 hover:shadow-xl"
                 >
                   <Plus className="mr-2 h-4 w-4" />
                   New Request
@@ -963,8 +965,8 @@ const Leaves = () => {
           }}
         />
 
-        {/* Leave Requests */}
-        <section className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        {/* Leave Requests — GlassCard pattern */}
+        <section className="relative overflow-hidden rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm p-4 shadow-[0_1px_3px_rgba(37,99,235,0.08),_0_4px_12px_rgba(37,99,235,0.06)]">
           <div className="relative mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-sm font-semibold tracking-tight text-slate-900">
