@@ -23,8 +23,10 @@ import { BankDirectoryContent } from "./BankDirectoryPage";
 import { BankLedgerReportContent } from "./BankLedgerReportPage";
 import { LedgerReportsContent } from "./LedgerReportsPage";
 import { BankReconciliationContent } from "./BankReconciliationPage";
+import { FinanceAnalyticsContent } from "./FinanceAnalyticsPage";
 
 const TABS = [
+  { key: "analytics", label: "Finance Analytics" },
   { key: "payments", label: "Payments" },
   { key: "bank-accounts", label: "Bank Accounts" },
   { key: "bank-ledger", label: "Bank Ledger" },
@@ -44,7 +46,7 @@ type PaymentsSubTabKey = (typeof PAYMENTS_SUBTABS)[number]["key"];
 export default function FinanceLedgerHubPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
-  const tab: TabKey = TABS.some((t) => t.key === tabParam) ? (tabParam as TabKey) : "payments";
+  const tab: TabKey = TABS.some((t) => t.key === tabParam) ? (tabParam as TabKey) : "analytics";
   const [paymentsSubTab, setPaymentsSubTab] = useState<PaymentsSubTabKey>("vouchers");
 
   const setTab = (next: string) => {
@@ -67,6 +69,8 @@ export default function FinanceLedgerHubPage() {
               <TabsTrigger key={t.key} value={t.key} className="cursor-pointer">{t.label}</TabsTrigger>
             ))}
           </TabsList>
+
+          <TabsContent value="analytics"><FinanceAnalyticsContent /></TabsContent>
 
           <TabsContent value="payments">
             <Tabs value={paymentsSubTab} onValueChange={(v) => setPaymentsSubTab(v as PaymentsSubTabKey)}>
