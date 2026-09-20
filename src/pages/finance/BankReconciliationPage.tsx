@@ -236,6 +236,16 @@ export function BankReconciliationContent() {
   const unmatchedLines = statementLines.filter((l) => l.match_status === "unmatched");
   const resolvedCount = statementLines.length - unmatchedLines.length;
   const canClose = statementLines.length > 0 && unmatchedLines.length === 0 && statementClosingBalance !== "";
+
+  const matchedLinesArr = statementLines.filter((l) => l.match_status === "matched" || l.match_status === "adjusted");
+  const matchPct = statementLines.length > 0 ? Math.round((matchedLinesArr.length / statementLines.length) * 100) : 0;
+  const matchedAmt = matchedLinesArr.reduce((s, l) => s + Number(l.credit_amount || l.debit_amount || 0), 0);
+  const totalStatementAmt = statementLines.reduce((s, l) => s + Number(l.credit_amount || l.debit_amount || 0), 0);
+  const matchCountByStatus = {
+    matched: statementLines.filter((l) => l.match_status === "matched").length,
+    unmatched: statementLines.filter((l) => l.match_status === "unmatched").length,
+    adjusted: statementLines.filter((l) => l.match_status === "adjusted").length,
+  };
   const mostRecentClosed = closedPeriods[0];
 
   const startNewPeriodDefaultFrom = useMemo(() => {
@@ -370,6 +380,30 @@ export function BankReconciliationContent() {
 
             {statementLines.length > 0 && (
               <>
+                {/* Reconciliation Progress */}
+                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm mb-3">
+                  <div className="flex items-center justify-between mb-1 text-sm">
+                    <span className="font-semibold text-slate-700">
+                      {matchCountByStatus.matched} matched / {matchCountByStatus.unmatched} unmatched / {matchCountByStatus.adjusted} adjusted
+                    </span>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${matchPct === 100 ? "bg-emerald-100 text-emerald-700" : matchPct >= 80 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-700"}`}>
+                      {matchPct === 100 ? "Fully Reconciled" : `${matchPct}% matched`}
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${matchPct === 100 ? "bg-emerald-500" : matchPct >= 80 ? "bg-yellow-400" : "bg-red-400"}`}
+                      style={{ width: `${matchPct}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-xs text-slate-500 mt-1.5">
+                    <span>₹{matchedAmt.toLocaleString("en-IN")} matched</span>
+                    <span className={matchPct === 100 ? "text-emerald-600 font-semibold" : "text-red-600 font-semibold"}>
+                      {matchPct === 100 ? "₹0 remaining" : `₹${(totalStatementAmt - matchedAmt).toLocaleString("en-IN")} remaining`}
+                    </span>
+                  </div>
+                </div>
+
                 <div className="rounded-2xl border bg-white shadow-sm">
                   <div className="border-b px-4 py-3">
                     <p className="text-xs font-bold uppercase tracking-wide text-slate-400">

@@ -27,6 +27,7 @@ type LedgerRow = {
   raised_by: string | null;
   ceo_approved_by: string | null;
   released_by: string | null;
+  source_type?: string | null;
 };
 
 function money(value: unknown) {
@@ -152,6 +153,19 @@ export function BankLedgerReportContent() {
         </div>
       )}
 
+      {rows.length > 0 && (
+        <div className="flex items-center gap-4 rounded-xl border border-blue-100 bg-blue-50 px-5 py-3 text-sm">
+          <span className="text-slate-500">Opening Balance</span>
+          <span className="font-semibold text-blue-700">{money(rows[0].running_balance - (rows[0].credit - rows[0].debit))}</span>
+          <span className="text-slate-400">→</span>
+          <span className="text-slate-500">Current Balance</span>
+          <span className="font-bold text-blue-800 text-base">{money(rows[rows.length - 1].running_balance)}</span>
+          <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${rows[rows.length - 1].running_balance >= 0 ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
+            {rows[rows.length - 1].running_balance >= 0 ? "✓ Positive" : "⚠ Overdrawn"}
+          </span>
+        </div>
+      )}
+
       <div className="overflow-hidden rounded-2xl border border-white/60 bg-white/95 shadow-sm backdrop-blur-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -174,17 +188,33 @@ export function BankLedgerReportContent() {
               {bankAccountId && reportQuery.isLoading && <tr><td colSpan={10} className="px-3 py-6 text-center text-slate-400">Loading…</td></tr>}
               {bankAccountId && !reportQuery.isLoading && rows.length === 0 && <tr><td colSpan={10} className="px-3 py-6 text-center text-slate-400">No entries in this range</td></tr>}
               {rows.map((r, i) => (
-                <tr key={i} className="hover:bg-blue-50/40">
+                <tr
+                  key={i}
+                  className={
+                    r.credit > 0
+                      ? "bg-emerald-50/60 hover:bg-emerald-50 transition-colors"
+                      : r.debit > 0
+                        ? "bg-amber-50/40 hover:bg-amber-50/60 transition-colors"
+                        : "hover:bg-blue-50/40"
+                  }
+                >
                   <td className="px-3 py-2 text-gray-600">{r.entry_date}</td>
                   <td className="px-3 py-2 font-mono text-gray-800">{r.voucher_number ?? "—"}</td>
                   <td className="px-3 py-2"><Badge variant="outline" className="text-[10px]">{r.type}</Badge></td>
                   <td className="px-3 py-2 text-gray-600">{r.ledger_head ?? "—"}</td>
                   <td className="px-3 py-2 text-gray-600">{r.party ?? "—"}</td>
-                  <td className="px-3 py-2 text-right font-semibold text-rose-600">{money(r.debit)}</td>
-                  <td className="px-3 py-2 text-right font-semibold text-emerald-600">{money(r.credit)}</td>
+                  <td className="px-3 py-2 text-right font-semibold text-amber-700">{r.debit > 0 ? "↓ " : ""}{money(r.debit)}</td>
+                  <td className="px-3 py-2 text-right font-semibold text-emerald-700">{r.credit > 0 ? "↑ " : ""}{money(r.credit)}</td>
                   <td className="px-3 py-2 text-right font-bold text-gray-800">{money(r.running_balance)}</td>
                   <td className="px-3 py-2 font-mono text-gray-500">{r.instrument_ref ?? "—"}</td>
-                  <td className="max-w-xs truncate px-3 py-2 text-gray-500" title={r.narration}>{r.narration}</td>
+                  <td className="max-w-xs px-3 py-2 text-gray-500">
+                    <div className="flex items-center gap-1 overflow-hidden">
+                      <span className="truncate" title={r.narration}>{r.narration}</span>
+                      {r.source_type === "backfill_receipt" && (
+                        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">Migrated</span>
+                      )}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

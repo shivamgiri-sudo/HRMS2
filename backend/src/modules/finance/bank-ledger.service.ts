@@ -74,6 +74,7 @@ export const bankLedgerService = {
       raised_by: row.raised_by_name ?? null,
       ceo_approved_by: row.ceo_approved_by_name ?? null,
       released_by: row.released_by_name ?? null,
+      source_type: row.source_type ?? null,
     }));
   },
 
