@@ -29,7 +29,13 @@ import {
   getPendingAction,
   clearPendingAction,
   type PendingLeaveAction,
+  type AnyPendingAction,
 } from './ai-conversation.service.js';
+
+// Narrow helper used only within this file
+function asLeave(a: AnyPendingAction | null): PendingLeaveAction | null {
+  return a?.type === 'leave_request' ? (a as PendingLeaveAction) : null;
+}
 
 const MIRA_ACTIONS_ENABLED = process.env.MIRA_ACTIONS_ENABLED === 'true';
 
@@ -281,7 +287,7 @@ export async function draftLeaveRequest(question: string, userId: string): Promi
 }
 
 export async function confirmLeaveAction(userId: string): Promise<ConfirmResult> {
-  const pending = getPendingAction(userId);
+  const pending = asLeave(getPendingAction(userId));
   if (!pending) {
     return { ok: false, message: "I don't have a leave request waiting on your confirmation. Ask me to raise one first." };
   }
@@ -311,7 +317,7 @@ export async function confirmLeaveAction(userId: string): Promise<ConfirmResult>
 }
 
 export async function cancelLeaveAction(userId: string): Promise<ConfirmResult> {
-  const pending = getPendingAction(userId);
+  const pending = asLeave(getPendingAction(userId));
   clearPendingAction(userId);
   if (!pending) {
     return { ok: true, message: 'There was nothing pending to cancel.' };

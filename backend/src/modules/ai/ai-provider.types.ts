@@ -85,7 +85,7 @@ export interface AiGenerateResponse {
 
 export interface AiPendingAction {
   /** What kind of action this is; the frontend and the confirm/cancel routes both switch on this. */
-  type: 'leave_request';
+  type: 'leave_request' | 'leave_cancel' | 'attendance_regularization' | 'grievance';
   /** Human-readable summary of exactly what will happen on confirm — shown verbatim in chat. */
   summary: string;
   confirmLabel: string;

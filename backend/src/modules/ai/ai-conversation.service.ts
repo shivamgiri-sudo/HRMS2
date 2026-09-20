@@ -55,10 +55,53 @@ export interface PendingLeaveAction {
   createdAt: number;
 }
 
+export interface PendingLeaveCancelAction {
+  type: 'leave_cancel';
+  payload: {
+    employeeId: string;
+    leaveRequestId: string;
+    leaveTypeName: string;
+    fromDate: string;
+    toDate: string;
+    currentStatus: string;
+  };
+  createdAt: number;
+}
+
+export interface PendingRegularizationAction {
+  type: 'attendance_regularization';
+  payload: {
+    employeeId: string;
+    sessionDate: string;
+    reason: string;
+    requestedStatus: 'present' | 'half_day' | null;
+    newPunchIn: string | null;
+    newPunchOut: string | null;
+  };
+  createdAt: number;
+}
+
+export interface PendingGrievanceAction {
+  type: 'grievance';
+  payload: {
+    employeeId: string;
+    description: string;
+    category: string;
+    severity: string;
+  };
+  createdAt: number;
+}
+
+export type AnyPendingAction =
+  | PendingLeaveAction
+  | PendingLeaveCancelAction
+  | PendingRegularizationAction
+  | PendingGrievanceAction;
+
 interface Thread {
   turns: ConversationTurn[];
   lastTouched: number;
-  pendingAction?: PendingLeaveAction;
+  pendingAction?: AnyPendingAction;
   /** The language Mira is currently answering this thread in. Unset means English. */
   preferredLanguage?: DetectedLang;
   /**
@@ -230,7 +273,7 @@ export function getPreferredLanguage(userId: string): DetectedLang | null {
 }
 
 /** Stash a drafted action for this user, replacing any earlier undrafted one. */
-export function setPendingAction(userId: string, action: PendingLeaveAction): void {
+export function setPendingAction(userId: string, action: AnyPendingAction): void {
   if (!userId) return;
   const now = Date.now();
   sweep(now);
@@ -242,7 +285,7 @@ export function setPendingAction(userId: string, action: PendingLeaveAction): vo
 }
 
 /** The user's pending action, if one exists and hasn't gone stale. */
-export function getPendingAction(userId: string): PendingLeaveAction | null {
+export function getPendingAction(userId: string): AnyPendingAction | null {
   const thread = threads.get(userId);
   if (!thread?.pendingAction) return null;
   if (Date.now() - thread.pendingAction.createdAt > PENDING_ACTION_TTL_MS) {

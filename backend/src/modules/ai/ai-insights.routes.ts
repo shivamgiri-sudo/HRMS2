@@ -5,6 +5,8 @@
  */
 
 import { Router } from 'express';
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
 import type { Response } from 'express';
 import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
@@ -28,6 +30,9 @@ import {
 import { recordTurn, resolveFollowUp, lastIntentTurn, providerHistory, providerHistorySummaries, getPendingAction, detectConfirmation, getPreferredLanguage } from './ai-conversation.service.js';
 import { detectLanguage } from './mira-language-detect.js';
 import { draftLeaveRequest, confirmLeaveAction, cancelLeaveAction, isLeaveActionRequest, miraActionsEnabled } from './mira-leave-action.service.js';
+import { draftLeaveCancelRequest, confirmLeaveCancelAction, isLeaveCancelRequest } from './mira-leave-cancel.service.js';
+import { draftRegularizationRequest, confirmRegularizationAction, isRegularizationRequest } from './mira-regularization.service.js';
+import { draftGrievanceRequest, confirmGrievanceAction, isGrievanceRequest } from './mira-grievance-action.service.js';
 import {
   answerCompanyQuestion,
   companyKnowledgeMissResponse,
@@ -204,7 +209,7 @@ aiInsightsRouter.get('/session', h(async (req, res) => {
       description: 'Live answers from your own HRMS account and approved MAS Callnet company sources.',
     },
     roleKeys,
-    prompts: getMiraSuggestedPrompts(),
+    prompts: getMiraSuggestedPrompts(roleKeys),
     capabilities: {
       selfAccount: true,
       proactiveBriefing: true,
@@ -587,17 +592,90 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
   if (miraActionsEnabled() && getPendingAction(userId)) {
     const decision = detectConfirmation(safeQuestion);
     if (decision === 'confirm') {
-      const result = await confirmLeaveAction(userId);
-      const miraResponse = miraLocalResponse(result.message, result.leaveRequestId ? { actions: [{ key: 'leaves', label: 'Open leave dashboard', url: '/leaves', priority: 'low' }] } : {});
-      return respond(miraResponse, { externalSafe: false, intent: 'leave_action_confirm', redactedSummary: 'The user confirmed a drafted leave request; Mira submitted it via the normal leave workflow.' });
+      const pending = getPendingAction(userId);
+      const actionType = pending?.type ?? 'leave_request';
+      let confirmResult: { ok: boolean; message: string; leaveRequestId?: string };
+      if (actionType === 'leave_cancel') {
+        confirmResult = await confirmLeaveCancelAction(userId);
+      } else if (actionType === 'attendance_regularization') {
+        confirmResult = await confirmRegularizationAction(userId);
+      } else if (actionType === 'grievance') {
+        confirmResult = await confirmGrievanceAction(userId);
+      } else {
+        const r = await confirmLeaveAction(userId);
+        confirmResult = r;
+      }
+      const leaveUrl = 'leaveRequestId' in confirmResult && confirmResult.leaveRequestId
+        ? [{ key: 'leaves', label: 'Open leave dashboard', url: '/leaves', priority: 'low' as const }]
+        : [];
+      const miraResponse = miraLocalResponse(confirmResult.message, leaveUrl.length ? { actions: leaveUrl } : {});
+      return respond(miraResponse, {
+        externalSafe: false,
+        intent: `${actionType}_confirm`,
+        redactedSummary: `The user confirmed a ${actionType} action; Mira executed it.`,
+      });
     }
     if (decision === 'cancel') {
+      const pending = getPendingAction(userId);
+      const actionType = pending?.type ?? 'leave_request';
       const result = await cancelLeaveAction(userId);
-      return respond(miraLocalResponse(result.message), { externalSafe: false, intent: 'leave_action_cancel', redactedSummary: 'The user cancelled a drafted leave request.' });
+      return respond(miraLocalResponse(result.message), {
+        externalSafe: false,
+        intent: `${actionType}_cancel`,
+        redactedSummary: `The user cancelled a drafted ${actionType} action.`,
+      });
     }
     // A pending draft exists but this message wasn't a yes/no — fall through to the
     // normal pipeline below; a genuinely new question is still answered normally,
     // and the stale draft simply expires on its own TTL if never confirmed.
+  }
+
+  // Action detection order: cancel-leave before leave-apply (more specific first),
+  // then regularization, grievance, then generic leave apply.
+  // All checked before self-account so balance queries are never misrouted.
+  if (miraActionsEnabled() && isLeaveCancelRequest(safeQuestion)) {
+    const draft = await draftLeaveCancelRequest(safeQuestion, userId);
+    if (draft.summary) {
+      const pendingAction: import('./ai-provider.types.js').AiPendingAction = {
+        type: 'leave_cancel', summary: draft.summary, confirmLabel: 'Yes, cancel it', cancelLabel: 'No, keep it',
+      };
+      return respond(miraLocalResponse(draft.summary, { pendingAction }), {
+        externalSafe: false, intent: 'leave_cancel_draft',
+        redactedSummary: 'The user asked Mira to cancel a leave request; Mira drafted the cancellation awaiting confirmation.',
+      });
+    }
+    const answer = draft.error ?? 'I could not find a cancellable leave for that date.';
+    return respond(miraLocalResponse(answer), { externalSafe: false, intent: 'leave_cancel_draft', redactedSummary: 'The user asked Mira to cancel leave; Mira could not find a matching record.' });
+  }
+
+  if (miraActionsEnabled() && isRegularizationRequest(safeQuestion)) {
+    const draft = await draftRegularizationRequest(safeQuestion, userId);
+    if (draft.summary) {
+      const pendingAction: import('./ai-provider.types.js').AiPendingAction = {
+        type: 'attendance_regularization', summary: draft.summary, confirmLabel: 'Yes, submit it', cancelLabel: 'No, cancel',
+      };
+      return respond(miraLocalResponse(draft.summary, { pendingAction }), {
+        externalSafe: false, intent: 'regularization_draft',
+        redactedSummary: 'The user asked Mira to submit an attendance regularization; Mira drafted it awaiting confirmation.',
+      });
+    }
+    const answer = draft.clarifyingQuestion ?? draft.error ?? 'I could not understand that regularization request.';
+    return respond(miraLocalResponse(answer), { externalSafe: false, intent: 'regularization_draft', redactedSummary: 'Mira could not draft a regularization without more information.' });
+  }
+
+  if (miraActionsEnabled() && isGrievanceRequest(safeQuestion)) {
+    const draft = await draftGrievanceRequest(safeQuestion, userId);
+    if (draft.summary) {
+      const pendingAction: import('./ai-provider.types.js').AiPendingAction = {
+        type: 'grievance', summary: draft.summary, confirmLabel: 'Yes, file it', cancelLabel: 'No, cancel',
+      };
+      return respond(miraLocalResponse(draft.summary, { pendingAction }), {
+        externalSafe: false, intent: 'grievance_draft',
+        redactedSummary: 'The user asked Mira to file a grievance; Mira drafted it awaiting confirmation.',
+      });
+    }
+    const answer = draft.clarifyingQuestion ?? draft.error ?? 'I could not understand that grievance request.';
+    return respond(miraLocalResponse(answer), { externalSafe: false, intent: 'grievance_draft', redactedSummary: 'Mira could not draft a grievance without more information.' });
   }
 
   // "raise leave for 23rd August" is an action request, not a read-only balance
@@ -619,6 +697,37 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
       externalSafe: false, intent: 'leave_action_draft',
       redactedSummary: 'The user asked Mira to raise a leave request; Mira could not complete the draft without more information.',
     });
+  }
+
+  // "download my payslip" / "get my salary slip" → return direct link from salary_payslip.
+  // Handled here (not in ai-account.service.ts) because it needs to return a file URL
+  // in the action bar rather than just text, and the account service's salary intent
+  // only returns a structured salary breakdown.
+  if (/\b(download|get|show|send)\b[^.?!]{0,20}\b(payslip|salary\s+slip|pay\s+slip)\b/i.test(safeQuestion)) {
+    const employee = await getEmployeeForUser(userId);
+    if (employee?.id) {
+      interface PayslipRow extends RowDataPacket { run_month: string; file_url: string | null; }
+      const [rows] = await db.execute<PayslipRow[]>(
+        `SELECT pr.run_month, sp.file_url
+           FROM salary_payslip sp
+           JOIN payroll_run pr ON pr.id = sp.run_id
+          WHERE sp.employee_id = ?
+            AND sp.file_url IS NOT NULL
+          ORDER BY pr.run_month DESC
+          LIMIT 1`,
+        [employee.id],
+      );
+      const payslip = rows[0] as PayslipRow | undefined;
+      if (payslip?.file_url) {
+        const msg = `Here is your latest payslip (${payslip.run_month}).`;
+        return respond(miraLocalResponse(msg, {
+          actions: [{ key: 'payslip', label: 'Download payslip', url: payslip.file_url, priority: 'high' as const }],
+        }), { externalSafe: false, intent: 'salary', redactedSummary: 'The user asked for their payslip; Mira returned a download link.' });
+      }
+      return respond(miraLocalResponse('No finalized payslip with a download link is available for your account yet. It may still be processing.'), {
+        externalSafe: false, intent: 'salary', redactedSummary: 'The user asked for a payslip download; none was available.',
+      });
+    }
   }
 
   // "and last month?" only means something against the previous turn. Rewrite it

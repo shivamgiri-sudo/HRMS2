@@ -710,20 +710,49 @@ function helpText(): string {
     `For privacy, ${MIRA_NAME} will not disclose another employee's personal account information in chat.`;
 }
 
-export function getMiraSuggestedPrompts(): string[] {
-  return [
-    'Give me my account summary',
-    'Show my latest salary breakup',
-    'How many leaves do I have left?',
-    'Summarize my attendance this month',
-    'Was my punch recorded today?',
-    'What is my shift for the next 7 days?',
-    'Which documents are pending verification?',
-    'What actions are pending from my side?',
-    'Show my loan or reimbursement status',
-    'Who is the CEO of MAS Callnet?',
-    'Who are the current branch heads?',
-  ];
+const BASE_PROMPTS = [
+  'Give me my account summary',
+  'Show my latest salary breakup',
+  'How many leaves do I have left?',
+  'Summarize my attendance this month',
+  'Was my punch recorded today?',
+  'What is my shift for the next 7 days?',
+  'Which documents are pending verification?',
+  'What actions are pending from my side?',
+  'Show my loan or reimbursement status',
+  'Who is the CEO of MAS Callnet?',
+  'Who are the current branch heads?',
+];
+
+const EMPLOYEE_ACTION_PROMPTS = [
+  'Apply for casual leave tomorrow',
+  'Cancel my latest leave request',
+  'My attendance was not marked on Monday',
+  'Download my latest payslip',
+  'I want to raise a complaint about my salary',
+];
+
+const MANAGER_PROMPTS = [
+  'Show pending approvals from my team',
+  'How many team members are absent today?',
+  'Show this month roster for my process',
+];
+
+const PAYROLL_PROMPTS = [
+  'How many employees are in the payroll run this month?',
+  'List employees with pending salary holds',
+];
+
+export function getMiraSuggestedPrompts(roleKeys: string[] = []): string[] {
+  const roles = roleKeys.map((r) => r.toLowerCase());
+  const extras: string[] = [...EMPLOYEE_ACTION_PROMPTS];
+  if (roles.some((r) => ['hr admin', 'branch head', 'process manager', 'operations manager', 'wfm'].includes(r))) {
+    extras.push(...MANAGER_PROMPTS);
+  }
+  if (roles.some((r) => ['finance', 'payroll', 'finance/payroll'].includes(r))) {
+    extras.push(...PAYROLL_PROMPTS);
+  }
+  return [...BASE_PROMPTS, ...extras];
 }
 
 export async function answerSelfAccountQuestion(
