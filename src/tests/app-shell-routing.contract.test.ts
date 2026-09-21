@@ -338,6 +338,11 @@ describe("application shell routing contracts", () => {
       //   BGV verification center.
       "/ats/bgv-enhanced",
       "/ats/bgv-report",
+      //   /wfm/attendance-mismatches, /wfm/roster-analytics-panel -> tabs of the merged consoles
+      //   (attendance-integrity, roster-command-center). The first is the address old Work
+      //   Inbox week-off alerts still carry; the second was a pre-merge roster page.
+      "/wfm/attendance-mismatches",
+      "/wfm/roster-analytics-panel",
 
       // (d2) ⚠️ Gated shut, so a menu entry would be a dead link. FINANCE_CLIENT_PAYMENTS has
       // NO page_catalog row and ZERO role grants, so <Gate> denies every user — the page is

@@ -1114,6 +1114,8 @@ const MIGRATION_MANIFEST: string[] = [
   "1828_receipt_receivable_ledger_heads.sql", // Adds ledger head + sub-head columns to receipt vouchers and creates receivable_ledger_head reference table. Previously untracked as 1825 (conflict with mcn_content_builder_request); renumbered to 1828.
   "1829_jr_meta_screening_config.sql", // Adds meta_screening_config JSON column to job_requisition for advanced META Lead Gen screening (gender, certifications, language requirements, typing speed, custom field rules).
   "1830_backfill_emp_type_from_employment_type.sql", // Backfills employees.emp_type from employment_type for all rows where emp_type IS NULL (ATS/manual/bulk-upload onboarded employees). All four write paths now keep both columns in sync.
+  "1832_attendance_mismatch_escalation.sql", // Creates attendance_mismatch_escalation: WFM -> reporting-manager escalation of attendance_daily_record mismatches (level, due_at, manager recommendation). Additive, no FKs.
+  "1833_adr_open_mismatch_queue_indexes.sql", // Adds idx_adr_mismatch_open (mismatch_flag, record_date, mismatch_resolved_at) on attendance_daily_record for the WFM mismatch queue.
   ];
 
 export type MigrationHealth = {

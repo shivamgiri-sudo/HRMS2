@@ -4,6 +4,7 @@ import { lazy } from "./lazy";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
 import { AttendanceIntegrityRedirect } from "./AttendanceIntegrityRedirect";
+import { RosterCommandCenterRedirect } from "./RosterCommandCenterRedirect";
 
 const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactNode }) =>
   <WorkforcePageGate pageCode={pageCode}>{children}</WorkforcePageGate>;
@@ -107,6 +108,7 @@ export const workforceRouteElements = (
       */}
       <Route path="/attendance/billing-config"  element={<AttendanceIntegrityRedirect toTab="billing" />} />
       <Route path="/wfm/mismatch-queue"         element={<AttendanceIntegrityRedirect toTab="mismatches" />} />
+      <Route path="/wfm/attendance-mismatches"  element={<AttendanceIntegrityRedirect toTab="mismatches" />} />
       <Route path="/wfm/attendance-exceptions"  element={<AttendanceIntegrityRedirect toTab="exceptions" />} />
       <Route path="/attendance-rules-master"    element={<ProtectedRoute roles={['super_admin','admin','hr','payroll_hr']}><Gate pageCode="ATTENDANCE_RULES_MASTER"><NativeAttendanceRulesMaster /></Gate></ProtectedRoute>} />
       <Route path="/hr/attendance-lookup"       element={
@@ -190,6 +192,13 @@ export const workforceRouteElements = (
         that must be applied before this ships.
       */}
       <Route path="/wfm/roster-command-center" element={<ProtectedRoute><DashboardLayout><RosterCommandCenter /></DashboardLayout></ProtectedRoute>} />
+      {/* Pre-merge roster paths: the sidebar and bookmarks still use them; forward into the console tab. */}
+      <Route path="/wfm/roster-analytics"      element={<RosterCommandCenterRedirect toTab="analytics" />} />
+      <Route path="/wfm/roster-analytics-panel" element={<RosterCommandCenterRedirect toTab="analytics" />} />
+      <Route path="/wfm/roster-compliance"     element={<RosterCommandCenterRedirect toTab="compliance" />} />
+      <Route path="/wfm/shift-effectiveness"   element={<RosterCommandCenterRedirect toTab="shifts" />} />
+      <Route path="/wfm/roster-interventions"  element={<RosterCommandCenterRedirect toTab="interventions" />} />
+      <Route path="/wfm/roster-audit"          element={<RosterCommandCenterRedirect toTab="audit" />} />
       <Route path="/wfm/employee-roster/:employeeId" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><EmployeeRosterProfile /></Gate></ProtectedRoute>} />
       <Route path="/wfm/capacity-dashboard" element={<ProtectedRoute><Gate pageCode="WFM_CAPACITY_DASHBOARD"><WFMCapacityDashboard /></Gate></ProtectedRoute>} />
       <Route path="/wfm/team-comparison" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><TeamRosterComparison /></Gate></ProtectedRoute>} />

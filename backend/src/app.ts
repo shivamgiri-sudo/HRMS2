@@ -167,6 +167,7 @@ import { salaryDisputeRouter } from "./modules/salary-dispute/salary-dispute.rou
 import { attendanceManualOverrideRouter } from "./modules/attendance/attendance.manual-override.routes.js";
 import { discardRouter } from "./modules/discard/discard.routes.js";
 import { mismatchReviewRouter } from "./modules/wfm/mismatch-review.routes.js";
+import { attendanceLedgerRouter } from "./modules/wfm/attendance-ledger.routes.js";
 import { attendanceExceptionsRouter } from "./modules/wfm/attendance-exceptions.routes.js";
 import { billingConfigRouter } from "./modules/attendance/billing-config.routes.js";
 import customizationRouter from "./modules/customization/customization.routes.js";
@@ -784,6 +785,8 @@ app.use("/api/attendance", attendanceManualOverrideRouter);
 // Discard of approved leave / regularization / dispute — super_admin + wfm only.
 app.use("/api/discard", discardRouter);
 app.use("/api/wfm/mismatches", mismatchReviewRouter);
+// Read-only per-branch ledger of regularizations / mismatch + exception resolutions / disputes / overrides.
+app.use("/api/wfm/attendance-ledger", attendanceLedgerRouter);
 app.use("/api/wfm/roster-imports", rosterImportRouter);
 // Weekly roster-upload status grid + missing-upload escalation (reads only; alerts need migration 1834).
 app.use("/api/wfm/roster-upload-tracker", rosterUploadTrackerRouter);
