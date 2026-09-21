@@ -28,6 +28,14 @@ export const MAX_WEEKS = 12;
 export const WEEKS_BEFORE_CURRENT = 3;
 const MISSING_EMPLOYEE_LIMIT = 200;
 
+/**
+ * Branches that follow a fixed default shift instead of a weekly roster, so nothing is expected
+ * from them. Head Office: everyone works 10:00-19:00 with Sunday off, and the exceptions are kept
+ * in Exception Control (owner, 2026-09-21). Compared case-insensitively on the trimmed name;
+ * both "HEAD OFFICE" and "Head Office" exist as separate branch rows.
+ */
+export const ROSTER_EXEMPT_BRANCH_NAMES: readonly string[] = ['head office'];
+
 const WFM_ROLE_KEYS = ['wfm', 'branch_wfm'] as const;
 const PROCESS_MANAGER_ROLE_KEYS = ['process_manager'] as const;
 const BRANCH_HEAD_ROLE_KEYS = ['branch_head'] as const;
@@ -139,8 +147,9 @@ async function loadPairs(filter: { branchId?: string; processId?: string; scope?
     'e.branch_id IS NOT NULL',
     'e.process_id IS NOT NULL',
     'p.active_status = 1',
+    `LOWER(TRIM(br.branch_name)) NOT IN (${inList(ROSTER_EXEMPT_BRANCH_NAMES)})`,
   ];
-  const params: unknown[] = [];
+  const params: unknown[] = [...ROSTER_EXEMPT_BRANCH_NAMES];
   const restrict = (column: string, ids: string[] | null | undefined) => {
     if (ids) {
       conds.push(ids.length ? `${column} IN (${inList(ids)})` : '1 = 0');

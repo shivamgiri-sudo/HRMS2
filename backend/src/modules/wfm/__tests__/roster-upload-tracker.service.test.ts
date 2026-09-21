@@ -184,3 +184,19 @@ describe('ROSTER_UPLOAD_ESCALATION_FROM_WEEK', () => {
     expect(result.weeks).toEqual(['2026-09-21', '2026-09-28']);
   });
 });
+
+describe('exempt branches', () => {
+  it('leaves Head Office out of the tracker: it works a fixed default shift, not a weekly roster', async () => {
+    await getTracker({ nowMs: NOW });
+    const pairs = dbExecute.mock.calls.find((c) => String(c[0]).includes('GROUP BY e.branch_id, br.branch_name'))!;
+    expect(String(pairs[0])).toContain('LOWER(TRIM(br.branch_name)) NOT IN (?)');
+    expect(pairs[1]).toContain('head office');
+  });
+
+  it('keeps the exemption when a branch filter is also applied', async () => {
+    await getTracker({ nowMs: NOW, branchId: NOIDA, scope: { branchIds: [NOIDA], processIds: null } });
+    const pairs = dbExecute.mock.calls.find((c) => String(c[0]).includes('GROUP BY e.branch_id, br.branch_name'))!;
+    expect(String(pairs[0])).toContain('NOT IN (?)');
+    expect(pairs[1]).toEqual(['head office', NOIDA, NOIDA]);
+  });
+});
