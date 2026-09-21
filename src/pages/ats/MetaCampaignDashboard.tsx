@@ -86,6 +86,15 @@ type Campaign = {
   requisitionCode: string | null;
   designationName: string | null;
   branchName: string | null;
+  processName: string | null;
+  demandRaisedDate: string | null;
+  trainingStartDate: string | null;
+  targetJoiningDate: string | null;
+  requestedByName: string | null;
+  requestedHeadcount: number | null;
+  plannedBatchNo: string | null;
+  plannedBatchName: string | null;
+  requisitionPriority: string | null;
   campaignName: string;
   campaignStatus: "draft" | "active" | "paused" | "completed" | "archived";
   metaCampaignId: string | null;
@@ -175,6 +184,13 @@ function fmtDateTime(value: string | null): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function fmtDate(value: string | null): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
 }
 
 export default function MetaCampaignDashboard() {
@@ -595,68 +611,140 @@ export default function MetaCampaignDashboard() {
               <table className="w-full min-w-[900px] border-collapse text-sm">
                 <thead className="sticky top-0 z-10 bg-slate-50 text-left">
                   <tr className="border-b border-slate-200">
-                    {["Campaign", "Requisition", "Status", "Impressions", "Clicks", "Leads", "Spend", "Last Sync", ""].map((h) => (
-                      <th
-                        key={h}
-                        className={`px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 ${
-                          ["Impressions", "Clicks", "Leads", "Spend"].includes(h) ? "text-right" : ""
-                        }`}
-                      >
-                        {h}
-                      </th>
-                    ))}
+                    <th className="sr-only">Campaign details</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-slate-100">
                   {filtered.map((c) => {
                     const isActive = selected?.id === c.id && sheetOpen;
+                    const PRIORITY_BADGE: Record<string, string> = {
+                      urgent: "bg-red-100 text-red-700",
+                      high: "bg-amber-100 text-amber-700",
+                      normal: "bg-slate-100 text-slate-600",
+                      low: "bg-slate-50 text-slate-400",
+                    };
                     return (
                       <tr
                         key={c.id}
                         onClick={() => void openCampaign(c)}
-                        className={`cursor-pointer border-b border-slate-100 transition-colors ${
-                          isActive ? "bg-blue-50/60" : "hover:bg-slate-50/70"
-                        }`}
+                        className={`cursor-pointer transition-colors ${isActive ? "bg-blue-50/60" : "hover:bg-slate-50/70"}`}
                       >
-                        <td className="px-3 py-2">
-                          <div className="text-xs font-semibold text-slate-900">{c.campaignName}</div>
-                          <div className="font-mono text-[10px] text-slate-400">
-                            {c.metaFormId ? `form ${c.metaFormId}` : "no form ID linked"}
+                        <td className="px-4 py-3">
+                          {/* ── Row: two-column grid — left=context, right=metrics ── */}
+                          <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:gap-6">
+
+                            {/* LEFT — Campaign + Requisition context */}
+                            <div className="min-w-0 flex-1 space-y-1.5">
+                              {/* Row 1: campaign name + status + priority */}
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-sm font-bold text-slate-900 leading-tight">{c.campaignName}</span>
+                                <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_BADGE[c.campaignStatus]}`}>
+                                  {c.campaignStatus}
+                                </span>
+                                {c.requisitionPriority && c.requisitionPriority !== "normal" && (
+                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${PRIORITY_BADGE[c.requisitionPriority] ?? "bg-slate-100 text-slate-600"}`}>
+                                    {c.requisitionPriority}
+                                  </span>
+                                )}
+                                <span className="font-mono text-[10px] text-slate-400">
+                                  {c.metaFormId ? `form ${c.metaFormId}` : "no form ID"}
+                                </span>
+                              </div>
+
+                              {/* Row 2: Designation · Branch · Process */}
+                              <div className="flex flex-wrap items-center gap-1 text-[11px] text-slate-600">
+                                {c.designationName && <span className="font-semibold">{c.designationName}</span>}
+                                {c.branchName && <><span className="text-slate-300">·</span><span>{c.branchName}</span></>}
+                                {c.processName && <><span className="text-slate-300">·</span><span className="text-blue-600 font-medium">{c.processName}</span></>}
+                                {c.requisitionCode && <><span className="text-slate-300">·</span><span className="font-mono text-slate-500">{c.requisitionCode}</span></>}
+                              </div>
+
+                              {/* Row 3: Batch no + name */}
+                              {(c.plannedBatchNo || c.plannedBatchName) && (
+                                <div className="flex items-center gap-1.5 text-[11px]">
+                                  <span className="text-slate-400 uppercase tracking-wide font-bold text-[9px]">Batch</span>
+                                  <span className="font-semibold text-indigo-700">{[c.plannedBatchNo, c.plannedBatchName].filter(Boolean).join(" — ")}</span>
+                                </div>
+                              )}
+
+                              {/* Row 4: Key dates + who raised */}
+                              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-slate-500">
+                                {c.demandRaisedDate && (
+                                  <span>
+                                    <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Raised </span>
+                                    {fmtDate(c.demandRaisedDate)}
+                                  </span>
+                                )}
+                                {c.trainingStartDate && (
+                                  <span>
+                                    <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Training </span>
+                                    <span className="font-semibold text-emerald-700">{fmtDate(c.trainingStartDate)}</span>
+                                  </span>
+                                )}
+                                {c.targetJoiningDate && (
+                                  <span>
+                                    <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Target join </span>
+                                    {fmtDate(c.targetJoiningDate)}
+                                  </span>
+                                )}
+                                {c.requestedByName && (
+                                  <span>
+                                    <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400">By </span>
+                                    {c.requestedByName}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* RIGHT — Metrics */}
+                            <div className="flex flex-shrink-0 flex-wrap items-center gap-3 lg:justify-end">
+                              {c.requestedHeadcount && (
+                                <div className="text-center">
+                                  <div className="text-sm font-bold text-slate-900">{c.requestedHeadcount}</div>
+                                  <div className="text-[9px] uppercase tracking-wide text-slate-400">HC</div>
+                                </div>
+                              )}
+                              <div className="text-center">
+                                <div className="text-sm font-bold text-emerald-700">{num(c.leadsCount)}</div>
+                                <div className="text-[9px] uppercase tracking-wide text-slate-400">Leads</div>
+                              </div>
+                              {c.impressions > 0 && (
+                                <div className="text-center">
+                                  <div className="text-sm font-bold text-slate-700">{num(c.impressions)}</div>
+                                  <div className="text-[9px] uppercase tracking-wide text-slate-400">Impressions</div>
+                                </div>
+                              )}
+                              {c.clicks > 0 && (
+                                <div className="text-center">
+                                  <div className="text-sm font-bold text-slate-700">{num(c.clicks)}</div>
+                                  <div className="text-[9px] uppercase tracking-wide text-slate-400">Clicks</div>
+                                </div>
+                              )}
+                              {c.spendInr > 0 && (
+                                <div className="text-center">
+                                  <div className="text-sm font-bold text-slate-700">{inrShort(c.spendInr)}</div>
+                                  <div className="text-[9px] uppercase tracking-wide text-slate-400">Spend</div>
+                                </div>
+                              )}
+                              <div className="text-center">
+                                {c.lastSyncError ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-600">
+                                    <AlertTriangle className="h-3 w-3" /> sync failed
+                                  </span>
+                                ) : c.lastSyncedAt ? (
+                                  <div>
+                                    <div className="text-[10px] text-slate-400">{fmtDate(c.lastSyncedAt)}</div>
+                                    <div className="text-[9px] uppercase tracking-wide text-slate-400">Last sync</div>
+                                  </div>
+                                ) : (
+                                  <span className="text-[10px] text-slate-300">no sync</span>
+                                )}
+                              </div>
+                              <span className={`inline-flex items-center rounded-lg px-2.5 py-1 text-[11px] font-bold ${isActive ? "bg-blue-600 text-white" : "border border-slate-200 text-slate-700"}`}>
+                                {isActive ? "Open" : "View"}
+                              </span>
+                            </div>
                           </div>
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="font-mono text-[11px] text-slate-700">{c.requisitionCode ?? "—"}</div>
-                          <div className="text-[10px] text-slate-400">
-                            {c.designationName ?? "—"}
-                            {c.branchName ? ` · ${c.branchName}` : ""}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2">
-                          <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_BADGE[c.campaignStatus]}`}>
-                            {c.campaignStatus}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-right text-xs tabular-nums text-slate-700">{num(c.impressions)}</td>
-                        <td className="px-3 py-2 text-right text-xs tabular-nums text-slate-700">{num(c.clicks)}</td>
-                        <td className="px-3 py-2 text-right text-xs font-semibold tabular-nums text-slate-900">{num(c.leadsCount)}</td>
-                        <td className="px-3 py-2 text-right text-xs tabular-nums text-slate-700">{inrShort(c.spendInr)}</td>
-                        <td className="px-3 py-2 text-[10px] text-slate-400">
-                          {c.lastSyncError ? (
-                            <span className="inline-flex items-center gap-1 font-semibold text-rose-600">
-                              <AlertTriangle className="h-3 w-3" /> sync failed
-                            </span>
-                          ) : (
-                            fmtDateTime(c.lastSyncedAt)
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <span
-                            className={`inline-flex items-center rounded-lg px-2.5 py-1 text-[11px] font-bold ${
-                              isActive ? "bg-blue-600 text-white" : "border border-slate-200 text-slate-700"
-                            }`}
-                          >
-                            {isActive ? "Open" : "View"}
-                          </span>
                         </td>
                       </tr>
                     );
@@ -682,14 +770,36 @@ export default function MetaCampaignDashboard() {
       >
         <SheetContent side="right" className="flex w-full flex-col overflow-hidden p-0 sm:max-w-2xl">
           <SheetHeader className="border-b border-slate-100 px-5 py-4">
-            <SheetTitle className="text-base font-bold text-slate-900">
-              {selected?.campaignName ?? "Campaign"}
-            </SheetTitle>
-            <p className="text-[11px] text-slate-500">
-              {selected?.requisitionCode ?? "—"}
-              {selected?.designationName ? ` · ${selected.designationName}` : ""}
-              {selected?.branchName ? ` · ${selected.branchName}` : ""}
-            </p>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <SheetTitle className="text-base font-bold text-slate-900 leading-snug">
+                  {selected?.campaignName ?? "Campaign"}
+                </SheetTitle>
+                <div className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-slate-600">
+                  {selected?.designationName && <span className="font-semibold">{selected.designationName}</span>}
+                  {selected?.branchName && <><span className="text-slate-300">·</span><span>{selected.branchName}</span></>}
+                  {selected?.processName && <><span className="text-slate-300">·</span><span className="text-blue-600 font-medium">{selected.processName}</span></>}
+                  {selected?.requisitionCode && <><span className="text-slate-300">·</span><span className="font-mono text-slate-500">{selected.requisitionCode}</span></>}
+                </div>
+                {(selected?.plannedBatchNo || selected?.plannedBatchName) && (
+                  <div className="mt-1 text-[11px] font-semibold text-indigo-700">
+                    Batch: {[selected.plannedBatchNo, selected.plannedBatchName].filter(Boolean).join(" — ")}
+                  </div>
+                )}
+                <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-500">
+                  {selected?.requestedHeadcount && <span><span className="font-bold text-slate-700">{selected.requestedHeadcount}</span> HC required</span>}
+                  {selected?.demandRaisedDate && <span>Raised: <span className="font-medium">{fmtDate(selected.demandRaisedDate)}</span></span>}
+                  {selected?.trainingStartDate && <span>Training: <span className="font-semibold text-emerald-700">{fmtDate(selected.trainingStartDate)}</span></span>}
+                  {selected?.targetJoiningDate && <span>Target join: <span className="font-medium">{fmtDate(selected.targetJoiningDate)}</span></span>}
+                  {selected?.requestedByName && <span>By: <span className="font-medium">{selected.requestedByName}</span></span>}
+                </div>
+              </div>
+              {selected && (
+                <span className={`mt-0.5 flex-shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_BADGE[selected.campaignStatus]}`}>
+                  {selected.campaignStatus}
+                </span>
+              )}
+            </div>
           </SheetHeader>
 
           <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">

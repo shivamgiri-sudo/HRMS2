@@ -40,6 +40,16 @@ export interface MetaCampaign {
   requisitionCode?: string | null;
   designationName?: string | null;
   branchName?: string | null;
+  /** Joined from job_requisition */
+  processName?: string | null;
+  demandRaisedDate?: string | null;
+  trainingStartDate?: string | null;
+  targetJoiningDate?: string | null;
+  requestedByName?: string | null;
+  requestedHeadcount?: number | null;
+  plannedBatchNo?: string | null;
+  plannedBatchName?: string | null;
+  requisitionPriority?: string | null;
   metaCampaignId: string | null;
   metaAdsetId: string | null;
   metaAdId: string | null;

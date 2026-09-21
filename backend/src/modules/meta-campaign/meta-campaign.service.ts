@@ -62,6 +62,15 @@ function toCampaign(row: RowDataPacket | MetaCampaignRow): MetaCampaign {
     requisitionCode: (r.requisition_code as string | null) ?? null,
     designationName: (r.designation_name as string | null) ?? null,
     branchName: (r.branch_name as string | null) ?? null,
+    processName: (r.process_name as string | null) ?? null,
+    demandRaisedDate: iso(r.demand_raised_date as Date | string | null),
+    trainingStartDate: iso(r.training_start_date as Date | string | null),
+    targetJoiningDate: iso(r.target_joining_date as Date | string | null),
+    requestedByName: (r.requested_by_name as string | null) ?? null,
+    requestedHeadcount: r.requested_headcount ? Number(r.requested_headcount) : null,
+    plannedBatchNo: (r.planned_batch_no as string | null) ?? null,
+    plannedBatchName: (r.planned_batch_name as string | null) ?? null,
+    requisitionPriority: (r.requisition_priority as string | null) ?? null,
     metaCampaignId: r.meta_campaign_id,
     metaAdsetId: r.meta_adset_id,
     metaAdId: r.meta_ad_id,
@@ -124,7 +133,11 @@ function toLead(row: RowDataPacket | MetaLeadRow): MetaLead {
 }
 
 const CAMPAIGN_SELECT = `
-  SELECT mc.*, jr.requisition_code, jr.designation_name, jr.branch_name
+  SELECT mc.*,
+         jr.requisition_code, jr.designation_name, jr.branch_name, jr.process_name,
+         jr.demand_raised_date, jr.training_start_date, jr.target_joining_date,
+         jr.requested_by_name, jr.requested_headcount,
+         jr.planned_batch_no, jr.planned_batch_name, jr.priority AS requisition_priority
     FROM meta_campaign mc
     LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id`;
 
