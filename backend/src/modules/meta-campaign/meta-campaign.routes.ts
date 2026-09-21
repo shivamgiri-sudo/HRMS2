@@ -25,6 +25,8 @@ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { metaCampaignService } from './meta-campaign.service.js';
 import { notifyQualifiedLead, recordVoiceCallback } from './lead-outreach.service.js';
 import { leadVerifyToken, isMetaConfigured } from './meta-api.client.js';
+import { parseVapiCallback, isVapiConfigured } from './vapi-voicebot.provider.js';
+import type { VapiCallbackPayload } from './vapi-voicebot.provider.js';
 import type { MetaCampaignStatus, MetaWebhookLeadPayload } from './meta-campaign.types.js';
 
 export const metaCampaignRouter = Router();
@@ -172,6 +174,75 @@ metaCampaignRouter.post('/voice-callback', (req: Request, res: Response) => {
   return res.status(200).json({ success: true });
 });
 
+// ─────────────────────────── Vapi.ai voice bot callback ───────────────────────────
+
+/**
+ * Vapi.ai sends webhooks when calls complete. This endpoint:
+ *   - Parses the call outcome (interested, not_interested, no_answer, etc.)
+ *   - Updates the lead's voice_call_status and voice_call_outcome
+ *   - Stores the transcript for review
+ *
+ * Vapi signs requests with HMAC, but for simplicity we also support a bearer token.
+ */
+metaCampaignRouter.post('/vapi-callback', (req: Request, res: Response) => {
+  // Vapi can authenticate via HMAC or a simple secret header
+  const expectedSecret = process.env.VAPI_CALLBACK_SECRET ?? process.env.VAPI_API_KEY ?? '';
+  const suppliedSecret = String(
+    req.header('x-vapi-secret') ?? req.header('authorization')?.replace('Bearer ', '') ?? ''
+  );
+
+  // If a secret is configured, verify it
+  if (expectedSecret && suppliedSecret) {
+    const a = Buffer.from(suppliedSecret);
+    const b = Buffer.from(expectedSecret);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      console.warn('[vapi-callback] invalid secret');
+      return res.status(403).json({ success: false, message: 'invalid callback secret' });
+    }
+  }
+
+  const payload = req.body as VapiCallbackPayload;
+  const parsed = parseVapiCallback(payload);
+
+  if (!parsed.referenceId) {
+    console.warn('[vapi-callback] no reference_id in payload', payload);
+    return res.status(200).json({ success: true, message: 'no reference_id, ignored' });
+  }
+
+  // Map Vapi outcome to our status format
+  const statusMap: Record<string, string> = {
+    interested: 'completed_interested',
+    not_interested: 'completed_not_interested',
+    no_answer: 'no_answer',
+    busy: 'busy',
+    unknown: 'completed',
+  };
+
+  const outcomeText = parsed.summary
+    ? `${parsed.outcome}: ${parsed.summary}`
+    : `${parsed.outcome}${parsed.duration ? ` (${parsed.duration}s)` : ''}`;
+
+  void recordVoiceCallback(
+    parsed.referenceId,
+    statusMap[parsed.outcome] ?? 'completed',
+    outcomeText
+  )
+    .then((matched) => {
+      if (!matched) {
+        console.warn('[vapi-callback] no lead matched reference_id', parsed.referenceId);
+      } else {
+        console.log('[vapi-callback] recorded outcome', {
+          referenceId: parsed.referenceId,
+          outcome: parsed.outcome,
+          duration: parsed.duration,
+        });
+      }
+    })
+    .catch((e: unknown) => console.error('[vapi-callback] failed', e));
+
+  return res.status(200).json({ success: true });
+});
+
 // ─────────────────────────── authenticated API ───────────────────────────
 
 metaCampaignRouter.get(
@@ -197,6 +268,7 @@ metaCampaignRouter.get(
         webhookSignatureConfigured: Boolean(process.env.META_APP_SECRET),
         whatsappConfigured: Boolean(process.env.LOCAL_WHATSAPP_API_URL),
         voicebotConfigured: Boolean(process.env.VOICEBOT_TRIGGER_URL),
+        vapiConfigured: isVapiConfigured(),
       },
     })
   )
