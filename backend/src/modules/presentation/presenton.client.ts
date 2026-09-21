@@ -32,6 +32,7 @@ export const presenton = {
         verbosity: 'standard',
         export_as: 'pptx',
         include_title_slide: false,
+        template: 'general',
       }),
     })
     if (!res.ok) {

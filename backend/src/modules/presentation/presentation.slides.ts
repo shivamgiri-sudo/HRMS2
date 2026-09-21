@@ -34,6 +34,12 @@ export interface ProcessDeckInput {
   commentary: Commentary | null
 }
 
+const MCN_LOGO = `![MCN Logo](https://mcnhrms.teammas.in/mcn-logo.png)`
+
+function withBranding(slide: string): string {
+  return `${MCN_LOGO}\n\n${slide}`
+}
+
 function ragEmoji(rag: string): string {
   if (rag === 'green') return '🟢'
   if (rag === 'amber') return '🟡'
@@ -106,7 +112,7 @@ export function buildClientSummarySlides(input: ClientSummaryInput): string[] {
     : '*No published commentary for this period.*'
   const closing = `# Next Steps & Closing\n\n${commentaryText}\n\n---\n\n*Thank you for your partnership. Next review: ${periodLabel}.*\n\nMAS Callnet PeopleOS`
 
-  return [cover, execSummary, scorecard, attrition, training, actions, governance, closing]
+  return [cover, execSummary, scorecard, attrition, training, actions, governance, closing].map(withBranding)
 }
 
 export function buildProcessDeckSlides(input: ProcessDeckInput): string[] {
@@ -193,5 +199,5 @@ export function buildProcessDeckSlides(input: ProcessDeckInput): string[] {
     .join('\n')
   const nextSteps = `# Next Steps\n## ${processName} | ${periodLabel}\n\n${nextStepsItems || '*No pending action items.*'}\n\n---\n\n*MAS Callnet PeopleOS — Confidential*`
 
-  return [cover, kpiSlide, trend, workforce, attrSlide, trainSlide, quality, actionsSlide, commentarySlide, nextSteps]
+  return [cover, kpiSlide, trend, workforce, attrSlide, trainSlide, quality, actionsSlide, commentarySlide, nextSteps].map(withBranding)
 }
