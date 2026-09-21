@@ -867,7 +867,8 @@
     "1826_meta_lead_walkin_reply_columns.sql",
     "1827_meta_lead_messages.sql",
     "1828_receipt_receivable_ledger_heads.sql",
-    "1829_jr_meta_screening_config.sql"
+    "1829_jr_meta_screening_config.sql",
+    "1830_backfill_emp_type_from_employment_type.sql"
   ],
   "approvedDeletions": [
     {
@@ -1028,6 +1029,7 @@
     "175_clean_department_master.sql",
     "1767_onfido_external_audit_add_total_columns.sql",
     "1788_gnc_sale_order_id_unique.sql",
+    "1831_meta_lead_interview_slot.sql",
     "204_personal_contact_fields.sql",
     "205_branch_alias_examples.sql",
     "206_ats_recruiter_contact_details.sql",

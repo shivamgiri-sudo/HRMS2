@@ -109,6 +109,33 @@ export async function sendShortlistMessage(
 }
 
 /**
+ * Send any custom text message via Wassenger. Used when the full interview
+ * message (with slot + address + Maps link) is pre-built by lead-outreach.
+ */
+export async function sendCustomMessage(
+  phone: string,
+  message: string
+): Promise<WassengerSendResult> {
+  if (!isWassengerConfigured()) {
+    return { success: false, error: 'WASSENGER_API_TOKEN or WASSENGER_DEVICE_ID not set' };
+  }
+  const waPhone = toWaPhone(phone);
+  try {
+    const { data } = await axios.post(
+      `${WASSENGER_BASE}/messages`,
+      { phone: waPhone, message, device: process.env.WASSENGER_DEVICE_ID },
+      { headers: headers(), timeout: 15000 }
+    );
+    return { success: true, messageId: data?.id ?? data?.data?.id ?? 'sent' };
+  } catch (err) {
+    const msg = axios.isAxiosError(err)
+      ? err.response?.data?.message ?? err.response?.data?.error ?? err.message
+      : err instanceof Error ? err.message : String(err);
+    return { success: false, error: msg };
+  }
+}
+
+/**
  * Parse an incoming Wassenger webhook payload.
  *
  * Wassenger sends a webhook for every incoming message.
