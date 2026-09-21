@@ -33,6 +33,8 @@ export type MismatchRecord = {
   branch_name: string | null;
   process_name: string | null;
   designation: string | null;
+  manager_name: string | null;
+  manager_employee_id: string | null;
   mismatch_resolved_at: string | null;
   mismatch_resolution_reason: string | null;
   is_locked: number;

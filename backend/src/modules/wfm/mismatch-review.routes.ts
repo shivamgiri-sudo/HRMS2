@@ -231,8 +231,8 @@ mismatchReviewRouter.get(
 
     const where = await buildWhere(req);
 
-    const countSql = `SELECT COUNT(*) AS total ${where.from} ${where.sql}`;
-
+    // Single query: window function gives total_count without a separate COUNT roundtrip.
+    // Manager name joined directly so the UI can show it without an escalation existing.
     const dataSql = `
       SELECT
         adr.id, adr.employee_id, adr.record_date, adr.attendance_status,
@@ -244,20 +244,20 @@ mismatchReviewRouter.get(
         CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
         e.employee_code,
         bm.branch_name, pm.process_name,
-        dm.designation_code AS designation
+        dm.designation_code AS designation,
+        CONCAT(mgr.first_name,' ',COALESCE(mgr.last_name,'')) AS manager_name,
+        e.reporting_manager_id AS manager_employee_id,
+        COUNT(*) OVER() AS total_count
       ${where.from}
-      LEFT JOIN branch_master bm ON bm.id = adr.branch_id
-      LEFT JOIN process_master pm ON pm.id = adr.process_id
+      LEFT JOIN branch_master bm    ON bm.id  = adr.branch_id
+      LEFT JOIN process_master pm   ON pm.id  = adr.process_id
       LEFT JOIN designation_master dm ON dm.id = e.designation_id
+      LEFT JOIN employees mgr       ON mgr.id = e.reporting_manager_id
       ${where.sql}
       ORDER BY adr.record_date DESC, adr.employee_id
       LIMIT ${lim} OFFSET ${offset}`;
-    // Count and page are independent reads; running them together roughly halves the wait.
-    const [[countRows], [rows]] = await Promise.all([
-      db.execute<RowDataPacket[]>(countSql, queueParams(where)),
-      db.execute<RowDataPacket[]>(dataSql, queueParams(where)),
-    ]);
-    const total = Number((countRows[0] as any)?.total ?? 0);
+    const [rows] = await db.execute<RowDataPacket[]>(dataSql, queueParams(where));
+    const total = Number((rows as any[])[0]?.total_count ?? 0);
     const data = await attachEscalations(rows as RowDataPacket[], req.authUser?.id);
 
     res.json({ success: true, data, total, page: pg, limit: lim });
@@ -465,6 +465,76 @@ mismatchReviewRouter.post(
     } catch (err) {
       return sendEscalationError(res, err);
     }
+  })
+);
+
+// ── Bulk escalate up to 100 records at once ───────────────────────────────────
+
+mismatchReviewRouter.post(
+  '/bulk-escalate',
+  requireRole(...ESCALATE_ROLES),
+  h(async (req, res) => {
+    const ids: string[] = Array.isArray(req.body?.ids)
+      ? req.body.ids.map(String).filter(Boolean)
+      : [];
+    if (!ids.length || ids.length > 100) {
+      return res.status(400).json({ success: false, message: 'ids must be an array of 1–100 items' });
+    }
+    const note = typeof req.body?.note === 'string' && req.body.note.trim() ? req.body.note.trim() : null;
+
+    // Load all requested records in one query (scope-filtered).
+    const scope = await scopeConditionFor(req);
+    const placeholders = ids.map(() => '?').join(',');
+    const [recs] = await db.execute<RowDataPacket[]>(
+      `SELECT adr.id, adr.employee_id, adr.is_locked, adr.mismatch_resolved_at,
+              DATE_FORMAT(adr.record_date, '%Y-%m-%d') AS record_date,
+              e.employee_code,
+              CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name
+         ${FROM_JOIN}
+        WHERE adr.id IN (${placeholders}) AND (${scope.sql})`,
+      [...ids, ...scope.params],
+    );
+    const recMap = new Map((recs as any[]).map((r) => [r.id, r]));
+
+    let succeeded = 0;
+    let skipped = 0;
+    let failed = 0;
+    const errors: string[] = [];
+
+    for (const id of ids) {
+      const rec = recMap.get(id);
+      if (!rec) { skipped++; continue; }
+      if (rec.is_locked || rec.mismatch_resolved_at) { skipped++; continue; }
+      try {
+        await escalateToManager({
+          adrId: rec.id,
+          employeeId: rec.employee_id,
+          employeeLabel: `${String(rec.employee_name).trim()} (${rec.employee_code})`,
+          recordDate: rec.record_date,
+          actorUserId: req.authUser?.id as string,
+          actorRole: req.authUser?.role ?? 'unknown',
+          note,
+        });
+        succeeded++;
+      } catch (err) {
+        if (err instanceof EscalationError) { skipped++; }
+        else { failed++; errors.push(String((err as Error).message)); }
+      }
+    }
+
+    if (succeeded > 0) {
+      void logSensitiveAction({
+        actor_user_id: req.authUser?.id as string,
+        actor_role: req.authUser?.role ?? 'unknown',
+        action_type: 'ATTENDANCE_MISMATCH_BULK_ESCALATED',
+        module_key: 'attendance',
+        entity_type: 'attendance_daily_record',
+        entity_id: `bulk_${Date.now()}`,
+        new_value_json: { succeeded, skipped, failed, ids },
+      });
+    }
+
+    return res.json({ success: true, data: { succeeded, skipped, failed, errors } });
   })
 );
 
