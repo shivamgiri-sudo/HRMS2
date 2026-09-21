@@ -34,7 +34,10 @@ export interface ProcessDeckInput {
   commentary: Commentary | null
 }
 
-const MCN_LOGO = `![MCN Logo](https://mcnhrms.teammas.in/mcn-logo.png)`
+// Presenton runs as a Docker sidecar; Puppeteer inside the container cannot reach
+// external URLs. The logo is copied to the Next.js public dir so it's reachable
+// at http://localhost:3000/mcn-logo.png during headless export.
+const MCN_LOGO = `![MCN Logo](http://localhost:3000/mcn-logo.png)`
 
 function withBranding(slide: string): string {
   return `${MCN_LOGO}\n\n${slide}`
