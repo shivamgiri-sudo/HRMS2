@@ -42,6 +42,13 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   ChartCard,
   EmptyState,
   FUNNEL_RAMP,
@@ -180,6 +187,18 @@ export default function MetaCampaignDashboard() {
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [search, setSearch] = useState("");
 
+  // Dimension filters — server-side
+  const [branchFilter, setBranchFilter] = useState("");
+  const [processFilter, setProcessFilter] = useState("");
+  const [requisitionFilter, setRequisitionFilter] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [filterOptions, setFilterOptions] = useState<{
+    branches: string[];
+    processes: string[];
+    requisitions: Array<{ id: string; code: string; designation: string }>;
+  }>({ branches: [], processes: [], requisitions: [] });
+
   const [sheetOpen, setSheetOpen] = useState(false);
   const [selected, setSelected] = useState<Campaign | null>(null);
   const [funnel, setFunnel] = useState<Funnel | null>(null);
@@ -191,10 +210,17 @@ export default function MetaCampaignDashboard() {
     else setLoading(true);
     setErrorMsg("");
     try {
+      const params = new URLSearchParams();
+      if (branchFilter) params.set("branchName", branchFilter);
+      if (processFilter) params.set("processName", processFilter);
+      if (requisitionFilter) params.set("requisitionId", requisitionFilter);
+      if (dateFrom) params.set("dateFrom", dateFrom);
+      if (dateTo) params.set("dateTo", dateTo);
+      const qs = params.toString() ? `?${params.toString()}` : "";
       const [ov, cfg, camps] = await Promise.all([
         hrmsApi.get<{ success: boolean; data: Overview }>("/api/meta/overview"),
         hrmsApi.get<{ success: boolean; data: ConfigStatus }>("/api/meta/config-status"),
-        hrmsApi.get<{ success: boolean; data: Campaign[] }>("/api/meta/campaigns"),
+        hrmsApi.get<{ success: boolean; data: Campaign[] }>(`/api/meta/campaigns${qs}`),
       ]);
       setOverview(ov.data);
       setConfig(cfg.data);
@@ -205,11 +231,18 @@ export default function MetaCampaignDashboard() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [branchFilter, processFilter, requisitionFilter, dateFrom, dateTo]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    hrmsApi
+      .get<{ success: boolean; data: typeof filterOptions }>("/api/meta/filter-options")
+      .then((res) => setFilterOptions(res.data ?? { branches: [], processes: [], requisitions: [] }))
+      .catch(() => {});
+  }, []);
 
   const openCampaign = async (campaign: Campaign) => {
     setSelected(campaign);
@@ -320,6 +353,82 @@ export default function MetaCampaignDashboard() {
             </div>
           </div>
         )}
+
+        {/* Dimension filter bar */}
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <Select
+            value={branchFilter}
+            onValueChange={(v) => setBranchFilter(v === "__all__" ? "" : v)}
+          >
+            <SelectTrigger className="h-9 w-[160px]">
+              <SelectValue placeholder="Branch" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Branches</SelectItem>
+              {filterOptions.branches.map((b) => (
+                <SelectItem key={b} value={b}>{b}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={processFilter}
+            onValueChange={(v) => setProcessFilter(v === "__all__" ? "" : v)}
+          >
+            <SelectTrigger className="h-9 w-[160px]">
+              <SelectValue placeholder="Process" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Processes</SelectItem>
+              {filterOptions.processes.map((p) => (
+                <SelectItem key={p} value={p}>{p}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={requisitionFilter}
+            onValueChange={(v) => setRequisitionFilter(v === "__all__" ? "" : v)}
+          >
+            <SelectTrigger className="h-9 w-[200px]">
+              <SelectValue placeholder="Requisition" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Requisitions</SelectItem>
+              {filterOptions.requisitions.map((r) => (
+                <SelectItem key={r.id} value={r.id}>
+                  {r.code}{r.designation ? ` — ${r.designation}` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <input
+            type="date"
+            aria-label="Date from"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+          <input
+            type="date"
+            aria-label="Date to"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+          {(branchFilter || processFilter || requisitionFilter || dateFrom || dateTo) && (
+            <button
+              onClick={() => {
+                setBranchFilter("");
+                setProcessFilter("");
+                setRequisitionFilter("");
+                setDateFrom("");
+                setDateTo("");
+              }}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <X className="h-4 w-4" /> Clear
+            </button>
+          )}
+        </div>
 
         <ProvenanceBar
           items={[

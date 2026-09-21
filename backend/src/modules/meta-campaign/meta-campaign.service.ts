@@ -135,6 +135,10 @@ export const metaCampaignService = {
     requisitionId?: string;
     status?: MetaCampaignStatus;
     search?: string;
+    branchName?: string;
+    processName?: string;
+    dateFrom?: string;
+    dateTo?: string;
   } = {}): Promise<MetaCampaign[]> {
     const conds: string[] = [];
     const params: unknown[] = [];
@@ -150,6 +154,22 @@ export const metaCampaignService = {
       conds.push('(mc.campaign_name LIKE ? OR jr.requisition_code LIKE ? OR jr.designation_name LIKE ?)');
       const like = `%${filters.search}%`;
       params.push(like, like, like);
+    }
+    if (filters.branchName) {
+      conds.push('jr.branch_name = ?');
+      params.push(filters.branchName);
+    }
+    if (filters.processName) {
+      conds.push('jr.process_name = ?');
+      params.push(filters.processName);
+    }
+    if (filters.dateFrom) {
+      conds.push('mc.created_at >= ?');
+      params.push(filters.dateFrom);
+    }
+    if (filters.dateTo) {
+      conds.push("mc.created_at <= CONCAT(?, ' 23:59:59')");
+      params.push(filters.dateTo);
     }
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -710,6 +730,10 @@ export const metaCampaignService = {
     search?: string;
     screening?: string;
     requisitionId?: string;
+    branchName?: string;
+    processName?: string;
+    dateFrom?: string;
+    dateTo?: string;
     limit?: number;
     offset?: number;
   } = {}): Promise<{ rows: Array<MetaLead & { requisitionCode: string | null; designationName: string | null; branchName: string | null; campaignName: string | null }>; total: number }> {
@@ -728,10 +752,32 @@ export const metaCampaignService = {
       const like = `%${filters.search.trim()}%`;
       params.push(like, like, like);
     }
+    let needsJrJoin = false;
+    if (filters.branchName) {
+      conds.push('jr.branch_name = ?');
+      params.push(filters.branchName);
+      needsJrJoin = true;
+    }
+    if (filters.processName) {
+      conds.push('jr.process_name = ?');
+      params.push(filters.processName);
+      needsJrJoin = true;
+    }
+    if (filters.dateFrom) {
+      conds.push('ml.created_at >= ?');
+      params.push(filters.dateFrom);
+    }
+    if (filters.dateTo) {
+      conds.push("ml.created_at <= CONCAT(?, ' 23:59:59')");
+      params.push(filters.dateTo);
+    }
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+    const countJoin = needsJrJoin
+      ? 'LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id'
+      : '';
 
     const [countRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS total FROM meta_lead_raw ml ${where}`,
+      `SELECT COUNT(*) AS total FROM meta_lead_raw ml ${countJoin} ${where}`,
       params
     );
     const total = Number(countRows[0]?.total ?? 0);
@@ -1099,6 +1145,44 @@ export const metaCampaignService = {
       }
     }
     return { synced, failed, skipped: 0 };
+  },
+
+  /** Distinct branches, processes, and requisitions for the dashboard filter dropdowns. */
+  async getFilterOptions(): Promise<{
+    branches: string[];
+    processes: string[];
+    requisitions: Array<{ id: string; code: string; designation: string }>;
+  }> {
+    const [dimRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT jr.branch_name, jr.process_name
+         FROM meta_campaign mc
+         LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id
+        WHERE jr.branch_name IS NOT NULL OR jr.process_name IS NOT NULL`
+    );
+    const branches = [...new Set(
+      dimRows.map((r) => r.branch_name as string | null).filter((v): v is string => Boolean(v))
+    )].sort();
+    const processes = [...new Set(
+      dimRows.map((r) => r.process_name as string | null).filter((v): v is string => Boolean(v))
+    )].sort();
+
+    const [reqRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT mc.requisition_id AS id, jr.requisition_code AS code,
+              jr.designation_name AS designation
+         FROM meta_campaign mc
+         LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id
+        WHERE mc.requisition_id IS NOT NULL
+        ORDER BY jr.requisition_code`
+    );
+    const requisitions = reqRows
+      .filter((r) => r.id)
+      .map((r) => ({
+        id: String(r.id),
+        code: String(r.code ?? r.id),
+        designation: String(r.designation ?? ''),
+      }));
+
+    return { branches, processes, requisitions };
   },
 
   /** Re-parse and re-screen a stored lead without going back to the Graph API. */

@@ -365,6 +365,16 @@ metaCampaignRouter.get(
 );
 
 metaCampaignRouter.get(
+  '/filter-options',
+  requireAuth,
+  requireRole(...CAMPAIGN_READ_ROLES),
+  h(async (_req, res) => {
+    const data = await metaCampaignService.getFilterOptions();
+    return res.json({ success: true, data });
+  })
+);
+
+metaCampaignRouter.get(
   '/campaigns',
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
@@ -373,6 +383,10 @@ metaCampaignRouter.get(
       requisitionId: req.query.requisitionId as string | undefined,
       status: req.query.status as MetaCampaignStatus | undefined,
       search: req.query.search as string | undefined,
+      branchName: req.query.branchName as string | undefined,
+      processName: req.query.processName as string | undefined,
+      dateFrom: req.query.dateFrom as string | undefined,
+      dateTo: req.query.dateTo as string | undefined,
     });
     return res.json({ success: true, data });
   })
@@ -432,6 +446,10 @@ metaCampaignRouter.get(
       search: req.query.search as string | undefined,
       screening: req.query.screening as string | undefined,
       requisitionId: req.query.requisitionId as string | undefined,
+      branchName: req.query.branchName as string | undefined,
+      processName: req.query.processName as string | undefined,
+      dateFrom: req.query.dateFrom as string | undefined,
+      dateTo: req.query.dateTo as string | undefined,
       limit: Number.isFinite(limit) ? limit : 50,
       offset: Number.isFinite(offset) ? offset : 0,
     });

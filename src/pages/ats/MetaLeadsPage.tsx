@@ -35,6 +35,13 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { EmptyState, num } from "@/components/analytics/analytics-kit";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type Lead = {
   id: string;
@@ -116,6 +123,18 @@ export default function MetaLeadsPage() {
   const [screening, setScreening] = useState<string>("all");
   const [offset, setOffset] = useState(0);
 
+  // Dimension filters — server-side
+  const [branchFilter, setBranchFilter] = useState("");
+  const [processFilter, setProcessFilter] = useState("");
+  const [requisitionFilter, setRequisitionFilter] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [filterOptions, setFilterOptions] = useState<{
+    branches: string[];
+    processes: string[];
+    requisitions: Array<{ id: string; code: string; designation: string }>;
+  }>({ branches: [], processes: [], requisitions: [] });
+
   // Drill-down drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [detail, setDetail] = useState<LeadDetail | null>(null);
@@ -133,6 +152,11 @@ export default function MetaLeadsPage() {
         params.set("offset", String(offset));
         if (search.trim()) params.set("search", search.trim());
         if (screening !== "all") params.set("screening", screening);
+        if (branchFilter) params.set("branchName", branchFilter);
+        if (processFilter) params.set("processName", processFilter);
+        if (requisitionFilter) params.set("requisitionId", requisitionFilter);
+        if (dateFrom) params.set("dateFrom", dateFrom);
+        if (dateTo) params.set("dateTo", dateTo);
         const res = await hrmsApi.get<{ success: boolean; data: Lead[]; total: number }>(
           `/api/meta/leads-all?${params.toString()}`
         );
@@ -145,7 +169,7 @@ export default function MetaLeadsPage() {
         setRefreshing(false);
       }
     },
-    [offset, search, screening]
+    [offset, search, screening, branchFilter, processFilter, requisitionFilter, dateFrom, dateTo]
   );
 
   useEffect(() => {
@@ -160,6 +184,18 @@ export default function MetaLeadsPage() {
     }, 350);
     return () => clearTimeout(t);
   }, [searchInput]);
+
+  // Reset paging when any dimension filter changes.
+  useEffect(() => {
+    setOffset(0);
+  }, [branchFilter, processFilter, requisitionFilter, dateFrom, dateTo]);
+
+  useEffect(() => {
+    hrmsApi
+      .get<{ success: boolean; data: typeof filterOptions }>("/api/meta/filter-options")
+      .then((res) => setFilterOptions(res.data ?? { branches: [], processes: [], requisitions: [] }))
+      .catch(() => {});
+  }, []);
 
   const openLead = useCallback(async (lead: Lead) => {
     setDrawerOpen(true);
@@ -292,6 +328,78 @@ export default function MetaLeadsPage() {
               ))}
             </select>
           </div>
+          <Select
+            value={branchFilter}
+            onValueChange={(v) => setBranchFilter(v === "__all__" ? "" : v)}
+          >
+            <SelectTrigger className="h-10 w-[150px]">
+              <SelectValue placeholder="Branch" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Branches</SelectItem>
+              {filterOptions.branches.map((b) => (
+                <SelectItem key={b} value={b}>{b}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={processFilter}
+            onValueChange={(v) => setProcessFilter(v === "__all__" ? "" : v)}
+          >
+            <SelectTrigger className="h-10 w-[150px]">
+              <SelectValue placeholder="Process" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Processes</SelectItem>
+              {filterOptions.processes.map((p) => (
+                <SelectItem key={p} value={p}>{p}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={requisitionFilter}
+            onValueChange={(v) => setRequisitionFilter(v === "__all__" ? "" : v)}
+          >
+            <SelectTrigger className="h-10 w-[190px]">
+              <SelectValue placeholder="Requisition" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Requisitions</SelectItem>
+              {filterOptions.requisitions.map((r) => (
+                <SelectItem key={r.id} value={r.id}>
+                  {r.code}{r.designation ? ` — ${r.designation}` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <input
+            type="date"
+            aria-label="Date from"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="h-10 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+          <input
+            type="date"
+            aria-label="Date to"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            className="h-10 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+          {(branchFilter || processFilter || requisitionFilter || dateFrom || dateTo) && (
+            <button
+              onClick={() => {
+                setBranchFilter("");
+                setProcessFilter("");
+                setRequisitionFilter("");
+                setDateFrom("");
+                setDateTo("");
+              }}
+              className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <X className="h-4 w-4" /> Clear
+            </button>
+          )}
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
