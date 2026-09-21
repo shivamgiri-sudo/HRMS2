@@ -153,7 +153,7 @@ export async function getInbox(opts: {
          GROUP BY lead_id
      ) lm ON lm.lead_id = ml.id
      LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id
-     LEFT JOIN branch_master bm ON bm.name = jr.branch_name
+     LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name
      LEFT JOIN meta_campaign mc ON mc.id = ml.campaign_id
      WHERE 1=1
        ${branchFilter}
@@ -202,7 +202,7 @@ export async function getTotalUnread(opts: {
        FROM meta_lead_messages mlm
        JOIN meta_lead_raw ml ON ml.id = mlm.lead_id
        LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id
-       LEFT JOIN branch_master bm ON bm.name = jr.branch_name
+       LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name
       WHERE mlm.direction = 'inbound' AND mlm.read_at IS NULL
         ${branchFilter}`,
     params
@@ -237,11 +237,10 @@ export async function notifyBranchHrOfInboundMessage(
     `SELECT DISTINCT e.user_id
        FROM employees e
        JOIN branch_master bm ON bm.id = e.branch_id
-       JOIN auth_user au ON au.id = e.user_id
-      WHERE bm.name = ?
-        AND au.role IN ('recruitment_hr', 'hr', 'branch_head', 'admin', 'super_admin')
-        AND e.active_status = 1
-        AND au.is_active = 1`,
+       JOIN user_roles ur ON ur.user_id = e.user_id AND ur.active_status = 1
+      WHERE bm.branch_name = ?
+        AND ur.role_key IN ('recruitment_hr', 'hr', 'branch_head', 'admin', 'super_admin', 'branch_admin')
+        AND e.active_status = 1`,
     [branchName]
   );
 
