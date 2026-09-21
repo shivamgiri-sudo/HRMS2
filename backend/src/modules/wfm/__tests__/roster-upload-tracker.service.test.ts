@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const { dbExecute } = vi.hoisted(() => ({ dbExecute: vi.fn() }));
 vi.mock('../../../db/mysql.js', () => ({ db: { execute: dbExecute } }));
@@ -152,5 +152,35 @@ describe('coverage matching', () => {
     const uncoveredSql = String(dbExecute.mock.calls.find((c) => String(c[0]).includes('NOT EXISTS'))![0]);
     expect(uncoveredSql).toContain('r.employee_id_raw');
     expect(uncoveredSql).not.toMatch(/r\.employee_id\s*=\s*e\.id/);
+  });
+});
+
+describe('ROSTER_UPLOAD_ESCALATION_FROM_WEEK', () => {
+  afterEach(() => { delete process.env.ROSTER_UPLOAD_ESCALATION_FROM_WEEK; });
+
+  it('does not alert on weeks before the chosen first week', async () => {
+    process.env.ROSTER_UPLOAD_ESCALATION_FROM_WEEK = '2026-09-28';
+    const result = await runRosterUploadEscalation({ nowMs: NOW, dryRun: true }); // Mon 21 Sep: W/C 21 Sep is excluded
+    expect(result.weeks).toEqual(['2026-09-28']);
+    expect(result.actions).toEqual([]); // W/C 28 Sep's first stage is Friday 10:00
+  });
+
+  it('starts alerting the chosen week at its Friday reminder', async () => {
+    process.env.ROSTER_UPLOAD_ESCALATION_FROM_WEEK = '2026-09-28';
+    const result = await runRosterUploadEscalation({ nowMs: istEpoch('2026-09-25', 10), dryRun: true });
+    expect(result.actions.every((a) => a.weekStart === '2026-09-28' && a.stage === 'reminder')).toBe(true);
+    expect(result.actions.length).toBeGreaterThan(0);
+  });
+
+  it('returns nothing when every candidate week is before the first week', async () => {
+    process.env.ROSTER_UPLOAD_ESCALATION_FROM_WEEK = '2027-01-04';
+    const result = await runRosterUploadEscalation({ nowMs: NOW, dryRun: true });
+    expect(result).toMatchObject({ weeks: [], actions: [] });
+  });
+
+  it('ignores a malformed value rather than silencing or blasting everything', async () => {
+    process.env.ROSTER_UPLOAD_ESCALATION_FROM_WEEK = 'next monday';
+    const result = await runRosterUploadEscalation({ nowMs: NOW, dryRun: true });
+    expect(result.weeks).toEqual(['2026-09-21', '2026-09-28']);
   });
 });

@@ -154,12 +154,25 @@ export interface SweepOptions {
   dryRun?: boolean;
 }
 
+const FIRST_WEEK_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Weeks that may be alerted: ROSTER_UPLOAD_ESCALATION_FROM_WEEK (a Monday, YYYY-MM-DD) is the first
+ * one. It lets the rule start at a chosen week instead of alerting on a deadline that had already
+ * passed before anyone was told about it. Unset (or malformed) means no lower bound.
+ */
+function alertableWeeks(candidates: string[]): string[] {
+  const from = process.env.ROSTER_UPLOAD_ESCALATION_FROM_WEEK?.trim();
+  return from && FIRST_WEEK_PATTERN.test(from) ? candidates.filter((w) => w >= from) : candidates;
+}
+
 /** Current and next week are the only weeks with live deadlines. */
 export async function runRosterUploadEscalation(options: SweepOptions = {}): Promise<SweepResult> {
   const nowMs = options.nowMs ?? Date.now();
   const dryRun = options.dryRun ?? false;
   const thisWeek = currentWeekStart(nowMs);
-  const weeks = [thisWeek, addDays(thisWeek, 7)];
+  const weeks = alertableWeeks([thisWeek, addDays(thisWeek, 7)]);
+  if (weeks.length === 0) return { dryRun, weeks, actions: [], delivered: 0, skippedAlreadySent: 0 };
 
   const sent = await loadSentStages(weeks);
   const { rows, directory } = await loadGrid(weeks, nowMs);
