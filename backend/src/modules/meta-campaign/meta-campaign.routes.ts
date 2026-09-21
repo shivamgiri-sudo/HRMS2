@@ -58,14 +58,15 @@ const CAMPAIGN_READ_ROLES = [
 ] as const;
 
 /**
- * The WhatsApp inbox is also opened by branch staff the sidebar grants ATS_META_CAMPAIGNS to
- * (migration/commit 818f3123). Without listing them here the page opened for them and every API
- * call returned 403, which the page rendered as an empty inbox. They are branch-scoped by
- * resolveBranchScope, so this widens who may open the inbox, not which branch they see.
+ * Roles allowed into the WhatsApp inbox: the campaign read roles plus payroll_hr and interviewer,
+ * which the sidebar grants ATS_META_CAMPAIGNS to (commit 818f3123). Listing them here stops the
+ * page opening for them and every call returning 403 (rendered as an empty inbox). branch_admin,
+ * branch_wfm and branch_it are deliberately excluded — they do not need the inbox. Everyone but the
+ * all-branch roles is still limited to their own branch by resolveBranchScope.
  */
 const INBOX_ROLES = [
   ...CAMPAIGN_READ_ROLES,
-  'branch_admin', 'branch_wfm', 'branch_it', 'payroll_hr', 'interviewer',
+  'payroll_hr', 'interviewer',
 ] as const;
 
 /** Every role the caller holds, falling back to the primary role. */
