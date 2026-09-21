@@ -266,6 +266,7 @@ export default function MetaCampaignDashboard() {
     setDrawerLoading(true);
     setFunnel(null);
     setLeads([]);
+    setActiveStage(null);
     try {
       const [f, l] = await Promise.all([
         hrmsApi.get<{ success: boolean; data: Funnel }>(`/api/meta/campaigns/${campaign.id}/funnel`),
@@ -304,14 +305,21 @@ export default function MetaCampaignDashboard() {
     return gaps;
   }, [config]);
 
+  const [activeStage, setActiveStage] = useState<string | null>(null);
+
   const funnelBars = useMemo(() => {
     if (!funnel?.stages?.length) return [];
-    const top = funnel.stages[0]?.count ?? 0;
+    // Use the maximum count across ALL stages as the width reference, not just stage[0].
+    // When stage[0] is Impressions=0 (no META spend yet), using it as denominator makes
+    // every subsequent bar ratio=null → all bars collapse to the 7% minimum (a dot).
+    // The max-count approach keeps bars proportional no matter which stage is tallest.
+    const maxCount = Math.max(...funnel.stages.map((s) => s.count), 1);
+    // "First non-zero" stage — used for ofPrev chain and drop calculation anchor
     return funnel.stages.map((stage, i) => {
       const prev = i === 0 ? stage.count : funnel.stages[i - 1]!.count;
       return {
         ...stage,
-        ofTop: ratio(stage.count, top),
+        ofMax: ratio(stage.count, maxCount),          // drives bar width
         ofPrev: i === 0 ? null : ratio(stage.count, prev),
         dropped: i === 0 ? 0 : Math.max(0, prev - stage.count),
       };
@@ -765,6 +773,7 @@ export default function MetaCampaignDashboard() {
             setSelected(null);
             setFunnel(null);
             setLeads([]);
+            setActiveStage(null);
           }
         }}
       >
@@ -840,122 +849,167 @@ export default function MetaCampaignDashboard() {
                     Bar width is each stage's share of the first stage. Both denominators are labelled, so no percentage is
                     ambiguous. ATS stages appear only once a candidate has reached them.
                   </p>
+                  {activeStage && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="text-[11px] text-slate-600">Showing: <strong>{funnelBars.find(s => s.key === activeStage)?.label}</strong></span>
+                      <button type="button" onClick={() => setActiveStage(null)} className="text-[10px] text-blue-600 hover:underline">Show all</button>
+                    </div>
+                  )}
                   {funnelBars.length === 0 ? (
                     <div className="mt-3">
                       <EmptyState label="No funnel data yet" hint="The funnel populates as leads arrive." />
                     </div>
                   ) : (
                     <div className="mt-3 space-y-1">
-                      {funnelBars.map((stage, i) => (
+                      {funnelBars.map((stage, i) => {
+                        const isActive = activeStage === stage.key;
+                        return (
                         <div key={stage.key}>
                           {i > 0 && stage.dropped > 0 && (
-                            <div className="flex items-center gap-2 py-1 pl-[124px]">
+                            <div className="flex items-center gap-2 py-0.5 pl-[124px]">
                               <span className="h-px w-5 bg-rose-200" />
-                              <span className="text-[10px] font-semibold text-rose-600">−{num(stage.dropped)} dropped</span>
+                              <span className="text-[10px] font-semibold text-rose-500">−{num(stage.dropped)} dropped</span>
                             </div>
                           )}
-                          <div className="flex items-center gap-3">
-                            <span className="w-[112px] shrink-0 text-right text-[11px] font-semibold text-slate-700">
+                          <button
+                            type="button"
+                            onClick={() => setActiveStage(isActive ? null : stage.key)}
+                            className={`group flex w-full items-center gap-3 rounded-lg px-1 py-0.5 text-left transition-colors ${isActive ? "bg-blue-50 ring-1 ring-blue-200" : "hover:bg-slate-50"}`}
+                            title={`Click to filter leads to ${stage.label} stage`}
+                          >
+                            <span className={`w-[112px] shrink-0 text-right text-[11px] font-semibold transition-colors ${isActive ? "text-blue-700" : "text-slate-700 group-hover:text-blue-600"}`}>
                               {stage.label}
                             </span>
-                            <div className="relative h-8 flex-1 overflow-hidden rounded-md bg-slate-50">
+                            <div className="relative h-9 flex-1 overflow-hidden rounded-lg bg-slate-100">
                               <div
-                                className="flex h-full items-center rounded-md px-2.5 transition-[width] duration-500"
+                                className="flex h-full items-center rounded-lg px-3 transition-[width] duration-700"
                                 style={{
-                                  width: `${Math.max(stage.ofTop ?? 0, 7)}%`,
-                                  backgroundColor: FUNNEL_RAMP[i % FUNNEL_RAMP.length],
+                                  width: `${Math.max(stage.ofMax ?? 0, stage.count > 0 ? 8 : 4)}%`,
+                                  backgroundColor: isActive ? "#2563eb" : FUNNEL_RAMP[i % FUNNEL_RAMP.length],
                                 }}
                               >
-                                <span className="text-[11px] font-bold tabular-nums text-white drop-shadow-sm">
+                                <span className="text-[12px] font-bold tabular-nums text-white drop-shadow-sm">
                                   {num(stage.count)}
                                 </span>
                               </div>
-                              {/* Percentages are omitted entirely rather than shown as 0.0% when
-                                  the denominator is zero — the bar's own count is still visible,
-                                  so nothing is lost by not inventing a share. */}
                               <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center gap-1.5">
-                                {stage.ofTop !== null && (
-                                  <span className="rounded bg-white/80 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-slate-600">
-                                    {pct(stage.ofTop)} of {funnelBars[0]!.label.toLowerCase()}
-                                  </span>
-                                )}
-                                {stage.ofPrev !== null && (
-                                  <span className="rounded bg-slate-200/80 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-slate-700">
+                                {stage.ofPrev !== null && stage.ofPrev !== undefined && (
+                                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${isActive ? "bg-blue-100 text-blue-700" : "bg-slate-200/80 text-slate-700"}`}>
                                     {pct(stage.ofPrev)} of prev
                                   </span>
                                 )}
                               </div>
                             </div>
-                          </div>
+                          </button>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </section>
 
                 <section>
-                  <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
-                    Leads ({num(leads.length)})
-                  </h3>
-                  {leads.length === 0 ? (
-                    <div className="mt-3">
-                      <EmptyState
-                        label="No leads received"
-                        hint="Leads arrive via the META webhook once the Lead Gen form is linked and the ad is live."
-                      />
-                    </div>
-                  ) : (
-                    <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
-                      <table className="w-full min-w-[560px] border-collapse text-sm">
-                        <thead className="bg-slate-50 text-left">
-                          <tr className="border-b border-slate-200">
-                            {["Lead", "Age / Location", "Screening", "Notified", "Received"].map((h) => (
-                              <th key={h} className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                                {h}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {leads.map((l) => (
-                            <tr key={l.id} className="border-b border-slate-100 last:border-0">
-                              <td className="px-3 py-2">
-                                <div className="text-xs font-semibold text-slate-900">{l.parsedName ?? "—"}</div>
-                                <div className="text-[10px] text-slate-400">{l.parsedPhone ?? "no phone"}</div>
-                              </td>
-                              <td className="px-3 py-2 text-[11px] text-slate-600">
-                                <div>{l.parsedAge != null ? `${l.parsedAge} yrs` : "—"}</div>
-                                <div className="text-[10px] text-slate-400">{l.parsedLocation ?? "—"}</div>
-                              </td>
-                              <td className="px-3 py-2">
-                                <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${SCREENING_BADGE[l.screeningResult]}`}>
-                                  {l.screeningResult}
-                                </span>
-                                {l.disqualificationReason && (
-                                  <div className="mt-1 max-w-[190px] text-[10px] leading-snug text-slate-500">
-                                    {l.disqualificationReason}
-                                  </div>
-                                )}
-                              </td>
-                              <td className="px-3 py-2 text-[11px] text-slate-600">
-                                {l.notificationSentAt ? (
-                                  <span className="inline-flex items-center gap-1 font-semibold text-emerald-700">
-                                    <BadgeCheck className="h-3 w-3" />
-                                    {l.notificationChannels.length ? l.notificationChannels.join(", ") : "sent"}
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 text-slate-400">
-                                    <X className="h-3 w-3" /> not sent
-                                  </span>
-                                )}
-                              </td>
-                              <td className="px-3 py-2 text-[10px] text-slate-400">{fmtDateTime(l.createdAt)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                  {/* Stage-filtered leads list */}
+                  {(() => {
+                    const stageFiltered = activeStage
+                      ? leads.filter((l) => {
+                          switch (activeStage) {
+                            case "form_fills":     return true;
+                            case "qualified":      return l.screeningResult === "qualified";
+                            case "disqualified":   return l.screeningResult === "disqualified";
+                            case "pending":        return l.screeningResult === "pending";
+                            case "notified":       return Boolean(l.notificationSentAt);
+                            case "applied":
+                            case "hr_screening":
+                            case "assessment":
+                            case "operations":
+                            case "client_round":
+                            case "selection":
+                            case "selected":
+                            case "offered":
+                            case "arrived":
+                            case "joined":         return Boolean(l.atsCandidateId);
+                            default:               return true;
+                          }
+                        })
+                      : leads;
+                    const stageLabel = activeStage ? funnelBars.find(s => s.key === activeStage)?.label : null;
+                    return (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
+                            {stageLabel ? `${stageLabel} Leads` : "All Leads"} ({num(stageFiltered.length)})
+                          </h3>
+                          <a
+                            href={`/ats/meta-leads`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[11px] text-blue-600 hover:underline"
+                          >
+                            Open in Leads page ↗
+                          </a>
+                        </div>
+                        {stageFiltered.length === 0 ? (
+                          <div className="mt-3">
+                            <EmptyState
+                              label={activeStage ? `No leads at ${stageLabel} stage` : "No leads received"}
+                              hint={activeStage ? "Try a different funnel stage above." : "Leads arrive via the META webhook once the Lead Gen form is linked."}
+                            />
+                          </div>
+                        ) : (
+                          <div className="mt-2 overflow-x-auto rounded-lg border border-slate-200">
+                            <table className="w-full min-w-[520px] border-collapse text-sm">
+                              <thead className="bg-slate-50 text-left">
+                                <tr className="border-b border-slate-200">
+                                  {["Name / Phone", "Age", "Screening", "Notified", "Received"].map((h) => (
+                                    <th key={h} className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {stageFiltered.map((l) => (
+                                  <tr
+                                    key={l.id}
+                                    onClick={() => window.open(`/ats/meta-leads`, "_blank")}
+                                    className="cursor-pointer border-b border-slate-100 last:border-0 hover:bg-blue-50/50 transition-colors"
+                                    title="Click to view full lead details"
+                                  >
+                                    <td className="px-3 py-2">
+                                      <div className="text-xs font-semibold text-blue-700 hover:underline">{l.parsedName ?? "—"}</div>
+                                      <div className="text-[10px] text-slate-400">{l.parsedPhone ?? "no phone"}</div>
+                                    </td>
+                                    <td className="px-3 py-2 text-[11px] text-slate-600">
+                                      {l.parsedAge != null ? `${l.parsedAge} yrs` : "—"}
+                                      {l.parsedLocation && <div className="text-[10px] text-slate-400">{l.parsedLocation}</div>}
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${SCREENING_BADGE[l.screeningResult]}`}>
+                                        {l.screeningResult}
+                                      </span>
+                                      {l.disqualificationReason && (
+                                        <div className="mt-0.5 max-w-[160px] text-[9px] leading-snug text-slate-400">{l.disqualificationReason}</div>
+                                      )}
+                                    </td>
+                                    <td className="px-3 py-2 text-[11px]">
+                                      {l.notificationSentAt ? (
+                                        <span className="inline-flex items-center gap-1 font-semibold text-emerald-700">
+                                          <BadgeCheck className="h-3 w-3" />
+                                          {l.notificationChannels.length ? l.notificationChannels.join(", ") : "sent"}
+                                        </span>
+                                      ) : (
+                                        <span className="text-slate-400 text-[10px]">not sent</span>
+                                      )}
+                                    </td>
+                                    <td className="px-3 py-2 text-[10px] text-slate-400">{fmtDateTime(l.createdAt)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </section>
               </>
             )}

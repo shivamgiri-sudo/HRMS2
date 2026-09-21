@@ -52,6 +52,33 @@ const CAMPAIGN_READ_ROLES = [
   'process_manager', 'management', 'manager', 'assistant_manager', 'recruiter',
 ] as const;
 
+/** Roles that see ALL branches (no auto-scoping). */
+const ALL_BRANCH_ROLES = ['super_admin', 'admin', 'hr', 'management', 'manager'];
+
+/**
+ * Resolve the effective branchName filter for a request.
+ * - ALL_BRANCH_ROLES: return whatever branchName the caller passed (may be undefined = show all)
+ * - branch-scoped roles: look up the user's branch from their employee record and force it.
+ */
+async function resolvebranchScope(
+  userId: string,
+  role: string,
+  callerBranch?: string
+): Promise<string | undefined> {
+  if (ALL_BRANCH_ROLES.includes(role)) return callerBranch;
+  // Branch-scoped role: derive branch_name from employee → branch_master
+  const { db } = await import('../../db/mysql.js');
+  const [rows] = await db.execute<import('mysql2').RowDataPacket[]>(
+    `SELECT bm.name AS branch_name
+       FROM employees e
+       JOIN branch_master bm ON bm.id = e.branch_id
+      WHERE e.user_id = ? AND e.active_status = 1
+      LIMIT 1`,
+    [userId]
+  );
+  return (rows[0]?.branch_name as string | null) ?? callerBranch;
+}
+
 /** Writes are narrower: linking a form ID wrongly misroutes candidates, so keep it with HR. */
 const CAMPAIGN_WRITE_ROLES = ['super_admin', 'admin', 'hr', 'recruitment_hr'] as const;
 
@@ -379,11 +406,17 @@ metaCampaignRouter.get(
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (req, res) => {
+    const ar = req as AuthenticatedRequest;
+    const branchName = await resolvebranchScope(
+      ar.authUser.id,
+      ar.authUser.role ?? '',
+      req.query.branchName as string | undefined
+    );
     const data = await metaCampaignService.listCampaigns({
       requisitionId: req.query.requisitionId as string | undefined,
       status: req.query.status as MetaCampaignStatus | undefined,
       search: req.query.search as string | undefined,
-      branchName: req.query.branchName as string | undefined,
+      branchName,
       processName: req.query.processName as string | undefined,
       dateFrom: req.query.dateFrom as string | undefined,
       dateTo: req.query.dateTo as string | undefined,
@@ -440,13 +473,19 @@ metaCampaignRouter.get(
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (req, res) => {
+    const ar = req as AuthenticatedRequest;
+    const branchName = await resolvebranchScope(
+      ar.authUser.id,
+      ar.authUser.role ?? '',
+      req.query.branchName as string | undefined
+    );
     const limit = req.query.limit ? Number(req.query.limit) : 50;
     const offset = req.query.offset ? Number(req.query.offset) : 0;
     const data = await metaCampaignService.listAllLeads({
       search: req.query.search as string | undefined,
       screening: req.query.screening as string | undefined,
       requisitionId: req.query.requisitionId as string | undefined,
-      branchName: req.query.branchName as string | undefined,
+      branchName,
       processName: req.query.processName as string | undefined,
       dateFrom: req.query.dateFrom as string | undefined,
       dateTo: req.query.dateTo as string | undefined,
