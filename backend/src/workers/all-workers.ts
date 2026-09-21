@@ -44,6 +44,7 @@ import { startEmployeeLifecycleWorker, stopEmployeeLifecycleWorker } from "./emp
 // ats-reminders when it lived in one file only.
 import { initBusinessActionSyncJobs, stopBusinessActionSyncJobs } from "../cron/business-action-sync.cron.js";
 import { startEmployeeMasterSnapshotScheduler, stopEmployeeMasterSnapshotScheduler } from "../cron/employee-master-snapshot.cron.js";
+import { startDbbillMigrationReportCron } from "../cron/dbbill-migration-report.cron.js";
 import { startDashboardSnapshotScheduler, stopDashboardSnapshotScheduler } from "../modules/dashboards/dashboard-snapshot.cron.js";
 import {
   startPerformanceScorecardSnapshotScheduler,
@@ -503,6 +504,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // ROSTER_INTELLIGENCE_CRON env var (default enabled).
     name: "roster-intelligence",
     start: () => { registerRosterIntelligenceCrons(); return Promise.resolve(); },
+  },
+  {
+    name: "dbbill-migration-report",
+    start: () => { startDbbillMigrationReportCron(); return Promise.resolve(); },
   },
 ];
 
