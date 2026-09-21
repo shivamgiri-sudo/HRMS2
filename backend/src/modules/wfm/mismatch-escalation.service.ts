@@ -104,9 +104,12 @@ export async function escalationHistory(adrId: string) {
       `SELECT x.*,
               CONCAT(t.first_name, ' ', COALESCE(t.last_name, '')) AS escalated_to_name,
               t.employee_code AS escalated_to_code,
+              CONCAT(b.first_name, ' ', COALESCE(b.last_name, '')) AS escalated_by_name,
+              b.employee_code AS escalated_by_code,
               (x.status = 'pending' AND x.due_at < NOW()) AS is_overdue
          FROM attendance_mismatch_escalation x
          LEFT JOIN employees t ON t.id = x.escalated_to_employee_id
+         LEFT JOIN employees b ON b.user_id = x.escalated_by_user_id
         WHERE x.adr_id = ?
         ORDER BY x.created_at DESC`,
       [adrId],

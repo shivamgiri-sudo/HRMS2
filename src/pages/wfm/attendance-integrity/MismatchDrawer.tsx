@@ -24,7 +24,14 @@ type DetailRecord = Record<string, unknown> & {
   resolved_by_name: string | null;
   is_locked: number;
 };
-type Detail = { record: DetailRecord; escalations: (EscalationInfo & { escalated_by_role?: string | null })[] };
+type Detail = { record: DetailRecord; escalations: (EscalationInfo & { escalated_by_role?: string | null; escalated_by_name?: string | null; escalated_by_code?: string | null })[] };
+
+/** "Wanda Workforce (SBX003) · wfm" — the person first, the role as context. */
+function byLabel(e: { escalated_by_name?: string | null; escalated_by_code?: string | null; escalated_by_role?: string | null }): string {
+  const name = e.escalated_by_name?.trim();
+  const who = name ? `${name}${e.escalated_by_code ? ` (${e.escalated_by_code})` : ""}` : "";
+  return [who, e.escalated_by_role].filter(Boolean).join(" · ") || "—";
+}
 
 const SECTION = "text-xs font-bold uppercase tracking-wide text-slate-400";
 
@@ -109,7 +116,7 @@ export function MismatchDrawer({ recordId, onClose }: { recordId: string | null;
                     Level {e.level} → {e.escalated_to_name?.trim() || "—"} {e.escalated_to_code ? `(${e.escalated_to_code})` : ""}
                     <Badge variant="outline" className="ml-2">{e.status}{e.is_overdue ? " · overdue" : ""}</Badge>
                   </p>
-                  <p className="text-slate-500">Sent {fmtDateTime(e.created_at)}{e.escalated_by_role ? ` by ${e.escalated_by_role}` : ""} · due {fmtDateTime(e.due_at)}</p>
+                  <p className="text-slate-500">Sent {fmtDateTime(e.created_at)} by {byLabel(e)} · due {fmtDateTime(e.due_at)}</p>
                   {e.escalation_note && <p className="text-slate-700">Note: {e.escalation_note}</p>}
                   {e.recommended_status && (
                     <p className="text-slate-700">

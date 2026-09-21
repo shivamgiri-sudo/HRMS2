@@ -349,7 +349,7 @@ export default function BranchLedgerPanel() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
             <Label className="text-xs font-bold uppercase tracking-wide text-slate-400">Month</Label>
-            <Input type="month" value={month} max={currentMonth()} onChange={(e) => { if (e.target.value) { setMonth(e.target.value); setPage(1); } }} className="w-40" />
+            <Input type="month" value={month} max={currentMonth()} onChange={(e) => { if (e.target.value) { setMonth(e.target.value); setPage(1); } }} className="w-52" />
           </div>
           <div className="space-y-1">
             <Label className="text-xs font-bold uppercase tracking-wide text-slate-400">Branch</Label>
