@@ -112,6 +112,29 @@ describe("queue definition", () => {
   });
 });
 
+describe("queue query shape (speed)", () => {
+  it("UNIONs the two arms instead of OR-ing them, so each arm can use its own index", async () => {
+    const res = await request(appFor("wfm")).get("/api/wfm/mismatches");
+    expect(res.status).toBe(200);
+    const sql = execute.mock.calls.find(([s]) => /COUNT\(\*\) AS total/.test(s))![0] as string;
+    // Measured live 2026-09-21: a single WHERE with an OR took 17s (full scan on idx_adr_locked);
+    // the UNION of the two arms takes ~1.7s. A reintroduced OR would silently bring the 17s back.
+    expect(sql).toMatch(/UNION/);
+    expect(sql).not.toMatch(/\)\s*OR\s*\(adr\.attendance_status/);
+    expect(sql).toMatch(/JOIN attendance_daily_record adr ON adr\.id = cand\.id/);
+  });
+
+  it("binds the date window once per arm, ahead of the outer filters", async () => {
+    const res = await request(appFor("wfm")).get("/api/wfm/mismatches?fromDate=2026-09-01&toDate=2026-09-15&employeeId=emp-9");
+    expect(res.status).toBe(200);
+    const call = execute.mock.calls.find(([s]) => /COUNT\(\*\) AS total/.test(s))!;
+    const params = call[1] as unknown[];
+    expect(params.slice(0, 4)).toEqual(["2026-09-01", "2026-09-15", "2026-09-01", "2026-09-15"]);
+    expect(params).toContain("emp-9");
+    expect(params.indexOf("emp-9")).toBeGreaterThan(3);
+  });
+});
+
 describe("POST /:id/escalate", () => {
   it("is refused for read-only roles", async () => {
     const res = await request(appFor("branch_head")).post("/api/wfm/mismatches/adr-1/escalate").send({});

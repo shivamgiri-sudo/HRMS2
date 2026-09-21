@@ -117,7 +117,19 @@ async function scopeConditionFor(req: any) {
  * optional filters on `adr.branch_id`/`adr.process_id` (attendance_daily_record carries its own
  * copies) — they narrow further; they do not replace the scope predicate.
  */
-async function buildWhere(req: any): Promise<{ sql: string; params: unknown[] }> {
+type QueueQuery = {
+  /** `FROM (...) cand JOIN adr ... LEFT JOIN employees e` — its bound params come first. */
+  from: string;
+  fromParams: unknown[];
+  /** Outer `WHERE ...` (filters, closed months, row scope) and its params. */
+  sql: string;
+  params: unknown[];
+};
+
+/** All bound params for a query built as `${q.from} ${q.sql}`, in placeholder order. */
+const queueParams = (q: QueueQuery): unknown[] => [...q.fromParams, ...q.params];
+
+async function buildWhere(req: any): Promise<QueueQuery> {
   const { fromDate, toDate, employeeId, branchId, processId, search } = req.query;
 
   const scopeCondition = await scopeConditionFor(req);
@@ -133,32 +145,49 @@ async function buildWhere(req: any): Promise<{ sql: string; params: unknown[] }>
   //    into this queue.
   //  * anything payroll has frozen (is_locked) or whose month has a finalized company-wide run
   //    is closed, so last month disappears once payroll is done.
-  const conds: string[] = [
-    `adr.mismatch_resolved_at IS NULL`,
-    `adr.is_locked = 0`,
-    `(
-      (
-        adr.mismatch_flag = 1
-        AND adr.biometric_status IS NOT NULL
-        AND adr.apr_status IS NOT NULL
-        AND adr.biometric_status <> adr.apr_status
-        AND (COALESCE(adr.biometric_minutes, 0) > 0 OR COALESCE(adr.dialler_minutes, 0) > 0)
-      )
-      OR (adr.attendance_status = 'week_off_worked' AND COALESCE(adr.raw_minutes, 0) > 0)
-    )`,
-  ];
+  // Two candidate arms, UNIONed, instead of one WHERE with an OR. With the OR MySQL could not use
+  // any index for either arm and fell back to scanning every unlocked row (measured live on
+  // 2026-09-21: 17.2s). Split, arm 1 uses idx_adr_mismatch_open (1.4s) and arm 2 uses
+  // idx_adr_status (0.08s); the UNION is ~1.7s. Both arms carry the date window so the index
+  // range is bounded. Filters that touch employees (search, scope) stay in the outer query, which
+  // only ever sees the already-narrow candidate set.
+  const dateConds: string[] = [];
+  const dateParams: unknown[] = [];
+  if (fromDate) {
+    dateConds.push('adr.record_date >= ?');
+    dateParams.push(fromDate);
+  } else {
+    // record_date leads idx_adr_date / idx_adr_record_date_status; an unbounded query scans the
+    // whole table, so default to the same 30-day window the dashboard-style pages use.
+    dateConds.push('adr.record_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)');
+  }
+  if (toDate) { dateConds.push('adr.record_date <= ?'); dateParams.push(toDate); }
+  const dateSql = dateConds.join(' AND ');
+
+  const from = `FROM (
+      SELECT adr.id FROM attendance_daily_record adr
+       WHERE adr.mismatch_flag = 1
+         AND adr.mismatch_resolved_at IS NULL
+         AND adr.is_locked = 0
+         AND adr.biometric_status IS NOT NULL
+         AND adr.apr_status IS NOT NULL
+         AND adr.biometric_status <> adr.apr_status
+         AND (COALESCE(adr.biometric_minutes, 0) > 0 OR COALESCE(adr.dialler_minutes, 0) > 0)
+         AND ${dateSql}
+      UNION
+      SELECT adr.id FROM attendance_daily_record adr
+       WHERE adr.attendance_status = 'week_off_worked' AND COALESCE(adr.raw_minutes, 0) > 0
+         AND adr.mismatch_resolved_at IS NULL
+         AND adr.is_locked = 0
+         AND ${dateSql}
+    ) cand
+    JOIN attendance_daily_record adr ON adr.id = cand.id
+    LEFT JOIN employees e ON e.id = adr.employee_id`;
+  const fromParams: unknown[] = [...dateParams, ...dateParams];
+
+  const conds: string[] = [];
   const params: unknown[] = [];
 
-  // record_date is the leading column of idx_adr_date / idx_adr_date_employee, so an
-  // unbounded query scans the whole table (measured: 124,954 rows examined, 9.9s warm).
-  // Default to the same 30-day window the dashboard-style pages in this codebase use.
-  if (fromDate) {
-    conds.push('adr.record_date >= ?');
-    params.push(fromDate);
-  } else {
-    conds.push('adr.record_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)');
-  }
-  if (toDate) { conds.push('adr.record_date <= ?'); params.push(toDate); }
   if (employeeId) { conds.push('adr.employee_id = ?'); params.push(employeeId); }
   if (branchId)   { conds.push('adr.branch_id = ?'); params.push(branchId); }
   if (processId)  { conds.push('adr.process_id = ?'); params.push(processId); }
@@ -181,9 +210,10 @@ async function buildWhere(req: any): Promise<{ sql: string; params: unknown[] }>
   conds.push(`(${scopeCondition.sql})`);
   params.push(...scopeCondition.params);
 
-  return { sql: `WHERE ${conds.join(' AND ')}`, params };
+  return { from, fromParams, sql: conds.length ? `WHERE ${conds.join(' AND ')}` : '', params };
 }
 
+/** Plain join for single-record loaders (not the queue). */
 const FROM_JOIN = `
   FROM attendance_daily_record adr
   LEFT JOIN employees e ON e.id = adr.employee_id`;
@@ -201,9 +231,7 @@ mismatchReviewRouter.get(
 
     const where = await buildWhere(req);
 
-    const countSql = `SELECT COUNT(*) AS total ${FROM_JOIN} ${where.sql}`;
-    const [countRows] = await db.execute<RowDataPacket[]>(countSql, where.params);
-    const total = Number((countRows[0] as any)?.total ?? 0);
+    const countSql = `SELECT COUNT(*) AS total ${where.from} ${where.sql}`;
 
     const dataSql = `
       SELECT
@@ -217,15 +245,19 @@ mismatchReviewRouter.get(
         e.employee_code,
         bm.branch_name, pm.process_name,
         dm.designation_code AS designation
-      FROM attendance_daily_record adr
-      LEFT JOIN employees e ON e.id = adr.employee_id
+      ${where.from}
       LEFT JOIN branch_master bm ON bm.id = adr.branch_id
       LEFT JOIN process_master pm ON pm.id = adr.process_id
       LEFT JOIN designation_master dm ON dm.id = e.designation_id
       ${where.sql}
       ORDER BY adr.record_date DESC, adr.employee_id
       LIMIT ${lim} OFFSET ${offset}`;
-    const [rows] = await db.execute<RowDataPacket[]>(dataSql, where.params);
+    // Count and page are independent reads; running them together roughly halves the wait.
+    const [[countRows], [rows]] = await Promise.all([
+      db.execute<RowDataPacket[]>(countSql, queueParams(where)),
+      db.execute<RowDataPacket[]>(dataSql, queueParams(where)),
+    ]);
+    const total = Number((countRows[0] as any)?.total ?? 0);
     const data = await attachEscalations(rows as RowDataPacket[], req.authUser?.id);
 
     res.json({ success: true, data, total, page: pg, limit: lim });
@@ -327,9 +359,9 @@ mismatchReviewRouter.get(
          COUNT(CASE WHEN adr.attendance_status <> 'week_off_worked' THEN 1 END) AS unresolved_mismatches,
          COUNT(CASE WHEN adr.attendance_status = 'week_off_worked' THEN 1 END) AS week_off_worked,
          COUNT(*) AS total_open
-       ${FROM_JOIN}
+       ${where.from}
        ${where.sql}`,
-      where.params
+      queueParams(where)
     );
     res.json({ success: true, data: rows[0] });
   })

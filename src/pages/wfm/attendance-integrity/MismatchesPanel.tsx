@@ -110,12 +110,15 @@ export default function MismatchesPanel() {
       const params = buildParams();
       params.set("page", String(page));
       params.set("limit", String(PAGE_SIZE));
-      const res = await hrmsApi.get<{ success: boolean; data: MismatchRecord[]; total: number }>(`/api/wfm/mismatches?${params}`);
-      setRecords(res.data ?? []);
-      setTotal(res.total ?? 0);
       const summaryParams = buildParams();
       summaryParams.delete("search");
-      const sum = await hrmsApi.get<{ success: boolean; data: Summary }>(`/api/wfm/mismatches/summary?${summaryParams}`);
+      // Independent reads — fire together so the tiles do not wait behind the table.
+      const [res, sum] = await Promise.all([
+        hrmsApi.get<{ success: boolean; data: MismatchRecord[]; total: number }>(`/api/wfm/mismatches?${params}`),
+        hrmsApi.get<{ success: boolean; data: Summary }>(`/api/wfm/mismatches/summary?${summaryParams}`),
+      ]);
+      setRecords(res.data ?? []);
+      setTotal(res.total ?? 0);
       setSummary(sum.success ? sum.data : null);
     } catch (err) {
       setError({ status: getHrmsApiErrorStatus(err), message: err instanceof Error ? err.message : "Failed to load the queue" });
