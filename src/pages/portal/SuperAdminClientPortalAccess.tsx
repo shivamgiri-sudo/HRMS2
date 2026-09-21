@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, ShieldAlert, Building2, LogIn, Search } from "lucide-react";
+import { ExportPresentationButton } from "@/components/presentation/ExportPresentationButton";
 
 interface ClientUserRow {
   id: string;
@@ -169,6 +170,12 @@ export default function SuperAdminClientPortalAccess() {
                   </>
                 )}
               </Button>
+
+              <ExportPresentationButton
+                scope="client"
+                clientId={String(selected.client_id)}
+                isAdminMode={true}
+              />
             </CardContent>
           </Card>
         )}

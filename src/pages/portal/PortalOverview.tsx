@@ -8,6 +8,7 @@ import { PortalKpiStrip, type KpiStripItem } from "@/components/portal/PortalKpi
 import { PortalRagDonut, type RagDonutSegment } from "@/components/portal/PortalRagDonut";
 import { ImpersonationBanner, IMPERSONATION_BANNER_HEIGHT_PX } from "@/components/portal/ImpersonationBanner";
 import { getImpersonationInfo } from "@/lib/portalApi";
+import { ExportPresentationButton } from "@/components/presentation/ExportPresentationButton";
 
 const RAG_BORDER = {
   green: "border-l-green-500",
@@ -183,6 +184,7 @@ export default function PortalOverview() {
                 <span className="text-xs font-medium truncate max-w-[100px] sm:max-w-none">{clientName}</span>
               </div>
             )}
+            <ExportPresentationButton scope="client" />
             <button
               onClick={handleLogout}
               className="flex items-center gap-1.5 px-2.5 py-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all duration-200 border border-transparent hover:border-rose-500/20"

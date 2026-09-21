@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { ExportPresentationButton } from "@/components/presentation/ExportPresentationButton";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { portalApi, clearPortalToken, getImpersonationInfo } from "@/lib/portalApi";
 import { KpiScorecardGrid } from "@/components/portal/KpiScorecardGrid";
@@ -120,6 +121,7 @@ export default function PortalProcessDashboard() {
               </div>
               <span className="text-xs font-medium hidden md:inline">{clientName || "Client"}</span>
             </div>
+            <ExportPresentationButton scope="process" processId={id} />
             <button
               onClick={handleLogout}
               className="flex items-center gap-1.5 px-2.5 py-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all duration-200 border border-transparent hover:border-rose-500/20"
