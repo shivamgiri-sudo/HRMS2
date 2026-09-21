@@ -48,6 +48,25 @@ async function requireOnfidoScope(req: AuthenticatedRequest, res: Response, next
     next(err);
   }
 }
+// Self-service: an Onfido analyst (any role, including employee) can fetch
+// their own performance without going through requireOnfidoScope. Declared
+// before the router-level scope guard so the guard never runs for this path.
+// Security: the email is taken from the verified JWT — the caller cannot
+// spoof someone else's data.
+router.get("/my-performance", requireAuth, h(async (req, res) => {
+  const email = req.authUser?.email;
+  if (!email) return res.status(400).json({ success: false, message: "No email on token." });
+  const q = req.query as Record<string, string | undefined>;
+  const d90 = new Date(); d90.setMonth(d90.getMonth() - 3);
+  const filters = {
+    from: q.from ?? d90.toISOString().slice(0, 10),
+    to: q.to ?? new Date().toISOString().slice(0, 10),
+  };
+  const data = await svc.getAnalystPerformance(email, filters);
+  if (!data) return res.status(404).json({ success: false, message: "No Onfido records for your account in this range." });
+  res.json({ success: true, data });
+}));
+
 router.use(requireAuth, requireOnfidoScope);
 router.use(ensureDocTaskTypeColumn);
 // Same numbers are re-requested on every tab switch and each takes seconds on the multi-GB tables.

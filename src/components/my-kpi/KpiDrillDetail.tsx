@@ -110,7 +110,7 @@ export function KpiDrillDetail({ metric }: Props) {
       {metric.trend_data?.length > 0 && (
         <DrawerSection label="Recent Trend">
           <div className="divide-y divide-slate-50">
-            {metric.trend_data.slice(-10).reverse().map((point, i) => (
+            {(metric.trend_data ?? []).slice(-10).reverse().map((point, i) => (
               <div key={i} className="flex justify-between items-center py-2 text-xs">
                 <span className="text-slate-500">{fmtDate(point.date)}</span>
                 <div className="flex items-center gap-3">

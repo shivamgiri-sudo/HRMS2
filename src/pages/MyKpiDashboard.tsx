@@ -294,7 +294,7 @@ export default function MyKpiDashboard() {
     queryKey: ["onfido-my-perf", user?.email, onfidoFrom, onfidoTo],
     queryFn: () =>
       hrmsApi.get<{ data: OnfidoAnalystPerformance }>(
-        `/api/onfido-process/analyst-performance/${encodeURIComponent(user?.email ?? "")}?from=${onfidoFrom}&to=${onfidoTo}`
+        `/api/onfido-process/my-performance?from=${onfidoFrom}&to=${onfidoTo}`
       ),
     enabled: !!user?.email,
     retry: false,
