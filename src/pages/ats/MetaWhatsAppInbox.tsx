@@ -208,6 +208,8 @@ export function MetaWhatsAppInbox() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [search, setSearch] = useState("");
   const [loadingList, setLoadingList] = useState(true);
+  // Load failures used to be swallowed, so a 403 looked exactly like an empty inbox.
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -235,7 +237,10 @@ export function MetaWhatsAppInbox() {
       const params = search ? `?search=${encodeURIComponent(search)}` : "";
       const res = await hrmsApi.get(`/api/meta/inbox${params}`);
       setConversations(res.data ?? []);
-    } catch { /* keep stale */ } finally {
+      setLoadError(null);
+    } catch (err: unknown) {
+      setLoadError(err instanceof Error ? err.message : "Could not load conversations.");
+    } finally {
       setLoadingList(false);
     }
   }, [search]);
@@ -245,11 +250,19 @@ export function MetaWhatsAppInbox() {
     try {
       const res = await hrmsApi.get(`/api/meta/leads/${leadId}/messages`);
       setMessages(res.data ?? []);
-      await hrmsApi.patch(`/api/meta/leads/${leadId}/messages/read`).catch(() => {});
-      setConversations((prev) =>
-        prev.map((c) => (c.leadId === leadId ? { ...c, unreadCount: 0 } : c))
-      );
-    } catch { setMessages([]); } finally { setLoadingThread(false); }
+      setLoadError(null);
+      // Only mark as read when the tab is actually visible — the 30s refresh runs in background
+      // tabs too and would otherwise clear unread flags for messages nobody has seen.
+      if (!document.hidden) {
+        await hrmsApi.patch(`/api/meta/leads/${leadId}/messages/read`).catch(() => {});
+        setConversations((prev) =>
+          prev.map((c) => (c.leadId === leadId ? { ...c, unreadCount: 0 } : c))
+        );
+      }
+    } catch (err: unknown) {
+      setMessages([]);
+      setLoadError(err instanceof Error ? err.message : "Could not load this conversation.");
+    } finally { setLoadingThread(false); }
   }, []);
 
   useEffect(() => { void fetchInbox(); }, [fetchInbox]);
@@ -310,6 +323,7 @@ export function MetaWhatsAppInbox() {
         body: form,
       });
       if (!res.ok) {
+        if (res.status === 401) throw new Error("Session expired — refresh the page and sign in again.");
         const err = await res.json().catch(() => ({ message: "Upload failed" }));
         throw new Error(err.message ?? "Upload failed");
       }
@@ -386,6 +400,11 @@ export function MetaWhatsAppInbox() {
 
             {/* Conversation list */}
             <div className="flex-1 overflow-y-auto">
+              {loadError && (
+                <div role="alert" className="px-4 py-2 bg-rose-50 border-b border-rose-100 text-xs text-rose-600">
+                  {loadError}
+                </div>
+              )}
               {loadingList && conversations.length === 0 ? (
                 <div className="flex items-center justify-center h-32 text-[#8696a0] text-sm">Loading…</div>
               ) : conversations.length === 0 ? (

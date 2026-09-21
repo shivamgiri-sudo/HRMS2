@@ -11,6 +11,7 @@
 import { randomUUID } from 'crypto';
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
+import type { BranchScope } from './meta-access.js';
 
 export interface LeadMessage {
   id: string;
@@ -37,12 +38,6 @@ export interface InboxConversation {
   lastMessageAt: string | null;
   lastDirection: 'inbound' | 'outbound' | null;
   unreadCount: number;
-}
-
-const ALL_ROLES = ['super_admin', 'admin', 'hr'] as const;
-
-function isAllBranchRole(role: string): boolean {
-  return (ALL_ROLES as readonly string[]).includes(role);
 }
 
 export async function saveMessage(params: {
@@ -94,33 +89,18 @@ export async function markThreadRead(leadId: string): Promise<void> {
   );
 }
 
-/**
- * Returns the branch_id for an auth_user by joining auth_user → employees.
- */
-async function getBranchForUser(userId: string): Promise<string | null> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.branch_id FROM employees e
-      WHERE e.user_id = ? AND e.active_status = 1 LIMIT 1`,
-    [userId]
-  );
-  return rows[0]?.branch_id ?? null;
-}
-
 export async function getInbox(opts: {
-  userId: string;
-  userRole: string;
+  scope: BranchScope;
   search?: string;
 }): Promise<InboxConversation[]> {
+  // Fail closed: a branch-scoped user with no resolvable branch sees nothing.
+  if (!opts.scope.all && !opts.scope.branchName) return [];
+
   let branchFilter = '';
   const params: unknown[] = [];
-
-  if (!isAllBranchRole(opts.userRole)) {
-    // Resolve branch for this user's employee record
-    const branchId = await getBranchForUser(opts.userId);
-    if (branchId) {
-      branchFilter = `AND bm.id = ?`;
-      params.push(branchId);
-    }
+  if (!opts.scope.all) {
+    branchFilter = `AND jr.branch_name = ?`;
+    params.push(opts.scope.branchName);
   }
 
   const searchFilter = opts.search ? `AND (ml.parsed_name LIKE ? OR ml.parsed_phone LIKE ?)` : '';
@@ -138,22 +118,21 @@ export async function getInbox(opts: {
        jr.branch_name                      AS branchName,
        jr.designation_name                 AS designationName,
        mc.campaign_name                    AS campaignName,
-       lm.last_message_text                AS lastMessageText,
+       (SELECT m2.message_text FROM meta_lead_messages m2
+         WHERE m2.lead_id = ml.id ORDER BY m2.created_at DESC, m2.id DESC LIMIT 1) AS lastMessageText,
        lm.last_message_at                  AS lastMessageAt,
-       lm.last_direction                   AS lastDirection,
+       (SELECT m3.direction FROM meta_lead_messages m3
+         WHERE m3.lead_id = ml.id ORDER BY m3.created_at DESC, m3.id DESC LIMIT 1)  AS lastDirection,
        COALESCE(lm.unread_count, 0)        AS unreadCount
      FROM meta_lead_raw ml
      INNER JOIN (
        SELECT lead_id,
               MAX(created_at)          AS last_message_at,
-              SUM(CASE WHEN direction = 'inbound' AND read_at IS NULL THEN 1 ELSE 0 END) AS unread_count,
-              SUBSTRING_INDEX(GROUP_CONCAT(message_text ORDER BY created_at DESC SEPARATOR '||'), '||', 1) AS last_message_text,
-              SUBSTRING_INDEX(GROUP_CONCAT(direction ORDER BY created_at DESC SEPARATOR '||'), '||', 1)    AS last_direction
+              SUM(CASE WHEN direction = 'inbound' AND read_at IS NULL THEN 1 ELSE 0 END) AS unread_count
          FROM meta_lead_messages
          GROUP BY lead_id
      ) lm ON lm.lead_id = ml.id
      LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id
-     LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name
      LEFT JOIN meta_campaign mc ON mc.id = ml.campaign_id
      WHERE 1=1
        ${branchFilter}
@@ -182,19 +161,14 @@ export async function getInbox(opts: {
  * Total unread count across all conversations the user can see.
  * Used for the notification badge in the nav.
  */
-export async function getTotalUnread(opts: {
-  userId: string;
-  userRole: string;
-}): Promise<number> {
+export async function getTotalUnread(opts: { scope: BranchScope }): Promise<number> {
+  if (!opts.scope.all && !opts.scope.branchName) return 0;
+
   let branchFilter = '';
   const params: unknown[] = [];
-
-  if (!isAllBranchRole(opts.userRole)) {
-    const branchId = await getBranchForUser(opts.userId);
-    if (branchId) {
-      branchFilter = `AND bm.id = ?`;
-      params.push(branchId);
-    }
+  if (!opts.scope.all) {
+    branchFilter = `AND jr.branch_name = ?`;
+    params.push(opts.scope.branchName);
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -202,7 +176,6 @@ export async function getTotalUnread(opts: {
        FROM meta_lead_messages mlm
        JOIN meta_lead_raw ml ON ml.id = mlm.lead_id
        LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id
-       LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name
       WHERE mlm.direction = 'inbound' AND mlm.read_at IS NULL
         ${branchFilter}`,
     params

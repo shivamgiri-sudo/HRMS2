@@ -17,7 +17,7 @@ import {
   normaliseRoutingCode,
   extractRoutingCode,
 } from '../meta-lead.parser.js';
-import { screenLead, eduRank } from '../lead-screener.service.js';
+import { screenLead, eduRank, requisitionClosedReason } from '../lead-screener.service.js';
 import type { MetaLeadDetail } from '../meta-campaign.types.js';
 
 const detail = (fields: Array<[string, string]>, key: 'name' | 'field_name' = 'name'): MetaLeadDetail =>
@@ -440,5 +440,45 @@ describe('screenLead — end to end from a raw payload', () => {
     );
     expect(r.qualified).toBe(false);
     expect(r.reason).toMatch(/below the required minimum/);
+  });
+});
+
+describe('requisitionClosedReason: shortlisting is against an OPEN batch requisition', () => {
+  const open = {
+    approvalStatus: 'approved',
+    activeStatus: 1,
+    closedAt: null,
+    requestedHeadcount: 20,
+    fulfilledHeadcount: 5,
+  };
+
+  it('is open while seats remain', () => {
+    expect(requisitionClosedReason(open)).toBeNull();
+  });
+
+  it('is open when there is no linked requisition to judge', () => {
+    expect(requisitionClosedReason(null)).toBeNull();
+  });
+
+  it('does not block draft or pending approval; a live campaign may run ahead of the record', () => {
+    expect(requisitionClosedReason({ ...open, approvalStatus: 'pending_approval' })).toBeNull();
+    expect(requisitionClosedReason({ ...open, approvalStatus: 'draft' })).toBeNull();
+  });
+
+  it.each(['closed', 'cancelled', 'rejected', 'on_hold'])('blocks a %s requisition', (approvalStatus) => {
+    expect(requisitionClosedReason({ ...open, approvalStatus })).not.toBeNull();
+  });
+
+  it('blocks when every seat is filled', () => {
+    expect(requisitionClosedReason({ ...open, fulfilledHeadcount: 20 })).toContain('filled');
+  });
+
+  it('does not treat a zero-headcount requisition as filled', () => {
+    expect(requisitionClosedReason({ ...open, requestedHeadcount: 0, fulfilledHeadcount: 0 })).toBeNull();
+  });
+
+  it('blocks an inactive or closed-dated requisition', () => {
+    expect(requisitionClosedReason({ ...open, activeStatus: 0 })).not.toBeNull();
+    expect(requisitionClosedReason({ ...open, closedAt: '2026-09-01' })).not.toBeNull();
   });
 });

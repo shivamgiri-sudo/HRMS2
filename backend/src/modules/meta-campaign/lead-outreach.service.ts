@@ -35,6 +35,7 @@ import { sendShortlistMessage, isWassengerConfigured } from './wassenger.provide
 import { saveMessage as saveLeadMessage } from './meta-messages.service.js';
 import { assignInterviewSlot } from './interview-slot.service.js';
 import type { InterviewSlot } from './interview-slot.service.js';
+import { requisitionClosedReason } from './lead-screener.service.js';
 
 export interface OutreachOutcome {
   leadId: string;
@@ -172,12 +173,16 @@ ${salary ? `    <tr><td style="padding:8px 12px;background:#f8fafc;border-radius
 </body></html>`;
 }
 
-async function loadLeadContext(leadId: string): Promise<{ ctx: LeadContext; qualified: boolean; alreadySent: boolean } | null> {
+async function loadLeadContext(
+  leadId: string
+): Promise<{ ctx: LeadContext; qualified: boolean; alreadySent: boolean; closedReason: string | null } | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ml.id, ml.parsed_name, ml.parsed_phone, ml.parsed_email,
             ml.screening_result, ml.notification_sent_at,
             jr.designation_name, jr.branch_name, jr.requisition_code, jr.bmi_assessment_url,
             jr.salary_min, jr.salary_max,
+            jr.approval_status, jr.active_status, jr.closed_at,
+            jr.requested_headcount, jr.fulfilled_headcount,
             bm.address AS branch_address, bm.city AS branch_city,
             bm.latitude AS branch_lat, bm.longitude AS branch_lng
        FROM meta_lead_raw ml
@@ -207,6 +212,13 @@ async function loadLeadContext(leadId: string): Promise<{ ctx: LeadContext; qual
     },
     qualified: row.screening_result === 'qualified',
     alreadySent: Boolean(row.notification_sent_at),
+    closedReason: requisitionClosedReason({
+      approvalStatus: (row.approval_status as string | null) ?? null,
+      activeStatus: (row.active_status as number | null) ?? null,
+      closedAt: (row.closed_at as string | null) ?? null,
+      requestedHeadcount: row.requested_headcount !== null ? Number(row.requested_headcount) : null,
+      fulfilledHeadcount: row.fulfilled_headcount !== null ? Number(row.fulfilled_headcount) : null,
+    }),
   };
 }
 
@@ -220,6 +232,12 @@ export async function notifyQualifiedLead(leadId: string, options: { force?: boo
   }
   if (!loaded.qualified) {
     outcome.skipped.push({ channel: 'all', reason: 'Lead is not qualified; outreach refused' });
+    return outcome;
+  }
+  // Shortlisting is against the batch requisition: a closed or fully-staffed batch cannot take
+  // more candidates, so refuse outreach outright (force does not override this).
+  if (loaded.closedReason) {
+    outcome.skipped.push({ channel: 'all', reason: `Outreach refused: ${loaded.closedReason}` });
     return outcome;
   }
   // Re-notifying is a real recruiter need, but it must be explicit. Without this guard a webhook
@@ -428,10 +446,16 @@ export async function recordWalkInConfirmation(
   const digits = phone.replace(/\D/g, '');
   const mobile = digits.length > 10 ? digits.slice(-10) : digits;
 
+  // A phone can appear on several leads (one per campaign). Route the reply to the conversation
+  // that is actually live: shortlisted first, then the one we messaged most recently — not merely
+  // the newest row, which split a candidate's thread across leads.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, parsed_name FROM meta_lead_raw
       WHERE RIGHT(REPLACE(parsed_phone, '+', ''), 10) = ?
-      ORDER BY created_at DESC LIMIT 1`,
+      ORDER BY (screening_result = 'qualified') DESC,
+               (notification_sent_at IS NOT NULL) DESC,
+               COALESCE(notification_sent_at, created_at) DESC
+      LIMIT 1`,
     [mobile]
   );
 

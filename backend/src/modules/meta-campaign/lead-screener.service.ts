@@ -45,6 +45,38 @@ export interface ScreeningResult {
   skipped: string[];
 }
 
+// ── Requisition openness ──────────────────────────────────────────────────────────────────────
+
+export interface RequisitionState {
+  approvalStatus: string | null;
+  activeStatus: boolean | number | null;
+  closedAt: string | Date | null;
+  requestedHeadcount: number | null;
+  fulfilledHeadcount: number | null;
+}
+
+const DEAD_APPROVAL_STATUSES = ['closed', 'cancelled', 'rejected', 'on_hold'];
+
+/**
+ * Why a batch requisition can no longer take candidates, or null when it is still open.
+ *
+ * A lead can meet every criterion and still belong to a batch that is closed or fully staffed;
+ * telling that candidate "Congratulations, you are shortlisted" invites them to an interview for
+ * seats that no longer exist. Only clearly-dead states block — draft / pending approval are left
+ * alone because a live campaign may legitimately run ahead of the approval record.
+ */
+export function requisitionClosedReason(state: RequisitionState | null): string | null {
+  if (!state) return null;
+  if (state.activeStatus !== null && Number(state.activeStatus) === 0) return 'requisition is inactive';
+  if (state.closedAt) return 'requisition is closed';
+  const status = (state.approvalStatus ?? '').toLowerCase();
+  if (DEAD_APPROVAL_STATUSES.includes(status)) return `requisition is ${status.replace('_', ' ')}`;
+  const requested = Number(state.requestedHeadcount ?? 0);
+  const fulfilled = Number(state.fulfilledHeadcount ?? 0);
+  if (requested > 0 && fulfilled >= requested) return 'all seats in this batch are filled';
+  return null;
+}
+
 // ── Education ladder ──────────────────────────────────────────────────────────────────────────
 const EDU_RANK: Record<string, number> = {
   'below 10th': 1, 'under 10th': 1, '8th': 1,

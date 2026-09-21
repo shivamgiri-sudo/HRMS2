@@ -135,6 +135,21 @@ export async function sendCustomMessage(
   }
 }
 
+/** Upload a base64 file to Wassenger and return the stored file id. */
+async function uploadFile(base64: string, mimeType?: string, filename?: string): Promise<string> {
+  const form = new FormData();
+  const blob = new Blob([Buffer.from(base64, 'base64')], { type: mimeType ?? 'application/octet-stream' });
+  form.append('file', blob, filename ?? 'attachment');
+  const { data } = await axios.post(`${WASSENGER_BASE}/files`, form, {
+    headers: { Token: process.env.WASSENGER_API_TOKEN ?? '' },
+    timeout: 30000,
+    maxBodyLength: Infinity,
+  });
+  const id = Array.isArray(data) ? data[0]?.id : data?.id;
+  if (!id) throw new Error('Wassenger file upload returned no file id');
+  return String(id);
+}
+
 /**
  * Send a media message (image, PDF, document) via Wassenger.
  * Accepts a base64-encoded file + MIME type, or a public URL.
@@ -159,11 +174,14 @@ export async function sendMediaMessage(
   }
   const waPhone = toWaPhone(phone);
   try {
+    // Wassenger does not accept inline base64 on /messages. A file is uploaded once to /files
+    // (multipart, field `file`) and then referenced by its id; a public URL is passed as-is.
     const mediaPayload: Record<string, string> = {};
-    if (opts.base64)   mediaPayload['data']     = opts.base64;
-    if (opts.url)      mediaPayload['url']      = opts.url;
-    if (opts.mimeType) mediaPayload['mimetype'] = opts.mimeType;
-    if (opts.filename) mediaPayload['filename'] = opts.filename;
+    if (opts.base64) {
+      mediaPayload['file'] = await uploadFile(opts.base64, opts.mimeType, opts.filename);
+    } else if (opts.url) {
+      mediaPayload['url'] = opts.url;
+    }
 
     const { data } = await axios.post(
       `${WASSENGER_BASE}/messages`,
@@ -203,6 +221,8 @@ export interface WassengerWebhookPayload {
   };
 }
 
+const MEDIA_TYPES = ['image', 'video', 'audio', 'ptt', 'document', 'sticker'];
+
 export type WalkInReply = 'confirmed' | 'reschedule' | 'not_interested' | 'unknown';
 
 export function parseWassengerWebhook(payload: WassengerWebhookPayload): {
@@ -217,11 +237,18 @@ export function parseWassengerWebhook(payload: WassengerWebhookPayload): {
   }
 
   const msg = payload.data;
-  if (!msg || msg.fromMe || msg.type !== 'chat') {
+  if (!msg || msg.fromMe) {
+    return { isIncoming: false, phone: null, reply: 'unknown', rawBody: null };
+  }
+  const isMedia = typeof msg.type === 'string' && MEDIA_TYPES.includes(msg.type);
+  if (msg.type !== 'chat' && !isMedia) {
     return { isIncoming: false, phone: null, reply: 'unknown', rawBody: null };
   }
 
-  const body = (msg.body ?? '').trim();
+  // A media message has no text of its own; record that an attachment arrived (with its caption)
+  // so HR sees it in the thread instead of the message being dropped silently.
+  const caption = (msg.body ?? '').trim();
+  const body = isMedia ? `📎 [${msg.type}]${caption ? ` ${caption}` : ''}` : caption;
   const phone = msg.phone ?? null;
 
   let reply: WalkInReply = 'unknown';

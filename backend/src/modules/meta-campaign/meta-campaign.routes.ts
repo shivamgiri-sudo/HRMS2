@@ -24,6 +24,8 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { metaCampaignService } from './meta-campaign.service.js';
+import { ALL_BRANCH_ROLES, resolveBranchScope, canAccessLead, canMessageLead } from './meta-access.js';
+import type { BranchScope } from './meta-access.js';
 import { notifyQualifiedLead, recordVoiceCallback, recordWalkInConfirmation } from './lead-outreach.service.js';
 import { leadVerifyToken, isMetaConfigured } from './meta-api.client.js';
 import { parseVapiCallback, isVapiConfigured } from './vapi-voicebot.provider.js';
@@ -34,6 +36,7 @@ import {
   sendConfirmationAck,
   sendShortlistMessage,
   sendMediaMessage,
+  sendCustomMessage,
 } from './wassenger.provider.js';
 import type { WassengerWebhookPayload } from './wassenger.provider.js';
 import {
@@ -54,8 +57,34 @@ const CAMPAIGN_READ_ROLES = [
   'process_manager', 'management', 'manager', 'assistant_manager', 'recruiter',
 ] as const;
 
-/** Roles that see ALL branches (no auto-scoping). */
-const ALL_BRANCH_ROLES = ['super_admin', 'admin', 'hr', 'management', 'manager'];
+/**
+ * The WhatsApp inbox is also opened by branch staff the sidebar grants ATS_META_CAMPAIGNS to
+ * (migration/commit 818f3123). Without listing them here the page opened for them and every API
+ * call returned 403, which the page rendered as an empty inbox. They are branch-scoped by
+ * resolveBranchScope, so this widens who may open the inbox, not which branch they see.
+ */
+const INBOX_ROLES = [
+  ...CAMPAIGN_READ_ROLES,
+  'branch_admin', 'branch_wfm', 'branch_it', 'payroll_hr', 'interviewer',
+] as const;
+
+/** Every role the caller holds, falling back to the primary role. */
+function callerRoles(req: AuthenticatedRequest): string[] {
+  const roles = req.userRoles?.length ? req.userRoles : [req.authUser?.role ?? ''];
+  return roles.filter(Boolean);
+}
+
+/** Resolve the caller's branch scope, or answer 403 when the lead is outside it. */
+async function requireLeadInScope(
+  req: AuthenticatedRequest,
+  res: Response,
+  leadId: string
+): Promise<BranchScope | null> {
+  const scope = await resolveBranchScope(req.authUser!.id, callerRoles(req));
+  if (await canAccessLead(leadId, scope)) return scope;
+  res.status(403).json({ success: false, message: 'This conversation belongs to another branch' });
+  return null;
+}
 
 /**
  * Resolve the effective branchName filter for a request.
@@ -504,6 +533,7 @@ metaCampaignRouter.get(
   requireAuth,
   requireRole(...CAMPAIGN_READ_ROLES),
   h(async (req, res) => {
+    if (!(await requireLeadInScope(req, res, req.params.id!))) return;
     const data = await metaCampaignService.getLeadDetail(req.params.id!);
     if (!data) return res.status(404).json({ success: false, message: 'Lead not found' });
     return res.json({ success: true, data });
@@ -638,13 +668,10 @@ metaCampaignRouter.post(
 metaCampaignRouter.get(
   '/inbox',
   requireAuth,
-  requireRole(...CAMPAIGN_READ_ROLES),
+  requireRole(...INBOX_ROLES),
   h(async (req, res) => {
-    const data = await getInbox({
-      userId: req.authUser!.id,
-      userRole: req.authUser!.role ?? '',
-      search: req.query.search as string | undefined,
-    });
+    const scope = await resolveBranchScope(req.authUser!.id, callerRoles(req));
+    const data = await getInbox({ scope, search: req.query.search as string | undefined });
     return res.json({ success: true, data });
   })
 );
@@ -653,12 +680,10 @@ metaCampaignRouter.get(
 metaCampaignRouter.get(
   '/inbox/unread-count',
   requireAuth,
-  requireRole(...CAMPAIGN_READ_ROLES),
+  requireRole(...INBOX_ROLES),
   h(async (req, res) => {
-    const count = await getTotalUnread({
-      userId: req.authUser!.id,
-      userRole: req.authUser!.role ?? '',
-    });
+    const scope = await resolveBranchScope(req.authUser!.id, callerRoles(req));
+    const count = await getTotalUnread({ scope });
     return res.json({ success: true, data: { count } });
   })
 );
@@ -667,8 +692,9 @@ metaCampaignRouter.get(
 metaCampaignRouter.get(
   '/leads/:id/messages',
   requireAuth,
-  requireRole(...CAMPAIGN_READ_ROLES),
+  requireRole(...INBOX_ROLES),
   h(async (req, res) => {
+    if (!(await requireLeadInScope(req, res, req.params.id!))) return;
     const messages = await getThread(req.params.id!);
     return res.json({ success: true, data: messages });
   })
@@ -678,8 +704,9 @@ metaCampaignRouter.get(
 metaCampaignRouter.patch(
   '/leads/:id/messages/read',
   requireAuth,
-  requireRole(...CAMPAIGN_READ_ROLES),
+  requireRole(...INBOX_ROLES),
   h(async (req, res) => {
+    if (!(await requireLeadInScope(req, res, req.params.id!))) return;
     await markThreadRead(req.params.id!);
     return res.json({ success: true });
   })
@@ -692,12 +719,15 @@ metaCampaignRouter.patch(
 metaCampaignRouter.post(
   '/leads/:id/reply',
   requireAuth,
-  requireRole(...CAMPAIGN_READ_ROLES),
+  requireRole(...INBOX_ROLES),
   h(async (req, res) => {
     const text = String(req.body?.message ?? '').trim();
     if (!text) {
       return res.status(400).json({ success: false, message: 'message is required' });
     }
+    if (!(await requireLeadInScope(req, res, req.params.id!))) return;
+    const gate = await canMessageLead(req.params.id!);
+    if (!gate.allowed) return res.status(409).json({ success: false, message: gate.reason });
     if (!isWassengerConfigured()) {
       return res.status(503).json({ success: false, message: 'Wassenger is not configured' });
     }
@@ -709,27 +739,12 @@ metaCampaignRouter.post(
       return res.status(422).json({ success: false, message: 'Lead has no phone number' });
     }
 
-    // Send the custom reply text directly via Wassenger REST (not the template)
-    const axios = (await import('axios')).default;
-    let wassengerMsgId: string | null = null;
-    try {
-      const { data } = await axios.post(
-        'https://api.wassenger.com/v1/messages',
-        {
-          phone: lead.parsedPhone.replace(/\D/g, '').replace(/^(.{10})$/, '91$1'),
-          message: text,
-          device: process.env.WASSENGER_DEVICE_ID,
-        },
-        {
-          headers: { 'Content-Type': 'application/json', Token: process.env.WASSENGER_API_TOKEN ?? '' },
-          timeout: 15000,
-        }
-      );
-      wassengerMsgId = data?.id ?? null;
-    } catch (err) {
-      const errMsg = (err instanceof Error) ? err.message : String(err);
-      return res.status(502).json({ success: false, message: `Wassenger send failed: ${errMsg}` });
+    // Same phone normalisation and error handling as every other outbound send.
+    const sent = await sendCustomMessage(lead.parsedPhone, text);
+    if (!sent.success) {
+      return res.status(502).json({ success: false, message: `Wassenger send failed: ${sent.error ?? 'unknown error'}` });
     }
+    const wassengerMsgId = sent.messageId ?? null;
 
     // Persist as outbound message from HR
     const msgId = await saveMessage({
@@ -757,13 +772,16 @@ const _upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20
 metaCampaignRouter.post(
   '/leads/:id/send-file',
   requireAuth,
-  requireRole(...CAMPAIGN_READ_ROLES),
+  requireRole(...INBOX_ROLES),
   _upload.single('file'),
   h(async (req, res) => {
     const file = (req as Request & { file?: Express.Multer.File }).file;
     if (!file) {
       return res.status(400).json({ success: false, message: 'No file attached' });
     }
+    if (!(await requireLeadInScope(req, res, req.params.id!))) return;
+    const gate = await canMessageLead(req.params.id!);
+    if (!gate.allowed) return res.status(409).json({ success: false, message: gate.reason });
     if (!isWassengerConfigured()) {
       return res.status(503).json({ success: false, message: 'Wassenger is not configured' });
     }
