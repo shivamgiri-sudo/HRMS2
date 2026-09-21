@@ -1116,6 +1116,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1830_backfill_emp_type_from_employment_type.sql", // Backfills employees.emp_type from employment_type for all rows where emp_type IS NULL (ATS/manual/bulk-upload onboarded employees). All four write paths now keep both columns in sync.
   "1832_attendance_mismatch_escalation.sql", // Creates attendance_mismatch_escalation: WFM -> reporting-manager escalation of attendance_daily_record mismatches (level, due_at, manager recommendation). Additive, no FKs.
   "1833_adr_open_mismatch_queue_indexes.sql", // Adds idx_adr_mismatch_open (mismatch_flag, record_date, mismatch_resolved_at) on attendance_daily_record for the WFM mismatch queue.
+  "1835_meta_campaign_screening_config.sql", // Registered 2026-09-21. Adds meta_campaign.screening_config (nullable JSON): shortlisting criteria for campaigns with no job requisition yet ("JR pending"). Used only while the campaign has no requisition; the linked requisition's criteria take over afterwards. Additive, information_schema-guarded.
   ];
 
 export type MigrationHealth = {

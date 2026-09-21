@@ -30,6 +30,14 @@ type Summary = {
   alreadyNotified: number;
   topDisqualificationReasons: Array<{ label: string; count: number }>;
   topUnverifiedChecks: Array<{ label: string; count: number }>;
+  byCampaign: Array<{
+    campaignName: string;
+    criteria: "campaign_criteria" | "none";
+    total: number;
+    qualified: number;
+    disqualified: number;
+    unscreened: number;
+  }>;
   byRequisition: Array<{
     requisitionId: string;
     requisitionCode: string | null;
@@ -53,7 +61,8 @@ type Row = {
   createdAt: string | null;
   currentResult: Current;
   notified: boolean;
-  mappingSource: "routing_code" | "stored" | "none";
+  mappingSource: "routing_code" | "stored" | "campaign_criteria" | "none";
+  campaignName: string | null;
   requisitionId: string | null;
   requisitionCode: string | null;
   designation: string | null;
@@ -83,6 +92,7 @@ type Detail = {
     requestedHeadcount: number | null;
     fulfilledHeadcount: number | null;
   } | null;
+  campaign?: { name: string | null; screeningConfig: Record<string, unknown> | null } | null;
   lead: {
     age: number | null;
     education: string | null;
@@ -107,6 +117,12 @@ const PROPOSED_BADGE: Record<Proposed, string> = {
   no_data: "bg-amber-100 text-amber-700",
 };
 const CURRENT_LABEL: Record<Current, string> = { pending: "Pending", qualified: "Qualified", disqualified: "Disqualified" };
+const MAPPING_LABEL: Record<Row["mappingSource"], string> = {
+  routing_code: "Form requisition code",
+  stored: "Stored campaign link",
+  campaign_criteria: "Campaign criteria (no requisition yet)",
+  none: "Not mapped",
+};
 const PAGE_SIZE = 50;
 
 const fmt = (n: number) => n.toLocaleString("en-IN");
@@ -356,6 +372,40 @@ export default function MetaShortlistReport() {
                 </tbody>
               </table>
             </div>
+
+            {summary.byCampaign.length > 0 && (
+              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+                <div className="border-b border-slate-100 px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-400">
+                  Campaigns without a requisition yet
+                </div>
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                    <tr>
+                      <th className="px-4 py-2">Campaign</th>
+                      <th className="px-4 py-2">Screened on</th>
+                      <th className="px-4 py-2 text-right">Leads</th>
+                      <th className="px-4 py-2 text-right">Shortlisted</th>
+                      <th className="px-4 py-2 text-right">Not shortlisted</th>
+                      <th className="px-4 py-2 text-right">Pending</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.byCampaign.map((c) => (
+                      <tr key={c.campaignName} className="border-t border-slate-100">
+                        <td className="px-4 py-2 font-medium text-slate-900">{c.campaignName}</td>
+                        <td className="px-4 py-2 text-xs text-slate-600">
+                          {c.criteria === "campaign_criteria" ? "Campaign criteria" : "No criteria — waiting for the requisition"}
+                        </td>
+                        <td className="px-4 py-2 text-right">{fmt(c.total)}</td>
+                        <td className="px-4 py-2 text-right text-emerald-700">{fmt(c.qualified)}</td>
+                        <td className="px-4 py-2 text-right text-rose-700">{fmt(c.disqualified)}</td>
+                        <td className="px-4 py-2 text-right text-slate-600">{fmt(c.unscreened)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </>
         )}
 
@@ -427,8 +477,10 @@ export default function MetaShortlistReport() {
                     <div className="text-xs text-slate-500">{r.phone ?? "—"}</div>
                   </td>
                   <td className="px-4 py-2 text-slate-700">
-                    {r.requisitionCode ?? "—"}
-                    <div className="text-xs text-slate-500">{[r.designation, r.branch].filter(Boolean).join(" · ")}</div>
+                    {r.requisitionCode ?? r.campaignName ?? "—"}
+                    <div className="text-xs text-slate-500">
+                      {r.requisitionCode ? [r.designation, r.branch].filter(Boolean).join(" · ") : r.campaignName ? "No requisition yet" : ""}
+                    </div>
                   </td>
                   <td className="px-4 py-2 text-slate-700">{CURRENT_LABEL[r.currentResult]}</td>
                   <td className="px-4 py-2">
@@ -497,7 +549,7 @@ function DetailBody({ detail }: { detail: Detail }) {
       <Line k="Stored result" v={CURRENT_LABEL[e.currentResult]} />
       <Line k="HRMS result today" v={PROPOSED_LABEL[e.proposedResult]} />
       <Line k="Reason" v={e.reason} />
-      <Line k="Mapped via" v={e.mappingSource === "routing_code" ? "Form requisition code" : e.mappingSource === "stored" ? "Stored campaign link" : "Not mapped"} />
+      <Line k="Mapped via" v={MAPPING_LABEL[e.mappingSource]} />
       {e.relink && <p className="mt-1 text-xs text-blue-700">The form's requisition code differs from the stored link; a re-screen would re-link this lead.</p>}
 
       <SectionLabel>What HRMS could not verify</SectionLabel>
@@ -506,7 +558,14 @@ function DetailBody({ detail }: { detail: Detail }) {
       )}
 
       <SectionLabel>Requisition requirements</SectionLabel>
-      {!r ? <p className="text-sm text-slate-500">None — no requisition mapped.</p> : (
+      {!r && detail.campaign?.screeningConfig ? (
+        <>
+          <Line k="Campaign" v={detail.campaign.name} />
+          {Object.entries(detail.campaign.screeningConfig).map(([k, v]) => (
+            <Line key={k} k={k.replace(/_/g, " ")} v={typeof v === "object" ? JSON.stringify(v) : String(v)} />
+          ))}
+        </>
+      ) : !r ? <p className="text-sm text-slate-500">None — no requisition mapped{detail.campaign?.name ? ` (${detail.campaign.name})` : ""}.</p> : (
         <>
           <Line k="Requisition" v={`${r.code ?? ""} ${r.designation ?? ""}`.trim()} />
           <Line k="Branch / process" v={[r.branch, r.process].filter(Boolean).join(" · ")} />

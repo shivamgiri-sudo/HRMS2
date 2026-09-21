@@ -26,11 +26,13 @@ export interface MetaScreeningConfig {
   written_english_level?: 'basic' | 'intermediate' | 'advanced' | null;
   /**
    * Arbitrary form-field conditions. Each rule checks a specific META form answer.
-   * op: eq | neq | contains | not_contains | gte (for numeric fields like wpm).
+   * op: eq | neq | contains | not_contains | gte (for numeric fields like wpm) | is_yes (a yes/no
+   * answer: "Yes"/"Yas"/"ok" pass, "No" fails, an ambiguous answer is skipped, never rejected;
+   * `value` is ignored).
    */
   custom_field_rules?: Array<{
     field: string;
-    op: 'eq' | 'neq' | 'contains' | 'not_contains' | 'gte';
+    op: 'eq' | 'neq' | 'contains' | 'not_contains' | 'gte' | 'is_yes';
     value: string;
     label?: string;
   }>;

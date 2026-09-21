@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1186,
-  "columnCount": 17682,
+  "columnCount": 17683,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -12790,7 +12790,8 @@
       "notes",
       "created_by",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "screening_config"
     ],
     "meta_lead_raw": [
       "id",

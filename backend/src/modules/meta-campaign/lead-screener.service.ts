@@ -174,6 +174,7 @@ function evaluateCustomRule(
   const expected = rule.value.toLowerCase();
 
   switch (rule.op) {
+    case 'is_yes':       return isAffirmative(val);
     case 'eq':           return val === expected;
     case 'neq':          return val !== expected;
     case 'contains':     return val.includes(expected);
@@ -376,7 +377,7 @@ export function screenLead(input: ScreeningInput, req: ScreeningRequirements): S
     if (!result) {
       return {
         qualified: false,
-        reason: `Custom rule failed: ${rule.label ?? rule.field} (expected ${rule.value})`,
+        reason: `Custom rule failed: ${rule.label ?? rule.field} (${rule.op === 'is_yes' ? 'expected a yes answer' : `expected ${rule.value}`})`,
         skipped,
       };
     }

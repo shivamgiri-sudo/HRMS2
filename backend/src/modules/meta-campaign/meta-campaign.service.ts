@@ -31,6 +31,7 @@ import {
 } from './meta-api.client.js';
 import { parseLead, normaliseMetaId, extractRoutingCode } from './meta-lead.parser.js';
 import { screenLead } from './lead-screener.service.js';
+import { loadCampaignScreeningConfig } from './campaign-screening.js';
 import { notifyQualifiedLead } from './lead-outreach.service.js';
 import { buildCanonicalFunnel, canonicalStage, CANONICAL_STAGE_LABEL, CANONICAL_STAGE_ORDER } from '../ats/ats-stage-model.js';
 import type {
@@ -575,12 +576,17 @@ export const metaCampaignService = {
       if (routed) campaign = routed;
     }
 
-    const rawScreeningConfig = campaign?.meta_screening_config;
+    // A campaign with no requisition yet ("JR pending") is screened only against its own
+    // campaign-level criteria, if it has any. With none it stays 'pending' — it used to be screened
+    // against nothing and so qualified (and was messaged) unchecked.
+    const hasRequisition = Boolean(campaign?.requisition_id);
+    const campaignCriteria = campaign && !hasRequisition ? await loadCampaignScreeningConfig(formId) : null;
+    const rawScreeningConfig = hasRequisition ? campaign?.meta_screening_config : campaignCriteria;
     const screeningConfig = rawScreeningConfig
       ? (typeof rawScreeningConfig === 'string' ? JSON.parse(rawScreeningConfig) : rawScreeningConfig)
       : null;
 
-    const screening = campaign
+    const screening = campaign && (hasRequisition || campaignCriteria)
       ? screenLead(
           {
             parsedAge: parsed.age,
@@ -617,7 +623,7 @@ export const metaCampaignService = {
         formId,
         leadgenId,
         campaign?.id ?? null,
-        campaign?.requisition_id ?? null,
+        campaign?.requisition_id || null,
         JSON.stringify(detail),
         parsed.name,
         parsed.phone,
@@ -1279,6 +1285,31 @@ export const metaCampaignService = {
             experienceMinYears: r.experience_min_years === null ? null : Number(r.experience_min_years),
             experienceMaxYears: r.experience_max_years === null ? null : Number(r.experience_max_years),
             screeningConfig: cfg,
+          }
+        );
+        screeningResult = result.qualified ? 'qualified' : 'disqualified';
+        reason = result.reason;
+      }
+    } else {
+      // No requisition yet ("JR pending"): screen against the campaign's own criteria if it has
+      // any; otherwise the lead stays pending, as before.
+      const campaignCfg = await loadCampaignScreeningConfig(String(lead.meta_form_id));
+      if (campaignCfg) {
+        const result = screenLead(
+          {
+            parsedAge: parsed.age,
+            parsedEducation: parsed.education,
+            parsedExperienceYr: parsed.experienceYears,
+            parsedGender: parsed.gender,
+            rawFields: parsed.rawFields,
+          },
+          {
+            metaTargetAgeMin: null,
+            metaTargetAgeMax: null,
+            educationRequirement: null,
+            experienceMinYears: null,
+            experienceMaxYears: null,
+            screeningConfig: campaignCfg,
           }
         );
         screeningResult = result.qualified ? 'qualified' : 'disqualified';

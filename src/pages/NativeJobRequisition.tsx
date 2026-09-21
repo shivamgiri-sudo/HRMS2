@@ -1750,6 +1750,7 @@ export default function NativeJobRequisition() {
                             <option value="contains">contains</option>
                             <option value="not_contains">excludes</option>
                             <option value="gte">≥ gte</option>
+                            <option value="is_yes">answered yes</option>
                           </select>
                           <input
                             type="text"

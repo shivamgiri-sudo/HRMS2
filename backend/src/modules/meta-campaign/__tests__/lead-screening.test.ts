@@ -482,3 +482,33 @@ describe('requisitionClosedReason: shortlisting is against an OPEN batch requisi
     expect(requisitionClosedReason({ ...open, closedAt: '2026-09-01' })).not.toBeNull();
   });
 });
+
+describe('custom rule op is_yes', () => {
+  const rule = { field: 'are_you_a_graduate', op: 'is_yes' as const, value: '', label: 'Graduate (must)' };
+  const run = (answer: string | null) =>
+    screenLead(
+      { ...noAnswers, parsedGender: null, rawFields: answer === null ? {} : { are_you_a_graduate: answer } },
+      { ...noRequirements, screeningConfig: { custom_field_rules: [rule] } }
+    );
+
+  it.each(['Yes', 'yes', 'Yas', 'ok'])('passes on a "%s" answer', (a) => {
+    expect(run(a).qualified).toBe(true);
+  });
+
+  it.each(['No', 'no', 'nahi'])('rejects on a "%s" answer, with a readable reason', (a) => {
+    const r = run(a);
+    expect(r.qualified).toBe(false);
+    expect(r.reason).toBe('Custom rule failed: Graduate (must) (expected a yes answer)');
+  });
+
+  it('never rejects an ambiguous answer; it is recorded as unverified instead', () => {
+    const r = run('Pursuing');
+    expect(r.qualified).toBe(true);
+  });
+
+  it('skips when the form did not ask the question', () => {
+    const r = run(null);
+    expect(r.qualified).toBe(true);
+    expect(r.skipped.join(' ')).toContain('Graduate (must)');
+  });
+});

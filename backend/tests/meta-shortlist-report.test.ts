@@ -11,6 +11,7 @@ import {
   toCsv,
 } from '../src/modules/meta-campaign/shortlist-report.service.js';
 import type { LeadRow, RequisitionInfo } from '../src/modules/meta-campaign/shortlist-report.service.js';
+import { CAMPAIGN_CRITERIA, REQUISITION_CRITERIA } from '../src/modules/meta-campaign/shortlist-criteria.js';
 
 const req = (over: Partial<RequisitionInfo>): RequisitionInfo => ({
   id: 'r-noida',
@@ -161,5 +162,84 @@ describe('toCsv', () => {
     const csv = toCsv([e]);
     expect(csv).toContain(`"'=HYPERLINK(""http://x"",""y"")"`);
     expect(csv.split('\r\n')).toHaveLength(2);
+  });
+});
+
+describe('campaign-level criteria (no requisition yet)', () => {
+  const campaigns = [
+    { formId: 'f-dra', campaignName: 'AHMEDABAD DRA', requisitionId: null, screeningConfig: { certifications: ['DRA'], auto_notify: false } },
+    { formId: 'f-tele', campaignName: 'Telesales', requisitionId: null, screeningConfig: null },
+  ];
+  const idx = indexRequisitions([req({})], campaigns);
+  const dra = (answer: string, form = 'f-dra') =>
+    evaluateLeadRow(
+      lead({ requisition_id: null, meta_form_id: form, fields: [['full_name', 'A'], ['do_you_hold_a_valid_dra_certification?', answer]] }),
+      idx
+    );
+
+  it('shortlists a DRA holder on the campaign criteria, but never as outreach-eligible', () => {
+    const e = dra('Yes');
+    expect(e.proposedResult).toBe('qualified');
+    expect(e.mappingSource).toBe('campaign_criteria');
+    expect(e.campaignName).toBe('AHMEDABAD DRA');
+    expect(e.outreachEligible).toBe(false);
+  });
+
+  it('rejects a candidate without DRA', () => {
+    const e = dra('No');
+    expect(e.proposedResult).toBe('disqualified');
+    expect(e.reason).toContain('DRA certification required');
+  });
+
+  it('leaves a campaign with no criteria unmapped, named for the report', () => {
+    const e = dra('Yes', 'f-tele');
+    expect(e.proposedResult).toBe('unmapped');
+    expect(e.campaignName).toBe('Telesales');
+  });
+
+  it('summarises requisition-less leads by campaign', () => {
+    const rows = [dra('Yes'), dra('No'), dra('Yes', 'f-tele')];
+    const byCampaign = summarise(rows, idx).byCampaign;
+    expect(byCampaign.find((c) => c.campaignName === 'AHMEDABAD DRA')).toMatchObject({ total: 2, qualified: 1, disqualified: 1 });
+    expect(byCampaign.find((c) => c.campaignName === 'Telesales')).toMatchObject({ total: 1, unscreened: 1 });
+  });
+});
+
+describe('agreed criteria data', () => {
+  const normalise = (raw: string) => raw.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+
+  it('uses only normalised field keys, so every rule can actually match a parsed form', () => {
+    const rules = Object.values(REQUISITION_CRITERIA).flatMap((c) => c.config.custom_field_rules ?? []);
+    expect(rules.length).toBeGreaterThan(0);
+    for (const r of rules) expect(r.field).toBe(normalise(r.field));
+  });
+
+  it('K7BK shortlists a graduate who accepts night shifts and rejects the rest', () => {
+    const k7 = indexRequisitions([
+      req({ id: 'r-k7', code: 'REQ-2609-K7BK', screeningConfig: REQUISITION_CRITERIA['REQ-2609-K7BK']!.config, ageMin: null, ageMax: null }),
+    ]);
+    const night = 'this_role_includes_night_shifts._are_you_willing_and_able_to_work_night_shifts?';
+    const run = (grad: string, ns: string) =>
+      evaluateLeadRow(lead({ requisition_id: 'r-k7', fields: [['full_name', 'A'], ['are_you_a_graduate?', grad], [night, ns]] }), k7).proposedResult;
+    expect(run('Yes', 'yes')).toBe('qualified');
+    expect(run('No', 'yes')).toBe('disqualified');
+    expect(run('Yes', 'No')).toBe('disqualified');
+  });
+
+  it('DZCV excludes below_12th and candidates who cannot travel, accepts can_relocate', () => {
+    const dz = indexRequisitions([
+      req({ id: 'r-dz', code: 'REQ-2609-DZCV', education: '12th pass', screeningConfig: REQUISITION_CRITERIA['REQ-2609-DZCV']!.config, ageMin: null, ageMax: null }),
+    ]);
+    const run = (q: string, t: string) =>
+      evaluateLeadRow(lead({ requisition_id: 'r-dz', fields: [['full_name', 'A'], ['qualification', q], ['can_travel_noida', t]] }), dz).proposedResult;
+    expect(run('12th', 'yes')).toBe('qualified');
+    expect(run('graduate', 'can_relocate')).toBe('qualified');
+    expect(run('12th', 'no')).toBe('disqualified');
+    expect(run('below_12th', 'yes')).toBe('disqualified');
+  });
+
+  it('Tughlakabad Telesales is not given campaign criteria', () => {
+    expect(CAMPAIGN_CRITERIA.map((c) => c.formId)).not.toContain('2524199738118576');
+    expect(CAMPAIGN_CRITERIA[0]!.config.auto_notify).toBe(false);
   });
 });
