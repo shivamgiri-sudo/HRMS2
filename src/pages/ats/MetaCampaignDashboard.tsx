@@ -26,11 +26,14 @@ import {
   BadgeCheck,
   Eye,
   Filter,
+  Footprints,
   Megaphone,
   MousePointerClick,
   RefreshCcw,
   Send,
+  ThumbsUp,
   UserCheck,
+  UserPlus,
   UserX,
   Wallet,
   X,
@@ -61,7 +64,12 @@ type Overview = {
   disqualified: number;
   pending: number;
   candidatesCreated: number;
+  walkins: number;
+  selected: number;
+  onboarded: number;
   costPerQualified: number | null;
+  costPerWalkin: number | null;
+  costPerOnboarded: number | null;
   metaConfigured: boolean;
 };
 
@@ -324,56 +332,108 @@ export default function MetaCampaignDashboard() {
         />
 
         {loading ? (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-            {Array.from({ length: 6 }).map((_, i) => (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+            {Array.from({ length: 10 }).map((_, i) => (
               <div key={i} className="h-24 animate-pulse rounded-xl bg-slate-100" />
             ))}
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-            <StatTile
-              label="Impressions"
-              value={num(overview?.impressions ?? 0)}
-              denominator="Across all campaigns"
-              icon={<Eye className="h-4 w-4" />}
-            />
-            <StatTile
-              label="Clicks"
-              value={num(overview?.clicks ?? 0)}
-              denominator={shareOf(overview?.clicks, overview?.impressions, "impressions")}
-              icon={<MousePointerClick className="h-4 w-4" />}
-            />
-            <StatTile
-              label="Form Fills"
-              value={num(overview?.formFills ?? 0)}
-              denominator={shareOf(overview?.formFills, overview?.clicks, "clicks")}
-              icon={<Send className="h-4 w-4" />}
-            />
-            <StatTile
-              label="Qualified"
-              value={num(overview?.qualified ?? 0)}
-              denominator={`${shareOf(overview?.qualified, overview?.formFills, "form fills")} · ${num(overview?.pending ?? 0)} unscreened`}
-              intent="good"
-              icon={<UserCheck className="h-4 w-4" />}
-            />
-            <StatTile
-              label="Disqualified"
-              value={num(overview?.disqualified ?? 0)}
-              denominator={shareOf(overview?.disqualified, overview?.formFills, "form fills")}
-              intent="critical"
-              icon={<UserX className="h-4 w-4" />}
-            />
-            <StatTile
-              label="Spend"
-              value={inrShort(overview?.spendInr ?? 0)}
-              denominator={
-                overview?.costPerQualified != null
-                  ? `${inrShort(overview.costPerQualified)} per qualified lead`
-                  : "Cost per qualified lead — not yet measurable"
-              }
-              icon={<Wallet className="h-4 w-4" />}
-            />
-          </div>
+          <>
+            {/* META Funnel: Impressions → Clicks → Form Fills → Qualified/Disqualified */}
+            <div className="rounded-xl border border-slate-200 bg-gradient-to-r from-blue-50 to-indigo-50 p-4">
+              <h3 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-blue-700">
+                <Megaphone className="h-4 w-4" /> META Ad Funnel
+              </h3>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+                <StatTile
+                  label="Impressions"
+                  value={num(overview?.impressions ?? 0)}
+                  denominator="Across all campaigns"
+                  icon={<Eye className="h-4 w-4" />}
+                />
+                <StatTile
+                  label="Clicks"
+                  value={num(overview?.clicks ?? 0)}
+                  denominator={shareOf(overview?.clicks, overview?.impressions, "impressions")}
+                  icon={<MousePointerClick className="h-4 w-4" />}
+                />
+                <StatTile
+                  label="Form Fills"
+                  value={num(overview?.formFills ?? 0)}
+                  denominator={shareOf(overview?.formFills, overview?.clicks, "clicks")}
+                  icon={<Send className="h-4 w-4" />}
+                />
+                <StatTile
+                  label="Qualified"
+                  value={num(overview?.qualified ?? 0)}
+                  denominator={`${shareOf(overview?.qualified, overview?.formFills, "form fills")} · ${num(overview?.pending ?? 0)} pending`}
+                  intent="good"
+                  icon={<UserCheck className="h-4 w-4" />}
+                />
+                <StatTile
+                  label="Disqualified"
+                  value={num(overview?.disqualified ?? 0)}
+                  denominator={shareOf(overview?.disqualified, overview?.formFills, "form fills")}
+                  intent="critical"
+                  icon={<UserX className="h-4 w-4" />}
+                />
+                <StatTile
+                  label="Ad Spend"
+                  value={inrShort(overview?.spendInr ?? 0)}
+                  denominator={
+                    overview?.costPerQualified != null
+                      ? `${inrShort(overview.costPerQualified)} per qualified`
+                      : "Cost per qualified — not measurable"
+                  }
+                  icon={<Wallet className="h-4 w-4" />}
+                />
+              </div>
+            </div>
+
+            {/* ATS Funnel: Walk-ins → Selections → Onboardings */}
+            <div className="rounded-xl border border-slate-200 bg-gradient-to-r from-emerald-50 to-teal-50 p-4">
+              <h3 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-emerald-700">
+                <Footprints className="h-4 w-4" /> Recruitment Funnel (from Campaign Leads)
+              </h3>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <StatTile
+                  label="ATS Candidates"
+                  value={num(overview?.candidatesCreated ?? 0)}
+                  denominator={shareOf(overview?.candidatesCreated, overview?.qualified, "qualified leads")}
+                  icon={<UserPlus className="h-4 w-4" />}
+                />
+                <StatTile
+                  label="Walk-ins"
+                  value={num(overview?.walkins ?? 0)}
+                  denominator={
+                    overview?.costPerWalkin != null
+                      ? `${inrShort(overview.costPerWalkin)} per walk-in`
+                      : shareOf(overview?.walkins, overview?.candidatesCreated, "ATS candidates")
+                  }
+                  intent="good"
+                  icon={<Footprints className="h-4 w-4" />}
+                />
+                <StatTile
+                  label="Selected"
+                  value={num(overview?.selected ?? 0)}
+                  denominator={shareOf(overview?.selected, overview?.walkins, "walk-ins")}
+                  intent="good"
+                  icon={<ThumbsUp className="h-4 w-4" />}
+                />
+                <StatTile
+                  label="Onboarded"
+                  value={num(overview?.onboarded ?? 0)}
+                  denominator={
+                    overview?.costPerOnboarded != null
+                      ? `${inrShort(overview.costPerOnboarded)} per onboarding`
+                      : shareOf(overview?.onboarded, overview?.selected, "selected")
+                  }
+                  intent="good"
+                  icon={<BadgeCheck className="h-4 w-4" />}
+                />
+              </div>
+            </div>
+          </>
         )}
 
         <ChartCard

@@ -992,7 +992,12 @@ export const metaCampaignService = {
     disqualified: number;
     pending: number;
     candidatesCreated: number;
+    walkins: number;
+    selected: number;
+    onboarded: number;
     costPerQualified: number | null;
+    costPerWalkin: number | null;
+    costPerOnboarded: number | null;
     metaConfigured: boolean;
   }> {
     const [c] = await db.execute<RowDataPacket[]>(
@@ -1011,8 +1016,24 @@ export const metaCampaignService = {
               SUM(CASE WHEN ats_candidate_id IS NOT NULL THEN 1 ELSE 0 END)      AS candidates
          FROM meta_lead_raw`
     );
+
+    // ATS funnel stages for candidates from META campaigns — uses the canonical stage mapping
+    // to handle the variant labels (Arrival/Arrived, converted/onboarded, etc.)
+    const [ats] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         SUM(CASE WHEN LOWER(c.current_stage) IN ('arrival', 'arrived') THEN 1 ELSE 0 END) AS walkins,
+         SUM(CASE WHEN LOWER(c.current_stage) IN ('selected', 'selection discussion') THEN 1 ELSE 0 END) AS selected,
+         SUM(CASE WHEN LOWER(c.current_stage) IN ('onboarded', 'converted', 'payroll_validated') THEN 1 ELSE 0 END) AS onboarded
+       FROM meta_lead_raw ml
+       JOIN ats_candidate c ON c.id = ml.ats_candidate_id
+       WHERE ml.ats_candidate_id IS NOT NULL`
+    );
+
     const spend = Number(c[0]?.spend_inr ?? 0);
     const qualified = Number(l[0]?.qualified ?? 0);
+    const walkins = Number(ats[0]?.walkins ?? 0);
+    const onboarded = Number(ats[0]?.onboarded ?? 0);
+
     return {
       campaigns: Number(c[0]?.campaigns ?? 0),
       activeCampaigns: Number(c[0]?.active_campaigns ?? 0),
@@ -1024,7 +1045,12 @@ export const metaCampaignService = {
       disqualified: Number(l[0]?.disqualified ?? 0),
       pending: Number(l[0]?.pending ?? 0),
       candidatesCreated: Number(l[0]?.candidates ?? 0),
+      walkins,
+      selected: Number(ats[0]?.selected ?? 0),
+      onboarded,
       costPerQualified: spend > 0 && qualified > 0 ? spend / qualified : null,
+      costPerWalkin: spend > 0 && walkins > 0 ? spend / walkins : null,
+      costPerOnboarded: spend > 0 && onboarded > 0 ? spend / onboarded : null,
       metaConfigured: isMetaConfigured(),
     };
   },
