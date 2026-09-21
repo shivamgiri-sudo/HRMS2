@@ -277,7 +277,7 @@ export function MetaWhatsAppInbox() {
 
   useEffect(() => {
     hrmsApi
-      .get<{ success: boolean; data: Array<{ id: string; requisition_code: string; designation_name: string | null; branch_name: string | null }> }>("/api/meta/job-requisition?limit=100")
+      .get<{ success: boolean; data: Array<{ id: string; requisition_code: string; designation_name: string | null; branch_name: string | null }> }>("/api/job-requisition?limit=100&approval_status=approved")
       .then((res) => {
         setRequisitions((res.data ?? []).map((r) => ({
           id: String(r.id),
