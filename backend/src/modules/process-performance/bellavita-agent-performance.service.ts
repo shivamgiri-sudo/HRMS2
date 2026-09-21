@@ -89,7 +89,7 @@ export async function getBellavitaAgentPerformance(from: string, to: string): Pr
        MAX(team_leader) AS team_leader,
        MAX(lob) AS lob,
        MAX(tenure) AS tenure,
-       SUM(CAST(attendance_1 AS DECIMAL(6,2))) AS attendance_days,
+       SUM(CASE WHEN attendance_1 = 'P' THEN 1 WHEN attendance_1 = 'HD' THEN 0.5 ELSE CAST(attendance_1 AS DECIMAL(6,2)) END) AS attendance_days,
        SUM(TIME_TO_SEC(actual_login_hrs)) AS login_seconds,
        SUM(TIME_TO_SEC(total_break)) AS break_seconds,
        SUM(TIME_TO_SEC(talk_time)) AS talk_seconds,
@@ -97,8 +97,16 @@ export async function getBellavitaAgentPerformance(from: string, to: string): Pr
      FROM db_masmis.bb_apr
      WHERE report_date >= ? AND report_date < DATE_ADD(?, INTERVAL 1 DAY)
        AND noiid IS NOT NULL AND noiid != ''
+       -- bb_apr is re-uploaded verbatim (Sep 2026: every agent-day exists 3x,
+       -- same unique_id), so keep ONE row per unique_id (the first, complete
+       -- upload) or attendance/login/break/talk hours are inflated 3x.
+       AND id IN (
+         SELECT MIN(id) FROM db_masmis.bb_apr
+         WHERE report_date >= ? AND report_date < DATE_ADD(?, INTERVAL 1 DAY)
+         GROUP BY unique_id
+       )
      GROUP BY noiid`,
-    range,
+    [...range, ...range],
   );
 
   const [saleRows] = await db.execute<SaleAggRow[]>(
@@ -119,10 +127,13 @@ export async function getBellavitaAgentPerformance(from: string, to: string): Pr
   );
 
   const saleByAgent = new Map<string, SaleAggRow>();
-  for (const r of saleRows) saleByAgent.set(r.emp_id, r);
+  // Keys are upper-cased: MySQL's case-insensitive GROUP BY hands back an
+  // arbitrary-case emp_id ("mas57478" vs APR's "MAS57478"), and a
+  // case-sensitive JS Map would split one agent into two rows.
+  for (const r of saleRows) saleByAgent.set(r.emp_id.toUpperCase(), r);
 
   const rows: BellavitaAgentPerformanceRow[] = aprRows.map((a) => {
-    const s = saleByAgent.get(a.noiid);
+    const s = saleByAgent.get(a.noiid.toUpperCase());
     const saleCount = num(s?.sale_count);
     const revenue = num(s?.revenue);
     const codCount = num(s?.cod_count);
@@ -157,9 +168,9 @@ export async function getBellavitaAgentPerformance(from: string, to: string): Pr
   // Agents who sold but have no bb_apr attendance row in range (e.g. their
   // APR file wasn't uploaded that day) -- included too, rather than
   // silently dropping real sales from the report.
-  const aprAgentIds = new Set(aprRows.map((a) => a.noiid));
+  const aprAgentIds = new Set(aprRows.map((a) => a.noiid.toUpperCase()));
   for (const s of saleRows) {
-    if (aprAgentIds.has(s.emp_id)) continue;
+    if (aprAgentIds.has(s.emp_id.toUpperCase())) continue;
     const saleCount = num(s.sale_count);
     const revenue = num(s.revenue);
     const codCount = num(s.cod_count);

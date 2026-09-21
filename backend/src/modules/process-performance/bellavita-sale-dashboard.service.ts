@@ -195,7 +195,12 @@ export function currentMonthRange(): { from: string; to: string } {
 }
 
 /**
- * One row per bella_vita_order_id (MIN(id) as the representative),
+ * One row per bella_vita_order_id (MAX(id) = the LATEST upload is the
+ * representative; the alias below is still named min_id). Re-uploads refresh
+ * final_status/RTO and agent attribution, so MIN(id) kept the stale first
+ * upload and understated RTO: 1-13 Sep 2026 RTO was 190 (7.61%) with MIN(id)
+ * vs 292 (11.69%) with MAX(id); amount/payment_status/state never differ
+ * across the copies),
  * restricted to calling_status='Sale Made' and the date range -- every
  * bb_sale aggregate below reads from this instead of the raw table. Takes
  * its own [from, to] pair since it's re-embedded per query (MySQL has no
@@ -206,7 +211,7 @@ export function dedupedSaleSql(): string {
     SELECT s.*
     FROM db_masmis.bb_sale s
     INNER JOIN (
-      SELECT bella_vita_order_id, MIN(id) AS min_id
+      SELECT bella_vita_order_id, MAX(id) AS min_id
       FROM db_masmis.bb_sale
       WHERE \`Date\` >= ? AND \`Date\` < DATE_ADD(?, INTERVAL 1 DAY)
         AND calling_status = 'Sale Made'

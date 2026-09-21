@@ -45,6 +45,17 @@ interface AgentRow {
   saleChatCount: number; conversionPct: number;
   resolvedPct: number; avgWaitTimeMin: number;
 }
+interface PeriodColumn { key: string; label: string; kind: "week" | "day" }
+interface PeriodMetrics {
+  totalTickets: number; uniqueCount: number; repeatCount: number; resolvedPct: number; repeatPct: number;
+  avgFrtMin: number; avgResolutionMin: number; avgWaitTimeMin: number; activeAgents: number; activeTls: number;
+}
+interface PeriodBreakdown {
+  columns: PeriodColumn[];
+  metrics: Record<string, PeriodMetrics>;
+  dispositions: Record<string, Record<string, number>>;
+  dailyColumnsOmitted: boolean;
+}
 interface DashboardData {
   headline: Headline; from: string; to: string;
   dateWiseTrend: TrendRow[]; dispositionBreakdown: DispositionRow[]; byTl: TlRow[]; agents: AgentRow[];
@@ -97,6 +108,22 @@ export function BellavitaChatDashboard() {
   const needsLegacy = tab === "tl" || tab === "agents" || tab === "legacy";
   useEffect(() => { if (needsLegacy) void load(); }, [load, needsLegacy]);
 
+  // Week-wise / date-wise figures for the export: every download carries a Value column plus
+  // one column per week and per day. Loaded alongside the page so the export is never missing them.
+  const [periods, setPeriods] = useState<PeriodBreakdown | null>(null);
+  const [periodsState, setPeriodsState] = useState<"loading" | "ready" | "failed">("loading");
+  useEffect(() => {
+    if (!needsLegacy) return;
+    let cancelled = false;
+    setPeriodsState("loading");
+    const lobQs = lob ? `&lob=${encodeURIComponent(lob)}` : "";
+    hrmsApi
+      .get<{ success: boolean; data: PeriodBreakdown }>(`${CHAT_API}/period-breakdown?from=${from}&to=${to}${lobQs}`)
+      .then((res) => { if (!cancelled) { setPeriods(res.data); setPeriodsState("ready"); } })
+      .catch(() => { if (!cancelled) { setPeriods(null); setPeriodsState("failed"); } });
+    return () => { cancelled = true; };
+  }, [from, to, lob, needsLegacy]);
+
   const filteredAgents = useMemo(() => {
     const rows = data?.agents ?? [];
     const q = agentSearch.trim().toLowerCase();
@@ -106,25 +133,40 @@ export function BellavitaChatDashboard() {
 
   const exportSlides = useMemo<ExportSlide[]>(() => {
     if (!data) return [];
+    const hl = data.headline;
+    // Metric | Value | W-1 .. W-n | 1-Sep .. n -- the Value column is the whole selected range.
+    const p = periods;
+    const periodHead = (p?.columns ?? []).map((c) => c.label);
+    const metricDefs: Array<{ label: string; range: string | number; pick: (m: PeriodMetrics) => string | number }> = [
+      { label: "Total Tickets", range: hl.totalTickets, pick: (m) => m.totalTickets },
+      { label: "Unique Chats", range: hl.uniqueCount, pick: (m) => m.uniqueCount },
+      { label: "Repeat Chats", range: hl.repeatCount, pick: (m) => m.repeatCount },
+      { label: "Resolved %", range: `${hl.resolvedPct}%`, pick: (m) => `${m.resolvedPct}%` },
+      { label: "Repeat %", range: `${hl.repeatPct}%`, pick: (m) => `${m.repeatPct}%` },
+      { label: "Avg FRT", range: `${hl.avgFrtMin}m`, pick: (m) => `${m.avgFrtMin}m` },
+      { label: "Avg Resolution", range: `${hl.avgResolutionMin}m`, pick: (m) => `${m.avgResolutionMin}m` },
+      { label: "Avg Wait Time", range: `${hl.avgWaitTimeMin}m`, pick: (m) => `${m.avgWaitTimeMin}m` },
+      { label: "Active Agents", range: hl.activeAgents, pick: (m) => m.activeAgents },
+      { label: "Active TLs", range: hl.activeTls, pick: (m) => m.activeTls },
+    ];
     const overview: ExportSlide = {
       title: "Overview",
-      kpis: [
-        { label: "Total Tickets", value: data.headline.totalTickets.toLocaleString("en-IN") },
-        { label: "Unique Chats", value: data.headline.uniqueCount.toLocaleString("en-IN") },
-        { label: "Repeat Chats", value: data.headline.repeatCount.toLocaleString("en-IN") },
-        { label: "Resolved %", value: `${data.headline.resolvedPct}%` },
-        { label: "Repeat %", value: `${data.headline.repeatPct}%` },
-        { label: "Avg FRT", value: `${data.headline.avgFrtMin}m` },
-        { label: "Avg Resolution", value: `${data.headline.avgResolutionMin}m` },
-        { label: "Avg Wait Time", value: `${data.headline.avgWaitTimeMin}m` },
-        { label: "Active Agents", value: String(data.headline.activeAgents) },
-        { label: "Active TLs", value: String(data.headline.activeTls) },
+      tables: [
+        {
+          title: "Overview metrics",
+          columns: ["Metric", "Value", ...periodHead],
+          rows: metricDefs.map((d) => [
+            d.label, d.range, ...(p?.columns ?? []).map((c) => (p?.metrics[c.key] ? d.pick(p.metrics[c.key]) : 0)),
+          ]),
+        },
+        {
+          title: "Disposition Breakdown",
+          columns: ["Disposition", "Count", "Share", ...periodHead],
+          rows: data.dispositionBreakdown.map((d) => [
+            d.disposition, d.count, `${d.pct}%`, ...(p?.columns ?? []).map((c) => p?.dispositions[c.key]?.[d.disposition] ?? 0),
+          ]),
+        },
       ],
-      tables: [{
-        title: "Disposition Breakdown",
-        columns: ["Disposition", "Count", "Share"],
-        rows: data.dispositionBreakdown.map((d) => [d.disposition, d.count, `${d.pct}%`]),
-      }],
     };
     const tl: ExportSlide = {
       title: "TL-wise",
@@ -149,7 +191,7 @@ export function BellavitaChatDashboard() {
       }],
     };
     return [overview, tl, agentsSlide];
-  }, [data]);
+  }, [data, periods]);
 
   const headline = data?.headline;
 
@@ -162,7 +204,9 @@ export function BellavitaChatDashboard() {
       />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        {needsLegacy ? (
+        {needsLegacy && periodsState === "loading" ? (
+          <span className="rounded-lg bg-slate-100 px-3 py-1.5 text-[11px] font-semibold text-slate-500">Preparing week &amp; date columns for export…</span>
+        ) : needsLegacy ? (
           <DashboardExportMenu
             reportTitle="Bellavita — Chat Performance"
             fileBaseName="Bellavita_Chat"
@@ -192,6 +236,12 @@ export function BellavitaChatDashboard() {
           />
         </div>
       </div>
+
+      {needsLegacy && periodsState === "failed" && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-700">
+          The week-wise and date-wise figures couldn't be loaded, so a download from this tab would only carry the overall Value column. Change the date range or reload to retry.
+        </div>
+      )}
 
       {tab === "overview" && (
         <BellavitaChatOverview

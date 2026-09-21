@@ -242,8 +242,8 @@ export function NeemansPerformanceDashboard() {
       kpis: [
         { label: "Total Tickets", value: String(chat.headline.totalTickets) },
         { label: "Resolved %", value: `${chat.headline.resolvedPct}%` },
-        { label: "Avg FRT", value: `${chat.headline.avgFrtHrs}h` },
-        { label: "Avg Resolution", value: `${chat.headline.avgResolutionHrs}h` },
+        { label: "Avg FRT", value: `${chat.headline.avgFrtHrs}m` },
+        { label: "Avg Resolution", value: `${chat.headline.avgResolutionHrs}m` },
         { label: "Avg CSAT", value: String(chat.headline.avgCsat) },
         { label: "FRT TAT Compliance %", value: `${chat.headline.frtTatCompliancePct}%` },
         { label: "Resolution TAT Compliance %", value: `${chat.headline.resolutionTatCompliancePct}%` },
@@ -301,6 +301,12 @@ export function NeemansPerformanceDashboard() {
   if (!data) return null;
 
   const { sale, allocation, chat, productivity } = data;
+  /** Orders placed / total numbers allocated -- matches the reference management
+   * workbook's "Conversion %" (Neeman's Billing Sep 26.xlsb, sheet "Dashboard": Total
+   * Orders / Workable Data). See NeemansOverviewTab for the same computation. */
+  const conversionPct = allocation.headline.totalAllocation > 0
+    ? Math.round((sale.headline.saleCount / allocation.headline.totalAllocation) * 10000) / 100
+    : 0;
 
   return (
     <div className="space-y-5">
@@ -407,6 +413,37 @@ export function NeemansPerformanceDashboard() {
           </div>
         </SectionCard>
 
+        <SectionCard
+          icon={ListTree} title="Order Status Breakdown" tone="teal"
+          footnote="neemans_sale_raw.current_status — the shipment/fulfilment status (Delivered/RTO/Dispatched/Cancelled/Unfulfilled/...), not the same as the payment-status or RTO% cards above."
+        >
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
+                  <th className="py-2 pr-3 font-semibold">Status</th>
+                  <th className="py-2 pr-3 text-right font-semibold">Orders</th>
+                  <th className="py-2 pr-3 text-right font-semibold">Revenue</th>
+                  <th className="py-2 pr-0 text-right font-semibold">Share</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sale.orderStatusBreakdown.map((r) => (
+                  <tr key={r.status} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-teal-50/40">
+                    <td className="py-2.5 pr-3 font-medium text-slate-700">{r.status}</td>
+                    <td className="py-2.5 pr-3 text-right text-slate-600">{r.count.toLocaleString("en-IN")}</td>
+                    <td className="py-2.5 pr-3 text-right font-semibold text-slate-800">{formatINR(r.revenue)}</td>
+                    <td className="py-2.5 pr-0 text-right text-slate-600">{r.pct}%</td>
+                  </tr>
+                ))}
+                {sale.orderStatusBreakdown.length === 0 && (
+                  <tr><td colSpan={4} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </SectionCard>
+
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="relative w-full max-w-sm">
@@ -462,7 +499,7 @@ export function NeemansPerformanceDashboard() {
 
       {tab === "allocation" && (
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
           <KpiCard icon={ClipboardList} label="Total Allocation" value={allocation.headline.totalAllocation.toLocaleString("en-IN")} tone="violet" />
           <KpiCard icon={PhoneCall} label="Connected" value={allocation.headline.connected.toLocaleString("en-IN")} tone="emerald" />
           <KpiCard icon={Gauge} label="Connected %" value={`${allocation.headline.connectedPct}%`} tone="teal" />
@@ -470,6 +507,7 @@ export function NeemansPerformanceDashboard() {
           <KpiCard icon={Clock3} label="Pending" value={allocation.headline.pending.toLocaleString("en-IN")} tone="amber" />
           <KpiCard icon={Users} label="Unique Phones" value={allocation.headline.uniquePhones.toLocaleString("en-IN")} tone="sky" />
           <KpiCard icon={Users} label="Active Agents" value={String(allocation.headline.activeAgents)} tone="indigo" />
+          <KpiCard icon={Target} label="Conversion %" value={`${conversionPct}%`} tone="cyan" sub="orders / allocation" />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-3">
@@ -559,8 +597,8 @@ export function NeemansPerformanceDashboard() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
           <KpiCard icon={MessageSquare} label="Total Tickets" value={String(chat.headline.totalTickets)} tone="indigo" />
           <KpiCard icon={Gauge} label="Resolved %" value={`${chat.headline.resolvedPct}%`} tone="emerald" />
-          <KpiCard icon={Clock3} label="Avg FRT" value={`${chat.headline.avgFrtHrs}h`} tone="sky" />
-          <KpiCard icon={Clock3} label="Avg Resolution" value={`${chat.headline.avgResolutionHrs}h`} tone="violet" />
+          <KpiCard icon={Clock3} label="Avg FRT" value={`${chat.headline.avgFrtHrs}m`} tone="sky" />
+          <KpiCard icon={Clock3} label="Avg Resolution" value={`${chat.headline.avgResolutionHrs}m`} tone="violet" />
           <KpiCard icon={Trophy} label="Avg CSAT" value={String(chat.headline.avgCsat)} tone="amber" />
           <KpiCard icon={ShieldCheck} label="FRT TAT Compliance" value={`${chat.headline.frtTatCompliancePct}%`} tone="teal" sub="frt_tat = IN TAT" />
           <KpiCard icon={ShieldCheck} label="Resolution TAT Compliance" value={`${chat.headline.resolutionTatCompliancePct}%`} tone="cyan" sub="resolution_tat = IN TAT" />
@@ -612,6 +650,35 @@ export function NeemansPerformanceDashboard() {
                   </tr>
                 ))}
                 {chat.byLob.length === 0 && (
+                  <tr><td colSpan={3} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </SectionCard>
+
+        <SectionCard
+          icon={Layers} title="Channel-wise Tickets" tone="sky"
+          footnote="neemans_chat.inbox_name — the actual inbox (WhatsApp, Instagram, Facebook, Email), a finer grain than the LOB view above."
+        >
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
+                  <th className="py-2 pr-3 font-semibold">Channel</th>
+                  <th className="py-2 pr-3 text-right font-semibold">Tickets</th>
+                  <th className="py-2 pr-0 text-right font-semibold">Resolved %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {chat.channelBreakdown.map((r) => (
+                  <tr key={r.channel} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-sky-50/40">
+                    <td className="py-2.5 pr-3 font-medium text-slate-700">{r.channel}</td>
+                    <td className="py-2.5 pr-3 text-right text-slate-600">{r.tickets}</td>
+                    <td className={`py-2.5 pr-0 text-right font-semibold ${resolvedClass(r.resolvedPct)}`}>{r.resolvedPct}%</td>
+                  </tr>
+                ))}
+                {chat.channelBreakdown.length === 0 && (
                   <tr><td colSpan={3} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
                 )}
               </tbody>
@@ -690,6 +757,37 @@ export function NeemansPerformanceDashboard() {
             />
           </SectionCard>
         </div>
+
+        <SectionCard
+          icon={Layers} title="LOB-wise Productivity" tone="indigo"
+          footnote="neemans_apr.lob — currently only Cart-process APR files have ever been uploaded to this table (for any month), so this shows one row today. Chat/Inbound/Email/Social Media rows will appear here automatically once their APR exports are uploaded."
+        >
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
+                  <th className="py-2 pr-3 font-semibold">LOB</th>
+                  <th className="py-2 pr-3 text-right font-semibold">Calls</th>
+                  <th className="py-2 pr-3 text-right font-semibold">Agents</th>
+                  <th className="py-2 pr-0 text-right font-semibold">Avg Occupancy %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {productivity.lobBreakdown.map((r) => (
+                  <tr key={r.lob} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-indigo-50/40">
+                    <td className="py-2.5 pr-3 font-medium text-slate-700">{r.lob}</td>
+                    <td className="py-2.5 pr-3 text-right text-slate-600">{r.calls.toLocaleString("en-IN")}</td>
+                    <td className="py-2.5 pr-3 text-right text-slate-600">{r.agents}</td>
+                    <td className="py-2.5 pr-0 text-right font-semibold text-slate-800">{r.avgOccupancyPct}%</td>
+                  </tr>
+                ))}
+                {productivity.lobBreakdown.length === 0 && (
+                  <tr><td colSpan={4} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </SectionCard>
 
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">

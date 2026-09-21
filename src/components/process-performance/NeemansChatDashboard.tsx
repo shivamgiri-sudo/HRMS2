@@ -61,8 +61,8 @@ export function NeemansChatDashboard() {
       kpis: [
         { label: "Total Tickets", value: String(data.headline.totalTickets) },
         { label: "Resolved %", value: `${data.headline.resolvedPct}%` },
-        { label: "Avg FRT", value: `${data.headline.avgFrtHrs}h` },
-        { label: "Avg Resolution", value: `${data.headline.avgResolutionHrs}h` },
+        { label: "Avg FRT", value: `${data.headline.avgFrtHrs}m` },
+        { label: "Avg Resolution", value: `${data.headline.avgResolutionHrs}m` },
         { label: "Avg CSAT", value: String(data.headline.avgCsat || "—") },
       ],
       tables: [
@@ -117,8 +117,8 @@ export function NeemansChatDashboard() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <KpiCard icon={MessageSquare} label="Total Tickets" value={String(headline.totalTickets)} tone="indigo" />
         <KpiCard icon={Gauge} label="Resolved %" value={`${headline.resolvedPct}%`} tone="emerald" sub={headline.resolvedPct >= 90 ? "on target" : headline.resolvedPct >= 75 ? "watch" : "needs attention"} />
-        <KpiCard icon={Clock3} label="Avg FRT" value={`${headline.avgFrtHrs}h`} tone="sky" sub="first response time" />
-        <KpiCard icon={Clock3} label="Avg Resolution" value={`${headline.avgResolutionHrs}h`} tone="violet" sub="ticket close time" />
+        <KpiCard icon={Clock3} label="Avg FRT" value={`${headline.avgFrtHrs}m`} tone="sky" sub="first response time" />
+        <KpiCard icon={Clock3} label="Avg Resolution" value={`${headline.avgResolutionHrs}m`} tone="violet" sub="ticket close time" />
         <KpiCard icon={Trophy} label="Avg CSAT" value={String(headline.avgCsat || "—")} tone="amber" sub="customer rating" />
       </div>
 

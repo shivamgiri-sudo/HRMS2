@@ -271,7 +271,8 @@ function renderPdfSlideBody(doc: AutoTableDoc, slide: ExportSlide, startY: numbe
       body: table.rows,
       theme: "striped",
       headStyles: { fillColor: [71, 85, 105] },
-      styles: { fontSize: 8, cellPadding: 2 },
+      // Week-wise / date-wise tables run to 20-40 columns: shrink the type so they fit the page.
+      styles: { fontSize: table.columns.length > 28 ? 5 : table.columns.length > 16 ? 6 : 8, cellPadding: table.columns.length > 16 ? 1 : 2 },
       margin: { left: 14, right: 14 },
     });
     y = (doc.lastAutoTable?.finalY ?? y) + 10;
@@ -288,7 +289,12 @@ export function exportSlidesToPdf(params: {
   fileName: string; reportTitle: string; subtitle?: string; slides: ExportSlide[];
 }): void {
   const { fileName, reportTitle, subtitle, slides } = params;
-  const doc = new jsPDF() as AutoTableDoc;
+  // Wide (week / date column) tables need a landscape page, and a larger sheet when very wide.
+  const maxColumns = Math.max(0, ...slides.flatMap((s) => (s.tables ?? []).map((t) => t.columns.length)));
+  const doc = new jsPDF({
+    orientation: maxColumns > 10 ? "landscape" : "portrait",
+    format: maxColumns > 20 ? "a3" : "a4",
+  }) as AutoTableDoc;
   const list = slides.length > 0 ? slides : [{ title: "No data" } satisfies ExportSlide];
 
   list.forEach((slide, i) => {

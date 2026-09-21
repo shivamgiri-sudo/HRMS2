@@ -1,7 +1,7 @@
 import { Router, type NextFunction, type Response } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { getBellavitaChatDashboard, getBellavitaChatLobSnapshot } from "./bellavita-chat-dashboard.service.js";
+import { getBellavitaChatDashboard, getBellavitaChatLobSnapshot, getBellavitaChatPeriodBreakdown } from "./bellavita-chat-dashboard.service.js";
 import {
   getBellavitaChatOverview, getBellavitaChatPeriodDetail, setPlannedCapacity,
   parseUserType, CHAT_USER_TYPES, type ChatUserType,
@@ -26,6 +26,16 @@ router.get("/bellavita-chat-dashboard", requireRole(...VIEWER_ROLES), h(async (r
   const lob = req.query.lob ? String(req.query.lob) : undefined;
   const data = await getBellavitaChatDashboard(from, to, lob);
   res.json({ success: true, data });
+}));
+
+router.get("/bellavita-chat-dashboard/period-breakdown", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const lob = req.query.lob ? String(req.query.lob) : undefined;
+  try {
+    const data = await getBellavitaChatPeriodBreakdown(String(req.query.from ?? ""), String(req.query.to ?? ""), lob);
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(400).json({ success: false, error: err instanceof Error ? err.message : "Invalid range" });
+  }
 }));
 
 router.get("/bellavita-chat-dashboard/lob-snapshot", requireRole(...VIEWER_ROLES), h(async (_req, res) => {

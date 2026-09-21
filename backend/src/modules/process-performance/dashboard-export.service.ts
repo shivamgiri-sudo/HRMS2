@@ -224,7 +224,7 @@ async function writeMasmisRaw(
 
   const [colRows] = await db.query<RowDataPacket[]>(`SHOW COLUMNS FROM db_masmis.\`${src.table}\``);
   const allCols = colRows.map((c) => String(c.Field));
-  const cols = allCols.filter((c) => !EXCLUDED_RAW_COLUMNS.has(c));
+  const cols = allCols.filter((c) => !EXCLUDED_RAW_COLUMNS.has(c) && !(src.excludeColumns ?? []).includes(c));
   const hasId = allCols.includes("id");
   const select = cols.map((c) => `\`${c}\``).join(", ");
 

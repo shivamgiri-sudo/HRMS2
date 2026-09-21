@@ -4,16 +4,22 @@ import {
 } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
-  Users, PhoneCall, Heart, TrendingUp, IndianRupee, Wallet, Timer, Map, Tag, Award,
+  Users, PhoneCall, Heart, TrendingUp, IndianRupee, Wallet, Timer, Map, Tag, Award, Package, ListChecks,
 } from "lucide-react";
 import { DashboardExportMenu, type ExportSlide } from "./DashboardKit";
 
 interface GroupRow { label: string; leads: number; connected: number; connectedPct: number; converted: number; conversionPct: number; saleValue: number }
+interface MonthlyFunnelRow {
+  monthKey: string; month: string; enquiriesReceived: number; connected: number; connectedPct: number;
+  validated: number; elvaPct: number; qualified: number; elqPct: number; converted: number; elcoPct: number;
+  volMt: number; valueInr: number;
+}
 interface DashboardData {
   headline: {
     totalLeads: number; connected: number; connectedPct: number; interested: number; interestedPct: number;
     converted: number; conversionPct: number; totalSaleValue: number; avgOrderValue: number;
     tatTracked: number; tatWithin: number; tatCompliancePct: number;
+    qualified: number; qualifiedPct: number; totalVolumeMt: number;
   };
   byLeadCloserStatus: { status: string; count: number; saleValue: number }[];
   byBusiness: GroupRow[];
@@ -23,6 +29,8 @@ interface DashboardData {
   byZone: GroupRow[];
   byAgent: GroupRow[];
   dailyTrend: { date: string; leads: number; saleValue: number }[];
+  monthlyFunnel: MonthlyFunnelRow[];
+  tatBucketDistribution: { bucket: string; count: number }[];
   productivity: { agentsInRoster: number; agentsWithMetrics: number; note: string };
 }
 
@@ -145,12 +153,27 @@ export function BirlanuDashboard() {
         { label: "Total Leads", value: headline.totalLeads.toLocaleString("en-IN") },
         { label: "Connected %", value: `${headline.connectedPct}%` },
         { label: "Interested %", value: `${headline.interestedPct}%` },
+        { label: "Qualified %", value: `${headline.qualifiedPct}%` },
         { label: "Conversion %", value: `${headline.conversionPct}%` },
         { label: "Total Sale Value", value: formatINR(headline.totalSaleValue) },
         { label: "Avg Order Value", value: formatINR(headline.avgOrderValue) },
+        { label: "Volume (MT)", value: headline.totalVolumeMt.toLocaleString("en-IN") },
         { label: "TAT Compliance", value: headline.tatTracked ? `${headline.tatCompliancePct}%` : "—" },
       ],
       tables: [
+        {
+          title: "Monthly Contact Center Flow",
+          columns: ["Month", "Enquiries", "Connected", "Connect%", "Validated", "ELVa%", "Qualified", "ELQ%", "Converted", "ELCo%", "Vol (MT)", "Value"],
+          rows: data.monthlyFunnel.map((m) => [
+            m.month, m.enquiriesReceived, m.connected, `${m.connectedPct}%`, m.validated, `${m.elvaPct}%`,
+            m.qualified, `${m.elqPct}%`, m.converted, `${m.elcoPct}%`, m.volMt, formatINR(m.valueInr),
+          ]),
+        },
+        {
+          title: "Lead TAT Bucket Distribution",
+          columns: ["Bucket", "Count"],
+          rows: data.tatBucketDistribution.map((b) => [b.bucket, b.count]),
+        },
         {
           title: "Lead Closer Status",
           columns: ["Status", "Count", "Sale Value"],
@@ -223,9 +246,11 @@ export function BirlanuDashboard() {
         <KpiCard icon={Users} label="Total Leads" value={headline.totalLeads.toLocaleString("en-IN")} tone="bg-indigo-50 text-indigo-600" />
         <KpiCard icon={PhoneCall} label="Connected %" value={`${headline.connectedPct}%`} sub={`${headline.connected} of ${headline.totalLeads}`} tone="bg-sky-50 text-sky-600" />
         <KpiCard icon={Heart} label="Interested %" value={`${headline.interestedPct}%`} sub={`${headline.interested} leads`} tone="bg-rose-50 text-rose-600" />
+        <KpiCard icon={ListChecks} label="Qualified %" value={`${headline.qualifiedPct}%`} sub={`${headline.qualified} assigned to sales`} tone="bg-fuchsia-50 text-fuchsia-600" />
         <KpiCard icon={TrendingUp} label="Conversion %" value={`${headline.conversionPct}%`} sub={`${headline.converted} closed`} tone="bg-emerald-50 text-emerald-600" />
         <KpiCard icon={IndianRupee} label="Total Sale Value" value={formatINR(headline.totalSaleValue)} tone="bg-amber-50 text-amber-600" />
         <KpiCard icon={Wallet} label="Avg Order Value" value={formatINR(headline.avgOrderValue)} tone="bg-violet-50 text-violet-600" />
+        <KpiCard icon={Package} label="Volume (MT)" value={headline.totalVolumeMt.toLocaleString("en-IN")} sub="converted leads" tone="bg-orange-50 text-orange-600" />
         <KpiCard icon={Timer} label="TAT Compliance" value={headline.tatTracked ? `${headline.tatCompliancePct}%` : "—"} sub={headline.tatTracked ? `${headline.tatWithin} of ${headline.tatTracked} tracked` : "not tracked"} tone="bg-teal-50 text-teal-600" />
       </div>
 
@@ -266,6 +291,65 @@ export function BirlanuDashboard() {
           </ResponsiveContainer>
         </div>
       </div>
+
+      {/* Monthly Contact Center Funnel (Performance Dashboard's core funnel, cohorted by LeadRegisterMonth) */}
+      <SectionCard title="Monthly Contact Center Flow (Enquiries → Connected → Validated → Qualified → Converted)">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
+                <th className="py-2 pr-3 font-semibold">Month</th>
+                <th className="py-2 pr-3 text-right font-semibold">Enquiries</th>
+                <th className="py-2 pr-3 text-right font-semibold">Connected</th>
+                <th className="py-2 pr-3 text-right font-semibold">Connect%</th>
+                <th className="py-2 pr-3 text-right font-semibold">Validated</th>
+                <th className="py-2 pr-3 text-right font-semibold">ELVa%</th>
+                <th className="py-2 pr-3 text-right font-semibold">Qualified</th>
+                <th className="py-2 pr-3 text-right font-semibold">ELQ%</th>
+                <th className="py-2 pr-3 text-right font-semibold">Converted</th>
+                <th className="py-2 pr-3 text-right font-semibold">ELCo%</th>
+                <th className="py-2 pr-3 text-right font-semibold">Vol (MT)</th>
+                <th className="py-2 pr-0 text-right font-semibold">Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.monthlyFunnel.map((m) => (
+                <tr key={m.monthKey} className="border-b border-slate-50 last:border-0">
+                  <td className="py-2 pr-3 font-medium text-slate-700">{m.month}</td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{m.enquiriesReceived}</td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{m.connected}</td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{m.connectedPct}%</td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{m.validated}</td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{m.elvaPct}%</td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{m.qualified}</td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{m.elqPct}%</td>
+                  <td className="py-2 pr-3 text-right font-semibold text-emerald-600">{m.converted}</td>
+                  <td className="py-2 pr-3 text-right font-semibold text-emerald-600">{m.elcoPct}%</td>
+                  <td className="py-2 pr-3 text-right text-slate-600">{m.volMt.toLocaleString("en-IN")}</td>
+                  <td className="py-2 pr-0 text-right font-semibold text-slate-800">{formatINR(m.valueInr)}</td>
+                </tr>
+              ))}
+              {data.monthlyFunnel.length === 0 && (
+                <tr><td colSpan={12} className="py-6 text-center text-slate-400">No data.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-[11px] text-slate-400">Cohorted by LeadRegisterMonth — Converted/Vol/Value count leads whose register month matches, closed by any date (mirrors the reference workbook&apos;s Performance Dashboard).</p>
+      </SectionCard>
+
+      {/* TAT Bucket Distribution */}
+      <SectionCard title="Lead TAT Bucket Distribution">
+        <div className="flex flex-wrap gap-2">
+          {data.tatBucketDistribution.map((b) => (
+            <div key={b.bucket} className="rounded-lg bg-slate-50 px-3 py-2 text-xs">
+              <span className="font-medium text-slate-700">{b.bucket}</span>
+              <span className="ml-2 font-semibold text-slate-800">{b.count}</span>
+            </div>
+          ))}
+          {data.tatBucketDistribution.length === 0 && <p className="py-6 text-center text-xs text-slate-400">No data.</p>}
+        </div>
+      </SectionCard>
 
       {/* Business + Brand */}
       <div className="grid gap-4 lg:grid-cols-2">

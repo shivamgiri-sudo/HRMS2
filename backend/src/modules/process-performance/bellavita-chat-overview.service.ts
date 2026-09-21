@@ -114,6 +114,30 @@ export interface OverviewValues {
   duplicateRevenue: number | null;
 }
 
+/** The six QRC categories, in the order the reference "BVO Chat QRC" sheet lists them. */
+export const QRC_CATEGORIES = ["Escalation", "Inactive chat", "Inactive sale chat", "Query", "Request chat", "Saleschat"] as const;
+
+export interface QrcColumnValues {
+  /** Unique chats per category. */
+  counts: Record<string, number>;
+  /** Sum of the six categories -- the reference sheet's "Grand Total". */
+  total: number;
+  /** Unique chats that carry no (or an unrecognised) disposition; excluded from total. */
+  untagged: number;
+  /** Days in the column that have chats, and how many of them have a disposition source. */
+  dataDays: number;
+  coveredDays: number;
+}
+
+export interface QrcData {
+  categories: string[];
+  /** null = the column has chats but no day in it has a disposition to count. */
+  values: Record<string, QrcColumnValues | null>;
+  /** Dates with chats but no disposition in either chat table. */
+  uncoveredDates: string[];
+  note: string | null;
+}
+
 export interface OrderIntegrity {
   saleRows: number;
   uniqueOrders: number;
@@ -130,6 +154,7 @@ export interface BellavitaChatOverviewData {
   userType: OverviewUserType;
   columns: OverviewColumn[];
   values: Record<string, OverviewValues>;
+  qrc: QrcData;
   daily: Array<{ date: string; overall: number; unique: number; saleMade: number | null }>;
   salesAvailable: boolean;
   salesNote: string | null;
@@ -174,6 +199,51 @@ async function loadChatDaily(from: string, to: string, types: ChatUserType[]): P
     });
   }
   return m;
+}
+
+interface QrcDay { counts: Record<string, number>; untagged: number }
+
+/**
+ * Unique chats per disposition per day. The disposition (Escalation / Inactive chat /
+ * Inactive sale chat / Query / Request chat / Saleschat) lives in the chat export's
+ * "Disposition" column. new_bb_chat is the current chat table but its uploads so far
+ * carry no disposition; the older bb_chat has it for the dates it covers (identical
+ * chats, checked 1-4 Sep). So per date: new_bb_chat if it has dispositions for that date,
+ * otherwise bb_chat, otherwise the date is reported as uncovered -- never guessed.
+ */
+async function loadQrcDaily(from: string, to: string, types: ChatUserType[]): Promise<Map<string, QrcDay>> {
+  const known = new Set<string>(QRC_CATEGORIES);
+  const sql = (table: string) => `SELECT DATE_FORMAT(chat_date, '%Y-%m-%d') AS d, TRIM(COALESCE(disposition, '')) AS disp, COUNT(*) AS n
+       FROM db_masmis.${table}
+      WHERE chat_date BETWEEN ? AND ? AND user_type IN (${types.map(() => "?").join(",")}) AND repeat_status = 'Unique'
+      GROUP BY chat_date, TRIM(COALESCE(disposition, ''))`;
+  const params = [from, to, ...types];
+  const [[newRows], [oldRows]] = await Promise.all([
+    db.execute<RowDataPacket[]>(sql("new_bb_chat"), params),
+    db.execute<RowDataPacket[]>(sql("bb_chat"), params),
+  ]);
+  const group = (rows: RowDataPacket[]) => {
+    const m = new Map<string, QrcDay & { hasDisposition: boolean }>();
+    for (const r of rows) {
+      const d = String(r.d);
+      const cur = m.get(d) ?? { counts: {}, untagged: 0, hasDisposition: false };
+      const disp = String(r.disp);
+      if (known.has(disp)) { cur.counts[disp] = (cur.counts[disp] ?? 0) + num(r.n); cur.hasDisposition = true; }
+      else cur.untagged += num(r.n);
+      m.set(d, cur);
+    }
+    return m;
+  };
+  const fromNew = group(newRows);
+  const fromOld = group(oldRows);
+  const out = new Map<string, QrcDay>();
+  for (const d of new Set([...fromNew.keys(), ...fromOld.keys()])) {
+    const n = fromNew.get(d);
+    const o = fromOld.get(d);
+    const pick = n?.hasDisposition ? n : o?.hasDisposition ? o : null;
+    if (pick) out.set(d, { counts: pick.counts, untagged: pick.untagged });
+  }
+  return out;
 }
 
 const SALE_WHERE = "campaign = 'Chat' AND calling_status = 'Sale Made'";
@@ -237,9 +307,10 @@ export async function getBellavitaChatOverview(
   const salesAvailable = salesAvailableFor(userType);
   const days = eachDay(from, to);
 
-  const [chatDaily, sales] = await Promise.all([
+  const [chatDaily, sales, qrcDaily] = await Promise.all([
     loadChatDaily(from, to, types),
     salesAvailable ? loadSalesDaily(from, to) : Promise.resolve(null),
+    loadQrcDaily(from, to, types),
   ]);
 
   const months = [...new Set(days.map((d) => d.slice(0, 7)))];
@@ -316,6 +387,34 @@ export async function getBellavitaChatOverview(
     };
   }
 
+  const qrcValues: Record<string, QrcColumnValues | null> = {};
+  for (const col of columns) {
+    const span = eachDay(col.from, col.to);
+    const dataDays = span.filter((d) => (chatDaily.get(d)?.overall ?? 0) > 0);
+    const covered = dataDays.filter((d) => qrcDaily.has(d));
+    if (dataDays.length > 0 && covered.length === 0) { qrcValues[col.key] = null; continue; }
+    const counts: Record<string, number> = Object.fromEntries(QRC_CATEGORIES.map((c) => [c, 0]));
+    let untagged = 0;
+    for (const d of covered) {
+      const day = qrcDaily.get(d)!;
+      for (const c of QRC_CATEGORIES) counts[c] += day.counts[c] ?? 0;
+      untagged += day.untagged;
+    }
+    qrcValues[col.key] = {
+      counts, total: QRC_CATEGORIES.reduce((sum, c) => sum + counts[c], 0), untagged,
+      dataDays: dataDays.length, coveredDays: covered.length,
+    };
+  }
+  const uncoveredDates = days.filter((d) => (chatDaily.get(d)?.overall ?? 0) > 0 && !qrcDaily.has(d));
+  const qrc: QrcData = {
+    categories: [...QRC_CATEGORIES],
+    values: qrcValues,
+    uncoveredDates,
+    note: uncoveredDates.length > 0
+      ? `Disposition is missing for ${uncoveredDates.length} of the days in this range (${uncoveredDates[0]}${uncoveredDates.length > 1 ? ` to ${uncoveredDates[uncoveredDates.length - 1]}` : ""}) because the chat export uploaded for them has no Disposition column filled in. Those days are not counted, so weekly and MTD totals cover only the days that have it. Re-upload the chat export with Disposition to complete them.`
+      : null,
+  };
+
   let integrity: OrderIntegrity | null = null;
   if (sales) {
     const t = emptySale();
@@ -335,7 +434,7 @@ export async function getBellavitaChatOverview(
   );
 
   return {
-    from, to, userType, columns, values,
+    from, to, userType, columns, values, qrc,
     daily: days.map((d) => ({
       date: d,
       overall: chatDaily.get(d)?.overall ?? 0,

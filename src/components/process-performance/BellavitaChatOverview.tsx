@@ -31,6 +31,17 @@ const USER_TYPES: Array<{ key: UserType; label: string; hint: string }> = [
 const CAPACITY_TYPES = ["Chat", "Kenaz", "Bevzilla"] as const;
 
 interface Column { key: string; label: string; kind: "mtd" | "week" | "day"; from: string; to: string }
+
+/** Consecutive columns of the same kind, for the Period / Weekly / Date-wise band above the header. */
+function groupColumns(columns: Column[]): Array<{ kind: Column["kind"]; count: number }> {
+  const groups: Array<{ kind: Column["kind"]; count: number }> = [];
+  for (const c of columns) {
+    const last = groups[groups.length - 1];
+    if (last && last.kind === c.kind) last.count += 1;
+    else groups.push({ kind: c.kind, count: 1 });
+  }
+  return groups;
+}
 interface Values {
   plannedCapacity: number | null; overallChat: number; capacityUtilizationPct: number | null; frtPct: number;
   repeat24: number; repeat48: number; repeat72: number; repeatMore72: number; unique: number; withoutAgentFrt: number;
@@ -42,8 +53,10 @@ interface Integrity {
   saleRows: number; uniqueOrders: number; duplicateRows: number;
   grossRevenue: number; revenue: number; duplicateRevenue: number; blankOrderIdRows: number;
 }
+interface QrcColumn { counts: Record<string, number>; total: number; untagged: number; dataDays: number; coveredDays: number }
+interface QrcData { categories: string[]; values: Record<string, QrcColumn | null>; uncoveredDates: string[]; note: string | null }
 interface OverviewData {
-  from: string; to: string; userType: UserType; columns: Column[]; values: Record<string, Values>;
+  from: string; to: string; userType: UserType; columns: Column[]; values: Record<string, Values>; qrc: QrcData;
   daily: Array<{ date: string; overall: number; unique: number; saleMade: number | null }>;
   salesAvailable: boolean; salesNote: string | null; integrity: Integrity | null;
   capacity: { month: string; byType: Record<(typeof CAPACITY_TYPES)[number], number | null> };
@@ -80,6 +93,12 @@ function format(v: number | null, fmt: Fmt): string {
     case "pct1": return `${Math.round(v * 10) / 10}%`;
     case "inr": return formatINR(v);
   }
+}
+
+/** A QRC cell: the count, "—" when the column has no disposition data, and a trailing * when only some of its days have it. */
+function qrcCell(v: QrcColumn | null | undefined, pick: (v: QrcColumn) => number): string {
+  if (!v) return "—";
+  return `${fmtN(pick(v))}${v.coveredDays < v.dataDays ? "*" : ""}`;
 }
 
 const monthLabel = (ym: string): string => {
@@ -141,6 +160,15 @@ export function BellavitaChatOverview({
         title: `Chat Dashboard BVO — ${data.userType}`,
         columns: ["Metric", ...data.columns.map((c) => c.label)],
         rows: METRICS.map((m) => [m.label, ...data.columns.map((c) => format(data.values[c.key]?.[m.key] as number | null, m.fmt))]),
+      }, {
+        // Same MTD / week / date columns as the BVO table above.
+        title: `BVO Chat QRC — ${data.userType} (unique chats by disposition)`,
+        columns: ["BVO Chat QRC", ...data.columns.map((c) => c.label)],
+        rows: [
+          ...data.qrc.categories.map((cat) => [cat, ...data.columns.map((c) => qrcCell(data.qrc.values[c.key], (v) => v.counts[cat] ?? 0))]),
+          ["Grand Total", ...data.columns.map((c) => qrcCell(data.qrc.values[c.key], (v) => v.total))],
+          ["Not tagged (excluded from total)", ...data.columns.map((c) => qrcCell(data.qrc.values[c.key], (v) => v.untagged))],
+        ],
       }],
     }];
   }, [data]);
@@ -216,7 +244,7 @@ export function BellavitaChatOverview({
             <p className="text-sm font-bold text-slate-700">Sales are counted once per bella_vita_order_id</p>
             <p className="mt-0.5">
               <b>{fmtN(data.integrity.uniqueOrders)}</b> unique orders from <b>{fmtN(data.integrity.saleRows)}</b> sale rows —{" "}
-              <b className="text-rose-600">{fmtN(data.integrity.duplicateRows)}</b> duplicate rows ignored (an order repeats once per line item).
+              <b className="text-rose-600">{fmtN(data.integrity.duplicateRows)}</b> duplicate rows ignored (the same order appears again because the sale file was uploaded more than once).
               Revenue is <b>{formatINR(data.integrity.revenue)}</b>; adding the duplicates would have shown{" "}
               <b>{formatINR(data.integrity.grossRevenue)}</b>, overstating it by <b className="text-rose-600">{formatINR(data.integrity.duplicateRevenue)}</b>.
               {data.integrity.blankOrderIdRows > 0 && <> {fmtN(data.integrity.blankOrderIdRows)} sale row(s) have no order id and can't be de-duplicated, so they are not counted.</>}
@@ -237,15 +265,38 @@ export function BellavitaChatOverview({
           <table className="border-collapse text-center text-[13px] tabular-nums">
             <thead>
               <tr>
+                <th className="sticky left-0 z-10 bg-white" />
+                {groupColumns(data.columns).map((g) => (
+                  <th
+                    key={g.kind}
+                    colSpan={g.count}
+                    className={`px-2 py-1 text-[11px] font-bold uppercase tracking-widest ${
+                      g.kind === "day" ? "border-l-[3px] border-l-[#0e7490] bg-[#cffafe] text-[#155e75]"
+                        : g.kind === "week" ? "border-l border-[#e7d6ad] bg-[#fde9d9] text-[#9a3412]"
+                          : "bg-[#fbd5b0] text-[#9a3412]"
+                    }`}
+                  >
+                    {g.kind === "day" ? "Date-wise" : g.kind === "week" ? "Weekly" : "Period"}
+                  </th>
+                ))}
+              </tr>
+              <tr>
                 <th className="sticky left-0 z-10 min-w-[260px] border-b border-[#0f1a44] bg-[#1c2a5e] px-4 py-3 text-left text-sm font-bold text-white">
                   Chat Dashboard BVO
                 </th>
-                {data.columns.map((c) => (
-                  <th key={c.key} className="border-b border-l border-[#0f1a44] bg-[#1c2a5e] p-0 text-sm font-bold text-white">
+                {data.columns.map((c, ci) => (
+                  <th
+                    key={c.key}
+                    className={`border-b border-l border-[#0f1a44] p-0 text-sm font-bold text-white ${
+                      c.kind === "day" ? "bg-[#0e5a6e]" : "bg-[#1c2a5e]"
+                    } ${c.kind === "day" && data.columns[ci - 1]?.kind !== "day" ? "border-l-[3px] border-l-[#22d3ee]" : ""}`}
+                  >
                     <button
                       type="button" title={`Open ${c.label}`}
                       onClick={() => setDrawer({ label: c.label, from: c.from, to: c.to })}
-                      className="group flex w-full min-w-[86px] items-center justify-center gap-1 px-3 py-3 transition-colors hover:bg-[#2a3b7d] focus:bg-[#2a3b7d] focus:outline-none"
+                      className={`group flex w-full min-w-[86px] items-center justify-center gap-1 px-3 py-3 transition-colors focus:outline-none ${
+                        c.kind === "day" ? "hover:bg-[#137a94] focus:bg-[#137a94]" : "hover:bg-[#2a3b7d] focus:bg-[#2a3b7d]"
+                      }`}
                     >
                       {c.label}
                       <MousePointerClick className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-70 group-focus:opacity-70" />
@@ -260,17 +311,81 @@ export function BellavitaChatOverview({
                 return (
                   <tr key={m.key} className={firstIntegrity ? "border-t-[3px] border-[#1c2a5e]/30" : ""}>
                     <td className="sticky left-0 z-10 border-b border-[#e7d6ad] bg-[#fff2cc] px-4 py-2.5 text-left font-medium text-slate-800">{m.label}</td>
-                    {data.columns.map((c) => {
+                    {data.columns.map((c, ci) => {
                       const v = data.values[c.key]?.[m.key] as number | null | undefined;
                       const isMtd = c.kind === "mtd";
+                      const isDay = c.kind === "day";
+                      const firstDay = isDay && data.columns[ci - 1]?.kind !== "day";
                       return (
                         <td
                           key={c.key}
-                          className={`border-b border-l border-[#e7d6ad] px-3 py-2.5 ${
-                            isMtd ? "bg-[#f4b183] font-bold text-slate-900" : m.group === "integrity" ? "bg-[#fde9d9] text-slate-700" : "bg-[#f8cbad]/60 text-slate-800"
+                          className={`border-b border-l px-3 py-2.5 ${
+                            isDay ? "border-[#bae6fd]" : "border-[#e7d6ad]"
+                          } ${firstDay ? "border-l-[3px] border-l-[#0e7490]" : ""} ${
+                            isMtd ? "bg-[#f4b183] font-bold text-slate-900"
+                              : isDay ? (m.group === "integrity" ? "bg-[#e0f2fe] text-slate-700" : "bg-[#dbeafe]/70 text-slate-800")
+                                : m.group === "integrity" ? "bg-[#fde9d9] text-slate-700" : "bg-[#f8cbad]/60 text-slate-800"
                           }`}
                         >
                           {format(v ?? null, m.fmt)}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        icon={MessageSquare} title={`BVO Chat QRC — ${data.userType}`} tone="indigo"
+        footnote="Unique chats by disposition, with the same MTD, weekly and date columns as the table above. Grand Total is the six categories added up; unique chats with no disposition are shown separately and are not in it. * = only some days in that column have a disposition."
+      >
+        {data.qrc.note && (
+          <p className="mb-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-800">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />{data.qrc.note}
+          </p>
+        )}
+        <div className="overflow-x-auto rounded-xl border border-[#c9a978]/50">
+          <table className="border-collapse text-center text-[13px] tabular-nums">
+            <thead>
+              <tr>
+                <th className="sticky left-0 z-10 min-w-[260px] border-b border-[#0f1a44] bg-[#1c2a5e] px-4 py-3 text-left text-sm font-bold text-white">BVO Chat QRC</th>
+                {data.columns.map((c) => (
+                  <th
+                    key={c.key}
+                    className={`min-w-[86px] border-b border-l border-[#0f1a44] px-3 py-3 text-sm font-bold text-white ${c.kind === "day" ? "bg-[#0e5a6e]" : "bg-[#1c2a5e]"}`}
+                  >
+                    {c.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {[...data.qrc.categories, "Grand Total", "Not tagged"].map((cat) => {
+                const isTotal = cat === "Grand Total";
+                const isUntagged = cat === "Not tagged";
+                return (
+                  <tr key={cat} className={isTotal ? "border-t-2 border-[#1c2a5e]/40" : ""}>
+                    <td className={`sticky left-0 z-10 border-b border-[#e7d6ad] px-4 py-2.5 text-left ${isTotal ? "bg-[#ffe699] font-bold" : isUntagged ? "bg-white italic text-slate-500" : "bg-[#fff2cc] font-medium"} text-slate-800`}>
+                      {isUntagged ? "Not tagged (excluded from total)" : cat}
+                    </td>
+                    {data.columns.map((c) => {
+                      const v = data.qrc.values[c.key];
+                      const text = qrcCell(v, (x) => (isTotal ? x.total : isUntagged ? x.untagged : x.counts[cat] ?? 0));
+                      return (
+                        <td
+                          key={c.key}
+                          title={v && v.coveredDays < v.dataDays ? `Disposition available for ${v.coveredDays} of ${v.dataDays} days in this column` : undefined}
+                          className={`border-b border-l px-3 py-2.5 ${c.kind === "day" ? "border-[#bae6fd]" : "border-[#e7d6ad]"} ${
+                            c.kind === "mtd" ? "bg-[#f4b183] font-bold text-slate-900"
+                              : c.kind === "day" ? (isUntagged ? "bg-white text-slate-500" : "bg-[#dbeafe]/70 text-slate-800")
+                                : isUntagged ? "bg-white text-slate-500" : "bg-[#f8cbad]/60 text-slate-800"
+                          } ${isTotal ? "font-bold" : ""}`}
+                        >
+                          {text}
                         </td>
                       );
                     })}

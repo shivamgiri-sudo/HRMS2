@@ -107,7 +107,7 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
     `SELECT COUNT(*) AS total, SUM(amount) AS value,
        SUM(CASE WHEN disposition = 'Connect' THEN 1 ELSE 0 END) AS connected,
        COUNT(DISTINCT NULLIF(phone_number, '')) AS unique_customers,
-       COUNT(DISTINCT NULLIF(agent, '')) AS active_agents,
+       COUNT(DISTINCT CASE WHEN agent NOT IN ('', '-', 'VDAD') THEN agent END) AS active_agents, -- VDAD = auto-dialer, not an agent
        SUM(CASE WHEN disposition IN ('Connect', 'Not Connect') THEN 1 ELSE 0 END) AS workable_cases,
        SUM(CASE WHEN disposition = 'Pending to call' THEN 1 ELSE 0 END) AS dnd_cases,
        COUNT(DISTINCT CASE WHEN phone_number IS NOT NULL AND phone_number != ''
@@ -123,9 +123,18 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
    * live, same as the Chat dashboard's identical cross-reference) -- directly
    * comparable to `from`/`to` without parsing. */
   const [[abandonSaleRow]] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS n, SUM(amount) AS revenue
-     FROM db_masmis.bb_sale
-     WHERE campaign = 'Abandon Cart' AND \`Date\` >= ? AND \`Date\` <= ?`,
+    // One row per Sale Made order (latest upload). The raw campaign='Abandon Cart'
+    // rows also hold non-sale call outcomes and orders re-uploaded 2-3x:
+    // 1-13 Sep 2026 gave 2,714 sales / 1,958,841 vs the true 832 / 599,148.
+    `SELECT COUNT(*) AS n, SUM(s.amount) AS revenue
+     FROM db_masmis.bb_sale s
+     INNER JOIN (
+       SELECT bella_vita_order_id, MAX(id) AS keep_id
+       FROM db_masmis.bb_sale
+       WHERE campaign = 'Abandon Cart' AND calling_status = 'Sale Made' AND \`Date\` >= ? AND \`Date\` <= ?
+         AND bella_vita_order_id IS NOT NULL AND bella_vita_order_id != ''
+       GROUP BY bella_vita_order_id
+     ) dk ON dk.keep_id = s.id`,
     [from, to],
   );
 

@@ -5,9 +5,11 @@ import {
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   PhoneIncoming, PhoneMissed, Timer, Users, Mail, MessageSquare, Star, ShieldCheck,
-  CalendarDays, TrendingUp, PhoneOff, Repeat, LayoutDashboard, Headset, Grid3x3,
+  CalendarDays, TrendingUp, PhoneOff, Repeat, LayoutDashboard, Headset, Grid3x3, PhoneOutgoing,
 } from "lucide-react";
 import { DashboardExportMenu, type ExportSlide } from "./DashboardKit";
+import { CloviaLobSlide } from "./CloviaLobSlide";
+import { CloviaInboundSlide } from "./CloviaInboundSlide";
 
 // ── Types ────────────────────────────────────────────────────────────────
 interface InboundSummary {
@@ -604,14 +606,18 @@ function OverviewSlide({ from, to, onData }: { from: string; to: string; onData?
  * fabricated number.
  */
 export function CloviaDashboard() {
-  const [slide, setSlide] = useState<"overview" | "inbound" | "channels">("overview");
+  const [slide, setSlide] = useState<"overview" | "inbound" | "email" | "chat" | "outbound" | "channels">("overview");
   const defaultRange = currentMonthRange();
   const [from, setFrom] = useState(defaultRange.from);
   const [to, setTo] = useState(defaultRange.to);
+  const setRange = useCallback((f: string, t: string) => { setFrom(f); setTo(t); }, []);
 
   const tabs: Array<{ key: typeof slide; label: string; icon: React.ComponentType<{ className?: string }> }> = [
     { key: "overview", label: "Overview", icon: LayoutDashboard },
     { key: "inbound", label: "Inbound", icon: PhoneIncoming },
+    { key: "email", label: "Email", icon: Mail },
+    { key: "chat", label: "Chat", icon: MessageSquare },
+    { key: "outbound", label: "Outbound", icon: PhoneOutgoing },
     { key: "channels", label: "Channels", icon: Grid3x3 },
   ];
 
@@ -791,20 +797,47 @@ export function CloviaDashboard() {
         </div>
       </div>
 
-      <div className="flex justify-end">
-        <DashboardExportMenu
-          reportTitle="Clovia — Process Performance"
-          fileBaseName="Clovia_Dashboard"
-          raw={{ dashboard: "clovia", from, to }}
-          subtitle={`${from} to ${to}`}
-          slides={exportSlides}
-          activeSlideTitle={slide === "overview" ? "Overview" : slide === "inbound" ? "Inbound" : "Channels"}
-        />
-      </div>
-
-      {slide === "overview" && <OverviewSlide from={from} to={to} onData={handleOverviewData} />}
-      {slide === "inbound" && <InboundSlide from={from} to={to} onData={handleInboundData} />}
-      {slide === "channels" && <ChannelsSlide from={from} to={to} onData={handleChannelsData} />}
+      {/* The Overview, Inbound, Email, Chat and Outbound slides carry their own export menu (Value + week +
+          date columns); this shell menu serves the earlier Channels slide and the Classic inbound view. */}
+      {(() => {
+        const menu = (title: string) => (
+          <div className="flex justify-end">
+            <DashboardExportMenu
+              reportTitle="Clovia — Process Performance"
+              fileBaseName="Clovia_Dashboard"
+              raw={{ dashboard: "clovia", from, to }}
+              subtitle={`${from} to ${to}`}
+              slides={exportSlides}
+              activeSlideTitle={title}
+            />
+          </div>
+        );
+        return (
+          <>
+            {slide === "overview" && (
+              <div className="space-y-5">
+                <OverviewSlide from={from} to={to} onData={handleOverviewData} />
+                <CloviaLobSlide lob="overview" from={from} to={to} onRangeChange={setRange} hideHero />
+              </div>
+            )}
+            {slide === "inbound" && (
+              <CloviaInboundSlide
+                from={from} to={to} onRangeChange={setRange}
+                classic={<div className="space-y-5">{menu("Inbound")}<InboundSlide from={from} to={to} onData={handleInboundData} /></div>}
+              />
+            )}
+            {slide === "email" && <CloviaLobSlide lob="email" from={from} to={to} onRangeChange={setRange} />}
+            {slide === "chat" && <CloviaLobSlide lob="chat" from={from} to={to} onRangeChange={setRange} />}
+            {slide === "outbound" && <CloviaLobSlide lob="outbound" from={from} to={to} onRangeChange={setRange} />}
+            {slide === "channels" && (
+              <div className="space-y-5">
+                {menu("Channels")}
+                <ChannelsSlide from={from} to={to} onData={handleChannelsData} />
+              </div>
+            )}
+          </>
+        );
+      })()}
     </div>
   );
 }

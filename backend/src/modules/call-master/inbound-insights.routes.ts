@@ -3,7 +3,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { logger } from "../../lib/logger.js";
 import { getIstDateString } from "../../utils/dateUtils.js";
-import { getInboundCalls, getInboundInsights, isInsightProject } from "./inbound-insights.service.js";
+import { getInboundCalls, getInboundInsights, getInboundPeriods, isInsightProject } from "./inbound-insights.service.js";
 
 const router = Router();
 const h = (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -61,6 +61,7 @@ router.get("/:key/calls", h(async (req, res) => {
         ...baseFilters(req),
         date,
         hour,
+        quarter: str(q.quarter),
         agentId: str(q.agentId),
         outcome,
         waitBucket: str(q.waitBucket),
@@ -73,6 +74,17 @@ router.get("/:key/calls", h(async (req, res) => {
     });
   } catch (err) {
     fail(res, "GET /:key/calls", err);
+  }
+}));
+
+// Week-wise + date-wise columns for the Excel/PDF export (same rows and definitions as GET /:key).
+router.get("/:key/periods", h(async (req, res) => {
+  const key = String(req.params.key);
+  if (!isInsightProject(key)) return res.status(404).json({ success: false, error: "Unknown inbound project" });
+  try {
+    res.json({ success: true, data: await getInboundPeriods(key, baseFilters(req)) });
+  } catch (err) {
+    fail(res, "GET /:key/periods", err);
   }
 }));
 

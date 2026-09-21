@@ -10,8 +10,12 @@ import {
 } from "lucide-react";
 import {
   Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
-  formatINR, formatShortDate, last7DaysRange, type ExportSlide,
+  formatINR, formatShortDate, last7DaysRange, currentMonthRange, type ExportSlide,
 } from "./DashboardKit";
+import { BellavitaCartSnapshot } from "./BellavitaCartSnapshot";
+import { BellavitaCartAgents } from "./BellavitaCartAgents";
+
+const CART_API = "/api/process-performance/bellavita-cart-dashboard";
 
 /**
  * Bellavita's real Cart (abandoned-cart recovery) dashboard -- live
@@ -50,20 +54,24 @@ interface DashboardData {
 
 const DISPOSITION_COLORS = ["#059669", "#e11d48", "#f59e0b"];
 
-type TabKey = "overview" | "agents";
+/** "snapshot" and "agentperf" are the new sheet-style views; "overview" and
+ * "agents" are the original tabs and are unchanged. */
+type TabKey = "snapshot" | "agentperf" | "overview" | "agents";
 const TABS: Array<{ key: TabKey; label: string }> = [
+  { key: "snapshot", label: "Snapshot" },
+  { key: "agentperf", label: "Agent Performance" },
   { key: "overview", label: "Overview" },
   { key: "agents", label: "Agent-wise" },
 ];
 
 export function BellavitaCartDashboard() {
-  const defaultRange = last7DaysRange();
+  const defaultRange = currentMonthRange();
   const [from, setFrom] = useState(defaultRange.from);
   const [to, setTo] = useState(defaultRange.to);
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<TabKey>("overview");
+  const [tab, setTab] = useState<TabKey>("snapshot");
   const [agentSearch, setAgentSearch] = useState("");
 
   const load = useCallback(async () => {
@@ -81,7 +89,9 @@ export function BellavitaCartDashboard() {
     }
   }, [from, to]);
 
-  useEffect(() => { void load(); }, [load]);
+  // The original aggregate is slower, so it only loads for the tabs that use it.
+  const needsLegacy = tab === "overview" || tab === "agents";
+  useEffect(() => { if (needsLegacy) void load(); }, [load, needsLegacy]);
 
   const filteredAgents = useMemo(() => {
     const rows = data?.agents ?? [];
@@ -144,11 +154,8 @@ export function BellavitaCartDashboard() {
     return [overview, agentsSlide];
   }, [data]);
 
-  if (loading && !data) return <Spinner tone="blue" />;
-  if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
-  if (!data) return null;
-
-  const { headline, allocation } = data;
+  const headline = data?.headline;
+  const allocation = data?.allocation;
 
   return (
     <div className="space-y-5">
@@ -159,22 +166,47 @@ export function BellavitaCartDashboard() {
       />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <DashboardExportMenu
-          reportTitle="Bellavita — Abandon Cart"
-          fileBaseName="Bellavita_Cart"
-          raw={{ dashboard: "bellavita_cart", from, to }}
-          subtitle={`${from} to ${to}`}
-          slides={exportSlides}
-          activeSlideTitle={tab === "overview" ? "Overview" : "Agent-wise"}
-        />
-        <DateRangeToolbar
-          from={from} to={to} onFrom={setFrom} onTo={setTo}
-          onReset={() => { const r = last7DaysRange(); setFrom(r.from); setTo(r.to); }}
-          resetLabel="Last 7 Days" accentFocus="focus:border-fuchsia-400"
-        />
+        {needsLegacy ? (
+          <DashboardExportMenu
+            reportTitle="Bellavita — Abandon Cart"
+            fileBaseName="Bellavita_Cart"
+            raw={{ dashboard: "bellavita_cart", from, to }}
+            subtitle={`${from} to ${to}`}
+            slides={exportSlides}
+            activeSlideTitle={tab === "overview" ? "Overview" : "Agent-wise"}
+          />
+        ) : <span />}
+        <div className="flex flex-wrap items-center gap-2">
+          <DateRangeToolbar
+            from={from} to={to} onFrom={setFrom} onTo={setTo}
+            onReset={() => { const r = currentMonthRange(); setFrom(r.from); setTo(r.to); }}
+            resetLabel="This Month" accentFocus="focus:border-fuchsia-400"
+          />
+          {needsLegacy && (
+            <button
+              type="button" onClick={() => { const r = last7DaysRange(); setFrom(r.from); setTo(r.to); }}
+              className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-200"
+            >
+              Last 7 Days
+            </button>
+          )}
+        </div>
       </div>
 
-      {tab === "overview" && (
+      {tab === "snapshot" && (
+        <BellavitaCartSnapshot
+          apiPath={CART_API} from={from} to={to}
+          onOpenPeriod={(f, t) => { setFrom(f); setTo(t); setTab("agentperf"); }}
+        />
+      )}
+      {tab === "agentperf" && <BellavitaCartAgents apiPath={CART_API} from={from} to={to} />}
+
+      {needsLegacy && loading && !data && <Spinner tone="blue" />}
+      {needsLegacy && error && (
+        <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>
+      )}
+
+      {tab === "overview" && data && headline && allocation && (
       <>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <KpiCard icon={ShoppingCart} label="Overall Base Count" value={headline.totalCarts.toLocaleString("en-IN")} sub="count of allocation" tone="rose" />
@@ -269,7 +301,7 @@ export function BellavitaCartDashboard() {
       </>
       )}
 
-      {tab === "agents" && (
+      {tab === "agents" && data && (
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="relative w-full max-w-sm">

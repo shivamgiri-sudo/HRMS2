@@ -5,6 +5,7 @@ export interface SaleData {
   headline: { revenue: number; saleCount: number; aov: number; prepaidPct: number; codPct: number; rtoPct: number; activeAgents: number; target: number; achievementPct: number };
   dateWiseTrend: Array<{ date: string; saleCount: number; revenue: number; rtoCount: number }>;
   paymentBreakdown: Array<{ paymentStatus: string; count: number; revenue: number }>;
+  orderStatusBreakdown: Array<{ status: string; count: number; revenue: number; pct: number }>;
   byTl: Array<{ tlName: string; saleCount: number; revenue: number; rtoPct: number; target: number; achievementPct: number }>;
   agents: Array<{ empId: string; name: string; tlName: string; saleCount: number; revenue: number; rtoPct: number; prepaidPct: number; target: number; achievementPct: number }>;
 }
@@ -24,6 +25,7 @@ export interface ChatData {
     frtTatCompliancePct: number; resolutionTatCompliancePct: number;
   };
   byLob: Array<{ lob: string; tickets: number; resolvedPct: number }>;
+  channelBreakdown: Array<{ channel: string; tickets: number; resolvedPct: number }>;
   statusBreakdown: Array<{ status: string; count: number; pct: number }>;
   dateWiseTrend: Array<{ date: string; tickets: number; resolvedPct: number }>;
   agents: Array<{ agent: string; empId: string; tickets: number; resolvedPct: number; avgCsat: number }>;
@@ -32,6 +34,7 @@ export interface ChatData {
 export interface ProductivityData {
   headline: { totalCalls: number; activeAgents: number; avgOccupancyPct: number; attendanceDays: number; avgNetLoginSec: number; avgTotalBreakSec: number };
   dateWiseTrend: Array<{ date: string; calls: number; avgOccupancyPct: number; loginAgents: number }>;
+  lobBreakdown: Array<{ lob: string; calls: number; agents: number; avgOccupancyPct: number }>;
   agents: Array<{ empId: string; name: string; calls: number; loginTimeSec: number; talkTimeSec: number; occupancyPct: number; attendanceDays: number }>;
 }
 

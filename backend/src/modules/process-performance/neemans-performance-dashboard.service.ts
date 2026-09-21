@@ -78,6 +78,13 @@ export interface NeemansOverviewHeadline {
   totalChatTickets: number;
   chatResolvedPct: number;
   avgOccupancyPct: number;
+  /** sale.headline.saleCount / allocation.headline.totalAllocation -- how many of the
+   * numbers dialled through Allocation actually turned into an order. Matches the
+   * reference management workbook (Neeman's Billing Sep 26.xlsb, sheet "Dashboard",
+   * column "Conversion %") -- confirmed live there as Total Orders / Workable Data. Not
+   * previously surfaced anywhere in this dashboard; both inputs were already computed,
+   * this just divides them. */
+  conversionPct: number;
 }
 
 export interface NeemansSaleData {
@@ -88,6 +95,17 @@ export interface NeemansSaleData {
   };
   dateWiseTrend: Array<{ date: string; saleCount: number; revenue: number; rtoCount: number }>;
   paymentBreakdown: Array<{ paymentStatus: string; count: number; revenue: number }>;
+  /** neemans_sale_raw.current_status -- the order-fulfilment status (Delivered/RTO/
+   * Dispatched/Cancelled/Unfulfilled/...), NOT `final_status` (which only ever carries
+   * "-" or "RTO" in the live data, already used for the RTO KPIs above). Matches the
+   * reference workbook's "OD Status Contribution" / Summary-sheet pivot (Neeman's
+   * Abandon Cart Dashboard Aug'2026.xlsb, sheets "Dashboard" and "Summary") -- confirmed
+   * live 2026-09-20 that `current_status` (not `final_status`) is what carries those
+   * values: Unfulfilled 3768, Unfulfill 1143 (a real spelling split in the upstream
+   * export, shown as-is rather than merged), Delivered 880, RTO 137, Dispatched 48,
+   * Cancelled 28, Processing 1, OTHER 1. Not previously surfaced anywhere in this
+   * dashboard. */
+  orderStatusBreakdown: Array<{ status: string; count: number; revenue: number; pct: number }>;
   byTl: Array<{ tlName: string; saleCount: number; revenue: number; rtoPct: number; target: number; achievementPct: number }>;
   agents: Array<{ empId: string; name: string; tlName: string; saleCount: number; revenue: number; rtoPct: number; prepaidPct: number; target: number; achievementPct: number }>;
 }
@@ -119,6 +137,15 @@ export interface NeemansChatData {
     resolutionTatCompliancePct: number;
   };
   byLob: Array<{ lob: string; tickets: number; resolvedPct: number }>;
+  /** neemans_chat.inbox_name -- the actual channel (Neeman's WA, neemansofficial Insta,
+   * a Facebook inbox, an Email inbox, ...), a finer grain than `lob` (Chat/SM/Email).
+   * Matches the reference workbook's "Channel Wise" section (Neeman's Inbound & Chat
+   * Dashboard Sep'26.xlsb, sheet "Chat Snap": neemansofficial Insta - Comment/DM,
+   * Neemans FB - Comment/DM, Email, Neeman's WA). Not previously surfaced anywhere in
+   * this dashboard. Only 4 live rows across 2 channels right now (db_masmis.neemans_chat
+   * is genuinely thin, same caveat as the rest of this Chat tab) -- real, not fabricated,
+   * and will fill out as more chat exports are uploaded. */
+  channelBreakdown: Array<{ channel: string; tickets: number; resolvedPct: number }>;
   /** neemans_chat.ticket_status (open/waiting/closed/...), not previously
    * surfaced -- only the coarser is_resolved flag was. */
   statusBreakdown: Array<{ status: string; count: number; pct: number }>;
@@ -136,6 +163,16 @@ export interface NeemansProductivityData {
     avgTotalBreakSec: number;
   };
   dateWiseTrend: Array<{ date: string; calls: number; avgOccupancyPct: number; loginAgents: number }>;
+  /** neemans_apr.lob -- confirmed live 2026-09-20: every one of the 403 rows currently
+   * in db_masmis.neemans_apr carries lob='Cart'. The reference workbook (Neeman's
+   * Billing Sep 26.xlsb, sheet "APR Raw") shows this table is meant to carry Chat/
+   * Inbound/Email/Social Media rows too (128/118/28/1 rows there, for September) --
+   * those LOBs' APR exports have never been bulk-uploaded into this table for ANY
+   * month, so this Productivity tab is really "Cart-process productivity" today, not
+   * all-LOB productivity as its combined placement here implies. This breakdown is
+   * real and will pick up the other LOBs automatically the moment their APR files are
+   * uploaded -- nothing here is invented to fill that gap. */
+  lobBreakdown: Array<{ lob: string; calls: number; agents: number; avgOccupancyPct: number }>;
   agents: Array<{ empId: string; name: string; calls: number; loginTimeSec: number; talkTimeSec: number; occupancyPct: number; attendanceDays: number }>;
 }
 
@@ -213,7 +250,7 @@ END`;
  * 1,106 rows are "D-Mon-YY" text, and 1 row is a literal "0" placeholder
  * (falls through to NULL/excluded, same as any other unparseable value). */
 const ALLOC_DATE_EXPR = `CASE
-  WHEN date REGEXP '^[0-9]+$' THEN DATE_ADD('1899-12-30', INTERVAL CAST(date AS UNSIGNED) DAY)
+  WHEN date REGEXP '^[1-9][0-9]*$' THEN DATE_ADD('1899-12-30', INTERVAL CAST(date AS UNSIGNED) DAY)
   WHEN date REGEXP '^[0-9]{1,2}-[A-Za-z]{3}-[0-9]{2}$' THEN STR_TO_DATE(date, '%e-%b-%y')
   ELSE NULL
 END`;
@@ -223,8 +260,16 @@ END`;
  * APR/Allocation's mixed `date` columns. */
 const CHAT_DATE_EXPR = `STR_TO_DATE(report_date, '%e-%b-%y')`;
 
+/** neemans_sale_raw repeats an order on several rows (one per line item / a re-uploaded
+ * file), each carrying the WHOLE order's amount -- Aug 2026: 11 orders on 24 rows, so
+ * SUM(amount) overstated revenue by 36,358 and prepaid/COD/RTO row counts exceeded the
+ * distinct-order denominator (Prepaid% + COD% = 100.58%). Keep one row per order. */
+const ONE_ROW_PER_ORDER = ` AND (order_id IS NULL OR order_id = '' OR id IN (
+  SELECT MIN(id) FROM db_masmis.neemans_sale_raw WHERE order_id IS NOT NULL AND order_id != '' GROUP BY order_id))`;
+
 async function getSaleData(from?: string, to?: string): Promise<NeemansSaleData> {
-  const f = dateFilter(SALE_DATE_EXPR, from, to);
+  const f0 = dateFilter(SALE_DATE_EXPR, from, to);
+  const f = { sql: f0.sql + ONE_ROW_PER_ORDER, params: f0.params };
 
   // The six queries below are independent, and this DB is a remote host at
   // ~300-750ms per round trip, so they are started together and awaited once
@@ -277,6 +322,14 @@ async function getSaleData(from?: string, to?: string): Promise<NeemansSaleData>
     f.params,
   );
 
+  const orderStatusP = db.execute<RowDataPacket[]>(
+    `SELECT current_status, COUNT(DISTINCT NULLIF(order_id, '')) AS n, SUM(amount) AS revenue
+     FROM db_masmis.neemans_sale_raw
+     WHERE current_status IS NOT NULL AND current_status != ''${f.sql}
+     GROUP BY current_status ORDER BY n DESC`,
+    f.params,
+  );
+
   const agentP = db.execute<RowDataPacket[]>(
     `SELECT emp_id, MAX(name) AS name, MAX(tl) AS tl_name,
        COUNT(DISTINCT NULLIF(order_id, '')) AS sale_count, SUM(amount) AS revenue,
@@ -288,8 +341,8 @@ async function getSaleData(from?: string, to?: string): Promise<NeemansSaleData>
     f.params,
   );
 
-  const [[[headlineRow]], [rosterRows], [trendRows], [paymentRows], [tlRows], [agentRows]] = await Promise.all([
-    headlineP, rosterP, trendP, paymentP, tlP, agentP,
+  const [[[headlineRow]], [rosterRows], [trendRows], [paymentRows], [tlRows], [agentRows], [orderStatusRows]] = await Promise.all([
+    headlineP, rosterP, trendP, paymentP, tlP, agentP, orderStatusP,
   ]);
 
   const targetByEmpId = new Map<string, number>();
@@ -325,6 +378,9 @@ async function getSaleData(from?: string, to?: string): Promise<NeemansSaleData>
     paymentBreakdown: paymentRows.map((r) => ({
       paymentStatus: String(r.payment_status), count: num(r.n), revenue: num(r.revenue),
     })),
+    orderStatusBreakdown: orderStatusRows.map((r) => ({
+      status: String(r.current_status), count: num(r.n), revenue: num(r.revenue), pct: pct(num(r.n), saleCount),
+    })),
     byTl: tlRows.map((r) => {
       const tlRevenue = num(r.revenue);
       const tlName = String(r.tl_name);
@@ -357,7 +413,7 @@ async function getAllocationData(from?: string, to?: string): Promise<NeemansAll
        SUM(CASE WHEN calling_status = 'Not Connected' THEN 1 ELSE 0 END) AS not_connected,
        SUM(CASE WHEN calling_status = 'Pending to call' THEN 1 ELSE 0 END) AS pending,
        COUNT(DISTINCT NULLIF(phone, '')) AS unique_phones,
-       COUNT(DISTINCT NULLIF(agent, '')) AS active_agents
+       COUNT(DISTINCT CASE WHEN agent NOT IN ('', 'VDAD') THEN agent END) AS active_agents -- VDAD = auto-dialer, not an agent
      FROM db_masmis.neemans_allocation WHERE 1=1${f.sql}`,
     f.params,
   );
@@ -427,7 +483,7 @@ export async function getChatData(from?: string, to?: string): Promise<NeemansCh
        SUM(CASE WHEN is_resolved = '1' THEN 1 ELSE 0 END) AS resolved,
        AVG(NULLIF(frt, '') + 0) AS avg_frt,
        AVG(NULLIF(resolution_time, '') + 0) AS avg_resolution,
-       AVG(NULLIF(csat_rating, '') + 0) AS avg_csat,
+       AVG(NULLIF(NULLIF(csat_rating, ''), '0') + 0) AS avg_csat, -- '0' = not rated, not a rating of zero
        SUM(CASE WHEN frt_tat = 'IN TAT' THEN 1 ELSE 0 END) AS frt_in_tat,
        SUM(CASE WHEN frt_tat IS NOT NULL AND frt_tat != '' THEN 1 ELSE 0 END) AS frt_tat_known,
        SUM(CASE WHEN resolution_tat = 'IN TAT' THEN 1 ELSE 0 END) AS resolution_in_tat,
@@ -447,6 +503,12 @@ export async function getChatData(from?: string, to?: string): Promise<NeemansCh
      GROUP BY ticket_status ORDER BY n DESC`,
     f.params,
   );
+  const channelP = db.execute<RowDataPacket[]>(
+    `SELECT inbox_name, COUNT(*) AS n, SUM(CASE WHEN is_resolved = '1' THEN 1 ELSE 0 END) AS resolved
+     FROM db_masmis.neemans_chat WHERE inbox_name IS NOT NULL AND inbox_name != ''${f.sql}
+     GROUP BY inbox_name ORDER BY n DESC`,
+    f.params,
+  );
   const trendP = db.execute<RowDataPacket[]>(
     `SELECT ${CHAT_DATE_EXPR} AS d, COUNT(*) AS n,
        SUM(CASE WHEN is_resolved = '1' THEN 1 ELSE 0 END) AS resolved
@@ -458,14 +520,14 @@ export async function getChatData(from?: string, to?: string): Promise<NeemansCh
   const agentP = db.execute<RowDataPacket[]>(
     `SELECT agent_name, emp_id, COUNT(*) AS n,
        SUM(CASE WHEN is_resolved = '1' THEN 1 ELSE 0 END) AS resolved,
-       AVG(NULLIF(csat_rating, '') + 0) AS avg_csat
+       AVG(NULLIF(NULLIF(csat_rating, ''), '0') + 0) AS avg_csat
      FROM db_masmis.neemans_chat WHERE agent_name IS NOT NULL AND agent_name != ''${f.sql}
      GROUP BY agent_name, emp_id ORDER BY n DESC LIMIT 100`,
     f.params,
   );
 
-  const [[[headlineRow]], [lobRows], [statusRows], [trendRows], [agentRows]] = await Promise.all([
-    headlineP, lobP, statusP, trendP, agentP,
+  const [[[headlineRow]], [lobRows], [statusRows], [channelRows], [trendRows], [agentRows]] = await Promise.all([
+    headlineP, lobP, statusP, channelP, trendP, agentP,
   ]);
 
   const total = num(headlineRow?.total);
@@ -480,6 +542,7 @@ export async function getChatData(from?: string, to?: string): Promise<NeemansCh
       resolutionTatCompliancePct: pct(num(headlineRow?.resolution_in_tat), num(headlineRow?.resolution_tat_known)),
     },
     byLob: lobRows.map((r) => ({ lob: String(r.lob), tickets: num(r.n), resolvedPct: pct(num(r.resolved), num(r.n)) })),
+    channelBreakdown: channelRows.map((r) => ({ channel: String(r.inbox_name), tickets: num(r.n), resolvedPct: pct(num(r.resolved), num(r.n)) })),
     statusBreakdown: statusRows.map((r) => ({ status: String(r.ticket_status), count: num(r.n), pct: pct(num(r.n), total) })),
     dateWiseTrend: trendRows.map((r) => ({ date: String(r.d), tickets: num(r.n), resolvedPct: pct(num(r.resolved), num(r.n)) })),
     agents: agentRows.map((r) => ({
@@ -517,8 +580,15 @@ async function getProductivityData(from?: string, to?: string): Promise<NeemansP
      GROUP BY emp_id ORDER BY calls DESC LIMIT 100`,
     f.params,
   );
+  const lobP = db.execute<RowDataPacket[]>(
+    `SELECT lob, SUM(calls) AS calls, COUNT(DISTINCT NULLIF(emp_id, '')) AS agents,
+       AVG(NULLIF(occu_pct, '') + 0) AS avg_occupancy
+     FROM db_masmis.neemans_apr WHERE lob IS NOT NULL AND lob != ''${f.sql}
+     GROUP BY lob ORDER BY calls DESC`,
+    f.params,
+  );
 
-  const [[[headlineRow]], [trendRows], [rawAgentRows]] = await Promise.all([headlineP, trendP, agentP]);
+  const [[[headlineRow]], [trendRows], [rawAgentRows], [lobRows]] = await Promise.all([headlineP, trendP, agentP, lobP]);
 
   return {
     headline: {
@@ -531,6 +601,9 @@ async function getProductivityData(from?: string, to?: string): Promise<NeemansP
     },
     dateWiseTrend: trendRows.map((r) => ({
       date: String(r.d), calls: num(r.calls), avgOccupancyPct: Math.round(num(r.avg_occupancy) * 100) / 100, loginAgents: num(r.login_agents),
+    })),
+    lobBreakdown: lobRows.map((r) => ({
+      lob: String(r.lob), calls: num(r.calls), agents: num(r.agents), avgOccupancyPct: Math.round(num(r.avg_occupancy) * 100) / 100,
     })),
     agents: rawAgentRows.map((r) => {
       const loginSecs = String(r.login_times ?? "").split("|").map(timeToSec);
@@ -607,6 +680,7 @@ export async function getNeemansPerformanceDashboard(from?: string, to?: string)
     totalChatTickets: chat.headline.totalTickets,
     chatResolvedPct: chat.headline.resolvedPct,
     avgOccupancyPct: productivity.headline.avgOccupancyPct,
+    conversionPct: pct(sale.headline.saleCount, allocation.headline.totalAllocation),
   };
 
   return {

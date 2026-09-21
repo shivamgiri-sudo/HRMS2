@@ -53,6 +53,15 @@ export function NeemansOverviewTab({
 }: { data: NeemansDashboardData; onOpenTab: (tab: OverviewTarget) => void }) {
   const { sale, allocation, chat, productivity, cart, inbound } = data;
 
+  /** Orders placed / total numbers allocated -- matches the reference management
+   * workbook's "Conversion %" (Neeman's Billing Sep 26.xlsb, sheet "Dashboard": Total
+   * Orders / Workable Data). Computed here rather than read off the API response
+   * because both inputs are already in `data`; the backend also now exposes the same
+   * figure as `overview.conversionPct` for any non-UI consumer of this endpoint. */
+  const conversionPct = allocation.headline.totalAllocation > 0
+    ? Math.round((sale.headline.saleCount / allocation.headline.totalAllocation) * 10000) / 100
+    : 0;
+
   return (
     <div className="space-y-8">
       <SectionCard icon={HeartPulse} title="Process health at a glance" tone="violet" footnote="Each ring is one source's headline rate for the selected range; an empty ring means that source has no data in range.">
@@ -118,13 +127,14 @@ export function NeemansOverviewTab({
           subtitle={`${allocation.headline.totalAllocation.toLocaleString("en-IN")} allocated · ${allocation.headline.connectedPct}% connected`}
           onOpen={() => onOpenTab("allocation")}
         />
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
           <KpiCard icon={ClipboardList} label="Total allocation" value={allocation.headline.totalAllocation.toLocaleString("en-IN")} tone="violet" />
           <KpiCard icon={PhoneCall} label="Connected" value={allocation.headline.connected.toLocaleString("en-IN")} tone="emerald" />
           <KpiCard icon={Gauge} label="Connected %" value={`${allocation.headline.connectedPct}%`} tone="teal" />
           <KpiCard icon={PhoneMissed} label="Not connected" value={allocation.headline.notConnected.toLocaleString("en-IN")} tone="rose" />
           <KpiCard icon={Clock3} label="Pending" value={allocation.headline.pending.toLocaleString("en-IN")} tone="amber" />
           <KpiCard icon={Users} label="Unique phones" value={allocation.headline.uniquePhones.toLocaleString("en-IN")} tone="sky" />
+          <KpiCard icon={Target} label="Conversion %" value={`${conversionPct}%`} tone="indigo" sub="orders / allocation" />
         </div>
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="lg:col-span-2">
@@ -166,8 +176,8 @@ export function NeemansOverviewTab({
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
           <KpiCard icon={MessageSquare} label="Tickets" value={chat.headline.totalTickets.toLocaleString("en-IN")} tone="indigo" />
           <KpiCard icon={Gauge} label="Resolved %" value={`${chat.headline.resolvedPct}%`} tone="emerald" />
-          <KpiCard icon={Clock3} label="Avg FRT" value={`${chat.headline.avgFrtHrs}h`} tone="sky" />
-          <KpiCard icon={Clock3} label="Avg resolution" value={`${chat.headline.avgResolutionHrs}h`} tone="violet" />
+          <KpiCard icon={Clock3} label="Avg FRT" value={`${chat.headline.avgFrtHrs}m`} tone="sky" />
+          <KpiCard icon={Clock3} label="Avg resolution" value={`${chat.headline.avgResolutionHrs}m`} tone="violet" />
           <KpiCard icon={Trophy} label="Avg CSAT" value={chat.headline.avgCsat ? String(chat.headline.avgCsat) : "—"} tone="amber" />
           <KpiCard icon={ShieldCheck} label="FRT TAT" value={`${chat.headline.frtTatCompliancePct}%`} tone="teal" />
           <KpiCard icon={ShieldCheck} label="Resolution TAT" value={`${chat.headline.resolutionTatCompliancePct}%`} tone="cyan" />

@@ -43,12 +43,14 @@ export interface TrendSeries {
 /** Date-axis combo chart: any mix of gradient areas, gradient bars and lines,
  * each on the left or right axis. */
 export function ComboTrend({
-  data, series, xKey = "date", height = 240,
+  data, series, xKey = "date", height = 240, xFormat = (v: string) => formatShortDate(v),
 }: {
   data: Array<Record<string, string | number>>;
   series: TrendSeries[];
   xKey?: string;
   height?: number;
+  /** Label for an X value. Defaults to a short date; pass another for non-date axes (hour of day, attempt bucket). */
+  xFormat?: (v: string) => string;
 }) {
   const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
   if (data.length === 0) return <EmptyChart height={height} />;
@@ -69,11 +71,11 @@ export function ComboTrend({
           ))}
         </defs>
         <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} />
-        <XAxis dataKey={xKey} tickFormatter={(v: string) => formatShortDate(String(v))} tick={axisTick} axisLine={false} tickLine={false} />
+        <XAxis dataKey={xKey} tickFormatter={(v: string) => xFormat(String(v))} tick={axisTick} axisLine={false} tickLine={false} />
         <YAxis yAxisId="left" tick={axisTick} tickFormatter={compact} axisLine={false} tickLine={false} />
         {hasRight && <YAxis yAxisId="right" orientation="right" tick={axisTick} tickFormatter={compact} axisLine={false} tickLine={false} />}
         <Tooltip
-          labelFormatter={(v: unknown) => formatShortDate(String(v))}
+          labelFormatter={(v: unknown) => xFormat(String(v))}
           formatter={(value: number, name: string) => {
             const fmt = byName.get(name)?.format;
             return fmt ? fmt(Number(value)) : fmtNum(Number(value));

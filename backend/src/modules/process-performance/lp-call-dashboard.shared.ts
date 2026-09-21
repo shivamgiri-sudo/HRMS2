@@ -219,9 +219,16 @@ function parseRowDate(raw: unknown): string | null {
 
 /** "H:MM:SS" / "HH:MM:SS" duration text -> seconds. */
 function durationToSec(v: unknown): number {
-  const m = String(v ?? "").trim().match(/^(\d{1,3}):(\d{2}):(\d{2})$/);
-  if (!m) return 0;
-  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+  const s = String(v ?? "").trim();
+  const m = s.match(/^(\d{1,3}):(\d{2}):(\d{2})$/);
+  if (m) return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+  // Files Excel saved with a General format carry a duration as a day-fraction
+  // ("0.000416667" = 36 s) instead of "HH:MM:SS" -- 1,853 LP Onboarding rows.
+  if (/^\d*\.\d+$/.test(s)) {
+    const n = Number(s);
+    if (n > 0 && n < 1) return Math.round(n * 86400);
+  }
+  return 0;
 }
 
 /** Hour of day (0-23) from either "YYYY-MM-DD HH:MM:SS" text or a bare
@@ -309,9 +316,10 @@ async function loadSlices(processKey: LpProcessKey, from: string, to: string): P
   const { apr: aprTable, cdr: cdrTable } = TABLES[processKey];
 
   const [cdrRaw] = await db.execute<any[]>(
-    `SELECT id, report_date, service, agent, login_id, lead_id, disposition_status, disposition,
+    `SELECT id, call_number, report_date, service, agent, login_id, lead_id, disposition_status, disposition,
             attempt, unique_flag, start_time, talk_duration, hangup_by
-     FROM db_masmis.${cdrTable}`,
+     FROM db_masmis.${cdrTable}
+     ORDER BY id`,
   );
   const [aprRaw] = await db.execute<any[]>(
     `SELECT report_date, agent, login_id, total_calls, login_time, net_login_time,
@@ -322,9 +330,18 @@ async function loadSlices(processKey: LpProcessKey, from: string, to: string): P
   );
 
   const calls: CallRow[] = [];
+  // call_number is the dialer's unique call id. A whole day can be loaded twice (LP Feedback
+  // 12-Sep-26: all 2,373 calls appear a second time, later copy carrying a higher unique_flag),
+  // which doubled that day's calls -- keep the first row (lowest id) per call_number.
+  const seenCalls = new Set<string>();
   for (const r of cdrRaw as any[]) {
     const reportDate = parseRowDate(r.report_date);
     if (!reportDate || reportDate < from || reportDate > to) continue;
+    const callNo = String(r.call_number ?? "").trim();
+    if (callNo) {
+      if (seenCalls.has(callNo)) continue;
+      seenCalls.add(callNo);
+    }
     const status = normalizeStatus(r.disposition_status);
     calls.push({
       id: num(r.id),
