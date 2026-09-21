@@ -1,6 +1,15 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
+import { loadSpanTargetContext, spanTarget } from "./dashboard-monthly-target.shared.js";
+
+/** Same dashboard_code/metric_code the Overview tab's Monthly Target editor
+ * (and the Date-wise Target upload/edit) write to (bellavita-cart-dashboard.
+ * service.ts) -- this snapshot reads the identical stored values, just
+ * spread across MTD/week/day columns instead of shown as one figure, so a
+ * target set from any of the three places shows up in all of them. */
+const CART_DASHBOARD_CODE = "bellavita_cart";
+const CART_TARGET_METRIC = "BB_CART_REVENUE_TARGET";
 
 /**
  * Bellavita Abandoned Cart -- the overview snapshot (MTD / weeks / days) and
@@ -43,9 +52,16 @@ import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
  *   FHD -- bb_apr carries the same date for every agent -- and tenure/bucket
  *   are counted to the end of the range (0-30, 31-60, 61-90, 91-120, 121-180,
  *   Above 180).
+ * - Target / Achievement %: the Abandon Cart Revenue target set via the
+ *   Overview tab (bellavita-cart-dashboard.service.ts, dashboard_metric_target
+ *   table) -- either a real per-day value (Date-wise Target upload/edit) or
+ *   a monthly figure spread across MTD/week/day columns by each day's share
+ *   of its calendar month, same convention as Bellavita Chat's planned
+ *   capacity. Daily values win over the monthly fallback where both exist.
+ *   A column touching a period with no target at all shows null rather than
+ *   a partial figure.
  * - NOT derivable from the data, so shown as empty rather than invented:
- *   Target / Achievement % (per-agent monthly targets live only in the sheet)
- *   and the TQ/MQ/BQ quality band.
+ *   the TQ/MQ/BQ quality band (per-agent targets live only in the sheet).
  */
 
 /** Every query here is a read, so a lock-wait timeout caused by another session's write is safe to retry. */
@@ -270,9 +286,17 @@ export async function getBellavitaCartSnapshot(fromInput: string, toInput: strin
   const dataThrough = cartDates.length ? cartDates[cartDates.length - 1] : null;
   const { columns, omitted } = buildColumns(from, to, dataThrough);
 
+  // Same target(s) the Overview tab's editors write (dashboard-monthly-target.shared.ts):
+  // a real per-day value (from the Date-wise Target upload/edit) where one is set, else that
+  // day's monthly target spread evenly across its month -- same convention already used for
+  // Bellavita Chat's planned capacity, now overridable per day.
+  const allDates = [...new Set(columns.flatMap((c) => eachDay(c.from, c.to)))];
+  const targetCtx = await loadSpanTargetContext(CART_DASHBOARD_CODE, CART_TARGET_METRIC, allDates);
+
   const values: Record<string, CartSnapshotValues> = {};
   for (const col of columns) {
     const span = eachDay(col.from, col.to);
+    const target = spanTarget(targetCtx, span);
     let base = 0, attempted = 0, connected = 0, dnd = 0, sdc = 0, cartRows = 0;
     let orders = 0, revenue = 0, saleRows = 0, gross = 0, cod = 0, paid = 0, rto = 0, rtoRev = 0;
     const agentCounts: number[] = [];
@@ -295,7 +319,7 @@ export async function getBellavitaCartSnapshot(fromInput: string, toInput: strin
       cpa: avgAgents > 0 ? Math.round(base / avgAgents) : null,
       revenue: round2(revenue), saleCount: orders,
       convBasePct: pct(orders, base), convUniqueConnectPct: pct(orders, connected),
-      target: null, overallRevenueBau: round2(revenue), achievementPct: null,
+      target, overallRevenueBau: round2(revenue), achievementPct: target ? pct(revenue, target) : null,
       aov: orders > 0 ? Math.round(revenue / orders) : 0,
       codOrders: cod, paidOrders: paid, rtoOrders: rto, rtoRevenue: round2(rtoRev),
       duplicateCartRows: Math.max(0, cartRows - base),
@@ -322,8 +346,9 @@ export async function getBellavitaCartSnapshot(fromInput: string, toInput: strin
       date: d, base: cartDaily.get(d)?.base ?? 0, connected: cartDaily.get(d)?.connected ?? 0,
       saleCount: sales.daily.get(d)?.orders ?? 0, revenue: sales.daily.get(d)?.revenue ?? 0,
     })),
-    targetNote:
-      "Target and Achievement % are not in the database -- the reference sheet keeps per-agent monthly targets outside it -- so they are left empty rather than estimated.",
+    targetNote: targetCtx.dailyByDate.size === 0 && targetCtx.monthlyByMonth.size === 0
+      ? "No target has been set yet for this range -- set a monthly figure on the Overview tab, or upload/edit real per-day values there, and it will appear here across MTD/week/day."
+      : "Target prefers a real per-day value (Overview tab's Date-wise Target) where one is set; otherwise it falls back to the monthly figure spread evenly across the days in its month. A column touching a period with no target at all shows — rather than a partial number.",
     dailyColumnsOmitted: omitted,
   };
 }

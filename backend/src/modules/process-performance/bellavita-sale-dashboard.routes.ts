@@ -1,8 +1,11 @@
 import { Router, type NextFunction, type Response } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { getBellavitaSaleDashboard, currentMonthRange } from "./bellavita-sale-dashboard.service.js";
+import { getBellavitaSaleDashboard, currentMonthRange, setBellavitaSaleMonthlyTarget, getBellavitaSaleDateLobMatrix } from "./bellavita-sale-dashboard.service.js";
 import { getBellavitaAgentPerformance } from "./bellavita-agent-performance.service.js";
+import { hasAnyRole } from "../../shared/scopeAccess.js";
+import { writeAuditLog } from "../../shared/auditLog.js";
+import { TARGET_ADMIN_ROLES } from "./dashboard-monthly-target.shared.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
@@ -29,7 +32,37 @@ router.get("/bellavita-sale-dashboard", requireRole(...VIEWER_ROLES), h(async (r
   const from = String(req.query.from ?? "");
   const to = String(req.query.to ?? "");
   const data = await getBellavitaSaleDashboard(from, to);
+  const canSetTarget = await hasAnyRole(req.authUser!.id, ...TARGET_ADMIN_ROLES);
+  res.json({ success: true, data: { ...data, canSetTarget } });
+}));
+
+router.get("/bellavita-sale-dashboard/date-lob-matrix", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await getBellavitaSaleDateLobMatrix(String(req.query.from ?? ""), String(req.query.to ?? ""));
   res.json({ success: true, data });
+}));
+
+router.put("/bellavita-sale-dashboard/monthly-target", requireRole(...TARGET_ADMIN_ROLES), h(async (req, res) => {
+  const body = (req.body ?? {}) as { lob?: string; month?: string; target?: number | string; reason?: string };
+  const lob = String(body.lob ?? "").trim();
+  if (!lob) return res.status(400).json({ success: false, error: "lob is required" });
+  let change;
+  try {
+    change = await setBellavitaSaleMonthlyTarget(lob, String(body.month ?? ""), Number(body.target), req.authUser!.id);
+  } catch (err) {
+    return res.status(400).json({ success: false, error: err instanceof Error ? err.message : "Invalid target" });
+  }
+  await writeAuditLog({
+    actor_user_id: req.authUser!.id,
+    action_type: "BB_SALE_MONTHLY_TARGET_SET",
+    module_key: "process-performance",
+    entity_type: "dashboard_metric_target",
+    entity_id: `bellavita_sale:${lob}:${change.month}`,
+    reason: body.reason ? String(body.reason) : undefined,
+    old_value_json: { target: change.oldValue },
+    new_value_json: { target: change.newValue, lob, month: change.month },
+    req,
+  });
+  res.json({ success: true, data: change });
 }));
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

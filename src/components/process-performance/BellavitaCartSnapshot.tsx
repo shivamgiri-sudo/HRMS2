@@ -77,7 +77,7 @@ const SECTIONS: Section[] = [
   {
     title: "Revenue Metrics", head: "bg-[#0e4b1f] text-white", label: "bg-[#c6e0b4]",
     rows: [
-      { key: "target", label: "Target", fmt: "count" },
+      { key: "target", label: "Target", fmt: "inr" },
       { key: "overallRevenueBau", label: "Overall Revenue_BAU", fmt: "inr" },
       { key: "achievementPct", label: "Achievement %", fmt: "pct0" },
       { key: "aov", label: "AOV", fmt: "inr" },

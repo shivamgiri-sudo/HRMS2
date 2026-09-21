@@ -1,5 +1,16 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import {
+  setMonthlyTarget, type MonthlyTargetChange,
+  loadSpanTargetContext, spanTarget, dayTargetFrom, eachDay,
+  setDailyTarget, setDailyTargetsBulk, type DailyTargetChange,
+} from "./dashboard-monthly-target.shared.js";
+
+/** dashboard_metric_target keys for this dashboard's one editable target:
+ * the monthly Abandon Cart Revenue commitment (Overview tab). Set via
+ * setBellavitaCartMonthlyTarget / PUT .../bellavita-cart-dashboard/monthly-target. */
+const CART_DASHBOARD_CODE = "bellavita_cart";
+const CART_TARGET_METRIC = "BB_CART_REVENUE_TARGET";
 
 /**
  * Bellavita's real Cart (abandoned-cart recovery) dashboard -- live
@@ -55,6 +66,9 @@ export interface BellavitaCartHeadline {
    * Chat dashboard's Revenue (campaign = 'Chat'). */
   abandonCartRevenue: number;
   abandonCartSaleCount: number;
+  /** Monthly target for abandonCartRevenue, admin-set (null = never set for this month). */
+  target: number | null;
+  achievementPct: number | null;
 }
 
 export interface BellavitaAllocationHeadline {
@@ -67,6 +81,10 @@ export interface BellavitaCartDashboardData {
   headline: BellavitaCartHeadline;
   from: string;
   to: string;
+  /** The calendar month (YYYY-MM) the headline's target/achievementPct apply
+   * to -- always the month of `to`, so an admin editing the target knows
+   * which month they're setting even when the selected range spans several. */
+  targetMonth: string;
   dateWiseTrend: Array<{ date: string; cartCount: number; cartValue: number }>;
   dispositionBreakdown: Array<{ disposition: string; count: number; pct: number }>;
   discountBreakdown: Array<{ code: string; count: number }>;
@@ -183,6 +201,16 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
   const allocTotal = num(allocRow?.total);
   const uniqueCallCount = num(headlineRow?.unique_call_count);
   const uniqueCallConnectedCount = num(headlineRow?.unique_call_connected);
+  const abandonCartRevenue = num(abandonSaleRow?.revenue);
+
+  // The target editor's default month is `to`'s month; the actual headline
+  // figure sums every day in [from, to], preferring a real uploaded daily
+  // target per day and falling back to that day's monthly target / days in
+  // its month where no daily value has been set (dashboard-monthly-target.shared.ts).
+  const targetMonth = to.slice(0, 7);
+  const targetDays = eachDay(from, to);
+  const targetCtx = await loadSpanTargetContext(CART_DASHBOARD_CODE, CART_TARGET_METRIC, targetDays);
+  const target = spanTarget(targetCtx, targetDays);
 
   return {
     headline: {
@@ -198,10 +226,13 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
       uniqueCallCount,
       uniqueCallConnectedCount,
       uniqueCallConnectedPct: pct(uniqueCallConnectedCount, uniqueCallCount),
-      abandonCartRevenue: num(abandonSaleRow?.revenue),
+      abandonCartRevenue,
       abandonCartSaleCount: num(abandonSaleRow?.n),
+      target,
+      achievementPct: target ? pct(abandonCartRevenue, target) : null,
     },
     from, to,
+    targetMonth,
     dateWiseTrend: trendRows.map((r) => ({ date: String(r.d), cartCount: num(r.cart_count), cartValue: num(r.cart_value) })),
     dispositionBreakdown: dispositionRows.map((r) => ({ disposition: String(r.disposition), count: num(r.n), pct: pct(num(r.n), totalCarts) })),
     discountBreakdown: discountRows.map((r) => ({ code: String(r.code), count: num(r.n) })),
@@ -217,4 +248,118 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
       hasData: allocTotal > 0,
     },
   };
+}
+
+/** Sets the Abandon Cart Revenue target for one calendar month. See
+ * dashboard-monthly-target.shared.ts's header comment for the storage model. */
+export async function setBellavitaCartMonthlyTarget(month: string, value: number, actorId: string): Promise<MonthlyTargetChange> {
+  return setMonthlyTarget(CART_DASHBOARD_CODE, CART_TARGET_METRIC, month, value, actorId);
+}
+
+/* ---------------------------- date-wise target ------------------------------ */
+/**
+ * A per-DATE Abandon Cart Revenue target, from the reference sheet the user
+ * supplied (2026-09-21 screenshots): Date / Conv Tgt% / Allocation / Sale
+ * Target / Revenue target, with two real formulas shown in the sheet:
+ *   Sale Target    = Allocation x Conv Tgt%      (cell formula "=C2*B2")
+ *   Revenue target = Sale Target x 500            (cell formula "=D2*500")
+ * Conv Tgt% and Allocation are the business's own planning inputs (a
+ * per-day conversion-rate target and a per-day planned allocation volume --
+ * not live counts, since the sheet repeats the same Allocation for many
+ * consecutive days); this module trusts them as given and only computes the
+ * two derived columns, so the formula can never silently drift from what
+ * was actually entered. 500 is the sheet's own fixed assumed revenue-per-
+ * sale figure, not something this app derived -- if that assumption ever
+ * changes, this constant needs updating alongside it.
+ *
+ * Only the final Revenue target is persisted (as a daily row in
+ * dashboard_metric_target, reusing the exact same table/metric the monthly
+ * target above uses, just with target_period='daily' -- see
+ * dashboard-monthly-target.shared.ts). Conv Tgt%/Allocation/Sale Target are
+ * returned to the caller for display right after an upload, but are not
+ * stored as their own columns: this app's target table only has one numeric
+ * value per row, and Revenue target is the one the dashboard's Achievement%
+ * actually needs. Storing the three drivers too would need a new table.
+ */
+const REVENUE_PER_SALE = 500;
+const round3 = (v: number): number => Math.round(v * 1000) / 1000;
+
+export interface CartDailyTargetInput { date: string; convTgtPct: number; allocation: number }
+export interface CartDailyTargetComputed extends CartDailyTargetInput { saleTarget: number; revenueTarget: number }
+
+/** Pure, no DB access -- lets the frontend preview Sale Target/Revenue target
+ * as an admin types, using the exact same formula the upload endpoint applies. */
+export function computeCartDailyTargets(rows: CartDailyTargetInput[]): CartDailyTargetComputed[] {
+  return rows.map((r) => {
+    const saleTarget = round3(r.allocation * (r.convTgtPct / 100));
+    return { ...r, saleTarget, revenueTarget: Math.round(saleTarget * REVENUE_PER_SALE) };
+  });
+}
+
+function validateDailyTargetInputs(rows: CartDailyTargetInput[]): void {
+  if (rows.length === 0) throw new Error("No rows to upload");
+  if (rows.length > 400) throw new Error("Too many rows in one upload (max 400)");
+  for (const r of rows) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(r.date)) throw new Error(`Invalid date: "${r.date}" (expected YYYY-MM-DD)`);
+    if (!Number.isFinite(r.convTgtPct) || r.convTgtPct < 0 || r.convTgtPct > 100) throw new Error(`Conv Tgt% must be 0-100 for ${r.date}`);
+    if (!Number.isFinite(r.allocation) || r.allocation < 0) throw new Error(`Allocation must be a non-negative number for ${r.date}`);
+  }
+}
+
+/** The "upload" path: Date/Conv Tgt%/Allocation rows in, computed Sale
+ * Target/Revenue target out, with Revenue target persisted as each date's
+ * daily target. Every row is validated before anything is written. */
+export async function uploadBellavitaCartDailyTargets(rows: CartDailyTargetInput[], actorId: string): Promise<CartDailyTargetComputed[]> {
+  validateDailyTargetInputs(rows);
+  const computed = computeCartDailyTargets(rows);
+  await setDailyTargetsBulk(CART_DASHBOARD_CODE, CART_TARGET_METRIC, computed.map((c) => ({ date: c.date, value: c.revenueTarget })), actorId);
+  return computed;
+}
+
+/** A quick single-date override, bypassing the Conv Tgt%/Allocation formula
+ * -- for correcting one day's Revenue target directly without re-deriving it. */
+export async function setBellavitaCartDailyTarget(date: string, value: number, actorId: string): Promise<DailyTargetChange> {
+  return setDailyTarget(CART_DASHBOARD_CODE, CART_TARGET_METRIC, date, value, actorId);
+}
+
+export interface CartDailyTargetRow { date: string; target: number | null; source: "daily" | "monthly" | "none"; actualRevenue: number }
+
+/** The effective per-day target for a range, for the chart/table + edit UI:
+ * a real uploaded daily value where set ("daily"), else that day's monthly
+ * target's even share ("monthly"), else null ("none") -- alongside that same
+ * day's real Abandon Cart Revenue (identical definition to the Overview
+ * headline's abandonCartRevenue: db_masmis.bb_sale, campaign = 'Abandon
+ * Cart', calling_status = 'Sale Made', one row per order), so the chart can
+ * show Target vs Actual, not the target in isolation. */
+export async function getBellavitaCartDailyTargets(fromInput: string, toInput: string): Promise<{ from: string; to: string; rows: CartDailyTargetRow[] }> {
+  const { from, to } = resolveRange(fromInput, toInput);
+  const days = eachDay(from, to);
+  const [ctx, revenueRows] = await Promise.all([
+    loadSpanTargetContext(CART_DASHBOARD_CODE, CART_TARGET_METRIC, days),
+    db.execute<RowDataPacket[]>(
+      `SELECT DATE(s.\`Date\`) AS d, SUM(s.amount) AS revenue
+       FROM db_masmis.bb_sale s
+       INNER JOIN (
+         SELECT bella_vita_order_id, MAX(id) AS keep_id
+         FROM db_masmis.bb_sale
+         WHERE campaign = 'Abandon Cart' AND calling_status = 'Sale Made' AND \`Date\` >= ? AND \`Date\` <= ?
+           AND bella_vita_order_id IS NOT NULL AND bella_vita_order_id != ''
+         GROUP BY bella_vita_order_id
+       ) dk ON dk.keep_id = s.id
+       GROUP BY DATE(s.\`Date\`)`,
+      [from, to],
+    ).then(([rows]) => rows),
+  ]);
+  const revenueByDate = new Map<string, number>();
+  for (const r of revenueRows) revenueByDate.set(String(r.d), Number(r.revenue) || 0);
+
+  const rows: CartDailyTargetRow[] = days.map((d) => {
+    const actualRevenue = revenueByDate.get(d) ?? 0;
+    if (ctx.dailyByDate.has(d)) return { date: d, target: ctx.dailyByDate.get(d)!, source: "daily", actualRevenue };
+    const t = dayTargetFrom(ctx, d);
+    return t === null
+      ? { date: d, target: null, source: "none", actualRevenue }
+      : { date: d, target: Math.round(t), source: "monthly", actualRevenue };
+  });
+  return { from, to, rows };
 }

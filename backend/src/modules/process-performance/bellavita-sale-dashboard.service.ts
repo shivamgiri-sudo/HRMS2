@@ -1,5 +1,36 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { loadMonthlyTargets, setMonthlyTarget, type MonthlyTargetChange } from "./dashboard-monthly-target.shared.js";
+
+const SALE_DASHBOARD_CODE = "bellavita_sale";
+
+/** The Cart dashboard's own target key (bellavita-cart-dashboard.service.ts) --
+ * imported as plain strings, not a function, so this file doesn't depend on
+ * that module just for two constants. */
+const CART_DASHBOARD_CODE = "bellavita_cart";
+const CART_TARGET_METRIC = "BB_CART_REVENUE_TARGET";
+
+/** dashboard_metric_target key for one LOB's monthly turnover target --
+ * derived from the real `lob` value (e.g. "Repeat" -> BB_SALE_TARGET_REPEAT).
+ * Shared by the loader below and by setBellavitaSaleMonthlyTarget, so a set
+ * target is always read back under the exact key it was written with. */
+export function lobTargetMetricCode(lob: string): string {
+  const slug = lob.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return `BB_SALE_TARGET_${slug || "UNKNOWN"}`;
+}
+
+/** Where a LOB's target actually lives. "Abandon Cart" is deliberately routed
+ * to the SAME (dashboard_code, metric_code) the Bellavita Cart dashboard's own
+ * Monthly Target editor uses (bellavita-cart-dashboard.service.ts) -- Abandon
+ * Cart revenue is one business figure, not two, so setting it from either
+ * dashboard updates the other automatically; there is no separate sync step
+ * because there is no longer a separate value to keep in sync. Every other
+ * LOB keeps its own bellavita_sale-scoped key, since it has no equivalent
+ * dashboard elsewhere. */
+function targetKeyFor(lob: string): { dashboardCode: string; metricCode: string } {
+  if (lob.trim().toLowerCase() === "abandon cart") return { dashboardCode: CART_DASHBOARD_CODE, metricCode: CART_TARGET_METRIC };
+  return { dashboardCode: SALE_DASHBOARD_CODE, metricCode: lobTargetMetricCode(lob) };
+}
 
 /**
  * Real KPI aggregates for Bellavita's Process Performance V2 "Sale
@@ -72,6 +103,10 @@ export interface BellavitaSaleDashboardData {
     codCount: number;
     rtoCount: number;
   }>;
+  /** The calendar month (YYYY-MM) lobRevenue's target/achievementPct apply to
+   * -- always the month of `to` (same convention as Bellavita Cart / Chat's
+   * planned capacity). */
+  targetMonth: string;
   lobRevenue: Array<{
     lob: string;
     saleCount: number;
@@ -79,6 +114,10 @@ export interface BellavitaSaleDashboardData {
     target: number | null;
     achievementPct: number | null;
     targetNote?: string;
+    /** "manual" = an admin set this month's target via the UI; "default" =
+     * falling back to the hardcoded LOB_TARGETS figure below; "none" = no
+     * target at all for this LOB. */
+    targetSource: "manual" | "default" | "none";
     codCount: number;
     paidCount: number;
     codPct: number;
@@ -321,6 +360,29 @@ export async function getBellavitaSaleDashboard(fromInput: string, toInput: stri
   const codCount = num(headlineRow?.cod_count);
   const rtoCount = num(headlineRow?.rto_count);
 
+  // Admin-set monthly targets take priority over the hardcoded LOB_TARGETS
+  // fallback below, for every LOB actually present this period plus every
+  // LOB the hardcoded map already knows about (so a target can be set for a
+  // LOB even before it has any sales this range). Each LOB's key may live
+  // under bellavita_sale OR bellavita_cart (see targetKeyFor) -- grouped by
+  // dashboard_code so this is still just one query per code, not one per LOB.
+  const targetMonth = to.slice(0, 7);
+  const lobKeys = new Set<string>([...lobRows.map((r) => r.lob || "Unknown"), ...Object.keys(LOB_TARGETS)]);
+  const keyByLob = new Map<string, { dashboardCode: string; metricCode: string }>([...lobKeys].map((lob) => [lob, targetKeyFor(lob)]));
+  const codesByDashboard = new Map<string, string[]>();
+  for (const { dashboardCode, metricCode } of keyByLob.values()) {
+    codesByDashboard.set(dashboardCode, [...(codesByDashboard.get(dashboardCode) ?? []), metricCode]);
+  }
+  const targetsByDashboard = new Map<string, Map<string, number>>();
+  for (const [dashboardCode, codes] of codesByDashboard) {
+    const loaded = await loadMonthlyTargets(dashboardCode, codes, [targetMonth]);
+    targetsByDashboard.set(dashboardCode, loaded.get(targetMonth) ?? new Map<string, number>());
+  }
+  const manualTargetFor = (lob: string): number | null => {
+    const key = keyByLob.get(lob) ?? targetKeyFor(lob);
+    return targetsByDashboard.get(key.dashboardCode)?.get(key.metricCode) ?? null;
+  };
+
   const lobRevenue = lobRows.map((r) => {
     const lob = r.lob || "Unknown";
     const turnoverVal = num(r.turnover);
@@ -329,13 +391,20 @@ export async function getBellavitaSaleDashboard(fromInput: string, toInput: stri
     const paidCountVal = num(r.paid_count);
     const rtoCountVal = num(r.rto_count);
     const targetInfo = LOB_TARGETS[lob];
+    const manualTarget = manualTargetFor(lob);
+    const target = manualTarget ?? targetInfo?.target ?? null;
+    const targetSource: "manual" | "default" | "none" = manualTarget !== null ? "manual" : targetInfo ? "default" : "none";
     return {
       lob,
       saleCount: saleCountVal,
       turnover: turnoverVal,
-      target: targetInfo?.target ?? null,
-      achievementPct: targetInfo ? pct(turnoverVal, targetInfo.target) : null,
-      targetNote: targetInfo?.note,
+      target,
+      targetSource,
+      achievementPct: target ? pct(turnoverVal, target) : null,
+      // The hardcoded figure's caveat only still applies while that figure is
+      // the one actually in effect -- once an admin sets a real monthly value
+      // it's dropped, since it no longer describes what's shown.
+      targetNote: targetSource === "default" ? targetInfo?.note : undefined,
       codCount: codCountVal,
       paidCount: paidCountVal,
       codPct: pct(codCountVal, paidCountVal + codCountVal),
@@ -394,6 +463,7 @@ export async function getBellavitaSaleDashboard(fromInput: string, toInput: stri
     },
     from,
     to,
+    targetMonth,
     dateWiseTrend: trendRows.map((r) => ({
       date: String(r.d),
       saleCount: num(r.sale_count),
@@ -425,4 +495,144 @@ export async function getBellavitaSaleDashboard(fromInput: string, toInput: stri
       rtoPct: pct(num(r.rto_count), num(r.sale_count)),
     })),
   };
+}
+
+/** Sets one LOB's turnover target for one calendar month, overriding the
+ * hardcoded LOB_TARGETS fallback for that LOB from then on. `lob` must be a
+ * real value from db_masmis.bb_sale.lob (or an existing LOB_TARGETS key) --
+ * the same string this endpoint's caller reads off the dashboard's own
+ * lobRevenue rows, so it's a closed set at the UI level even though this
+ * function itself doesn't enumerate every possible LOB. See
+ * dashboard-monthly-target.shared.ts's header comment for the storage model. */
+export async function setBellavitaSaleMonthlyTarget(lob: string, month: string, value: number, actorId: string): Promise<MonthlyTargetChange> {
+  const trimmed = lob.trim();
+  if (!trimmed) throw new Error("lob is required");
+  const { dashboardCode, metricCode } = targetKeyFor(trimmed);
+  const change = await setMonthlyTarget(dashboardCode, metricCode, month, value, actorId);
+  return { ...change, metricCode: trimmed }; // report back the real LOB name, not its internal metric code
+}
+
+/* --------------------------- date x LOB matrix ----------------------------- */
+
+/**
+ * Date-wise, LOB-wise Sale/Revenue split by COD vs Paid -- the "BVO Chat
+ * QRC"-style raw matrix the user supplied as a reference sheet (columns:
+ * Repeat Customer / Chat / Inbound / Abandon Cart, each split COD | Paid |
+ * Grand Total, plus an Overall Sale Performance block, an RTO block and a
+ * Net Sale Amount block, one row per date). Reuses DEDUPED_SALE_SQL, same as
+ * every other query in this file, so it can never disagree with the
+ * headline/LOB-wise table above.
+ *
+ * "RTO , RTD & Revenue" in the reference sheet: this app's data only carries
+ * one return-status flag (bb_sale.final_status = 'RTO'), confirmed by every
+ * other RTO figure in this file -- there is no separate "RTD" value anywhere
+ * in db_masmis.bb_sale. So this block reports RTO only, under that same
+ * combined label (matching the reference sheet's own header), rather than
+ * inventing a second, non-existent bucket.
+ */
+export interface DateLobBlockRow {
+  codSale: number; codRevenue: number;
+  paidSale: number; paidRevenue: number;
+  totalSale: number; totalRevenue: number;
+  codPct: number; paidPct: number;
+}
+export interface DateLobMatrixRow {
+  date: string;
+  lobs: Record<string, DateLobBlockRow>;
+  overall: DateLobBlockRow;
+  rtoCount: number; rtoRevenue: number;
+  netSaleCount: number; netSaleRevenue: number;
+}
+export interface BellavitaDateLobMatrixData {
+  from: string; to: string;
+  /** Real LOBs present in this range, in the reference sheet's own display order
+   * (Repeat, Chat, Abandon Cart, Inbound), with any unexpected extra LOB appended. */
+  lobOrder: string[];
+  rows: DateLobMatrixRow[];
+  grandTotal: DateLobMatrixRow;
+}
+
+const LOB_DISPLAY_ORDER = ["Repeat", "Chat", "Abandon Cart", "Inbound"];
+
+function emptyBlock(): DateLobBlockRow {
+  return { codSale: 0, codRevenue: 0, paidSale: 0, paidRevenue: 0, totalSale: 0, totalRevenue: 0, codPct: 0, paidPct: 0 };
+}
+function finalizeBlock(b: DateLobBlockRow): DateLobBlockRow {
+  return { ...b, codPct: pct(b.codSale, b.codSale + b.paidSale), paidPct: pct(b.paidSale, b.codSale + b.paidSale) };
+}
+function addBlock(dst: DateLobBlockRow, src: { codSale: number; codRevenue: number; paidSale: number; paidRevenue: number; totalSale: number; totalRevenue: number }) {
+  dst.codSale += src.codSale; dst.codRevenue += src.codRevenue;
+  dst.paidSale += src.paidSale; dst.paidRevenue += src.paidRevenue;
+  dst.totalSale += src.totalSale; dst.totalRevenue += src.totalRevenue;
+}
+
+interface DateLobRawRow extends RowDataPacket {
+  d: string; lob: string | null;
+  cod_n: number; cod_rev: string | null; paid_n: number; paid_rev: string | null;
+  total_n: number; total_rev: string | null; rto_n: number; rto_rev: string | null;
+}
+
+export async function getBellavitaSaleDateLobMatrix(fromInput: string, toInput: string): Promise<BellavitaDateLobMatrixData> {
+  const fallback = currentMonthRange();
+  const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
+  const to = DATE_RE.test(toInput) ? toInput : fallback.to;
+  const deduped = dedupedSaleSql();
+
+  const [rows] = await db.execute<DateLobRawRow[]>(
+    `SELECT DATE(ds.\`Date\`) AS d, ds.lob AS lob,
+       SUM(CASE WHEN ds.payment_status = 'cod' THEN 1 ELSE 0 END) AS cod_n,
+       SUM(CASE WHEN ds.payment_status = 'cod' THEN CAST(ds.amount AS DECIMAL(14,2)) ELSE 0 END) AS cod_rev,
+       SUM(CASE WHEN ds.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_n,
+       SUM(CASE WHEN ds.payment_status = 'paid' THEN CAST(ds.amount AS DECIMAL(14,2)) ELSE 0 END) AS paid_rev,
+       COUNT(*) AS total_n, SUM(CAST(ds.amount AS DECIMAL(14,2))) AS total_rev,
+       SUM(CASE WHEN ds.final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_n,
+       SUM(CASE WHEN ds.final_status = 'RTO' THEN CAST(ds.amount AS DECIMAL(14,2)) ELSE 0 END) AS rto_rev
+     FROM ${deduped}
+     WHERE ds.lob IS NOT NULL AND ds.lob != ''
+     GROUP BY DATE(ds.\`Date\`), ds.lob
+     ORDER BY d ASC`,
+    [from, to],
+  );
+
+  const lobsSeen = new Set<string>(rows.map((r) => r.lob || "Unknown"));
+  const lobOrder = [...LOB_DISPLAY_ORDER.filter((l) => lobsSeen.has(l)), ...[...lobsSeen].filter((l) => !LOB_DISPLAY_ORDER.includes(l)).sort()];
+
+  const byDate = new Map<string, DateLobMatrixRow>();
+  for (const r of rows) {
+    const date = String(r.d);
+    const lob = r.lob || "Unknown";
+    let row = byDate.get(date);
+    if (!row) {
+      row = { date, lobs: {}, overall: emptyBlock(), rtoCount: 0, rtoRevenue: 0, netSaleCount: 0, netSaleRevenue: 0 };
+      byDate.set(date, row);
+    }
+    const block: DateLobBlockRow = {
+      codSale: num(r.cod_n), codRevenue: num(r.cod_rev),
+      paidSale: num(r.paid_n), paidRevenue: num(r.paid_rev),
+      totalSale: num(r.total_n), totalRevenue: num(r.total_rev),
+      codPct: 0, paidPct: 0,
+    };
+    row.lobs[lob] = finalizeBlock(block);
+    addBlock(row.overall, block);
+    row.rtoCount += num(r.rto_n);
+    row.rtoRevenue += num(r.rto_rev);
+    row.netSaleCount += num(r.total_n) - num(r.rto_n);
+    row.netSaleRevenue += num(r.total_rev) - num(r.rto_rev);
+  }
+  for (const row of byDate.values()) row.overall = finalizeBlock(row.overall);
+
+  const rowsOut = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+
+  const grandTotal: DateLobMatrixRow = { date: "Grand Total", lobs: {}, overall: emptyBlock(), rtoCount: 0, rtoRevenue: 0, netSaleCount: 0, netSaleRevenue: 0 };
+  for (const lob of lobOrder) grandTotal.lobs[lob] = emptyBlock();
+  for (const row of rowsOut) {
+    for (const lob of lobOrder) if (row.lobs[lob]) addBlock(grandTotal.lobs[lob], row.lobs[lob]);
+    addBlock(grandTotal.overall, row.overall);
+    grandTotal.rtoCount += row.rtoCount; grandTotal.rtoRevenue += row.rtoRevenue;
+    grandTotal.netSaleCount += row.netSaleCount; grandTotal.netSaleRevenue += row.netSaleRevenue;
+  }
+  for (const lob of lobOrder) grandTotal.lobs[lob] = finalizeBlock(grandTotal.lobs[lob]);
+  grandTotal.overall = finalizeBlock(grandTotal.overall);
+
+  return { from, to, lobOrder, rows: rowsOut, grandTotal };
 }

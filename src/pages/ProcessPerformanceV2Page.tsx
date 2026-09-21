@@ -4,6 +4,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { ProjectDetailView } from "@/pages/NativeInboundDashboard";
 import { BellavitaSaleDashboard } from "@/components/process-performance/BellavitaSaleDashboard";
 import { GncSaleDashboard } from "@/components/process-performance/GncSaleDashboard";
+import { GncChatDashboard } from "@/components/process-performance/GncChatDashboard";
 import { InboundInsightsDashboard, type InboundInsightProject } from "@/components/process-performance/InboundInsightsDashboard";
 import { NeemansCartDashboard } from "@/components/process-performance/NeemansCartDashboard";
 import { NeemansPerformanceDashboard } from "@/components/process-performance/NeemansPerformanceDashboard";
@@ -19,7 +20,8 @@ import { SatyaRetailReport } from "@/components/process-performance/SatyaRetailR
 import { CloviaDashboard } from "@/components/process-performance/CloviaDashboard";
 import { BirlanuDashboard } from "@/components/process-performance/BirlanuDashboard";
 import { AppreciateWealthDashboard } from "@/components/process-performance/AppreciateWealthDashboard";
-import { hrmsApi } from "@/lib/hrmsApi";
+import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
+import { apiUrl } from "@/lib/apiBase";
 import { TONE_CLASSES, TONE_GRADIENT_CLASSES, type Tone } from "@/lib/processPerformanceTones";
 import { UploaderHub, type UploaderHubItem } from "@/components/process-performance/UploaderHub";
 import { UploaderWorkspace } from "@/components/process-performance/UploaderWorkspace";
@@ -29,7 +31,7 @@ import {
   Receipt, PhoneIncoming, PhoneOutgoing, PhoneCall, ClipboardList,
   Mail, Star, ShieldCheck, Repeat, RotateCcw, TrendingUp,
   Heart, Footprints, HeartPulse, Home, Crown, Shirt, FileText, Tag,
-  Building2, Globe, Settings, Zap, LayoutGrid, UploadCloud, Sparkles,
+  Building2, Globe, Settings, Zap, LayoutGrid, UploadCloud, Sparkles, Download,
 } from "lucide-react";
 
 /**
@@ -39,7 +41,7 @@ import {
  * mapping table, same as bellavita/gnc/clovia/neemans already are.
  */
 type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "lp_feedback" | "lp_onboarding" | "puresta" | "dalmia" | "dubangladesh" | "viega" | "exicom";
-type SectionKey = "dashboards" | "uploader";
+type SectionKey = "dashboards" | "uploader" | "mis";
 
 const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
   { key: "bellavita", label: "Bellavita" },
@@ -91,7 +93,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
  * separate mapping. "stub" entries are the pre-existing "nothing built
  * yet" placeholders (Neemans' Sale/Allocation cards) -- unchanged.
  */
-const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" }>>> = {
+const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" }>>> = {
   bellavita: [
     { key: "sale_performance", label: "Sale Performance", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
     { key: "chat_performance", label: "Chat Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
@@ -116,6 +118,7 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
   ],
   gnc: [
     { key: "sale_performance", label: "Sale Performance", description: "Turn over, prepaid%, allocation, top performers — live from uploaded sale data", kind: "gnc_sale" },
+    { key: "chat_performance", label: "Chat Performance", description: "Tickets, unique/repeat, FRT/resolution TAT, QRC & agent-wise, with Sale (Chat) linkage — live from uploaded chat data", kind: "gnc_chat" },
     { key: "inbound", label: "Inbound", description: "Live call performance — Overview, agent-wise & date-wise breakdowns", kind: "inbound" },
   ],
   clovia: [
@@ -150,6 +153,7 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
 const SECTIONS: Array<{ key: SectionKey; label: string; description: string }> = [
   { key: "dashboards", label: "Dashboards", description: "Live KPI dashboards, built from uploaded data" },
   { key: "uploader", label: "Uploader", description: "Bulk data uploaders" },
+  { key: "mis", label: "MIS", description: "Download a combined MIS report for this process" },
 ];
 
 /**
@@ -394,11 +398,123 @@ function InboundDashboardTab({ projectKey }: { projectKey: string }) {
   );
 }
 
+const firstOfMonthStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+};
+
+/**
+ * "MIS" tab — one combined, client-ready Excel per process: every dashboard
+ * that company has (Sale/Chat/Cart/Inbound/...), each as its own styled
+ * summary sheet plus its full raw data, built server-side by
+ * GET /api/process-performance/mis/:company/excel (mis-export.routes.ts ->
+ * mis-export.service.ts, which reuses each dashboard's own already-verified
+ * service function and the same styled-sheet writer the single-dashboard
+ * "Export" button uses). No chart/number is computed here -- this is a
+ * download trigger over data every dashboard in this app already shows.
+ */
+function MisPanel({ companyKey, companyLabel }: { companyKey: CompanyKey; companyLabel: string }) {
+  const [from, setFrom] = useState(firstOfMonthStr());
+  const [to, setTo] = useState(todayStr());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const download = async () => {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const url = `${apiUrl(`/api/process-performance/mis/${companyKey}/excel`)}?from=${from}&to=${to}&label=${encodeURIComponent(companyLabel)}`;
+      const response = await fetch(url, { headers: { Authorization: `Bearer ${getAuthToken()}` } });
+      if (!response.ok) {
+        let message = `MIS export failed (${response.status}).`;
+        try {
+          const body = await response.json();
+          if (body?.error || body?.message) message = String(body.error ?? body.message);
+        } catch { /* body was not JSON */ }
+        throw new Error(message);
+      }
+      const failed = Number(response.headers.get("X-Export-Failed-Sheets") ?? 0);
+      const truncated = Number(response.headers.get("X-Export-Truncated-Sheets") ?? 0);
+      const skippedSections = Number(response.headers.get("X-Export-Skipped-Sections") ?? 0);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = `${companyKey}_MIS_${to}.xlsx`;
+      link.click();
+      URL.revokeObjectURL(blobUrl);
+      if (failed > 0 || truncated > 0 || skippedSections > 0) {
+        setNotice(
+          `Downloaded. ${skippedSections > 0 ? `${skippedSections} section(s) could not be built and were left out. ` : ""}` +
+          `${failed > 0 ? `${failed} raw-data sheet(s) could not be included. ` : ""}` +
+          `${truncated > 0 ? `${truncated} raw-data sheet(s) were cut short. ` : ""}` +
+          `See "Sections Not Included" / "Raw Data Notes" in the file for details.`,
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "MIS export failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+        <div className="flex items-start gap-3.5">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
+            <FileText className="h-5 w-5" />
+          </span>
+          <div>
+            <div className="text-sm font-bold text-slate-900">MIS Report — {companyLabel}</div>
+            <p className="mt-0.5 text-xs text-slate-500">
+              One Excel workbook with every {companyLabel} dashboard's KPIs and charts as styled summary
+              sheets, followed by the full raw data behind each — ready to send to the client.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <input
+            type="date" value={from} onChange={(e) => setFrom(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 shadow-sm"
+          />
+          <span className="text-sm text-slate-400">—</span>
+          <input
+            type="date" value={to} onChange={(e) => setTo(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 shadow-sm"
+          />
+          <button
+            type="button"
+            onClick={() => { setFrom(firstOfMonthStr()); setTo(todayStr()); }}
+            className="flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-200"
+          >
+            <RotateCcw className="h-3.5 w-3.5" /> This Month
+          </button>
+          <button
+            type="button"
+            onClick={() => void download()}
+            disabled={busy}
+            className="ml-auto flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-700 disabled:cursor-wait disabled:opacity-70"
+          >
+            <Download className="h-3.5 w-3.5" /> {busy ? "Preparing MIS…" : "Download MIS Report"}
+          </button>
+        </div>
+
+        {error && <div className="mt-3 rounded-lg border border-red-100 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
+        {notice && <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 p-3 text-xs text-amber-800">{notice}</div>}
+      </div>
+    </div>
+  );
+}
+
 export default function ProcessPerformanceV2Page() {
   const [company, setCompany] = useState<CompanyKey | null>(null);
   const [section, setSection] = useState<SectionKey | null>(null);
   const [selectedUploader, setSelectedUploader] = useState<{ code: string; label: string } | null>(null);
-  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" } | null>(null);
+  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" } | null>(null);
   const [stats, setStats] = useState({ totalFilesUploaded: 0, activeUsers: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
 
@@ -490,10 +606,10 @@ export default function ProcessPerformanceV2Page() {
               {SECTIONS.map((s) => (
                 <Box
                   key={s.key}
-                  icon={s.key === "dashboards" ? LayoutDashboard : Upload}
+                  icon={s.key === "dashboards" ? LayoutDashboard : s.key === "uploader" ? Upload : FileText}
                   label={s.label}
                   description={s.description}
-                  tone={s.key === "dashboards" ? "indigo" : "emerald"}
+                  tone={s.key === "dashboards" ? "indigo" : s.key === "uploader" ? "emerald" : "amber"}
                   onClick={() => setSection(s.key)}
                 />
               ))}
@@ -520,7 +636,7 @@ export default function ProcessPerformanceV2Page() {
               {DASHBOARDS_BY_COMPANY[company]!.map((d) => (
                 <Box
                   key={d.key}
-                  icon={d.kind === "inbound" ? PhoneIncoming : d.kind === "bellavita_sale" || d.kind === "gnc_sale" || d.kind === "housing_owner_sale" || d.kind === "housing_premium_sale" || d.kind === "neemans_performance" ? TrendingUp : d.kind === "neemans_cart" || d.kind === "bellavita_cart" ? ShoppingCart : d.kind === "clovia_dashboard" ? LayoutGrid : d.kind === "lp_feedback" || d.kind === "lp_onboarding" || d.kind === "satya_retail_dashboard" || d.kind === "satya_retail_report" ? PhoneCall : d.kind === "bellavita_chat" || d.kind === "neemans_chat" ? MessageSquare : LayoutDashboard}
+                  icon={d.kind === "inbound" ? PhoneIncoming : d.kind === "bellavita_sale" || d.kind === "gnc_sale" || d.kind === "housing_owner_sale" || d.kind === "housing_premium_sale" || d.kind === "neemans_performance" ? TrendingUp : d.kind === "neemans_cart" || d.kind === "bellavita_cart" ? ShoppingCart : d.kind === "clovia_dashboard" ? LayoutGrid : d.kind === "lp_feedback" || d.kind === "lp_onboarding" || d.kind === "satya_retail_dashboard" || d.kind === "satya_retail_report" ? PhoneCall : d.kind === "bellavita_chat" || d.kind === "neemans_chat" || d.kind === "gnc_chat" ? MessageSquare : LayoutDashboard}
                   label={d.label}
                   description={d.description}
                   tone={company ? COMPANY_META[company].tone : "slate"}
@@ -546,6 +662,8 @@ export default function ProcessPerformanceV2Page() {
               <BellavitaSaleDashboard />
             ) : selectedDashboard.kind === "gnc_sale" ? (
               <GncSaleDashboard />
+            ) : selectedDashboard.kind === "gnc_chat" ? (
+              <GncChatDashboard />
             ) : selectedDashboard.kind === "neemans_cart" ? (
               <NeemansCartDashboard />
             ) : selectedDashboard.kind === "neemans_performance" ? (
@@ -622,6 +740,16 @@ export default function ProcessPerformanceV2Page() {
             <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white p-16 text-sm text-slate-400">
               Nothing here yet
             </div>
+          </div>
+        )}
+
+        {/* Level 3: MIS — every company (the "puresta" placeholder has no
+            dashboards to bundle, so the server 404s with a plain message
+            the panel shows inline rather than a dead grid here). */}
+        {company && section === "mis" && (
+          <div className="space-y-4">
+            <Breadcrumb parts={[companyLabel, "MIS"]} onBack={backToCompany} />
+            <MisPanel companyKey={company} companyLabel={companyLabel} />
           </div>
         )}
       </div>
