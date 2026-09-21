@@ -135,6 +135,8 @@ export const navGroups: NavGroup[] = [
           { label: "Form Config",       href: "/ats/form-config",              icon: ic(Settings2),                                               roles: ["admin","hr","super_admin"], description: "Interview form & branch aliases" },
           { label: "Enhanced Registration", href: "/ats/registration-enhanced", icon: ic(UserPlus), roles: ["admin","hr","recruiter","super_admin"], description: "Extended candidate registration" },
           { label: "ATS Extensions", href: "/ats/extensions", icon: ic(Settings2), pageCode: "ATS_EXTENSIONS", roles: ["admin","hr","super_admin"], description: "ATS extension workspace" },
+          { label: "Meta Campaigns", href: "/ats/meta-campaigns", icon: ic(Activity), pageCode: "ATS_META_CAMPAIGNS", roles: ["admin","hr","super_admin","recruiter"], description: "Meta/WhatsApp lead campaigns and outreach" },
+          { label: "Meta Leads", href: "/ats/meta-leads", icon: ic(Users), pageCode: "ATS_META_CAMPAIGNS", roles: ["admin","hr","super_admin","recruiter"], description: "Incoming leads from Meta campaigns" },
           // /ats/payroll-hr-validation is a redirect to /ats/onboarding-requests
           // (the dedicated page was retired in 49efe7fd and the capability moved
           // to Joining Control). Pointing straight at the destination, because a
