@@ -439,12 +439,12 @@ export async function createEmployeeFromCandidate(
           -- just the pre-ATS backfilled population.
           candidate_id,
           branch_id, process_id, department_id, designation_id, cost_centre_id, cost_center_code,
-          date_of_joining, salary_start_date, employment_type, reporting_manager_id,
+          date_of_joining, salary_start_date, employment_type, emp_type, reporting_manager_id,
           -- FamilyForm — see the fam join above. Mirrors the candidate journey exactly as
           -- 1073_employee_profile_parity.sql intended when it added these two columns.
           annual_income, count_of_dependents,
           user_id, active_status, employment_status)
-       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
       [
         // biometric_code -- owner decision 2026-09-16: no separate biometric enrollment ID is
         // in use, so this is always the employee code itself. (Actual biometric-device
@@ -486,6 +486,7 @@ export async function createEmployeeFromCandidate(
         costCentreCode,
         offer.date_of_joining,
         salaryStartDate,
+        offer.emp_type,
         offer.emp_type,
         offer.reporting_manager_id ?? null,
         candRow?.annual_income ?? null,

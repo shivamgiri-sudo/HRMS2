@@ -219,10 +219,10 @@ export const employeeService = {
       // request shape, two different answers depending on which screen created the row.
       `INSERT INTO employees
          (id, employee_code, first_name, last_name, email, mobile, gender,
-          date_of_birth, date_of_joining, salary_start_date, employment_type,
+          date_of_birth, date_of_joining, salary_start_date, employment_type, emp_type,
           branch_id, department_id, process_id, designation_id, cost_centre_id, cost_center_code,
           reporting_manager_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
          (SELECT cost_centre_code FROM cost_centre_master WHERE id = ? LIMIT 1),
          ?)`,
       [
@@ -236,6 +236,7 @@ export const employeeService = {
         input.dateOfBirth ?? null,
         input.dateOfJoining,
         salaryStartDate,
+        input.employmentType ?? "Full Time",
         input.employmentType ?? "Full Time",
         resolvedBranchId,
         input.departmentId ?? null,
@@ -580,7 +581,7 @@ export const employeeService = {
     if (input.dateOfJoining     !== undefined) { sets.push("date_of_joining = ?");      params.push(input.dateOfJoining); }
     if (input.salaryStartDate   !== undefined) { sets.push("salary_start_date = ?");    params.push(input.salaryStartDate ?? null); }
     if (input.dateOfExit        !== undefined) { sets.push("date_of_exit = ?");         params.push(input.dateOfExit ?? null); }
-    if (input.employmentType    !== undefined) { sets.push("employment_type = ?");      params.push(input.employmentType); }
+    if (input.employmentType    !== undefined) { sets.push("employment_type = ?, emp_type = ?"); params.push(input.employmentType, input.employmentType); }
     if (input.employmentStatus  !== undefined) { sets.push("employment_status = ?");    params.push(input.employmentStatus); }
     if (input.branchId          !== undefined) { sets.push("branch_id = ?");            params.push(input.branchId ?? null); }
     if (input.departmentId      !== undefined) { sets.push("department_id = ?");        params.push(input.departmentId ?? null); }

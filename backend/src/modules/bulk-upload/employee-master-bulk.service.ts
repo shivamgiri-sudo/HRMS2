@@ -288,13 +288,14 @@ export async function importEmployeeMasterBatch(
     r.processCode ? processIds.get(r.processCode) ?? null : null,
     r.lobCode ? lobIds.get(r.lobCode) ?? null : null,
     r.employmentType,
+    r.employmentType,
   ];
 
   const insertSql = (placeholders: string) => `
     INSERT INTO employees
        (employee_code, first_name, last_name, mobile, official_email,
         gender, date_of_joining, date_of_birth, branch_id, department_id, designation_id,
-        cost_centre_id, process_id, lob_id, employment_type, active_status,
+        cost_centre_id, process_id, lob_id, employment_type, emp_type, active_status,
         employment_status)
      VALUES ${placeholders}
      ON DUPLICATE KEY UPDATE
@@ -311,10 +312,11 @@ export async function importEmployeeMasterBatch(
        cost_centre_id = COALESCE(VALUES(cost_centre_id), cost_centre_id),
        process_id = COALESCE(VALUES(process_id), process_id),
        lob_id = COALESCE(VALUES(lob_id), lob_id),
-       employment_type = VALUES(employment_type)`;
+       employment_type = VALUES(employment_type),
+       emp_type = VALUES(emp_type)`;
 
   for (const rowsInChunk of chunk(importable, CHUNK_SIZE)) {
-    const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active')").join(", ");
+    const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active')").join(", ");
     const params = rowsInChunk.flatMap(buildParams);
 
     try {
@@ -327,7 +329,7 @@ export async function importEmployeeMasterBatch(
     } catch {
       for (const r of rowsInChunk) {
         try {
-          await db.execute(insertSql("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active')"), buildParams(r));
+          await db.execute(insertSql("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active')"), buildParams(r));
           importedRowIds.push(r.rowId);
           provisionQueue.push(r.employeeCode);
           importedRows++;
