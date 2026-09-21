@@ -160,7 +160,11 @@ export async function listPackages(filters: {
   // location_id this function used to accept and silently ignore.
   if (filters.band) { sql += ' AND spm.band_code = ?'; params.push(filters.band); }
   if (filters.branch) { sql += ' AND spm.branch_name = ?'; params.push(filters.branch); }
-  if (filters.costCentre) { sql += ' AND spm.cost_centre_code = ?'; params.push(filters.costCentre); }
+  if (filters.costCentre) {
+    // Include branch-wide packages (cost_centre_code IS NULL) alongside CC-specific ones
+    sql += ' AND (spm.cost_centre_code = ? OR spm.cost_centre_code IS NULL)';
+    params.push(filters.costCentre);
+  }
   sql += ' ORDER BY spm.created_at DESC';
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
   return rows;

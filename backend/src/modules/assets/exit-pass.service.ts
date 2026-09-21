@@ -204,6 +204,7 @@ async function getPassRow(passId: string): Promise<PassRow> {
 
 /** Resolves the active Branch Head assigned to a branch, if any. */
 async function resolveBranchHeadEmployeeId(branchId: string): Promise<string | null> {
+  // Primary: explicit branch_head_assignments table (legacy admin-managed path)
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT bha.branch_head_id
      FROM branch_head_assignments bha
@@ -212,7 +213,18 @@ async function resolveBranchHeadEmployeeId(branchId: string): Promise<string | n
      LIMIT 1`,
     [branchId],
   );
-  return rows[0]?.branch_head_id ? String(rows[0].branch_head_id) : null;
+  if (rows[0]?.branch_head_id) return String(rows[0].branch_head_id);
+
+  // Fallback: find an active branch_head via user_assignment_scope (modern RBAC)
+  const [scopeRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id AS employee_id
+     FROM user_assignment_scope uas
+     JOIN employees e ON e.user_id = uas.user_id AND e.active_status = 1
+     WHERE uas.role_key = 'branch_head' AND uas.branch_id = ? AND uas.active_status = 1
+     LIMIT 1`,
+    [branchId],
+  );
+  return scopeRows[0]?.employee_id ? String(scopeRows[0].employee_id) : null;
 }
 
 export async function submitExitPass(passId: string, requester: RequestingEmployee): Promise<void> {
@@ -752,8 +764,27 @@ export async function listExitPasses(actor: RequestingEmployee, actorRoles: stri
 /** Pending-Branch-Head queue for the calling employee (their own assignments only, unless override). */
 export async function listPendingBranchHead(actor: RequestingEmployee, actorRoles: string[]) {
   const isOverride = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r));
-  const where = isOverride ? `epr.status = 'pending_branch_head'` : `epr.status = 'pending_branch_head' AND epr.branch_head_employee_id = ?`;
-  const params = isOverride ? [] : [actor.employeeId];
+  let where: string;
+  let params: unknown[];
+  if (isOverride) {
+    where = `epr.status = 'pending_branch_head'`;
+    params = [];
+  } else {
+    // Match passes explicitly assigned to this employee (branch_head_assignments path)
+    // OR passes for any branch this employee manages via user_assignment_scope (modern RBAC)
+    where = `epr.status = 'pending_branch_head'
+             AND (
+               epr.branch_head_employee_id = ?
+               OR epr.branch_id IN (
+                 SELECT uas.branch_id
+                 FROM user_assignment_scope uas
+                 WHERE uas.user_id = (SELECT user_id FROM employees WHERE id = ? AND active_status = 1)
+                   AND uas.role_key = 'branch_head'
+                   AND uas.active_status = 1
+               )
+             )`;
+    params = [actor.employeeId, actor.employeeId];
+  }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT epr.*, req.full_name AS requestor_name, bm.branch_name
      FROM exit_pass_requests epr
