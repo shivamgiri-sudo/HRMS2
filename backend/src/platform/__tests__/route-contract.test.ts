@@ -164,6 +164,9 @@ const KNOWN_GAPS: Record<string, string> = {
   "POST /api/payroll/esic-automation/cases/:p/approve":
     "ESIC automation backend is an empty stub. esic-automation.routes.ts exports only a bare Router(); EsicRegistrationBotTab.tsx calls /cases/:id/approve for approvals. In-progress work; remove once handlers are implemented.",
 
+  // ── Meta-campaign outreach — 2026-09-21 ─────────────────────────────────────────────
+  "POST /api/meta/leads/:p/outreach":
+    "In-progress work. lead-outreach.service.ts.tmp exists but is incomplete; no route is registered yet. MetaLeadsPage calls this to send a lead through an outreach sequence. Remove once the route is implemented in meta-campaign.routes.ts.",
 
 };
 
