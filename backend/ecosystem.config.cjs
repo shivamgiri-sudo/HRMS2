@@ -1,80 +1,73 @@
 /**
- * PM2 Production Configuration for MCN HRMS
+ * PM2 ecosystem config — production cluster mode.
  *
- * Usage:
- *   pm2 start ecosystem.config.cjs
- *   pm2 start ecosystem.config.cjs --only hrms-api
- *   pm2 start ecosystem.config.cjs --only hrms-workers
+ * Two workers share port 5055. PM2 load-balances incoming connections.
+ * `pm2 reload hrms2-backend` sends SIGINT to one worker at a time, waits
+ * for `process.send('ready')` from the new worker before killing the old one
+ * (wait_ready + listen_timeout). Zero-downtime restarts even under load.
  *
- * IMPORTANT:
- * - API and Workers run as SEPARATE processes
- * - API does NOT start any schedulers/workers inline
- * - Workers handle ALL background jobs
- * - Frontend is served via nginx, NOT vite preview
+ * Start:  pm2 start ecosystem.config.cjs --only hrms2-backend
+ * Reload: pm2 reload hrms2-backend
+ * Logs:   pm2 logs hrms2-backend
  */
-
 module.exports = {
   apps: [
     {
-      name: "hrms-api",
+      name: "hrms2-backend",
       script: "dist/src/server.js",
-      cwd: __dirname,
-      instances: 1, // Scale with caution - some endpoints may not be cluster-safe
-      exec_mode: "fork",
+      cwd: "/var/www/HRMS2/backend",
+
+      // Cluster mode: two workers, one per CPU-bound task set.
+      // Each worker connects to MySQL independently using the pool (DB_POOL_MAX / 2 each).
+      exec_mode: "cluster",
+      instances: 2,
+
+      // Readiness handshake — server.ts calls process.send('ready') once
+      // httpServer is listening. PM2 waits up to 30s for this signal before
+      // considering a worker started; without it a reload can route traffic to
+      // a worker still running migrations.
+      wait_ready: true,
+      listen_timeout: 30000,
+
+      // Grace period: give the outgoing worker 15s to drain in-flight requests
+      // (payroll calculations, bulk exports) before force-killing it.
+      kill_timeout: 15000,
+
+      // Log files
+      out_file: "logs/backend-out.log",
+      error_file: "logs/backend-err.log",
+      merge_logs: true,
+
+      // Restart policy: if a worker crashes, wait 3s then restart.
+      // Do NOT restart more than 10 times in 30s (indicates a hard crash loop).
+      restart_delay: 3000,
+      max_restarts: 10,
+      min_uptime: "30s",
+
+      // Never auto-restart on SIGINT (graceful shutdown signal)
+      stop_exit_codes: [0],
+
+      // Environment — dotenv loads from cwd/.env; these are overrides only
       env: {
         NODE_ENV: "production",
-        // This is an IST business: attendance dates, payroll month boundaries and shift
-        // roll-over are all reasoned about in IST. Nothing pinned the timezone before, so
-        // the process inherited the host's — which meant dev (IST) and CI (UTC) disagreed,
-        // and any date built with a local Date and read back as UTC (or vice versa) shifted
-        // by a day depending on where it ran. Pinned so every environment agrees.
-        TZ: "Asia/Kolkata",
-        // CRITICAL: Workers must run externally
-        WORKERS_PROCESS: "external",
-        ENABLE_SCHEDULERS: "false",
-        // Port - nginx proxies to this
         PORT: 5055,
       },
-      // Graceful shutdown
-      kill_timeout: 35000, // Wait for graceful shutdown (30s internal + buffer)
-      wait_ready: true,
-      listen_timeout: 10000,
-      // Restart policy
-      max_restarts: 10,
-      restart_delay: 5000,
-      // Logging
-      error_file: "/var/log/hrms/api-error.log",
-      out_file: "/var/log/hrms/api-out.log",
-      merge_logs: true,
-      log_date_format: "YYYY-MM-DD HH:mm:ss Z",
     },
+
     {
-      name: "hrms-workers",
+      name: "hrms2-workers",
       script: "dist/src/workers/all-workers.js",
-      cwd: __dirname,
-      instances: 1, // Workers should NOT be clustered - they use distributed locks
+      cwd: "/var/www/HRMS2/backend",
       exec_mode: "fork",
+      instances: 1,
+      out_file: "logs/workers-out.log",
+      error_file: "logs/workers-err.log",
+      restart_delay: 5000,
+      max_restarts: 10,
+      min_uptime: "30s",
       env: {
         NODE_ENV: "production",
-        // Same reason as hrms-api above. Matters more here, if anything: the schedulers
-        // decide which calendar day a cron run belongs to.
-        TZ: "Asia/Kolkata",
-        // Enable nightly KPI Studio compute (2 AM IST) that writes process_metric_actual.
-        // Without this flag the worker starts but immediately returns, leaving all
-        // KPI-section tiles stale. Set DRY_RUN=false so rows are actually written.
-        KPI_STUDIO_COMPUTE_ENABLED: "true",
-        KPI_STUDIO_COMPUTE_DRY_RUN: "false",
       },
-      // Graceful shutdown - workers need time to finish current jobs
-      kill_timeout: 60000,
-      // Restart policy
-      max_restarts: 10,
-      restart_delay: 10000, // Longer delay for workers to avoid rapid job collisions
-      // Logging
-      error_file: "/var/log/hrms/workers-error.log",
-      out_file: "/var/log/hrms/workers-out.log",
-      merge_logs: true,
-      log_date_format: "YYYY-MM-DD HH:mm:ss Z",
     },
   ],
 };
