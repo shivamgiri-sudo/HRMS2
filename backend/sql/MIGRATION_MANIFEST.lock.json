@@ -870,7 +870,9 @@
     "1829_jr_meta_screening_config.sql",
     "1830_backfill_emp_type_from_employment_type.sql",
     "1832_attendance_mismatch_escalation.sql",
-    "1833_adr_open_mismatch_queue_indexes.sql"
+    "1833_adr_open_mismatch_queue_indexes.sql",
+    "1835_meta_campaign_screening_config.sql",
+    "1834_wfm_roster_upload_alert.sql"
   ],
   "approvedDeletions": [
     {

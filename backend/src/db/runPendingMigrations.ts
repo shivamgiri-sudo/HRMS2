@@ -1117,6 +1117,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1832_attendance_mismatch_escalation.sql", // Creates attendance_mismatch_escalation: WFM -> reporting-manager escalation of attendance_daily_record mismatches (level, due_at, manager recommendation). Additive, no FKs.
   "1833_adr_open_mismatch_queue_indexes.sql", // Adds idx_adr_mismatch_open (mismatch_flag, record_date, mismatch_resolved_at) on attendance_daily_record for the WFM mismatch queue.
   "1835_meta_campaign_screening_config.sql", // Registered 2026-09-21. Adds meta_campaign.screening_config (nullable JSON): shortlisting criteria for campaigns with no job requisition yet ("JR pending"). Used only while the campaign has no requisition; the linked requisition's criteria take over afterwards. Additive, information_schema-guarded.
+  "1834_wfm_roster_upload_alert.sql", // Registered 2026-09-21 on owner approval. One new table wfm_roster_upload_alert (CREATE TABLE IF NOT EXISTS, no other object touched, no data read or written): the send log and per-recipient claim for roster-upload-tracker reminders and escalation. The tracker grid works without it; the escalation sweep and the Send reminder now button need it.
   ];
 
 export type MigrationHealth = {

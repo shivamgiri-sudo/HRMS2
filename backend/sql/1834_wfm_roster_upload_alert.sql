@@ -1,15 +1,11 @@
--- PROPOSED, NOT APPLIED. To activate: move to backend/sql/, add to MIGRATION_MANIFEST in
--- src/db/runPendingMigrations.ts and regenerate the lock (scripts/update-migration-lock.mjs).
--- Kept under proposed/ so the manifest guard does not treat it as a forgotten migration.
---
 -- 1834: notification log for the weekly roster-upload tracker.
 --
 -- One row per (branch, process, week, stage, recipient) alert sent by
 -- modules/wfm/roster-upload-escalation.service.ts. The unique key is the claim that stops the same
--- stage being sent twice to the same person; 'manual' rows (Send reminder now) refresh sent_at.
+-- stage being sent twice to the same person. Manual rows (Send reminder now) refresh sent_at.
 --
--- Purely additive: new table only, no existing object is touched. The tracker grid works without
--- it (its notification trail is just empty); the escalation sweep needs it.
+-- Purely additive: one new table, no existing object is touched, no data is read or changed.
+-- The tracker grid works without it. The escalation sweep and the reminder button need it.
 CREATE TABLE IF NOT EXISTS wfm_roster_upload_alert (
   id                CHAR(36)    COLLATE utf8mb4_unicode_ci NOT NULL PRIMARY KEY,
   branch_id         CHAR(36)    COLLATE utf8mb4_unicode_ci NOT NULL,
