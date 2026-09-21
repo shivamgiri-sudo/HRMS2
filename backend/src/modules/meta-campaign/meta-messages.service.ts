@@ -1,0 +1,279 @@
+/**
+ * WhatsApp conversation thread service for META campaign leads.
+ *
+ * Persists every outbound (system/HR) and inbound (candidate) message so Branch HR
+ * can see the full thread and reply from the HRMS inbox page.
+ *
+ * Branch scoping: Branch HR only sees leads whose requisition maps to their branch.
+ * Super admin, admin, and hr roles see all branches.
+ */
+
+import { randomUUID } from 'crypto';
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+
+export interface LeadMessage {
+  id: string;
+  leadId: string;
+  direction: 'inbound' | 'outbound';
+  messageText: string;
+  senderType: 'system' | 'hr' | 'candidate';
+  senderId: string | null;
+  senderName: string | null;
+  wassengerMessageId: string | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export interface InboxConversation {
+  leadId: string;
+  parsedName: string | null;
+  parsedPhone: string | null;
+  screeningResult: string;
+  branchName: string | null;
+  designationName: string | null;
+  campaignName: string | null;
+  lastMessageText: string | null;
+  lastMessageAt: string | null;
+  lastDirection: 'inbound' | 'outbound' | null;
+  unreadCount: number;
+}
+
+const ALL_ROLES = ['super_admin', 'admin', 'hr'] as const;
+
+function isAllBranchRole(role: string): boolean {
+  return (ALL_ROLES as readonly string[]).includes(role);
+}
+
+export async function saveMessage(params: {
+  leadId: string;
+  direction: 'inbound' | 'outbound';
+  messageText: string;
+  senderType: 'system' | 'hr' | 'candidate';
+  senderId?: string | null;
+  senderName?: string | null;
+  wassengerMessageId?: string | null;
+}): Promise<string> {
+  const id = randomUUID();
+  await db.execute(
+    `INSERT INTO meta_lead_messages
+       (id, lead_id, direction, message_text, sender_type, sender_id, sender_name, wassenger_message_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      params.leadId,
+      params.direction,
+      params.messageText,
+      params.senderType,
+      params.senderId ?? null,
+      params.senderName ?? null,
+      params.wassengerMessageId ?? null,
+    ]
+  );
+  return id;
+}
+
+export async function getThread(leadId: string): Promise<LeadMessage[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, lead_id, direction, message_text, sender_type, sender_id, sender_name,
+            wassenger_message_id, read_at, created_at
+       FROM meta_lead_messages
+      WHERE lead_id = ?
+      ORDER BY created_at ASC`,
+    [leadId]
+  );
+  return rows.map(toMessage);
+}
+
+export async function markThreadRead(leadId: string): Promise<void> {
+  await db.execute(
+    `UPDATE meta_lead_messages
+        SET read_at = NOW()
+      WHERE lead_id = ? AND direction = 'inbound' AND read_at IS NULL`,
+    [leadId]
+  );
+}
+
+/**
+ * Returns the branch_id for an auth_user by joining auth_user → employees.
+ */
+async function getBranchForUser(userId: string): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.branch_id FROM employees e
+      WHERE e.user_id = ? AND e.active_status = 1 LIMIT 1`,
+    [userId]
+  );
+  return rows[0]?.branch_id ?? null;
+}
+
+export async function getInbox(opts: {
+  userId: string;
+  userRole: string;
+  search?: string;
+}): Promise<InboxConversation[]> {
+  let branchFilter = '';
+  const params: unknown[] = [];
+
+  if (!isAllBranchRole(opts.userRole)) {
+    // Resolve branch for this user's employee record
+    const branchId = await getBranchForUser(opts.userId);
+    if (branchId) {
+      branchFilter = `AND bm.id = ?`;
+      params.push(branchId);
+    }
+  }
+
+  const searchFilter = opts.search ? `AND (ml.parsed_name LIKE ? OR ml.parsed_phone LIKE ?)` : '';
+  if (opts.search) {
+    const like = `%${opts.search}%`;
+    params.push(like, like);
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       ml.id                               AS leadId,
+       ml.parsed_name                      AS parsedName,
+       ml.parsed_phone                     AS parsedPhone,
+       ml.screening_result                 AS screeningResult,
+       jr.branch_name                      AS branchName,
+       jr.designation_name                 AS designationName,
+       mc.campaign_name                    AS campaignName,
+       lm.last_message_text                AS lastMessageText,
+       lm.last_message_at                  AS lastMessageAt,
+       lm.last_direction                   AS lastDirection,
+       COALESCE(lm.unread_count, 0)        AS unreadCount
+     FROM meta_lead_raw ml
+     INNER JOIN (
+       SELECT lead_id,
+              MAX(created_at)          AS last_message_at,
+              SUM(CASE WHEN direction = 'inbound' AND read_at IS NULL THEN 1 ELSE 0 END) AS unread_count,
+              SUBSTRING_INDEX(GROUP_CONCAT(message_text ORDER BY created_at DESC SEPARATOR '||'), '||', 1) AS last_message_text,
+              SUBSTRING_INDEX(GROUP_CONCAT(direction ORDER BY created_at DESC SEPARATOR '||'), '||', 1)    AS last_direction
+         FROM meta_lead_messages
+         GROUP BY lead_id
+     ) lm ON lm.lead_id = ml.id
+     LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id
+     LEFT JOIN branch_master bm ON bm.name = jr.branch_name
+     LEFT JOIN meta_campaign mc ON mc.id = ml.campaign_id
+     WHERE 1=1
+       ${branchFilter}
+       ${searchFilter}
+     ORDER BY lm.last_message_at DESC
+     LIMIT 200`,
+    params
+  );
+
+  return rows.map((r) => ({
+    leadId: String(r.leadId),
+    parsedName: (r.parsedName as string | null) ?? null,
+    parsedPhone: (r.parsedPhone as string | null) ?? null,
+    screeningResult: String(r.screeningResult ?? 'pending'),
+    branchName: (r.branchName as string | null) ?? null,
+    designationName: (r.designationName as string | null) ?? null,
+    campaignName: (r.campaignName as string | null) ?? null,
+    lastMessageText: (r.lastMessageText as string | null) ?? null,
+    lastMessageAt: (r.lastMessageAt as string | null) ?? null,
+    lastDirection: ((r.lastDirection as string | null) ?? null) as 'inbound' | 'outbound' | null,
+    unreadCount: Number(r.unreadCount ?? 0),
+  }));
+}
+
+/**
+ * Total unread count across all conversations the user can see.
+ * Used for the notification badge in the nav.
+ */
+export async function getTotalUnread(opts: {
+  userId: string;
+  userRole: string;
+}): Promise<number> {
+  let branchFilter = '';
+  const params: unknown[] = [];
+
+  if (!isAllBranchRole(opts.userRole)) {
+    const branchId = await getBranchForUser(opts.userId);
+    if (branchId) {
+      branchFilter = `AND bm.id = ?`;
+      params.push(branchId);
+    }
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt
+       FROM meta_lead_messages mlm
+       JOIN meta_lead_raw ml ON ml.id = mlm.lead_id
+       LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id
+       LEFT JOIN branch_master bm ON bm.name = jr.branch_name
+      WHERE mlm.direction = 'inbound' AND mlm.read_at IS NULL
+        ${branchFilter}`,
+    params
+  );
+
+  return Number(rows[0]?.cnt ?? 0);
+}
+
+/**
+ * Notify Branch HR users about an inbound candidate question.
+ * Inserts into work_inbox_item for every HR/Branch Head employee in the lead's branch.
+ */
+export async function notifyBranchHrOfInboundMessage(
+  leadId: string,
+  candidateName: string | null,
+  messageSnippet: string
+): Promise<void> {
+  // Find the branch for this lead
+  const [leadRows] = await db.execute<RowDataPacket[]>(
+    `SELECT jr.branch_name
+       FROM meta_lead_raw ml
+       LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id
+      WHERE ml.id = ? LIMIT 1`,
+    [leadId]
+  );
+
+  const branchName = leadRows[0]?.branch_name as string | null;
+  if (!branchName) return;
+
+  // Find auth_user IDs for HR-role employees in that branch
+  const [hrRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT e.user_id
+       FROM employees e
+       JOIN branch_master bm ON bm.id = e.branch_id
+       JOIN auth_user au ON au.id = e.user_id
+      WHERE bm.name = ?
+        AND au.role IN ('recruitment_hr', 'hr', 'branch_head', 'admin', 'super_admin')
+        AND e.active_status = 1
+        AND au.is_active = 1`,
+    [branchName]
+  );
+
+  if (!hrRows.length) return;
+
+  const snippet = messageSnippet.length > 80 ? messageSnippet.slice(0, 77) + '...' : messageSnippet;
+  const title = `WhatsApp: ${candidateName ?? 'Candidate'} replied`;
+  const description = snippet;
+  const actionUrl = `/ats/whatsapp-inbox`;
+  const entityId = leadId;
+
+  for (const row of hrRows) {
+    await db.execute(
+      `INSERT INTO work_inbox_item
+         (id, user_id, type, title, description, entity_type, entity_id, action_url, priority, is_read, is_actioned, created_at)
+       VALUES (UUID(), ?, 'meta_whatsapp_reply', ?, ?, 'meta_lead', ?, ?, 'high', 0, 0, NOW())`,
+      [row.user_id, title, description, entityId, actionUrl]
+    ).catch(() => { /* best-effort — don't let notification failure break webhook ACK */ });
+  }
+}
+
+function toMessage(r: RowDataPacket): LeadMessage {
+  return {
+    id: String(r.id),
+    leadId: String(r.lead_id),
+    direction: r.direction as 'inbound' | 'outbound',
+    messageText: String(r.message_text),
+    senderType: r.sender_type as 'system' | 'hr' | 'candidate',
+    senderId: (r.sender_id as string | null) ?? null,
+    senderName: (r.sender_name as string | null) ?? null,
+    wassengerMessageId: (r.wassenger_message_id as string | null) ?? null,
+    readAt: (r.read_at as string | null) ?? null,
+    createdAt: String(r.created_at),
+  };
+}

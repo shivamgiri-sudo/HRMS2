@@ -42,6 +42,7 @@ const NativeJobRequisition             = lazy(() => import("@/pages/NativeJobReq
 const IjpAdminPage                     = lazy(() => import("@/pages/recruitment/IjpAdminPage"));
 const MetaCampaignDashboard            = lazy(() => import("@/pages/ats/MetaCampaignDashboard"));
 const MetaLeadsPage                    = lazy(() => import("@/pages/ats/MetaLeadsPage"));
+const MetaWhatsAppInbox                = lazy(() => import("@/pages/ats/MetaWhatsAppInbox"));
 
 export const recruitmentRouteElements = (
   <>
@@ -95,6 +96,8 @@ export const recruitmentRouteElements = (
       {/* All-leads flat view — same page code as the campaign dashboard, so anyone who can see
           campaigns can see the leads they produced without a separate grant. */}
       <Route path="/ats/meta-leads" element={<ProtectedRoute><Gate pageCode="ATS_META_CAMPAIGNS"><MetaLeadsPage /></Gate></ProtectedRoute>} />
+      {/* WhatsApp Inbox — same gate as meta campaigns. Branch HR sees their branch only. */}
+      <Route path="/ats/whatsapp-inbox" element={<ProtectedRoute><Gate pageCode="ATS_META_CAMPAIGNS"><MetaWhatsAppInbox /></Gate></ProtectedRoute>} />
 
       {/* Onboarding bridge */}
       <Route path="/ats/onboarding-bridge"    element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><NativeATSOnboardingBridge /></Gate></ProtectedRoute>} />

@@ -32,6 +32,7 @@ import { triggerVoiceCall, isVoicebotConfigured } from './voicebot.provider.js';
 import { triggerVapiCallWithInlineScript, isVapiConfigured } from './vapi-voicebot.provider.js';
 import { sendWhatsAppNotification, isWhatsAppWebConfigured } from './whatsapp-web.provider.js';
 import { sendShortlistMessage, isWassengerConfigured } from './wassenger.provider.js';
+import { saveMessage as saveLeadMessage } from './meta-messages.service.js';
 
 export interface OutreachOutcome {
   leadId: string;
@@ -196,6 +197,14 @@ export async function notifyQualifiedLead(leadId: string, options: { force?: boo
       );
       if (res.success) {
         outcome.succeeded.push('whatsapp_wassenger');
+        // Persist the outbound shortlist message so it appears in the inbox thread
+        await saveLeadMessage({
+          leadId: ctx.id,
+          direction: 'outbound',
+          messageText: `[Shortlist notification sent to ${ctx.name}]`,
+          senderType: 'system',
+          wassengerMessageId: res.messageId ?? null,
+        }).catch(() => { /* best-effort */ });
       } else {
         outcome.failed.push({ channel: 'whatsapp_wassenger', error: res.error ?? 'unknown error' });
       }

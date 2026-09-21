@@ -31,8 +31,17 @@ import {
   isWassengerConfigured,
   parseWassengerWebhook,
   sendConfirmationAck,
+  sendShortlistMessage,
 } from './wassenger.provider.js';
 import type { WassengerWebhookPayload } from './wassenger.provider.js';
+import {
+  saveMessage,
+  getThread,
+  getInbox,
+  getTotalUnread,
+  markThreadRead,
+  notifyBranchHrOfInboundMessage,
+} from './meta-messages.service.js';
 import type { MetaCampaignStatus, MetaWebhookLeadPayload } from './meta-campaign.types.js';
 
 export const metaCampaignRouter = Router();
@@ -276,29 +285,46 @@ metaCampaignRouter.post('/wassenger-webhook', (req: Request, res: Response) => {
   }
 
   const payload = req.body as WassengerWebhookPayload;
-  const { isIncoming, phone, reply } = parseWassengerWebhook(payload);
+  const { isIncoming, phone, reply, rawBody } = parseWassengerWebhook(payload);
 
-  if (!isIncoming || !phone || reply === 'unknown') {
-    // Not an actionable candidate reply — ack and ignore
+  if (!isIncoming || !phone) {
+    // Not an incoming candidate message — ack and ignore
     return res.status(200).json({ success: true, action: 'ignored' });
   }
 
-  // Fire-and-forget: update lead + send ack (we must return 200 fast for Wassenger)
+  // Fire-and-forget — must return 200 fast for Wassenger
   void (async () => {
     try {
+      const messageText = rawBody ?? (reply === 'confirmed' ? '1' : reply === 'reschedule' ? '2' : reply === 'not_interested' ? '3' : '');
+      if (!messageText) return;
+
+      // Always find the lead first (needed for both unknown questions and walk-in replies)
       const result = await recordWalkInConfirmation(phone, reply);
-      if (result.found && result.name) {
-        await sendConfirmationAck(phone, reply, result.name);
-        console.log('[wassenger-webhook] walk-in reply recorded', {
-          phone,
-          reply,
-          leadId: result.leadId,
-        });
-      } else {
-        console.warn('[wassenger-webhook] incoming reply but no matching lead for phone', phone);
+      if (!result.found || !result.leadId) {
+        console.warn('[wassenger-webhook] no matching lead for phone', phone);
+        return;
       }
+
+      // Persist the inbound message in the thread
+      await saveMessage({
+        leadId: result.leadId,
+        direction: 'inbound',
+        messageText,
+        senderType: 'candidate',
+        wassengerMessageId: payload.data?.id ?? null,
+      });
+
+      if (reply === 'unknown') {
+        // Freeform message / question — notify Branch HR to respond
+        await notifyBranchHrOfInboundMessage(result.leadId, result.name, messageText);
+      } else if (result.name) {
+        // Walk-in reply — send auto-ack to candidate
+        await sendConfirmationAck(phone, reply, result.name);
+      }
+
+      console.log('[wassenger-webhook] processed', { phone, reply, leadId: result.leadId });
     } catch (e: unknown) {
-      console.error('[wassenger-webhook] processing failed', e instanceof Error ? e.message : e);
+      console.error('[wassenger-webhook] failed', e instanceof Error ? e.message : e);
     }
   })();
 
@@ -544,5 +570,119 @@ metaCampaignRouter.post(
         .json({ success: false, message: 'Lead has no usable name/phone, so no candidate could be created' });
     }
     return res.json({ success: true, data: { candidateId } });
+  })
+);
+
+// ─────────────────────────── WhatsApp Inbox ───────────────────────────
+
+/** Conversation list — branch-scoped for Branch HR, all branches for admin/hr. */
+metaCampaignRouter.get(
+  '/inbox',
+  requireAuth,
+  requireRole(...CAMPAIGN_READ_ROLES),
+  h(async (req, res) => {
+    const data = await getInbox({
+      userId: req.authUser!.id,
+      userRole: req.authUser!.role ?? '',
+      search: req.query.search as string | undefined,
+    });
+    return res.json({ success: true, data });
+  })
+);
+
+/** Unread count badge for the nav. */
+metaCampaignRouter.get(
+  '/inbox/unread-count',
+  requireAuth,
+  requireRole(...CAMPAIGN_READ_ROLES),
+  h(async (req, res) => {
+    const count = await getTotalUnread({
+      userId: req.authUser!.id,
+      userRole: req.authUser!.role ?? '',
+    });
+    return res.json({ success: true, data: { count } });
+  })
+);
+
+/** Full message thread for one lead. */
+metaCampaignRouter.get(
+  '/leads/:id/messages',
+  requireAuth,
+  requireRole(...CAMPAIGN_READ_ROLES),
+  h(async (req, res) => {
+    const messages = await getThread(req.params.id!);
+    return res.json({ success: true, data: messages });
+  })
+);
+
+/** Mark all inbound messages in a thread as read. */
+metaCampaignRouter.patch(
+  '/leads/:id/messages/read',
+  requireAuth,
+  requireRole(...CAMPAIGN_READ_ROLES),
+  h(async (req, res) => {
+    await markThreadRead(req.params.id!);
+    return res.json({ success: true });
+  })
+);
+
+/**
+ * Branch HR replies to a candidate from the HRMS inbox.
+ * Sends via Wassenger and persists as an outbound message.
+ */
+metaCampaignRouter.post(
+  '/leads/:id/reply',
+  requireAuth,
+  requireRole(...CAMPAIGN_READ_ROLES),
+  h(async (req, res) => {
+    const text = String(req.body?.message ?? '').trim();
+    if (!text) {
+      return res.status(400).json({ success: false, message: 'message is required' });
+    }
+    if (!isWassengerConfigured()) {
+      return res.status(503).json({ success: false, message: 'Wassenger is not configured' });
+    }
+
+    // Load the lead to get phone + name
+    const lead = await metaCampaignService.getLeadDetail(req.params.id!);
+    if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
+    if (!lead.parsedPhone) {
+      return res.status(422).json({ success: false, message: 'Lead has no phone number' });
+    }
+
+    // Send the custom reply text directly via Wassenger REST (not the template)
+    const axios = (await import('axios')).default;
+    let wassengerMsgId: string | null = null;
+    try {
+      const { data } = await axios.post(
+        'https://api.wassenger.com/v1/messages',
+        {
+          phone: lead.parsedPhone.replace(/\D/g, '').replace(/^(.{10})$/, '91$1'),
+          message: text,
+          device: process.env.WASSENGER_DEVICE_ID,
+        },
+        {
+          headers: { 'Content-Type': 'application/json', Token: process.env.WASSENGER_API_TOKEN ?? '' },
+          timeout: 15000,
+        }
+      );
+      wassengerMsgId = data?.id ?? null;
+    } catch (err) {
+      const errMsg = (err instanceof Error) ? err.message : String(err);
+      return res.status(502).json({ success: false, message: `Wassenger send failed: ${errMsg}` });
+    }
+
+    // Persist as outbound message from HR
+    const msgId = await saveMessage({
+      leadId: req.params.id!,
+      direction: 'outbound',
+      messageText: text,
+      senderType: 'hr',
+      senderId: req.authUser!.id,
+      senderName: req.authUser!.email ?? null,
+      wassengerMessageId: wassengerMsgId,
+    });
+
+    return res.json({ success: true, data: { messageId: msgId } });
   })
 );
