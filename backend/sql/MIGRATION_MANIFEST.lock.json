@@ -857,7 +857,16 @@
     "1816_marketing_brief_recipients_update.sql",
     "1817_leave_approval_overdue_cc_employee.sql",
     "1818_payroll_export_pages_page_access.sql",
-    "1819_payment_voucher_expense_head.sql"
+    "1819_payment_voucher_expense_head.sql",
+    "1820_quality_learning_governance.sql",
+    "1821_training_dialer_hold.sql",
+    "1822_training_assignment_lms_provisioning.sql",
+    "1823_training_reminder_nudge_event.sql",
+    "1824_fix_employee_page_grants.sql",
+    "1825_mcn_content_builder_request.sql",
+    "1826_meta_lead_walkin_reply_columns.sql",
+    "1827_meta_lead_messages.sql",
+    "1828_receipt_receivable_ledger_heads.sql"
   ],
   "approvedDeletions": [
     {
