@@ -1,7 +1,9 @@
 // Weekly roster-upload tracker: which branch × process has uploaded the roster for each W/C week.
 //
 // "Uploaded" means a COMMITTED roster-import batch holds rows for the process's active employees
-// in that Monday–Sunday week (wfm_roster_import_row). A batch stuck in PREVIEW does not count.
+// in that Monday–Sunday week (wfm_roster_import_row, matched to employees by employee CODE: the
+// import stores employee_id_raw and leaves employee_id NULL — verified live, 30,084 of 30,084 rows).
+// A batch stuck in PREVIEW does not count.
 // The status rules live in roster-upload-tracker.logic.ts; this file only gathers the facts.
 //
 // Reads never need the alert table (migration 1834): while it is missing the notification trail
@@ -177,17 +179,18 @@ async function loadCoverage(weeks: string[]): Promise<Map<string, CoverageRow>> 
     `SELECT e.branch_id, e.process_id, c.week_start,
             COUNT(*) AS covered, MIN(c.first_commit) AS first_commit, MAX(c.first_commit) AS full_commit
        FROM (
-         SELECT r.employee_id,
+         SELECT r.employee_id_raw AS employee_code,
                 DATE_FORMAT(DATE_SUB(r.roster_date, INTERVAL WEEKDAY(r.roster_date) DAY), '%Y-%m-%d') AS week_start,
                 MIN(UNIX_TIMESTAMP(b.committed_at)) AS first_commit
            FROM wfm_roster_import_batch b
            JOIN wfm_roster_import_row r ON r.batch_id = b.id
           WHERE b.status = 'COMMITTED' AND b.committed_at IS NOT NULL
             AND b.date_range_end >= ? AND b.date_range_start <= ?
-            AND r.employee_id IS NOT NULL AND r.roster_date BETWEEN ? AND ?
-          GROUP BY r.employee_id, week_start
+            AND r.employee_id_raw IS NOT NULL AND r.roster_date BETWEEN ? AND ?
+          GROUP BY r.employee_id_raw, week_start
        ) c
-       JOIN employees e ON e.id = c.employee_id AND e.employment_status = 'active'
+       JOIN employees e ON e.employee_code COLLATE utf8mb4_unicode_ci = c.employee_code COLLATE utf8mb4_unicode_ci
+                       AND e.employment_status = 'active'
       GROUP BY e.branch_id, e.process_id, c.week_start`,
     [from, to, from, to],
   );
@@ -547,7 +550,8 @@ export async function getCellDetail(
           AND NOT EXISTS (
             SELECT 1 FROM wfm_roster_import_row r
               JOIN wfm_roster_import_batch b ON b.id = r.batch_id AND b.status = 'COMMITTED'
-             WHERE r.employee_id = e.id AND r.roster_date BETWEEN ? AND ?)
+             WHERE r.employee_id_raw COLLATE utf8mb4_unicode_ci = e.employee_code COLLATE utf8mb4_unicode_ci
+               AND r.roster_date BETWEEN ? AND ?)
         ORDER BY e.full_name LIMIT ${MISSING_EMPLOYEE_LIMIT}`,
       [branchId, processId, weekStart, weekEnd],
     ),

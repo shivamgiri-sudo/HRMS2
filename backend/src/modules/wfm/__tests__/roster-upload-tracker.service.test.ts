@@ -135,3 +135,22 @@ describe('sendManualReminder', () => {
     await expect(sendManualReminder(NOIDA, P_ONFIDO, HOUSING_WEEK[0], NOW)).rejects.toMatchObject({ status: 409 });
   });
 });
+
+describe('coverage matching', () => {
+  it('matches import rows to employees by employee code, because the import leaves employee_id NULL', async () => {
+    await getTracker({ nowMs: NOW, weeks: 1, offset: 3 });
+    const coverageSql = String(dbExecute.mock.calls.find((c) => String(c[0]).includes('FROM wfm_roster_import_batch b'))![0]);
+    expect(coverageSql).toContain('r.employee_id_raw');
+    expect(coverageSql).toMatch(/e\.employee_code COLLATE utf8mb4_unicode_ci\s*=\s*c\.employee_code COLLATE utf8mb4_unicode_ci/);
+    expect(coverageSql).not.toContain('r.employee_id IS NOT NULL');
+  });
+
+  it('finds uncovered employees the same way', async () => {
+    dbExecute.mockImplementation(async (sql: string, params?: unknown[]) => [route(sql, params)]);
+    const { getCellDetail } = await import('../roster-upload-tracker.service.js');
+    await getCellDetail(NOIDA, P_HOUSING, '2026-09-21', NOW);
+    const uncoveredSql = String(dbExecute.mock.calls.find((c) => String(c[0]).includes('NOT EXISTS'))![0]);
+    expect(uncoveredSql).toContain('r.employee_id_raw');
+    expect(uncoveredSql).not.toMatch(/r\.employee_id\s*=\s*e\.id/);
+  });
+});
