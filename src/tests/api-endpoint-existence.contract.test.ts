@@ -360,8 +360,7 @@ const KNOWN_MISSING: Record<string, string> = {
     "SCANNER FALSE POSITIVE — a bare base URL. AppreciateWealthDrawer.tsx appends /agent/:id, /source/:t, /day/:d etc., all served by appreciate-wealth-dashboard.routes.ts.",
   "/api/process-performance/housing-premium-dashboard":
     "SCANNER FALSE POSITIVE — a bare base URL. housingPremiumShared.ts exports it as HP_API and callers append /overview, /day-wise, /agent-wise ...; each of those is served by housing-premium-dashboard.routes.ts.",
-  "/api/meta/leads/:x/outreach":
-    "GENUINELY ABSENT (in-progress, see also route-contract.test.ts). MetaLeadsPage.tsx POSTs here; meta-campaign.routes.ts only registers POST /leads/:id/notify, so the 'notify lead' button gets a 404-shaped failure until the route or the URL is reconciled by the Meta-campaign work.",
+  // "/api/meta/leads/:x/outreach" — FIXED: MetaLeadsPage.tsx now calls /notify (the registered route). Entry removed 2026-09-21.
   // /api/public/noc/:x and /api/public/noc/:x/submit used to sit here too, described as
   // "module built locally but never pushed" (2026-09-10). It was pushed the next day by its
   // owning session, and this file's mount was completed 2026-09-11 -- same shape as the

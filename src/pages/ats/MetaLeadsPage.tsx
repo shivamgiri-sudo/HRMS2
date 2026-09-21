@@ -227,10 +227,10 @@ export default function MetaLeadsPage() {
     try {
       const res = await hrmsApi.post<{
         success: boolean;
-        outcome: { succeeded: string[]; failed: Array<{ channel: string; error: string }> };
-      }>(`/api/meta/leads/${leadId}/outreach`, {});
-      const succeeded = res.outcome?.succeeded ?? [];
-      const failed = res.outcome?.failed ?? [];
+        data: { succeeded: string[]; failed: Array<{ channel: string; error: string }> };
+      }>(`/api/meta/leads/${leadId}/notify`, {});
+      const succeeded = res.data?.succeeded ?? [];
+      const failed = res.data?.failed ?? [];
       const ok = succeeded.length > 0;
       const msg = ok
         ? `Sent via: ${succeeded.join(", ")}`
