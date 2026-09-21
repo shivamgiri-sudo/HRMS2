@@ -11096,7 +11096,8 @@
       "meta_target_age_min",
       "meta_target_age_max",
       "meta_target_locations",
-      "meta_target_radius_km"
+      "meta_target_radius_km",
+      "meta_screening_config"
     ],
     "job_requisition_approval_log": [
       "id",
