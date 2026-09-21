@@ -106,6 +106,11 @@ export function PaymentVouchersContent() {
     queryFn: async () => (await hrmsApi.get<{ success: boolean; data: any[] }>("/api/finance/payable-accounts")).data ?? [],
     enabled: raiseOpen || receiptOpen,
   });
+  const financeClientsQuery = useQuery({
+    queryKey: ["finance-clients"],
+    queryFn: async () => (await hrmsApi.get<{ success: boolean; data: any[] }>("/api/finance/clients")).data ?? [],
+    enabled: receiptOpen,
+  });
   // Vendor Master runs to ~1.8k active rows (same scale BudgetLinkedGrnForm.tsx's GRN vendor
   // picker already searches server-side, /api/erp/vendors?is_active=1&limit=50&q=). A vendor
   // dropdown built from "who has an outstanding due in the first 200 rows" — the old approach —
@@ -223,9 +228,9 @@ export function PaymentVouchersContent() {
         payableAccountId: receiptForm.payableAccountId,
         clientName: receiptForm.clientName.trim() || undefined,
         amount: parseFloat(receiptForm.amount),
-        remarks: receiptForm.instrumentType
-          ? `${receiptForm.instrumentType}${receiptForm.instrumentRef ? ` — ${receiptForm.instrumentRef}` : ""}`
-          : receiptForm.remarks || undefined,
+        paymentMode: receiptForm.instrumentType || undefined,
+        transactionRef: receiptForm.instrumentRef.trim() || undefined,
+        remarks: receiptForm.remarks.trim() || undefined,
       };
       return (await hrmsApi.post("/api/finance/payment-vouchers", payload)).data;
     },
@@ -621,10 +626,14 @@ export function PaymentVouchersContent() {
             </div>
             <div>
               <Label className="mb-1 block text-xs text-slate-500">Client / Party Name</Label>
-              <Input
+              <SearchableSelect
+                options={(financeClientsQuery.data ?? []).map((c: any) => ({
+                  value: c.client_name,
+                  label: c.client_name,
+                }))}
                 value={receiptForm.clientName}
-                onChange={(e) => setReceiptForm((f) => ({ ...f, clientName: e.target.value }))}
-                placeholder="e.g. Vodafone Mobile Services Ltd."
+                onChange={(v) => setReceiptForm((f) => ({ ...f, clientName: v }))}
+                placeholder="Select client"
               />
             </div>
             <div>

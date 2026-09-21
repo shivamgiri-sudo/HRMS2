@@ -250,6 +250,10 @@ export interface RaiseVoucherInput {
   remarks?: string | null;
   reason?: string | null;
   voucherType?: "payment" | "receipt";
+  /** Instrument type for sales_receipt recorded at raise time (RTGS/NEFT/Cheque/UPI/Cash etc.) */
+  paymentMode?: string | null;
+  /** UTR / cheque number for sales_receipt recorded at raise time */
+  transactionRef?: string | null;
 }
 
 function maskVoucherRow(row: any) {
@@ -585,8 +589,9 @@ export const paymentVoucherService = {
            (id, voucher_number, voucher_type, source_type, bank_account_id, payable_account_id,
             linked_vendor_payment_id, linked_imprest_manager_id, linked_vendor_id, amount, remarks, reason,
             particulars, expense_head_code, expense_head_name, expense_sub_head_code, expense_sub_head_name,
+            payment_mode, transaction_ref,
             status, raised_by, raised_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'raised', ?, NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'raised', ?, NOW())`,
         [
           id,
           voucherNumber,
@@ -605,6 +610,8 @@ export const paymentVoucherService = {
           expenseClassification?.headName ?? null,
           expenseClassification?.subHeadCode ?? null,
           expenseClassification?.subHeadName ?? null,
+          isSalesReceipt ? (input.paymentMode?.trim() || null) : null,
+          isSalesReceipt ? (input.transactionRef?.trim() || null) : null,
           actorUserId,
         ],
       );

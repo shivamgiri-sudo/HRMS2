@@ -290,6 +290,7 @@ import { vendorApprovalRouter } from "./modules/finance/vendor-approval.routes.j
 import { imprestRouter } from "./modules/finance/imprest.routes.js";
 import { companyBankAccountRouter } from "./modules/finance/company-bank-account.routes.js";
 import { payableAccountRouter } from "./modules/finance/payable-account.routes.js";
+import { financeClientsRouter } from "./modules/finance/finance-clients.routes.js";
 import { paymentVoucherRouter } from "./modules/finance/payment-voucher.routes.js";
 import { bankReconciliationRouter } from "./modules/finance/bank-reconciliation.routes.js";
 import { ledgerReportsRouter } from "./modules/finance/ledger-reports.routes.js";
@@ -697,6 +698,7 @@ app.use("/api/finance/imprest", imprestRouter);
 // imprest above: none of these paths may ever be shadowed by grnRouter's ":id"-shaped routes.
 app.use("/api/finance/bank-accounts", companyBankAccountRouter);
 app.use("/api/finance/payable-accounts", payableAccountRouter);
+app.use("/api/finance/clients", financeClientsRouter);
 app.use("/api/finance/payment-vouchers", paymentVoucherRouter);
 app.use("/api/finance/bank-reconciliation", bankReconciliationRouter);
 // Journal Task 4 (Phase 4 of the double-entry plan) — Trial Balance / Vendor Ledger /
