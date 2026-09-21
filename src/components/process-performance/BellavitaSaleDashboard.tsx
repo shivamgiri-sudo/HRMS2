@@ -5,9 +5,11 @@ import {
 } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
-  IndianRupee, ShoppingBag, CreditCard, RotateCcw, TrendingUp, Users, CalendarDays, Wallet,
+  IndianRupee, ShoppingBag, CreditCard, RotateCcw, TrendingUp, Users, CalendarDays, Wallet, Target,
 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BellavitaAgentPerformance } from "./BellavitaAgentPerformance";
+import { BellavitaSaleDateLobMatrix } from "./BellavitaSaleDateLobMatrix";
 import { DashboardExportMenu, type ExportSlide } from "./DashboardKit";
 
 interface DashboardData {
@@ -23,9 +25,15 @@ interface DashboardData {
   };
   from: string;
   to: string;
+  /** The calendar month (YYYY-MM) lobRevenue's target/achievementPct apply to. */
+  targetMonth: string;
+  /** Whether the signed-in user may set a monthly target (admin/management roles only). */
+  canSetTarget: boolean;
   dateWiseTrend: Array<{ date: string; saleCount: number; turnover: number; paidCount: number; codCount: number; rtoCount: number }>;
   lobRevenue: Array<{
     lob: string; saleCount: number; turnover: number; target: number | null; achievementPct: number | null; targetNote?: string;
+    /** "manual" = an admin set this month's target; "default" = the older hardcoded LOB_TARGETS fallback; "none" = no target at all. */
+    targetSource: "manual" | "default" | "none";
     codCount: number; paidCount: number; codPct: number; paidPct: number; rtoAmount: number; rtoCount: number; rtoPct: number;
     aov: number; netSaleCount: number; netRevenue: number;
   }>;
@@ -40,6 +48,12 @@ interface DashboardData {
 }
 
 const LOB_COLORS = ["#e11d48", "#0ea5e9", "#f59e0b", "#10b981", "#8b5cf6"];
+
+/** "September 2026" from a "2026-09" month key, for the target editor's label. */
+function monthLabel(ym: string): string {
+  const [y, m] = ym.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-IN", { month: "long", year: "numeric", timeZone: "UTC" });
+}
 
 /** Local YYYY-MM-DD, deliberately NOT via toISOString(): that converts
  * through UTC and rolls the date back a day for a viewer ahead of UTC
@@ -97,17 +111,24 @@ function KpiCard({
  * slide-switcher + date range and hand the same [from, to] to whichever
  * slide (this one, or Agent Performance) is active.
  */
+const SALE_API = "/api/process-performance/bellavita-sale-dashboard";
+
 function SaleDashboardSlide({ from, to }: { from: string; to: string }) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [targetLob, setTargetLob] = useState("");
+  const [targetMonth, setTargetMonth] = useState("");
+  const [targetValue, setTargetValue] = useState("");
+  const [targetBusy, setTargetBusy] = useState(false);
+  const [targetMsg, setTargetMsg] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
       const res = await hrmsApi.get<{ success: boolean; data: DashboardData }>(
-        `/api/process-performance/bellavita-sale-dashboard?from=${from}&to=${to}`,
+        `${SALE_API}?from=${from}&to=${to}`,
       );
       setData(res.data);
     } catch (err) {
@@ -118,6 +139,30 @@ function SaleDashboardSlide({ from, to }: { from: string; to: string }) {
   }, [from, to]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Keep the target editor's month in step with whichever month the LOB
+  // table is actually showing, and default the LOB picker to the first row
+  // once data loads (or once the previously-selected LOB disappears).
+  useEffect(() => {
+    if (!data) return;
+    setTargetMonth(data.targetMonth);
+    setTargetLob((cur) => (data.lobRevenue.some((r) => r.lob === cur) ? cur : (data.lobRevenue[0]?.lob ?? "")));
+  }, [data]);
+
+  async function saveTarget() {
+    setTargetBusy(true);
+    setTargetMsg("");
+    try {
+      await hrmsApi.put(`${SALE_API}/monthly-target`, { lob: targetLob, month: targetMonth, target: Number(targetValue) });
+      setTargetValue("");
+      setTargetMsg(`Saved ${targetLob} target for ${monthLabel(targetMonth)}.`);
+      await load();
+    } catch (err) {
+      setTargetMsg(err instanceof Error ? err.message : "Could not save the target.");
+    } finally {
+      setTargetBusy(false);
+    }
+  }
 
   const exportSlides = useMemo<ExportSlide[]>(() => {
     if (!data) return [];
@@ -238,7 +283,14 @@ function SaleDashboardSlide({ from, to }: { from: string; to: string }) {
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="date" tickFormatter={formatShortDate} tick={{ fontSize: 9 }} />
               <YAxis tick={{ fontSize: 10 }} />
-              <Tooltip labelFormatter={(v: unknown) => formatShortDate(String(v))} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+              <Tooltip
+                labelFormatter={(v: unknown) => formatShortDate(String(v))}
+                formatter={(value: number, name: string, item: { payload?: { paidCount?: number; codCount?: number } }) => {
+                  const total = (item?.payload?.paidCount ?? 0) + (item?.payload?.codCount ?? 0);
+                  return [total > 0 ? `${Math.round((value / total) * 1000) / 10}%` : "0%", name];
+                }}
+                contentStyle={{ fontSize: 12, borderRadius: 8 }}
+              />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Bar dataKey="paidCount" name="Prepaid" stackId="pay" fill="#10b981" radius={[0, 0, 0, 0]} />
               <Bar dataKey="codCount" name="COD" stackId="pay" fill="#f59e0b" radius={[3, 3, 0, 0]} />
@@ -298,7 +350,10 @@ function SaleDashboardSlide({ from, to }: { from: string; to: string }) {
                   <td className={`border border-slate-200 px-3 py-2 font-semibold ${r.rtoPct > 10 ? "text-red-600" : "text-slate-600"}`}>{r.rtoPct}%</td>
                   <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.netSaleCount.toLocaleString("en-IN")}</td>
                   <td className="border border-slate-200 px-3 py-2 text-slate-600">{formatINR(r.netRevenue)}</td>
-                  <td className="border border-slate-200 px-3 py-2 text-slate-500">{r.target != null ? formatINR(r.target) : "—"}</td>
+                  <td className="border border-slate-200 px-3 py-2 text-slate-500">
+                    {r.target != null ? formatINR(r.target) : "—"}
+                    {r.targetSource === "default" && <span className="ml-1 rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-slate-400">default</span>}
+                  </td>
                   <td className={`border border-slate-200 px-3 py-2 font-semibold ${r.achievementPct != null ? (r.achievementPct >= 100 ? "text-emerald-600" : r.achievementPct >= 70 ? "text-amber-600" : "text-red-600") : "text-slate-400"}`}>
                     {r.achievementPct != null ? `${r.achievementPct}%` : "—"}
                   </td>
@@ -331,6 +386,49 @@ function SaleDashboardSlide({ from, to }: { from: string; to: string }) {
           </table>
         </div>
       </div>
+
+      {/* Monthly target editor -- sets the Target column above per LOB, per month. */}
+      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+        <div className="mb-1 flex items-center gap-2">
+          <Target className="h-4 w-4 text-amber-500" />
+          <p className="text-sm font-semibold text-slate-700">Monthly target — {monthLabel(data.targetMonth)}</p>
+        </div>
+        <p className="mb-3 text-[11px] text-slate-400">
+          A target applies to one LOB for one calendar month. It's a business commitment, so it's entered by an admin rather than derived from data.
+          "Default" rows above are the older fixed figures used until an admin sets a real monthly value here.
+        </p>
+        {data.canSetTarget ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Select value={targetLob} onValueChange={setTargetLob}>
+              <SelectTrigger className="h-8 w-[180px] bg-white text-xs" aria-label="LOB"><SelectValue placeholder="LOB" /></SelectTrigger>
+              <SelectContent>
+                {data.lobRevenue.map((r) => <SelectItem key={r.lob} value={r.lob}>{r.lob}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <input
+              type="month" value={targetMonth} onChange={(e) => setTargetMonth(e.target.value)} aria-label="Target month"
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm focus:border-amber-400 focus:outline-none"
+            />
+            <input
+              type="number" min={1} inputMode="numeric" value={targetValue} onChange={(e) => setTargetValue(e.target.value)}
+              placeholder={(() => { const cur = data.lobRevenue.find((r) => r.lob === targetLob)?.target; return cur != null ? `Now ${formatINR(cur)}` : "Target amount (₹)"; })()}
+              aria-label="Target amount for the LOB and month"
+              className="w-48 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm focus:border-amber-400 focus:outline-none"
+            />
+            <button
+              type="button" onClick={() => void saveTarget()} disabled={targetBusy || !targetLob || !targetMonth || !(Number(targetValue) > 0)}
+              className="rounded-lg bg-amber-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {targetBusy ? "Saving…" : "Save"}
+            </button>
+            {targetMsg && <span className="text-[11px] text-slate-500">{targetMsg}</span>}
+          </div>
+        ) : (
+          <p className="text-[11px] text-slate-400">Ask an admin to set monthly targets.</p>
+        )}
+      </div>
+
+      <BellavitaSaleDateLobMatrix from={from} to={to} />
 
       {/* State-wise revenue */}
       <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">

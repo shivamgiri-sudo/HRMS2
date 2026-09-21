@@ -401,23 +401,36 @@ export function normalizeSlides(input: unknown): ExportSlideInput[] {
   });
 }
 
-export async function buildDashboardExcel(
-  req: DashboardExcelRequest, filePath: string,
-): Promise<{ raw: RawSheetResult[] }> {
-  const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ filename: filePath, useStyles: true, useSharedStrings: false });
-  wb.creator = "MAS Callnet PeopleOS";
-  wb.created = new Date();
-  const used = new Set<string>();
-
+/**
+ * Writes one dashboard's summary sheets + raw-data sheets into an ALREADY
+ * OPEN workbook (does not add the "Raw Data Notes" sheet or commit/close the
+ * workbook -- the caller does that once, after every dashboard it wants has
+ * been appended). This is the single-dashboard export's own per-dashboard
+ * body, pulled out so the MIS bundle builder below can call it once per
+ * dashboard into ONE combined file instead of duplicating this logic.
+ * `used` is shared across every call so sheet names never collide across
+ * dashboards in the same workbook (safeSheetName already dedupes against it).
+ */
+export async function appendDashboardToWorkbook(
+  wb: ExcelJS.stream.xlsx.WorkbookWriter, req: DashboardExcelRequest, deadline: number, used: Set<string>,
+  /** Prefixes every sheet name with this (e.g. the dashboard's own short
+   * title) -- needed only when several dashboards share one workbook (the
+   * MIS bundle below), so e.g. two dashboards each having an "Overview"
+   * slide don't collide or get silently renumbered into confusing "Overview
+   * 2" tabs. The single-dashboard export path leaves this unset, so its
+   * sheet names are byte-identical to before this refactor. */
+  sheetPrefix?: string,
+): Promise<RawSheetResult[]> {
   const slides = req.slides.length > 0 ? req.slides : [{ title: "Report" }];
   for (const slide of slides) {
-    writeSummarySheet(wb, slide, safeSheetName(slide.title, used), req.reportTitle, req.subtitle);
+    const name = sheetPrefix ? `${sheetPrefix} — ${slide.title}` : slide.title;
+    writeSummarySheet(wb, slide, safeSheetName(name, used), req.reportTitle, req.subtitle);
   }
 
   const raw: RawSheetResult[] = [];
-  const deadline = Date.now() + TIME_BUDGET_MS;
   for (const src of RAW_SOURCES[req.dashboard] ?? []) {
-    const sheetName = safeSheetName(`Raw - ${src.sheet}`, used);
+    const rawName = sheetPrefix ? `Raw - ${sheetPrefix} - ${src.sheet}` : `Raw - ${src.sheet}`;
+    const sheetName = safeSheetName(rawName, used);
     const sourceLabel = src.kind === "masmis" ? `db_masmis.${(src as MasmisRawSource).table}` : "dialer_db";
     if (Date.now() > deadline) {
       raw.push({
@@ -439,10 +452,29 @@ export async function buildDashboardExcel(
       });
     }
   }
+  return raw;
+}
 
+export function newWorkbookWriter(filePath: string): ExcelJS.stream.xlsx.WorkbookWriter {
+  const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ filename: filePath, useStyles: true, useSharedStrings: false });
+  wb.creator = "MAS Callnet PeopleOS";
+  wb.created = new Date();
+  return wb;
+}
+
+export { writeNotesSheet, safeSheetName };
+
+export async function buildDashboardExcel(
+  req: DashboardExcelRequest, filePath: string,
+): Promise<{ raw: RawSheetResult[] }> {
+  const wb = newWorkbookWriter(filePath);
+  const used = new Set<string>();
+  const deadline = Date.now() + TIME_BUDGET_MS;
+  const raw = await appendDashboardToWorkbook(wb, req, deadline, used);
   if (raw.length > 0) writeNotesSheet(wb, raw, used);
   await wb.commit();
   return { raw };
 }
 
 export type { RawSource };
+export { TIME_BUDGET_MS };

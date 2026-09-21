@@ -71,6 +71,13 @@ export const RAW_SOURCES: Record<string, RawSource[]> = {
     { kind: "masmis", sheet: "gnc_apr", table: "gnc_apr", dateExpr: "report_date" },
   ],
   gnc_inbound: [{ kind: "dialer", sheet: "GNC inbound calls", projectKey: "gnc" }],
+  gnc_chat: [
+    { kind: "masmis", sheet: "gnc_chat", table: "gnc_chat", dateExpr: D_MON_YY("report_date") },
+    {
+      kind: "masmis", sheet: "gnc_sale (Chat)", table: "gnc_sale", dateExpr: "sale_date", extraWhere: "campaign = 'Chat'",
+      note: "Sale rows the Orders/Revenue KPIs come from (campaign = 'Chat'). Linked to chat agents by name only -- see the dashboard's Sale Linkage note for names that don't match.",
+    },
+  ],
 
   inbound_dubangladesh: [{ kind: "dialer", sheet: "DU Bangladesh inbound calls", projectKey: "dubangladesh" }],
   inbound_exicom: [{ kind: "dialer", sheet: "Exicom inbound calls", projectKey: "exicom" }],
