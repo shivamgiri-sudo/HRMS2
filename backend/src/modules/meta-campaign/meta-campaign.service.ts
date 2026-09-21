@@ -810,10 +810,19 @@ export const metaCampaignService = {
     const offset = Math.max(Number(filters.offset ?? 0), 0);
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT ml.*, jr.requisition_code, jr.designation_name, jr.branch_name, mc.campaign_name
+      `SELECT ml.*, jr.requisition_code, jr.designation_name, jr.branch_name, mc.campaign_name,
+              COALESCE(msg.unread_count, 0) AS unread_message_count,
+              msg.last_message_at
          FROM meta_lead_raw ml
          LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id
          LEFT JOIN meta_campaign mc ON mc.id = ml.campaign_id
+         LEFT JOIN (
+           SELECT lead_id,
+                  SUM(CASE WHEN direction='inbound' AND read_at IS NULL THEN 1 ELSE 0 END) AS unread_count,
+                  MAX(created_at) AS last_message_at
+             FROM meta_lead_messages
+            GROUP BY lead_id
+         ) msg ON msg.lead_id = ml.id
          ${where}
         ORDER BY ml.created_at DESC
         LIMIT ${limit} OFFSET ${offset}`,
@@ -827,6 +836,8 @@ export const metaCampaignService = {
         designationName: (r.designation_name as string | null) ?? null,
         branchName: (r.branch_name as string | null) ?? null,
         campaignName: (r.campaign_name as string | null) ?? null,
+        unreadMessageCount: Number(r.unread_message_count ?? 0),
+        lastMessageAt: (r.last_message_at as string | null) ?? null,
       })),
       total,
     };

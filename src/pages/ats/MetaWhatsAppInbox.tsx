@@ -1,23 +1,12 @@
 /**
  * WhatsApp Inbox — META Campaign Leads
  *
- * Branch HR sees conversations from their branch only.
+ * Exact WhatsApp visual design. Branch HR sees only their branch.
  * Admin / HR / Super Admin see all branches.
- *
- * Split-panel: conversation list on left, chat thread on right.
- * Auto-refreshes every 30 seconds.
+ * All API calls unchanged; only the presentation layer is redesigned.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  MessageCircle,
-  RefreshCcw,
-  Search,
-  Send,
-  User,
-  PhoneCall,
-  X,
-  ChevronLeft,
-} from "lucide-react";
+import { Check, CheckCheck, ChevronLeft, RefreshCcw, Search, Send, X } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 
@@ -45,6 +34,7 @@ type Message = {
   senderType: "system" | "hr" | "candidate";
   senderId: string | null;
   senderName: string | null;
+  readAt: string | null;
   createdAt: string;
 };
 
@@ -59,97 +49,102 @@ function fmtTime(iso: string | null): string {
     d.getDate() === now.getDate() &&
     d.getMonth() === now.getMonth() &&
     d.getFullYear() === now.getFullYear();
-  if (isToday) {
-    return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
-  }
+  if (isToday) return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
   return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
 }
 
-function fmtFull(iso: string | null): string {
+function fmtBubbleTime(iso: string | null): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+}
+
+function fmtDateSeparator(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const diff = Math.floor((now.getTime() - d.getTime()) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" });
 }
 
 function initials(name: string | null): string {
   if (!name) return "?";
-  return name
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase() ?? "")
-    .join("");
+  return name.split(" ").filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("");
 }
 
-const SCREENING_COLOR: Record<string, string> = {
-  qualified: "bg-emerald-100 text-emerald-700",
-  disqualified: "bg-rose-100 text-rose-700",
-  pending: "bg-amber-100 text-amber-700",
-};
+function avatarBg(name: string | null): string {
+  const colors = [
+    "bg-[#b39ddb]", "bg-[#80cbc4]", "bg-[#ef9a9a]", "bg-[#ffe082]",
+    "bg-[#80deea]", "bg-[#a5d6a7]", "bg-[#ffab91]", "bg-[#90caf9]",
+  ];
+  if (!name) return colors[0];
+  return colors[name.charCodeAt(0) % colors.length];
+}
+
+// Group messages by date for separator display
+function groupByDate(messages: Message[]): Array<{ date: string; msgs: Message[] }> {
+  const map = new Map<string, Message[]>();
+  for (const m of messages) {
+    const key = new Date(m.createdAt).toDateString();
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(m);
+  }
+  return Array.from(map.entries()).map(([, msgs]) => ({ date: msgs[0].createdAt, msgs }));
+}
 
 // ── sub-components ────────────────────────────────────────────────────────────
 
-function ConversationItem({
-  conv,
-  selected,
-  onClick,
-}: {
-  conv: Conversation;
-  selected: boolean;
-  onClick: () => void;
+function ConversationItem({ conv, selected, onClick }: {
+  conv: Conversation; selected: boolean; onClick: () => void;
 }) {
+  const hasUnread = conv.unreadCount > 0;
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`w-full text-left px-4 py-3 border-b border-slate-100 hover:bg-blue-50 transition-colors duration-150 ${
-        selected ? "bg-blue-50 border-l-4 border-l-blue-600" : ""
-      }`}
+      className={`w-full text-left transition-colors duration-100 ${selected ? "bg-[#f0f2f5]" : "hover:bg-[#f5f5f5]"}`}
     >
-      <div className="flex items-start gap-3">
-        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
+      <div className="flex items-center gap-3 px-3 py-3 border-b border-[#e9edef]">
+        {/* Avatar */}
+        <div className={`w-12 h-12 rounded-full ${avatarBg(conv.parsedName)} flex items-center justify-center text-white text-sm font-bold flex-shrink-0 uppercase`}>
           {initials(conv.parsedName)}
         </div>
+        {/* Content */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between gap-2">
-            <span className="font-semibold text-slate-800 text-sm truncate">
-              {conv.parsedName ?? "Unknown Candidate"}
+          <div className="flex items-center justify-between gap-1">
+            <span className={`text-[15px] truncate ${hasUnread ? "font-bold text-[#111b21]" : "font-medium text-[#111b21]"}`}>
+              {conv.parsedName ?? "Unknown"}
             </span>
-            <span className="text-xs text-slate-400 flex-shrink-0">
+            <span className={`text-[11px] flex-shrink-0 ${hasUnread ? "text-[#25d366] font-semibold" : "text-[#667781]"}`}>
               {fmtTime(conv.lastMessageAt)}
             </span>
           </div>
-          <div className="flex items-center justify-between gap-2 mt-0.5">
-            <span className="text-xs text-slate-500 truncate">
+          <div className="flex items-center justify-between gap-1 mt-0.5">
+            <div className="flex items-center gap-1 min-w-0">
               {conv.lastDirection === "outbound" && (
-                <span className="text-slate-400 mr-1">You:</span>
+                <CheckCheck className="w-3.5 h-3.5 flex-shrink-0 text-[#53bdeb]" />
               )}
-              {conv.lastMessageText ?? "No messages yet"}
-            </span>
-            {conv.unreadCount > 0 && (
-              <span className="bg-blue-600 text-white text-xs font-bold rounded-full px-1.5 py-0.5 flex-shrink-0 min-w-[20px] text-center">
-                {conv.unreadCount}
+              <span className="text-[13px] text-[#667781] truncate">
+                {conv.lastMessageText
+                  ? conv.lastMessageText.length > 45
+                    ? conv.lastMessageText.slice(0, 45) + "…"
+                    : conv.lastMessageText
+                  : <span className="italic opacity-60">No messages</span>}
+              </span>
+            </div>
+            {hasUnread && (
+              <span className="flex-shrink-0 min-w-[20px] h-5 rounded-full bg-[#25d366] text-white text-[11px] font-bold flex items-center justify-center px-1.5">
+                {conv.unreadCount > 99 ? "99+" : conv.unreadCount}
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2 mt-1">
-            {conv.branchName && (
-              <span className="text-xs text-slate-400">{conv.branchName}</span>
-            )}
-            {conv.designationName && (
-              <>
-                <span className="text-slate-300">·</span>
-                <span className="text-xs text-slate-400 truncate">{conv.designationName}</span>
-              </>
-            )}
-          </div>
+          {(conv.branchName || conv.designationName) && (
+            <div className="mt-0.5 text-[11px] text-[#8696a0] truncate">
+              {[conv.designationName, conv.branchName].filter(Boolean).join(" · ")}
+            </div>
+          )}
         </div>
       </div>
     </button>
@@ -158,27 +153,50 @@ function ConversationItem({
 
 function ChatBubble({ msg }: { msg: Message }) {
   const isOut = msg.direction === "outbound";
-  const label =
-    msg.senderType === "system"
-      ? "System"
-      : msg.senderType === "hr"
-      ? msg.senderName ?? "HR"
-      : "Candidate";
+  const isSystem = msg.senderType === "system";
 
-  return (
-    <div className={`flex ${isOut ? "justify-end" : "justify-start"} mb-2`}>
-      <div className={`max-w-[75%] ${isOut ? "items-end" : "items-start"} flex flex-col`}>
-        <span className="text-xs text-slate-400 mb-1 px-1">{label}</span>
-        <div
-          className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap shadow-sm ${
-            isOut
-              ? "bg-blue-600 text-white rounded-tr-sm"
-              : "bg-white border border-slate-200 text-slate-800 rounded-tl-sm"
-          }`}
-        >
+  if (isSystem) {
+    return (
+      <div className="flex justify-center my-1">
+        <div className="bg-[#fff3cd] text-[#7d6608] text-[11px] px-3 py-1 rounded-full shadow-sm max-w-[80%] text-center">
           {msg.messageText}
         </div>
-        <span className="text-xs text-slate-400 mt-1 px-1">{fmtFull(msg.createdAt)}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`flex ${isOut ? "justify-end" : "justify-start"} mb-1 px-3`}>
+      <div
+        className={`relative max-w-[65%] px-3 py-2 shadow-sm ${
+          isOut
+            ? "bg-[#d9fdd3] rounded-tl-xl rounded-bl-xl rounded-br-xl"
+            : "bg-white rounded-tr-xl rounded-bl-xl rounded-br-xl"
+        }`}
+        style={{
+          // WhatsApp message tail using CSS
+          filter: "drop-shadow(0 1px 1px rgba(0,0,0,.08))",
+        }}
+      >
+        {/* Sender label for HR messages */}
+        {isOut && msg.senderName && (
+          <div className="text-[11px] font-semibold text-[#25d366] mb-0.5 leading-none">
+            {msg.senderName.split("@")[0]}
+          </div>
+        )}
+        {/* Message text */}
+        <p className="text-[14px] leading-[1.45] text-[#111b21] whitespace-pre-wrap break-words pr-10">
+          {msg.messageText}
+        </p>
+        {/* Time + ticks */}
+        <div className="absolute bottom-1.5 right-2 flex items-center gap-1">
+          <span className="text-[10px] text-[#667781] leading-none">{fmtBubbleTime(msg.createdAt)}</span>
+          {isOut && (
+            msg.readAt
+              ? <CheckCheck className="w-3.5 h-3.5 text-[#53bdeb]" />
+              : <CheckCheck className="w-3.5 h-3.5 text-[#667781]" />
+          )}
+        </div>
       </div>
     </div>
   );
@@ -198,24 +216,23 @@ export function MetaWhatsAppInbox() {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
 
-  // Mobile: show list or thread
   const [mobileView, setMobileView] = useState<"list" | "thread">("list");
 
   const threadEndRef = useRef<HTMLDivElement>(null);
   const refreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const selectedConv = conversations.find((c) => c.leadId === selectedId) ?? null;
+  const totalUnread = conversations.reduce((s, c) => s + c.unreadCount, 0);
 
-  // ── data fetching ────────────────────────────────────────────────────────
+  // ── data fetching ─────────────────────────────────────────────────────────
 
   const fetchInbox = useCallback(async () => {
     try {
       const params = search ? `?search=${encodeURIComponent(search)}` : "";
       const res = await hrmsApi.get(`/meta/inbox${params}`);
       setConversations(res.data.data ?? []);
-    } catch {
-      // silent — keep stale data
-    } finally {
+    } catch { /* keep stale */ } finally {
       setLoadingList(false);
     }
   }, [search]);
@@ -225,41 +242,28 @@ export function MetaWhatsAppInbox() {
     try {
       const res = await hrmsApi.get(`/meta/leads/${leadId}/messages`);
       setMessages(res.data.data ?? []);
-      // mark read
       await hrmsApi.patch(`/meta/leads/${leadId}/messages/read`).catch(() => {});
-      // update unread count locally
       setConversations((prev) =>
         prev.map((c) => (c.leadId === leadId ? { ...c, unreadCount: 0 } : c))
       );
-    } catch {
-      setMessages([]);
-    } finally {
-      setLoadingThread(false);
-    }
+    } catch { setMessages([]); } finally { setLoadingThread(false); }
   }, []);
 
-  // Initial load
-  useEffect(() => {
-    void fetchInbox();
-  }, [fetchInbox]);
+  useEffect(() => { void fetchInbox(); }, [fetchInbox]);
 
-  // Auto-refresh every 30s
   useEffect(() => {
     refreshRef.current = setInterval(() => {
       void fetchInbox();
       if (selectedId) void fetchThread(selectedId);
     }, 30000);
-    return () => {
-      if (refreshRef.current) clearInterval(refreshRef.current);
-    };
+    return () => { if (refreshRef.current) clearInterval(refreshRef.current); };
   }, [fetchInbox, fetchThread, selectedId]);
 
-  // Scroll to bottom when thread loads
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // ── handlers ────────────────────────────────────────────────────────────
+  // ── handlers ──────────────────────────────────────────────────────────────
 
   function handleSelectConversation(leadId: string) {
     setSelectedId(leadId);
@@ -276,93 +280,93 @@ export function MetaWhatsAppInbox() {
     try {
       await hrmsApi.post(`/meta/leads/${selectedId}/reply`, { message: replyText.trim() });
       setReplyText("");
+      textareaRef.current?.focus();
       await fetchThread(selectedId);
       await fetchInbox();
     } catch (err: unknown) {
-      const msg =
-        err && typeof err === "object" && "response" in err
-          ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
-          : undefined;
-      setSendError(msg ?? "Failed to send. Please try again.");
-    } finally {
-      setSending(false);
-    }
+      const msg = err && typeof err === "object" && "response" in err
+        ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
+        : undefined;
+      setSendError(msg ?? "Failed to send. Try again.");
+    } finally { setSending(false); }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void handleSend();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void handleSend(); }
   }
 
-  // ── render ───────────────────────────────────────────────────────────────
+  // ── render ────────────────────────────────────────────────────────────────
+
+  const grouped = groupByDate(messages);
 
   return (
-    <DashboardLayout title="WhatsApp Inbox" subtitle="META campaign candidate conversations">
-      <div className="flex flex-col h-[calc(100vh-130px)] bg-slate-50">
-        {/* Header bar */}
-        <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500 flex items-center justify-center">
-              <MessageCircle className="w-4 h-4 text-white" />
-            </div>
-            <div>
-              <h1 className="font-bold text-slate-800 text-base leading-tight">WhatsApp Inbox</h1>
-              <p className="text-xs text-slate-500">META campaign candidate conversations</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => { setLoadingList(true); void fetchInbox(); }}
-            className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 transition-colors"
-            title="Refresh"
-          >
-            <RefreshCcw className={`w-4 h-4 ${loadingList ? "animate-spin" : ""}`} />
-          </button>
-        </div>
+    <DashboardLayout>
+      {/* Outer container — fill available height */}
+      <div className="flex flex-col rounded-xl overflow-hidden border border-[#d1d7db] shadow-md" style={{ height: "calc(100vh - 110px)" }}>
 
-        {/* Body */}
+        {/* ══ LEFT PANEL + RIGHT PANEL side by side ══ */}
         <div className="flex flex-1 min-h-0">
-          {/* ── Conversation List ── */}
-          <div
-            className={`flex flex-col border-r border-slate-200 bg-white ${
-              mobileView === "thread" ? "hidden md:flex" : "flex"
-            } w-full md:w-80 lg:w-96 flex-shrink-0`}
-          >
-            {/* Search */}
-            <div className="p-3 border-b border-slate-100">
+
+          {/* ══ LEFT: Conversation list ══ */}
+          <div className={`flex flex-col bg-white border-r border-[#d1d7db] flex-shrink-0 w-full md:w-[360px] lg:w-[380px] ${mobileView === "thread" ? "hidden md:flex" : "flex"}`}>
+
+            {/* WhatsApp-style header */}
+            <div className="flex items-center justify-between px-4 py-3 bg-[#f0f2f5] border-b border-[#d1d7db] flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-full bg-[#dfe5e7] flex items-center justify-center text-[#54656f] text-xs font-bold">
+                  HR
+                </div>
+                <div>
+                  <div className="text-[15px] font-semibold text-[#111b21]">WhatsApp Inbox</div>
+                  {totalUnread > 0 && (
+                    <div className="text-[11px] text-[#25d366] font-semibold">{totalUnread} unread</div>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setLoadingList(true); void fetchInbox(); }}
+                className="p-2 rounded-full hover:bg-[#dfe5e7] text-[#54656f] transition-colors"
+                title="Refresh"
+              >
+                <RefreshCcw className={`w-4 h-4 ${loadingList ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+
+            {/* Search bar */}
+            <div className="px-2 py-2 bg-white border-b border-[#e9edef]">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#54656f]" />
                 <input
                   type="text"
-                  placeholder="Search name or phone…"
+                  placeholder="Search or start new chat"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+                  className="w-full pl-9 pr-8 py-1.5 text-[14px] rounded-lg bg-[#f0f2f5] border-0 outline-none placeholder-[#8696a0] text-[#111b21]"
                 />
                 {search && (
-                  <button
-                    type="button"
-                    onClick={() => setSearch("")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                  >
+                  <button type="button" onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#54656f]">
                     <X className="w-4 h-4" />
                   </button>
                 )}
               </div>
             </div>
 
-            {/* List */}
+            {/* Conversation list */}
             <div className="flex-1 overflow-y-auto">
               {loadingList && conversations.length === 0 ? (
-                <div className="flex items-center justify-center h-40 text-slate-400 text-sm">
-                  Loading…
-                </div>
+                <div className="flex items-center justify-center h-32 text-[#8696a0] text-sm">Loading…</div>
               ) : conversations.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-40 text-slate-400 gap-2">
-                  <MessageCircle className="w-8 h-8 opacity-30" />
-                  <span className="text-sm">No conversations yet</span>
+                <div className="flex flex-col items-center justify-center h-48 gap-3 text-[#8696a0]">
+                  <div className="w-16 h-16 rounded-full bg-[#f0f2f5] flex items-center justify-center">
+                    <svg viewBox="0 0 24 24" className="w-8 h-8 fill-[#8696a0]">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z" />
+                    </svg>
+                  </div>
+                  <p className="text-[14px]">No conversations yet</p>
+                  <p className="text-[12px] text-center px-6">
+                    When candidates reply to your META campaign WhatsApp messages, they'll appear here.
+                  </p>
                 </div>
               ) : (
                 conversations.map((conv) => (
@@ -377,105 +381,134 @@ export function MetaWhatsAppInbox() {
             </div>
           </div>
 
-          {/* ── Thread Panel ── */}
-          <div
-            className={`flex flex-col flex-1 min-w-0 ${
-              mobileView === "list" ? "hidden md:flex" : "flex"
-            }`}
-          >
+          {/* ══ RIGHT: Chat thread ══ */}
+          <div className={`flex flex-col flex-1 min-w-0 ${mobileView === "list" ? "hidden md:flex" : "flex"}`}>
             {selectedConv ? (
               <>
-                {/* Thread header */}
-                <div className="flex items-center gap-3 px-4 py-3 bg-white border-b border-slate-200 flex-shrink-0">
-                  {/* Back button — mobile only */}
+                {/* Chat header — WhatsApp green */}
+                <div className="flex items-center gap-3 px-3 py-2 bg-[#075e54] flex-shrink-0">
                   <button
                     type="button"
                     onClick={() => setMobileView("list")}
-                    className="md:hidden p-1 rounded text-slate-500 hover:bg-slate-100"
+                    className="md:hidden p-1 text-white/80 hover:text-white"
                   >
                     <ChevronLeft className="w-5 h-5" />
                   </button>
-                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
+                  <div className={`w-10 h-10 rounded-full ${avatarBg(selectedConv.parsedName)} flex items-center justify-center text-white text-sm font-bold flex-shrink-0 uppercase`}>
                     {initials(selectedConv.parsedName)}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-slate-800 text-sm truncate">
+                    <div className="text-[15px] font-semibold text-white leading-tight truncate">
                       {selectedConv.parsedName ?? "Unknown Candidate"}
-                    </p>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {selectedConv.parsedPhone && (
-                        <span className="flex items-center gap-1 text-xs text-slate-500">
-                          <PhoneCall className="w-3 h-3" />
-                          {selectedConv.parsedPhone}
-                        </span>
-                      )}
-                      {selectedConv.branchName && (
-                        <span className="text-xs text-slate-400">{selectedConv.branchName}</span>
-                      )}
-                      {selectedConv.screeningResult && (
-                        <span
-                          className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                            SCREENING_COLOR[selectedConv.screeningResult] ?? "bg-slate-100 text-slate-600"
-                          }`}
-                        >
-                          {selectedConv.screeningResult}
-                        </span>
-                      )}
                     </div>
+                    <div className="text-[12px] text-[#b2dfdb] truncate">
+                      {selectedConv.parsedPhone ?? "no phone"}
+                      {selectedConv.branchName ? ` · ${selectedConv.branchName}` : ""}
+                      {selectedConv.designationName ? ` · ${selectedConv.designationName}` : ""}
+                    </div>
+                  </div>
+                  <div>
+                    {selectedConv.screeningResult === "qualified" && (
+                      <span className="text-[10px] bg-[#25d366] text-white font-bold px-2 py-0.5 rounded-full">qualified</span>
+                    )}
+                    {selectedConv.screeningResult === "disqualified" && (
+                      <span className="text-[10px] bg-rose-500 text-white font-bold px-2 py-0.5 rounded-full">disqualified</span>
+                    )}
                   </div>
                 </div>
 
-                {/* Messages */}
-                <div className="flex-1 overflow-y-auto px-4 py-4 bg-slate-50">
+                {/* Chat body — WhatsApp wallpaper bg */}
+                <div
+                  className="flex-1 overflow-y-auto py-3"
+                  style={{
+                    background: "#efeae2",
+                    backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23c9c3ba' fill-opacity='0.12'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
+                  }}
+                >
                   {loadingThread ? (
-                    <div className="flex items-center justify-center h-32 text-slate-400 text-sm">
-                      Loading…
+                    <div className="flex items-center justify-center h-32">
+                      <div className="w-6 h-6 border-2 border-[#25d366] border-t-transparent rounded-full animate-spin" />
                     </div>
                   ) : messages.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-32 text-slate-400 gap-2">
-                      <MessageCircle className="w-8 h-8 opacity-30" />
-                      <span className="text-sm">No messages yet</span>
+                    <div className="flex justify-center mt-8">
+                      <div className="bg-[#fffeee] border border-[#e8e8a0] text-[#5c5c00] text-[12px] px-4 py-2 rounded-lg max-w-xs text-center shadow-sm">
+                        No messages yet. Send a WhatsApp shortlist notification to start the conversation.
+                      </div>
                     </div>
                   ) : (
-                    messages.map((msg) => <ChatBubble key={msg.id} msg={msg} />)
+                    grouped.map(({ date, msgs }) => (
+                      <div key={date}>
+                        {/* Date separator */}
+                        <div className="flex justify-center my-3">
+                          <span className="bg-[#e1f3fb] text-[#54656f] text-[11px] font-medium px-3 py-1 rounded-full shadow-sm">
+                            {fmtDateSeparator(date)}
+                          </span>
+                        </div>
+                        {msgs.map((msg) => (
+                          <ChatBubble key={msg.id} msg={msg} />
+                        ))}
+                      </div>
+                    ))
                   )}
                   <div ref={threadEndRef} />
                 </div>
 
-                {/* Reply box */}
-                <div className="border-t border-slate-200 bg-white p-3 flex-shrink-0">
+                {/* Reply input bar */}
+                <div className="flex-shrink-0 bg-[#f0f2f5] border-t border-[#d1d7db]">
                   {sendError && (
-                    <p className="text-xs text-rose-500 mb-2 px-1">{sendError}</p>
+                    <div className="px-4 py-1.5 bg-rose-50 border-b border-rose-100 text-xs text-rose-600">
+                      {sendError}
+                    </div>
                   )}
-                  <div className="flex items-end gap-2">
-                    <textarea
-                      value={replyText}
-                      onChange={(e) => setReplyText(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                      placeholder="Type a message… (Enter to send, Shift+Enter for new line)"
-                      rows={2}
-                      className="flex-1 resize-none text-sm px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 placeholder-slate-400"
-                    />
+                  <div className="flex items-end gap-2 px-3 py-2">
+                    <div className="flex-1 bg-white rounded-[22px] px-4 py-2 shadow-sm min-h-[44px] flex items-end">
+                      <textarea
+                        ref={textareaRef}
+                        rows={1}
+                        value={replyText}
+                        onChange={(e) => setReplyText(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        placeholder="Type a message"
+                        className="w-full resize-none outline-none text-[14px] text-[#111b21] placeholder-[#8696a0] leading-snug max-h-32 overflow-y-auto bg-transparent"
+                        style={{ lineHeight: "1.4" }}
+                      />
+                    </div>
                     <button
                       type="button"
                       onClick={() => void handleSend()}
                       disabled={!replyText.trim() || sending}
-                      className="flex-shrink-0 w-10 h-10 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center text-white transition-colors shadow-sm"
+                      className="w-11 h-11 rounded-full bg-[#00a884] flex items-center justify-center text-white flex-shrink-0 shadow-md hover:bg-[#008f72] disabled:bg-[#ccc] disabled:cursor-not-allowed transition-colors"
                     >
-                      <Send className="w-4 h-4" />
+                      {sending ? (
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <Send className="w-4 h-4" />
+                      )}
                     </button>
                   </div>
+                  <p className="text-center text-[10px] text-[#8696a0] pb-1">
+                    Enter to send · Shift+Enter for new line · Messages delivered via Wassenger
+                  </p>
                 </div>
               </>
             ) : (
-              <div className="flex-1 flex flex-col items-center justify-center text-slate-400 gap-3 bg-slate-50">
-                <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center">
-                  <MessageCircle className="w-8 h-8 opacity-40" />
-                </div>
-                <div className="text-center">
-                  <p className="font-medium text-slate-500">Select a conversation</p>
-                  <p className="text-sm text-slate-400 mt-1">
-                    Choose a candidate from the left to view their messages
+              /* Empty state — no conversation selected */
+              <div
+                className="flex flex-col items-center justify-center flex-1"
+                style={{ background: "#f0f2f5" }}
+              >
+                <div className="flex flex-col items-center gap-4 max-w-xs text-center">
+                  <div className="w-24 h-24 rounded-full bg-[#dfe5e7] flex items-center justify-center">
+                    <svg viewBox="0 0 212 212" className="w-14 h-14 fill-[#8696a0]">
+                      <path d="M106.005 8C52.813 8 9.5 51.296 9.5 104.505c0 18.328 4.978 35.502 13.684 50.224L8.5 203.5l50.022-14.43c14.214 8.127 30.593 12.835 48.021 12.835 53.188 0 96.5-43.296 96.5-96.4C202.5 52.28 159.2 8 106.005 8z" opacity=".08"/>
+                    </svg>
+                  </div>
+                  <h2 className="text-[22px] font-light text-[#41525d]">WhatsApp Inbox</h2>
+                  <p className="text-[14px] text-[#667781]">
+                    Select a conversation from the left to read messages and reply to candidates.
+                  </p>
+                  <p className="text-[12px] text-[#8696a0]">
+                    Branch HR sees conversations from their branch only. Messages are sent and received via Wassenger.
                   </p>
                 </div>
               </div>

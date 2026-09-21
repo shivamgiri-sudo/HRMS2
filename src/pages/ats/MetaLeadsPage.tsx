@@ -62,6 +62,8 @@ type Lead = {
   atsCandidateId: string | null;
   notificationSentAt: string | null;
   voiceCallStatus: string | null;
+  unreadMessageCount: number;
+  lastMessageAt: string | null;
   createdAt: string;
   requisitionCode: string | null;
   designationName: string | null;
@@ -482,9 +484,24 @@ export default function MetaLeadsPage() {
                       className="cursor-pointer border-b border-slate-100 last:border-0 hover:bg-blue-50/60"
                     >
                       <td className="px-3 py-2.5">
-                        <div className="text-sm font-semibold text-slate-900">{l.parsedName ?? "—"}</div>
-                        <div className="text-xs text-slate-500">{l.parsedPhone ?? "no phone"}</div>
-                        {l.parsedEmail && <div className="text-xs text-slate-400">{l.parsedEmail}</div>}
+                        <div className="flex items-start gap-2">
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-slate-900">{l.parsedName ?? "—"}</div>
+                            <div className="text-xs text-slate-500">{l.parsedPhone ?? "no phone"}</div>
+                            {l.parsedEmail && <div className="text-xs text-slate-400">{l.parsedEmail}</div>}
+                          </div>
+                          {l.unreadMessageCount > 0 && (
+                            <a
+                              href="/ats/whatsapp-inbox"
+                              onClick={(e) => e.stopPropagation()}
+                              className="mt-0.5 flex flex-shrink-0 items-center gap-1 rounded-full bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-emerald-600"
+                              title={`${l.unreadMessageCount} unread WhatsApp message${l.unreadMessageCount > 1 ? "s" : ""}`}
+                            >
+                              <MessageCircle className="h-2.5 w-2.5" />
+                              {l.unreadMessageCount}
+                            </a>
+                          )}
+                        </div>
                       </td>
                       <td className="px-3 py-2.5 text-sm text-slate-600">{l.parsedAge != null ? `${l.parsedAge}` : "—"}</td>
                       <td className="px-3 py-2.5 text-sm text-slate-600">{l.parsedLocation ?? "—"}</td>
