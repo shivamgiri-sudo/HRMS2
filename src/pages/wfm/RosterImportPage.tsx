@@ -7,6 +7,7 @@
  */
 
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
+import type { ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { hrmsApi } from "@/lib/hrmsApi";
+import RosterUploadTracker from "./roster-upload-tracker/RosterUploadTracker";
 import {
   Upload,
   FileSpreadsheet,
@@ -285,7 +287,7 @@ function CellEditModal({ row, batchId, onClose }: CellEditModalProps) {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
-export default function RosterImportPage() {
+function RosterUploadWorkspace({ tabBar }: { tabBar: ReactNode }) {
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -591,6 +593,8 @@ export default function RosterImportPage() {
   return (
     <DashboardLayout>
       <div className="p-6 max-w-full space-y-5">
+
+        {tabBar}
 
         {/* Header */}
         <div className="rounded-xl bg-gradient-to-r from-slate-800 to-slate-700 text-white p-6">
@@ -1196,4 +1200,58 @@ export default function RosterImportPage() {
       </div>
     </DashboardLayout>
   );
+}
+
+type PageTab = "upload" | "tracker";
+
+/** Upload workspace plus the weekly Upload tracker; ?tab=tracker opens the tracker directly. */
+export default function RosterImportPage() {
+  const [tab, setTab] = useState<PageTab>(() =>
+    new URLSearchParams(window.location.search).get("tab") === "tracker" ? "tracker" : "upload",
+  );
+
+  const choose = (next: PageTab) => {
+    setTab(next);
+    const url = new URL(window.location.href);
+    if (next === "tracker") url.searchParams.set("tab", "tracker"); else url.searchParams.delete("tab");
+    window.history.replaceState(null, "", url);
+  };
+
+  const tabBar = (
+    <div role="tablist" aria-label="Roster import views" className="flex gap-1 border-b">
+      {([["upload", "Upload roster"], ["tracker", "Upload tracker"]] as const).map(([value, label]) => (
+        <button
+          key={value}
+          type="button"
+          role="tab"
+          aria-selected={tab === value}
+          onClick={() => choose(value)}
+          className={`-mb-px min-h-[40px] border-b-2 px-4 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 ${
+            tab === value ? "border-blue-600 text-slate-900" : "border-transparent text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (tab === "tracker") {
+    return (
+      <DashboardLayout>
+        <div className="p-6 max-w-full space-y-5">
+          {tabBar}
+          <div>
+            <p className="text-xs font-semibold tracking-widest uppercase text-slate-500 mb-1">WFM · ROSTER IMPORT</p>
+            <h1 className="text-2xl font-bold text-slate-900">Roster Upload Tracker</h1>
+            <p className="text-sm text-slate-600">
+              Every process uploads its roster for the week starting Monday by the Sunday before, 18:00 IST.
+            </p>
+          </div>
+          <RosterUploadTracker />
+        </div>
+      </DashboardLayout>
+    );
+  }
+  return <RosterUploadWorkspace tabBar={tabBar} />;
 }

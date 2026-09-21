@@ -56,6 +56,7 @@ import { startAttendanceReconciliationWorker, stopAttendanceReconciliationWorker
 // why a single-file registration silently never runs in one of the two worker
 // topologies). No-ops unless MANAGER_DAILY_BRIEF_ENABLED=true.
 import { startManagerDailyBriefScheduler, stopManagerDailyBriefScheduler } from "../modules/management/daily-brief/daily-brief.cron.js";
+import { startRosterUploadEscalationScheduler, stopRosterUploadEscalationScheduler } from "../modules/wfm/roster-upload-escalation.cron.js";
 import { startInterventionRecommendationScheduler, stopInterventionRecommendationScheduler } from "../modules/analytics/intervention-recommendation.cron.js";
 import { startMetaCampaignSyncScheduler, stopMetaCampaignSyncScheduler } from "../modules/meta-campaign/meta-campaign.cron.js";
 import { startRetentionCron } from "./privacy-retention.worker.js";
@@ -285,6 +286,12 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "manager-daily-brief",
     start: () => { startManagerDailyBriefScheduler(); return Promise.resolve(); },
+  },
+  {
+    // Off by default: ROSTER_UPLOAD_ESCALATION_ENABLED must be "true"; dry-run unless
+    // ROSTER_UPLOAD_ESCALATION_DRY_RUN=false — see roster-upload-escalation.cron.ts.
+    name: "roster-upload-escalation",
+    start: () => { startRosterUploadEscalationScheduler(); return Promise.resolve(); },
   },
   {
     // Off by default: INTERVENTION_RECOMMENDATIONS_ENABLED must be explicitly
@@ -549,6 +556,7 @@ function shutdown(): void {
   stopPerformanceScorecardSnapshotScheduler();
   stopAttendanceReconciliationWorker();
   stopManagerDailyBriefScheduler();
+  stopRosterUploadEscalationScheduler();
   stopInterventionRecommendationScheduler();
   stopMetaCampaignSyncScheduler();
   stopAccessExpiryScheduler();

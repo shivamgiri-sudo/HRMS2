@@ -154,6 +154,7 @@ import { cosecSyncRouter } from "./modules/wfm/cosec-sync.routes.js";
 import { biometricSummaryRouter } from "./modules/wfm/biometric-summary.routes.js";
 import { attendanceExceptionBucketRouter } from "./modules/wfm/attendance-exception-bucket.routes.js";
 import { rosterImportRouter } from "./modules/wfm/roster-import.routes.js";
+import { rosterUploadTrackerRouter } from "./modules/wfm/roster-upload-tracker.routes.js";
 import { rosterBuilderRouter } from "./modules/wfm/roster-builder.routes.js";
 import { rosterIntelligenceRouter } from "./modules/wfm/roster-intelligence.routes.js";
 import { rosterAnalyticsRouter } from "./modules/wfm/roster-analytics.routes.js";
@@ -784,6 +785,8 @@ app.use("/api/attendance", attendanceManualOverrideRouter);
 app.use("/api/discard", discardRouter);
 app.use("/api/wfm/mismatches", mismatchReviewRouter);
 app.use("/api/wfm/roster-imports", rosterImportRouter);
+// Weekly roster-upload status grid + missing-upload escalation (reads only; alerts need migration 1834).
+app.use("/api/wfm/roster-upload-tracker", rosterUploadTrackerRouter);
 app.use("/api/wfm/roster-builder", rosterBuilderRouter);
 app.use("/api/wfm/shift-aliases", shiftAliasRouter);
 app.use("/api/wfm/header-mapping-profiles", headerMappingProfileRouter);

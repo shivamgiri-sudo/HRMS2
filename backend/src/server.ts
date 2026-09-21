@@ -31,6 +31,7 @@ import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-re
 // registration silently never runs in the WORKERS_PROCESS=external topology).
 // Off by default: MANAGER_DAILY_BRIEF_ENABLED must be explicitly "true".
 import { startManagerDailyBriefScheduler } from "./modules/management/daily-brief/daily-brief.cron.js";
+import { startRosterUploadEscalationScheduler } from "./modules/wfm/roster-upload-escalation.cron.js";
 // Off by default: INTERVENTION_RECOMMENDATIONS_ENABLED must be explicitly "true" —
 // see intervention-recommendation.cron.ts's header for why this engine existed
 // but never ran before this scheduler was added.
@@ -230,6 +231,8 @@ function startServer() {
         // No-ops unless MANAGER_DAILY_BRIEF_ENABLED=true — see daily-brief.cron.ts's
         // header for the dependency-timing evidence behind its default run time.
         startManagerDailyBriefScheduler();
+        // No-op unless ROSTER_UPLOAD_ESCALATION_ENABLED=true (dry-run unless ..._DRY_RUN=false).
+        startRosterUploadEscalationScheduler();
         // No-op unless INTERVENTION_RECOMMENDATIONS_ENABLED=true.
         startInterventionRecommendationScheduler();
         // Pulls biometric punches from the NCOSEC SQL Server — the only feed that
