@@ -4,7 +4,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { ProjectDetailView } from "@/pages/NativeInboundDashboard";
 import { BellavitaSaleDashboard } from "@/components/process-performance/BellavitaSaleDashboard";
 import { GncSaleDashboard } from "@/components/process-performance/GncSaleDashboard";
-import { GncInboundDashboard } from "@/components/process-performance/GncInboundDashboard";
+import { InboundInsightsDashboard, type InboundInsightProject } from "@/components/process-performance/InboundInsightsDashboard";
 import { NeemansCartDashboard } from "@/components/process-performance/NeemansCartDashboard";
 import { NeemansPerformanceDashboard } from "@/components/process-performance/NeemansPerformanceDashboard";
 import { NeemansChatDashboard } from "@/components/process-performance/NeemansChatDashboard";
@@ -15,8 +15,10 @@ import { HousingPremiumSaleDashboard } from "@/components/process-performance/Ho
 import { LpFeedbackDashboard } from "@/components/process-performance/LpFeedbackDashboard";
 import { LpOnboardingDashboard } from "@/components/process-performance/LpOnboardingDashboard";
 import { SatyaRetailDashboard } from "@/components/process-performance/SatyaRetailDashboard";
+import { SatyaRetailReport } from "@/components/process-performance/SatyaRetailReport";
 import { CloviaDashboard } from "@/components/process-performance/CloviaDashboard";
 import { BirlanuDashboard } from "@/components/process-performance/BirlanuDashboard";
+import { AppreciateWealthDashboard } from "@/components/process-performance/AppreciateWealthDashboard";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { TONE_CLASSES, TONE_GRADIENT_CLASSES, type Tone } from "@/lib/processPerformanceTones";
 import { UploaderHub, type UploaderHubItem } from "@/components/process-performance/UploaderHub";
@@ -27,7 +29,7 @@ import {
   Receipt, PhoneIncoming, PhoneOutgoing, PhoneCall, ClipboardList,
   Mail, Star, ShieldCheck, Repeat, RotateCcw, TrendingUp,
   Heart, Footprints, HeartPulse, Home, Crown, Shirt, FileText, Tag,
-  Building2, Globe, Settings, Zap, LayoutGrid, UploadCloud,
+  Building2, Globe, Settings, Zap, LayoutGrid, UploadCloud, Sparkles,
 } from "lucide-react";
 
 /**
@@ -36,14 +38,14 @@ import {
  * company is passed straight through as projectKey with no separate
  * mapping table, same as bellavita/gnc/clovia/neemans already are.
  */
-type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "lp_feedback" | "lp_onboarding" | "dalmia" | "dubangladesh" | "viega" | "exicom";
+type CompanyKey = "bellavita" | "gnc" | "neemans" | "appreciate_health" | "housing_owner" | "housing_premium" | "clovia" | "birlanu" | "satya_retail" | "lp_feedback" | "lp_onboarding" | "puresta" | "dalmia" | "dubangladesh" | "viega" | "exicom";
 type SectionKey = "dashboards" | "uploader";
 
 const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
   { key: "bellavita", label: "Bellavita" },
   { key: "gnc", label: "GNC" },
   { key: "neemans", label: "Neemans" },
-  { key: "appreciate_health", label: "Appreciate Health" },
+  { key: "appreciate_health", label: "Appreciate Wealth" },
   { key: "housing_owner", label: "Housing Owner" },
   { key: "housing_premium", label: "Housing Premium" },
   { key: "clovia", label: "Clovia" },
@@ -51,6 +53,7 @@ const COMPANIES: Array<{ key: CompanyKey; label: string }> = [
   { key: "satya_retail", label: "Satya Retail" },
   { key: "lp_feedback", label: "LP Feedback" },
   { key: "lp_onboarding", label: "LP Onboarding" },
+  { key: "puresta", label: "Puresta" },
   { key: "dalmia", label: "Dalmia" },
   { key: "dubangladesh", label: "DU Bangladesh" },
   { key: "viega", label: "Viega" },
@@ -71,6 +74,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
   satya_retail: { icon: Tag, tone: "yellow" },
   lp_feedback: { icon: MessageSquare, tone: "blue" },
   lp_onboarding: { icon: Users, tone: "pink" },
+  puresta: { icon: Sparkles, tone: "slate" },
   dalmia: { icon: Building2, tone: "green" },
   dubangladesh: { icon: Globe, tone: "cyan" },
   viega: { icon: Settings, tone: "purple" },
@@ -87,11 +91,11 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
  * separate mapping. "stub" entries are the pre-existing "nothing built
  * yet" placeholders (Neemans' Sale/Allocation cards) -- unchanged.
  */
-const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" }>>> = {
+const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" }>>> = {
   bellavita: [
     { key: "sale_performance", label: "Sale Performance", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
     { key: "chat_performance", label: "Chat Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
-    { key: "cart_performance", label: "Cart Recovery", description: "Cart value, connect%, discount codes, agent-wise + Repeat Allocation — live from uploaded cart data", kind: "bellavita_cart" },
+    { key: "cart_performance", label: "Abandon Cart", description: "Cart value, connect%, discount codes, agent-wise + Repeat Allocation — live from uploaded cart data", kind: "bellavita_cart" },
     { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%", kind: "inbound" },
   ],
   housing_owner: [
@@ -107,6 +111,7 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
     { key: "call_performance", label: "Onboarding Call Performance", description: "Login/calls/connectivity, lead-source, week-wise & agent-wise — live from uploaded APR/CDR data", kind: "lp_onboarding" },
   ],
   satya_retail: [
+    { key: "calling_order_tracking", label: "Calling & Order Tracking", description: "Full report — daily MTD/weekly tracker, agent-wise, beat & warehouse, call attempts, with row drill-downs and data checks", kind: "satya_retail_report" },
     { key: "beat_performance", label: "Beat & Call Performance", description: "Allocation/connect%, warehouse-wise & agent-wise — live from uploaded allocation/CDR data", kind: "satya_retail_dashboard" },
   ],
   gnc: [
@@ -115,6 +120,9 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
   ],
   clovia: [
     { key: "dashboard", label: "Dashboard", description: "Inbound (live calls), Email/Chat/Feedback/Quality/Headcount and slot-wise/hourly views — beautiful multi-slide dashboard", kind: "clovia_dashboard" },
+  ],
+  appreciate_health: [
+    { key: "dashboard", label: "Dashboard", description: "Overview, date-wise, billing & mandate, inbound, outbound dialer & sales, agent-wise and data health — live from the uploaded AW Billing / Inbound / Mandate / New CDR / Outbound files", kind: "appreciate_wealth" },
   ],
   birlanu: [
     { key: "dashboard", label: "Dashboard", description: "Lead-to-sale funnel, conversion%, business/brand/zone/agent-wise, TAT compliance — live from uploaded Sale/APR data", kind: "birlanu_dashboard" },
@@ -178,18 +186,19 @@ const NEEMANS_UPLOADERS = [
   { code: "NEEMANS_CHAT_MASMIS",           label: "Chat Data",      description: "Upload Neemans chat/DM ticket data", icon: MessageSquare },
 ];
 
-/** Appreciate Health's 5 live db_masmis uploaders. No real Excel export has
+/** Appreciate Wealth's 5 live db_masmis uploaders (internal key/table names stay
+ * "appreciate_health"/"aw_*" -- only the user-facing label changed). No real Excel export has
  * been seen for any of them yet (unlike GNC/Neemans, no sample file or
  * screenshot) -- header matching is normalized on both this component's own
  * pre-check and each aw-*-bulk.service.ts backend importer, so real-world
  * spelling/case/spacing differences shouldn't block an upload the way they
  * did for GNC/Neemans before those were fixed. See aw-mandate-bulk.service.ts. */
 const APPRECIATE_HEALTH_UPLOADERS = [
-  { code: "AW_BILLING_MASMIS", label: "Billing",  description: "Upload Appreciate Health billing data",  icon: Receipt },
-  { code: "AW_INBOUND_MASMIS", label: "Inbound",   description: "Upload Appreciate Health inbound CDR",   icon: PhoneIncoming },
-  { code: "AW_MANDATE_MASMIS", label: "Mandate",   description: "Upload Appreciate Health billing mandate", icon: ClipboardList },
-  { code: "AW_NEW_CDR_MASMIS", label: "New CDR",   description: "Upload Appreciate Health new CDR data",   icon: Activity },
-  { code: "AW_OUT_MASMIS",     label: "Outbound",  description: "Upload Appreciate Health outbound data",  icon: PhoneOutgoing },
+  { code: "AW_BILLING_MASMIS", label: "Billing",  description: "Upload Appreciate Wealth billing data",  icon: Receipt },
+  { code: "AW_INBOUND_MASMIS", label: "Inbound",   description: "Upload Appreciate Wealth inbound CDR",   icon: PhoneIncoming },
+  { code: "AW_MANDATE_MASMIS", label: "Mandate",   description: "Upload Appreciate Wealth billing mandate", icon: ClipboardList },
+  { code: "AW_NEW_CDR_MASMIS", label: "New CDR",   description: "Upload Appreciate Wealth new CDR data",   icon: Activity },
+  { code: "AW_OUT_MASMIS",     label: "Outbound",  description: "Upload Appreciate Wealth outbound data",  icon: PhoneOutgoing },
 ];
 
 /** Housing Owner's 3 uploaders, writing into brand-new db_masmis tables
@@ -205,9 +214,11 @@ const HOUSING_OWNER_UPLOADERS = [
   { code: "OWNER_AGENT_DETAILS_MASMIS", label: "Owner Agent Details", description: "Upload Housing Owner agent roster", icon: Users },
 ];
 
-/** Housing Premium's 3 uploaders, writing into brand-new db_masmis tables
- * (pre_sale/Pre_cdr/pre_agent_details, sql/1766) -- same caveat as Housing
- * Owner above: tables not yet created, blocked on DB CREATE privilege. */
+/** Housing Premium's 3 uploaders, writing into db_masmis.pre_sale/Pre_cdr/
+ * pre_agent_details. These tables exist and hold real data (confirmed live
+ * 2026-09-20: pre_sale 1,072 rows, pre_agent_details 40 rows, Pre_cdr 4 rows
+ * -- the full CDR file has not been uploaded yet) -- the "not yet created"
+ * caveat that used to apply here no longer does. */
 const HOUSING_PREMIUM_UPLOADERS = [
   { code: "PRE_SALE_MASMIS",          label: "Premium Sale",          description: "Upload Housing Premium sale data",   icon: ShoppingBag },
   { code: "PRE_CDR_MASMIS",           label: "Premium CDR",           description: "Upload Housing Premium CDR data",     icon: PhoneIncoming },
@@ -387,7 +398,7 @@ export default function ProcessPerformanceV2Page() {
   const [company, setCompany] = useState<CompanyKey | null>(null);
   const [section, setSection] = useState<SectionKey | null>(null);
   const [selectedUploader, setSelectedUploader] = useState<{ code: string; label: string } | null>(null);
-  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" } | null>(null);
+  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" } | null>(null);
   const [stats, setStats] = useState({ totalFilesUploaded: 0, activeUsers: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
 
@@ -491,7 +502,7 @@ export default function ProcessPerformanceV2Page() {
         )}
 
         {/* Level 3: Dashboards — blank for now (single stub for every company without named sub-dashboards) */}
-        {company === "appreciate_health" && section === "dashboards" && (
+        {company === "puresta" && section === "dashboards" && (
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel, "Dashboards"]} onBack={backToCompany} />
             <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white p-16 text-sm text-slate-400">
@@ -509,7 +520,7 @@ export default function ProcessPerformanceV2Page() {
               {DASHBOARDS_BY_COMPANY[company]!.map((d) => (
                 <Box
                   key={d.key}
-                  icon={d.kind === "inbound" ? PhoneIncoming : d.kind === "bellavita_sale" || d.kind === "gnc_sale" || d.kind === "housing_owner_sale" || d.kind === "housing_premium_sale" || d.kind === "neemans_performance" ? TrendingUp : d.kind === "neemans_cart" || d.kind === "bellavita_cart" ? ShoppingCart : d.kind === "clovia_dashboard" ? LayoutGrid : d.kind === "lp_feedback" || d.kind === "lp_onboarding" || d.kind === "satya_retail_dashboard" ? PhoneCall : d.kind === "bellavita_chat" || d.kind === "neemans_chat" ? MessageSquare : LayoutDashboard}
+                  icon={d.kind === "inbound" ? PhoneIncoming : d.kind === "bellavita_sale" || d.kind === "gnc_sale" || d.kind === "housing_owner_sale" || d.kind === "housing_premium_sale" || d.kind === "neemans_performance" ? TrendingUp : d.kind === "neemans_cart" || d.kind === "bellavita_cart" ? ShoppingCart : d.kind === "clovia_dashboard" ? LayoutGrid : d.kind === "lp_feedback" || d.kind === "lp_onboarding" || d.kind === "satya_retail_dashboard" || d.kind === "satya_retail_report" ? PhoneCall : d.kind === "bellavita_chat" || d.kind === "neemans_chat" ? MessageSquare : LayoutDashboard}
                   label={d.label}
                   description={d.description}
                   tone={company ? COMPANY_META[company].tone : "slate"}
@@ -524,11 +535,13 @@ export default function ProcessPerformanceV2Page() {
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel, "Dashboards", selectedDashboard.label]} onBack={backToDashboardGrid} />
             {selectedDashboard.kind === "inbound" ? (
-              // GNC's Inbound gets its own beautified Overview/Agent-wise/Date-wise
-              // dashboard (GncInboundDashboard) per explicit user request -- every
-              // other "inbound" company keeps the original shared InboundDashboardTab/
-              // ProjectDetailView untouched.
-              company === "gnc" ? <GncInboundDashboard /> : <InboundDashboardTab projectKey={company} />
+              // Dialer-backed inbound processes share one full dashboard (overview / hour / date /
+              // agent / LOB / wait & abandon / callers, with call-level drill-down). GNC's earlier
+              // GncInboundDashboard component stays on disk but is no longer routed. Clovia still
+              // uses the original shared InboundDashboardTab.
+              (["dubangladesh", "exicom", "viega", "dalmia", "neemans", "gnc", "bellavita"] as string[]).includes(company)
+                ? <InboundInsightsDashboard projectKey={company as InboundInsightProject} />
+                : <InboundDashboardTab projectKey={company} />
             ) : selectedDashboard.kind === "bellavita_sale" ? (
               <BellavitaSaleDashboard />
             ) : selectedDashboard.kind === "gnc_sale" ? (
@@ -551,10 +564,14 @@ export default function ProcessPerformanceV2Page() {
               <LpFeedbackDashboard />
             ) : selectedDashboard.kind === "lp_onboarding" ? (
               <LpOnboardingDashboard />
+            ) : selectedDashboard.kind === "satya_retail_report" ? (
+              <SatyaRetailReport />
             ) : selectedDashboard.kind === "satya_retail_dashboard" ? (
               <SatyaRetailDashboard />
             ) : selectedDashboard.kind === "clovia_dashboard" ? (
               <CloviaDashboard />
+            ) : selectedDashboard.kind === "appreciate_wealth" ? (
+              <AppreciateWealthDashboard />
             ) : selectedDashboard.kind === "birlanu_dashboard" ? (
               <BirlanuDashboard />
             ) : (
@@ -596,9 +613,10 @@ export default function ProcessPerformanceV2Page() {
         )}
 
         {/* Dalmia/DU Bangladesh/Viega/Exicom only have an Inbound dashboard so far
-            (no uploader requested) — stub, same "nothing here yet" state the
+            (no uploader requested), and Puresta was added as a placeholder with
+            both tabs deliberately blank — stub, same "nothing here yet" state the
             Dashboards section uses elsewhere, so Uploader is never a dead end. */}
-        {(company === "dalmia" || company === "dubangladesh" || company === "viega" || company === "exicom") && section === "uploader" && (
+        {(company === "dalmia" || company === "dubangladesh" || company === "viega" || company === "exicom" || company === "puresta") && section === "uploader" && (
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel, "Data Uploader"]} onBack={backToCompany} />
             <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white p-16 text-sm text-slate-400">

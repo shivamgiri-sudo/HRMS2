@@ -6,8 +6,16 @@ import {
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   ShoppingCart, IndianRupee, TrendingUp, PhoneCall, Users, Search, ListFilter, Tag, Truck,
+  CheckCircle2, PhoneOff, Wallet, Percent,
 } from "lucide-react";
-import { Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, formatINR, formatShortDate, last7DaysRange } from "./DashboardKit";
+import {
+  Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
+  formatINR, formatShortDate, last7DaysRange, currentMonthRange, type ExportSlide,
+} from "./DashboardKit";
+import { BellavitaCartSnapshot } from "./BellavitaCartSnapshot";
+import { BellavitaCartAgents } from "./BellavitaCartAgents";
+
+const CART_API = "/api/process-performance/bellavita-cart-dashboard";
 
 /**
  * Bellavita's real Cart (abandoned-cart recovery) dashboard -- live
@@ -29,6 +37,9 @@ import { Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, formatI
 interface Headline {
   totalCarts: number; cartValue: number; aov: number;
   connectedCount: number; connectedPct: number; uniqueCustomers: number; activeAgents: number;
+  workableCases: number; dndCases: number;
+  uniqueCallCount: number; uniqueCallConnectedCount: number; uniqueCallConnectedPct: number;
+  abandonCartRevenue: number; abandonCartSaleCount: number;
 }
 interface TrendRow { date: string; cartCount: number; cartValue: number }
 interface DispositionRow { disposition: string; count: number; pct: number }
@@ -43,20 +54,24 @@ interface DashboardData {
 
 const DISPOSITION_COLORS = ["#059669", "#e11d48", "#f59e0b"];
 
-type TabKey = "overview" | "agents";
+/** "snapshot" and "agentperf" are the new sheet-style views; "overview" and
+ * "agents" are the original tabs and are unchanged. */
+type TabKey = "snapshot" | "agentperf" | "overview" | "agents";
 const TABS: Array<{ key: TabKey; label: string }> = [
+  { key: "snapshot", label: "Snapshot" },
+  { key: "agentperf", label: "Agent Performance" },
   { key: "overview", label: "Overview" },
   { key: "agents", label: "Agent-wise" },
 ];
 
 export function BellavitaCartDashboard() {
-  const defaultRange = last7DaysRange();
+  const defaultRange = currentMonthRange();
   const [from, setFrom] = useState(defaultRange.from);
   const [to, setTo] = useState(defaultRange.to);
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<TabKey>("overview");
+  const [tab, setTab] = useState<TabKey>("snapshot");
   const [agentSearch, setAgentSearch] = useState("");
 
   const load = useCallback(async () => {
@@ -74,7 +89,9 @@ export function BellavitaCartDashboard() {
     }
   }, [from, to]);
 
-  useEffect(() => { void load(); }, [load]);
+  // The original aggregate is slower, so it only loads for the tabs that use it.
+  const needsLegacy = tab === "overview" || tab === "agents";
+  useEffect(() => { if (needsLegacy) void load(); }, [load, needsLegacy]);
 
   const filteredAgents = useMemo(() => {
     const rows = data?.agents ?? [];
@@ -83,40 +100,133 @@ export function BellavitaCartDashboard() {
     return rows.filter((a) => a.agent.toLowerCase().includes(q));
   }, [data, agentSearch]);
 
-  if (loading && !data) return <Spinner tone="blue" />;
-  if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
-  if (!data) return null;
+  const exportSlides = useMemo<ExportSlide[]>(() => {
+    if (!data) return [];
+    const overview: ExportSlide = {
+      title: "Overview",
+      kpis: [
+        { label: "Overall Base Count", value: data.headline.totalCarts.toLocaleString("en-IN") },
+        { label: "Cart Value", value: formatINR(data.headline.cartValue) },
+        { label: "AOV", value: formatINR(data.headline.aov) },
+        { label: "Connected %", value: `${data.headline.connectedPct}%` },
+        { label: "Unique Customers", value: data.headline.uniqueCustomers.toLocaleString("en-IN") },
+        { label: "Active Agents", value: String(data.headline.activeAgents) },
+        { label: "Workable Cases", value: data.headline.workableCases.toLocaleString("en-IN") },
+        { label: "DND Cases", value: data.headline.dndCases.toLocaleString("en-IN") },
+        { label: "Unique Calls", value: data.headline.uniqueCallCount.toLocaleString("en-IN") },
+        { label: "Unique Calls Connected", value: data.headline.uniqueCallConnectedCount.toLocaleString("en-IN") },
+        { label: "Unique Call Connected %", value: `${data.headline.uniqueCallConnectedPct}%` },
+        { label: "Abandon Cart Revenue", value: formatINR(data.headline.abandonCartRevenue) },
+        { label: "Sale Count (Abandon Cart)", value: data.headline.abandonCartSaleCount.toLocaleString("en-IN") },
+      ],
+      tables: [
+        {
+          title: "Disposition Breakdown",
+          columns: ["Disposition", "Count", "Share"],
+          rows: data.dispositionBreakdown.map((d) => [d.disposition, d.count, `${d.pct}%`]),
+        },
+        {
+          title: "Discount Code Breakdown",
+          columns: ["Code", "Uses"],
+          rows: data.discountBreakdown.map((d) => [d.code, d.count]),
+        },
+        {
+          title: "Repeat Allocation",
+          columns: ["Metric", "Value"],
+          rows: data.allocation.hasData
+            ? [
+                ["Total Allocation", data.allocation.headline.totalAllocation],
+                ["Total Value", formatINR(data.allocation.headline.totalValue)],
+                ["Unique Customers", data.allocation.headline.uniqueCustomers],
+              ]
+            : [],
+        },
+      ],
+    };
+    const agentsSlide: ExportSlide = {
+      title: "Agent-wise",
+      tables: [{
+        title: "Agent-wise Abandon Cart",
+        columns: ["Agent", "Cart Count", "Cart Value", "Connected %"],
+        rows: data.agents.map((a) => [a.agent, a.cartCount, formatINR(a.cartValue), `${a.connectedPct}%`]),
+      }],
+    };
+    return [overview, agentsSlide];
+  }, [data]);
 
-  const { headline, allocation } = data;
+  const headline = data?.headline;
+  const allocation = data?.allocation;
 
   return (
     <div className="space-y-5">
-      <DashboardHero
-        icon={ShoppingCart} eyebrow="Bellavita · Process Performance" title="Cart Recovery Performance"
-        tabs={TABS} activeTab={tab} onTabChange={(key) => setTab(key as TabKey)}
+      <DashboardHero<TabKey>
+        icon={ShoppingCart} eyebrow="Bellavita · Process Performance" title="Bellavita Abandon Cart"
+        tabs={TABS} activeTab={tab} onTabChange={setTab}
         gradient="from-fuchsia-600 via-rose-500 to-fuchsia-700"
       />
 
-      <DateRangeToolbar
-        from={from} to={to} onFrom={setFrom} onTo={setTo}
-        onReset={() => { const r = last7DaysRange(); setFrom(r.from); setTo(r.to); }}
-        resetLabel="Last 7 Days" accentFocus="focus:border-fuchsia-400"
-      />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {needsLegacy ? (
+          <DashboardExportMenu
+            reportTitle="Bellavita — Abandon Cart"
+            fileBaseName="Bellavita_Cart"
+            raw={{ dashboard: "bellavita_cart", from, to }}
+            subtitle={`${from} to ${to}`}
+            slides={exportSlides}
+            activeSlideTitle={tab === "overview" ? "Overview" : "Agent-wise"}
+          />
+        ) : <span />}
+        <div className="flex flex-wrap items-center gap-2">
+          <DateRangeToolbar
+            from={from} to={to} onFrom={setFrom} onTo={setTo}
+            onReset={() => { const r = currentMonthRange(); setFrom(r.from); setTo(r.to); }}
+            resetLabel="This Month" accentFocus="focus:border-fuchsia-400"
+          />
+          {needsLegacy && (
+            <button
+              type="button" onClick={() => { const r = last7DaysRange(); setFrom(r.from); setTo(r.to); }}
+              className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-200"
+            >
+              Last 7 Days
+            </button>
+          )}
+        </div>
+      </div>
 
-      {tab === "overview" && (
+      {tab === "snapshot" && (
+        <BellavitaCartSnapshot
+          apiPath={CART_API} from={from} to={to}
+          onOpenPeriod={(f, t) => { setFrom(f); setTo(t); setTab("agentperf"); }}
+        />
+      )}
+      {tab === "agentperf" && <BellavitaCartAgents apiPath={CART_API} from={from} to={to} />}
+
+      {needsLegacy && loading && !data && <Spinner tone="blue" />}
+      {needsLegacy && error && (
+        <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>
+      )}
+
+      {tab === "overview" && data && headline && allocation && (
       <>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <KpiCard icon={ShoppingCart} label="Total Carts" value={headline.totalCarts.toLocaleString("en-IN")} tone="rose" />
-        <KpiCard icon={IndianRupee} label="Cart Value" value={formatINR(headline.cartValue)} tone="emerald" />
+        <KpiCard icon={ShoppingCart} label="Overall Base Count" value={headline.totalCarts.toLocaleString("en-IN")} sub="count of allocation" tone="rose" />
+        <KpiCard icon={IndianRupee} label="Cart Value" value={formatINR(headline.cartValue)} sub="pre-recovery" tone="emerald" />
         <KpiCard icon={TrendingUp} label="AOV" value={formatINR(headline.aov)} tone="violet" />
         <KpiCard icon={PhoneCall} label="Connected %" value={`${headline.connectedPct}%`} tone="teal" />
         <KpiCard icon={Users} label="Unique Customers" value={headline.uniqueCustomers.toLocaleString("en-IN")} tone="sky" />
         <KpiCard icon={Users} label="Active Agents" value={String(headline.activeAgents)} tone="indigo" />
+        <KpiCard icon={CheckCircle2} label="Workable Cases" value={headline.workableCases.toLocaleString("en-IN")} sub="Connect + Not Connect" tone="teal" />
+        <KpiCard icon={PhoneOff} label="DND Cases" value={headline.dndCases.toLocaleString("en-IN")} sub="pending to call" tone="amber" />
+        <KpiCard icon={Users} label="Unique Calls" value={headline.uniqueCallCount.toLocaleString("en-IN")} sub="by date + number" tone="sky" />
+        <KpiCard icon={PhoneCall} label="Unique Calls Connected" value={headline.uniqueCallConnectedCount.toLocaleString("en-IN")} tone="cyan" />
+        <KpiCard icon={Percent} label="Unique Call Connected %" value={`${headline.uniqueCallConnectedPct}%`} tone="indigo" />
+        <KpiCard icon={Wallet} label="Abandon Cart Revenue" value={formatINR(headline.abandonCartRevenue)} sub="realized, from bb_sale" tone="emerald" />
+        <KpiCard icon={ShoppingCart} label="Sale Count" value={headline.abandonCartSaleCount.toLocaleString("en-IN")} sub="abandoned cart recovered" tone="rose" />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
-        <SectionCard icon={ShoppingCart} title="Date-wise Cart Recovery" tone="rose">
+        <SectionCard icon={ShoppingCart} title="Date-wise Abandon Cart" tone="rose">
           <ResponsiveContainer width="100%" height={240}>
             <AreaChart data={data.dateWiseTrend} margin={{ top: 4, right: 12, left: -16, bottom: 0 }}>
               <defs>
@@ -191,7 +301,7 @@ export function BellavitaCartDashboard() {
       </>
       )}
 
-      {tab === "agents" && (
+      {tab === "agents" && data && (
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="relative w-full max-w-sm">
@@ -203,7 +313,7 @@ export function BellavitaCartDashboard() {
             <ListFilter className="h-3 w-3" />{filteredAgents.length} of {data.agents.length} agents
           </span>
         </div>
-        <SectionCard icon={Users} title="Agent-wise Cart Recovery" tone="rose">
+        <SectionCard icon={Users} title="Agent-wise Abandon Cart" tone="rose">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>

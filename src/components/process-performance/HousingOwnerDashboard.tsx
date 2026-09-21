@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
-  IndianRupee, ShoppingBag, PhoneCall, PhoneMissed, Timer, Target, Users, TrendingUp, CalendarDays,
+  IndianRupee, ShoppingBag, PhoneCall, PhoneMissed, Timer, Target, Users, TrendingUp, CalendarDays, Search,
 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DashboardExportMenu, type ExportSlide } from "./DashboardKit";
 
 interface Headline {
   totalRevenue: number;
@@ -56,7 +58,14 @@ interface AgentRow {
   stage: "TQ" | "MQ" | "BQ" | "NA";
 }
 
+interface FilterOptions {
+  tls: string[];
+  ams: string[];
+  tlByAm: Record<string, string[]>;
+}
+
 interface DashboardData {
+  filterOptions: FilterOptions;
   headline: Headline;
   byAm: GroupRow[];
   byTl: GroupRow[];
@@ -78,7 +87,6 @@ const formatSecs = (s: number) => {
   const sec = total % 60;
   return `${h}h ${m}m ${sec}s`;
 };
-const pkgLabel = (p: string) => p.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 const formatShortDate = (iso: string) => {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -231,13 +239,19 @@ export function HousingOwnerDashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [tl, setTl] = useState("all");
+  const [am, setAm] = useState("all");
+  const [agentSearch, setAgentSearch] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
+      const qs = new URLSearchParams({ from, to });
+      if (tl !== "all") qs.set("tl", tl);
+      if (am !== "all") qs.set("am", am);
       const res = await hrmsApi.get<{ success: boolean; data: DashboardData }>(
-        `/api/process-performance/housing-owner-dashboard?from=${from}&to=${to}`,
+        `/api/process-performance/housing-owner-dashboard?${qs.toString()}`,
       );
       setData(res.data);
     } catch (err) {
@@ -245,9 +259,99 @@ export function HousingOwnerDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [from, to]);
+  }, [from, to, tl, am]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const tlOptions = useMemo(() => {
+    const opts = data?.filterOptions;
+    if (!opts) return [];
+    return am === "all" ? opts.tls : (opts.tlByAm[am] ?? []);
+  }, [data, am]);
+
+  /** AM is the parent of TL: picking an AM narrows the TL list and drops a TL that no longer belongs. */
+  const changeAm = (next: string) => {
+    setAm(next);
+    if (next !== "all" && tl !== "all" && !(data?.filterOptions.tlByAm[next] ?? []).includes(tl)) setTl("all");
+  };
+
+  const filteredAgents = useMemo(() => {
+    const q = agentSearch.trim().toLowerCase();
+    const list = data?.agents ?? [];
+    return q ? list.filter((a) => a.name.toLowerCase().includes(q) || (a.empId ?? "").toLowerCase().includes(q)) : list;
+  }, [data, agentSearch]);
+
+  /** TL achievement % (revenue / target) for the pie -- only TLs with a target have one. */
+  const tlAchievement = useMemo(
+    () => (data?.byTl ?? [])
+      .filter((r) => r.target > 0)
+      .map((r) => ({ name: r.name, value: Math.round(r.achievementPct * 10) / 10, revenue: r.revenue, target: r.target }))
+      .sort((a, b) => b.value - a.value),
+    [data],
+  );
+
+  /** Single export slide for "Download Snap"/"Download Excel" — this
+   * dashboard has no tabs, so the whole page's KPIs/tables become one
+   * slide, built from the same data already rendered on screen. */
+  const exportSlides = useMemo<ExportSlide[]>(() => {
+    if (!data) return [];
+    const { headline } = data;
+    const slide: ExportSlide = {
+      title: "Housing Owner Performance",
+      kpis: [
+        { label: "Revenue", value: formatINR(headline.totalRevenue) },
+        { label: "Sale Count", value: headline.totalSaleCount.toLocaleString("en-IN") },
+        { label: "AOV", value: formatINR(headline.aov) },
+        { label: "Total Calls", value: headline.totalCalls.toLocaleString("en-IN") },
+        { label: "Connected %", value: `${headline.connectedPct.toFixed(1)}%` },
+        { label: "Avg Daily Talk / Agent", value: formatSecs(headline.avgTalkTimeSec) },
+        { label: "Achievement %", value: `${headline.achievementPct.toFixed(1)}%` },
+        { label: "Active Agents", value: String(headline.activeAgents) },
+      ],
+      tables: [
+        {
+          title: "AM-wise Performance",
+          columns: ["Name", "Calls", "Connected %", "Sale Count", "Revenue", "Target", "Achievement %"],
+          rows: data.byAm.map((r) => [
+            r.name, r.totalCalls.toLocaleString("en-IN"), `${r.connectedPct.toFixed(1)}%`, r.saleCount, formatINR(r.revenue),
+            r.target > 0 ? formatINR(r.target) : "—", r.target > 0 ? `${r.achievementPct.toFixed(0)}%` : "—",
+          ]),
+        },
+        {
+          title: "TL-wise Performance",
+          columns: ["Name", "Calls", "Connected %", "Sale Count", "Revenue", "Target", "Achievement %"],
+          rows: data.byTl.map((r) => [
+            r.name, r.totalCalls.toLocaleString("en-IN"), `${r.connectedPct.toFixed(1)}%`, r.saleCount, formatINR(r.revenue),
+            r.target > 0 ? formatINR(r.target) : "—", r.target > 0 ? `${r.achievementPct.toFixed(0)}%` : "—",
+          ]),
+        },
+        {
+          title: "Top 5 Performers (by Achievement %)",
+          columns: ["Agent", "TL", "Revenue", "Achievement %"],
+          rows: data.topPerformers.map((r) => [r.name, r.tlName, formatINR(r.revenue), `${r.achievementPct.toFixed(0)}%`]),
+        },
+        {
+          title: "Bottom 5 Performers (by Achievement %)",
+          columns: ["Agent", "TL", "Revenue", "Achievement %"],
+          rows: data.bottomPerformers.map((r) => [r.name, r.tlName, formatINR(r.revenue), `${r.achievementPct.toFixed(0)}%`]),
+        },
+        {
+          title: "Agent-wise Performance",
+          columns: [
+            "Agent", "Emp ID", "TL", "AM", "Bucket", "Status", "Target", "Total Calls", "Connected %",
+            "Avg Daily Talk", "Sale Count", "Revenue", "Achievement %", "Stage",
+          ],
+          rows: data.agents.map((a) => [
+            a.name, a.empId ?? "—", a.tlName, a.am, a.bucket ?? "—", a.status,
+            a.target > 0 ? formatINR(a.target) : "—", a.totalCalls.toLocaleString("en-IN"), `${a.connectedPct.toFixed(1)}%`,
+            a.avgTalkTimeSec > 0 ? formatSecs(a.avgTalkTimeSec) : "—", a.saleCount, formatINR(a.revenue),
+            a.target > 0 ? `${a.achievementPct.toFixed(0)}%` : "—", a.stage,
+          ]),
+        },
+      ],
+    };
+    return [slide];
+  }, [data]);
 
   const dateFilter = (
     <div className="flex flex-wrap items-center justify-end gap-2">
@@ -300,7 +404,33 @@ export function HousingOwnerDashboard() {
 
   return (
     <div className="space-y-5">
-      {dateFilter}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <DashboardExportMenu
+          reportTitle="Housing Owner — Performance"
+          fileBaseName="Housing_Owner_Performance"
+          raw={{ dashboard: "housing_owner", from, to }}
+          subtitle={`${from} to ${to}`}
+          slides={exportSlides}
+          activeSlideTitle="Housing Owner Performance"
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={am} onValueChange={changeAm}>
+            <SelectTrigger className="h-8 w-[170px] bg-white text-xs" aria-label="Filter by AM"><SelectValue placeholder="All AMs" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All AMs</SelectItem>
+              {data.filterOptions.ams.map((a) => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={tl} onValueChange={setTl}>
+            <SelectTrigger className="h-8 w-[190px] bg-white text-xs" aria-label="Filter by TL"><SelectValue placeholder="All TLs" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All TLs</SelectItem>
+              {tlOptions.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        {dateFilter}
+      </div>
 
       {/* Headline KPIs */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8">
@@ -309,14 +439,14 @@ export function HousingOwnerDashboard() {
         <KpiCard icon={TrendingUp} label="AOV" value={formatINR(headline.aov)} tone="bg-cyan-50 text-cyan-600" />
         <KpiCard icon={PhoneCall} label="Total Calls" value={headline.totalCalls.toLocaleString("en-IN")} tone="bg-indigo-50 text-indigo-600" />
         <KpiCard icon={PhoneMissed} label="Connected %" value={`${headline.connectedPct.toFixed(1)}%`} sub={`${headline.connectedCalls.toLocaleString("en-IN")} of ${headline.totalCalls.toLocaleString("en-IN")}`} tone="bg-emerald-50 text-emerald-600" />
-        <KpiCard icon={Timer} label="Avg Talk Time" value={formatSecs(headline.avgTalkTimeSec)} tone="bg-violet-50 text-violet-600" />
+        <KpiCard icon={Timer} label="Avg Daily Talk / Agent" value={formatSecs(headline.avgTalkTimeSec)} sub="talk duration per agent per day (not per call)" tone="bg-violet-50 text-violet-600" />
         <KpiCard icon={Target} label="Achievement %" value={`${headline.achievementPct.toFixed(1)}%`} sub={`vs ${formatINR(headline.totalTarget)} monthly target`} tone="bg-amber-50 text-amber-600" />
         <KpiCard icon={Users} label="Active Agents" value={String(headline.activeAgents)} tone="bg-rose-50 text-rose-600" />
       </div>
 
-      {/* Daily trend + package type */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm lg:col-span-2">
+      {/* Daily trend */}
+      <div className="grid gap-4">
+        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
           <p className="mb-3 text-sm font-semibold text-slate-700">Day-wise Revenue &amp; Calls</p>
           <ResponsiveContainer width="100%" height={240}>
             <LineChart data={data.dailyTrend} margin={{ top: 4, right: 12, left: -16, bottom: 0 }}>
@@ -335,21 +465,6 @@ export function HousingOwnerDashboard() {
             </LineChart>
           </ResponsiveContainer>
         </div>
-
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-          <p className="mb-3 text-sm font-semibold text-slate-700">Revenue by Package Type</p>
-          <ResponsiveContainer width="100%" height={240}>
-            <PieChart>
-              <Pie data={data.packageTypeBreakdown} dataKey="revenue" nameKey="packageType" cx="50%" cy="50%" outerRadius={80} label={false}>
-                {data.packageTypeBreakdown.map((entry, i) => (
-                  <Cell key={entry.packageType} fill={PKG_COLORS[i % PKG_COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip formatter={(value: number, _n: string, item: { payload?: { packageType?: string } }) => [formatINR(value), pkgLabel(item?.payload?.packageType ?? "")]} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-              <Legend wrapperStyle={{ fontSize: 9 }} formatter={(v: string) => pkgLabel(v)} />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
       </div>
 
       {/* AM-wise + TL-wise */}
@@ -358,15 +473,56 @@ export function HousingOwnerDashboard() {
         <GroupTable title="TL-wise Performance" rows={data.byTl} />
       </div>
 
-      {/* Top / Bottom performers */}
-      <div className="grid gap-4 lg:grid-cols-2">
+      {/* TL achievement pie + Top / Bottom performers */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+          <p className="mb-3 text-sm font-semibold text-slate-700">TL-wise Achievement %</p>
+          {tlAchievement.length === 0 ? (
+            <div className="py-16 text-center text-xs text-slate-400">No TL has a target in this selection.</div>
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={240}>
+                <PieChart>
+                  <Pie
+                    data={tlAchievement} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80}
+                    label={(p: { value?: number }) => `${Math.round(p.value ?? 0)}%`}
+                  >
+                    {tlAchievement.map((entry, i) => (
+                      <Cell key={entry.name} fill={PKG_COLORS[i % PKG_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    formatter={(value: number, _n: string, item: { payload?: { revenue?: number; target?: number } }) => [
+                      `${value}% (${formatINR(item?.payload?.revenue ?? 0)} of ${formatINR(item?.payload?.target ?? 0)})`, "Achievement",
+                    ]}
+                    contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <p className="mt-1 text-[11px] text-slate-400">Slice size is each TL's achievement % (revenue / target). Slices compare TLs; they do not add up to 100%.</p>
+            </>
+          )}
+        </div>
         <PerformerTable title="Top 5 Performers (by Achievement %)" rows={data.topPerformers} tone="text-emerald-600" />
         <PerformerTable title="Bottom 5 Performers (by Achievement %)" rows={data.bottomPerformers} tone="text-red-600" />
       </div>
 
       {/* Full agent-wise table */}
       <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-        <p className="mb-3 text-sm font-semibold text-slate-700">Agent-wise Performance ({data.agents.length} agents)</p>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm font-semibold text-slate-700">
+            Agent-wise Performance ({agentSearch.trim() ? `${filteredAgents.length} of ${data.agents.length}` : data.agents.length} agents)
+          </p>
+          <div className="relative w-full max-w-xs">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text" value={agentSearch} onChange={(e) => setAgentSearch(e.target.value)}
+              placeholder="Search agent name or ID..." aria-label="Search agents by name"
+              className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-xs text-slate-700 shadow-sm focus:border-blue-400 focus:outline-none"
+            />
+          </div>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
@@ -379,7 +535,7 @@ export function HousingOwnerDashboard() {
                 <th className="py-2 pr-3 text-right font-semibold">Target</th>
                 <th className="py-2 pr-3 text-right font-semibold">Total Calls</th>
                 <th className="py-2 pr-3 text-right font-semibold">Connected%</th>
-                <th className="py-2 pr-3 text-right font-semibold">Avg Talk</th>
+                <th className="py-2 pr-3 text-right font-semibold">Avg Daily Talk</th>
                 <th className="py-2 pr-3 text-right font-semibold">Sale Count</th>
                 <th className="py-2 pr-3 text-right font-semibold">Revenue</th>
                 <th className="py-2 pr-3 text-right font-semibold">Ach%</th>
@@ -387,7 +543,7 @@ export function HousingOwnerDashboard() {
               </tr>
             </thead>
             <tbody>
-              {data.agents.map((a) => (
+              {filteredAgents.map((a) => (
                 <tr key={a.name} className="border-b border-slate-50 last:border-0">
                   <td className="py-2.5 pr-3">
                     <div className="font-medium text-slate-700">{a.name}</div>
@@ -413,8 +569,8 @@ export function HousingOwnerDashboard() {
                   <td className="py-2.5 pr-0 text-center"><StageBadge stage={a.stage} /></td>
                 </tr>
               ))}
-              {data.agents.length === 0 && (
-                <tr><td colSpan={13} className="py-6 text-center text-slate-400">No agent data.</td></tr>
+              {filteredAgents.length === 0 && (
+                <tr><td colSpan={13} className="py-6 text-center text-slate-400">{data.agents.length === 0 ? "No agent data." : "No agents match this search."}</td></tr>
               )}
             </tbody>
           </table>

@@ -9,8 +9,9 @@ import {
   PhoneCall, PhoneOff, Search, Sparkles, Layers, Trophy, ListFilter,
 } from "lucide-react";
 import {
-  Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar,
+  Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
   localDateStr, currentMonthRange, formatINR, formatShortDate, formatDDMMYYYY,
+  type ExportSlide,
 } from "./DashboardKit";
 
 interface DashboardData {
@@ -105,6 +106,68 @@ export function GncSaleDashboard() {
     return rows.filter((a) => a.empName.toLowerCase().includes(q) || a.empId.toLowerCase().includes(q) || a.tl.toLowerCase().includes(q));
   }, [data, agentSearch]);
 
+  /** Export slides for "Download Snap"/"Download Excel" — one per tab,
+   * built from the same data already rendered on screen, not re-fetched. */
+  const exportSlides = useMemo<ExportSlide[]>(() => {
+    if (!data) return [];
+    const overall: ExportSlide = {
+      title: "Overall",
+      kpis: [
+        { label: "Sale Count", value: data.headline.saleCount.toLocaleString("en-IN") },
+        { label: "Amount", value: formatINR(data.headline.turnover) },
+        { label: "Prepaid %", value: `${data.headline.prepaidPct}%` },
+        { label: "COD %", value: `${data.headline.codPct}%` },
+        { label: "AOV", value: formatINR(data.headline.aov) },
+        { label: "Active Agents", value: String(data.headline.activeAgents) },
+        { label: "Total Allocation", value: data.headline.totalAllocation.toLocaleString("en-IN") },
+        { label: "Same Day Connected %", value: `${data.headline.sameDayConnectedPct}%` },
+      ],
+      tables: [
+        {
+          title: "LOB-wise Summary",
+          columns: ["LOB", "Sale Count", "COD", "Paid", "COD %", "Paid %", "Revenue"],
+          rows: data.campaignRevenue.map((c) => [c.campaign, c.saleCount, c.codCount, c.paidCount, `${c.codPct}%`, `${c.paidPct}%`, formatINR(c.turnover)]),
+        },
+        {
+          title: "TL-wise Revenue",
+          columns: ["TL", "Sale Count", "Revenue"],
+          rows: data.tlRevenue.map((t) => [t.tl, t.saleCount, formatINR(t.turnover)]),
+        },
+        {
+          title: "Top Performers",
+          columns: ["Agent", "Emp ID", "TL", "Campaign", "Sale Count", "Revenue", "Prepaid %"],
+          rows: data.topPerformers.map((p) => [p.empName, p.empId, p.tl, p.campaign, p.saleCount, formatINR(p.turnover), `${p.prepaidPct}%`]),
+        },
+        {
+          title: "Allocation Connect Status",
+          columns: ["Status", "Count", "Share"],
+          rows: data.allocationStatus.map((s) => [s.status, s.count, `${s.pct}%`]),
+        },
+        {
+          title: "Date & Campaign-wise Overall Sale",
+          columns: ["Date", ...data.campaigns.flatMap((c) => [`${c} Sale`, `${c} Amount`]), "Grand Total Sale", "Grand Total Amount"],
+          rows: data.dateWiseBreakdown.map((row) => [
+            formatShortDate(row.date),
+            ...data.campaigns.flatMap((c) => [row.byCampaign[c]?.totalSaleCount ?? 0, formatINR(row.byCampaign[c]?.totalAmount ?? 0)]),
+            row.totalSaleCount, formatINR(row.totalAmount),
+          ]),
+        },
+      ],
+    };
+    const agents: ExportSlide = {
+      title: "Agent-wise Performance",
+      tables: [{
+        title: "Agent-wise Performance",
+        columns: ["Emp Id", "Agent Name", "DOJ", "Tenure", "Bucket", "TL Name", "LOB", "Sale Made", "COD", "Paid", "COD %", "Paid %", "Revenue", "Attendance"],
+        rows: data.agentPerformance.map((a) => [
+          a.empId, a.empName, formatDDMMYYYY(a.doj), a.tenureDays ?? "—", a.bucket, a.tl, a.lob,
+          a.saleCount, a.codCount, a.paidCount, `${a.codPct}%`, `${a.paidPct}%`, formatINR(a.revenue), a.attendanceDays,
+        ]),
+      }],
+    };
+    return [overall, agents];
+  }, [data]);
+
   if (loading && !data) return <Spinner />;
 
   if (error) {
@@ -123,16 +186,26 @@ export function GncSaleDashboard() {
 
   return (
     <div className="space-y-5">
-      <DashboardHero
+      <DashboardHero<TabKey>
         icon={Sparkles} eyebrow="GNC · Process Performance" title="Sale Performance"
-        tabs={TABS} activeTab={tab} onTabChange={(key) => setTab(key as TabKey)}
+        tabs={TABS} activeTab={tab} onTabChange={setTab}
         gradient="from-emerald-600 via-teal-600 to-emerald-700"
       />
 
-      <DateRangeToolbar
-        from={from} to={to} onFrom={setFrom} onTo={setTo}
-        onReset={() => { const r = currentMonthRange(); setFrom(r.from); setTo(r.to); }}
-      />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <DashboardExportMenu
+          reportTitle="GNC — Sale Performance"
+          fileBaseName="GNC_Sale_Performance"
+          raw={{ dashboard: "gnc_sale", from, to }}
+          subtitle={`${from} to ${to}`}
+          slides={exportSlides}
+          activeSlideTitle={tab === "overall" ? "Overall" : "Agent-wise Performance"}
+        />
+        <DateRangeToolbar
+          from={from} to={to} onFrom={setFrom} onTo={setTo}
+          onReset={() => { const r = currentMonthRange(); setFrom(r.from); setTo(r.to); }}
+        />
+      </div>
 
       {tab === "overall" && (
       <>
@@ -263,7 +336,7 @@ export function GncSaleDashboard() {
             </thead>
             <tbody>
               {data.topPerformers.map((p, i) => (
-                <tr key={p.empId} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-amber-50/40">
+                <tr key={p.empId} className={`border-b border-slate-50 transition-colors last:border-0 hover:bg-amber-50/40 ${i % 2 === 1 ? "bg-amber-50/20" : "bg-white"}`}>
                   <td className="py-2.5 pr-3">
                     <div className="flex items-center gap-2">
                       <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
@@ -309,8 +382,8 @@ export function GncSaleDashboard() {
               </tr>
             </thead>
             <tbody>
-              {data.campaignRevenue.map((c) => (
-                <tr key={c.campaign} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-teal-50/40">
+              {data.campaignRevenue.map((c, i) => (
+                <tr key={c.campaign} className={`border-b border-slate-50 transition-colors last:border-0 hover:bg-teal-50/40 ${i % 2 === 1 ? "bg-teal-50/20" : "bg-white"}`}>
                   <td className="py-2.5 pr-3 font-medium text-slate-700">{c.campaign}</td>
                   <td className="py-2.5 pr-3 text-right text-slate-600">{c.saleCount}</td>
                   <td className="py-2.5 pr-3 text-right text-slate-600">{c.codCount}</td>
@@ -348,48 +421,104 @@ export function GncSaleDashboard() {
         icon={CalendarDays} title="Date & Campaign-wise Overall Sale" tone="indigo"
         footnote="RTO/RTD & Net Sale Amount columns from the reference sheet are not shown — db_masmis.gnc_sale has no RTO/return-status column to compute them from."
       >
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-[11px]">
+        {/* At-a-glance totals per campaign, colour-matched to the table below,
+            so the grid underneath reads as organised groups instead of a wall
+            of identical thin columns. */}
+        <div className="mb-4 flex flex-wrap gap-2">
+          {data.campaigns.map((c, i) => {
+            const totals = data.campaignRevenue.find((cr) => cr.campaign === c);
+            const color = CAMPAIGN_COLORS[i % CAMPAIGN_COLORS.length];
+            return (
+              <div
+                key={c}
+                className="flex items-center gap-2 rounded-full border border-slate-100 bg-white py-1.5 pl-2.5 pr-3.5 text-[11px] shadow-sm"
+              >
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                <span className="font-bold text-slate-700">{c}</span>
+                <span className="text-slate-300">•</span>
+                <span className="text-slate-500">{(totals?.saleCount ?? 0).toLocaleString("en-IN")} sales</span>
+                <span className="text-slate-300">•</span>
+                <span className="font-semibold text-slate-700">{formatINR(totals?.turnover ?? 0)}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full min-w-[640px] border-collapse text-center text-xs">
             <thead>
-              <tr className="border-b border-slate-100 text-[10px] uppercase tracking-wide text-slate-400">
-                <th rowSpan={2} className="py-2 pr-3 font-semibold align-bottom">Date</th>
-                {data.campaigns.map((c) => (
-                  <th key={c} colSpan={2} className="border-l border-slate-100 py-1 text-center font-semibold">{c}</th>
+              <tr className="text-[10px] uppercase tracking-wide text-slate-300">
+                <th rowSpan={2} className="border-b border-slate-700 bg-slate-800 py-2.5 px-3 align-middle font-bold text-white">Date</th>
+                {data.campaigns.map((c, i) => (
+                  <th
+                    key={c} colSpan={2}
+                    className="border-b border-l border-slate-700 bg-slate-800 py-2 text-center font-bold text-white"
+                  >
+                    <span className="inline-flex items-center justify-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: CAMPAIGN_COLORS[i % CAMPAIGN_COLORS.length] }} />
+                      {c}
+                    </span>
+                  </th>
                 ))}
-                <th colSpan={2} className="border-l border-slate-100 py-1 text-center font-semibold">Grand Total</th>
+                <th colSpan={2} className="border-b border-l-2 border-indigo-400/40 bg-indigo-950 py-2 text-center font-bold text-white">
+                  Grand Total
+                </th>
               </tr>
-              <tr className="border-b border-slate-100 text-[10px] uppercase tracking-wide text-slate-400">
+              <tr className="text-[10px] uppercase tracking-wide text-slate-300">
                 {data.campaigns.map((c) => (
                   <Fragment key={c}>
-                    <th className="border-l border-slate-100 py-1 pr-2 text-right font-semibold">Sale</th>
-                    <th className="py-1 pr-2 text-right font-semibold">Amount</th>
+                    <th className="border-b border-l border-slate-700 bg-slate-700 py-1.5 px-2 text-center font-semibold">Sale</th>
+                    <th className="border-b border-slate-700 bg-slate-700 py-1.5 px-2 text-center font-semibold">Amount</th>
                   </Fragment>
                 ))}
-                <th className="border-l border-slate-100 py-1 pr-2 text-right font-semibold">Sale</th>
-                <th className="py-1 pr-0 text-right font-semibold">Amount</th>
+                <th className="border-b border-l-2 border-indigo-400/40 bg-indigo-900 py-1.5 px-2 text-center font-semibold text-indigo-100">Sale</th>
+                <th className="border-b bg-indigo-900 py-1.5 px-2 text-center font-semibold text-indigo-100">Amount</th>
               </tr>
             </thead>
             <tbody>
-              {data.dateWiseBreakdown.map((row) => (
-                <tr key={row.date} className="border-b border-slate-50 last:border-0">
-                  <td className="py-2 pr-3 font-medium text-slate-700">{formatShortDate(row.date)}</td>
+              {data.dateWiseBreakdown.map((row, ri) => (
+                <tr key={row.date} className={`${ri % 2 === 1 ? "bg-slate-50/60" : "bg-white"} transition-colors hover:bg-indigo-50/30`}>
+                  <td className="border-b border-slate-50 py-2 px-3 text-center font-medium text-slate-700 last:border-0">{formatShortDate(row.date)}</td>
                   {data.campaigns.map((c) => {
                     const cell = row.byCampaign[c];
                     return (
                       <Fragment key={c}>
-                        <td className="border-l border-slate-100 py-2 pr-2 text-right text-slate-600">{cell?.totalSaleCount ?? 0}</td>
-                        <td className="py-2 pr-2 text-right text-slate-600">{cell ? formatINR(cell.totalAmount) : "₹0"}</td>
+                        <td className="border-b border-l border-slate-50 py-2 px-2 text-center text-slate-600 last:border-0">{cell?.totalSaleCount ?? 0}</td>
+                        <td className="border-b border-slate-50 py-2 px-2 text-center text-slate-600 last:border-0">{cell ? formatINR(cell.totalAmount) : "₹0"}</td>
                       </Fragment>
                     );
                   })}
-                  <td className="border-l border-slate-100 py-2 pr-2 text-right font-semibold text-slate-800">{row.totalSaleCount}</td>
-                  <td className="py-2 pr-0 text-right font-semibold text-slate-800">{formatINR(row.totalAmount)}</td>
+                  <td className="border-b border-l-2 border-indigo-100 bg-indigo-50/40 py-2 px-2 text-center font-bold text-indigo-700 last:border-0">{row.totalSaleCount}</td>
+                  <td className="border-b border-indigo-100 bg-indigo-50/40 py-2 px-3 text-center font-bold text-indigo-700 last:border-0">{formatINR(row.totalAmount)}</td>
                 </tr>
               ))}
               {data.dateWiseBreakdown.length === 0 && (
                 <tr><td colSpan={2 + data.campaigns.length * 2 + 2} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
               )}
             </tbody>
+            {data.dateWiseBreakdown.length > 0 && (
+              <tfoot>
+                <tr className="border-t-2 border-slate-700 bg-slate-800 text-[11px] font-bold text-white">
+                  <td className="py-2.5 px-3 text-center">Total</td>
+                  {data.campaigns.map((c) => {
+                    const saleSum = data.dateWiseBreakdown.reduce((s, r) => s + (r.byCampaign[c]?.totalSaleCount ?? 0), 0);
+                    const amtSum = data.dateWiseBreakdown.reduce((s, r) => s + (r.byCampaign[c]?.totalAmount ?? 0), 0);
+                    return (
+                      <Fragment key={c}>
+                        <td className="border-l border-slate-600 py-2.5 px-2 text-center">{saleSum}</td>
+                        <td className="py-2.5 px-2 text-center">{formatINR(amtSum)}</td>
+                      </Fragment>
+                    );
+                  })}
+                  <td className="border-l-2 border-indigo-400/40 bg-indigo-950 py-2.5 px-2 text-center text-indigo-100">
+                    {data.dateWiseBreakdown.reduce((s, r) => s + r.totalSaleCount, 0)}
+                  </td>
+                  <td className="bg-indigo-950 py-2.5 px-3 text-center text-indigo-100">
+                    {formatINR(data.dateWiseBreakdown.reduce((s, r) => s + r.totalAmount, 0))}
+                  </td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </SectionCard>
@@ -439,8 +568,8 @@ export function GncSaleDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {filteredAgents.map((a) => (
-                  <tr key={a.empId} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-indigo-50/40">
+                {filteredAgents.map((a, i) => (
+                  <tr key={a.empId} className={`border-b border-slate-50 transition-colors last:border-0 hover:bg-indigo-50/40 ${i % 2 === 1 ? "bg-indigo-50/20" : "bg-white"}`}>
                     <td className="py-2.5 pr-3 text-slate-500">{a.empId}</td>
                     <td className="py-2.5 pr-3 font-medium text-slate-700">{a.empName}</td>
                     <td className="py-2.5 pr-3 text-slate-500">{formatDDMMYYYY(a.doj)}</td>

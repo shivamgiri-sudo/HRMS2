@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -8,6 +8,7 @@ import {
   IndianRupee, ShoppingBag, CreditCard, RotateCcw, TrendingUp, Users, CalendarDays, Wallet,
 } from "lucide-react";
 import { BellavitaAgentPerformance } from "./BellavitaAgentPerformance";
+import { DashboardExportMenu, type ExportSlide } from "./DashboardKit";
 
 interface DashboardData {
   headline: {
@@ -23,7 +24,16 @@ interface DashboardData {
   from: string;
   to: string;
   dateWiseTrend: Array<{ date: string; saleCount: number; turnover: number; paidCount: number; codCount: number; rtoCount: number }>;
-  lobRevenue: Array<{ lob: string; saleCount: number; turnover: number; target: number | null; achievementPct: number | null; targetNote?: string }>;
+  lobRevenue: Array<{
+    lob: string; saleCount: number; turnover: number; target: number | null; achievementPct: number | null; targetNote?: string;
+    codCount: number; paidCount: number; codPct: number; paidPct: number; rtoAmount: number; rtoCount: number; rtoPct: number;
+    aov: number; netSaleCount: number; netRevenue: number;
+  }>;
+  lobGrandTotal: {
+    saleCount: number; turnover: number; codCount: number; paidCount: number; codPct: number; paidPct: number;
+    rtoAmount: number; rtoCount: number; rtoPct: number; aov: number; netSaleCount: number; netRevenue: number;
+    target: number; achievementPct: number;
+  };
   stateRevenue: Array<{ state: string; saleCount: number; turnover: number; rtoCount: number }>;
   topPerformers: Array<{ empId: string; empName: string; saleCount: number; turnover: number; rtoPct: number; prepaidPct: number; lob: string }>;
   topRtoStates: Array<{ state: string; saleCount: number; rtoPct: number }>;
@@ -109,6 +119,49 @@ function SaleDashboardSlide({ from, to }: { from: string; to: string }) {
 
   useEffect(() => { void load(); }, [load]);
 
+  const exportSlides = useMemo<ExportSlide[]>(() => {
+    if (!data) return [];
+    return [{
+      title: "Sale Performance",
+      kpis: [
+        { label: "Turn Over", value: formatINR(data.headline.turnover) },
+        { label: "Net Sale Amount", value: formatINR(data.headline.netTurnover) },
+        { label: "Sale Count", value: data.headline.saleCount.toLocaleString("en-IN") },
+        { label: "Prepaid %", value: `${data.headline.prepaidPct}%` },
+        { label: "RTO %", value: `${data.headline.rtoPct}%` },
+        { label: "AOV", value: formatINR(data.headline.aov) },
+        { label: "Active Agents", value: String(data.headline.activeAgents) },
+      ],
+      tables: [
+        {
+          title: "LOB-wise Performance",
+          columns: ["LOB", "Sale Count", "COD", "Paid", "COD%", "Paid%", "RTO Amount", "Revenue", "AOV", "RTO%", "Net Sale Count", "Net Revenue", "Target", "Gross Ach%"],
+          rows: data.lobRevenue.map((r) => [
+            r.lob, r.saleCount, r.codCount, r.paidCount, `${r.codPct}%`, `${r.paidPct}%`,
+            formatINR(r.rtoAmount), formatINR(r.turnover), formatINR(r.aov), `${r.rtoPct}%`,
+            r.netSaleCount, formatINR(r.netRevenue), r.target != null ? formatINR(r.target) : "—",
+            r.achievementPct != null ? `${r.achievementPct}%` : "—",
+          ]),
+        },
+        {
+          title: "Top 10 States by Revenue",
+          columns: ["State", "Sale Count", "Revenue", "RTO Count"],
+          rows: data.stateRevenue.map((s) => [s.state, s.saleCount, formatINR(s.turnover), s.rtoCount]),
+        },
+        {
+          title: "Top Performers",
+          columns: ["Agent", "Emp ID", "LOB", "Revenue", "RTO%", "Prepaid%"],
+          rows: data.topPerformers.map((p) => [p.empName, p.empId, p.lob, formatINR(p.turnover), `${p.rtoPct}%`, `${p.prepaidPct}%`]),
+        },
+        {
+          title: "Top 5 High RTO % States",
+          columns: ["State", "Sale Count", "RTO%"],
+          rows: data.topRtoStates.map((s) => [s.state, s.saleCount, `${s.rtoPct}%`]),
+        },
+      ],
+    }];
+  }, [data]);
+
   if (loading && !data) return <Spinner />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!data) return null;
@@ -117,6 +170,17 @@ function SaleDashboardSlide({ from, to }: { from: string; to: string }) {
 
   return (
     <div className="space-y-5">
+      <div className="flex justify-end">
+        <DashboardExportMenu
+          reportTitle="Bellavita — Sale Performance"
+          fileBaseName="Bellavita_Sale"
+          raw={{ dashboard: "bellavita_sale", from, to }}
+          subtitle={`${from} to ${to}`}
+          slides={exportSlides}
+          activeSlideTitle="Sale Performance"
+        />
+      </div>
+
       {/* Headline KPIs */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
         <KpiCard icon={IndianRupee} label="Turn Over" value={formatINR(headline.turnover)} tone="bg-rose-50 text-rose-600" />
@@ -193,6 +257,78 @@ function SaleDashboardSlide({ from, to }: { from: string; to: string }) {
               <Line type="monotone" dataKey="rtoCount" name="RTO Count" stroke="#dc2626" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* LOB-wise Performance */}
+      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+        <p className="mb-3 text-sm font-semibold text-slate-700">LOB-wise Performance</p>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-center text-xs">
+            <thead>
+              <tr className="text-[11px] uppercase tracking-wide text-slate-500">
+                <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">LOB</th>
+                <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Sale Count</th>
+                <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">COD</th>
+                <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Paid</th>
+                <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">COD%</th>
+                <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Paid%</th>
+                <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">RTO Amount</th>
+                <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Revenue</th>
+                <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">AOV</th>
+                <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">RTO%</th>
+                <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Net Sale Count</th>
+                <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Net Revenue</th>
+                <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Target</th>
+                <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Gross Ach%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.lobRevenue.map((r) => (
+                <tr key={r.lob}>
+                  <td className="border border-slate-200 px-3 py-2 font-medium text-slate-700">{r.lob}</td>
+                  <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.saleCount.toLocaleString("en-IN")}</td>
+                  <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.codCount.toLocaleString("en-IN")}</td>
+                  <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.paidCount.toLocaleString("en-IN")}</td>
+                  <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.codPct}%</td>
+                  <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.paidPct}%</td>
+                  <td className="border border-slate-200 px-3 py-2 text-slate-600">{formatINR(r.rtoAmount)}</td>
+                  <td className="border border-slate-200 px-3 py-2 font-semibold text-slate-800">{formatINR(r.turnover)}</td>
+                  <td className="border border-slate-200 px-3 py-2 text-slate-600">{formatINR(r.aov)}</td>
+                  <td className={`border border-slate-200 px-3 py-2 font-semibold ${r.rtoPct > 10 ? "text-red-600" : "text-slate-600"}`}>{r.rtoPct}%</td>
+                  <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.netSaleCount.toLocaleString("en-IN")}</td>
+                  <td className="border border-slate-200 px-3 py-2 text-slate-600">{formatINR(r.netRevenue)}</td>
+                  <td className="border border-slate-200 px-3 py-2 text-slate-500">{r.target != null ? formatINR(r.target) : "—"}</td>
+                  <td className={`border border-slate-200 px-3 py-2 font-semibold ${r.achievementPct != null ? (r.achievementPct >= 100 ? "text-emerald-600" : r.achievementPct >= 70 ? "text-amber-600" : "text-red-600") : "text-slate-400"}`}>
+                    {r.achievementPct != null ? `${r.achievementPct}%` : "—"}
+                  </td>
+                </tr>
+              ))}
+              {data.lobRevenue.length === 0 && (
+                <tr><td colSpan={14} className="border border-slate-200 py-6 text-center text-slate-400">No data for this period.</td></tr>
+              )}
+            </tbody>
+            {data.lobRevenue.length > 0 && (
+              <tfoot>
+                <tr className="font-semibold text-slate-800">
+                  <td className="border border-slate-200 bg-slate-50 px-3 py-2">Grand Total</td>
+                  <td className="border border-slate-200 bg-slate-50 px-3 py-2">{data.lobGrandTotal.saleCount.toLocaleString("en-IN")}</td>
+                  <td className="border border-slate-200 bg-slate-50 px-3 py-2">{data.lobGrandTotal.codCount.toLocaleString("en-IN")}</td>
+                  <td className="border border-slate-200 bg-slate-50 px-3 py-2">{data.lobGrandTotal.paidCount.toLocaleString("en-IN")}</td>
+                  <td className="border border-slate-200 bg-slate-50 px-3 py-2">{data.lobGrandTotal.codPct}%</td>
+                  <td className="border border-slate-200 bg-slate-50 px-3 py-2">{data.lobGrandTotal.paidPct}%</td>
+                  <td className="border border-slate-200 bg-slate-50 px-3 py-2">{formatINR(data.lobGrandTotal.rtoAmount)}</td>
+                  <td className="border border-slate-200 bg-slate-50 px-3 py-2">{formatINR(data.lobGrandTotal.turnover)}</td>
+                  <td className="border border-slate-200 bg-slate-50 px-3 py-2">{formatINR(data.lobGrandTotal.aov)}</td>
+                  <td className="border border-slate-200 bg-slate-50 px-3 py-2">{data.lobGrandTotal.rtoPct}%</td>
+                  <td className="border border-slate-200 bg-slate-50 px-3 py-2">{data.lobGrandTotal.netSaleCount.toLocaleString("en-IN")}</td>
+                  <td className="border border-slate-200 bg-slate-50 px-3 py-2">{formatINR(data.lobGrandTotal.netRevenue)}</td>
+                  <td className="border border-slate-200 bg-slate-50 px-3 py-2">{formatINR(data.lobGrandTotal.target)}</td>
+                  <td className="border border-slate-200 bg-slate-50 px-3 py-2">{data.lobGrandTotal.achievementPct}%</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
         </div>
       </div>
 

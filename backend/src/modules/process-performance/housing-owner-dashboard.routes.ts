@@ -17,7 +17,9 @@ const VIEWER_ROLES = [
 router.get("/housing-owner-dashboard", requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const from = String(req.query.from ?? "");
   const to = String(req.query.to ?? "");
-  const data = await getHousingOwnerDashboard(from, to);
+  const tl = String(req.query.tl ?? "");
+  const am = String(req.query.am ?? "");
+  const data = await getHousingOwnerDashboard(from, to, tl, am);
   res.json({ success: true, data });
 }));
 

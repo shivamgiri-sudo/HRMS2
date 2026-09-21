@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { MessageSquare, Gauge, Clock3, Trophy, Layers, Users, Search } from "lucide-react";
-import { Spinner, KpiCard, SectionCard } from "./DashboardKit";
+import { Spinner, KpiCard, SectionCard, DashboardExportMenu, type ExportSlide } from "./DashboardKit";
 
 /**
  * Neemans Chat, as its own standalone LOB dashboard -- same real
@@ -51,6 +51,35 @@ export function NeemansChatDashboard() {
     return rows.filter((a) => a.agent.toLowerCase().includes(q) || a.empId.toLowerCase().includes(q));
   }, [data, search]);
 
+  /** Export slide for "Download Snap"/"Download Excel" — this dashboard has
+   * no tabs and no date-range toolbar, so a single slide mirrors everything
+   * already rendered below. */
+  const exportSlides = useMemo<ExportSlide[]>(() => {
+    if (!data) return [];
+    return [{
+      title: "Chat Performance",
+      kpis: [
+        { label: "Total Tickets", value: String(data.headline.totalTickets) },
+        { label: "Resolved %", value: `${data.headline.resolvedPct}%` },
+        { label: "Avg FRT", value: `${data.headline.avgFrtHrs}m` },
+        { label: "Avg Resolution", value: `${data.headline.avgResolutionHrs}m` },
+        { label: "Avg CSAT", value: String(data.headline.avgCsat || "—") },
+      ],
+      tables: [
+        {
+          title: "LOB-wise Tickets",
+          columns: ["LOB", "Tickets", "Resolved %"],
+          rows: data.byLob.map((r) => [r.lob, r.tickets, `${r.resolvedPct}%`]),
+        },
+        {
+          title: "Agent-wise Chat Performance",
+          columns: ["Agent", "Emp ID", "Tickets", "Resolved %", "Avg CSAT"],
+          rows: data.agents.map((a) => [a.agent, a.empId, a.tickets, `${a.resolvedPct}%`, a.avgCsat || "—"]),
+        },
+      ],
+    }];
+  }, [data]);
+
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!data) return null;
@@ -75,11 +104,21 @@ export function NeemansChatDashboard() {
         </div>
       </div>
 
+      <div className="flex justify-end">
+        <DashboardExportMenu
+          reportTitle="Neemans — Chat Performance"
+          fileBaseName="Neemans_Chat_Performance"
+          raw={{ dashboard: "neemans_chat" }}
+          slides={exportSlides}
+          activeSlideTitle="Chat Performance"
+        />
+      </div>
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         <KpiCard icon={MessageSquare} label="Total Tickets" value={String(headline.totalTickets)} tone="indigo" />
         <KpiCard icon={Gauge} label="Resolved %" value={`${headline.resolvedPct}%`} tone="emerald" sub={headline.resolvedPct >= 90 ? "on target" : headline.resolvedPct >= 75 ? "watch" : "needs attention"} />
-        <KpiCard icon={Clock3} label="Avg FRT" value={`${headline.avgFrtHrs}h`} tone="sky" sub="first response time" />
-        <KpiCard icon={Clock3} label="Avg Resolution" value={`${headline.avgResolutionHrs}h`} tone="violet" sub="ticket close time" />
+        <KpiCard icon={Clock3} label="Avg FRT" value={`${headline.avgFrtHrs}m`} tone="sky" sub="first response time" />
+        <KpiCard icon={Clock3} label="Avg Resolution" value={`${headline.avgResolutionHrs}m`} tone="violet" sub="ticket close time" />
         <KpiCard icon={Trophy} label="Avg CSAT" value={String(headline.avgCsat || "—")} tone="amber" sub="customer rating" />
       </div>
 

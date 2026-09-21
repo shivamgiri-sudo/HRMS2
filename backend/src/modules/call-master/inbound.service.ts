@@ -38,6 +38,14 @@ export const PROJECTS: ProjectConfig[] = [
     campaigns: ["Exicom_TC_Battery","Exicom_EV_Battery","EV_Charger833"], mandate: 5, required: 5, hasFCR: false },
   { key: "dubangladesh",name: "DU Bangladesh", icon: "🇧🇩", color: "#F39C12", table: "cdr_in_4",   pattern: "B",
     campaigns: ["DU_Bangladesh_Bangla","DU_Bangladesh_Eng","DU_Bangladesh_Hindi"], mandate: 3, required: 3, hasFCR: false },
+  // Live on cdr_in_249 (10 language-variant campaigns), confirmed live 2026-09-15:
+  // ~1,700 calls/30 days, active through today. required/mandate set to 9 --
+  // the observed daily distinct-agent-login count (8-9 over the last 14 days),
+  // not an invented target, since no contractual mandate figure exists for this
+  // process anywhere in this codebase.
+  { key: "dalmia",      name: "Dalmia",        icon: "🏭", color: "#16A085", table: "cdr_in_249",   pattern: "B",
+    campaigns: ["Dalmia_Hindi","Dalmia_English","Dalmia_Kannada","Dalmia_Tamil","Dalmia_Bengoli","Dalmia_Malayalam","Dalmia_Odiya","Dalmia_Marathi","Dalmia_Telugu","Dalmia_Assamese"],
+    mandate: 9, required: 9, hasFCR: false },
 ];
 
 type DailyRow = {
@@ -161,6 +169,29 @@ export async function getProjectSummary(filters: InboundFilters, projectKey?: st
   return results;
 }
 
+/**
+ * One project's summary AND daily trend from a single pass over its CDR
+ * table. getProjectSummary and getProjectTrend each call runProjectQuery on
+ * their own, so a caller needing both (the Neemans overview) paid for the
+ * same slow remote dialer_db query twice; this runs it once, with the FCR
+ * lookup in parallel. Same aggregation as getProjectSummary -- additive, the
+ * existing functions are unchanged.
+ */
+export async function getProjectOverview(filters: InboundFilters, projectKey: string) {
+  const p = PROJECTS.find((x) => x.key === projectKey);
+  if (!p) throw new Error(`Unknown project key: ${projectKey}`);
+
+  const [rows, fcrRows] = await Promise.all([runProjectQuery(p, filters), getFCRData(p, filters)]);
+  const fcr_pct = fcrRows.length
+    ? Math.round(fcrRows.reduce((s, r) => s + r.fcr_pct, 0) / fcrRows.length * 100) / 100
+    : null;
+
+  return {
+    summary: { key: p.key, name: p.name, mandate: p.mandate, required: p.required, hasFCR: p.hasFCR, ...aggregateRows(rows), fcr_pct },
+    trend: rows,
+  };
+}
+
 export async function getProjectTrend(filters: InboundFilters, projectKey?: string) {
   const projects = projectKey ? PROJECTS.filter((p) => p.key === projectKey) : PROJECTS;
 
@@ -268,6 +299,72 @@ export async function getProjectAgentSummary(filters: InboundFilters, projectKey
   });
 }
 
+/**
+ * Date x hour matrix for one project -- same Pattern A/B logic as
+ * getProjectHourly, but GROUP BY date AND hour instead of collapsing the
+ * whole range into 24 buckets. Powers both a single day's slot-wise table
+ * and a date x hour heatmap grid over a wider range from one query.
+ *
+ * Groups by HOUR(HoursSlot), not HOUR(CallDate): CallDate is a DATE column
+ * with no time-of-day component (confirmed live -- every row's CallDate is
+ * midnight), so HOUR(CallDate) always evaluated to 0 for every row. The
+ * real per-call hour lives in HoursSlot ("09:00:00" .. "19:00:00" style
+ * text), which a live check against Clovia's 15-Sep-26 data matched the
+ * reference report's own slot-wise counts almost exactly.
+ */
+export async function getProjectHourlyByDate(filters: InboundFilters, projectKey: string) {
+  const p = PROJECTS.find((x) => x.key === projectKey);
+  if (!p) throw new Error(`Unknown project key: ${projectKey}`);
+
+  const { startDate, endDate } = filters;
+  const pool = await getDialerPool();
+  const ph   = p.campaigns.map(() => "?").join(",");
+  const params: (string | number)[] = [startDate, endDate, ...p.campaigns];
+
+  let sql: string;
+  if (p.pattern === "A") {
+    sql = `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS date, HOUR(HoursSlot) AS hour,
+      SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS offered,
+      SUM(CASE WHEN (AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME')
+               OR   (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0) THEN 1 ELSE 0 END) AS answered,
+      SUM(CASE WHEN TIME_TO_SEC(QueueDuration) <= 20 AND DisconnBy != 'HOLDTIME'
+               AND (AgentId != 'VDCL' OR (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0)) THEN 1 ELSE 0 END) AS sl_num,
+      ROUND(AVG(CASE WHEN DisconnBy != 'HOLDTIME' THEN CallDurationSecond END),0) AS acht
+     FROM dialer_db.${p.table}
+     WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
+       AND CampaignName IN (${ph})
+     GROUP BY DATE_FORMAT(CallDate,'%Y-%m-%d'), HOUR(HoursSlot) ORDER BY date ASC, hour ASC`;
+  } else {
+    sql = `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS date, HOUR(HoursSlot) AS hour,
+      COUNT(*) AS offered,
+      SUM(CASE WHEN AgentId != 'VDCL' THEN 1 ELSE 0 END) AS answered,
+      SUM(CASE WHEN AgentId != 'VDCL' AND TIME_TO_SEC(QueueDuration) <= 30 THEN 1 ELSE 0 END) AS sl_num,
+      ROUND(AVG(CallDurationSecond),0) AS acht
+     FROM dialer_db.${p.table}
+     WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
+       AND CampaignName IN (${ph})
+     GROUP BY DATE_FORMAT(CallDate,'%Y-%m-%d'), HOUR(HoursSlot) ORDER BY date ASC, hour ASC`;
+  }
+
+  const [rows] = await pool.execute(sql, params);
+  return (rows as { date: string; hour: number; offered: number; answered: number; sl_num: number; acht: number }[]).map((r) => ({
+    date: r.date,
+    hour: n(r.hour),
+    offered: n(r.offered),
+    answered: n(r.answered),
+    sl_pct: n(r.offered) ? Math.round((n(r.sl_num) / n(r.offered)) * 10000) / 100 : 0,
+    acht: n(r.acht),
+  }));
+}
+
+/**
+ * Groups by HOUR(HoursSlot), not HOUR(CallDate) -- see getProjectHourlyByDate's
+ * doc comment: CallDate has no time-of-day component, so the previous
+ * HOUR(CallDate) grouping put every single row in hour 0. This is the
+ * pre-existing endpoint ProjectDetailView's hourly chart calls for every
+ * company (GNC/Bellavita/Clovia/Neemans/Dalmia/DU Bangladesh/Viega/Exicom),
+ * so the fix benefits all of them, not just Clovia.
+ */
 export async function getProjectHourly(filters: InboundFilters, projectKey: string) {
   const p = PROJECTS.find((x) => x.key === projectKey);
   if (!p) throw new Error(`Unknown project key: ${projectKey}`);
@@ -279,7 +376,7 @@ export async function getProjectHourly(filters: InboundFilters, projectKey: stri
 
   let sql: string;
   if (p.pattern === "A") {
-    sql = `SELECT HOUR(CallDate) AS hour,
+    sql = `SELECT HOUR(HoursSlot) AS hour,
       SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS offered,
       SUM(CASE WHEN (AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME')
                OR   (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0) THEN 1 ELSE 0 END) AS answered,
@@ -288,74 +385,89 @@ export async function getProjectHourly(filters: InboundFilters, projectKey: stri
      FROM dialer_db.${p.table}
      WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
        AND CampaignName IN (${ph})
-     GROUP BY HOUR(CallDate) ORDER BY hour ASC`;
+     GROUP BY HOUR(HoursSlot) ORDER BY hour ASC`;
   } else {
-    sql = `SELECT HOUR(CallDate) AS hour,
+    sql = `SELECT HOUR(HoursSlot) AS hour,
       COUNT(*) AS offered,
       SUM(CASE WHEN AgentId != 'VDCL' THEN 1 ELSE 0 END) AS answered,
       SUM(CASE WHEN AgentId != 'VDCL' AND TIME_TO_SEC(QueueDuration) <= 30 THEN 1 ELSE 0 END) AS sl_num
      FROM dialer_db.${p.table}
      WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
        AND CampaignName IN (${ph})
-     GROUP BY HOUR(CallDate) ORDER BY hour ASC`;
+     GROUP BY HOUR(HoursSlot) ORDER BY hour ASC`;
   }
 
   const [rows] = await pool.execute(sql, params);
   return rows;
 }
 
-export type HourlyByDateRow = { date: string; hour: number; offered: number; answered: number; sl_pct: number; acht: number };
+type LobRow = {
+  campaign: string;
+  offered: number;
+  answered: number;
+  sl_num: number;
+  acht: number;
+  unique_phones: number;
+};
 
 /**
- * Same per-hour breakdown as getProjectHourly, one more GROUP BY dimension (date) so a caller
- * can build an hour x date heatmap instead of one hour-of-day total across the whole range.
- * Same Pattern A/B CASE WHEN definitions verbatim from getProjectHourly/runProjectQuery — this
- * is a grouping change, not a new metric definition. sl_pct/acht computed the same way
- * getConsolidatedTrend already does (sl_num/answered, rounded to 2dp; ACHT averaged in SQL like
- * runProjectQuery's daily rows), so this row shape is consistent with every other inbound
- * response instead of inventing a third convention.
+ * LOB-wise (campaign-wise) breakdown for one project's selected date range
+ * -- each project's real dialer_db CampaignName values ARE its LOBs (e.g.
+ * Bellavita splits into 16 campaigns across Luxury/Organic/Complaint/Order/
+ * Product sub-brands; GNC into 6 query-type campaigns; Clovia into just
+ * English/Hindi). Same Pattern A/B query shape as runProjectQuery, GROUP BY
+ * CampaignName instead of date/hour.
  */
-export async function getProjectHourlyByDate(filters: InboundFilters, projectKey: string): Promise<HourlyByDateRow[]> {
+export async function getProjectLobSummary(filters: InboundFilters, projectKey: string) {
   const p = PROJECTS.find((x) => x.key === projectKey);
   if (!p) throw new Error(`Unknown project key: ${projectKey}`);
 
   const { startDate, endDate } = filters;
   const pool = await getDialerPool();
-  const ph   = p.campaigns.map(() => "?").join(",");
+  const ph = p.campaigns.map(() => "?").join(",");
   const params: (string | number)[] = [startDate, endDate, ...p.campaigns];
 
   let sql: string;
   if (p.pattern === "A") {
-    sql = `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS date, HOUR(CallDate) AS hour,
+    sql = `SELECT CampaignName AS campaign,
       SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS offered,
       SUM(CASE WHEN (AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME')
                OR   (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0) THEN 1 ELSE 0 END) AS answered,
       SUM(CASE WHEN TIME_TO_SEC(QueueDuration) <= 20 AND DisconnBy != 'HOLDTIME'
                AND (AgentId != 'VDCL' OR (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0)) THEN 1 ELSE 0 END) AS sl_num,
-      ROUND(AVG(CASE WHEN DisconnBy != 'HOLDTIME' THEN CallDurationSecond END),0) AS acht
+      ROUND(AVG(CASE WHEN DisconnBy != 'HOLDTIME' THEN CallDurationSecond END),0) AS acht,
+      COUNT(DISTINCT CASE WHEN DisconnBy != 'HOLDTIME' THEN PhoneNumber END) AS unique_phones
      FROM dialer_db.${p.table}
      WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
        AND CampaignName IN (${ph})
-     GROUP BY DATE_FORMAT(CallDate,'%Y-%m-%d'), HOUR(CallDate) ORDER BY date ASC, hour ASC`;
+     GROUP BY CampaignName ORDER BY offered DESC`;
   } else {
-    sql = `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS date, HOUR(CallDate) AS hour,
+    sql = `SELECT CampaignName AS campaign,
       COUNT(*) AS offered,
       SUM(CASE WHEN AgentId != 'VDCL' THEN 1 ELSE 0 END) AS answered,
       SUM(CASE WHEN AgentId != 'VDCL' AND TIME_TO_SEC(QueueDuration) <= 30 THEN 1 ELSE 0 END) AS sl_num,
-      ROUND(AVG(CallDurationSecond),0) AS acht
+      ROUND(AVG(CallDurationSecond),0) AS acht,
+      COUNT(DISTINCT PhoneNumber) AS unique_phones
      FROM dialer_db.${p.table}
      WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
        AND CampaignName IN (${ph})
-     GROUP BY DATE_FORMAT(CallDate,'%Y-%m-%d'), HOUR(CallDate) ORDER BY date ASC, hour ASC`;
+     GROUP BY CampaignName ORDER BY offered DESC`;
   }
 
   const [rows] = await pool.execute(sql, params);
-  return (rows as (HourlyByDateRow & { sl_num: number })[]).map((r) => ({
-    date: r.date,
-    hour: Number(r.hour),
-    offered: Number(r.offered),
-    answered: Number(r.answered),
-    sl_pct: r.answered ? Math.round((r.sl_num / r.answered) * 100 * 100) / 100 : 0,
-    acht: Number(r.acht) || 0,
-  }));
+  return (rows as LobRow[]).map((r) => {
+    const offered = n(r.offered);
+    const answered = n(r.answered);
+    const slNum = n(r.sl_num);
+    return {
+      campaign: r.campaign,
+      offered,
+      answered,
+      answeredPct: offered ? Math.round((answered / offered) * 10000) / 100 : 0,
+      abandonPct: offered ? Math.round(((offered - answered) / offered) * 10000) / 100 : 0,
+      slPct: offered ? Math.round((slNum / offered) * 10000) / 100 : 0,
+      acht: n(r.acht),
+      uniquePhones: n(r.unique_phones),
+    };
+  });
 }

@@ -344,6 +344,26 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
     range,
   );
 
+  // An agent's campaign/LOB is the one they actually sold most in. MAX(campaign)
+  // picked alphabetically, so an agent with 66 Abandon Cart sales and 1 Chat
+  // sale was shown as "Chat" (Top Performers + Agent-wise LOB column).
+  const [agentCampaignRows] = await db.execute<RowDataPacket[]>(
+    `SELECT emp_id, campaign, COUNT(*) AS n
+     FROM db_masmis.gnc_sale
+     WHERE sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY) AND emp_id IS NOT NULL AND emp_id != ''
+       AND campaign IS NOT NULL AND campaign != ''
+     GROUP BY emp_id, campaign`,
+    range,
+  );
+  const topCampaignByAgent = new Map<string, { campaign: string; n: number }>();
+  for (const r of agentCampaignRows) {
+    const key = String(r.emp_id);
+    const cur = topCampaignByAgent.get(key);
+    if (!cur || num(r.n) > cur.n) topCampaignByAgent.set(key, { campaign: String(r.campaign), n: num(r.n) });
+  }
+  const primaryCampaign = (empId: string, fallback: string | null): string =>
+    topCampaignByAgent.get(empId)?.campaign || fallback || "Unknown";
+
   const agentIds = agentSaleRows.map((r) => r.emp_id);
   let employeeRows: EmployeeRow[] = [];
   let attendanceRows: AttendanceRow[] = [];
@@ -355,7 +375,10 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
       agentIds,
     );
     [attendanceRows] = await db.execute<AttendanceRow[]>(
-      `SELECT emp_id, SUM(atten) AS attendance_days
+      // Distinct present DAYS: gnc_apr repeats an agent-day when the same APR
+      // file is uploaded more than once (1 Sep 2026: 6 agent-days x3), so
+      // SUM(atten) reported 13 days for agents who were present on 11.
+      `SELECT emp_id, COUNT(DISTINCT CASE WHEN atten > 0 THEN report_date END) AS attendance_days
        FROM db_masmis.gnc_apr
        WHERE report_date >= ? AND report_date < DATE_ADD(?, INTERVAL 1 DAY) AND emp_id IN (${placeholders})
        GROUP BY emp_id`,
@@ -410,7 +433,7 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
       empId: r.emp_id,
       empName: r.emp_name || r.emp_id,
       tl: r.tl || "Unknown",
-      campaign: r.campaign || "Unknown",
+      campaign: primaryCampaign(r.emp_id, r.campaign),
       saleCount: num(r.sale_count),
       turnover: num(r.turnover),
       prepaidPct: pct(num(r.prepaid_count), num(r.sale_count)),
@@ -437,7 +460,7 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
         tenureDays,
         bucket: tenureBucket(tenureDays),
         tl: r.tl || "Unknown",
-        lob: r.campaign || "Unknown",
+        lob: primaryCampaign(r.emp_id, r.campaign),
         saleCount,
         codCount,
         paidCount,

@@ -1,4 +1,12 @@
-import type { ComponentType, ReactNode } from "react";
+import { useState, type ComponentType, type ReactNode } from "react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import { Download, FileText, FileSpreadsheet, Layers, Loader2 } from "lucide-react";
+import { getAuthToken } from "@/lib/hrmsApi";
+import { apiUrl } from "@/lib/apiBase";
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 
 /**
  * Shared visual language for Process Performance V2's per-company live
@@ -203,5 +211,243 @@ export function DateRangeToolbar({
         {resetLabel}
       </button>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------------ *
+ * Export ("Download Snap" / "Download Excel") — one reusable menu for every
+ * Process Performance V2 dashboard. Built entirely on jsPDF + jspdf-autotable
+ * + xlsx, all three already dependencies of this app and already used the
+ * same way elsewhere (src/components/performance/TeamAnalytics.tsx,
+ * src/pages/payroll/PfBatchesPage.tsx) — no new package added.
+ *
+ * Each dashboard hands this a list of "slides" (one per tab it has —
+ * Overview, Agent-wise, Date-wise, ...). "Download Snap"/"Download Excel"
+ * export only the currently active tab; "Download All" bundles every slide
+ * into one multi-page PDF (each slide = one page) or one multi-sheet
+ * workbook (each slide = one sheet) — the "all snap with slide(s)" bundle.
+ * ------------------------------------------------------------------------ */
+
+export interface ExportTable {
+  title: string;
+  columns: string[];
+  rows: Array<Array<string | number>>;
+}
+
+/** One tab/section's exportable content. */
+export interface ExportSlide {
+  title: string;
+  kpis?: Array<{ label: string; value: string }>;
+  tables?: ExportTable[];
+}
+
+type AutoTableDoc = jsPDF & { lastAutoTable?: { finalY: number } };
+
+function renderPdfSlideBody(doc: AutoTableDoc, slide: ExportSlide, startY: number): void {
+  let y = startY;
+
+  if (slide.kpis && slide.kpis.length > 0) {
+    autoTable(doc, {
+      startY: y,
+      head: [["Metric", "Value"]],
+      body: slide.kpis.map((k) => [k.label, k.value]),
+      theme: "striped",
+      headStyles: { fillColor: [30, 41, 59] },
+      styles: { fontSize: 9 },
+      margin: { left: 14, right: 14 },
+    });
+    y = (doc.lastAutoTable?.finalY ?? y) + 8;
+  }
+
+  for (const table of slide.tables ?? []) {
+    if (table.rows.length === 0) continue;
+    doc.setFontSize(10);
+    doc.setTextColor(71, 85, 105);
+    doc.text(table.title, 14, y);
+    y += 4;
+    autoTable(doc, {
+      startY: y,
+      head: [table.columns],
+      body: table.rows,
+      theme: "striped",
+      headStyles: { fillColor: [71, 85, 105] },
+      // Week-wise / date-wise tables run to 20-40 columns: shrink the type so they fit the page.
+      styles: { fontSize: table.columns.length > 28 ? 5 : table.columns.length > 16 ? 6 : 8, cellPadding: table.columns.length > 16 ? 1 : 2 },
+      margin: { left: 14, right: 14 },
+    });
+    y = (doc.lastAutoTable?.finalY ?? y) + 10;
+  }
+
+  if ((slide.kpis?.length ?? 0) === 0 && (slide.tables ?? []).every((t) => t.rows.length === 0)) {
+    doc.setFontSize(9);
+    doc.setTextColor(148, 163, 184);
+    doc.text("No data for this period.", 14, y);
+  }
+}
+
+export function exportSlidesToPdf(params: {
+  fileName: string; reportTitle: string; subtitle?: string; slides: ExportSlide[];
+}): void {
+  const { fileName, reportTitle, subtitle, slides } = params;
+  // Wide (week / date column) tables need a landscape page, and a larger sheet when very wide.
+  const maxColumns = Math.max(0, ...slides.flatMap((s) => (s.tables ?? []).map((t) => t.columns.length)));
+  const doc = new jsPDF({
+    orientation: maxColumns > 10 ? "landscape" : "portrait",
+    format: maxColumns > 20 ? "a3" : "a4",
+  }) as AutoTableDoc;
+  const list = slides.length > 0 ? slides : [{ title: "No data" } satisfies ExportSlide];
+
+  list.forEach((slide, i) => {
+    if (i > 0) doc.addPage();
+    doc.setFontSize(16);
+    doc.setTextColor(15, 23, 42);
+    doc.text(reportTitle, 14, 18);
+    doc.setFontSize(9);
+    doc.setTextColor(100, 116, 139);
+    doc.text(subtitle ? `${slide.title} · ${subtitle}` : slide.title, 14, 25);
+    renderPdfSlideBody(doc, slide, 33);
+  });
+
+  doc.save(fileName);
+}
+
+/** Tells the server which report an Excel export belongs to, so it can attach
+ * the raw source rows behind that report as extra sheets. `from`/`to`/`lob`
+ * must be the same filters the report itself is currently showing. */
+export interface ExportRawSpec {
+  /** Key of the report in the backend's dashboard-export registry. */
+  dashboard: string;
+  from?: string;
+  to?: string;
+  lob?: string;
+}
+
+/**
+ * Excel is built by the server (POST /api/process-performance/dashboard-export/excel):
+ * the report's on-screen tables become styled summary sheets, and the raw
+ * source rows behind the report are streamed into extra "Raw - <table>"
+ * sheets, followed by a "Raw Data Notes" sheet stating what each one holds.
+ * It is not built in the browser because raw data is large (tens of
+ * thousands of rows x dozens of columns) -- the server streams it to disk
+ * with flat memory, where the browser would have to hold every cell at once.
+ */
+export async function exportSlidesToExcel(params: {
+  fileName: string; slides: ExportSlide[]; reportTitle: string; subtitle?: string; raw: ExportRawSpec;
+}): Promise<{ failedSheets: number; truncatedSheets: number }> {
+  const { fileName, slides, reportTitle, subtitle, raw } = params;
+  const response = await fetch(apiUrl("/api/process-performance/dashboard-export/excel"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${getAuthToken()}` },
+    body: JSON.stringify({
+      dashboard: raw.dashboard, from: raw.from, to: raw.to, lob: raw.lob, reportTitle, subtitle, slides,
+    }),
+  });
+  if (!response.ok) {
+    let message = `Excel export failed (${response.status}).`;
+    try {
+      const body = await response.json();
+      if (body?.error || body?.message) message = String(body.error ?? body.message);
+    } catch { /* body was not JSON */ }
+    throw new Error(message);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
+  return {
+    failedSheets: Number(response.headers.get("X-Export-Failed-Sheets") ?? 0),
+    truncatedSheets: Number(response.headers.get("X-Export-Truncated-Sheets") ?? 0),
+  };
+}
+
+
+/** Drop-in "Export" button for a dashboard's toolbar row, next to
+ * DateRangeToolbar. `slides` is every tab the dashboard has (feeds the two
+ * "Download All" options); `activeSlideTitle` must match one slide's
+ * `title` exactly and picks what the two single-view options act on.
+ * `raw` is required on purpose: every Excel export carries the raw source
+ * rows behind the report, so a report that forgot to say which source it
+ * reads is a compile error rather than an export silently missing its data. */
+export function DashboardExportMenu({
+  reportTitle, fileBaseName, subtitle, slides, activeSlideTitle, raw,
+}: {
+  reportTitle: string;
+  fileBaseName: string;
+  subtitle?: string;
+  slides: ExportSlide[];
+  activeSlideTitle: string;
+  raw: ExportRawSpec;
+}) {
+  const [busy, setBusy] = useState(false);
+  const activeSlide = slides.find((s) => s.title === activeSlideTitle) ?? slides[0];
+  const stamp = localDateStr(new Date());
+  const safeFileBase = fileBaseName.replace(/\s+/g, "_");
+
+  const runExcel = async (fileName: string, excelSlides: ExportSlide[]) => {
+    setBusy(true);
+    try {
+      const { failedSheets, truncatedSheets } = await exportSlidesToExcel({
+        fileName, slides: excelSlides, reportTitle, subtitle, raw,
+      });
+      if (failedSheets > 0 || truncatedSheets > 0) {
+        window.alert(
+          `Excel downloaded. ${failedSheets > 0 ? `${failedSheets} raw-data sheet(s) could not be included. ` : ""}` +
+          `${truncatedSheets > 0 ? `${truncatedSheets} raw-data sheet(s) were cut short (row limit or time limit). ` : ""}` +
+          `See the "Raw Data Notes" sheet in the file for exactly what happened and how to get the rest.`,
+        );
+      }
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Excel export failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition-colors hover:bg-slate-50 disabled:cursor-wait disabled:opacity-70"
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+          {busy ? "Preparing Excel…" : "Export"}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="text-xs">
+        {activeSlide && (
+          <>
+            <DropdownMenuItem
+              onClick={() => exportSlidesToPdf({
+                fileName: `${safeFileBase}_${activeSlide.title.replace(/\s+/g, "_")}_${stamp}.pdf`,
+                reportTitle, subtitle, slides: [activeSlide],
+              })}
+            >
+              <FileText className="mr-2 h-3.5 w-3.5" /> Download Snap ({activeSlide.title})
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => void runExcel(
+                `${safeFileBase}_${activeSlide.title.replace(/\s+/g, "_")}_${stamp}.xlsx`, [activeSlide],
+              )}
+            >
+              <FileSpreadsheet className="mr-2 h-3.5 w-3.5" /> Download Excel + raw data ({activeSlide.title})
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
+        <DropdownMenuItem
+          onClick={() => exportSlidesToPdf({ fileName: `${safeFileBase}_All_${stamp}.pdf`, reportTitle, subtitle, slides })}
+        >
+          <Layers className="mr-2 h-3.5 w-3.5" /> Download All Views (PDF, all slides)
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => void runExcel(`${safeFileBase}_All_${stamp}.xlsx`, slides)}>
+          <Layers className="mr-2 h-3.5 w-3.5" /> Download All Views (Excel + raw data)
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

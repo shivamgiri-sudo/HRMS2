@@ -79,7 +79,33 @@ export interface BellavitaSaleDashboardData {
     target: number | null;
     achievementPct: number | null;
     targetNote?: string;
+    codCount: number;
+    paidCount: number;
+    codPct: number;
+    paidPct: number;
+    rtoAmount: number;
+    rtoCount: number;
+    rtoPct: number;
+    aov: number;
+    netSaleCount: number;
+    netRevenue: number;
   }>;
+  lobGrandTotal: {
+    saleCount: number;
+    turnover: number;
+    codCount: number;
+    paidCount: number;
+    codPct: number;
+    paidPct: number;
+    rtoAmount: number;
+    rtoCount: number;
+    rtoPct: number;
+    aov: number;
+    netSaleCount: number;
+    netRevenue: number;
+    target: number;
+    achievementPct: number;
+  };
   stateRevenue: Array<{ state: string; saleCount: number; turnover: number; rtoCount: number }>;
   topPerformers: Array<{
     empId: string;
@@ -117,6 +143,12 @@ interface LobRow extends RowDataPacket {
   lob: string | null;
   sale_count: number;
   turnover: string | null;
+  cod_count: number;
+  paid_count: number;
+  rto_amount: string | null;
+  rto_count: number;
+  net_sale_count: number;
+  net_turnover: string | null;
 }
 interface StateRow extends RowDataPacket {
   state: string | null;
@@ -163,7 +195,12 @@ export function currentMonthRange(): { from: string; to: string } {
 }
 
 /**
- * One row per bella_vita_order_id (MIN(id) as the representative),
+ * One row per bella_vita_order_id (MAX(id) = the LATEST upload is the
+ * representative; the alias below is still named min_id). Re-uploads refresh
+ * final_status/RTO and agent attribution, so MIN(id) kept the stale first
+ * upload and understated RTO: 1-13 Sep 2026 RTO was 190 (7.61%) with MIN(id)
+ * vs 292 (11.69%) with MAX(id); amount/payment_status/state never differ
+ * across the copies),
  * restricted to calling_status='Sale Made' and the date range -- every
  * bb_sale aggregate below reads from this instead of the raw table. Takes
  * its own [from, to] pair since it's re-embedded per query (MySQL has no
@@ -174,7 +211,7 @@ export function dedupedSaleSql(): string {
     SELECT s.*
     FROM db_masmis.bb_sale s
     INNER JOIN (
-      SELECT bella_vita_order_id, MIN(id) AS min_id
+      SELECT bella_vita_order_id, MAX(id) AS min_id
       FROM db_masmis.bb_sale
       WHERE \`Date\` >= ? AND \`Date\` < DATE_ADD(?, INTERVAL 1 DAY)
         AND calling_status = 'Sale Made'
@@ -227,7 +264,13 @@ export async function getBellavitaSaleDashboard(fromInput: string, toInput: stri
   );
 
   const [lobRows] = await db.execute<LobRow[]>(
-    `SELECT ds.lob AS lob, COUNT(*) AS sale_count, SUM(CAST(ds.amount AS DECIMAL(14,2))) AS turnover
+    `SELECT ds.lob AS lob, COUNT(*) AS sale_count, SUM(CAST(ds.amount AS DECIMAL(14,2))) AS turnover,
+       SUM(CASE WHEN ds.payment_status = 'cod' THEN 1 ELSE 0 END) AS cod_count,
+       SUM(CASE WHEN ds.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
+       SUM(CASE WHEN ds.final_status = 'RTO' THEN CAST(ds.amount AS DECIMAL(14,2)) ELSE 0 END) AS rto_amount,
+       SUM(CASE WHEN ds.final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count,
+       SUM(CASE WHEN ds.final_status != 'RTO' THEN 1 ELSE 0 END) AS net_sale_count,
+       SUM(CASE WHEN ds.final_status != 'RTO' THEN CAST(ds.amount AS DECIMAL(14,2)) ELSE 0 END) AS net_turnover
      FROM ${deduped}
      WHERE ds.lob IS NOT NULL AND ds.lob != ''
      GROUP BY ds.lob
@@ -278,6 +321,66 @@ export async function getBellavitaSaleDashboard(fromInput: string, toInput: stri
   const codCount = num(headlineRow?.cod_count);
   const rtoCount = num(headlineRow?.rto_count);
 
+  const lobRevenue = lobRows.map((r) => {
+    const lob = r.lob || "Unknown";
+    const turnoverVal = num(r.turnover);
+    const saleCountVal = num(r.sale_count);
+    const codCountVal = num(r.cod_count);
+    const paidCountVal = num(r.paid_count);
+    const rtoCountVal = num(r.rto_count);
+    const targetInfo = LOB_TARGETS[lob];
+    return {
+      lob,
+      saleCount: saleCountVal,
+      turnover: turnoverVal,
+      target: targetInfo?.target ?? null,
+      achievementPct: targetInfo ? pct(turnoverVal, targetInfo.target) : null,
+      targetNote: targetInfo?.note,
+      codCount: codCountVal,
+      paidCount: paidCountVal,
+      codPct: pct(codCountVal, paidCountVal + codCountVal),
+      paidPct: pct(paidCountVal, paidCountVal + codCountVal),
+      rtoAmount: num(r.rto_amount),
+      rtoCount: rtoCountVal,
+      rtoPct: pct(rtoCountVal, saleCountVal),
+      aov: saleCountVal > 0 ? Math.round((turnoverVal / saleCountVal) * 100) / 100 : 0,
+      netSaleCount: num(r.net_sale_count),
+      netRevenue: num(r.net_turnover),
+    };
+  });
+
+  /**
+   * Grand Total row across every LOB -- target is only the sum of
+   * LOB_TARGETS for LOBs actually present this period (not every key in
+   * that constant), so achievementPct compares like against like rather
+   * than penalizing a period where, say, no Inbound sales landed yet.
+   */
+  const lobTotalSaleCount = lobRevenue.reduce((s, r) => s + r.saleCount, 0);
+  const lobTotalTurnover = lobRevenue.reduce((s, r) => s + r.turnover, 0);
+  const lobTotalCod = lobRevenue.reduce((s, r) => s + r.codCount, 0);
+  const lobTotalPaid = lobRevenue.reduce((s, r) => s + r.paidCount, 0);
+  const lobTotalRtoAmount = lobRevenue.reduce((s, r) => s + r.rtoAmount, 0);
+  const lobTotalRtoCount = lobRevenue.reduce((s, r) => s + r.rtoCount, 0);
+  const lobTotalNetSaleCount = lobRevenue.reduce((s, r) => s + r.netSaleCount, 0);
+  const lobTotalNetRevenue = lobRevenue.reduce((s, r) => s + r.netRevenue, 0);
+  const lobTotalTarget = lobRevenue.reduce((s, r) => s + (r.target ?? 0), 0);
+  const lobGrandTotal = {
+    saleCount: lobTotalSaleCount,
+    turnover: lobTotalTurnover,
+    codCount: lobTotalCod,
+    paidCount: lobTotalPaid,
+    codPct: pct(lobTotalCod, lobTotalPaid + lobTotalCod),
+    paidPct: pct(lobTotalPaid, lobTotalPaid + lobTotalCod),
+    rtoAmount: lobTotalRtoAmount,
+    rtoCount: lobTotalRtoCount,
+    rtoPct: pct(lobTotalRtoCount, lobTotalSaleCount),
+    aov: lobTotalSaleCount > 0 ? Math.round((lobTotalTurnover / lobTotalSaleCount) * 100) / 100 : 0,
+    netSaleCount: lobTotalNetSaleCount,
+    netRevenue: lobTotalNetRevenue,
+    target: lobTotalTarget,
+    achievementPct: pct(lobTotalTurnover, lobTotalTarget),
+  };
+
   return {
     headline: {
       turnover,
@@ -299,19 +402,8 @@ export async function getBellavitaSaleDashboard(fromInput: string, toInput: stri
       codCount: num(r.cod_count),
       rtoCount: num(r.rto_count),
     })),
-    lobRevenue: lobRows.map((r) => {
-      const lob = r.lob || "Unknown";
-      const turnoverVal = num(r.turnover);
-      const targetInfo = LOB_TARGETS[lob];
-      return {
-        lob,
-        saleCount: num(r.sale_count),
-        turnover: turnoverVal,
-        target: targetInfo?.target ?? null,
-        achievementPct: targetInfo ? pct(turnoverVal, targetInfo.target) : null,
-        targetNote: targetInfo?.note,
-      };
-    }),
+    lobRevenue,
+    lobGrandTotal,
     stateRevenue: stateRows.map((r) => ({
       state: r.state || "Unknown",
       saleCount: num(r.sale_count),

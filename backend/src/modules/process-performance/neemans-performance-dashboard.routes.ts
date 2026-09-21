@@ -14,8 +14,14 @@ const VIEWER_ROLES = [
   "branch_head", "qa", "quality_analyst", "tq_head",
 ];
 
-router.get("/neemans-performance-dashboard", requireRole(...VIEWER_ROLES), h(async (_req, res) => {
-  const data = await getNeemansPerformanceDashboard();
+router.get("/neemans-performance-dashboard", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  // Absent or malformed from/to means "no filter" here, not a "this month"
+  // fallback -- see the service's own header comment for why: this is
+  // historical bulk-uploaded data, not a live daily feed, so an empty
+  // current-month default would misleadingly look broken.
+  const from = typeof req.query.from === "string" ? req.query.from : undefined;
+  const to = typeof req.query.to === "string" ? req.query.to : undefined;
+  const data = await getNeemansPerformanceDashboard(from, to);
   res.json({ success: true, data });
 }));
 

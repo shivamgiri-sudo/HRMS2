@@ -41,6 +41,27 @@ export interface NeemansCartDashboardData {
     cartValue: number;
     topDisposition: string;
   }>;
+  /** Individual cart records, most recent first, capped at RECORDS_LIMIT --
+   * the MIS-style "raw data" view sitting alongside the aggregates above.
+   * `recordsTruncated` tells the UI whether more rows exist for this range
+   * than were returned, so it can say "showing latest N of M" honestly
+   * instead of implying the cap is the whole dataset. */
+  records: Array<{
+    id: number;
+    cartId: string;
+    customerName: string;
+    phoneNumber: string;
+    emailId: string;
+    lineItems: string;
+    amount: number;
+    agent: string;
+    disposition: string;
+    subDisposition: string;
+    callDate: string | null;
+    status: string;
+  }>;
+  recordsTotal: number;
+  recordsTruncated: boolean;
 }
 
 interface HeadlineRow extends RowDataPacket {
@@ -69,6 +90,28 @@ interface AgentRow extends RowDataPacket {
   cart_value: string | null;
   top_disposition: string | null;
 }
+interface RecordRow extends RowDataPacket {
+  id: number;
+  cart_id: string;
+  customer_name: string | null;
+  phone_number: string | null;
+  email_id: string | null;
+  line_items: string | null;
+  amount: string | null;
+  agent: string | null;
+  disposition: string | null;
+  sub_disposition: string | null;
+  call_date: string | null;
+  status: string | null;
+}
+
+/** Raw-record cap for the "records" view -- a real abandoned-cart export
+ * can run into the tens of thousands of rows (Neemans' own reference export
+ * has 46k+), and shipping all of them to the browser on every date-range
+ * change would be both slow and pointless for a table nobody scrolls that
+ * far into. Most-recent-first ordering means the cap always shows the
+ * freshest activity in range. */
+const RECORDS_LIMIT = 1000;
 
 const num = (v: string | number | null | undefined): number => {
   const n = Number(v);
@@ -94,7 +137,13 @@ export function currentMonthRange(): { from: string; to: string } {
   return { from, to };
 }
 
-export async function getNeemansCartDashboard(fromInput: string, toInput: string): Promise<NeemansCartDashboardData> {
+/** `skipRecords` lets the combined Neemans overview reuse every aggregate here
+ * without paying for the up-to-1,000-row raw-records query it never shows. */
+export async function getNeemansCartDashboard(
+  fromInput: string,
+  toInput: string,
+  opts: { skipRecords?: boolean } = {},
+): Promise<NeemansCartDashboardData> {
   const fallback = currentMonthRange();
   const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
   const to = DATE_RE.test(toInput) ? toInput : fallback.to;
@@ -142,11 +191,11 @@ export async function getNeemansCartDashboard(fromInput: string, toInput: string
 
   const [agentRows] = await db.execute<AgentRow[]>(
     `SELECT agent,
-       COUNT(*) AS cart_count,
-       SUM(amount) AS cart_value,
+       SUM(disp_count) AS cart_count,
+       SUM(disp_value) AS cart_value,
        SUBSTRING_INDEX(GROUP_CONCAT(disposition ORDER BY disp_count DESC), ',', 1) AS top_disposition
      FROM (
-       SELECT agent, disposition, COUNT(*) AS disp_count
+       SELECT agent, disposition, COUNT(*) AS disp_count, SUM(amount) AS disp_value
        FROM db_masmis.neemans_cart
        WHERE call_date >= ? AND call_date < DATE_ADD(?, INTERVAL 1 DAY) AND agent IS NOT NULL AND agent != ''
        GROUP BY agent, disposition
@@ -155,6 +204,18 @@ export async function getNeemansCartDashboard(fromInput: string, toInput: string
      ORDER BY cart_count DESC`,
     range,
   );
+
+  const recordRows: RecordRow[] = opts.skipRecords
+    ? []
+    : (await db.execute<RecordRow[]>(
+        `SELECT id, cart_id, customer_name, phone_number, email_id, line_items, amount,
+           agent, disposition, sub_disposition, call_date, status
+         FROM db_masmis.neemans_cart
+         WHERE call_date >= ? AND call_date < DATE_ADD(?, INTERVAL 1 DAY)
+         ORDER BY call_date DESC, id DESC
+         LIMIT ${RECORDS_LIMIT}`,
+        range,
+      ))[0];
 
   const totalCarts = num(headlineRow?.total_carts);
   const totalCartValue = num(headlineRow?.total_value);
@@ -191,5 +252,21 @@ export async function getNeemansCartDashboard(fromInput: string, toInput: string
       cartValue: num(r.cart_value),
       topDisposition: r.top_disposition || "Unknown",
     })),
+    records: recordRows.map((r) => ({
+      id: r.id,
+      cartId: r.cart_id,
+      customerName: r.customer_name || "",
+      phoneNumber: r.phone_number || "",
+      emailId: r.email_id || "",
+      lineItems: r.line_items || "",
+      amount: num(r.amount),
+      agent: r.agent || "Unknown",
+      disposition: r.disposition || "Unknown",
+      subDisposition: r.sub_disposition || "",
+      callDate: r.call_date,
+      status: r.status || "Unknown",
+    })),
+    recordsTotal: totalCarts,
+    recordsTruncated: !opts.skipRecords && totalCarts > recordRows.length,
   };
 }

@@ -7,7 +7,10 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import {
   PhoneCall, Store, Warehouse, IndianRupee, Users, Search, ListFilter, ClipboardList, Target,
 } from "lucide-react";
-import { Spinner, KpiCard, SectionCard, DashboardHero, formatINR } from "./DashboardKit";
+import {
+  Spinner, KpiCard, SectionCard, DashboardHero, DashboardExportMenu, formatINR,
+  type ExportSlide,
+} from "./DashboardKit";
 
 /**
  * Satya Retail's real dashboard -- live aggregates over
@@ -80,6 +83,59 @@ export function SatyaRetailDashboard() {
     return rows.filter((a) => a.agentName.toLowerCase().includes(q) || a.agentId.toLowerCase().includes(q));
   }, [data, agentSearch]);
 
+  /** Export slides for "Download Snap"/"Download Excel" — one per tab,
+   * built from the same data already rendered on screen, not re-fetched. */
+  const exportSlides = useMemo<ExportSlide[]>(() => {
+    if (!data) return [];
+    const overall: ExportSlide = {
+      title: "Overall",
+      kpis: [
+        { label: "Total Allocation", value: String(data.headline.totalAllocation) },
+        { label: "Allocation Connected %", value: `${data.headline.allocationConnectedPct}%` },
+        { label: "Unique Shops", value: String(data.headline.uniqueShops) },
+        { label: "Order Value", value: formatINR(data.headline.orderValue) },
+        { label: "Total CDR Calls", value: String(data.headline.totalCdrCalls) },
+        { label: "CDR Connected %", value: `${data.headline.cdrConnectedPct}%` },
+        { label: "Active Agents", value: String(data.headline.activeAgents) },
+        { label: "Avg Attempts", value: String(data.headline.avgAttempts) },
+      ],
+      tables: [
+        {
+          title: "Warehouse-wise Allocation",
+          columns: ["Warehouse", "Allocation", "Connected"],
+          rows: data.byWarehouse.map((w) => [w.warehouse, w.allocation, w.connected]),
+        },
+        {
+          title: "Disposition Breakdown",
+          columns: ["Disposition", "Count"],
+          rows: data.dispositionBreakdown.map((d) => [d.disposition, d.count]),
+        },
+      ],
+    };
+    const warehouse: ExportSlide = {
+      title: "Warehouse-wise",
+      tables: [{
+        title: "Warehouse-wise Summary",
+        columns: ["Warehouse", "Allocation", "Connected", "Connected %", "Unique Shops", "Order Value"],
+        rows: data.byWarehouse.map((w) => [
+          w.warehouse, w.allocation, w.connected, `${w.connectedPct}%`, w.uniqueShops, formatINR(w.orderValue),
+        ]),
+      }],
+    };
+    const agentsSlide: ExportSlide = {
+      title: "Agent-wise",
+      tables: [{
+        title: "Agent-wise Performance",
+        columns: ["Agent", "Agent ID", "Allocation", "Alloc Connected %", "CDR Calls", "CDR Connected %", "Avg Attempts", "Order Value"],
+        rows: data.agents.map((a) => [
+          a.agentName, a.agentId, a.allocation, `${a.allocConnectedPct}%`, a.cdrCalls, `${a.cdrConnectedPct}%`,
+          a.avgAttempts || "—", formatINR(a.orderValue),
+        ]),
+      }],
+    };
+    return [overall, warehouse, agentsSlide];
+  }, [data]);
+
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!data) return null;
@@ -88,11 +144,21 @@ export function SatyaRetailDashboard() {
 
   return (
     <div className="space-y-5">
-      <DashboardHero
+      <DashboardHero<TabKey>
         icon={Store} eyebrow="Satya Retail · Process Performance" title="Beat & Call Performance"
-        tabs={TABS} activeTab={tab} onTabChange={(key) => setTab(key as TabKey)}
+        tabs={TABS} activeTab={tab} onTabChange={setTab}
         gradient="from-yellow-500 via-amber-500 to-yellow-600"
       />
+
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <DashboardExportMenu
+          reportTitle="Satya Retail — Beat & Call Performance"
+          fileBaseName="SatyaRetail_Beat_Call_Performance"
+          raw={{ dashboard: "satya_retail" }}
+          slides={exportSlides}
+          activeSlideTitle={tab === "overall" ? "Overall" : tab === "warehouse" ? "Warehouse-wise" : "Agent-wise"}
+        />
+      </div>
 
       {tab === "overall" && (
       <>

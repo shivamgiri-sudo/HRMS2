@@ -7,8 +7,7 @@ import {
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
   Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle, IndianRupee,
   Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound, RotateCcw, Mail, Share2,
-  Video, PenLine, Workflow, Layers3, CalendarOff, MessageSquare, AlertCircle, Trophy, History,
-  Megaphone
+  Video, PenLine, Workflow, Layers3, CalendarOff, MessageSquare, AlertCircle, Trophy, History
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
 
@@ -68,7 +67,6 @@ export const navGroups: NavGroup[] = [
           { label: "Apply Leave",        href: "/leaves",                      icon: ic(CalendarDays), public: true, description: "Leave" },
         ],
       },
-      { label: "My KPI",     href: "/my-kpi",     icon: ic(Target),       pageCode: "MY_KPI",    description: "Personal KPI targets and actuals" },
       {
         label: "Pay & Tax",  href: "/profile?tab=payslips", icon: ic(CreditCard), public: true, description: "Payslips & tax",
         children: [
@@ -132,8 +130,6 @@ export const navGroups: NavGroup[] = [
           { label: "Waiting Queue", href: "/ats/waiting-queue", icon: ic(Users), pageCode: "ATS_WAITING_QUEUE", description: "Candidate waiting workflow" },
           { label: "Recruiter Portal", href: "/ats/recruiter-portal", icon: ic(Briefcase), pageCode: "ATS_RECRUITER_PORTAL", description: "Recruiter interview workspace" },
           { label: "ATS Sourcing",      href: "/ats/sourcing-analysis",        icon: ic(BarChart3),    pageCode: "ATS_DASHBOARD",         roles: ["admin","hr"], description: "Sourcing analytics" },
-          { label: "META Campaigns",    href: "/ats/meta-campaigns",           icon: ic(Megaphone),    pageCode: "ATS_META_CAMPAIGNS",    description: "META Lead Gen ad performance & lead screening" },
-          { label: "META Leads",        href: "/ats/meta-leads",               icon: ic(Users),        pageCode: "ATS_META_CAMPAIGNS",    description: "All leads captured from META Lead Gen forms" },
           { label: "Name Consistency", href: "/ats/name-consistency", icon: ic(FileCheck), pageCode: "NAME_CONSISTENCY_MATRIX", description: "Candidate identity consistency" },
           { label: "ATS Reconciliation", href: "/ats/reconciliation", icon: ic(CheckCircle), roles: ["admin","hr","super_admin"], description: "Recruitment reconciliation" },
           { label: "Form Config",       href: "/ats/form-config",              icon: ic(Settings2),                                               roles: ["admin","hr","super_admin"], description: "Interview form & branch aliases" },
@@ -160,9 +156,6 @@ export const navGroups: NavGroup[] = [
           { label: "Admin Provisioning",  href: "/provisioning/admin",       icon: ic(ShieldCheck), pageCode: "PROVISIONING_ADMIN", roles: ["admin","branch_admin","hr","super_admin"], description: "Biometric & ID card" },
           { label: "WFM Alignment",       href: "/provisioning/wfm-alignment", icon: ic(Clock),     pageCode: "PROVISIONING_WFM_ALIGNMENT", roles: ["wfm","admin","super_admin"], description: "Roster & shift alignment" },
           { label: "Appointment Letters", href: "/provisioning/appointment-letter", icon: ic(FileText), pageCode: "PROVISIONING_APPOINTMENT_LETTER", roles: ["hr","admin","super_admin"], description: "E-sign tracking" },
-          { label: "Manager Handover",    href: "/provisioning/manager-handover", icon: ic(Users),     pageCode: "PROVISIONING_MANAGER_HANDOVER", roles: ["manager","admin","hr","super_admin"], description: "Exit handover clearance" },
-          { label: "HR Exit Clearance",   href: "/provisioning/hr-exit",         icon: ic(Users2),     pageCode: "PROVISIONING_HR_EXIT", roles: ["hr","admin","super_admin"], description: "Exit interview & compliance" },
-          { label: "Payroll Exit Clearance", href: "/provisioning/payroll-exit", icon: ic(Wallet),     pageCode: "PROVISIONING_PAYROLL_EXIT", roles: ["payroll","hr","admin","super_admin"], description: "F&F readiness" },
           { label: "Joining Documents",   href: "/ats/joining-documents-tracker", icon: ic(FileCheck), roles: ["admin","hr","payroll_hr","super_admin"], description: "Joining doc formalities" },
           { label: "Document Verification",href: "/document-verification",   icon: ic(FileCheck),   roles: ["admin","hr"],         description: "Documents" },
           { label: "Statutory Detail Approvals", href: "/statutory-change-approvals", icon: ic(ShieldCheck), roles: ["admin","hr","super_admin"], description: "PAN/Aadhaar/UAN/ESI change requests" },
@@ -214,24 +207,19 @@ export const navGroups: NavGroup[] = [
           { label: "Roster Workspace",       href: "/wfm/roster-workspace",      icon: ic(CalendarDays),  pageCode: "WFM_ROSTER",      description: "Weekly shift grid and acknowledgement tracker" },
           { label: "Roster Import",          href: "/wfm/roster-import",         icon: ic(Upload),        pageCode: "WFM_ROSTER",      description: "Upload Excel roster — auto-detect headers, 12h/24h, night shifts" },
           { label: "Roster",                 href: "/wfm/roster-view",           icon: ic(CalendarDays),  pageCode: "WFM_ROSTER",      description: "See who is working what — filter by branch, process or person" },
-          // Roster Command Center is now the merged console: Live Monitoring, Analytics,
-          // Trends & Publish, Compliance, Shift Effectiveness, Interventions and Audit
-          // Trail all live behind its tab bar (see RosterCommandCenter.tsx). The 6 nav
-          // entries this replaced (Roster Analytics, Roster Interventions, Roster
-          // Compliance, Shift Effectiveness, Roster Audit Trail — Roster Analytics Panel
-          // was never in this menu to begin with) are removed rather than left pointing at
-          // deleted pages. pageCode here is the first tab's code (WFM_ROSTER_LIVE_MONITORING)
-          // as a nav-visibility hint only — same convention as the Attendance Integrity
-          // entry above it in this file, see pageRoutePageCodes.ts's comment for why the
-          // route itself carries no single hard-gated page code.
-          { label: "Roster Command Center", href: "/wfm/roster-command-center", icon: ic(Activity),      pageCode: "WFM_ROSTER_LIVE_MONITORING", description: "Live monitoring, analytics, compliance, shift effectiveness, interventions and audit trail — one console" },
+          { label: "Roster Analytics",       href: "/wfm/roster-analytics",      icon: ic(BarChart3),     pageCode: "WFM_ROSTER",      description: "Shrinkage intelligence, quality correlation, cost impact, forecasting" },
+          { label: "Roster Command Center", href: "/wfm/roster-command-center", icon: ic(Activity),      pageCode: "WFM_ROSTER",      description: "Real-time attendance monitoring, manager effectiveness, live alerts" },
+          { label: "Roster Interventions",  href: "/wfm/roster-interventions",  icon: ic(ShieldAlert),   pageCode: "WFM_ROSTER",      description: "Track and manage retention interventions for at-risk employees" },
+          { label: "Roster Compliance",     href: "/wfm/roster-compliance",     icon: ic(ShieldCheck),   pageCode: "WFM_ROSTER",      description: "WFM rule violations — rest policy, consecutive days, week-off fairness" },
           // Linked 2026-08-28, once its endpoints were mounted. It was deliberately kept out of
           // the menu while /api/quality-dashboard/tni-* returned 401 — a sidebar entry to a page
           // that cannot load is worse than no entry. Verified serving live: August returns 58
           // agents, 51 of them flagged for coaching.
           { label: "Training Needs (TNI)",  href: "/wfm/tni-analysis",          icon: ic(GraduationCap), pageCode: "WFM_ROSTER",      description: "Agent × parameter quality heatmap — who needs coaching, on what" },
+          { label: "Shift Effectiveness",   href: "/wfm/shift-effectiveness",   icon: ic(BarChart3),     pageCode: "WFM_ROSTER",      description: "Shift performance, break compliance, and optimization recommendations" },
           { label: "Capacity Dashboard",    href: "/wfm/capacity-dashboard",    icon: ic(Users),         pageCode: "WFM_ROSTER",      description: "Headcount vs mandate, gap analysis, hiring demand projections" },
           { label: "Team Comparison",       href: "/wfm/team-comparison",       icon: ic(Trophy),        pageCode: "WFM_ROSTER",      description: "Compare adherence across managers, processes, and branches" },
+          { label: "Roster Audit Trail",    href: "/wfm/roster-audit",          icon: ic(History),       pageCode: "WFM_ROSTER",      description: "Track who changed what roster, when, and why for compliance" },
           { label: "Notification Hub",      href: "/wfm/notification-hub",      icon: ic(Bell),          pageCode: "WFM_ROSTER",      description: "Configure roster alerts — manager digest, unplanned absence, compliance" },
           { label: "Mobile Dashboard",      href: "/wfm/mobile-roster",         icon: ic(Users),         pageCode: "WFM_ROSTER",      description: "PWA-optimized team roster view for managers on the floor" },
           { label: "Roster Builder",         href: "/wfm/roster-builder",        icon: ic(CalendarDays),  pageCode: "WFM_ROSTER_BUILDER", description: "Build and publish a process's weekly roster — grid or bulk upload" },
@@ -300,10 +288,10 @@ export const navGroups: NavGroup[] = [
         ],
       },
       {
-        label: "Brand Sales",  href: "/process-operations?process=BELLA_VITA&view=sales", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager"], pageCode: "PROCESS_OPERATIONS", description: "Brand sales dashboards — in Process Operations",
+        label: "Brand Sales",  href: "/sales/brand-analytics", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager"], description: "Bellavita & GNC analytics",
         children: [
-          { label: "Brand Analytics",   href: "/process-operations?process=BELLA_VITA&view=sales", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager"], pageCode: "PROCESS_OPERATIONS", description: "Sales dashboards & upload — pick the process in Process Operations" },
-          { label: "Housing Dashboards", href: "/process-operations?process=HOUSING_OWNER&view=sales", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","coo","process_manager","operations_manager","branch_head","hr","manager"], pageCode: "PROCESS_OPERATIONS", description: "Housing Owner & Premium sales + CDR — in Process Operations" },
+          { label: "Brand Analytics",   href: "/sales/brand-analytics", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager"], description: "Sales dashboards & upload" },
+          { label: "Housing Dashboards", href: "/sales/housing-dashboards", icon: ic(ShoppingCart), roles: ["super_admin","admin","ceo","coo","process_manager","operations_manager","branch_head","hr","manager"], description: "Housing Owner & Premium sales + CDR" },
         ],
       },
       {
@@ -316,7 +304,7 @@ export const navGroups: NavGroup[] = [
           { label: "QA Audit Forms",      href: "/quality/audit-forms",   icon: ic(ClipboardList), pageCode: "QA_EVALUATION", description: "Define what a process is scored on", roles: ["super_admin","admin","qa","tq_head"] },
           { label: "Score a Call",        href: "/quality/file-audit",    icon: ic(ShieldCheck), pageCode: "QUALITY_DASHBOARD", description: "File a QA audit", roles: ["super_admin","admin","qa","quality_analyst","tq_head"] },
           { label: "Process Metrics",     href: "/kpi/process-metrics",   icon: ic(BarChart3), pageCode: "KPI_CONFIG", description: "What each process is measured on", roles: ["super_admin","admin","qa","tq_head","process_manager"] },
-          { label: "Onfido Process",      href: "/process-operations?process=onfido&view=live", icon: ic(ShieldCheck), pageCode: "PROCESS_OPERATIONS", description: "Onfido DOC/POA volume, AHT, quality and escalations — in Process Operations", roles: ["super_admin","admin","ceo","coo","manager","process_manager","team_leader","branch_head","qa","quality_analyst","wfm","branch_wfm"] },
+          { label: "Onfido Process",      href: "/onfido-process/dashboard", icon: ic(ShieldCheck), pageCode: "ONFIDO_PROCESS_DASHBOARD", description: "Onfido DOC/POA volume, AHT, quality and escalations", roles: ["super_admin","admin","ceo","coo","manager","process_manager","team_leader","branch_head","qa","quality_analyst","wfm"] },
         ],
       },
       {
@@ -325,13 +313,13 @@ export const navGroups: NavGroup[] = [
           { label: "Performance Hub",      href: "/performance-hub",            icon: ic(BarChart3),    roles: ["admin","hr","ceo","coo","manager","process_manager","branch_head","operations_manager","qa","quality_analyst","analyst","super_admin"], description: "Role-scoped KPI hub" },
           { label: "Performance",          href: "/performance",                icon: ic(Target),       roles: ["admin","hr","ceo","coo","manager","process_manager","branch_head","operations_manager","qa","quality_analyst","analyst","super_admin","employee","agent","team_leader","tl"], description: "Performance" },
           { label: "Performance Command",  href: "/performance/command-center", icon: ic(Target),       pageCode: "WORKFORCE_COMMAND_CENTER", description: "Perf command" },
-          { label: "Process Performance", href: "/performance/process-performance", icon: ic(Activity),  roles: ["admin","ceo","coo","manager","process_manager","operations_manager","branch_head","branch_wfm","wfm","qa","quality_analyst","tq_head","super_admin"], pageCode: "OPERATIONS_DASHBOARD", description: "Process health card: headcount, shrinkage, attrition, late comers" },
+          { label: "Process Performance", href: "/performance/process-performance", icon: ic(Activity),  roles: ["admin","ceo","coo","manager","process_manager","operations_manager","branch_head","qa","quality_analyst","tq_head","super_admin"], pageCode: "OPERATIONS_DASHBOARD", description: "Process health card: headcount, shrinkage, attrition, late comers" },
+          { label: "Process Performance V2", href: "/performance/process-performance-v2", icon: ic(Activity),  roles: ["admin","ceo","coo","manager","process_manager","operations_manager","branch_head","qa","quality_analyst","tq_head","super_admin"], pageCode: "OPERATIONS_DASHBOARD", description: "Live company dashboards: Bellavita, GNC, Neemans, Housing Owner/Premium, Clovia, and more" },
           { label: "Process KPI Dashboard", href: "/performance/process-kpi-dashboard", icon: ic(Building2), roles: ["admin","ceo","coo","manager","process_manager","operations_manager","branch_head","qa","quality_analyst","tq_head","super_admin"], pageCode: "PROCESS_KPI_DASHBOARD", description: "Client/process SLA targets vs actuals, with drilldown" },
           { label: "Process Data Sources", href: "/performance/process-data-sources", icon: ic(Database), roles: ["admin","ceo","coo","manager","process_manager","operations_manager","branch_head","qa","quality_analyst","tq_head","super_admin"], pageCode: "PROCESS_DATA_SOURCE", description: "Supply metrics HRMS cannot measure: upload, or connect the client's database" },
           { label: "KPI Studio", href: "/kpi-studio", icon: ic(FlaskConical), roles: ["admin","hr","process_manager","qa","tq_head","manager","branch_head","ceo","team_leader","super_admin"], pageCode: "KPI_STUDIO", description: "Build a KPI without a code change: source, formula, preview, compute" },
           { label: "Dashboard Builder", href: "/dashboard-builder", icon: ic(LayoutDashboard), roles: ["admin","ceo","coo","manager","process_manager","operations_manager","branch_head","qa","quality_analyst","tq_head","hr","team_leader","super_admin"], pageCode: "DASHBOARD_BUILDER", description: "Build a dashboard from existing metrics: pick charts, arrange, share" },
-          { label: "Process Operations", href: "/process-operations", icon: ic(Activity), roles: ["admin","ceo","coo","manager","process_manager","operations_manager","branch_head","qa","quality_analyst","tq_head","hr","team_leader","wfm","branch_wfm","super_admin"], pageCode: "PROCESS_OPERATIONS", description: "Every metric a process is measured on, with how fresh each number is" },
-          { label: "Process Performance V2", href: "/process-performance-v2", icon: ic(Upload), roles: ["admin","ceo","coo","manager","process_manager","operations_manager","branch_head","qa","quality_analyst","tq_head","hr","team_leader","wfm","branch_wfm","super_admin"], pageCode: "PROCESS_OPERATIONS", description: "Company-by-company dashboards and bulk data uploaders" },
+          { label: "Process Operations", href: "/process-operations", icon: ic(Activity), roles: ["admin","ceo","coo","manager","process_manager","operations_manager","branch_head","qa","quality_analyst","tq_head","hr","team_leader","super_admin"], pageCode: "PROCESS_OPERATIONS", description: "Every metric a process is measured on, with how fresh each number is" },
           { label: "Agent Performance",    href: "/agent-performance",          icon: ic(Activity),     roles: ["admin","hr","ceo","coo","qa","analyst","manager","process_manager","branch_head"], description: "Cross-source KPI" },
           { label: "KPI Config",           href: "/kpi-config",                 icon: ic(Target),       pageCode: "KPI_CONFIG", roles: ["admin","hr","manager","process_manager"], description: "KPI" },
           { label: "KPI Targets", href: "/kpi-targets", icon: ic(Target), pageCode: "KPI_MASTER", description: "Targets by process & designation" },
@@ -362,8 +350,6 @@ export const navGroups: NavGroup[] = [
           { label: "Employee Code Generation",  href: "/payroll/salary-review",            icon: ic(ShieldCheck),  pageCode: "PAYROLL_HEAD_SALARY_REVIEW_QUEUE", roles: ["super_admin","payroll_head","admin"],                  description: "Mandatory pre-payroll salary / BGV / document / bank review" },
           { label: "Salary Approval Status", href: "/payroll/approval-status",          icon: ic(CheckCircle),  pageCode: "PAYROLL_APPROVAL_STATUS_VIEW", roles: ["branch_head","payroll_hr","payroll_head","admin","super_admin"], description: "Read-only: which onboarded employees are approved/pending, and what was assigned" },
           { label: "Salary Change",        href: "/payroll/salary-change",            icon: ic(IndianRupee),  pageCode: "SALARY_CHANGE_CENTER", roles: ["payroll_head","admin","super_admin"], description: "Search an active employee and change their salary, fully audited" },
-          { label: "Salary Trend",         href: "/payroll/salary-trend",             icon: ic(TrendingUp),   pageCode: "SALARY_TREND_EXPORT",  roles: ["payroll_head","admin","super_admin","payroll_hr","hr","hr_admin"], description: "Month-by-month salary trend grid for the full financial year" },
-          { label: "Attendance Register",  href: "/payroll/attendance-register",      icon: ic(CalendarDays), pageCode: "ATTENDANCE_REGISTER_EXPORT", roles: ["payroll_head","admin","super_admin","payroll_hr","hr","hr_admin","wfm","branch_head","process_manager"], description: "Day-wise attendance register — complete replica with all summary columns" },
           { label: "Salary Date Revision", href: "/salary-revision",                  icon: ic(CalendarDays), pageCode: "SALARY_REVISION", roles: ["payroll_hr","payroll_head","branch_head","hr","admin","super_admin"], description: "Request or approve salary effective date changes" },
           { label: "Payroll Validation",   href: "/payroll/validation",               icon: ic(ShieldCheck),  roles: ["super_admin","payroll_head"],                                                                         description: "Validate run before salary transfer" },
           { label: "Payroll Sign-off",     href: "/payroll/sign-off",                 icon: ic(CheckCircle),  roles: ["super_admin","payroll_head","finance","ceo","admin"],                                                 description: "Finance & CEO approval" },
@@ -398,7 +384,6 @@ export const navGroups: NavGroup[] = [
           { label: "Holiday Master",       href: "/payroll/holiday-master",           icon: ic(CalendarDays), roles: ["admin","super_admin","payroll_head","payroll_branch"],                                                 description: "Holidays & cost-centre mapping" },
           { label: "Holiday Work",         href: "/payroll/holiday-work",             icon: ic(ClipboardList),roles: ["admin","super_admin","wfm","payroll_head","payroll_branch"],                                          description: "Submit & approve holiday work requests" },
           { label: "NOC Management",       href: "/payroll/noc",                      icon: ic(FileCheck),    roles: ["super_admin","payroll_head","payroll_branch","payroll","admin"],                                       description: "Upload & validate NOC documents" },
-          { label: "NOC Clearance Chain",  href: "/payroll/noc-cases",                icon: ic(ShieldCheck),  roles: ["super_admin","payroll_head","hr","branch_hr","admin"],                                                 description: "8-signatory exit clearance & asset return tracking" },
           { label: "Config Flags",         href: "/payroll/config-flags",             icon: ic(Settings),     roles: ["admin","super_admin","payroll_head","payroll_branch"],                                                 description: "Payroll calculation feature flags" },
           { label: "Payroll Calendar",     href: "/payroll/calendar",                 icon: ic(CalendarDays), roles: ["super_admin","payroll_head","payroll_branch"],                                                         description: "Payroll milestone planning calendar" },
           { label: "EPF Compliance",       href: "/payroll/epf-compliance",           icon: ic(ShieldCheck),  roles: ["admin","super_admin","payroll_hr","payroll","hr","manager"],                                          description: "EPF/PF compliance tracking" },
@@ -433,13 +418,14 @@ export const navGroups: NavGroup[] = [
           // branch_head, the roles that actually raise GRNs, were missing, leaving them no menu
           // entry at all and only the "Open Smart GRN" button inside Branch Budget to find it by.
           { label: "GRN Management",          href: "/finance/grn",                      icon: ic(ShoppingCart), roles: ["admin","finance","super_admin","finance_head","accounts_head","branch_head","branch_admin"], description: "Goods receipt notes" },
-          // Finance Ledger Hub (2026-09-18) — one nav entry for what used to be 8 (Payment
-          // Vouchers, Vendor Payments, Bank Accounts, Bank Ledger, Bank Reconciliation, Ledger
-          // Heads, Ledger Reports, Bank Directory), now tabs on one page. Role list is the
-          // union of all 8 pages' own roles from finance.routes.tsx — see that file's own
-          // comment on this route for why. The 8 old hrefs still work (redirected).
-          { label: "Finance Ledger", href: "/finance/ledger", icon: ic(IndianRupee), pageCode: "FINANCE_PAYMENT_VOUCHERS", description: "Payment vouchers, bank accounts and the general ledger", roles: ["super_admin","admin","finance","finance_head","accounts_head","ceo","branch_head","payroll_head","branch_admin"] },
+          { label: "Vendor Payments",         href: "/finance/vendor-payment-tracking",  icon: ic(DollarSign),   roles: ["admin","finance","super_admin","finance_head","accounts_head","payroll_head"], description: "Vendor payment tracking" },
           { label: "Vendor Bank Details", href: "/finance/vendor-bank-details", icon: ic(Landmark), pageCode: "VENDOR_BANK_DETAILS", description: "Payee accounts — maker-checker", roles: ["finance_head","accounts_head"] },
+          { label: "Bank Accounts", href: "/finance/bank-accounts", icon: ic(Landmark), pageCode: "FINANCE_BANK_ACCOUNTS", description: "The company's own paying/receiving accounts", roles: ["super_admin","finance_head","accounts_head","ceo","branch_head","admin","finance"] },
+          { label: "Payment Vouchers", href: "/finance/payment-vouchers", icon: ic(IndianRupee), pageCode: "FINANCE_PAYMENT_VOUCHERS", description: "Raise → CEO approve → release", roles: ["super_admin","finance_head","ceo","accounts_head","branch_head","admin","finance"] },
+          { label: "Bank Ledger", href: "/finance/bank-ledger", icon: ic(IndianRupee), pageCode: "FINANCE_BANK_LEDGER", description: "Credit/Debit report per account", roles: ["super_admin","finance_head","accounts_head","ceo","admin","finance"] },
+          { label: "Bank Reconciliation", href: "/finance/bank-reconciliation", icon: ic(Landmark), pageCode: "FINANCE_BANK_RECONCILIATION", description: "Match statements, post adjustments, close periods", roles: ["super_admin","finance_head","accounts_head","ceo","admin","finance"] },
+          { label: "Ledger Heads", href: "/finance/ledger-heads", icon: ic(BookOpen), pageCode: "FINANCE_LEDGER_HEADS", description: "Chart-of-accounts entries for vouchers and adjustments", roles: ["super_admin","finance_head","accounts_head","ceo","admin","finance"] },
+          { label: "Bank Directory", href: "/finance/bank-directory", icon: ic(Building2), pageCode: "FINANCE_BANK_DIRECTORY", description: "Banks offered when adding a company bank account", roles: ["super_admin","finance_head","accounts_head","ceo","admin","finance"] },
           { label: "Vendors", href: "/vendors", icon: ic(Users), roles: ["admin","super_admin","finance","manager"], description: "Vendor master" },
           { label: "Finance Masters", href: "/finance/masters", icon: ic(Settings2), pageCode: "FINANCE_MASTERS", roles: ["super_admin","finance_head","branch_admin"], description: "Expense heads/sub-heads, vendor approval queue and vendor-to-head mapping" },
           { label: "Procurement", href: "/procurement", icon: ic(ShoppingCart), pageCode: "PROCUREMENT", description: "Procurement requests" },
@@ -482,7 +468,6 @@ export const navGroups: NavGroup[] = [
   {
     title: "Support",
     items: [
-      { label: "HRMS Guide",     href: "/guide",                             icon: ic(BookOpen),    public: true, description: "Role-based how-to guide for all modules" },
       { label: "Helpdesk",       href: "/helpdesk",                          icon: ic(ShieldCheck), roles: ["admin","super_admin","hr","manager","process_manager","branch_head"], description: "Helpdesk" },
       { label: "Support Command",href: "/support/command-center",            icon: ic(ShieldCheck), pageCode: "SUPPORT_COMMAND_CENTER",    description: "Support ops" },
       { label: "Grievance",      href: "/support/grievance-command-center",  icon: ic(ClipboardList), pageCode: "GRIEVANCE_COMMAND_CENTER", description: "Grievances" },
@@ -548,7 +533,6 @@ export const navGroups: NavGroup[] = [
           { label: "Attendance Rules",    href: "/attendance-rules-master",      icon: ic(Settings2), roles: ["admin","hr"],              description: "Attendance rules" },
           { label: "Client Master",       href: "/client-master",                icon: ic(Users),     roles: ["admin","hr"],              description: "Clients" },
           { label: "Org Chart Settings", href: "/org-chart/settings", icon: ic(Settings2), roles: ["admin","hr","super_admin"], description: "Organisation chart rules" },
-          // OrgChartSettings: save is local-only (no backend persistence) — hidden until wired (HR-018)
         ],
       },
       {

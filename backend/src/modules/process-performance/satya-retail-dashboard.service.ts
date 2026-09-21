@@ -86,10 +86,23 @@ function normalizeName(v: unknown): string {
 }
 
 export async function getSatyaRetailDashboard(): Promise<SatyaDashboardData> {
-  const [allocRows] = await db.execute<any[]>(
-    `SELECT warehouse, beat_name, shop_phone, agent_id, agent_name_2, disposition, order_value
+  const [allocRawRows] = await db.execute<any[]>(
+    `SELECT id, report_date, uid, unique_flag, warehouse, beat_name, shop_phone, agent_id, agent_name_2, disposition, order_value
      FROM db_masmis.satya_allocation`,
   );
+  // An earlier test upload left 9 exact copies (same date + uid + flag) of rows in the full
+  // upload; keep the newest copy only, same rule as the Calling & Order Tracking report.
+  const newestAllocId = new Map<string, number>();
+  for (const r of allocRawRows as any[]) {
+    const uid = String(r.uid ?? "").trim();
+    if (!uid) continue;
+    const k = `${r.report_date}|${uid}|${r.unique_flag ?? ""}`;
+    if ((newestAllocId.get(k) ?? -1) < Number(r.id)) newestAllocId.set(k, Number(r.id));
+  }
+  const allocRows = (allocRawRows as any[]).filter((r) => {
+    const uid = String(r.uid ?? "").trim();
+    return !uid || newestAllocId.get(`${r.report_date}|${uid}|${r.unique_flag ?? ""}`) === Number(r.id);
+  });
   const [cdrRows] = await db.execute<any[]>(
     `SELECT scenario, sub_scenario_1, agent_name, attempt
      FROM db_masmis.satya_cdr`,
@@ -113,7 +126,8 @@ export async function getSatyaRetailDashboard(): Promise<SatyaDashboardData> {
     const agentId = normalizeName(r.agent_id) || "Unknown";
     const connected = normalizeName(r.disposition).toLowerCase() === "connected";
     const shopPhone = normalizeName(r.shop_phone);
-    const orderValue = num(r.order_value);
+    // order_value is text with thousands separators ("1,292"); Number() of that is NaN -> 0.
+    const orderValue = num(String(r.order_value ?? "").replace(/,/g, ""));
     if (shopPhone) shopSet.add(shopPhone);
     if (connected) allocationConnected += 1;
     orderValueTotal += orderValue;
@@ -193,7 +207,8 @@ export async function getSatyaRetailDashboard(): Promise<SatyaDashboardData> {
     totalCdrCalls,
     cdrConnected: cdrConnectedTotal,
     cdrConnectedPct: pct(cdrConnectedTotal, totalCdrCalls),
-    activeAgents: agentIds.size,
+    // 'VDCL' is the pending-queue sentinel, not a person.
+    activeAgents: [...agentIds].filter((id) => id !== "VDCL" && id !== "Unknown").length,
     avgAttempts: allAttempts.length > 0 ? Math.round((allAttempts.reduce((s, a) => s + a, 0) / allAttempts.length) * 100) / 100 : 0,
   };
 

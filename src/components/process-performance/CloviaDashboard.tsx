@@ -5,8 +5,11 @@ import {
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   PhoneIncoming, PhoneMissed, Timer, Users, Mail, MessageSquare, Star, ShieldCheck,
-  CalendarDays, TrendingUp, PhoneOff, Repeat, LayoutDashboard, Headset, Grid3x3,
+  CalendarDays, TrendingUp, PhoneOff, Repeat, LayoutDashboard, Headset, Grid3x3, PhoneOutgoing,
 } from "lucide-react";
+import { DashboardExportMenu, type ExportSlide } from "./DashboardKit";
+import { CloviaLobSlide } from "./CloviaLobSlide";
+import { CloviaInboundSlide } from "./CloviaInboundSlide";
 
 // ── Types ────────────────────────────────────────────────────────────────
 interface InboundSummary {
@@ -88,8 +91,18 @@ function SectionCard({ title, children }: { title: string; children: React.React
   );
 }
 
+/** Snapshot of InboundSlide's already-fetched data, lifted to the parent
+ * purely for the "Export" feature -- no new fetch, no new calculation. */
+export interface InboundExportData {
+  summary: InboundSummary | null;
+  trend: TrendRow[] | null;
+  agents: AgentRow[] | null;
+  hourlyByDate: HourlyByDateRow[] | null;
+  selectedDate: string;
+}
+
 // ── Inbound slide ────────────────────────────────────────────────────────
-function InboundSlide({ from, to }: { from: string; to: string }) {
+function InboundSlide({ from, to, onData }: { from: string; to: string; onData?: (d: InboundExportData) => void }) {
   const [summary, setSummary] = useState<InboundSummary | null>(null);
   const [trend, setTrend] = useState<TrendRow[] | null>(null);
   const [hourlyByDate, setHourlyByDate] = useState<HourlyByDateRow[] | null>(null);
@@ -123,6 +136,10 @@ function InboundSlide({ from, to }: { from: string; to: string }) {
   }, [from, to]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    onData?.({ summary, trend, agents, hourlyByDate, selectedDate });
+  }, [summary, trend, agents, hourlyByDate, selectedDate, onData]);
 
   const dates = useMemo(() => [...new Set((hourlyByDate ?? []).map((r) => r.date))].sort(), [hourlyByDate]);
   const hours = useMemo(() => [...new Set((hourlyByDate ?? []).map((r) => r.hour))].sort((a, b) => a - b), [hourlyByDate]);
@@ -336,7 +353,7 @@ function InboundSlide({ from, to }: { from: string; to: string }) {
 }
 
 // ── Channels slide ───────────────────────────────────────────────────────
-function ChannelsSlide({ from, to }: { from: string; to: string }) {
+function ChannelsSlide({ from, to, onData }: { from: string; to: string; onData?: (d: ChannelsData | null) => void }) {
   const [data, setData] = useState<ChannelsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -357,6 +374,8 @@ function ChannelsSlide({ from, to }: { from: string; to: string }) {
   }, [from, to]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => { onData?.(data); }, [data, onData]);
 
   if (loading && !data) return <Spinner />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
@@ -509,8 +528,15 @@ function ChannelsSlide({ from, to }: { from: string; to: string }) {
   );
 }
 
+/** Snapshot of OverviewSlide's already-fetched data, lifted to the parent
+ * purely for the "Export" feature -- no new fetch, no new calculation. */
+export interface OverviewExportData {
+  summary: InboundSummary | null;
+  channels: ChannelsData | null;
+}
+
 // ── Overview slide ───────────────────────────────────────────────────────
-function OverviewSlide({ from, to }: { from: string; to: string }) {
+function OverviewSlide({ from, to, onData }: { from: string; to: string; onData?: (d: OverviewExportData) => void }) {
   const [summary, setSummary] = useState<InboundSummary | null>(null);
   const [channels, setChannels] = useState<ChannelsData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -535,6 +561,8 @@ function OverviewSlide({ from, to }: { from: string; to: string }) {
   }, [from, to]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => { onData?.({ summary, channels }); }, [summary, channels, onData]);
 
   if (loading && !summary) return <Spinner />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
@@ -578,16 +606,152 @@ function OverviewSlide({ from, to }: { from: string; to: string }) {
  * fabricated number.
  */
 export function CloviaDashboard() {
-  const [slide, setSlide] = useState<"overview" | "inbound" | "channels">("overview");
+  const [slide, setSlide] = useState<"overview" | "inbound" | "email" | "chat" | "outbound" | "channels">("overview");
   const defaultRange = currentMonthRange();
   const [from, setFrom] = useState(defaultRange.from);
   const [to, setTo] = useState(defaultRange.to);
+  const setRange = useCallback((f: string, t: string) => { setFrom(f); setTo(t); }, []);
 
   const tabs: Array<{ key: typeof slide; label: string; icon: React.ComponentType<{ className?: string }> }> = [
     { key: "overview", label: "Overview", icon: LayoutDashboard },
     { key: "inbound", label: "Inbound", icon: PhoneIncoming },
+    { key: "email", label: "Email", icon: Mail },
+    { key: "chat", label: "Chat", icon: MessageSquare },
+    { key: "outbound", label: "Outbound", icon: PhoneOutgoing },
     { key: "channels", label: "Channels", icon: Grid3x3 },
   ];
+
+  // ── Export: each slide component already fetches its own data; these
+  // snapshots are lifted up (via each slide's optional `onData` callback)
+  // purely so the shared DashboardExportMenu can mirror what's on screen.
+  // No new fetch, no new calculation -- see InboundSlide/ChannelsSlide/
+  // OverviewSlide's `onData` effects above.
+  const [overviewExport, setOverviewExport] = useState<OverviewExportData | null>(null);
+  const [inboundExport, setInboundExport] = useState<InboundExportData | null>(null);
+  const [channelsExport, setChannelsExport] = useState<ChannelsData | null>(null);
+  const handleOverviewData = useCallback((d: OverviewExportData) => setOverviewExport(d), []);
+  const handleInboundData = useCallback((d: InboundExportData) => setInboundExport(d), []);
+  const handleChannelsData = useCallback((d: ChannelsData | null) => setChannelsExport(d), []);
+
+  const exportSlides = useMemo<ExportSlide[]>(() => {
+    const overviewKpis = overviewExport?.summary && overviewExport?.channels
+      ? [
+        { label: "Inbound Offered", value: overviewExport.summary.total.toLocaleString("en-IN") },
+        { label: "Outbound Dialed", value: overviewExport.channels.outbound.totalCalls.toLocaleString("en-IN") },
+        { label: "Emails", value: overviewExport.channels.email.totalAssigned.toLocaleString("en-IN") },
+        { label: "Chats", value: overviewExport.channels.chat.totalChats.toLocaleString("en-IN") },
+        { label: "Feedback CSAT", value: overviewExport.channels.feedback.totalFeedback === 0 ? "—" : `${overviewExport.channels.feedback.csatPct}%` },
+        { label: "Quality Score", value: overviewExport.channels.quality.auditsCount === 0 ? "—" : `${overviewExport.channels.quality.avgScorePct}%` },
+        { label: "Agents (APR)", value: overviewExport.channels.productivity.agentCount === 0 ? "—" : String(overviewExport.channels.productivity.agentCount) },
+      ]
+      : [];
+    const overviewSlide: ExportSlide = { title: "Overview", kpis: overviewKpis };
+
+    const summary = inboundExport?.summary ?? null;
+    const trend = inboundExport?.trend ?? [];
+    const agentsList = inboundExport?.agents ?? [];
+    const hourlyByDate = inboundExport?.hourlyByDate ?? [];
+    const selectedDate = inboundExport?.selectedDate ?? "";
+    const dates = [...new Set(hourlyByDate.map((r) => r.date))].sort();
+    const hours = [...new Set(hourlyByDate.map((r) => r.hour))].sort((a, b) => a - b);
+    const cellByDateHour = new Map<string, HourlyByDateRow>();
+    for (const r of hourlyByDate) cellByDateHour.set(`${r.date}|${r.hour}`, r);
+    const slotRows = hourlyByDate.filter((r) => r.date === selectedDate).sort((a, b) => a.hour - b.hour);
+    const slotOffered = slotRows.reduce((s, r) => s + r.offered, 0);
+    const slotSlPct = slotOffered
+      ? Math.round((slotRows.reduce((s, r) => s + (r.sl_pct * r.offered) / 100, 0) / slotOffered) * 10000) / 100
+      : 0;
+    const inboundSlide: ExportSlide = {
+      title: "Inbound",
+      kpis: summary
+        ? [
+          { label: "Call Offered", value: summary.total.toLocaleString("en-IN") },
+          { label: "Call Answered", value: summary.answered.toLocaleString("en-IN") },
+          { label: "AL %", value: `${summary.ans_pct}%` },
+          { label: "Abandoned", value: `${summary.abandoned} (${summary.abandon_pct}%)` },
+          { label: "SL %", value: `${summary.sl_pct}%` },
+          { label: "ACHT", value: formatSecs(summary.avg_handle) },
+          { label: "Agents Logged In", value: String(summary.login_count) },
+          { label: "Unique Callers", value: summary.unique_phones.toLocaleString("en-IN") },
+        ]
+        : [],
+      tables: [
+        {
+          title: "Date-wise Call Performance",
+          columns: ["Date", "Offered", "Answered", "SL%", "ACHT"],
+          rows: trend.map((r) => {
+            const slPct = r.answered ? Math.round((r.sl_num / r.answered) * 10000) / 100 : 0;
+            return [formatShortDate(r.date), r.offered, r.answered, `${slPct}%`, formatSecs(r.acht)];
+          }),
+        },
+        {
+          title: `Slot-wise Performance (${selectedDate ? formatShortDate(selectedDate) : "—"})`,
+          columns: ["Hour", "Offered", "SL%", "ACHT"],
+          rows: [
+            ...slotRows.map((r) => [`${String(r.hour).padStart(2, "0")}:00`, r.offered, `${r.sl_pct}%`, formatSecs(r.acht)]),
+            ...(slotRows.length > 0 ? [["Total", slotOffered, `${slotSlPct}%`, "—"]] : []),
+          ],
+        },
+        {
+          title: "Hourly Call Volume (Offered) Heatmap",
+          columns: ["Hour", ...dates.map(formatShortDate)],
+          rows: hours.map((h) => [
+            `${String(h).padStart(2, "0")}:00`,
+            ...dates.map((d) => cellByDateHour.get(`${d}|${h}`)?.offered ?? 0),
+          ]),
+        },
+        {
+          title: `Agent-wise Performance (${agentsList.length} agents)`,
+          columns: ["Agent", "Agent ID", "Offered", "Answered", "SL%", "ACHT", "Repeat%"],
+          rows: agentsList.map((a) => [a.agentName, a.agentId, a.offered, a.answered, `${a.sl_pct}%`, formatSecs(a.acht), `${a.repeat_pct}%`]),
+        },
+      ],
+    };
+
+    const ch = channelsExport;
+    const channelsSlide: ExportSlide = {
+      title: "Channels",
+      kpis: ch
+        ? [
+          { label: "Outbound – Dialed", value: ch.outbound.totalCalls.toLocaleString("en-IN") },
+          { label: "Outbound – Connected", value: ch.outbound.connectedCalls.toLocaleString("en-IN") },
+          { label: "Outbound – Connected%", value: `${ch.outbound.connectedPct}%` },
+          { label: "Outbound – Avg Talk", value: formatSecs(ch.outbound.avgTalkSec) },
+          { label: "Email – Assigned", value: String(ch.email.totalAssigned) },
+          { label: "Email – Closed", value: String(ch.email.closed) },
+          { label: "Email – Open", value: String(ch.email.open) },
+          { label: "Email – In Process", value: String(ch.email.inProcess) },
+          { label: "Email – Re-open", value: String(ch.email.reOpen) },
+          { label: "Email – Junk", value: String(ch.email.junk) },
+          { label: "Chat – Chats", value: String(ch.chat.totalChats) },
+          { label: "Chat – Avg Duration", value: formatSecs(ch.chat.avgChatDurationSec) },
+          { label: "Chat – Resolved%", value: `${ch.chat.csatPct}%` },
+          { label: "Feedback – Feedback", value: String(ch.feedback.totalFeedback) },
+          { label: "Feedback – C-SAT%", value: `${ch.feedback.csatPct}%` },
+          { label: "Feedback – D-SAT%", value: `${ch.feedback.dsatPct}%` },
+          { label: "Quality Audit – Audits", value: String(ch.quality.auditsCount) },
+          { label: "Quality Audit – Avg Score", value: `${ch.quality.avgScorePct}%` },
+          { label: "Quality Audit – Fatal", value: String(ch.quality.fatalCount) },
+          { label: "Productivity (APR) – Agents", value: String(ch.productivity.agentCount) },
+          { label: "Productivity (APR) – Utilization", value: `${ch.productivity.avgUtilizationPct}%` },
+          { label: "Productivity (APR) – Present Days", value: String(ch.productivity.presentDays) },
+          { label: "Disposition/FTR – Tickets", value: ch.disposition.totalTickets.toLocaleString("en-IN") },
+          { label: "Disposition/FTR – FTR%", value: `${ch.disposition.ftrPct}%` },
+          { label: "Disposition/FTR – FTR Count", value: ch.disposition.ftrCount.toLocaleString("en-IN") },
+          { label: "Rechurn Calls – Total Calls", value: String(ch.rechurn.totalCalls) },
+          { label: "Rechurn Calls – Abandoned", value: String(ch.rechurn.abandonedCount) },
+        ]
+        : [],
+      tables: ch
+        ? [
+          { title: "Disposition – Top Reasons", columns: ["Reason", "Count"], rows: ch.disposition.topReasons.map((r) => [r.reason, r.count]) },
+          { title: "Rechurn – By Status", columns: ["Status", "Count"], rows: ch.rechurn.byStatus.map((r) => [r.status, r.count]) },
+        ]
+        : [],
+    };
+
+    return [overviewSlide, inboundSlide, channelsSlide];
+  }, [overviewExport, inboundExport, channelsExport]);
 
   return (
     <div className="space-y-5">
@@ -633,9 +797,47 @@ export function CloviaDashboard() {
         </div>
       </div>
 
-      {slide === "overview" && <OverviewSlide from={from} to={to} />}
-      {slide === "inbound" && <InboundSlide from={from} to={to} />}
-      {slide === "channels" && <ChannelsSlide from={from} to={to} />}
+      {/* The Overview, Inbound, Email, Chat and Outbound slides carry their own export menu (Value + week +
+          date columns); this shell menu serves the earlier Channels slide and the Classic inbound view. */}
+      {(() => {
+        const menu = (title: string) => (
+          <div className="flex justify-end">
+            <DashboardExportMenu
+              reportTitle="Clovia — Process Performance"
+              fileBaseName="Clovia_Dashboard"
+              raw={{ dashboard: "clovia", from, to }}
+              subtitle={`${from} to ${to}`}
+              slides={exportSlides}
+              activeSlideTitle={title}
+            />
+          </div>
+        );
+        return (
+          <>
+            {slide === "overview" && (
+              <div className="space-y-5">
+                <OverviewSlide from={from} to={to} onData={handleOverviewData} />
+                <CloviaLobSlide lob="overview" from={from} to={to} onRangeChange={setRange} hideHero />
+              </div>
+            )}
+            {slide === "inbound" && (
+              <CloviaInboundSlide
+                from={from} to={to} onRangeChange={setRange}
+                classic={<div className="space-y-5">{menu("Inbound")}<InboundSlide from={from} to={to} onData={handleInboundData} /></div>}
+              />
+            )}
+            {slide === "email" && <CloviaLobSlide lob="email" from={from} to={to} onRangeChange={setRange} />}
+            {slide === "chat" && <CloviaLobSlide lob="chat" from={from} to={to} onRangeChange={setRange} />}
+            {slide === "outbound" && <CloviaLobSlide lob="outbound" from={from} to={to} onRangeChange={setRange} />}
+            {slide === "channels" && (
+              <div className="space-y-5">
+                {menu("Channels")}
+                <ChannelsSlide from={from} to={to} onData={handleChannelsData} />
+              </div>
+            )}
+          </>
+        );
+      })()}
     </div>
   );
 }

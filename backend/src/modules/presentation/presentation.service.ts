@@ -107,7 +107,6 @@ export const presentationService = {
     const clientName = await getClientName(clientId)
 
     // Fetch all data in parallel — failures return null (graceful degradation)
-    const overviewPromise = portalOverviewService.getOverview(processIds)
     const perProcessPromises = processIds.map(pid =>
       Promise.all([
         safeGet(() => portalAttritionService.getAttrition(pid, period, processIds)),
@@ -118,11 +117,11 @@ export const presentationService = {
     )
 
     const [processCards, ...perProcessData] = await Promise.all([
-      overviewPromise,
+      safeGet(() => portalOverviewService.getOverview(processIds)),
       ...perProcessPromises,
-    ]) as [ProcessCard[], ...Array<[any, any, any, any]>]
+    ]) as [ProcessCard[] | null, ...Array<[any, any, any, any]>]
 
-    if (!processCards.length) {
+    if (!processCards?.length) {
       throw Object.assign(new Error('No portal data found for the selected period'), { status: 422 })
     }
 

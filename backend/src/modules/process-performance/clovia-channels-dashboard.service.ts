@@ -258,7 +258,7 @@ async function getProductivityChannel(from: string, to: string): Promise<Product
   const [[totals]] = await db.execute<any[]>(
     `SELECT
        COUNT(DISTINCT mas_id) AS agentCount,
-       COALESCE(SUM(CAST(attendance AS UNSIGNED)),0) AS presentDays,
+       COALESCE(SUM(CAST(attendance AS DECIMAL(4,1))),0) AS presentDays,
        COALESCE(SUM(TIME_TO_SEC(actual_login_hrs)),0) AS totalLoginSeconds,
        COALESCE(AVG(CAST(REPLACE(utilization,'%','') AS DECIMAL(6,2))),0) AS avgUtilizationPct,
        COALESCE(SUM(CAST(total_calls AS UNSIGNED)),0) AS totalCallsLogged
