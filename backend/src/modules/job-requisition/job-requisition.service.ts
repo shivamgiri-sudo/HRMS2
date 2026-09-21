@@ -114,12 +114,40 @@ import { templateService } from "../communication/template.service.js";
 import { env } from "../../config/env.js";
 import { getConfiguredRecipients } from "../it-provisioning/notification-recipients.service.js";
 
-function generateRequisitionCode(): string {
-  const now = new Date();
-  const year = now.getFullYear().toString().slice(-2);
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-  return `REQ-${year}${month}-${random}`;
+function abbreviate(name: string | null | undefined, maxLen = 12): string {
+  if (!name) return "UNK";
+  // Keep only first word, strip non-alphanumeric, title-case
+  const word = name.trim().split(/[\s/_\-]+/)[0]!;
+  const clean = word.replace(/[^a-zA-Z0-9]/g, "");
+  return clean.slice(0, maxLen);
+}
+
+async function generateRequisitionCode(
+  branchId: string | null | undefined,
+  branchName: string | null | undefined,
+  processId: string | null | undefined,
+  processName: string | null | undefined,
+): Promise<string> {
+  const bAbbr = abbreviate(branchName);
+  const pAbbr = abbreviate(processName);
+
+  // Count existing JRs for this branch+process combination to derive sequence
+  let seq = 1;
+  try {
+    const whereClause = branchId && processId
+      ? "branch_id = ? AND process_id = ?"
+      : "branch_name = ? AND process_name = ?";
+    const params = branchId && processId ? [branchId, processId] : [branchName ?? "", processName ?? ""];
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM job_requisition WHERE ${whereClause}`,
+      params
+    );
+    seq = ((rows[0]?.cnt as number) ?? 0) + 1;
+  } catch {
+    // fallback to random suffix if DB count fails
+    return `${bAbbr}-${pAbbr}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
+  }
+  return `${bAbbr}-${pAbbr}-${seq}`;
 }
 
 /**
@@ -521,7 +549,12 @@ export const jobRequisitionService = {
     requestedByName: string | null
   ): Promise<JobRequisition> {
     const id = randomUUID();
-    const code = generateRequisitionCode();
+    const code = await generateRequisitionCode(
+      input.branch_id,
+      input.branch_name,
+      input.process_id,
+      input.process_name,
+    );
 
     const preferredSourcesJson = input.preferred_sources
       ? JSON.stringify(input.preferred_sources)

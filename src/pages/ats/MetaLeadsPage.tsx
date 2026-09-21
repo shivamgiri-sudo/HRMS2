@@ -466,12 +466,25 @@ export default function MetaLeadsPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1080px] border-collapse text-sm">
+              <table className="w-full min-w-[1320px] border-collapse text-sm">
                 <thead className="sticky top-0 z-10 bg-slate-50 text-left">
                   <tr className="border-b border-slate-200">
-                    {["Lead", "Age", "Location", "Education / Exp", "Screening", "Requisition", "Source Form", "ATS", "Received"].map((h) => (
-                      <th key={h} className="px-3 py-3 text-xs font-bold uppercase tracking-wider text-slate-500">
-                        {h}
+                    {[
+                      { label: "Name", w: "w-40" },
+                      { label: "Phone", w: "w-32" },
+                      { label: "Email", w: "w-44" },
+                      { label: "Age", w: "w-14" },
+                      { label: "Location", w: "w-28" },
+                      { label: "Education", w: "w-28" },
+                      { label: "Exp", w: "w-16" },
+                      { label: "Screening", w: "w-32" },
+                      { label: "Requisition", w: "w-36" },
+                      { label: "Campaign", w: "w-44" },
+                      { label: "ATS", w: "w-24" },
+                      { label: "Received", w: "w-32" },
+                    ].map(({ label, w }) => (
+                      <th key={label} className={`px-3 py-3 text-xs font-bold uppercase tracking-wider text-slate-500 ${w}`}>
+                        {label}
                       </th>
                     ))}
                   </tr>
@@ -483,18 +496,15 @@ export default function MetaLeadsPage() {
                       onClick={() => void openLead(l)}
                       className="cursor-pointer border-b border-slate-100 last:border-0 hover:bg-blue-50/60"
                     >
+                      {/* Name */}
                       <td className="px-3 py-2.5">
-                        <div className="flex items-start gap-2">
-                          <div className="min-w-0">
-                            <div className="text-sm font-semibold text-slate-900">{l.parsedName ?? "—"}</div>
-                            <div className="text-xs text-slate-500">{l.parsedPhone ?? "no phone"}</div>
-                            {l.parsedEmail && <div className="text-xs text-slate-400">{l.parsedEmail}</div>}
-                          </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold text-slate-900">{l.parsedName ?? "—"}</span>
                           {l.unreadMessageCount > 0 && (
                             <a
                               href="/ats/whatsapp-inbox"
                               onClick={(e) => e.stopPropagation()}
-                              className="mt-0.5 flex flex-shrink-0 items-center gap-1 rounded-full bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-emerald-600"
+                              className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-emerald-600"
                               title={`${l.unreadMessageCount} unread WhatsApp message${l.unreadMessageCount > 1 ? "s" : ""}`}
                             >
                               <MessageCircle className="h-2.5 w-2.5" />
@@ -503,13 +513,35 @@ export default function MetaLeadsPage() {
                           )}
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 text-sm text-slate-600">{l.parsedAge != null ? `${l.parsedAge}` : "—"}</td>
+                      {/* Phone */}
+                      <td className="px-3 py-2.5">
+                        {l.parsedPhone ? (
+                          <a href={`tel:${l.parsedPhone}`} onClick={(e) => e.stopPropagation()}
+                            className="flex items-center gap-1 text-sm text-blue-700 hover:underline">
+                            <Phone className="h-3 w-3 shrink-0" />{l.parsedPhone}
+                          </a>
+                        ) : <span className="text-slate-400">—</span>}
+                      </td>
+                      {/* Email */}
+                      <td className="max-w-[170px] px-3 py-2.5">
+                        {l.parsedEmail ? (
+                          <a href={`mailto:${l.parsedEmail}`} onClick={(e) => e.stopPropagation()}
+                            className="flex items-center gap-1 text-sm text-blue-700 hover:underline"
+                            title={l.parsedEmail}>
+                            <Mail className="h-3 w-3 shrink-0" />
+                            <span className="truncate">{l.parsedEmail}</span>
+                          </a>
+                        ) : <span className="text-slate-400">—</span>}
+                      </td>
+                      {/* Age */}
+                      <td className="px-3 py-2.5 text-sm text-slate-600">{l.parsedAge != null ? `${l.parsedAge} yr` : "—"}</td>
+                      {/* Location */}
                       <td className="px-3 py-2.5 text-sm text-slate-600">{l.parsedLocation ?? "—"}</td>
+                      {/* Education */}
+                      <td className="px-3 py-2.5 text-sm text-slate-600">{l.parsedEducation ?? "—"}</td>
+                      {/* Exp */}
                       <td className="px-3 py-2.5 text-sm text-slate-600">
-                        <div>{l.parsedEducation ?? "—"}</div>
-                        <div className="text-xs text-slate-400">
-                          {l.parsedExperienceYr != null ? `${l.parsedExperienceYr} yrs exp` : "exp —"}
-                        </div>
+                        {l.parsedExperienceYr != null ? `${l.parsedExperienceYr} yr` : "—"}
                       </td>
                       <td className="px-3 py-2.5">
                         <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-bold ${SCREENING_BADGE[l.screeningResult]}`}>
