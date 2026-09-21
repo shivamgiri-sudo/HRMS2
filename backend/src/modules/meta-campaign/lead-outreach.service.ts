@@ -29,6 +29,9 @@ import { providerFactory } from '../communication/providers/provider.factory.js'
 import { providerConfigService } from '../communication/provider-config.service.js';
 import { emailService } from '../communication/email.service.js';
 import { triggerVoiceCall, isVoicebotConfigured } from './voicebot.provider.js';
+import { triggerVapiCallWithInlineScript, isVapiConfigured } from './vapi-voicebot.provider.js';
+import { sendWhatsAppNotification, isWhatsAppWebConfigured } from './whatsapp-web.provider.js';
+import { sendShortlistMessage, isWassengerConfigured } from './wassenger.provider.js';
 
 export interface OutreachOutcome {
   leadId: string;
@@ -173,14 +176,90 @@ export async function notifyQualifiedLead(leadId: string, options: { force?: boo
     }
   }
 
+  // ── Wassenger WhatsApp fallback (hosted, preferred) ──
+  // If the primary provider failed/unconfigured, use Wassenger hosted gateway.
+  // Wassenger is preferred over self-hosted whatsapp-web.js — no puppeteer, no QR on server,
+  // and it supports inbound message webhooks for walk-in confirmation replies.
+  if (
+    ctx.phone &&
+    !outcome.succeeded.includes('whatsapp') &&
+    isWassengerConfigured()
+  ) {
+    outcome.attempted.push('whatsapp_wassenger');
+    try {
+      const res = await sendShortlistMessage(
+        ctx.phone,
+        ctx.name,
+        ctx.designation,
+        ctx.branch,
+        ctx.id
+      );
+      if (res.success) {
+        outcome.succeeded.push('whatsapp_wassenger');
+      } else {
+        outcome.failed.push({ channel: 'whatsapp_wassenger', error: res.error ?? 'unknown error' });
+      }
+    } catch (err) {
+      outcome.failed.push({ channel: 'whatsapp_wassenger', error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  // ── WhatsApp Web fallback (self-hosted, last resort) ──
+  // If neither primary nor Wassenger worked, try the self-hosted whatsapp-web.js session.
+  if (
+    ctx.phone &&
+    !outcome.succeeded.includes('whatsapp') &&
+    !outcome.succeeded.includes('whatsapp_wassenger') &&
+    isWhatsAppWebConfigured()
+  ) {
+    outcome.attempted.push('whatsapp_web');
+    try {
+      const res = await sendWhatsAppNotification(
+        ctx.phone,
+        ctx.name,
+        ctx.designation,
+        ctx.branch,
+        ctx.id
+      );
+      if (res.success) {
+        outcome.succeeded.push('whatsapp_web');
+      } else {
+        outcome.failed.push({ channel: 'whatsapp_web', error: res.error ?? 'unknown error' });
+      }
+    } catch (err) {
+      outcome.failed.push({ channel: 'whatsapp_web', error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
   // ── Voice bot ──
-  // Fires AFTER the text channels on purpose: a candidate who gets a call with no prior written
-  // context is far more likely to treat it as a spam call.
+  // Fires AFTER the text channels: a candidate who gets a call with no prior written context
+  // is far more likely to treat it as spam. Priority: Vapi.ai (AI conversation, Hindi/English)
+  // → legacy VOICEBOT_TRIGGER_URL (simple HTTP trigger).
   if (!ctx.phone) {
     outcome.skipped.push({ channel: 'voice', reason: 'Lead has no phone number' });
-  } else if (!isVoicebotConfigured()) {
-    outcome.skipped.push({ channel: 'voice', reason: 'VOICEBOT_TRIGGER_URL is not configured' });
-  } else {
+  } else if (isVapiConfigured()) {
+    outcome.attempted.push('voice');
+    const res = await triggerVapiCallWithInlineScript({
+      phone: ctx.phone,
+      name: ctx.name,
+      designation: ctx.designation,
+      branch: ctx.branch,
+      referenceId: ctx.id,
+    });
+    if (res.status === 'triggered') {
+      outcome.succeeded.push('voice');
+      await db.execute(
+        `UPDATE meta_lead_raw SET voice_call_status = 'triggered', voice_called_at = NOW() WHERE id = ?`,
+        [ctx.id]
+      );
+    } else {
+      outcome.failed.push({ channel: 'voice', error: res.detail ?? res.status });
+      await db.execute(
+        `UPDATE meta_lead_raw SET voice_call_status = ?, voice_call_outcome = ? WHERE id = ?`,
+        [res.status, res.detail, ctx.id]
+      );
+    }
+  } else if (isVoicebotConfigured()) {
     outcome.attempted.push('voice');
     const res = await triggerVoiceCall({ phone: ctx.phone, name: ctx.name, referenceId: ctx.id });
     if (res.status === 'triggered') {
@@ -196,6 +275,8 @@ export async function notifyQualifiedLead(leadId: string, options: { force?: boo
         [res.status, res.detail, ctx.id]
       );
     }
+  } else {
+    outcome.skipped.push({ channel: 'voice', reason: 'No voice provider configured (VAPI_API_KEY or VOICEBOT_TRIGGER_URL)' });
   }
 
   // Only stamp notification_sent_at when a channel genuinely landed. The dashboard's "Notified"
@@ -208,6 +289,46 @@ export async function notifyQualifiedLead(leadId: string, options: { force?: boo
   }
 
   return outcome;
+}
+
+/**
+ * Record a walk-in confirmation reply received via WhatsApp (Wassenger webhook).
+ *
+ * Looks up the lead by phone, updates walkin_confirmed column (or notes reschedule/not_interested).
+ * Returns true if a lead was found and updated.
+ */
+export async function recordWalkInConfirmation(
+  phone: string,
+  reply: 'confirmed' | 'reschedule' | 'not_interested' | 'unknown'
+): Promise<{ found: boolean; leadId: string | null; name: string | null }> {
+  // Normalise phone: strip country code prefix and non-digits, keep 10-digit Indian mobile
+  const digits = phone.replace(/\D/g, '');
+  const mobile = digits.length > 10 ? digits.slice(-10) : digits;
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, parsed_name FROM meta_lead_raw
+      WHERE RIGHT(REPLACE(parsed_phone, '+', ''), 10) = ?
+      ORDER BY created_at DESC LIMIT 1`,
+    [mobile]
+  );
+
+  const row = rows[0];
+  if (!row) return { found: false, leadId: null, name: null };
+
+  const statusCol =
+    reply === 'confirmed' ? 'walkin_confirmed'
+    : reply === 'reschedule' ? 'walkin_reschedule_requested'
+    : reply === 'not_interested' ? 'walkin_declined'
+    : null;
+
+  if (statusCol) {
+    await db.execute(
+      `UPDATE meta_lead_raw SET ${statusCol} = 1, walkin_reply_at = NOW(), walkin_reply = ? WHERE id = ?`,
+      [reply, row.id]
+    );
+  }
+
+  return { found: true, leadId: String(row.id), name: (row.parsed_name as string | null) ?? 'Candidate' };
 }
 
 /** Record a voice-bot callback outcome against the lead it referenced. */

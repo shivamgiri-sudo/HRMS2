@@ -23,10 +23,16 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { metaCampaignService } from './meta-campaign.service.js';
-import { notifyQualifiedLead, recordVoiceCallback } from './lead-outreach.service.js';
+import { notifyQualifiedLead, recordVoiceCallback, recordWalkInConfirmation } from './lead-outreach.service.js';
 import { leadVerifyToken, isMetaConfigured } from './meta-api.client.js';
 import { parseVapiCallback, isVapiConfigured } from './vapi-voicebot.provider.js';
 import type { VapiCallbackPayload } from './vapi-voicebot.provider.js';
+import {
+  isWassengerConfigured,
+  parseWassengerWebhook,
+  sendConfirmationAck,
+} from './wassenger.provider.js';
+import type { WassengerWebhookPayload } from './wassenger.provider.js';
 import type { MetaCampaignStatus, MetaWebhookLeadPayload } from './meta-campaign.types.js';
 
 export const metaCampaignRouter = Router();
@@ -243,6 +249,62 @@ metaCampaignRouter.post('/vapi-callback', (req: Request, res: Response) => {
   return res.status(200).json({ success: true });
 });
 
+// ─────────────────────────── Wassenger WhatsApp webhook ───────────────────────────
+
+/**
+ * Wassenger sends a POST here for every incoming WhatsApp message on the connected device.
+ * We use it to capture walk-in confirmation replies (1 = confirm, 2 = reschedule, 3 = decline).
+ *
+ * Security: Wassenger supports a webhook secret header (X-Wassenger-Secret). If
+ *   WASSENGER_WEBHOOK_SECRET is set we verify it; otherwise we accept all (suitable for private
+ *   server without public exposure, but set the secret in production).
+ */
+metaCampaignRouter.post('/wassenger-webhook', (req: Request, res: Response) => {
+  // Optional webhook secret check
+  const webhookSecret = process.env.WASSENGER_WEBHOOK_SECRET ?? '';
+  if (webhookSecret) {
+    const supplied = String(req.header('x-wassenger-secret') ?? req.header('x-api-key') ?? '');
+    const a = Buffer.from(supplied);
+    const b = Buffer.from(webhookSecret);
+    if (a.length === 0 || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      return res.status(403).json({ success: false, message: 'invalid webhook secret' });
+    }
+  }
+
+  if (!isWassengerConfigured()) {
+    return res.status(503).json({ success: false, message: 'Wassenger not configured' });
+  }
+
+  const payload = req.body as WassengerWebhookPayload;
+  const { isIncoming, phone, reply } = parseWassengerWebhook(payload);
+
+  if (!isIncoming || !phone || reply === 'unknown') {
+    // Not an actionable candidate reply — ack and ignore
+    return res.status(200).json({ success: true, action: 'ignored' });
+  }
+
+  // Fire-and-forget: update lead + send ack (we must return 200 fast for Wassenger)
+  void (async () => {
+    try {
+      const result = await recordWalkInConfirmation(phone, reply);
+      if (result.found && result.name) {
+        await sendConfirmationAck(phone, reply, result.name);
+        console.log('[wassenger-webhook] walk-in reply recorded', {
+          phone,
+          reply,
+          leadId: result.leadId,
+        });
+      } else {
+        console.warn('[wassenger-webhook] incoming reply but no matching lead for phone', phone);
+      }
+    } catch (e: unknown) {
+      console.error('[wassenger-webhook] processing failed', e instanceof Error ? e.message : e);
+    }
+  })();
+
+  return res.status(200).json({ success: true });
+});
+
 // ─────────────────────────── authenticated API ───────────────────────────
 
 metaCampaignRouter.get(
@@ -267,6 +329,8 @@ metaCampaignRouter.get(
         webhookVerifyTokenConfigured: Boolean(process.env.META_LEAD_VERIFY_TOKEN),
         webhookSignatureConfigured: Boolean(process.env.META_APP_SECRET),
         whatsappConfigured: Boolean(process.env.LOCAL_WHATSAPP_API_URL),
+        wassengerConfigured: isWassengerConfigured(),
+        whatsappWebConfigured: Boolean(process.env.ENABLE_WHATSAPP_WEB),
         voicebotConfigured: Boolean(process.env.VOICEBOT_TRIGGER_URL),
         vapiConfigured: isVapiConfigured(),
       },
