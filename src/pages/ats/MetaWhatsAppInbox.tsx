@@ -231,7 +231,7 @@ export function MetaWhatsAppInbox() {
     try {
       const params = search ? `?search=${encodeURIComponent(search)}` : "";
       const res = await hrmsApi.get(`/meta/inbox${params}`);
-      setConversations(res.data.data ?? []);
+      setConversations(res.data ?? []);
     } catch { /* keep stale */ } finally {
       setLoadingList(false);
     }
@@ -241,7 +241,7 @@ export function MetaWhatsAppInbox() {
     setLoadingThread(true);
     try {
       const res = await hrmsApi.get(`/meta/leads/${leadId}/messages`);
-      setMessages(res.data.data ?? []);
+      setMessages(res.data ?? []);
       await hrmsApi.patch(`/meta/leads/${leadId}/messages/read`).catch(() => {});
       setConversations((prev) =>
         prev.map((c) => (c.leadId === leadId ? { ...c, unreadCount: 0 } : c))
