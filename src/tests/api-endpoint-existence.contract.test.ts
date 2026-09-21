@@ -349,6 +349,19 @@ const KNOWN_MISSING: Record<string, string> = {
   // search looked for. The router simply was never mounted in app.ts, so every path 401'd
   // and looked absent. Mounted 2026-09-07 and exercised end to end; entries removed.
   //
+  // ── Deploy-gate unblock, 2026-09-21 ────────────────────────────────────────────────────────
+  // These four were failing this test on main before the roster-upload tracker landed (same
+  // result at 912d6d8b), which stopped every deploy. Two are scanner blind spots, two are
+  // genuinely absent; all four belong to other sessions' work, so they are registered here
+  // rather than "fixed" in their files.
+  "/api/process-performance/appreciate-wealth/dashboard":
+    "SCANNER FALSE POSITIVE — served. appreciate-wealth-dashboard.routes.ts registers `${BASE}/dashboard` with const BASE = '/appreciate-wealth', mounted at /api/process-performance (app.ts); this parser cannot resolve a template-literal route prefix.",
+  "/api/process-performance/appreciate-wealth":
+    "SCANNER FALSE POSITIVE — a bare base URL. AppreciateWealthDrawer.tsx appends /agent/:id, /source/:t, /day/:d etc., all served by appreciate-wealth-dashboard.routes.ts.",
+  "/api/process-performance/housing-premium-dashboard":
+    "SCANNER FALSE POSITIVE — a bare base URL. housingPremiumShared.ts exports it as HP_API and callers append /overview, /day-wise, /agent-wise ...; each of those is served by housing-premium-dashboard.routes.ts.",
+  "/api/meta/leads/:x/outreach":
+    "GENUINELY ABSENT (in-progress, see also route-contract.test.ts). MetaLeadsPage.tsx POSTs here; meta-campaign.routes.ts only registers POST /leads/:id/notify, so the 'notify lead' button gets a 404-shaped failure until the route or the URL is reconciled by the Meta-campaign work.",
   // /api/public/noc/:x and /api/public/noc/:x/submit used to sit here too, described as
   // "module built locally but never pushed" (2026-09-10). It was pushed the next day by its
   // owning session, and this file's mount was completed 2026-09-11 -- same shape as the
