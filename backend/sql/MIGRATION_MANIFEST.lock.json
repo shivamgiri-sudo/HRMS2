@@ -866,7 +866,8 @@
     "1825_mcn_content_builder_request.sql",
     "1826_meta_lead_walkin_reply_columns.sql",
     "1827_meta_lead_messages.sql",
-    "1828_receipt_receivable_ledger_heads.sql"
+    "1828_receipt_receivable_ledger_heads.sql",
+    "1829_jr_meta_screening_config.sql"
   ],
   "approvedDeletions": [
     {
