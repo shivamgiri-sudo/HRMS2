@@ -1030,6 +1030,8 @@
     "1767_onfido_external_audit_add_total_columns.sql",
     "1788_gnc_sale_order_id_unique.sql",
     "1831_meta_lead_interview_slot.sql",
+    "1832_attendance_mismatch_escalation.sql",
+    "1833_adr_open_mismatch_queue_indexes.sql",
     "204_personal_contact_fields.sql",
     "205_branch_alias_examples.sql",
     "206_ats_recruiter_contact_details.sql",

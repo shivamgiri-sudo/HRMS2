@@ -1155,27 +1155,39 @@ export async function approve(employeeId: string, actorUserId: string) {
     }).catch((e) => console.warn('[payroll-head-review] approve notify employee failed:', e))] : []),
   ]);
 
-  // Release the joining kit this approval was blocking (2026-08-27).
+  // Generate EMPLOYMENT_CONTRACT and release joining kit after approval (2026-09-21).
   //
-  // dispatchJoiningKit refuses to send while employee_payroll_head_review.status is not
-  // 'approved' — deliberately, because the contract appendix prints the final remuneration
-  // and must not be signed before salary is settled. But nothing ever re-ran dispatch once
-  // that gate opened. All three dispatch call sites (ats.convert, the creation orchestrator,
-  // and the manual send route) fire at or before employee creation, and no cron retries a
-  // blocked kit — so every kit blocked with 'payroll_head_not_approved' sat there
-  // permanently, and releasing it meant HR pressing "Send for eSign" once per employee.
-  // Approving a batch of salaries therefore appeared to dispatch nothing at all.
+  // autoGenerateJoiningDocuments deliberately skips EMPLOYMENT_CONTRACT at employee creation
+  // because the contract appendix prints the final remuneration from the approved package,
+  // which doesn't exist until this approval. Generating it earlier would bake in
+  // employee_salary_snapshot.gross (take-home + deductions) instead of the approved CTC.
   //
-  // Fire-and-forget and non-fatal, matching employee-creation-orchestrator's own call: an
-  // approval that is already committed above must not fail because an email provider is
-  // down. queueJoiningKit reuses the employee's existing open kit rather than opening a
-  // second one, so this cannot duplicate a kit or regenerate drafts on one already in
-  // flight. Every other block (hr_fill_pending, per_document_flow_active, no_documents)
-  // still applies — this only removes the one that approval itself just cleared.
+  // dispatchJoiningKit then releases the kit that approval was blocking. It refuses to send
+  // while employee_payroll_head_review.status is not 'approved' — deliberately, because the
+  // contract must not be signed before salary is settled.
   //
-  // Imported dynamically to keep the employees module out of this file's static graph,
-  // matching employeeJoiningDocuments.service.ts's own late import of the same module.
+  // Both steps run sequentially in one fire-and-forget block so the contract is generated
+  // before kit dispatch. The approval is already committed above, so failures here must not
+  // fail the approval itself. If contract generation fails, kit dispatch will block on
+  // 'draft_missing' and HR can regenerate manually.
+  //
+  // Imported dynamically to keep the employees module out of this file's static graph.
   void (async () => {
+    // Step 1: Generate EMPLOYMENT_CONTRACT with the approved package CTC
+    try {
+      const { generateEmploymentContractForEmployee } =
+        await import("../employees/employeeJoiningDocuments.service.js");
+      await generateEmploymentContractForEmployee(employeeId, actorUserId);
+      console.log('[payroll-head-review] EMPLOYMENT_CONTRACT generated after approval:', { employeeId });
+    } catch (e) {
+      console.error('[payroll-head-review] EMPLOYMENT_CONTRACT generation failed:', {
+        employeeId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+      // Continue to kit dispatch — it will block with 'draft_missing' if needed
+    }
+
+    // Step 2: Release the joining kit
     try {
       const { queueJoiningKit, dispatchJoiningKit } =
         await import("../employees/joiningKitDispatch.service.js");

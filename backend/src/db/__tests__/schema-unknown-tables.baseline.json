@@ -22,6 +22,9 @@
   "modules/finance/tally-export.service.ts": [
     "journal_entry_line"
   ],
+  "modules/wfm/mismatch-escalation.service.ts": [
+    "attendance_mismatch_escalation"
+  ],
   "modules/salary-dispute/salary-dispute.service.ts": [
     "email_queue",
     "salary_dispute_attachment",

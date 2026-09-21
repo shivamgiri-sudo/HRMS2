@@ -2648,7 +2648,17 @@ export async function autoGenerateJoiningDocuments(
   );
 
   let generated = 0;
+  let skippedForPayrollApproval = 0;
   for (const row of checklistRows as RowDataPacket[]) {
+    // EMPLOYMENT_CONTRACT must wait for payroll head approval — it prints the final
+    // remuneration from the approved salary package, which doesn't exist yet at
+    // employee creation time. Generating it now would bake in employee_salary_snapshot.gross
+    // (take-home + deductions) instead of the approved CTC. The payroll head approval
+    // flow triggers generation of this document when the package is finalized.
+    if (row.document_code === 'EMPLOYMENT_CONTRACT') {
+      skippedForPayrollApproval++;
+      continue;
+    }
     try {
       await generateChecklistDraft(String(row.checklist_id), actorUserId);
       generated++;
@@ -2668,5 +2678,46 @@ export async function autoGenerateJoiningDocuments(
     employeeId,
     totalChecklist: checklistRows.length,
     draftsGenerated: generated,
+    skippedForPayrollApproval,
   });
+}
+
+/**
+ * Generates the EMPLOYMENT_CONTRACT document for an employee after payroll head approval.
+ *
+ * autoGenerateJoiningDocuments deliberately skips EMPLOYMENT_CONTRACT at employee creation
+ * because the contract appendix prints the final remuneration from the approved salary
+ * package, which doesn't exist until the payroll head assigns a package. This function is
+ * called from payroll-head-review.service.ts when the package is approved.
+ *
+ * If the checklist item doesn't exist (template disabled, employee created before checklist
+ * was set up), this function does nothing — the kit will proceed without the contract, and
+ * HR can add it manually if needed.
+ */
+export async function generateEmploymentContractForEmployee(
+  employeeId: string,
+  actorUserId: string,
+): Promise<{ generated: boolean; checklistId: string | null }> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT c.id AS checklist_id
+       FROM employee_joining_document_checklist c
+       JOIN employee_joining_document_template t ON t.id = c.template_id
+      WHERE c.employee_id = ?
+        AND c.document_code = 'EMPLOYMENT_CONTRACT'
+        AND t.template_storage_path IS NOT NULL
+        AND t.active_status = 1
+      LIMIT 1`,
+    [employeeId],
+  );
+
+  const checklistId = rows[0]?.checklist_id ? String(rows[0].checklist_id) : null;
+  if (!checklistId) {
+    console.log('[generateEmploymentContractForEmployee] No EMPLOYMENT_CONTRACT checklist item found:', { employeeId });
+    return { generated: false, checklistId: null };
+  }
+
+  await generateChecklistDraft(checklistId, actorUserId);
+  await recalculateDocumentProgress(employeeId);
+
+  return { generated: true, checklistId };
 }
