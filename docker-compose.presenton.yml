@@ -1,21 +1,26 @@
 # docker-compose.presenton.yml
 # Run with: docker compose -f docker-compose.presenton.yml up -d
-# Presenton runs on loopback only — never expose port 8000 to the internet.
-version: "3.8"
+# Presenton runs on loopback only — never expose to the internet.
+#
+# Presenton is built from source (no pre-built image on Docker Hub).
+# Clone https://github.com/Presenton/presenton to /opt/presenton first.
 
 services:
   presenton:
-    image: presenton/presenton:latest
+    build:
+      context: /opt/presenton
+      dockerfile: Dockerfile
     container_name: hrms_presenton
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8000:80"
     environment:
-      - DISABLE_AUTH=true
+      - PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+      - MIGRATE_DATABASE_ON_STARTUP=true
+      - PRESENTATION_GENERATION_MODE=both
       - LLM=ollama
-      - OLLAMA_URL=http://host.docker.internal:11434
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - OLLAMA_MODEL=${PRESENTON_OLLAMA_MODEL:-llama3.2}
-      - APP_DATA_DIR=/app_data
     volumes:
       - presenton_data:/app_data
     extra_hosts:
