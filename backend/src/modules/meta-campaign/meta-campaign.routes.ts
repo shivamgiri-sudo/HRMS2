@@ -69,7 +69,7 @@ async function resolvebranchScope(
   // Branch-scoped role: derive branch_name from employee → branch_master
   const { db } = await import('../../db/mysql.js');
   const [rows] = await db.execute<import('mysql2').RowDataPacket[]>(
-    `SELECT bm.name AS branch_name
+    `SELECT bm.branch_name
        FROM employees e
        JOIN branch_master bm ON bm.id = e.branch_id
       WHERE e.user_id = ? AND e.active_status = 1
