@@ -20,6 +20,8 @@ type Conversation = {
   branchName: string | null;
   designationName: string | null;
   campaignName: string | null;
+  requisitionId: string | null;
+  requisitionCode: string | null;
   lastMessageText: string | null;
   lastMessageAt: string | null;
   lastDirection: "inbound" | "outbound" | null;
@@ -222,6 +224,9 @@ export function MetaWhatsAppInbox() {
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [sendingFile, setSendingFile] = useState(false);
 
+  const [filterRequisitionId, setFilterRequisitionId] = useState<string | null>(null);
+  const [requisitions, setRequisitions] = useState<Array<{ id: string; requisitionCode: string; designationName: string | null; branchName: string | null }>>([]);
+
   const threadEndRef = useRef<HTMLDivElement>(null);
   const refreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -234,8 +239,11 @@ export function MetaWhatsAppInbox() {
 
   const fetchInbox = useCallback(async () => {
     try {
-      const params = search ? `?search=${encodeURIComponent(search)}` : "";
-      const res = await hrmsApi.get(`/api/meta/inbox${params}`);
+      const qp = new URLSearchParams();
+      if (search) qp.set("search", search);
+      if (filterRequisitionId) qp.set("requisitionId", filterRequisitionId);
+      const qs = qp.toString() ? `?${qp.toString()}` : "";
+      const res = await hrmsApi.get(`/api/meta/inbox${qs}`);
       setConversations(res.data ?? []);
       setLoadError(null);
     } catch (err: unknown) {
@@ -243,7 +251,7 @@ export function MetaWhatsAppInbox() {
     } finally {
       setLoadingList(false);
     }
-  }, [search]);
+  }, [search, filterRequisitionId]);
 
   const fetchThread = useCallback(async (leadId: string) => {
     setLoadingThread(true);
@@ -266,6 +274,20 @@ export function MetaWhatsAppInbox() {
   }, []);
 
   useEffect(() => { void fetchInbox(); }, [fetchInbox]);
+
+  useEffect(() => {
+    hrmsApi
+      .get<{ success: boolean; data: Array<{ id: string; requisition_code: string; designation_name: string | null; branch_name: string | null }> }>("/api/meta/job-requisition?limit=100")
+      .then((res) => {
+        setRequisitions((res.data ?? []).map((r) => ({
+          id: String(r.id),
+          requisitionCode: r.requisition_code,
+          designationName: r.designation_name ?? null,
+          branchName: r.branch_name ?? null,
+        })));
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     refreshRef.current = setInterval(() => {
@@ -377,6 +399,26 @@ export function MetaWhatsAppInbox() {
               >
                 <RefreshCcw className={`w-4 h-4 ${loadingList ? "animate-spin" : ""}`} />
               </button>
+            </div>
+
+            {/* JR filter */}
+            <div className="bg-[#f0f2f5] border-b border-[#e9edef] px-3 py-2">
+              <select
+                value={filterRequisitionId ?? ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setFilterRequisitionId(val || null);
+                  setSelectedId(null);
+                }}
+                className="w-full text-sm bg-[#f0f2f5] border-0 outline-none text-[#111b21] rounded-lg px-2 py-1.5"
+              >
+                <option value="">All Requisitions</option>
+                {requisitions.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.requisitionCode}{r.designationName ? ` — ${r.designationName}` : ""}{r.branchName ? ` · ${r.branchName}` : ""}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Search bar */}

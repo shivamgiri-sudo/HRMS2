@@ -761,7 +761,7 @@ metaCampaignRouter.get(
   requireRole(...INBOX_ROLES),
   h(async (req, res) => {
     const scope = await resolveBranchScope(req.authUser!.id, callerRoles(req));
-    const data = await getInbox({ scope, search: req.query.search as string | undefined });
+    const data = await getInbox({ scope, search: req.query.search as string | undefined, requisitionId: req.query.requisitionId as string | undefined });
     return res.json({ success: true, data });
   })
 );

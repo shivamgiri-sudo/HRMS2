@@ -29,12 +29,14 @@ import {
   Phone,
   RefreshCcw,
   Search,
+  Send,
   Users,
   X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EmptyState, num } from "@/components/analytics/analytics-kit";
 import {
   Select,
@@ -148,6 +150,12 @@ export default function MetaLeadsPage() {
   const [notifying, setNotifying] = useState<Set<string>>(new Set());
   const [notifyResult, setNotifyResult] = useState<Record<string, { ok: boolean; msg: string }>>({});
 
+  // Compose modal
+  const [composeFor, setComposeFor] = useState<{ id: string; name: string | null; phone: string | null } | null>(null);
+  const [composeText, setComposeText] = useState("");
+  const [composeSending, setComposeSending] = useState(false);
+  const [composeResult, setComposeResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
   const load = useCallback(
     async (isRefresh = false) => {
       if (isRefresh) setRefreshing(true);
@@ -257,6 +265,26 @@ export default function MetaLeadsPage() {
       });
     }
   }, []);
+
+  async function handleComposeSend() {
+    if (!composeFor || !composeText.trim()) return;
+    setComposeSending(true);
+    setComposeResult(null);
+    try {
+      await hrmsApi.post(`/api/meta/leads/${composeFor.id}/reply`, { message: composeText.trim() });
+      setComposeResult({ ok: true, msg: "Message sent — visible in WhatsApp Inbox." });
+      setComposeText("");
+      setRows((prev) => prev.map((r) => r.id === composeFor.id ? { ...r, notificationSentAt: new Date().toISOString() } : r));
+      setTimeout(() => { setComposeFor(null); setComposeResult(null); }, 1500);
+    } catch (err: unknown) {
+      const msg = err && typeof err === "object" && "response" in err
+        ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
+        : undefined;
+      setComposeResult({ ok: false, msg: msg ?? "Send failed. Check Wassenger config." });
+    } finally {
+      setComposeSending(false);
+    }
+  }
 
   const page = Math.floor(offset / PAGE_SIZE) + 1;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -574,13 +602,12 @@ export default function MetaLeadsPage() {
                         </div>
                         {l.screeningResult === "qualified" && !l.notificationSentAt && (
                           <button
-                            onClick={(e) => void notifyLead(l.id, e)}
-                            disabled={notifying.has(l.id)}
-                            title="Send WhatsApp shortlist notification"
-                            className="mt-1 inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-0.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                            onClick={(e) => { e.stopPropagation(); setComposeFor({ id: l.id, name: l.parsedName, phone: l.parsedPhone }); setComposeText(""); setComposeResult(null); }}
+                            className="mt-1 inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-0.5 text-xs font-semibold text-white hover:bg-emerald-700"
+                            title="Compose WhatsApp message"
                           >
                             <MessageCircle className="h-3 w-3" />
-                            {notifying.has(l.id) ? "…" : "Notify"}
+                            Notify
                           </button>
                         )}
                         {l.notificationSentAt && (
@@ -769,6 +796,56 @@ export default function MetaLeadsPage() {
           </div>
         </SheetContent>
       </Sheet>
+      {/* Compose WhatsApp modal */}
+      <Dialog open={!!composeFor} onOpenChange={(o) => { if (!o) { setComposeFor(null); setComposeResult(null); setComposeText(""); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MessageCircle className="h-5 w-5 text-emerald-600" />
+              Send WhatsApp Message
+            </DialogTitle>
+            <DialogDescription>
+              {composeFor?.name ?? "Candidate"} · {composeFor?.phone ?? "no phone"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 pt-2">
+            <textarea
+              className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none min-h-[100px]"
+              placeholder="Type your WhatsApp message here…"
+              value={composeText}
+              onChange={(e) => setComposeText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void handleComposeSend(); }}
+              autoFocus
+            />
+            {composeResult && (
+              <p className={`text-sm font-medium ${composeResult.ok ? "text-emerald-600" : "text-rose-600"}`}>
+                {composeResult.msg}
+              </p>
+            )}
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-slate-400">Sent via Wassenger · Ctrl+Enter to send</p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setComposeFor(null); setComposeResult(null); setComposeText(""); }}
+                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleComposeSend()}
+                  disabled={composeSending || !composeText.trim()}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  {composeSending ? "Sending…" : "Send"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

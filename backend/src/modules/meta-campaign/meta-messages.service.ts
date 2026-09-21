@@ -34,6 +34,8 @@ export interface InboxConversation {
   branchName: string | null;
   designationName: string | null;
   campaignName: string | null;
+  requisitionId: string | null;
+  requisitionCode: string | null;
   lastMessageText: string | null;
   lastMessageAt: string | null;
   lastDirection: 'inbound' | 'outbound' | null;
@@ -92,6 +94,7 @@ export async function markThreadRead(leadId: string): Promise<void> {
 export async function getInbox(opts: {
   scope: BranchScope;
   search?: string;
+  requisitionId?: string;
 }): Promise<InboxConversation[]> {
   // Fail closed: a branch-scoped user with no resolvable branch sees nothing.
   if (!opts.scope.all && !opts.scope.branchName) return [];
@@ -109,6 +112,11 @@ export async function getInbox(opts: {
     params.push(like, like);
   }
 
+  const requisitionIdFilter = opts.requisitionId ? `AND ml.requisition_id = ?` : '';
+  if (opts.requisitionId) {
+    params.push(opts.requisitionId);
+  }
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        ml.id                               AS leadId,
@@ -118,6 +126,8 @@ export async function getInbox(opts: {
        jr.branch_name                      AS branchName,
        jr.designation_name                 AS designationName,
        mc.campaign_name                    AS campaignName,
+       ml.requisition_id                   AS requisitionId,
+       jr.requisition_code                 AS requisitionCode,
        (SELECT m2.message_text FROM meta_lead_messages m2
          WHERE m2.lead_id = ml.id ORDER BY m2.created_at DESC, m2.id DESC LIMIT 1) AS lastMessageText,
        lm.last_message_at                  AS lastMessageAt,
@@ -137,6 +147,7 @@ export async function getInbox(opts: {
      WHERE 1=1
        ${branchFilter}
        ${searchFilter}
+       ${requisitionIdFilter}
      ORDER BY lm.last_message_at DESC
      LIMIT 200`,
     params
@@ -150,6 +161,8 @@ export async function getInbox(opts: {
     branchName: (r.branchName as string | null) ?? null,
     designationName: (r.designationName as string | null) ?? null,
     campaignName: (r.campaignName as string | null) ?? null,
+    requisitionId: (r.requisitionId as string | null) ?? null,
+    requisitionCode: (r.requisitionCode as string | null) ?? null,
     lastMessageText: (r.lastMessageText as string | null) ?? null,
     lastMessageAt: (r.lastMessageAt as string | null) ?? null,
     lastDirection: ((r.lastDirection as string | null) ?? null) as 'inbound' | 'outbound' | null,
