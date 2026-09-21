@@ -587,12 +587,12 @@ export default function MyKpiDashboard() {
                                 </td>
                                 <td className="px-4 py-2.5">
                                   <div className="flex flex-wrap gap-1">
-                                    {day.metrics.slice(0, 4).map((m) => (
+                                    {(day.metrics ?? []).slice(0, 4).map((m) => (
                                       <span key={m.metric_id} className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono">
                                         {m.metric_code}: {formatMetricValue(m.actual_value, m.unit)}
                                       </span>
                                     ))}
-                                    {day.metrics.length > 4 && (
+                                    {(day.metrics ?? []).length > 4 && (
                                       <span className="text-[10px] text-slate-400">+{day.metrics.length - 4} more</span>
                                     )}
                                   </div>

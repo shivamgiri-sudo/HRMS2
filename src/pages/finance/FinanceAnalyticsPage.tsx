@@ -345,17 +345,17 @@ export function FinanceAnalyticsContent() {
 
   const agingQuery = useQuery<AgingRow[]>({
     queryKey: ["finance-analytics-ar-aging"],
-    queryFn: () => hrmsApi.get("/api/finance/analytics/ar-aging").then((r) => r.data),
+    queryFn: () => hrmsApi.get("/api/finance/analytics/ar-aging").then((r) => r.data?.rows ?? []),
   });
 
   const trendQuery = useQuery<TrendRow[]>({
     queryKey: ["finance-analytics-collection-trend"],
-    queryFn: () => hrmsApi.get("/api/finance/analytics/collection-trend").then((r) => r.data),
+    queryFn: () => hrmsApi.get("/api/finance/analytics/collection-trend").then((r) => r.data?.months ?? []),
   });
 
   const forecastQuery = useQuery<ForecastRow[]>({
     queryKey: ["finance-analytics-cash-flow"],
-    queryFn: () => hrmsApi.get("/api/finance/analytics/cash-flow-forecast").then((r) => r.data),
+    queryFn: () => hrmsApi.get("/api/finance/analytics/cash-flow-forecast").then((r) => r.data?.weeks ?? []),
   });
 
   const snap = snapshotQuery.data;
