@@ -45,7 +45,12 @@ VALUES
   (UUID(), 'process_manager',   'ATS_META_CAMPAIGNS', 1, 0, 0, 0, 1, 1),
   (UUID(), 'manager',           'ATS_META_CAMPAIGNS', 1, 0, 0, 0, 1, 1),
   (UUID(), 'assistant_manager', 'ATS_META_CAMPAIGNS', 1, 0, 0, 0, 0, 1),
-  (UUID(), 'recruiter',         'ATS_META_CAMPAIGNS', 1, 0, 0, 0, 0, 1)
+  (UUID(), 'recruiter',         'ATS_META_CAMPAIGNS', 1, 0, 0, 0, 0, 1),
+  (UUID(), 'branch_admin',      'ATS_META_CAMPAIGNS', 1, 0, 0, 0, 1, 1),
+  (UUID(), 'branch_wfm',        'ATS_META_CAMPAIGNS', 1, 0, 0, 0, 1, 1),
+  (UUID(), 'payroll_hr',        'ATS_META_CAMPAIGNS', 1, 0, 0, 0, 1, 1),
+  (UUID(), 'branch_it',         'ATS_META_CAMPAIGNS', 1, 0, 0, 0, 0, 1),
+  (UUID(), 'interviewer',       'ATS_META_CAMPAIGNS', 1, 0, 0, 0, 0, 1)
 ON DUPLICATE KEY UPDATE
   can_view      = VALUES(can_view),
   can_create    = VALUES(can_create),
@@ -53,4 +58,4 @@ ON DUPLICATE KEY UPDATE
   can_export    = VALUES(can_export),
   active_status = 1;
 
-SELECT 'Migration 1812 applied: ATS_META_CAMPAIGNS page registered and granted to 11 roles' AS status;
+SELECT 'Migration 1812 applied: ATS_META_CAMPAIGNS page registered and granted to 16 roles' AS status;
