@@ -230,7 +230,7 @@ export function MetaWhatsAppInbox() {
   const fetchInbox = useCallback(async () => {
     try {
       const params = search ? `?search=${encodeURIComponent(search)}` : "";
-      const res = await hrmsApi.get(`/meta/inbox${params}`);
+      const res = await hrmsApi.get(`/api/meta/inbox${params}`);
       setConversations(res.data ?? []);
     } catch { /* keep stale */ } finally {
       setLoadingList(false);
@@ -240,9 +240,9 @@ export function MetaWhatsAppInbox() {
   const fetchThread = useCallback(async (leadId: string) => {
     setLoadingThread(true);
     try {
-      const res = await hrmsApi.get(`/meta/leads/${leadId}/messages`);
+      const res = await hrmsApi.get(`/api/meta/leads/${leadId}/messages`);
       setMessages(res.data ?? []);
-      await hrmsApi.patch(`/meta/leads/${leadId}/messages/read`).catch(() => {});
+      await hrmsApi.patch(`/api/meta/leads/${leadId}/messages/read`).catch(() => {});
       setConversations((prev) =>
         prev.map((c) => (c.leadId === leadId ? { ...c, unreadCount: 0 } : c))
       );
@@ -278,7 +278,7 @@ export function MetaWhatsAppInbox() {
     setSending(true);
     setSendError(null);
     try {
-      await hrmsApi.post(`/meta/leads/${selectedId}/reply`, { message: replyText.trim() });
+      await hrmsApi.post(`/api/meta/leads/${selectedId}/reply`, { message: replyText.trim() });
       setReplyText("");
       textareaRef.current?.focus();
       await fetchThread(selectedId);
