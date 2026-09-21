@@ -186,11 +186,20 @@ const emptyForm = {
   // marketing on approval, and the age band is also what lead-screener.service.ts screens incoming
   // Lead Gen leads against — so leaving the band blank means age is not screened at all, not that
   // every age is rejected.
+  meta_campaign_enabled: false,   // if false, all META fields are hidden and marketing is not notified
   bmi_assessment_url: '',
   meta_target_age_min: '',
   meta_target_age_max: '',
   meta_target_locations: '',
   meta_target_radius_km: '',
+  // META screening config (migration 1829)
+  meta_screening_auto_notify: true,
+  meta_screening_gender: 'any' as 'any' | 'male' | 'female',
+  meta_screening_certifications: [] as string[],
+  meta_screening_language_requirements: [] as Array<{ language: string; skills: string[] }>,
+  meta_screening_min_typing_wpm: '',
+  meta_screening_written_english: '' as '' | 'basic' | 'intermediate' | 'advanced',
+  meta_screening_custom_rules: [] as Array<{ field: string; op: string; value: string; label: string }>,
 };
 
 // ── Main Component ─────────────────────────────────────────────────────────────
@@ -406,6 +415,28 @@ export default function NativeJobRequisition() {
           ? formData.meta_target_locations.split(',').map((s) => s.trim()).filter(Boolean)
           : null,
         meta_target_radius_km: formData.meta_target_radius_km ? Number(formData.meta_target_radius_km) : null,
+        // META screening config — build the JSON object
+        meta_screening_config: {
+          auto_notify: formData.meta_screening_auto_notify,
+          gender: formData.meta_screening_gender !== 'any' ? formData.meta_screening_gender : undefined,
+          certifications: formData.meta_screening_certifications.length > 0 ? formData.meta_screening_certifications : undefined,
+          language_requirements: formData.meta_screening_language_requirements.length > 0
+            ? formData.meta_screening_language_requirements
+            : undefined,
+          min_typing_speed_wpm: formData.meta_screening_min_typing_wpm ? Number(formData.meta_screening_min_typing_wpm) : undefined,
+          written_english_level: formData.meta_screening_written_english || undefined,
+          custom_field_rules: formData.meta_screening_custom_rules.length > 0
+            ? formData.meta_screening_custom_rules
+            : undefined,
+        },
+        // Strip UI-only keys from payload spread
+        meta_screening_auto_notify: undefined,
+        meta_screening_gender: undefined,
+        meta_screening_certifications: undefined,
+        meta_screening_language_requirements: undefined,
+        meta_screening_min_typing_wpm: undefined,
+        meta_screening_written_english: undefined,
+        meta_screening_custom_rules: undefined,
       };
 
       if (editingRequisition) {
@@ -628,6 +659,24 @@ export default function NativeJobRequisition() {
       training_start_date: req.training_start_date ? req.training_start_date.substring(0, 10) : '',
       target_joining_date: req.target_joining_date ? req.target_joining_date.substring(0, 10) : '',
       requisition_validity: req.requisition_validity ? req.requisition_validity.substring(0, 10) : '',
+      bmi_assessment_url: req.bmi_assessment_url || '',
+      meta_target_age_min: req.meta_target_age_min?.toString() || '',
+      meta_target_age_max: req.meta_target_age_max?.toString() || '',
+      meta_target_locations: Array.isArray(req.meta_target_locations) ? req.meta_target_locations.join(', ') : '',
+      meta_target_radius_km: req.meta_target_radius_km?.toString() || '',
+      meta_campaign_enabled: !!(req.meta_target_age_min || req.meta_target_age_max || req.bmi_assessment_url || req.meta_screening_config),
+      meta_screening_auto_notify: req.meta_screening_config?.auto_notify !== false,
+      meta_screening_gender: (req.meta_screening_config?.gender as 'any' | 'male' | 'female') || 'any',
+      meta_screening_certifications: req.meta_screening_config?.certifications ?? [],
+      meta_screening_language_requirements: (req.meta_screening_config?.language_requirements ?? []).map(lr => ({
+        language: lr.language,
+        skills: lr.skills as string[],
+      })),
+      meta_screening_min_typing_wpm: req.meta_screening_config?.min_typing_speed_wpm?.toString() || '',
+      meta_screening_written_english: (req.meta_screening_config?.written_english_level as '' | 'basic' | 'intermediate' | 'advanced') || '',
+      meta_screening_custom_rules: (req.meta_screening_config?.custom_field_rules ?? []).map(r => ({
+        field: r.field, op: r.op, value: r.value, label: r.label || '',
+      })),
     });
     setFormError('');
     setShowModal(true);
@@ -1380,15 +1429,36 @@ export default function NativeJobRequisition() {
                     Feeds the campaign brief emailed to marketing on approval, and the age band
                     doubles as the automated screening criterion for incoming Lead Gen leads. */}
                 <div className="border-t pt-4">
-                  <h3 className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-1">
-                    META Campaign Targeting
-                  </h3>
+                  <div className="flex items-center justify-between mb-1">
+                    <h3 className="text-xs font-bold uppercase tracking-wide text-gray-400">
+                      META Campaign
+                    </h3>
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <span className="text-xs text-gray-500">{formData.meta_campaign_enabled ? 'Enabled' : 'Disabled'}</span>
+                      <div className="relative">
+                        <input
+                          type="checkbox"
+                          className="sr-only peer"
+                          checked={formData.meta_campaign_enabled}
+                          onChange={(e) => setFormData(prev => ({ ...prev, meta_campaign_enabled: e.target.checked }))}
+                        />
+                        <div className="w-9 h-5 bg-gray-300 rounded-full peer peer-checked:bg-blue-600 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4" />
+                      </div>
+                    </label>
+                  </div>
+                  {!formData.meta_campaign_enabled && (
+                    <p className="text-xs text-gray-400 mb-3 italic">
+                      META campaign is OFF — marketing will not be notified, and lead screening is disabled for this requisition.
+                      Hiring will proceed through the standard ATS pipeline only.
+                    </p>
+                  )}
+                  {formData.meta_campaign_enabled && (
                   <p className="text-xs text-gray-500 mb-3">
-                    Optional. Included in the campaign brief emailed to marketing when this requisition is
-                    approved. The age band is also used to auto-screen incoming leads — leave it blank to skip
-                    age screening rather than to reject every age.
+                    When approved, a campaign brief with these targeting parameters is sent to the marketing team.
+                    The age band and screening rules below auto-screen incoming META leads.
                   </p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  )}
+                  {formData.meta_campaign_enabled && <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="md:col-span-2">
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         BMI / Assessment Link
@@ -1450,8 +1520,274 @@ export default function NativeJobRequisition() {
                         placeholder="25"
                       />
                     </div>
-                  </div>
+                  </div>}
                 </div>
+
+                {/* ── META Lead Screening Rules ────────────────────────────────────
+                    Auto-screening criteria evaluated for every incoming Lead Gen lead.
+                    All checks are optional — a blank field is skipped, never a hard fail. */}
+                {formData.meta_campaign_enabled && <div className="border-t pt-4">
+                  <h3 className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-1">
+                    META Lead Screening Rules
+                  </h3>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Applied automatically when a lead arrives via the META webhook. Leave a field blank to skip that check.
+                    Qualified leads get a WhatsApp shortlist message immediately (toggle below to disable).
+                  </p>
+
+                  {/* Auto-notify toggle */}
+                  <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-emerald-50 border border-emerald-200">
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={formData.meta_screening_auto_notify}
+                        onChange={(e) => setFormData(prev => ({ ...prev, meta_screening_auto_notify: e.target.checked }))}
+                      />
+                      <div className="w-10 h-5 bg-gray-300 peer-focus:ring-2 peer-focus:ring-emerald-400 rounded-full peer peer-checked:bg-emerald-500 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-5" />
+                    </label>
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">Auto-send WhatsApp on qualify</p>
+                      <p className="text-xs text-gray-500">When ON, qualified leads receive the shortlist message instantly. Turn OFF to review first.</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+                    {/* Gender */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Gender Requirement</label>
+                      <select
+                        value={formData.meta_screening_gender}
+                        onChange={(e) => setFormData(prev => ({ ...prev, meta_screening_gender: e.target.value as 'any' | 'male' | 'female' }))}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="any">Any</option>
+                        <option value="male">Male only</option>
+                        <option value="female">Female only</option>
+                      </select>
+                    </div>
+
+                    {/* Min typing speed */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Min Typing Speed (WPM)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={150}
+                        value={formData.meta_screening_min_typing_wpm}
+                        onChange={(e) => field('meta_screening_min_typing_wpm', e.target.value)}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                        placeholder="e.g. 25 (for chat processes)"
+                      />
+                    </div>
+
+                    {/* Written English level */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Minimum Written English Level</label>
+                      <select
+                        value={formData.meta_screening_written_english}
+                        onChange={(e) => setFormData(prev => ({ ...prev, meta_screening_written_english: e.target.value as '' | 'basic' | 'intermediate' | 'advanced' }))}
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="">No requirement</option>
+                        <option value="basic">Basic</option>
+                        <option value="intermediate">Intermediate</option>
+                        <option value="advanced">Advanced / Fluent</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Certifications */}
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Required Certifications</label>
+                    <div className="flex flex-wrap gap-2">
+                      {(['DRA', 'IRDA', 'NCFM', 'NSE', 'AMFI', 'NISM'] as const).map((cert) => (
+                        <label key={cert} className="flex items-center gap-1.5 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={formData.meta_screening_certifications.includes(cert)}
+                            onChange={(e) => setFormData(prev => ({
+                              ...prev,
+                              meta_screening_certifications: e.target.checked
+                                ? [...prev.meta_screening_certifications, cert]
+                                : prev.meta_screening_certifications.filter(c => c !== cert),
+                            }))}
+                            className="rounded"
+                          />
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${formData.meta_screening_certifications.includes(cert) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'}`}>
+                            {cert}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="mt-1 text-xs text-gray-400">
+                      Lead Gen form must include a question asking if the candidate holds each selected certification (Yes/No dropdown, not free text).
+                    </p>
+                  </div>
+
+                  {/* Language requirements */}
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-sm font-medium text-gray-700">Language Requirements</label>
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({
+                          ...prev,
+                          meta_screening_language_requirements: [
+                            ...prev.meta_screening_language_requirements,
+                            { language: 'English', skills: ['speak'] },
+                          ],
+                        }))}
+                        className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                      >
+                        + Add language
+                      </button>
+                    </div>
+                    {formData.meta_screening_language_requirements.length === 0 && (
+                      <p className="text-xs text-gray-400 italic">No language requirements set.</p>
+                    )}
+                    <div className="space-y-2">
+                      {formData.meta_screening_language_requirements.map((lr, i) => (
+                        <div key={i} className="flex items-center gap-2 p-2 rounded-lg border border-slate-200 bg-slate-50">
+                          <input
+                            type="text"
+                            value={lr.language}
+                            onChange={(e) => setFormData(prev => {
+                              const updated = [...prev.meta_screening_language_requirements];
+                              updated[i] = { ...updated[i], language: e.target.value };
+                              return { ...prev, meta_screening_language_requirements: updated };
+                            })}
+                            placeholder="Language"
+                            className="w-28 px-2 py-1 border rounded text-sm"
+                          />
+                          <div className="flex gap-2">
+                            {(['speak', 'read', 'write'] as const).map(skill => (
+                              <label key={skill} className="flex items-center gap-1 text-xs cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={lr.skills.includes(skill)}
+                                  onChange={(e) => setFormData(prev => {
+                                    const updated = [...prev.meta_screening_language_requirements];
+                                    updated[i] = {
+                                      ...updated[i],
+                                      skills: e.target.checked
+                                        ? [...updated[i].skills, skill]
+                                        : updated[i].skills.filter(s => s !== skill),
+                                    };
+                                    return { ...prev, meta_screening_language_requirements: updated };
+                                  })}
+                                  className="rounded"
+                                />
+                                {skill}
+                              </label>
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setFormData(prev => ({
+                              ...prev,
+                              meta_screening_language_requirements: prev.meta_screening_language_requirements.filter((_, j) => j !== i),
+                            }))}
+                            className="ml-auto text-red-400 hover:text-red-600 text-xs"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Custom field rules */}
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-sm font-medium text-gray-700">Custom Field Rules</label>
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({
+                          ...prev,
+                          meta_screening_custom_rules: [
+                            ...prev.meta_screening_custom_rules,
+                            { field: '', op: 'eq', value: 'yes', label: '' },
+                          ],
+                        }))}
+                        className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                      >
+                        + Add rule
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-400 mb-2">
+                      Map any META form field name to a required answer. Field names must match exactly what META sends (lowercase, underscored).
+                    </p>
+                    {formData.meta_screening_custom_rules.length === 0 && (
+                      <p className="text-xs text-gray-400 italic">No custom rules.</p>
+                    )}
+                    <div className="space-y-2">
+                      {formData.meta_screening_custom_rules.map((rule, i) => (
+                        <div key={i} className="grid grid-cols-12 gap-1 items-center p-2 rounded-lg border border-slate-200 bg-slate-50">
+                          <input
+                            type="text"
+                            value={rule.field}
+                            onChange={(e) => setFormData(prev => {
+                              const updated = [...prev.meta_screening_custom_rules];
+                              updated[i] = { ...updated[i], field: e.target.value };
+                              return { ...prev, meta_screening_custom_rules: updated };
+                            })}
+                            placeholder="form_field_name"
+                            className="col-span-4 px-2 py-1 border rounded text-xs font-mono"
+                          />
+                          <select
+                            value={rule.op}
+                            onChange={(e) => setFormData(prev => {
+                              const updated = [...prev.meta_screening_custom_rules];
+                              updated[i] = { ...updated[i], op: e.target.value };
+                              return { ...prev, meta_screening_custom_rules: updated };
+                            })}
+                            className="col-span-2 px-1 py-1 border rounded text-xs"
+                          >
+                            <option value="eq">= equals</option>
+                            <option value="neq">≠ not</option>
+                            <option value="contains">contains</option>
+                            <option value="not_contains">excludes</option>
+                            <option value="gte">≥ gte</option>
+                          </select>
+                          <input
+                            type="text"
+                            value={rule.value}
+                            onChange={(e) => setFormData(prev => {
+                              const updated = [...prev.meta_screening_custom_rules];
+                              updated[i] = { ...updated[i], value: e.target.value };
+                              return { ...prev, meta_screening_custom_rules: updated };
+                            })}
+                            placeholder="expected value"
+                            className="col-span-3 px-2 py-1 border rounded text-xs"
+                          />
+                          <input
+                            type="text"
+                            value={rule.label}
+                            onChange={(e) => setFormData(prev => {
+                              const updated = [...prev.meta_screening_custom_rules];
+                              updated[i] = { ...updated[i], label: e.target.value };
+                              return { ...prev, meta_screening_custom_rules: updated };
+                            })}
+                            placeholder="label (optional)"
+                            className="col-span-2 px-2 py-1 border rounded text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setFormData(prev => ({
+                              ...prev,
+                              meta_screening_custom_rules: prev.meta_screening_custom_rules.filter((_, j) => j !== i),
+                            }))}
+                            className="col-span-1 text-red-400 hover:text-red-600 text-xs text-center"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>}
               </div>
               <div className="p-6 border-t bg-gray-50 flex justify-end gap-3">
                 <button

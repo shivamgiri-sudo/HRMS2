@@ -458,7 +458,8 @@ export const metaCampaignService = {
       `SELECT mc.id, mc.requisition_id,
               jr.meta_target_age_min, jr.meta_target_age_max,
               jr.education_requirement, jr.experience_min_years, jr.experience_max_years,
-              jr.designation_name, jr.branch_name, jr.process_name
+              jr.designation_name, jr.branch_name, jr.process_name,
+              jr.meta_screening_config
          FROM meta_campaign mc
          LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id
         WHERE mc.meta_form_id = ? LIMIT 1`,
@@ -509,7 +510,8 @@ export const metaCampaignService = {
       `SELECT mc.id, mc.requisition_id,
               jr.meta_target_age_min, jr.meta_target_age_max,
               jr.education_requirement, jr.experience_min_years, jr.experience_max_years,
-              jr.designation_name, jr.branch_name, jr.process_name
+              jr.designation_name, jr.branch_name, jr.process_name,
+              jr.meta_screening_config
          FROM meta_campaign mc
          LEFT JOIN job_requisition jr ON jr.id = mc.requisition_id
         WHERE mc.meta_form_id = ? LIMIT 1`,
@@ -560,12 +562,19 @@ export const metaCampaignService = {
       if (routed) campaign = routed;
     }
 
+    const rawScreeningConfig = campaign?.meta_screening_config;
+    const screeningConfig = rawScreeningConfig
+      ? (typeof rawScreeningConfig === 'string' ? JSON.parse(rawScreeningConfig) : rawScreeningConfig)
+      : null;
+
     const screening = campaign
       ? screenLead(
           {
             parsedAge: parsed.age,
             parsedEducation: parsed.education,
             parsedExperienceYr: parsed.experienceYears,
+            parsedGender: parsed.gender,
+            rawFields: parsed.rawFields,
           },
           {
             metaTargetAgeMin: campaign.meta_target_age_min === null ? null : Number(campaign.meta_target_age_min),
@@ -575,6 +584,7 @@ export const metaCampaignService = {
               campaign.experience_min_years === null ? null : Number(campaign.experience_min_years),
             experienceMaxYears:
               campaign.experience_max_years === null ? null : Number(campaign.experience_max_years),
+            screeningConfig,
           }
         )
       : // No linked requisition means no criteria to screen against. 'pending' is the honest
@@ -616,9 +626,10 @@ export const metaCampaignService = {
       await this.createCandidateFromLead(id).catch((e: unknown) =>
         console.warn('[meta] createCandidateFromLead failed', e instanceof Error ? e.message : e)
       );
-      // Outreach is suppressed for backfilled leads — see skipOutreach. A live webhook lead
-      // (skipOutreach falsy) still fires immediately.
-      if (!args.skipOutreach) {
+      // Outreach is suppressed for backfilled leads or when auto_notify is explicitly disabled.
+      // Default: auto_notify = true (fire immediately on qualify).
+      const autoNotify = screeningConfig?.auto_notify !== false;
+      if (!args.skipOutreach && autoNotify) {
         await notifyQualifiedLead(id).catch((e: unknown) =>
           console.warn('[meta] notifyQualifiedLead failed', e instanceof Error ? e.message : e)
         );
@@ -1221,20 +1232,29 @@ export const metaCampaignService = {
     if (effectiveRequisitionId) {
       const [reqRows] = await db.execute<RowDataPacket[]>(
         `SELECT meta_target_age_min, meta_target_age_max, education_requirement,
-                experience_min_years, experience_max_years
+                experience_min_years, experience_max_years, meta_screening_config
            FROM job_requisition WHERE id = ? LIMIT 1`,
         [effectiveRequisitionId]
       );
       const r = reqRows[0];
       if (r) {
+        const rawCfg = r.meta_screening_config;
+        const cfg = rawCfg ? (typeof rawCfg === 'string' ? JSON.parse(rawCfg) : rawCfg) : null;
         const result = screenLead(
-          { parsedAge: parsed.age, parsedEducation: parsed.education, parsedExperienceYr: parsed.experienceYears },
+          {
+            parsedAge: parsed.age,
+            parsedEducation: parsed.education,
+            parsedExperienceYr: parsed.experienceYears,
+            parsedGender: parsed.gender,
+            rawFields: parsed.rawFields,
+          },
           {
             metaTargetAgeMin: r.meta_target_age_min === null ? null : Number(r.meta_target_age_min),
             metaTargetAgeMax: r.meta_target_age_max === null ? null : Number(r.meta_target_age_max),
             educationRequirement: (r.education_requirement as string | null) ?? null,
             experienceMinYears: r.experience_min_years === null ? null : Number(r.experience_min_years),
             experienceMaxYears: r.experience_max_years === null ? null : Number(r.experience_max_years),
+            screeningConfig: cfg,
           }
         );
         screeningResult = result.qualified ? 'qualified' : 'disqualified';

@@ -4,6 +4,37 @@
  */
 
 export type EmploymentType = 'full_time' | 'part_time' | 'contract' | 'intern' | 'trainee';
+
+/**
+ * Structured screening config stored as JSON on job_requisition.meta_screening_config.
+ * Drives auto-screening of incoming META Lead Gen leads beyond age/education/experience.
+ */
+export interface MetaScreeningConfig {
+  /** Send WhatsApp immediately when a lead qualifies. Default true. */
+  auto_notify?: boolean;
+  gender?: 'any' | 'male' | 'female';
+  /** Required certifications — e.g. ["DRA","IRDA"]. Lead must confirm holding each one. */
+  certifications?: string[];
+  /** Language requirements. Lead must confirm the listed skills per language. */
+  language_requirements?: Array<{
+    language: string;
+    skills: Array<'speak' | 'read' | 'write'>;
+  }>;
+  /** Minimum typing speed in WPM — for chat/email/back-office processes. */
+  min_typing_speed_wpm?: number | null;
+  /** Minimum written English level — for chat/email processes. */
+  written_english_level?: 'basic' | 'intermediate' | 'advanced' | null;
+  /**
+   * Arbitrary form-field conditions. Each rule checks a specific META form answer.
+   * op: eq | neq | contains | not_contains | gte (for numeric fields like wpm).
+   */
+  custom_field_rules?: Array<{
+    field: string;
+    op: 'eq' | 'neq' | 'contains' | 'not_contains' | 'gte';
+    value: string;
+    label?: string;
+  }>;
+}
 export type RequisitionPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type RequisitionType = 'new_position' | 'replacement' | 'expansion' | 'seasonal' | 'project_based';
 export type ApprovalStatus = 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'cancelled' | 'on_hold' | 'closed';
@@ -60,6 +91,8 @@ export interface JobRequisition {
   meta_target_age_max: number | null;
   meta_target_locations: string[] | null;
   meta_target_radius_km: number | null;
+  /** Structured screening config — see MetaScreeningConfig (migration 1829). */
+  meta_screening_config: MetaScreeningConfig | null;
   internal_posting: boolean;
   active_status: boolean;
   closed_at: string | null;
@@ -112,6 +145,7 @@ export interface CreateRequisitionInput {
   meta_target_age_max?: number | null;
   meta_target_locations?: string[] | null;
   meta_target_radius_km?: number | null;
+  meta_screening_config?: MetaScreeningConfig | null;
 }
 
 export interface UpdateRequisitionInput extends Partial<CreateRequisitionInput> {

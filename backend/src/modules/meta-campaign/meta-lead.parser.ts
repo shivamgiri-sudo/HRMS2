@@ -37,6 +37,13 @@ export interface ParsedLead {
    * in which case routing falls back to the form-ID link.
    */
   routingCode: string | null;
+  /** Gender answer from the form, if present. */
+  gender: string | null;
+  /**
+   * All form field answers as a flat Record<fieldName, value> for the screener.
+   * Keys are normalised (lowercase, underscored). Values are the first answer string.
+   */
+  rawFields: Record<string, string>;
 }
 
 function normaliseKey(raw: string): string {
@@ -314,5 +321,7 @@ export function parseLead(detail: MetaLeadDetail): ParsedLead {
       pick(map, ['experience', 'work_experience', 'years_of_experience', 'total_experience'])
     ),
     routingCode: extractRoutingCode(detail),
+    gender: pick(map, ['gender', 'sex', 'your_gender', 'gender_identity']),
+    rawFields: Object.fromEntries(map),
   };
 }

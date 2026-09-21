@@ -25,6 +25,7 @@ import {
   Download,
   Filter,
   Mail,
+  MessageCircle,
   Phone,
   RefreshCcw,
   Search,
@@ -141,6 +142,10 @@ export default function MetaLeadsPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
 
+  // WhatsApp notification
+  const [notifying, setNotifying] = useState<Set<string>>(new Set());
+  const [notifyResult, setNotifyResult] = useState<Record<string, { ok: boolean; msg: string }>>({});
+
   const load = useCallback(
     async (isRefresh = false) => {
       if (isRefresh) setRefreshing(true);
@@ -211,6 +216,43 @@ export default function MetaLeadsPage() {
       setDetailError((err as { message?: string })?.message || "Unable to load lead detail");
     } finally {
       setDetailLoading(false);
+    }
+  }, []);
+
+  const notifyLead = useCallback(async (leadId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setNotifying((prev) => new Set(prev).add(leadId));
+    try {
+      const res = await hrmsApi.post<{
+        success: boolean;
+        outcome: { succeeded: string[]; failed: Array<{ channel: string; error: string }> };
+      }>(`/api/meta/leads/${leadId}/outreach`, {});
+      const succeeded = res.outcome?.succeeded ?? [];
+      const failed = res.outcome?.failed ?? [];
+      const ok = succeeded.length > 0;
+      const msg = ok
+        ? `Sent via: ${succeeded.join(", ")}`
+        : failed.length
+        ? `Failed: ${failed.map((f) => f.channel).join(", ")}`
+        : "No channels succeeded";
+      setNotifyResult((prev) => ({ ...prev, [leadId]: { ok, msg } }));
+      // Update the row and drawer so "Notified" shows immediately
+      if (ok) {
+        const now = new Date().toISOString();
+        setRows((prev) => prev.map((r) => (r.id === leadId ? { ...r, notificationSentAt: now } : r)));
+        setDetail((prev) => (prev?.id === leadId ? { ...prev, notificationSentAt: now } : prev));
+      }
+    } catch (err: unknown) {
+      setNotifyResult((prev) => ({
+        ...prev,
+        [leadId]: { ok: false, msg: (err as { message?: string })?.message || "Request failed" },
+      }));
+    } finally {
+      setNotifying((prev) => {
+        const next = new Set(prev);
+        next.delete(leadId);
+        return next;
+      });
     }
   }, []);
 
@@ -474,10 +516,26 @@ export default function MetaLeadsPage() {
                         <div className="font-mono text-xs text-slate-400">form {l.metaFormId}</div>
                       </td>
                       <td className="px-3 py-2.5 text-sm">
-                        {l.atsCandidateId ? (
-                          <span className="font-semibold text-emerald-600">created</span>
-                        ) : (
-                          <span className="text-slate-400">—</span>
+                        <div>
+                          {l.atsCandidateId ? (
+                            <span className="font-semibold text-emerald-600">created</span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </div>
+                        {l.screeningResult === "qualified" && !l.notificationSentAt && (
+                          <button
+                            onClick={(e) => void notifyLead(l.id, e)}
+                            disabled={notifying.has(l.id)}
+                            title="Send WhatsApp shortlist notification"
+                            className="mt-1 inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-0.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                          >
+                            <MessageCircle className="h-3 w-3" />
+                            {notifying.has(l.id) ? "…" : "Notify"}
+                          </button>
+                        )}
+                        {l.notificationSentAt && (
+                          <div className="text-xs text-emerald-600">✓ notified</div>
                         )}
                       </td>
                       <td className="px-3 py-2.5 text-xs text-slate-400">{fmtDateTime(l.createdAt)}</td>
@@ -572,9 +630,27 @@ export default function MetaLeadsPage() {
                   <p className="mt-1 text-sm font-semibold text-slate-700">
                     {detail.atsCandidateId ? "Created" : "Not created"}
                   </p>
-                  <p className="mt-0.5 text-xs text-slate-400">
-                    {detail.notificationSentAt ? `Notified ${fmtDateTime(detail.notificationSentAt)}` : "Not notified"}
-                  </p>
+                  {detail.notificationSentAt ? (
+                    <p className="mt-0.5 text-xs text-emerald-600">✓ Notified {fmtDateTime(detail.notificationSentAt)}</p>
+                  ) : detail.screeningResult === "qualified" ? (
+                    <div className="mt-1.5 space-y-1">
+                      <button
+                        onClick={() => void notifyLead(detail.id)}
+                        disabled={notifying.has(detail.id)}
+                        className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                      >
+                        <MessageCircle className="h-3.5 w-3.5" />
+                        {notifying.has(detail.id) ? "Sending…" : "Send WhatsApp Notification"}
+                      </button>
+                      {notifyResult[detail.id] && (
+                        <p className={`text-xs ${notifyResult[detail.id].ok ? "text-emerald-600" : "text-rose-600"}`}>
+                          {notifyResult[detail.id].msg}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="mt-0.5 text-xs text-slate-400">Not notified</p>
+                  )}
                 </div>
               </section>
             )}

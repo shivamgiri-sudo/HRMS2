@@ -536,8 +536,8 @@ export const jobRequisitionService = {
         target_joining_date, requisition_validity, priority, requisition_type, business_justification,
         preferred_sources, internal_posting, requested_by, requested_by_name,
         bmi_assessment_url, meta_target_age_min, meta_target_age_max, meta_target_locations,
-        meta_target_radius_km, approval_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        meta_target_radius_km, meta_screening_config, approval_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
       [
         id,
         code,
@@ -575,6 +575,7 @@ export const jobRequisitionService = {
         input.meta_target_age_max ?? null,
         input.meta_target_locations ? JSON.stringify(input.meta_target_locations) : null,
         input.meta_target_radius_km ?? null,
+        input.meta_screening_config ? JSON.stringify(input.meta_screening_config) : null,
       ]
     );
 
@@ -626,6 +627,8 @@ export const jobRequisitionService = {
       // META campaign targeting (migration 1810).
       "bmi_assessment_url", "meta_target_age_min", "meta_target_age_max",
       "meta_target_locations", "meta_target_radius_km",
+      // META screening config (migration 1829).
+      "meta_screening_config",
     ];
 
     for (const field of allowedFields) {
@@ -635,6 +638,9 @@ export const jobRequisitionService = {
         // stringify treatment. Without it mysql2 would bind a JS array by flattening it into the
         // placeholder list and the statement would fail on argument count.
         if ((field === "preferred_sources" || field === "meta_target_locations") && Array.isArray(value)) {
+          sets.push(`${field} = ?`);
+          params.push(JSON.stringify(value));
+        } else if (field === "meta_screening_config" && value !== null && typeof value === "object") {
           sets.push(`${field} = ?`);
           params.push(JSON.stringify(value));
         } else if (field === "rotational_shift" || field === "night_shift_required" || field === "internal_posting") {
