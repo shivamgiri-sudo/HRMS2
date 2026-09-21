@@ -136,6 +136,55 @@ export async function sendCustomMessage(
 }
 
 /**
+ * Send a media message (image, PDF, document) via Wassenger.
+ * Accepts a base64-encoded file + MIME type, or a public URL.
+ */
+export async function sendMediaMessage(
+  phone: string,
+  opts: {
+    /** base64-encoded file data */
+    base64?: string;
+    /** public URL to the file */
+    url?: string;
+    mimeType?: string;
+    filename?: string;
+    caption?: string;
+  }
+): Promise<WassengerSendResult> {
+  if (!isWassengerConfigured()) {
+    return { success: false, error: 'WASSENGER_API_TOKEN or WASSENGER_DEVICE_ID not set' };
+  }
+  if (!opts.base64 && !opts.url) {
+    return { success: false, error: 'Either base64 or url must be provided' };
+  }
+  const waPhone = toWaPhone(phone);
+  try {
+    const mediaPayload: Record<string, string> = {};
+    if (opts.base64)   mediaPayload['data']     = opts.base64;
+    if (opts.url)      mediaPayload['url']      = opts.url;
+    if (opts.mimeType) mediaPayload['mimetype'] = opts.mimeType;
+    if (opts.filename) mediaPayload['filename'] = opts.filename;
+
+    const { data } = await axios.post(
+      `${WASSENGER_BASE}/messages`,
+      {
+        phone: waPhone,
+        device: process.env.WASSENGER_DEVICE_ID,
+        media: mediaPayload,
+        message: opts.caption ?? '',
+      },
+      { headers: headers(), timeout: 30000 }
+    );
+    return { success: true, messageId: data?.id ?? data?.data?.id ?? 'sent' };
+  } catch (err) {
+    const msg = axios.isAxiosError(err)
+      ? err.response?.data?.message ?? err.response?.data?.error ?? err.message
+      : err instanceof Error ? err.message : String(err);
+    return { success: false, error: msg };
+  }
+}
+
+/**
  * Parse an incoming Wassenger webhook payload.
  *
  * Wassenger sends a webhook for every incoming message.

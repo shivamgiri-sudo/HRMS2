@@ -16,6 +16,7 @@
  *   everything else requireAuth + requireRole.
  */
 
+import multer from 'multer';
 import { Router } from 'express';
 import type { Response, NextFunction, Request } from 'express';
 import crypto from 'crypto';
@@ -32,6 +33,7 @@ import {
   parseWassengerWebhook,
   sendConfirmationAck,
   sendShortlistMessage,
+  sendMediaMessage,
 } from './wassenger.provider.js';
 import type { WassengerWebhookPayload } from './wassenger.provider.js';
 import {
@@ -743,3 +745,62 @@ metaCampaignRouter.post(
     return res.json({ success: true, data: { messageId: msgId } });
   })
 );
+
+/** Memory storage — files are converted to base64 immediately, never written to disk. */
+const _upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+/**
+ * POST /api/meta/leads/:id/send-file
+ * Send a file attachment (PDF, image, etc.) to a candidate via WhatsApp.
+ * Multipart form field: file (required), caption (optional text).
+ */
+metaCampaignRouter.post(
+  '/leads/:id/send-file',
+  requireAuth,
+  requireRole(...CAMPAIGN_READ_ROLES),
+  _upload.single('file'),
+  h(async (req, res) => {
+    const file = (req as Request & { file?: Express.Multer.File }).file;
+    if (!file) {
+      return res.status(400).json({ success: false, message: 'No file attached' });
+    }
+    if (!isWassengerConfigured()) {
+      return res.status(503).json({ success: false, message: 'Wassenger is not configured' });
+    }
+
+    const lead = await metaCampaignService.getLeadDetail(req.params.id!);
+    if (!lead) return res.status(404).json({ success: false, message: 'Lead not found' });
+    if (!lead.parsedPhone) {
+      return res.status(422).json({ success: false, message: 'Lead has no phone number' });
+    }
+
+    const caption = String(req.body?.caption ?? '').trim();
+    const base64 = file.buffer.toString('base64');
+
+    const result = await sendMediaMessage(lead.parsedPhone, {
+      base64,
+      mimeType: file.mimetype,
+      filename: file.originalname,
+      caption: caption || undefined,
+    });
+
+    if (!result.success) {
+      return res.status(502).json({ success: false, message: result.error ?? 'Send failed' });
+    }
+
+    // Persist as outbound message from HR
+    const displayName = caption || file.originalname;
+    const msgId = await saveMessage({
+      leadId: req.params.id!,
+      direction: 'outbound',
+      messageText: `📎 ${displayName}`,
+      senderType: 'hr',
+      senderId: (req as AuthenticatedRequest).authUser!.id,
+      senderName: (req as AuthenticatedRequest).authUser!.email ?? null,
+      wassengerMessageId: result.messageId ?? null,
+    });
+
+    return res.json({ success: true, data: { messageId: msgId, wassengerMessageId: result.messageId } });
+  })
+);
+

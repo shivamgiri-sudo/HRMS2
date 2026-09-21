@@ -6,7 +6,7 @@
  * All API calls unchanged; only the presentation layer is redesigned.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, CheckCheck, ChevronLeft, RefreshCcw, Search, Send, X } from "lucide-react";
+import { Check, CheckCheck, ChevronLeft, Paperclip, RefreshCcw, Search, Send, X } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 
@@ -217,10 +217,13 @@ export function MetaWhatsAppInbox() {
   const [sendError, setSendError] = useState<string | null>(null);
 
   const [mobileView, setMobileView] = useState<"list" | "thread">("list");
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [sendingFile, setSendingFile] = useState(false);
 
   const threadEndRef = useRef<HTMLDivElement>(null);
   const refreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedConv = conversations.find((c) => c.leadId === selectedId) ?? null;
   const totalUnread = conversations.reduce((s, c) => s + c.unreadCount, 0);
@@ -289,6 +292,35 @@ export function MetaWhatsAppInbox() {
         : undefined;
       setSendError(msg ?? "Failed to send. Try again.");
     } finally { setSending(false); }
+  }
+
+  async function handleSendFile(file: File) {
+    if (!selectedId) return;
+    setSendingFile(true);
+    setSendError(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      if (replyText.trim()) form.append("caption", replyText.trim());
+      // Use native fetch for multipart (hrmsApi.post doesn't handle FormData natively)
+      const token = localStorage.getItem("hrms_access_token");
+      const res = await fetch(`/api/meta/leads/${selectedId}/send-file`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Upload failed" }));
+        throw new Error(err.message ?? "Upload failed");
+      }
+      setAttachedFile(null);
+      setReplyText("");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      await fetchThread(selectedId);
+      await fetchInbox();
+    } catch (err: unknown) {
+      setSendError(err instanceof Error ? err.message : "File send failed. Try again.");
+    } finally { setSendingFile(false); }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -456,11 +488,49 @@ export function MetaWhatsAppInbox() {
                 {/* Reply input bar */}
                 <div className="flex-shrink-0 bg-[#f0f2f5] border-t border-[#d1d7db]">
                   {sendError && (
-                    <div className="px-4 py-1.5 bg-rose-50 border-b border-rose-100 text-xs text-rose-600">
-                      {sendError}
+                    <div className="px-4 py-1.5 bg-rose-50 border-b border-rose-100 text-xs text-rose-600 flex items-center justify-between">
+                      <span>{sendError}</span>
+                      <button type="button" onClick={() => setSendError(null)} className="text-rose-400 hover:text-rose-600">×</button>
                     </div>
                   )}
+                  {/* File preview strip */}
+                  {attachedFile && (
+                    <div className="flex items-center gap-2 px-4 py-2 bg-[#e7f3ef] border-b border-[#d1d7db]">
+                      <Paperclip className="w-4 h-4 text-[#00a884] flex-shrink-0" />
+                      <span className="text-[13px] text-[#111b21] truncate flex-1">{attachedFile.name}</span>
+                      <span className="text-[11px] text-[#667781]">
+                        {(attachedFile.size / 1024 / 1024).toFixed(1)} MB
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => { setAttachedFile(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}
+                        className="text-[#667781] hover:text-rose-500"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                  {/* Hidden file input */}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) setAttachedFile(f);
+                    }}
+                  />
                   <div className="flex items-end gap-2 px-3 py-2">
+                    {/* Attachment button */}
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-10 h-10 rounded-full flex items-center justify-center text-[#54656f] hover:bg-[#dfe5e7] flex-shrink-0 transition-colors"
+                      title="Attach file (PDF, image, document)"
+                    >
+                      <Paperclip className="w-5 h-5" />
+                    </button>
                     <div className="flex-1 bg-white rounded-[22px] px-4 py-2 shadow-sm min-h-[44px] flex items-end">
                       <textarea
                         ref={textareaRef}
@@ -468,18 +538,21 @@ export function MetaWhatsAppInbox() {
                         value={replyText}
                         onChange={(e) => setReplyText(e.target.value)}
                         onKeyDown={handleKeyDown}
-                        placeholder="Type a message"
+                        placeholder={attachedFile ? "Add a caption (optional)" : "Type a message"}
                         className="w-full resize-none outline-none text-[14px] text-[#111b21] placeholder-[#8696a0] leading-snug max-h-32 overflow-y-auto bg-transparent"
                         style={{ lineHeight: "1.4" }}
                       />
                     </div>
                     <button
                       type="button"
-                      onClick={() => void handleSend()}
-                      disabled={!replyText.trim() || sending}
+                      onClick={() => {
+                        if (attachedFile) void handleSendFile(attachedFile);
+                        else void handleSend();
+                      }}
+                      disabled={(!replyText.trim() && !attachedFile) || sending || sendingFile}
                       className="w-11 h-11 rounded-full bg-[#00a884] flex items-center justify-center text-white flex-shrink-0 shadow-md hover:bg-[#008f72] disabled:bg-[#ccc] disabled:cursor-not-allowed transition-colors"
                     >
-                      {sending ? (
+                      {sending || sendingFile ? (
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                       ) : (
                         <Send className="w-4 h-4" />
@@ -487,7 +560,7 @@ export function MetaWhatsAppInbox() {
                     </button>
                   </div>
                   <p className="text-center text-[10px] text-[#8696a0] pb-1">
-                    Enter to send · Shift+Enter for new line · Messages delivered via Wassenger
+                    Enter to send · Shift+Enter for new line · 📎 Max 20 MB · Delivered via Wassenger
                   </p>
                 </div>
               </>
