@@ -826,7 +826,7 @@ atsRouter.post("/trigger-daily-report", requireRole("admin", "hr_admin", "super_
   try {
     // If preview mode, just return the data
     if (preview) {
-      const result = await runDailyHiringReport(date || '2026-08-24', 'preview');
+      const result = await runDailyHiringReport(date, 'preview');
       return res.json({
         success: true,
         preview: true,
@@ -837,8 +837,8 @@ atsRouter.post("/trigger-daily-report", requireRole("admin", "hr_admin", "super_
 
     // Otherwise send the email
     const result = await runDailyHiringReport(
-      date || '2026-08-24',  // Default to yesterday
-      email || 'shivam.giri@teammas.in'
+      date,
+      email
     );
 
     return res.json({
@@ -861,14 +861,14 @@ atsRouter.post("/trigger-daily-report", requireRole("admin", "hr_admin", "super_
 
 // ── PUBLIC TEST ROUTE - REMOVE AFTER TESTING ────────────────────────────────
 
-atsPublicRouter.post("/test-daily-report", async (req, res) => {
+atsPublicRouter.post("/test-daily-report", requireAuth, requireRole("admin", "hr_admin", "super_admin"), async (req, res) => {
   const { date, email, preview } = req.body;
 
   try {
     const { runDailyHiringReport } = await import("./ats-reminders.cron.js");
 
     if (preview) {
-      const result = await runDailyHiringReport(date || '2026-08-24', 'preview');
+      const result = await runDailyHiringReport(date, 'preview');
       return res.json({
         success: true,
         preview: true,
@@ -878,8 +878,8 @@ atsPublicRouter.post("/test-daily-report", async (req, res) => {
     }
 
     const result = await runDailyHiringReport(
-      date || '2026-08-24',
-      email || 'shivam.giri@teammas.in'
+      date,
+      email
     );
 
     return res.json({

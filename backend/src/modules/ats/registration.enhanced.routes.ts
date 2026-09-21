@@ -22,15 +22,17 @@ import { jobRequisitionService } from "../job-requisition/job-requisition.servic
 import { privacyService } from "../privacy/privacy.service.js";
 import { toStoredNameRequired } from "../../shared/nameFormat.js";
 import { publicRegistrationLimiter } from "../../middleware/rateLimiter.js";
+import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
 
 export const registrationEnhancedRouter = Router();
 
 // TEMP TEST ENDPOINT - REMOVE AFTER TESTING
-registrationEnhancedRouter.post("/test-daily-report", async (req, res) => {
+registrationEnhancedRouter.post("/test-daily-report", requireAuth, requireRole("admin", "hr_admin", "super_admin"), async (req, res) => {
   const { date, email } = req.body;
   try {
     const { runDailyHiringReport } = await import("./ats-reminders.cron.js");
-    const result = await runDailyHiringReport(date || '2026-08-24', email || 'shivam.giri@teammas.in');
+    const result = await runDailyHiringReport(date, email);
     return res.json(result);
   } catch (error: any) {
     return res.status(500).json({ success: false, error: error.message });

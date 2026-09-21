@@ -20,10 +20,11 @@ import { inboxService } from "../inbox/inbox.service.js";
 import { sendOnboardingTokenEmail } from "./ats.email.service.js";
 import { env } from "../../config/env.js";
 import { triggerOnboardingStuck, triggerJoiningDocsIncomplete } from "../work-inbox/work-inbox.triggers.js";
-import { computeBranchReport } from "./ats-daily-report.service.js";
-import { buildDailyReportEmail } from "./ats-daily-report.template.js";
 import { canonicalBranch } from "./ats-vocabulary.js";
-import nodemailer from "nodemailer";
+import { getCurrentDateIST } from "../../shared/istDate.js";
+
+/** On-demand sends may only go to a company mailbox. */
+const COMPANY_ADDRESS = /^[^\s@]+@teammas\.(in|co\.in)$/i;
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -315,121 +316,45 @@ export async function runDailyHiringReport(forDate?: string, testEmail?: string)
     console.error('[ats-daily-report] branch lookup failed, using the original fixed list:', (e as Error).message);
     BRANCHES = ['NOIDA', 'NOIDA-2', 'AHMEDABAD-JALDARSHAN'];
   }
-  const reports: any[] = [];
-  const targetDate = forDate || new Date().toISOString().slice(0, 10);
-
+  const targetDate = forDate || getCurrentDateIST();
   console.log(`[ats-daily-report] Generating report for date: ${targetDate}`);
 
-  for (const branch of BRANCHES) {
-    try {
-      const report = await computeBranchReport(branch, targetDate);
-      reports.push(report);
-      console.log(`[ats-daily-report] ${branch}: ${report.ftd.walkin} walk-ins, ${report.ftd.selected} selected, ${report.ftd.pending} pending`);
-    } catch (error) {
-      console.error(`[ats-daily-report] Error computing ${branch}:`, error);
-    }
-  }
+  // The report is now the per-branch recruitment activity report (branch-activity-report/). The old
+  // single combined email — one plain-table mail to every branch head, HR admin and super admin, with a
+  // different (and, for SLA, unmeasured) definition of every number — is gone, so a manual trigger, the
+  // public test routes and the 6 PM scheduler can no longer send it. BRANCHES above still decides which
+  // branches are in scope.
+  const { buildBranchActivityReports, sendBranchActivityReports } = await import('./branch-activity-report/index.js');
 
-  // If testEmail provided, just return the data for preview
   if (testEmail === 'preview') {
+    const built = await buildBranchActivityReports(targetDate);
+    const reports = built
+      .filter((r) => BRANCHES.some((b) => b.toLowerCase() === r.branch.toLowerCase()))
+      .map((r) => ({ branchName: r.branch, subject: r.subject, ftd: r.data.overall.ftd, wtd: r.data.overall.wtd, mtd: r.data.overall.mtd, html: r.html }));
     return { reports, targetDate };
   }
 
-  // Build combined email
-  const dashboardUrl = `${env.FRONTEND_URL || 'https://mcnhrms.teammas.in'}/recruitment/candidates`;
-  const combinedFtd = reports.reduce((acc, r) => ({
-    walkin: acc.walkin + r.ftd.walkin,
-    selected: acc.selected + r.ftd.selected,
-    pending: acc.pending + r.ftd.pending
-  }), { walkin: 0, selected: 0, pending: 0 });
-
-  // Combine all intervention points
-  const allInterventions: any[] = [];
-  for (const report of reports) {
-    allInterventions.push(...report.interventions);
+  // No explicit recipient = the scheduled 6 PM run. Real delivery (branch head To; HR + COO CC) belongs to the
+  // branch activity report scheduler, which has its own enable / dry-run switches and per-day idempotency.
+  // Doing it here as well would mail every branch twice, so this path only builds and logs.
+  if (!testEmail) {
+    const results = await sendBranchActivityReports({ reportDate: targetDate, branches: BRANCHES, dryRun: true });
+    return { success: false, error: 'Not sent: scheduled delivery is owned by the branch activity report scheduler (ATS_BRANCH_ACTIVITY_REPORT_*).', stats: { branches: results.length } };
   }
 
-  // Get branch head emails
-  const [branchHeadRows] = await db.execute<RowDataPacket[]>(
-    `SELECT DISTINCT au.email
-     FROM auth_user au
-     JOIN user_roles ur ON ur.user_id = au.id
-     WHERE ur.role_key IN ('branch_head', 'hr_admin', 'super_admin', 'management')
-       AND ur.active_status = 1
-       AND au.email IS NOT NULL`,
-    []
-  );
-
-  const recipients = testEmail || branchHeadRows.map(r => r.email).join(',') || 'shivam.giri@teammas.in';
-
-  // Create a simple combined HTML email
-  let interventionHtml = '';
-  if (allInterventions.length > 0) {
-    interventionHtml = `<h3 style="color:#dc2626;">⚠ Top Management Intervention Points</h3><ul>`;
-    for (const int of allInterventions) {
-      interventionHtml += `<li>${int.message}</li>`;
-    }
-    interventionHtml += `</ul>`;
+  // An explicit recipient is an on-demand test: every branch email goes to that one company address only.
+  if (!COMPANY_ADDRESS.test(testEmail.trim())) {
+    return { success: false, error: 'Recipient must be a company address (@teammas.in / @teammas.co.in).', stats: { branches: 0 } };
   }
-
-  let branchTables = '';
-  for (const report of reports) {
-    branchTables += `<h3>${report.branchName} - FTD Metrics</h3>
-      <table border="1" cellpadding="5" style="border-collapse:collapse;">
-        <tr><td>Walk-ins</td><td>${report.ftd.walkin}</td></tr>
-        <tr><td>Selected</td><td>${report.ftd.selected}</td></tr>
-        <tr><td>Rejected</td><td>${report.ftd.rejected}</td></tr>
-        <tr><td>Pending Submission</td><td style="color:${report.ftd.pending > 0 ? '#dc2626' : '#000'}"><strong>${report.ftd.pending}</strong></td></tr>
-        <tr><td>Selection %</td><td>${report.ftd.selectionPct}</td></tr>
-      </table>`;
-
-    if (report.recruiterFtd.length > 0) {
-      branchTables += `<h4>Recruiter Breakdown</h4><table border="1" cellpadding="5" style="border-collapse:collapse;"><tr><th>Recruiter</th><th>Sourced</th><th>Attended</th><th>Pending</th></tr>`;
-      for (const rec of report.recruiterFtd) {
-        if (rec.pendingCount > 0) {
-          branchTables += `<tr><td>${rec.recruiter}</td><td>${rec.sourced}</td><td>${rec.attended}</td><td style="color:#dc2626"><strong>${rec.pendingCount}</strong></td></tr>`;
-        }
-      }
-      branchTables += `</table>`;
-    }
-  }
-
-  const html = `<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;">
-    <h2>Daily Hiring Report - ${targetDate}</h2>
-    <p>Combined: ${combinedFtd.walkin} walk-ins, ${combinedFtd.selected} selected, <strong style="color:#dc2626">${combinedFtd.pending} pending</strong></p>
-    ${interventionHtml}
-    ${branchTables}
-    <hr>
-    <p><a href="${dashboardUrl}">Open ATS Dashboard</a></p>
-  </body></html>`;
-
-  const subject = `[Daily Report] ${targetDate} | ${combinedFtd.walkin} Walk-ins · ${combinedFtd.selected} Selected · ${combinedFtd.pending} Pending`;
-
-  // Send email
-  try {
-    const transporter = nodemailer.createTransport({
-      host: env.SMTP_HOST || 'smtp.gmail.com',
-      port: Number(env.SMTP_PORT || 587),
-      secure: false,
-      auth: {
-        user: env.SMTP_USER || '',
-        pass: env.SMTP_PASS || '',
-      },
-    });
-
-    const result = await transporter.sendMail({
-      from: `"MAS HRMS Daily Report" <${env.SMTP_FROM || env.SMTP_USER}>`,
-      to: recipients,
-      subject,
-      html,
-    });
-
-    console.log(`[ats-daily-report] Email sent to ${recipients}: ${result.messageId}`);
-    return { success: true, messageId: result.messageId, recipients, stats: combinedFtd };
-  } catch (error) {
-    console.error('[ats-daily-report] Email send failed:', error);
-    return { success: false, error: String(error), stats: combinedFtd };
-  }
+  const results = await sendBranchActivityReports({ reportDate: targetDate, branches: BRANCHES, dryRun: false, redirectTo: [testEmail.trim()] });
+  const sent = results.filter((r) => r.status === 'sent');
+  return {
+    success: sent.length > 0,
+    messageId: sent.map((r) => r.messageId).filter(Boolean).join(','),
+    recipients: testEmail.trim(),
+    stats: { branches: results.length, sent: sent.length, failed: results.filter((r) => r.status === 'failed').length },
+    ...(sent.length === 0 ? { error: results.map((r) => `${r.branch}: ${r.status}${r.reason ? ` (${r.reason})` : ''}`).join('; ') || 'no branch had activity' } : {}),
+  };
 }
 
 // ── Scheduler bootstrap ──────────────────────────────────────────────────────
