@@ -1221,7 +1221,7 @@ export const metaCampaignService = {
   },
 
   /** Re-parse and re-screen a stored lead without going back to the Graph API. */
-  async rescreenLead(leadId: string): Promise<MetaLead | null> {
+  async rescreenLead(leadId: string, opts: { createCandidate?: boolean } = {}): Promise<MetaLead | null> {
     const [rows] = await db.execute<RowDataPacket[]>('SELECT * FROM meta_lead_raw WHERE id = ? LIMIT 1', [leadId]);
     const lead = rows[0];
     if (!lead) return null;
@@ -1310,7 +1310,8 @@ export const metaCampaignService = {
     // candidate — same adopt-or-insert path as live ingestion. Outreach is intentionally NOT fired
     // here: rescreen runs over historical/backfilled leads, and messaging them is the exact thing
     // the backfill's skipOutreach was built to avoid. A recruiter can trigger outreach per-lead.
-    if (screeningResult === 'qualified') {
+    // opts.createCandidate = false lets a bulk re-screen refresh results without seeding the ATS.
+    if (screeningResult === 'qualified' && opts.createCandidate !== false) {
       await this.createCandidateFromLead(leadId).catch((e: unknown) =>
         console.warn('[meta] rescreen createCandidateFromLead failed', e instanceof Error ? e.message : e)
       );

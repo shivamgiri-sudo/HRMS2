@@ -26,6 +26,15 @@ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { metaCampaignService } from './meta-campaign.service.js';
 import { ALL_BRANCH_ROLES, resolveBranchScope, canAccessLead, canMessageLead } from './meta-access.js';
 import type { BranchScope } from './meta-access.js';
+import {
+  getEvaluations,
+  filterEvaluations,
+  summarise,
+  toCsv,
+  getLeadShortlistDetail,
+} from './shortlist-report.service.js';
+import type { ShortlistFilters } from './shortlist-report.service.js';
+import { writeAuditLog } from '../../shared/auditLog.js';
 import { notifyQualifiedLead, recordVoiceCallback, recordWalkInConfirmation } from './lead-outreach.service.js';
 import { leadVerifyToken, isMetaConfigured } from './meta-api.client.js';
 import { parseVapiCallback, isVapiConfigured } from './vapi-voicebot.provider.js';
@@ -525,6 +534,86 @@ metaCampaignRouter.get(
       offset: Number.isFinite(offset) ? offset : 0,
     });
     return res.json({ success: true, data: data.rows, total: data.total });
+  })
+);
+
+/**
+ * Shortlist report: who HRMS would shortlist against each lead's mapped batch requisition, why
+ * others are rejected, and what it could not verify. Read-only — nothing here writes to a lead.
+ * Branch-scoped callers only see their own branch's requisitions.
+ */
+async function shortlistFilters(req: AuthenticatedRequest): Promise<ShortlistFilters | null> {
+  const scope = await resolveBranchScope(req.authUser!.id, callerRoles(req));
+  if (!scope.all && !scope.branchName) return null; // fail closed
+  const q = req.query;
+  return {
+    branchName: scope.all ? (q.branchName as string | undefined) : scope.branchName!,
+    requisitionId: q.requisitionId as string | undefined,
+    proposed: (q.proposed as ShortlistFilters['proposed']) ?? 'all',
+    current: (q.current as ShortlistFilters['current']) ?? 'all',
+    changedOnly: q.changedOnly === 'true',
+    outreachEligibleOnly: q.outreachEligibleOnly === 'true',
+    search: q.search as string | undefined,
+  };
+}
+
+metaCampaignRouter.get(
+  '/shortlist/summary',
+  requireAuth,
+  requireRole(...INBOX_ROLES),
+  h(async (req, res) => {
+    const filters = await shortlistFilters(req);
+    const { evaluations, index } = await getEvaluations(req.query.refresh === 'true');
+    const rows = filters ? filterEvaluations(evaluations, { ...filters, proposed: 'all', current: 'all' }) : [];
+    return res.json({ success: true, data: summarise(rows, index) });
+  })
+);
+
+metaCampaignRouter.get(
+  '/shortlist/leads',
+  requireAuth,
+  requireRole(...INBOX_ROLES),
+  h(async (req, res) => {
+    const filters = await shortlistFilters(req);
+    const { evaluations } = await getEvaluations();
+    const rows = filters ? filterEvaluations(evaluations, filters) : [];
+    const limit = Math.min(Math.max(Number(req.query.limit ?? 50), 1), 200);
+    const offset = Math.max(Number(req.query.offset ?? 0), 0);
+    return res.json({ success: true, data: { rows: rows.slice(offset, offset + limit), total: rows.length } });
+  })
+);
+
+metaCampaignRouter.get(
+  '/shortlist/export.csv',
+  requireAuth,
+  requireRole(...CAMPAIGN_WRITE_ROLES),
+  h(async (req, res) => {
+    const filters = await shortlistFilters(req);
+    const { evaluations } = await getEvaluations();
+    const rows = filters ? filterEvaluations(evaluations, filters) : [];
+    await writeAuditLog({
+      actor_user_id: req.authUser!.id,
+      action_type: 'META_SHORTLIST_EXPORT',
+      module_key: 'meta_campaign',
+      entity_type: 'meta_lead_raw',
+      metadata: { rows: rows.length, filters },
+      req,
+    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="meta-shortlist.csv"');
+    return res.send('\uFEFF' + toCsv(rows));
+  })
+);
+
+metaCampaignRouter.get(
+  '/shortlist/leads/:id',
+  requireAuth,
+  requireRole(...INBOX_ROLES),
+  h(async (req, res) => {
+    if (!(await requireLeadInScope(req, res, req.params.id!))) return;
+    const data = await getLeadShortlistDetail(req.params.id!);
+    if (!data) return res.status(404).json({ success: false, message: 'Lead not found' });
+    return res.json({ success: true, data });
   })
 );
 

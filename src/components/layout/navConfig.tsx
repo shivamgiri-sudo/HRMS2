@@ -7,7 +7,7 @@ import {
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
   Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle, IndianRupee,
   Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound, RotateCcw, Mail, Share2,
-  Video, PenLine, Workflow, Layers3, CalendarOff, MessageSquare, AlertCircle, Trophy, History
+  Video, PenLine, Workflow, Layers3, CalendarOff, MessageSquare, AlertCircle, Trophy, History, ListChecks
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
 
@@ -136,6 +136,7 @@ export const navGroups: NavGroup[] = [
           { label: "Enhanced Registration", href: "/ats/registration-enhanced", icon: ic(UserPlus), roles: ["admin","hr","recruiter","super_admin"], description: "Extended candidate registration" },
           { label: "ATS Extensions", href: "/ats/extensions", icon: ic(Settings2), pageCode: "ATS_EXTENSIONS", roles: ["admin","hr","super_admin"], description: "ATS extension workspace" },
           { label: "Meta Campaigns", href: "/ats/meta-campaigns", icon: ic(Activity), pageCode: "ATS_META_CAMPAIGNS", roles: ["admin","hr","super_admin","recruiter","branch_head","recruitment_hr","payroll_hr","interviewer","operations_manager","process_manager","manager","management"], description: "Meta/WhatsApp lead campaigns and outreach" },
+          { label: "Shortlist Report", href: "/ats/meta-shortlist", icon: ic(ListChecks), pageCode: "ATS_META_CAMPAIGNS", roles: ["admin","hr","super_admin","recruiter","branch_head","recruitment_hr","payroll_hr","interviewer","operations_manager","process_manager","manager","management"], description: "Who HRMS shortlists against each batch requisition, and why" },
           { label: "Meta Leads", href: "/ats/meta-leads", icon: ic(Users), pageCode: "ATS_META_CAMPAIGNS", roles: ["admin","hr","super_admin","recruiter","branch_head","recruitment_hr","payroll_hr","interviewer","operations_manager","process_manager","manager","management"], description: "Incoming leads from Meta campaigns" },
           { label: "WhatsApp Inbox", href: "/ats/whatsapp-inbox", icon: ic(MessageSquare), pageCode: "ATS_META_CAMPAIGNS", roles: ["admin","hr","super_admin","recruiter","branch_head","recruitment_hr","payroll_hr","interviewer","operations_manager","process_manager","manager","management"], description: "Candidate WhatsApp conversations from Meta campaigns" },
           // /ats/payroll-hr-validation is a redirect to /ats/onboarding-requests

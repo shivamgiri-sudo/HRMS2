@@ -149,3 +149,7 @@ privacy-inventory-findings.json
 # on disk for reference only; excluded by directory so it can never enter
 # this public repo's history via a broad `git add`.
 /scripts/apps-script/
+
+# Re-screen / reconcile runners write rollback snapshots and shortlist CSVs (candidate names + phones)
+# here. PII: never commit.
+/backend/.deploy-backups/
