@@ -1112,6 +1112,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1826_meta_lead_walkin_reply_columns.sql", // Adds walkin_reply_sent_at + walkin_reply_text to meta_leads. Previously numbered 1810 (conflict with job_requisition_meta_fields); renumbered to 1826 to resolve duplicate.
   "1827_meta_lead_messages.sql", // Creates meta_lead_messages: per-lead WhatsApp message thread (direction, sender_type, wassenger_message_id, read_at). Previously numbered 1811 (conflict with marketing_team_email_setting); renumbered to 1827 to resolve duplicate.
   "1828_receipt_receivable_ledger_heads.sql", // Adds ledger head + sub-head columns to receipt vouchers and creates receivable_ledger_head reference table. Previously untracked as 1825 (conflict with mcn_content_builder_request); renumbered to 1828.
+  "1829_jr_meta_screening_config.sql", // Adds meta_screening_config JSON column to job_requisition for advanced META Lead Gen screening (gender, certifications, language requirements, typing speed, custom field rules).
   ];
 
 export type MigrationHealth = {
