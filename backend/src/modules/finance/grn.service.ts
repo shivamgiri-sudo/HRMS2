@@ -29,6 +29,7 @@ import { refuse } from "../process-pnl/finance-error.js";
 import { notifyGrnStage, resolveGrnNotifications } from "./grn-notify.js";
 import { notifyGrnSubmittedEmail, notifyGrnAccountsHeadPendingEmail } from "./grn.notifications.js";
 import { postGrnApprovalJournalEntry } from "./grn-journal-posting.service.js";
+import { runInBackground } from "./grn-background.js";
 import { journalService } from "./journal.service.js";
 
 export type GrnType = "vendor" | "imprest";
@@ -743,10 +744,6 @@ export const grnService = {
       throw new Error("GRN status changed before submission; refresh and try again");
     }
 
-    await writeGrnAudit("SUBMIT", grnId, actorUserId, actorRole, {
-      remarks: payload.remarks,
-      grn_number: grnNumber,
-    });
     /*
      * Also recorded on the WORKFLOW trail, not only the security one.
      *
@@ -757,26 +754,34 @@ export const grnService = {
      * only history a reviewer can read back (GET /grns/:id/approval-history), and it is the
      * transition that starts the chain. Both writes stay; they answer different questions.
      */
-    await recordFinanceApprovalEvent({
-      entityType: "grn",
-      entityId: grnId,
-      action: "submit",
-      fromStatus: "draft",
-      toStatus: "submitted",
-      actorUserId,
-      actorRole,
-      remarks: payload.remarks?.trim() || null,
-      details: { grnNumber: String(grnNumber ?? ""), branchId: String(grn.branch_id ?? "") },
-    });
-    await notifyGrnStage(
-      grnId,
-      String(grnNumber ?? ""),
-      grn.branch_id ? String(grn.branch_id) : null,
-      grn.vendor_name ? String(grn.vendor_name) : null,
-      Number(grn.amount_with_tax ?? grn.amount ?? 0) || null,
-      "branch_head",
+    await Promise.all([
+      writeGrnAudit("SUBMIT", grnId, actorUserId, actorRole, {
+        remarks: payload.remarks,
+        grn_number: grnNumber,
+      }),
+      recordFinanceApprovalEvent({
+        entityType: "grn",
+        entityId: grnId,
+        action: "submit",
+        fromStatus: "draft",
+        toStatus: "submitted",
+        actorUserId,
+        actorRole,
+        remarks: payload.remarks?.trim() || null,
+        details: { grnNumber: String(grnNumber ?? ""), branchId: String(grn.branch_id ?? "") },
+      }),
+    ]);
+    runInBackground("grn-submit-branch-alert", () =>
+      notifyGrnStage(
+        grnId,
+        String(grnNumber ?? ""),
+        grn.branch_id ? String(grn.branch_id) : null,
+        grn.vendor_name ? String(grn.vendor_name) : null,
+        Number(grn.amount_with_tax ?? grn.amount ?? 0) || null,
+        "branch_head",
+      )
     );
-    await notifyGrnSubmittedEmail(grnId);
+    runInBackground("grn-submit-email", () => notifyGrnSubmittedEmail(grnId));
     return { success: true, newStatus: "submitted" as const, grnNumber };
   },
 
@@ -1220,31 +1225,26 @@ export const grnService = {
       connection.release();
     }
 
-    await writeGrnAudit(
-      payload.decision.toUpperCase(),
-      grnId,
-      actorUserId,
-      actorRole,
-      {
+    runInBackground("grn-review-audit", () =>
+      writeGrnAudit(payload.decision.toUpperCase(), grnId, actorUserId, actorRole, {
         review_note: payload.reviewNote,
         new_status: newStatus!,
         payment_id: paymentId,
-      }
+      })
     );
     if (paymentId) {
-      await vendorPaymentService.notifyPaymentPending(paymentId).catch(() => undefined);
+      const pendingPaymentId = paymentId;
+      runInBackground("payment-pending", () => vendorPaymentService.notifyPaymentPending(pendingPaymentId));
     }
-    // The stage this decision cleared is done with; close its bell alert regardless of outcome,
-    // then raise the next stage's alert only when the chain continues (branch_head approved into
-    // finance_head_approved's next stage). A rejection or the finance_head's own final decision
-    // ends the chain, so nothing new is raised.
+    // resolveGrnNotifications is one cheap UPDATE and must complete before the next stage's alert
+    // is raised — kept inline. All downstream fan-out (next alert, email) runs in the background.
     await resolveGrnNotifications(grnId);
     if (notifyStage) {
-      await notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, notifyStage);
-      // Email leg — Branch Head -> Accounts Head only (see grn.notifications.ts's header for
-      // why Accounts Head -> Finance Head is deliberately not wired here).
+      runInBackground("next-stage-alert", () =>
+        notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, notifyStage!)
+      );
       if (notifyStage === "accounts_head") {
-        await notifyGrnAccountsHeadPendingEmail(grnId);
+        runInBackground("accounts-head-email", () => notifyGrnAccountsHeadPendingEmail(grnId));
       }
     }
     // grnNumber is assigned at final approval (number-at-final-approval); the caller surfaces it.
