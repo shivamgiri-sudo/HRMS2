@@ -912,3 +912,38 @@ metaCampaignRouter.post(
   })
 );
 
+// ── Job-requisition list for inbox filter dropdown ────────────────────────────
+
+metaCampaignRouter.get(
+  '/job-requisition',
+  requireAuth,
+  requireRole('super_admin', 'admin', 'hr', 'management', 'manager'),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const role = req.authUser!.role ?? '';
+    const scope = await resolveBranchScope(req.authUser!.id, role ? [role] : []);
+    const { db: dbConn } = await import('../../db/mysql.js');
+    const params: unknown[] = [];
+    let branchFilter = '';
+    if (!scope.all && scope.branchName) {
+      branchFilter = 'AND jr.branch_name = ?';
+      params.push(scope.branchName);
+    }
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
+    params.push(limit);
+    const [rows] = await dbConn.execute<import('mysql2').RowDataPacket[]>(
+      `SELECT jr.id, jr.requisition_code,
+              dm.designation_name,
+              bm.branch_name
+         FROM job_requisition jr
+         LEFT JOIN designation_master dm ON dm.id = jr.designation_id
+         LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name
+        WHERE jr.status IN ('open','approved','active')
+          ${branchFilter}
+        ORDER BY jr.created_at DESC
+        LIMIT ?`,
+      params,
+    );
+    return res.json({ success: true, data: rows });
+  })
+);
+
