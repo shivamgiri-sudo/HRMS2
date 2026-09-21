@@ -410,7 +410,7 @@ function startServer() {
   // restart overlapping the previous listener's hold on the port — a watch-mode
   // reload in development, or a pm2 restart in production — where the old socket
   // has not been released yet. Both are worth retrying rather than dying for.
-  httpServer.on("error", (error: NodeJS.ErrnoException) => {
+  httpServer!.on("error", (error: NodeJS.ErrnoException) => {
     if (error.code !== "EADDRINUSE") {
       console.error("[startup] HTTP server error:", error.message);
       throw error;

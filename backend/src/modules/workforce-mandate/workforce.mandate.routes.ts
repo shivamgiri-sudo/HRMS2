@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -117,7 +117,7 @@ router.get(
 router.get(
   "/capacity/:processId",
   requireRole("admin", "hr", "wfm", "process_manager", "ceo"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
+  h(async (req: AuthenticatedRequest & Request, res: Response) => {
     const { processId } = req.params;
     const { branchId } = req.query as { branchId?: string };
     const data = await workforceMandateService.getCapacitySnapshot(processId, branchId);
@@ -165,7 +165,7 @@ router.get(
     // Designation-based audience that no existing role can express - see migration 1689.
     "capacity_viewer",
   ),
-  h(async (req: AuthenticatedRequest, res: Response) => {
+  h(async (req: AuthenticatedRequest & Request, res: Response) => {
     const { branchId } = req.query as { branchId?: string };
 
     const [mandates] = await (await import("../../db/mysql.js")).db.execute<any[]>(

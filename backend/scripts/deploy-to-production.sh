@@ -33,9 +33,9 @@ echo ""
 run "git pull origin main" \
   "cd $APP_DIR && git fetch origin && git reset --hard origin/main"
 
-# 2. Install npm packages (only if package.json changed)
+# 2. Install npm packages including devDependencies (TypeScript + @types needed for build)
 run "npm install (backend)" \
-  "cd $APP_DIR/backend && npm ci --omit=dev 2>&1 | tail -3"
+  "cd $APP_DIR/backend && npm ci 2>&1 | tail -3"
 
 # 3. Build backend
 run "Build backend TypeScript" \
