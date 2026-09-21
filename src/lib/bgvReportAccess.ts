@@ -3,4 +3,7 @@
  * Mirrors BGV_REPORT_ROLES in backend/src/modules/ats/bgv-verification.routes.ts — the API enforces
  * it (and the branch scope); this list only decides what the UI offers. super_admin passes everywhere.
  */
-export const BGV_REPORT_ROLES = ["super_admin", "admin", "hr", "branch_hr", "branch_head", "branch_manager"] as const;
+export const BGV_REPORT_ROLES = [
+  "super_admin", "admin", "hr", "hr_admin", "ho_hr", "recruitment_hr", "process_hr",
+  "payroll_head", "compliance", "branch_hr", "branch_head", "branch_manager"
+] as const;

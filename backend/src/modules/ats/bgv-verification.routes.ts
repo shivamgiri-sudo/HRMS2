@@ -95,8 +95,11 @@ async function requireBgvCandidateScope(req: AuthenticatedRequest, candidateId: 
  *    only candidates who applied to that branch, whatever scopes are assigned to their login.
  * The wider BGV verification endpoints above keep their own role list.
  */
-const BGV_REPORT_ROLES = ["admin", "hr", "branch_hr", "branch_head", "branch_manager"] as const;
-const BGV_BRANCH_HR_ROLES = ["hr", "branch_hr"] as const;
+const BGV_REPORT_ROLES = [
+  "super_admin", "admin", "hr", "hr_admin", "ho_hr", "recruitment_hr", "process_hr",
+  "payroll_head", "compliance", "branch_hr", "branch_head", "branch_manager"
+] as const;
+const BGV_ORG_WIDE_ROLES = ["super_admin", "admin", "hr", "hr_admin", "ho_hr", "recruitment_hr", "process_hr", "payroll_head", "compliance"] as const;
 const BGV_BRANCH_MANAGER_ROLES = ["branch_head", "branch_manager"] as const;
 
 async function employeeBranchOf(userId: string): Promise<string | null> {
@@ -112,13 +115,13 @@ async function requireBgvReportScope(req: AuthenticatedRequest, candidateId: str
   const userId = req.authUser!.id;
   const candidateBranch = candidate.applied_for_branch ? String(candidate.applied_for_branch) : null;
 
-  // admin / super_admin bypass.
-  if (await hasScopedAccess(userId, ["admin"], {}, { allowAdminBypass: true })) return;
+  // Org-wide roles: admin, super_admin, all HR designations, payroll_head, compliance.
+  if (await hasAnyRole(userId, ...BGV_ORG_WIDE_ROLES)) return;
   if (!candidateBranch) throw Object.assign(new Error("Access denied"), { statusCode: 403 });
 
-  // Branch HR: a branch-type assignment scope on the candidate's branch.
-  if (await hasAnyRole(userId, ...BGV_BRANCH_HR_ROLES)) {
-    const scopes = await getUserAssignmentScopes(userId, [...BGV_BRANCH_HR_ROLES]);
+  // Branch HR: must have a branch-type assignment scope on the candidate's branch.
+  if (await hasAnyRole(userId, "branch_hr")) {
+    const scopes = await getUserAssignmentScopes(userId, ["branch_hr"]);
     if (scopes.some((sc) => (sc.scope_type === "branch" || sc.scope_type === "branch_process") && sc.branch_id === candidateBranch)) return;
   }
 
