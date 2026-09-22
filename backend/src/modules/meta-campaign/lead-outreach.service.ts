@@ -329,15 +329,15 @@ export async function notifyQualifiedLead(
 
       if (res.success) {
         outcome.succeeded.push('whatsapp_wassenger');
-        const msgText = slot
-          ? `[Shortlist + Interview ${slot.dateLabel} ${slot.timeLabel} sent to ${ctx.name}]`
-          : `[Shortlist notification sent to ${ctx.name}]`;
-        // Persist the outbound shortlist message so it appears in the inbox thread
+        // Save the actual message text as an outbound HR message so it renders
+        // as a green bubble in the inbox, not a system notification pill.
+        const sentText = waBody ?? `Hi ${ctx.name.split(' ')[0]}! Your profile has been shortlisted for ${ctx.designation ?? 'a position'} at Mas Callnet India Pvt. Ltd. Please visit our office for interview. — Mas Callnet HR Team`;
         await saveLeadMessage({
           leadId: ctx.id,
           direction: 'outbound',
-          messageText: msgText,
-          senderType: 'system',
+          messageText: sentText,
+          senderType: 'hr',
+          senderName: 'HR Team',
           wassengerMessageId: res.messageId ?? null,
         }).catch(() => { /* best-effort */ });
       } else {
