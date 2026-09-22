@@ -116,6 +116,7 @@ describe('GET /joining-documents-tracker', () => {
       completion_max: 75,
       document_code: undefined,
       overdue_only: true,
+      id_creation_sla_only: false,
       updated_since: undefined,
       search: 'John',
       page: DEFAULT_PAGE,

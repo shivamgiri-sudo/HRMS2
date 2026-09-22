@@ -78,6 +78,7 @@ joiningDocumentsTrackerRouter.get('/', h(async (req: AuthenticatedRequest, res: 
       completion_max: req.query.completion_max ? Number(req.query.completion_max) : undefined,
       document_code: req.query.document_code as string | undefined,
       overdue_only: req.query.overdue_only === 'true',
+      id_creation_sla_only: req.query.id_creation_sla_only === 'true',
       updated_since: req.query.updated_since as string | undefined,
       search: req.query.search as string | undefined,
       // The clamps are the service's, not a copy of them. Re-deriving the bounds here
