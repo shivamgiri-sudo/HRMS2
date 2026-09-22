@@ -279,10 +279,16 @@ export async function attendanceRegisterMonthly(
       CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
       COALESCE(dept.dept_name, '') AS department,
       COALESCE(desig.designation_name, '') AS designation,
-      COALESCE(NULLIF(e.profile_type, ''), e.employment_type, '') AS profile,
+      -- No fallback to employment_type: every other report showing this column
+      -- (legacy-reports.service.ts, payroll.executor.ts, payroll-extended.routes.ts)
+      -- leaves it blank when profile_type is unset. This report used to fall back
+      -- to employment_type (e.g. "Permanent"), which is a different field
+      -- mislabelled as "Profile" — the stakeholder-reported "incorrect Profile Name".
+      COALESCE(NULLIF(e.profile_type, ''), '') AS profile,
       COALESCE(cc.cost_centre_name, '') AS cost_center,
       COALESCE(b.branch_name, '') AS emp_location,
       COALESCE(p.process_name, '') AS process_name,
+      COALESCE(p.business_lob, '') AS process_lob_name,
       CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
       CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
       e.date_of_joining,
@@ -341,6 +347,7 @@ export async function attendanceRegisterMonthly(
         cost_center:     row.cost_center,
         emp_location:    row.emp_location,
         process_name:    row.process_name,
+        process_lob_name: row.process_lob_name,
         billable:        row.billable,
         employee_status: row.employee_status,
         date_of_joining: row.date_of_joining,
@@ -420,6 +427,7 @@ export async function attendanceRegisterMonthly(
       cost_center:     emp.cost_center,
       emp_location:    emp.emp_location,
       process_name:    emp.process_name,
+      process_lob_name: emp.process_lob_name,
       date_of_joining: emp.doj_display,
       salary_start_date: emp.salary_start_date_display,
       billable:        emp.billable,

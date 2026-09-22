@@ -5010,6 +5010,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "cost_center", label: "CostCenter", format: "text", width: 130 },
       { key: "emp_location", label: "EmpLocation", format: "text", width: 100 },
       { key: "process_name", label: "Process Name", format: "text", width: 140 },
+      { key: "process_lob_name", label: "Process LOB", format: "text", width: 130 },
       { key: "date_of_joining", label: "Joining Date", format: "date", width: 110 },
       { key: "salary_start_date", label: "Salary Start Date", format: "date", width: 120 },
       { key: "billable", label: "Billable", format: "text", width: 70, align: "center" },

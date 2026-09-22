@@ -16,7 +16,30 @@ export const createExitRequestSchema = z.object({
     .enum(["resignation", "retirement", "mutual_separation", "termination", "absconding", "contract_end", "abandonment", "did_not_join"])
     .optional()
     .default("resignation"),
-  exitReasonCategory: z.string().trim().max(100).nullable().optional(),
+  // Must match REASON_CATEGORIES in src/pages/NativeExitManagement.tsx — that dropdown was
+  // previously a UI convention only, with this field accepting arbitrary free text server-side.
+  // Existing rows keep whatever legacy value they already have (this enum gates new writes only,
+  // per the Form Input Rule: "the dropdown governs only what a user can newly pick").
+  exitReasonCategory: z
+    .enum([
+      "better_opportunity",
+      "career_growth",
+      "compensation",
+      "relocation",
+      "health_personal",
+      "family_reasons",
+      "higher_education",
+      "work_environment",
+      "dissatisfaction_management",
+      "entrepreneurship",
+      "performance_action",
+      "termination_misconduct",
+      "absconding",
+      "contract_end",
+      "other",
+    ])
+    .nullable()
+    .optional(),
   // The last date the employee actually worked, for absconding/abandonment.
   //
   // The New Exit form has demanded this as a mandatory field since it was written and the value

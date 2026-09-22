@@ -1608,14 +1608,20 @@ export default function NativeExitCommandCenter() {
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1.5">Reason Category</label>
                 <select value={createForm.exitReasonCategory} onChange={(e) => setCreateForm({ ...createForm, exitReasonCategory: e.target.value })} className="w-full rounded-2xl border bg-white px-4 py-3 text-sm outline-none focus:border-blue-400">
+                  <option value="better_opportunity">Better Opportunity</option>
                   <option value="career_growth">Career Growth</option>
-                  <option value="compensation">Compensation</option>
+                  <option value="compensation">Compensation Dissatisfaction</option>
                   <option value="relocation">Relocation</option>
-                  <option value="personal">Personal Reasons</option>
-                  <option value="health">Health</option>
-                  <option value="further_education">Further Education</option>
-                  <option value="misconduct">Misconduct</option>
-                  <option value="performance">Performance</option>
+                  <option value="health_personal">Health / Personal Reasons</option>
+                  <option value="family_reasons">Family Reasons</option>
+                  <option value="higher_education">Higher Education</option>
+                  <option value="work_environment">Work Environment</option>
+                  <option value="dissatisfaction_management">Management Dissatisfaction</option>
+                  <option value="entrepreneurship">Entrepreneurship</option>
+                  <option value="performance_action">Performance Action (Involuntary)</option>
+                  <option value="termination_misconduct">Termination — Misconduct</option>
+                  <option value="absconding">Absconding</option>
+                  <option value="contract_end">Contract End</option>
                   <option value="other">Other</option>
                 </select>
               </div>
