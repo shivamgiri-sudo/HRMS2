@@ -11,7 +11,8 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
 
-const HR_GLOBAL_ROLES = ["hr", "hr_admin", "ho_hr"];
+/** HR roles that should be CC'd — BRANCH-SCOPED (only HR from that branch, not global HR). */
+const HR_BRANCH_ROLES = ["hr", "hr_admin", "ho_hr", "branch_hr"];
 const COO_ROLES = ["coo"];
 /** No user holds the `coo` role today, so the COO is named explicitly (confirmed by the owner 2026-09-21). */
 const COO_EMAILS = ["bhavana.harjani@teammas.in"];
@@ -45,13 +46,13 @@ async function emailsForRoles(roles: string[], branchName: string | null): Promi
 }
 
 export async function resolveRecipients(branchName: string): Promise<ResolvedRecipients> {
-  const [branchHeads, hrGlobal, hrBranch, coo] = await Promise.all([
+  // CC is now BRANCH-SCOPED: only HR from that specific branch, not all HR globally
+  const [branchHeads, hrBranch, coo] = await Promise.all([
     emailsForRoles(["branch_head"], branchName),
-    emailsForRoles(HR_GLOBAL_ROLES, null),
-    emailsForRoles(["branch_hr"], branchName),
+    emailsForRoles(HR_BRANCH_ROLES, branchName),  // Branch-scoped HR only
     emailsForRoles(COO_ROLES, null),
   ]);
-  const hrTeam = unique([...hrGlobal, ...hrBranch]);
+  const hrTeam = unique(hrBranch);
   const toFellBackToHr = branchHeads.length === 0;
   const to = toFellBackToHr ? hrTeam : unique(branchHeads);
   const toSet = new Set(to.map((e) => e.toLowerCase()));
