@@ -29,11 +29,10 @@
  *   half_day when hours < threshold on any day, so week_off_worked always represents a full day
  *   worked on week off).
  * unreconciled = anomalous punch data → Absent (same as legacy).
- * lwp = Leave Without Pay, a distinct status from absent (attendance.executor.ts's
- *   attendanceRegisterGrid already tracks lwp_days separately). It previously had no entry here,
- *   so `lwp` fell through the lookup as the raw string and was silently uncounted in every
- *   register/sign-off total — now it gets its own code and bucket, unpaid like absent but
- *   visibly distinguishable from it.
+ * lwp = Leave Without Pay → Absent on this register (unpaid, same letter as absent). It
+ *   previously had no entry here at all, so `lwp` fell through the lookup as the raw string
+ *   and was silently uncounted in every register/sign-off total — that part was the bug.
+ *   The letter shown stays "A", matching week_off's treatment below.
  */
 export const ATTENDANCE_STATUS_CODE: Record<string, string> = {
   present:         "P",
@@ -46,7 +45,7 @@ export const ATTENDANCE_STATUS_CODE: Record<string, string> = {
   missing_punch:   "A",
   week_off_worked: "P",
   unreconciled:    "A",
-  lwp:             "LWP",
+  lwp:             "A",
 };
 
 export type DayCounts = {
@@ -56,7 +55,6 @@ export type DayCounts = {
   hd: number;
   leave: number;
   holiday: number;
-  lwp: number;
 };
 
 /**
@@ -74,16 +72,15 @@ export function resolveMissingDayCell(dayDate: Date, dateOfJoining: Date | null,
 
 /** Tally the filled day cells for one employee. `getCell(d)` returns the code for day d (1-based). */
 export function countDayCodes(getCell: (day: number) => string, daysInMonth: number): DayCounts {
-  const counts: DayCounts = { absent: 0, present: 0, od: 0, hd: 0, leave: 0, holiday: 0, lwp: 0 };
+  const counts: DayCounts = { absent: 0, present: 0, od: 0, hd: 0, leave: 0, holiday: 0 };
   for (let d = 1; d <= daysInMonth; d++) {
     const v = getCell(d);
-    if      (v === "A")   counts.absent++;
-    else if (v === "P")   counts.present++;
-    else if (v === "OD")  counts.od++;
-    else if (v === "HD")  counts.hd++;
-    else if (v === "L")   counts.leave++;
-    else if (v === "H")   counts.holiday++;
-    else if (v === "LWP") counts.lwp++;
+    if      (v === "A")  counts.absent++;
+    else if (v === "P")  counts.present++;
+    else if (v === "OD") counts.od++;
+    else if (v === "HD") counts.hd++;
+    else if (v === "L")  counts.leave++;
+    else if (v === "H")  counts.holiday++;
   }
   return counts;
 }

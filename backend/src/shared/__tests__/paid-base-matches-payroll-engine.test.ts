@@ -17,7 +17,7 @@ import { computePaidBase, computeSalDays, type DayCounts } from "../attendanceDa
 import { findSlabMaxWeekoffs } from "../../modules/payroll/weekoff-eligibility.service.js";
 
 const counts = (o: Partial<DayCounts>): DayCounts =>
-  ({ absent: 0, present: 0, od: 0, hd: 0, leave: 0, holiday: 0, lwp: 0, ...o });
+  ({ absent: 0, present: 0, od: 0, hd: 0, leave: 0, holiday: 0, ...o });
 
 /** The payroll engine's own weighting, transcribed from payrollCalculate.service.ts. */
 const enginePaidBase = (c: DayCounts) => c.present * 1.0 + c.hd * 0.5 + c.leave * 1.0 + c.od;
