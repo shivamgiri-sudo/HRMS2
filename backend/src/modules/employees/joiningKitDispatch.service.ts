@@ -600,7 +600,7 @@ export async function resendKitEsignLink(
     for (const addr of [...new Set(recipients)]) {
       await emailService.send({
         to: addr,
-        subject: `Reminder: sign your joining documents — MAS Callnet`,
+        subject: `Reminder: sign your joining documents — MAS Callnet (${new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: true })})`,
         html: buildKitEmailHtml({
           employeeName: String(kit.full_name ?? ""),
           employeeCode: String(kit.employee_code ?? ""),

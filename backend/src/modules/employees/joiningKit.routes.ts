@@ -17,6 +17,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { requireRole } from "../../middleware/requireRole.js";
 import { getPublicKitSession, getPublicKitFile, startKitEsign } from "./joiningKitPublic.service.js";
 import { queueJoiningKit, dispatchJoiningKit, resendKitEsignLink, redispatchDeadKit, kitEsignSessionIsAlive } from "./joiningKitDispatch.service.js";
+import { syncKitEsignStatus } from "./joiningKitSync.service.js";
 import { kitEligibleDocuments } from "./joiningKitAssembly.service.js";
 
 type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
@@ -160,6 +161,21 @@ joiningKitRouter.post("/:employeeId/joining-kit/:kitId/resend", h(async (req: Au
  * redispatchDeadKit itself refuses (409) if the current kit's session is still alive,
  * so this cannot be used to bail on a kit someone could still complete.
  */
+/**
+ * Force-pull the current eSign status from the provider for a sent kit.
+ * The reconciliation worker does this automatically (every 5 min, with backoff),
+ * but HR often needs the answer immediately — especially if the employee just
+ * finished signing and the page still shows "pending".
+ */
+joiningKitRouter.post("/:employeeId/joining-kit/:kitId/sync", h(async (req: AuthenticatedRequest, res) => {
+  const result = await syncKitEsignStatus(
+    String(req.params.kitId),
+    String(req.params.employeeId),
+    req.authUser?.id ?? null,
+  );
+  return res.json({ success: true, ...result });
+}));
+
 joiningKitRouter.post("/:employeeId/joining-kit/redispatch", h(async (req: AuthenticatedRequest, res) => {
   const result = await redispatchDeadKit(
     String(req.params.employeeId),

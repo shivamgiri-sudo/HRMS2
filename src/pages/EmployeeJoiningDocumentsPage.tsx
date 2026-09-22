@@ -790,18 +790,31 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
   const [msg, setMsg] = useState<{ kind: "ok" | "blocked" | "error"; text: string } | null>(null);
   const [pollPhase, setPollPhase] = useState<"idle" | "assembling" | "sent" | "failed" | "timeout">("idle");
   const [pollData, setPollData] = useState<{ docCount?: number; reason?: string } | null>(null);
+  const [syncBusy, setSyncBusy] = useState(false);
 
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollStart = useRef<number>(0);
   // stable refs so poll closure never captures stale callbacks
   const loadRef = useRef<() => Promise<void>>(async () => {});
   const onSentRef = useRef(onSent);
+  // Auto-refresh interval while an open "sent" kit is awaiting signature
+  const autoRefreshTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Tracks the open "sent" kit ID from the last load, to detect signing completion
+  // during auto-refresh so the parent checklist is invalidated exactly once.
+  const prevOpenKitId = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const r = await hrmsApi.get<{ data: typeof preview }>(`/api/employees/${employeeId}/joining-kit/preview`);
       setPreview(r.data);
+      const nowOpenId = r.data?.kits.find((k: KitRecord) => k.status === "sent")?.id ?? null;
+      if (prevOpenKitId.current && !nowOpenId) {
+        // Kit just moved out of "sent" — signing completed or otherwise closed
+        onSentRef.current();
+      }
+      prevOpenKitId.current = nowOpenId;
     } catch {
       setPreview(null);
     } finally {
@@ -815,6 +828,27 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
 
   // Clean up any pending poll timer on unmount
   useEffect(() => () => { if (pollTimer.current) clearTimeout(pollTimer.current); }, []);
+
+  // Auto-refresh every 30 s while an open "sent" kit is awaiting signature.
+  // load() above detects signing completion and notifies the parent.
+  useEffect(() => {
+    const hasSentKit = preview?.kits.some((k) => k.status === "sent");
+    if (!hasSentKit || pollPhase !== "idle") {
+      if (autoRefreshTimer.current) {
+        clearInterval(autoRefreshTimer.current);
+        autoRefreshTimer.current = null;
+      }
+      return;
+    }
+    if (autoRefreshTimer.current) return; // already ticking
+    autoRefreshTimer.current = setInterval(() => { void loadRef.current(); }, 30_000);
+    return () => {
+      if (autoRefreshTimer.current) {
+        clearInterval(autoRefreshTimer.current);
+        autoRefreshTimer.current = null;
+      }
+    };
+  }, [preview, pollPhase]);
 
   const startPolling = useCallback(() => {
     if (pollTimer.current) clearTimeout(pollTimer.current);
@@ -1010,6 +1044,35 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
                 </div>
               ) : (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={syncBusy}
+                    className="min-h-[36px] gap-1.5 border-emerald-400 bg-white text-emerald-700 hover:bg-emerald-50"
+                    onClick={async () => {
+                      setSyncBusy(true);
+                      try {
+                        const response = await hrmsApi.post<{ synced: boolean; message: string; providerStatus?: string }>(
+                          `/api/employees/${employeeId}/joining-kit/${open.id}/sync`, {},
+                        );
+                        toast({
+                          title: response.synced ? "Status checked" : "Already up to date",
+                          description: response.message || `Provider status: ${response.providerStatus ?? "unknown"}`,
+                        });
+                        void load();
+                        onSentRef.current();
+                      } catch (err: any) {
+                        toast({ title: "Sync failed", description: err?.message || "Unable to check status.", variant: "destructive" });
+                      } finally {
+                        setSyncBusy(false);
+                      }
+                    }}
+                  >
+                    {syncBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                    {syncBusy ? "Checking…" : "Check if signed"}
+                  </Button>
+                  <span className="text-xs text-slate-400">·</span>
                   <p className="text-xs text-cyan-700">Employee hasn&apos;t received or lost the email?</p>
                   <Button
                     type="button"
