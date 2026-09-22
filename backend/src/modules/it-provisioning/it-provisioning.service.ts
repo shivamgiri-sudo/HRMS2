@@ -433,7 +433,7 @@ async function createRequest(params: {
 
 // ── JOIN trigger ───────────────────────────────────────────────────────────────
 
-const JOIN_TASKS: ProvisioningTask[] = [
+export const JOIN_TASKS: ProvisioningTask[] = [
   {
     taskCode: 'WFM_PROCESS_ALIGNMENT',
     assignedRole: 'wfm',
@@ -473,6 +473,14 @@ const JOIN_TASKS: ProvisioningTask[] = [
     titleFn: (name, code) => `HR Action: Appointment letter e-sign for ${name} [${code}]`,
     descFn: (name, code) =>
       `New employee ${name} (${code}) has an employee code. Please generate the appointment letter and complete e-sign tracking.`,
+  },
+  {
+    taskCode: 'HR_BGV_INITIATION',
+    assignedRole: 'hr',
+    actionUrl: '/provisioning/hr-bgv',
+    titleFn: (name, code) => `HR Action: BGV initiation for ${name} [${code}]`,
+    descFn: (name, code) =>
+      `New employee ${name} (${code}) has an employee code. Please initiate background verification with the vendor and record the outcome (Red/Green) once received. This is separate from the candidate's own DigiLocker submission.`,
   },
 ];
 

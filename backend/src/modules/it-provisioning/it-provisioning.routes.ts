@@ -78,9 +78,13 @@ async function persistStructuredFields(taskId: string, body: Record<string, unkn
   const evidenceFileUrl = clean(body.evidence_file_url) || null;
   const biometricDone   = body.biometric_enrolled != null ? (body.biometric_enrolled ? 1 : 0) : null;
   const idCardDone      = body.id_card_printed    != null ? (body.id_card_printed    ? 1 : 0) : null;
+  const bgvResult = clean(body.bgv_result) || null;
+  if (bgvResult && !["red", "green"].includes(bgvResult)) {
+    throw Object.assign(new Error("bgv_result must be 'red' or 'green'"), { statusCode: 400 });
+  }
 
   // Only UPDATE if at least one structured field was sent
-  if (!officialEmail && !domainAccount && !assetTag && !evidenceFileUrl && biometricDone == null && idCardDone == null) return;
+  if (!officialEmail && !domainAccount && !assetTag && !evidenceFileUrl && biometricDone == null && idCardDone == null && !bgvResult) return;
 
   const sets: string[] = [];
   const vals: unknown[] = [];
@@ -90,6 +94,7 @@ async function persistStructuredFields(taskId: string, body: Record<string, unkn
   if (evidenceFileUrl !== null) { sets.push('evidence_file_url = ?');   vals.push(evidenceFileUrl); }
   if (biometricDone   != null)  { sets.push('biometric_enrolled = ?'); vals.push(biometricDone); }
   if (idCardDone      != null)  { sets.push('id_card_printed = ?');    vals.push(idCardDone); }
+  if (bgvResult !== null) { sets.push('bgv_result = ?'); vals.push(bgvResult); }
 
   if (sets.length) {
     vals.push(taskId);
@@ -428,6 +433,10 @@ router.post('/tasks/:id/complete', requireRole(...PROVISIONING_ROLES), h(async (
    */
   if (taskRow.locked) {
     throw Object.assign(new Error('Request is locked and cannot be modified'), { statusCode: 403 });
+  }
+
+  if (taskRow.task_code === 'HR_BGV_INITIATION' && !['red', 'green'].includes(clean(body.bgv_result))) {
+    return res.status(400).json({ success: false, message: "bgv_result ('red' or 'green') is required to complete this task" });
   }
 
   // Dispatch to role-specific handler that syncs master data
