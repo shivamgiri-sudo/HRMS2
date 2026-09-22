@@ -4981,7 +4981,11 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "net_in_hand", label: "Net In Hand", format: "currency", width: 120, align: "right", sensitive: true },
       { key: "offered_ctc", label: "Offered CTC", format: "currency", width: 120, align: "right", sensitive: true },
     ],
-    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH],
+    // Month/year are optional quick-filters on top of the from/to range: pick either
+    // one to jump straight to that period instead of typing exact dates. Not required
+    // (unlike F_MONTH's usual default) so the existing date-range behaviour still works
+    // when neither is set.
+    filters: [F_DATE_FROM, F_DATE_TO, { ...F_MONTH, required: false }, F_YEAR, F_BRANCH],
     viewRoles: ROLES_HR_MANAGER,
     exportRoles: ROLES_HR_ADMIN,
     sourceTables: ["employees", "employee_salary_snapshot", "employee_salary_assignment", "branch_master", "cost_centre_master", "department_master", "designation_master"],
@@ -5010,7 +5014,6 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "cost_center", label: "CostCenter", format: "text", width: 130 },
       { key: "emp_location", label: "EmpLocation", format: "text", width: 100 },
       { key: "process_name", label: "Process Name", format: "text", width: 140 },
-      { key: "process_lob_name", label: "Process LOB", format: "text", width: 130 },
       { key: "date_of_joining", label: "Joining Date", format: "date", width: 110 },
       { key: "salary_start_date", label: "Salary Start Date", format: "date", width: 120 },
       { key: "billable", label: "Billable", format: "text", width: 70, align: "center" },

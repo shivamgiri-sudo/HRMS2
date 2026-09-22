@@ -20,6 +20,7 @@ import {
   employeeInForce,
   dateParam,
   monthParam,
+  yearParam,
   applyPagination,
   fetchPageWithTotal,
 } from "./types.js";
@@ -1080,8 +1081,24 @@ export async function newJoinExport(
   scope: ExecScope,
   options: ExecOptions
 ): Promise<ExecResult> {
-  const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to   = dateParam(filters.to, new Date().toISOString().slice(0, 10));
+  // Month/year are quick-filters over the same date_of_joining range the from/to
+  // pickers use — whichever is set narrows the period; neither falls back to the
+  // existing year-to-date default. filters.month wins over filters.year if both
+  // are somehow set, since it's the more specific period.
+  let from: string;
+  let to: string;
+  if (typeof filters.month === "string" && /^\d{4}-\d{2}$/.test(filters.month)) {
+    const [y, m] = filters.month.split("-").map(Number);
+    from = `${filters.month}-01`;
+    to = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); // last day of that month
+  } else if (filters.year != null && filters.year !== "") {
+    const y = yearParam(filters.year);
+    from = `${y}-01-01`;
+    to = `${y}-12-31`;
+  } else {
+    from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
+    to   = dateParam(filters.to, new Date().toISOString().slice(0, 10));
+  }
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -1218,7 +1235,12 @@ export async function leftEmployeeExport(
   appendFilterConditions(filters, clauses, params);
   // Parentheses are load-bearing: this array is joined with AND, which binds tighter than OR.
   clauses.push("(e.active_status = 0 OR e.employment_status IN ('resigned','inactive','Resigned','Exit'))");
-  clauses.push("COALESCE(e.date_of_leaving, e.date_of_exit) BETWEEN ? AND ?");
+  // Last working day, most-to-least authoritative: exit_request's confirmed LWD (the
+  // employee's real signed-off last day), its proposed LWD (before confirmation),
+  // then employees.date_of_leaving/date_of_exit for anyone exited outside the exit_request
+  // workflow (e.g. bulk-migrated legacy records). Was employees-table-only, which could
+  // disagree with the confirmed LWD shown on the exit module itself.
+  clauses.push("COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed, e.date_of_leaving, e.date_of_exit) BETWEEN ? AND ?");
   params.push(from, to);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -1237,7 +1259,7 @@ export async function leftEmployeeExport(
       COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
       COALESCE(e.mobile, '') AS mobile_no,
       DATE_FORMAT(e.date_of_joining, '%d-%b-%Y') AS doj,
-      DATE_FORMAT(COALESCE(e.date_of_leaving, e.date_of_exit), '%d-%b-%Y') AS left_date,
+      DATE_FORMAT(COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed, e.date_of_leaving, e.date_of_exit), '%d-%b-%Y') AS left_date,
       COALESCE(er.exit_reason_category, '') AS left_remarks,
       COALESCE(e.source, '') AS source,
       COALESCE(e.sub_source, '') AS sub_source,

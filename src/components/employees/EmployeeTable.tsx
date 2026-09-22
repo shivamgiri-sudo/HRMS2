@@ -58,6 +58,8 @@ export interface Employee {
   designation: string;
   joinDate: string;
   salaryStartDate: string;
+  /** Empty for active employees; set once `date_of_exit` is recorded. */
+  exitDate?: string;
   status: "active" | "inactive" | "onboarding" | "offboarded";
   profileIncomplete?: boolean;
 }
@@ -273,6 +275,12 @@ export function EmployeeTable({
                 <span className="text-[var(--text-muted)]">Salary start date</span>
                 <span className="text-right font-semibold">{employee.salaryStartDate || "-"}</span>
               </div>
+              {employee.exitDate && (
+                <div className="flex justify-between gap-3">
+                  <span className="text-[var(--text-muted)]">Exit / last working day</span>
+                  <span className="text-right font-semibold">{employee.exitDate}</span>
+                </div>
+              )}
             </div>
           </MobileRecordCard>
         ))}
@@ -367,6 +375,7 @@ export function EmployeeTable({
                   >
                     Status
                   </SortableTableHead>
+                  <TableHead className="w-[130px]">Exit / Last Working Day</TableHead>
                 </>
               ) : (
                 <>
@@ -381,6 +390,7 @@ export function EmployeeTable({
                   <TableHead>Join Date</TableHead>
                   <TableHead className="w-[130px]">Salary Start Date</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="w-[130px]">Exit / Last Working Day</TableHead>
                 </>
               )}
               <TableHead className="text-right">Actions</TableHead>
@@ -463,6 +473,7 @@ export function EmployeeTable({
                 <TableCell>
                   <StatusBadgeV2 status={employee.status} />
                 </TableCell>
+                <TableCell className="text-muted-foreground">{employee.exitDate || "-"}</TableCell>
                 <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>

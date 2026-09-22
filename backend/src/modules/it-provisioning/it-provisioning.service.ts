@@ -18,12 +18,18 @@ interface ResolvedUser {
   email: string | null;
 }
 
+interface JoinTaskInfo {
+  doj: string | null;
+  branchName: string | null;
+  processName: string | null;
+}
+
 interface ProvisioningTask {
   taskCode: string;
   assignedRole: string;
   actionUrl: string;
-  titleFn: (name: string, code: string, lwd?: string | null) => string;
-  descFn: (name: string, code: string, lwd?: string | null) => string;
+  titleFn: (name: string, code: string, lwd?: string | null, info?: JoinTaskInfo) => string;
+  descFn: (name: string, code: string, lwd?: string | null, info?: JoinTaskInfo) => string;
 }
 
 function frontendUrl(path: string) {
@@ -449,8 +455,16 @@ const JOIN_TASKS: ProvisioningTask[] = [
     assignedRole: 'admin',
     actionUrl: '/provisioning/admin',
     titleFn: (name, code) => `Admin Action: Biometric and ID card for ${name} [${code}]`,
-    descFn: (name, code) =>
-      `New employee ${name} (${code}) has an employee code. Please enroll biometric attendance and issue the employee ID card.`,
+    descFn: (name, code, _lwd, info) => {
+      const details = [
+        `Employee Name: ${name}`,
+        `Employee Code: ${code}`,
+        info?.doj ? `DOJ: ${info.doj}` : null,
+        info?.branchName ? `Branch: ${info.branchName}` : null,
+        info?.processName ? `Process/Department: ${info.processName}` : null,
+      ].filter(Boolean).join(' | ');
+      return `New employee ${name} (${code}) has an employee code. Please enroll biometric attendance and issue the employee ID card.\n\n${details}`;
+    },
   },
   {
     taskCode: 'APPOINTMENT_LETTER_ESIGN',
@@ -482,6 +496,30 @@ export async function dispatchJoinProvisioningTasks(params: {
     tasksCount: JOIN_TASKS.length,
   });
 
+  // Branch/process names and DOJ for the biometric-creation admin notification
+  // (ADMIN_BIOMETRIC_ID_CARD). Best-effort: a lookup failure must not abort the
+  // whole provisioning dispatch, so tasks fall back to name/code-only text.
+  let taskInfo: JoinTaskInfo = { doj: joiningDate ?? null, branchName: null, processName: null };
+  try {
+    const [[infoRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT b.branch_name, p.process_name, e.date_of_joining
+         FROM employees e
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN process_master p ON p.id = e.process_id
+        WHERE e.id = ? LIMIT 1`,
+      [employeeId],
+    );
+    if (infoRow) {
+      taskInfo = {
+        doj: infoRow.date_of_joining ? String(infoRow.date_of_joining).slice(0, 10) : (joiningDate ?? null),
+        branchName: infoRow.branch_name ?? null,
+        processName: infoRow.process_name ?? null,
+      };
+    }
+  } catch (err) {
+    console.warn('[dispatchJoinProvisioningTasks] Non-fatal: failed to resolve branch/process for task notifications:', err);
+  }
+
   for (const task of JOIN_TASKS) {
     const recipients = await resolveTaskRecipients(task.assignedRole, branchId, task.taskCode);
     const users = recipients.to;
@@ -502,8 +540,8 @@ export async function dispatchJoinProvisioningTasks(params: {
       console.error(`[dispatchJoinProvisioningTasks] No users found for role ${task.assignedRole} - creating unassigned task for ${task.taskCode}`);
     }
 
-    const title = task.titleFn(employeeName, employeeCode);
-    const desc = task.descFn(employeeName, employeeCode);
+    const title = task.titleFn(employeeName, employeeCode, null, taskInfo);
+    const desc = task.descFn(employeeName, employeeCode, null, taskInfo);
 
     const requestId = await createRequest({
       employeeId,
