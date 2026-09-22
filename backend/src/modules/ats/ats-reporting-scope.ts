@@ -99,3 +99,38 @@ export function excludeOtherEntityCandidatesSql(candidateAlias: string): string 
 export function isOtherEntityCandidateCode(code: unknown): boolean {
   return /^IDC/i.test(String(code ?? "").trim());
 }
+
+/**
+ * Excludes candidates the recruiter has already disposed of, from a "still pending" queue.
+ *
+ * `getMyPendingCandidates`/`getOtherRecruitersPendingCandidates` (recruiterInterview.service.ts)
+ * decide "pending" purely from `ats_candidate.status`/`current_stage` staying in an open value
+ * (Waiting/New/Applied/Screening/Registered). Two write paths close out a candidate without ever
+ * touching those columns, so a genuinely-actioned candidate can sit in the pending queue forever:
+ *
+ *   1. `ats_interview_submission` — the recruiter's own interview-outcome form DOES set
+ *      ats_candidate.status via submitInterviewUpdate(), but a submission row can exist from a
+ *      prior attempt while a later data fix or retry left status behind. Any submission row for
+ *      the candidate is proof the recruiter's form has been filled in.
+ *   2. `ats_queue_token.queue_status IN ('completed','no_show')` — the walk-in queue's own
+ *      "Mark No-Show" button (queue.enhanced.service.ts markNoShow(), called from
+ *      NativeWalkinQueueEnhanced.tsx) and the generic queue status update close the token WITHOUT
+ *      updating ats_candidate at all. Live census 2026-09-22: 10 of the then-145 candidates in
+ *      the superadmin pending queue already had a completed/no_show token.
+ *
+ * Owner ruling 2026-09-22: once either signal exists, the candidate must not count as pending,
+ * whatever `status`/`current_stage` still says. This is a read-side fix — it does not change what
+ * either write path stores, only what "still pending" counts as reading it back.
+ *
+ * `candidateAlias` must be the ats_candidate alias in the calling query (pass the literal table
+ * name, e.g. "ats_candidate", if the query has no alias).
+ */
+export function excludeResolvedInterviewCandidatesSql(candidateAlias: string): string {
+  return `NOT EXISTS (
+      SELECT 1 FROM ats_interview_submission ais WHERE ais.candidate_id = ${candidateAlias}.id
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM ats_queue_token aqt
+       WHERE aqt.candidate_id = ${candidateAlias}.id AND aqt.queue_status IN ('completed', 'no_show')
+    )`;
+}

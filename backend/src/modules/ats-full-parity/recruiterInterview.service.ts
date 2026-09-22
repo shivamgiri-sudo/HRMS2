@@ -6,7 +6,7 @@ import { sendOnboardingToken } from "../ats/ats.onboarding.service.js";
 import { sendRejectedEmail } from "../ats/ats.email.service.js";
 import { jobRequisitionService } from "../job-requisition/job-requisition.service.js";
 import { toIST } from "../../shared/timezone.js";
-import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
+import { excludeEmployeeShapedCandidatesSql, excludeResolvedInterviewCandidatesSql } from "../ats/ats-reporting-scope.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -243,6 +243,7 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
      FROM ats_candidate
      WHERE active_status = 1
        AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}
+       AND ${excludeResolvedInterviewCandidatesSql("ats_candidate")}
        ${recruiterClause}
        AND (status = 'Waiting' OR (status IS NULL AND current_stage IN ('New', 'Applied', 'Screening', 'Registered')))
      ORDER BY pending_minutes DESC`,
@@ -347,6 +348,7 @@ export async function getOtherRecruitersPendingCandidates(
      FROM ats_candidate
      WHERE active_status = 1
        AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}
+       AND ${excludeResolvedInterviewCandidatesSql("ats_candidate")}
        AND status = 'Waiting'
        AND recruiter_assigned_name IS NOT NULL
        AND recruiter_assigned_name != ''
