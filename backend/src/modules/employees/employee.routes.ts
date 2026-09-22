@@ -2066,4 +2066,84 @@ router.post("/bank-quality/:employeeId/request-resubmission", requireAuth, requi
   return res.json({ success: true, message: `Resubmission request sent to ${emp.full_name}` });
 }));
 
+// POST /:id/provision-account — create a login account for an employee who has none.
+// Used by Access Control and HR Profile pages when user_id is NULL.
+router.post("/:id/provision-account",
+  requireAuth,
+  requireRole("super_admin", "admin", "hr", "hr_admin"),
+  h(async (req: any, res: any) => {
+    const { id } = req.params;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, employee_code, full_name, email, official_email, user_id
+       FROM employees WHERE id = ? AND active_status = 1 LIMIT 1`,
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: "Employee not found" });
+    const emp = rows[0];
+
+    if (emp.user_id) return res.status(409).json({ success: false, error: "Employee already has a login account" });
+
+    const rawEmail = [emp.official_email, emp.email]
+      .map((e: string | null) => (e ?? '').trim().toLowerCase())
+      .find((e: string) => e.includes('@') && e !== 'n/a');
+    // Fall back to employee-code placeholder when no real email set yet
+    const authEmail = rawEmail ?? `${String(emp.employee_code).toLowerCase()}@mas.internal`;
+
+    // Re-use the same createAuthUserForEmployee logic via a direct inline call
+    const { randomUUID } = await import('crypto');
+    const bcrypt = (await import('bcryptjs')).default;
+
+    const [existingAuth] = await db.execute<RowDataPacket[]>(
+      'SELECT id, is_blocked FROM auth_user WHERE LOWER(email) = LOWER(?) LIMIT 1',
+      [authEmail]
+    );
+
+    let userId: string;
+    if (existingAuth.length > 0) {
+      if (Number(existingAuth[0].is_blocked ?? 0) === 1) {
+        return res.status(409).json({ success: false, error: "An account with this email exists but is blocked. Unblock it first." });
+      }
+      userId = String(existingAuth[0].id);
+      await db.execute('UPDATE employees SET user_id = ? WHERE id = ?', [userId, id]);
+    } else {
+      userId = randomUUID();
+      const passwordHash = await bcrypt.hash(randomUUID(), 10);
+      await db.execute(
+        'INSERT INTO auth_user (id, email, password_hash, must_change_password, is_blocked) VALUES (?, ?, ?, 1, 0)',
+        [userId, authEmail, passwordHash]
+      );
+      await db.execute('UPDATE employees SET user_id = ? WHERE id = ?', [userId, id]);
+      // Assign default employee role
+      try {
+        const [roleCheck] = await db.execute<RowDataPacket[]>(
+          'SELECT role_key FROM workforce_role_catalog WHERE role_key = ? AND active_status = 1 LIMIT 1',
+          ['employee']
+        );
+        if (roleCheck.length > 0) {
+          await db.execute(
+            `INSERT INTO user_roles (id, user_id, role_key, active_status, granted_by, granted_at)
+             VALUES (UUID(), ?, 'employee', 1, NULL, NOW())
+             ON DUPLICATE KEY UPDATE
+               granted_at = IF(active_status = 0, NOW(), granted_at),
+               granted_by = IF(active_status = 0, NULL, granted_by),
+               active_status = 1`,
+            [userId]
+          );
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    await logSensitiveAction({
+      module_key: "employees",
+      action_type: "PROVISION_ACCOUNT",
+      entity_type: "employees",
+      entity_id: id,
+      actor_user_id: req.authUser!.id,
+      change_summary: { employee_code: emp.employee_code, full_name: emp.full_name, email: authEmail },
+    });
+
+    return res.json({ success: true, message: `Login account created for ${emp.full_name}. They can use "Forgot Password" to set their password.`, user_id: userId });
+  })
+);
+
 export { router as employeeRouter };

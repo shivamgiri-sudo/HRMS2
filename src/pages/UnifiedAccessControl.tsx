@@ -279,6 +279,46 @@ function QuickActionCard({
   );
 }
 
+function NoAccountWarning({ selectedUser, onAccountCreated }: { selectedUser: UserOption; onAccountCreated: () => void }) {
+  const [busy, setBusy] = useState(false);
+
+  async function handleProvision() {
+    if (!selectedUser.employee_id) return;
+    setBusy(true);
+    try {
+      const res = await hrmsApi.post(`/employees/${selectedUser.employee_id}/provision-account`);
+      const data = res.data as { success: boolean; message?: string; error?: string };
+      if (data.success) {
+        toast.success(data.message ?? "Login account created.");
+        onAccountCreated();
+      } else {
+        toast.error(data.error ?? "Failed to create login account.");
+      }
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? "Failed to create login account.";
+      toast.error(msg);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+      <div className="font-black text-slate-950">{selectedUser.full_name}</div>
+      <div className="text-sm text-slate-500 mt-0.5">{selectedUser.employee_code ?? "No employee code"}</div>
+      <p className="mt-3 text-sm text-amber-800">This employee does not have a login account yet.</p>
+      {selectedUser.employee_id ? (
+        <Button size="sm" className="mt-3" onClick={handleProvision} disabled={busy}>
+          {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <KeyRound className="mr-2 h-4 w-4" />}
+          Create Login Account
+        </Button>
+      ) : (
+        <p className="mt-2 text-xs text-slate-500">Navigate to the Employee Profile page to create a login account manually.</p>
+      )}
+    </div>
+  );
+}
+
 export default function UnifiedAccessControl() {
   const queryClient = useQueryClient();
   const { role } = useIsAdminOrHR();
@@ -922,11 +962,7 @@ export default function UnifiedAccessControl() {
                 {!selectedUser ? (
                   <EmptyState text="Select a user from the search panel to manage roles." />
                 ) : selectedUser.no_account ? (
-                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
-                    <div className="font-black text-slate-950">{selectedUser.full_name}</div>
-                    <div className="text-sm text-slate-500 mt-0.5">{selectedUser.employee_code ?? "No employee code"}</div>
-                    <p className="mt-3 text-sm text-amber-800">This employee does not have a login account yet. Create an account for them first via the Employee Profile page, then return here to assign roles.</p>
-                  </div>
+                  <NoAccountWarning selectedUser={selectedUser} onAccountCreated={() => queryClient.invalidateQueries({ queryKey: ["access-users"] })} />
                 ) : (
                   <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
                     <div className="font-black text-slate-950">{selectedUser.full_name || selectedUser.email}</div>

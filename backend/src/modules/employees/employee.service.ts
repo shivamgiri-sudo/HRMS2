@@ -248,15 +248,17 @@ export const employeeService = {
       ]
     );
 
-    // CRITICAL FIX: Auto-create auth_user if employee has valid email
-    // This ensures employees can login via "Forgot Password" flow immediately
-    if (input.email && input.email.includes('@') && input.email.toLowerCase() !== 'n/a') {
-      try {
-        await createAuthUserForEmployee(id, input.email);
-      } catch (error) {
-        // Log but don't block employee creation if auth fails
-        console.error(`[WARN] Failed to auto-create auth for employee ${input.employeeCode}:`, error);
-      }
+    // Always auto-create an auth_user. Use real email when available; fall back to a
+    // deterministic internal placeholder so the account exists even before HR fills in
+    // the email. The placeholder can be replaced later when the employee's email is set.
+    const rawEmail = (input.email ?? '').trim().toLowerCase();
+    const loginEmail = (rawEmail.includes('@') && rawEmail !== 'n/a')
+      ? rawEmail
+      : `${input.employeeCode.toLowerCase()}@mas.internal`;
+    try {
+      await createAuthUserForEmployee(id, loginEmail);
+    } catch (error) {
+      console.error(`[WARN] Failed to auto-create auth for employee ${input.employeeCode}:`, error);
     }
 
     const employee = await this.getEmployee(id);
