@@ -10,6 +10,7 @@ import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { FraudComparisonPanel } from "@/components/ats/FraudComparisonPanel";
 import { fraudReviewState, isBlocking, isUnresolved } from "@/lib/fraudReview";
 import { ReviewRequiredDialog } from "@/components/ats/fraud/ReviewRequiredDialog";
+import { PackageBuilderDialog } from '@/components/payroll/PackageBuilderDialog';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -537,6 +538,7 @@ export default function NativeHROnboardingRequests() {
   const [formFieldErrors, setFormFieldErrors] = useState<Record<string, string>>({});
   const [proposedCtc, setProposedCtc] = useState('');
   const [proposedReason, setProposedReason] = useState('');
+  const [showPackageBuilder, setShowPackageBuilder] = useState(false);
 
   // ── Manager search state
   const [managerSearch, setManagerSearch] = useState('');
@@ -2720,18 +2722,29 @@ export default function NativeHROnboardingRequests() {
                     )}
                   </div>
 
-                  {/* Calculate salary button (standard only, no package selected) */}
-                  {offerTab === 'standard' && !offer.selected_package_id && (
+                  {/* Calculate salary button + Advanced Package Builder */}
+                  <div className="flex flex-wrap gap-2">
+                    {offerTab === 'standard' && !offer.selected_package_id && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void calcSalaryManual()}
+                        disabled={calcLoading || !offer.offered_ctc || !offer.salary_band}
+                        className="min-h-[44px] gap-2"
+                      >
+                        {calcLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Calculator className="h-4 w-4" />} Calculate Salary
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={() => void calcSalaryManual()}
-                      disabled={calcLoading || !offer.offered_ctc || !offer.salary_band}
-                      className="min-h-[44px] gap-2"
+                      onClick={() => setShowPackageBuilder(true)}
+                      disabled={!offer.salary_band}
+                      className="min-h-[44px] gap-2 border-blue-200 text-blue-700 hover:bg-blue-50"
                     >
-                      {calcLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Calculator className="h-4 w-4" />} Calculate Salary
+                      <Calculator className="h-4 w-4" /> Advanced Package Builder
                     </Button>
-                  )}
+                  </div>
 
                   {/* Full salary breakdown — 13 components */}
                   {salaryPreview && (
@@ -3230,6 +3243,42 @@ export default function NativeHROnboardingRequests() {
             </div>
           </div>
         )}
+
+        {/* Package Builder Dialog */}
+        <PackageBuilderDialog
+          open={showPackageBuilder}
+          onOpenChange={setShowPackageBuilder}
+          defaultBand={offer.salary_band || undefined}
+          defaultCtc={offer.offered_ctc ? Number(offer.offered_ctc) : undefined}
+          defaultPfOpt={!offer.pf_eligible}
+          defaultEsiOpt={!offer.esi_eligible}
+          onSave={(pkg) => {
+            setOffer((prev) => ({
+              ...prev,
+              offered_ctc: String(pkg.ctc),
+              salary_band: pkg.band,
+              pf_eligible: !pkg.pfOptOut,
+              esi_eligible: !pkg.esiOptOut,
+            }));
+            setSalaryPreview({
+              gross: pkg.gross,
+              net_in_hand: pkg.net,
+              basic: pkg.basic,
+              hra: pkg.hra,
+              conveyance: pkg.conveyance ?? 0,
+              special_allowance: pkg.specialAllowance ?? 0,
+              bonus: pkg.bonus ?? 0,
+              pf_employee: pkg.pfEmployee,
+              pf_employer: pkg.pfEmployer,
+              esic_employee: pkg.esicEmployee,
+              esic_employer: pkg.esicEmployer,
+              professional_tax: pkg.pt ?? 0,
+              lwf_employee: pkg.lwfEmployee ?? 0,
+              lwf_employer: pkg.lwfEmployer ?? 0,
+            });
+            setShowPackageBuilder(false);
+          }}
+        />
 
       </div>
     </DashboardLayout>
