@@ -165,6 +165,7 @@ recruiterHiringRouter.get("/recruiter/hiring-activity", async (req: Authenticate
       search: parseQueryBool(req.query.search),
       page: req.query.page ? Number(req.query.page) : 1,
       limit: req.query.limit ? Number(req.query.limit) : 50,
+      export: parseQueryBool(req.query.export),
     });
     return res.json({ success: true, ...data });
   } catch (error: unknown) {

@@ -230,12 +230,19 @@ function formatMetric(value: number) {
 function isWalkedIn(row: HiringActivityRow) {
   const status = String(row.current_status ?? "").toLowerCase();
   const linked = String(row.linked_candidate_status ?? "").toLowerCase();
+  const remarks = String(row.recruiter_remarks ?? "").toLowerCase();
   return Boolean(
     row.linked_candidate_id ||
     row.queue_token_id ||
     row.walkin_flag === 1 || row.walkin_flag === "1" ||
+    row.final_selection_flag === 1 || row.final_selection_flag === "1" ||
+    row.joined_flag === 1 || row.joined_flag === "1" ||
     status.includes("arrived") || status.includes("waiting") ||
-    linked.includes("waiting") || linked.includes("arrived")
+    status.includes("selected") || status.includes("rejected") ||
+    status.includes("joined") || status.includes("shortlist") ||
+    linked.includes("waiting") || linked.includes("arrived") ||
+    remarks === "selected" || remarks === "rejected" || remarks === "joined" ||
+    remarks === "shortlisted"
   );
 }
 
@@ -2356,7 +2363,19 @@ export default function NativeATSHiringEntry() {
                 onClick={async () => {
                   try {
                     const XLSX = await import("xlsx");
-                    const exportData = filteredRows.map((r: any) => ({
+                    const qs = new URLSearchParams({ limit: "10000", page: "1", export: "1" });
+                    if (filterFrom)      qs.set("fromDate",        filterFrom);
+                    if (filterTo)        qs.set("toDate",           filterTo);
+                    if (filterOutcome)   qs.set("recruiterRemarks", filterOutcome);
+                    if (filterRecruiter) qs.set("recruiter",        filterRecruiter);
+                    if (filterBranch)    qs.set("branch",           filterBranch);
+                    if (filterProcess)   qs.set("process",          filterProcess);
+                    if (filterSource)    qs.set("hiringSource",     filterSource);
+                    if (filterWpGroup)   qs.set("wpGroup",          filterWpGroup);
+                    if (entrySearch)     qs.set("search",           entrySearch);
+                    const res = await hrmsApi.get<HiringListResponse>(`/api/ats/recruiter/hiring-activity?${qs.toString()}`);
+                    const allRows: HiringActivityRow[] = res.data ?? [];
+                    const exportData = allRows.map((r) => ({
                       "Date": r.activity_date?.slice(0, 10) ?? "",
                       "Recruiter": r.recruiter_name_snapshot ?? "",
                       "Branch": r.branch_name ?? "",
@@ -2376,15 +2395,17 @@ export default function NativeATSHiringEntry() {
                       "Ops Interview Status": r.ops_interview_status ?? "",
                       "Current Status": r.current_status ?? "",
                       "Walk-in Date": r.walkin_date ?? "",
-                      "Contacted": r.contacted_flag ? "Yes" : "No",
-                      "Selected": r.final_selection_flag ? "Yes" : "No",
-                      "Joined": r.joined_flag ? "Yes" : "No",
+                      "Walk-in": isWalkedIn(r) ? "Yes" : "No",
+                      "Selected": isSelected(r) ? "Yes" : "No",
+                      "Rejected": isRejected(r) ? "Yes" : "No",
+                      "No Show": isNoShow(r) ? "Yes" : "No",
+                      "Joined": isJoined(r) ? "Yes" : "No",
                     }));
                     const ws = XLSX.utils.json_to_sheet(exportData);
                     const wb = XLSX.utils.book_new();
                     XLSX.utils.book_append_sheet(wb, ws, "Hiring Activity");
                     XLSX.writeFile(wb, `hiring_activity_report_${new Date().toISOString().slice(0, 10)}.xlsx`);
-                    toast.success("Report exported");
+                    toast.success(`Exported ${allRows.length} records`);
                   } catch { toast.error("Export failed"); }
                 }}
                 className="h-9 cursor-pointer rounded-xl border border-emerald-200 bg-emerald-50 px-3 text-sm font-bold text-emerald-700 hover:bg-emerald-100 transition-colors flex items-center gap-1.5"
