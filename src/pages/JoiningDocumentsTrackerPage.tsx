@@ -137,6 +137,7 @@ export default function JoiningDocumentsTrackerPage() {
   // rows on screen the page looked like it was ignoring the search entirely.
   const [appliedSearch, setAppliedSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [branchFilter, setBranchFilter] = useState<string>("all");
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [idSlaOnly, setIdSlaOnly] = useState(false);
   const [page, setPage] = useState(1);
@@ -164,17 +165,29 @@ export default function JoiningDocumentsTrackerPage() {
     return () => clearTimeout(t);
   }, [search]);
 
+  // Backend already accepts branch_id (TrackerQueryParams.branch_id) — this page
+  // simply never exposed a control for it, so an admin/HR user covering several
+  // branches had no way to narrow the e-sign/document status list to just one.
+  const branchesQuery = useQuery({
+    queryKey: ["org-branches-for-joining-tracker"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: Array<{ id: string; branch_name: string }> }>("/api/org/branches");
+      return res.data ?? [];
+    },
+  });
+
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<TrackerResponse>({
     // An object, not positional members. A filter added later becomes a new named
     // key on this object, so it cannot silently occupy a position that already
     // meant something else — the failure mode of a positional key, where two
     // different filter states hash to the same entry and the cache serves the
     // wrong page.
-    queryKey: ["joining-documents-tracker", { search: appliedSearch, statusFilter, overdueOnly, idSlaOnly, page, limit }],
+    queryKey: ["joining-documents-tracker", { search: appliedSearch, statusFilter, branchFilter, overdueOnly, idSlaOnly, page, limit }],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (appliedSearch) params.set("search", appliedSearch);
       if (statusFilter && statusFilter !== "all") params.set("status", statusFilter);
+      if (branchFilter && branchFilter !== "all") params.set("branch_id", branchFilter);
       if (overdueOnly) params.set("overdue_only", "true");
       if (idSlaOnly) params.set("id_creation_sla_only", "true");
       params.set("page", String(page));
@@ -447,6 +460,17 @@ export default function JoiningDocumentsTrackerPage() {
                   <SelectItem value="completed">Completed</SelectItem>
                 </SelectContent>
               </Select>
+              <Select value={branchFilter} onValueChange={v => { setBranchFilter(v); setPage(1); }}>
+                <SelectTrigger className="w-[180px] min-h-[44px]">
+                  <SelectValue placeholder="All Branches" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Branches</SelectItem>
+                  {(branchesQuery.data ?? []).map(b => (
+                    <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <div className="flex items-center gap-2">
                 <Checkbox
                   id="overdue"
@@ -519,7 +543,7 @@ export default function JoiningDocumentsTrackerPage() {
                 <FileCheck className="mx-auto h-12 w-12 text-slate-300" />
                 <p className="mt-4 text-base font-medium text-slate-600">No employees found</p>
                 <p className="mt-1 text-sm text-slate-500">
-                  {search || statusFilter !== "all" || overdueOnly || idSlaOnly
+                  {search || statusFilter !== "all" || branchFilter !== "all" || overdueOnly || idSlaOnly
                     ? "Try adjusting your filters"
                     : "No joining documents to track yet"}
                 </p>
