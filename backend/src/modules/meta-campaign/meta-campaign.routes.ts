@@ -35,7 +35,7 @@ import {
 } from './shortlist-report.service.js';
 import type { ShortlistFilters } from './shortlist-report.service.js';
 import { writeAuditLog } from '../../shared/auditLog.js';
-import { notifyQualifiedLead, recordVoiceCallback, recordWalkInConfirmation } from './lead-outreach.service.js';
+import { notifyQualifiedLead, buildNotifyPreview, recordVoiceCallback, recordWalkInConfirmation } from './lead-outreach.service.js';
 import { leadVerifyToken, isMetaConfigured } from './meta-api.client.js';
 import { parseVapiCallback, isVapiConfigured } from './vapi-voicebot.provider.js';
 import type { VapiCallbackPayload } from './vapi-voicebot.provider.js';
@@ -724,6 +724,18 @@ metaCampaignRouter.post(
     const data = await metaCampaignService.rescreenLead(req.params.id!);
     if (!data) return res.status(404).json({ success: false, message: 'Lead not found' });
     return res.json({ success: true, data });
+  })
+);
+
+/** Preview the WhatsApp message that would be sent — no side effects. */
+metaCampaignRouter.get(
+  '/leads/:id/notify-preview',
+  requireAuth,
+  requireRole(...CAMPAIGN_WRITE_ROLES, ...INBOX_ROLES),
+  h(async (req, res) => {
+    const preview = await buildNotifyPreview(req.params.id!);
+    if (!preview) return res.status(404).json({ success: false, message: 'Lead not found' });
+    return res.json({ success: true, data: preview });
   })
 );
 

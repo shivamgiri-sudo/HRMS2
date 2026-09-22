@@ -35,6 +35,13 @@ import {
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { EmptyState, num } from "@/components/analytics/analytics-kit";
 import {
   Select,
@@ -74,6 +81,20 @@ type Lead = {
 type LeadDetail = Lead & {
   routingCode: string | null;
   fields: Array<{ name: string; value: string }>;
+};
+
+type NotifyPreview = {
+  candidateName: string | null;
+  phone: string | null;
+  designation: string | null;
+  branch: string | null;
+  branchCity: string | null;
+  branchAddress: string | null;
+  salaryMin: number | null;
+  salaryMax: number | null;
+  mapsLink: string;
+  messageBody: string;
+  alreadySent: boolean;
 };
 
 const SCREENING_BADGE: Record<Lead["screeningResult"], string> = {
@@ -152,6 +173,10 @@ export default function MetaLeadsPage() {
   // Bulk notify state
   const [bulkNotifying, setBulkNotifying] = useState(false);
   const [bulkResult, setBulkResult] = useState<{ sent: number; failed: number } | null>(null);
+
+  // Notify preview dialog state
+  const [previewFor, setPreviewFor] = useState<{ id: string; preview: NotifyPreview } | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState<string | null>(null);
 
   const load = useCallback(
     async (isRefresh = false) => {
@@ -263,6 +288,20 @@ export default function MetaLeadsPage() {
     }
     setBulkNotifying(false);
     setBulkResult({ sent, failed });
+  }
+
+  async function openNotifyPreview(leadId: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    setLoadingPreview(leadId);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: NotifyPreview }>(`/api/meta/leads/${leadId}/notify-preview`);
+      setPreviewFor({ id: leadId, preview: res.data });
+    } catch {
+      // fallback: send directly without preview
+      void notifyLead(leadId, e);
+    } finally {
+      setLoadingPreview(null);
+    }
   }
 
   const page = Math.floor(offset / PAGE_SIZE) + 1;
@@ -600,12 +639,12 @@ export default function MetaLeadsPage() {
                         </div>
                         {l.screeningResult === "qualified" && !(sentOverrides.has(l.id) || l.notificationSentAt) && (
                           <button
-                            onClick={(e) => void notifyLead(l.id, e)}
-                            disabled={notifyResults[l.id] === 'sending'}
+                            onClick={(e) => void openNotifyPreview(l.id, e)}
+                            disabled={notifyResults[l.id] === 'sending' || loadingPreview === l.id}
                             className="mt-1 inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-0.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                           >
                             <MessageCircle className="h-3 w-3" />
-                            {notifyResults[l.id] === 'sending' ? '…' : notifyResults[l.id] === 'failed' ? 'Retry' : 'Notify'}
+                            {loadingPreview === l.id ? '…' : notifyResults[l.id] === 'sending' ? '…' : notifyResults[l.id] === 'failed' ? 'Retry' : 'Notify'}
                           </button>
                         )}
                         {notifyResults[l.id] === 'failed' && (
@@ -799,6 +838,66 @@ export default function MetaLeadsPage() {
           </div>
         </SheetContent>
       </Sheet>
+      {/* Notify preview dialog */}
+      <Dialog open={!!previewFor} onOpenChange={(o) => { if (!o) setPreviewFor(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MessageCircle className="h-5 w-5 text-emerald-600" />
+              WhatsApp Message Preview
+            </DialogTitle>
+            <DialogDescription>
+              Review the message before sending to {previewFor?.preview.candidateName ?? "candidate"} · {previewFor?.preview.phone}
+            </DialogDescription>
+          </DialogHeader>
+          {previewFor && (
+            <div className="space-y-4">
+              {/* Key details */}
+              <div className="grid grid-cols-2 gap-2 rounded-xl bg-slate-50 p-3 text-sm">
+                {previewFor.preview.designation && (
+                  <div><span className="text-xs font-bold uppercase text-slate-400">Role</span><p className="font-semibold text-slate-800">{previewFor.preview.designation}</p></div>
+                )}
+                {previewFor.preview.branch && (
+                  <div><span className="text-xs font-bold uppercase text-slate-400">Branch</span><p className="font-semibold text-slate-800">{previewFor.preview.branchCity ?? previewFor.preview.branch}</p></div>
+                )}
+                {previewFor.preview.salaryMin && (
+                  <div><span className="text-xs font-bold uppercase text-slate-400">Salary</span><p className="font-semibold text-slate-800">₹{previewFor.preview.salaryMin.toLocaleString("en-IN")}–₹{(previewFor.preview.salaryMax ?? previewFor.preview.salaryMin).toLocaleString("en-IN")}/mo</p></div>
+                )}
+                {previewFor.preview.branchAddress && (
+                  <div className="col-span-2"><span className="text-xs font-bold uppercase text-slate-400">Address</span><p className="text-slate-700">{previewFor.preview.branchAddress}</p></div>
+                )}
+                {previewFor.preview.mapsLink && (
+                  <div className="col-span-2"><a href={previewFor.preview.mapsLink} target="_blank" rel="noopener noreferrer" className="text-blue-600 text-sm hover:underline">📍 View on Google Maps</a></div>
+                )}
+              </div>
+              {/* Message body */}
+              <div>
+                <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">Message to be sent</p>
+                <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-[#d9fdd3] p-3 text-sm text-slate-900 whitespace-pre-wrap leading-relaxed">
+                  {previewFor.preview.messageBody}
+                </div>
+              </div>
+              {previewFor.preview.alreadySent && (
+                <p className="text-xs text-amber-600">⚠ This candidate was already notified. Sending again will re-deliver the message.</p>
+              )}
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={() => setPreviewFor(null)}
+                  className="rounded-lg border border-slate-200 px-4 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={notifyResults[previewFor.id] === 'sending'}
+                  onClick={() => { void notifyLead(previewFor.id, { stopPropagation: () => {} } as React.MouseEvent); setPreviewFor(null); }}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
+                  <MessageCircle className="h-4 w-4" />
+                  Send WhatsApp
+                </button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

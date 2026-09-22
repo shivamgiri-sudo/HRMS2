@@ -222,6 +222,47 @@ async function loadLeadContext(
   };
 }
 
+/**
+ * Build the WhatsApp message preview for a lead without sending.
+ * Returns the rendered message body + key context fields for the HR preview dialog.
+ */
+export async function buildNotifyPreview(leadId: string): Promise<{
+  found: boolean;
+  qualified: boolean;
+  alreadySent: boolean;
+  candidateName: string | null;
+  phone: string | null;
+  designation: string | null;
+  branch: string | null;
+  branchCity: string | null;
+  branchAddress: string | null;
+  salaryMin: number | null;
+  salaryMax: number | null;
+  mapsLink: string;
+  messageBody: string;
+} | null> {
+  const loaded = await loadLeadContext(leadId);
+  if (!loaded) return null;
+  const { ctx } = loaded;
+  const mapsLink = buildMapsLink(ctx);
+  const messageBody = buildWhatsAppBody(ctx);
+  return {
+    found: true,
+    qualified: loaded.qualified,
+    alreadySent: loaded.alreadySent,
+    candidateName: ctx.name,
+    phone: ctx.phone,
+    designation: ctx.designation,
+    branch: ctx.branch,
+    branchCity: ctx.branchCity,
+    branchAddress: ctx.branchAddress,
+    salaryMin: ctx.salaryMin,
+    salaryMax: ctx.salaryMax,
+    mapsLink,
+    messageBody,
+  };
+}
+
 export async function notifyQualifiedLead(
   leadId: string,
   options: { force?: boolean; skipVoice?: boolean } = {}
