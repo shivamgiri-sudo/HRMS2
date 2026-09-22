@@ -138,7 +138,7 @@ async function getBranchContacts(conn) {
       COALESCE(e.official_email, au.email) AS email,
       CONCAT(e.first_name, ' ', e.last_name) AS name
     FROM user_roles ur
-    JOIN auth_user au ON au.id = ur.user_id AND au.is_active = 1
+    JOIN auth_user au ON au.id = ur.user_id AND au.is_blocked = 0
     JOIN employees e ON e.user_id = ur.user_id AND e.active_status = 1
     JOIN branch_master bm ON bm.id = (
       SELECT branch_id FROM employees WHERE user_id = ur.user_id AND active_status = 1 LIMIT 1
