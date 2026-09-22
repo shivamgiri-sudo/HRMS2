@@ -1088,6 +1088,16 @@ export const grnSmartService = {
       // budget line's planned tax treatment must not split a GST component out of it and the
       // whole amount is P&L cost. See applyImprestNoGst for the full rationale.
       const isImprest = String(grn.grn_type) === "imprest";
+      // Derive the GST type from the GRN's vendor and billing state codes.
+      // This overrides the budget-line gst_type for the cost split so that
+      // inter-state invoices (vendor ≠ billing state) always produce IGST
+      // amounts rather than inheriting "none" or an intra-state split from
+      // the budget template.
+      const _v1 = String(grn.vendor_state_code ?? "").trim();
+      const _b1 = String(grn.billing_state_code ?? "").trim();
+      const grnGstType: BudgetGstType = isImprest || !_v1 || !_b1
+        ? "none"
+        : _v1 === _b1 ? "cgst_sgst" : "igst";
 
       // An UNBUDGETED row (raised via the same "no approved budget line" path the vendor
       // cascade already has — createUnbudgetedDraft/e2c8db0d) has no budget line to pick.
@@ -1337,7 +1347,7 @@ export const grnSmartService = {
             gstRate: isImprest ? IMPREST_TAX_PROFILE.gstRate : Number(fundingLine.gst_rate),
             gstType: isImprest
               ? IMPREST_TAX_PROFILE.gstType
-              : String(fundingLine.gst_type) as BudgetGstType,
+              : (grnGstType !== "none" ? grnGstType : String(fundingLine.gst_type)) as BudgetGstType,
             recoverableTaxPct: isImprest
               ? IMPREST_TAX_PROFILE.recoverableTaxPct
               : Number(fundingLine.recoverable_tax_pct),
@@ -1503,7 +1513,7 @@ export const grnSmartService = {
           totalQuantity, units.size === 1 ? [...units][0] : "Mixed",
           totalQuantity > 0 ? roundMoney(totalBase / totalQuantity) : 0,
           taxTreatments.size === 1 ? [...taxTreatments][0] : "exclusive",
-          weightedGstRate, gstTypes.size === 1 ? [...gstTypes][0] : "none",
+          weightedGstRate, grnGstType !== "none" ? grnGstType : (gstTypes.size === 1 ? [...gstTypes][0] : "none"),
           weightedRecoverablePct, totalBase, totalTax, totalGross, totalPnl, totalGross,
           normalizeInvoiceNumber(input.invoiceNumber) || null,
           String(input.irn ?? "").trim() || null,
@@ -1608,6 +1618,10 @@ export const grnSmartService = {
       if (String(grn.grn_type) !== "vendor") {
         throw new Error("Invoice-component GRNs are only supported for vendor GRNs");
       }
+      // Derive GST type from state codes (same logic as saveAllocations).
+      const _v2 = String(input.vendorStateCode?.trim() || grn.vendor_state_code || "").trim();
+      const _b2 = String(input.billingStateCode?.trim() || grn.billing_state_code || "").trim();
+      const grnGstType: BudgetGstType = !_v2 || !_b2 ? "none" : _v2 === _b2 ? "cgst_sgst" : "igst";
 
       // UNBUDGETED EXPENSES: a split row with no budgetLineId but a costCentreId is unbudgeted
       // for that cost centre only — resolved independently per row, not gated by a single
@@ -1748,7 +1762,9 @@ export const grnSmartService = {
       // head/sub-head and therefore the same gst_type (intra-state vs inter-state). "cgst_sgst"
       // was hardcoded previously; that produced the correct total tax amount (taxAmount is
       // gstRate × base regardless of gstType) but wrong cgst/sgst/igst column breakdown.
-      const componentGstType = (resolvedSplits[0]?.line?.gst_type as BudgetGstType | undefined) ?? "cgst_sgst";
+      const componentGstType: BudgetGstType = grnGstType !== "none"
+        ? grnGstType
+        : ((resolvedSplits[0]?.line?.gst_type as BudgetGstType | undefined) ?? "cgst_sgst");
       const componentAmounts = components.map((component) =>
         calculateBudgetLine({
           head: "invoice-component",
@@ -1834,7 +1850,7 @@ export const grnSmartService = {
             unitRate: compBase,
             taxTreatment: "exclusive",
             gstRate: Number(component.gstRate),
-            gstType: String(line.gst_type) as BudgetGstType,
+            gstType: (grnGstType !== "none" ? grnGstType : String(line.gst_type)) as BudgetGstType,
             recoverableTaxPct: Number(line.recoverable_tax_pct),
             justification: String(line.justification || "Approved budget allocation"),
           });
@@ -2159,7 +2175,7 @@ export const grnSmartService = {
           `${components.length} invoice component(s) across ${resolvedSplits.length} cost centre(s)`,
           totalQuantity, units.size === 1 ? [...units][0] : "Mixed",
           totalQuantity > 0 ? roundMoney(rawTotalBase / totalQuantity) : 0,
-          "exclusive", weightedGstRate, gstTypes.size === 1 ? [...gstTypes][0] : "none",
+          "exclusive", weightedGstRate, grnGstType !== "none" ? grnGstType : (gstTypes.size === 1 ? [...gstTypes][0] : "none"),
           weightedRecoverablePct, rawTotalBase, rawTotalTax,
           totalGrossFinal, totalPnlFinal, totalGrossFinal,
           diff,

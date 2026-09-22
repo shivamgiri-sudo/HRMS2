@@ -359,7 +359,8 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
     if (components.length) {
       return components.map((component, index) => {
         const gst = num(component.tax_amount);
-        const isIgst = recordedGstType === "igst";
+        const effectiveGstType = recordedGstType !== "none" ? recordedGstType : expectedGstType;
+        const isIgst = effectiveGstType === "igst";
         return {
           key: String(component.id ?? index),
           label: String(index + 1),
@@ -389,7 +390,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
     return [...byRate.entries()].map(([rate, row], index) => ({
       key: `rate-${rate}`, label: String(index + 1), hsn: "—", rate, ...row,
     }));
-  }, [workspace, recordedGstType]);
+  }, [workspace, recordedGstType, expectedGstType]);
   const gstTotals = useMemo(
     () =>
       gstRows.reduce(
@@ -1225,7 +1226,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                     <p className="px-4 pb-1 pt-4 text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
                       GST breakdown
                       <span className="ml-2 font-normal normal-case tracking-normal">
-                        {recordedGstType === "igst" ? "IGST (inter-state)" : recordedGstType === "cgst_sgst" ? "CGST + SGST (intra-state)" : "No GST"}
+                        {(() => { const eg = recordedGstType !== "none" ? recordedGstType : expectedGstType; return eg === "igst" ? "IGST (inter-state)" : eg === "cgst_sgst" ? "CGST + SGST (intra-state)" : "No GST"; })()}
                         {parent?.vendor_gstin ? ` · GSTIN ${parent.vendor_gstin}` : ""}
                       </span>
                     </p>

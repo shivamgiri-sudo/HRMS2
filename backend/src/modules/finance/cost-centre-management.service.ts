@@ -102,6 +102,13 @@ export interface ListFilters {
   q?: string;
   status?: CostCentreStatus | "all";
   /**
+   * When "1" or 1, restricts to active cost centres (active_status = 1, close_date not passed).
+   * When "0" or 0, restricts to inactive. Omit to return all.
+   * Every dropdown on the site sends active_status=1 via useCostCentres but the service
+   * previously ignored it, causing inactive cost centres to appear everywhere.
+   */
+  active_status?: string | number;
+  /**
    * FK filter against client_master. Semantically correct but matches NOTHING today:
    * cost_centre_master.client_id is NULL on all 927 rows, so any caller using this gets an empty
    * list rather than an error. Kept because it is the right filter if the FK is ever populated —
@@ -153,7 +160,7 @@ export const costCentreManagementService = {
    * List cost centres with filters
    */
   async list(filters: ListFilters = {}) {
-    const { q, status, client_id, client_name, branch_id, page = 1, limit = 50 } = filters;
+    const { q, status, active_status, client_id, client_name, branch_id, page = 1, limit = 50 } = filters;
     const where: string[] = [];
     const params: (string | number)[] = [];
 
@@ -175,6 +182,12 @@ export const costCentreManagementService = {
       where.push("cc.status = ?");
       where.push("cc.active_status = 1");
       params.push(status);
+    } else if (active_status !== undefined && active_status !== "") {
+      // When no workflow-status filter is applied, honour the explicit active_status flag.
+      // Every site-wide dropdown (useCostCentres) sends active_status=1 but it was silently
+      // dropped, causing inactive cost centres to appear in GRN and all other pickers.
+      where.push("cc.active_status = ?");
+      params.push(Number(active_status));
     }
 
     /**

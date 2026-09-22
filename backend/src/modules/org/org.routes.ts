@@ -156,7 +156,7 @@ router.get("/filter-options", h(async (_req: Request, res: Response) => {
       branches: await branchService.list(),
       departments: await departmentService.list(),
       processes: await processService.list(),
-      costCentres: await costCentreService.list(),
+      costCentres: await costCentreService.list({ active_status: 1, limit: 500 }),
       designations: await designationService.list(),
       locations: await locationService.list(),
       managers,
@@ -185,7 +185,7 @@ router.get("/", h(async (_req: Request, res: Response) => {
     lobService.list(),
     locationService.list(),
     policyService.list(),
-    costCentreService.list(),
+    costCentreService.list({ active_status: 1, limit: 500 }),
     gradeBandService.list(),
     campaignService.list(),
   ]);
