@@ -444,6 +444,17 @@ export async function submitProfile(token: string, profile: Record<string, unkno
 
 // ── HR: List Onboarding Requests ──────────────────────────────────────────────
 
+/**
+ * Capped at the most recent 500, owner-approved 2026-09-22 as a quick fix for
+ * the page taking 13.5s to load: this had no LIMIT at all, joined 6 tables plus
+ * 2 correlated per-row subqueries, and returned the entire onboarding-request
+ * history on every load — the page then filters/counts all of it client-side
+ * (search box, status tabs) the same way the Appointment Letters queue already
+ * caps at 200 for the same reason (see that queue's own comment). A request
+ * older than the 500 most recent will drop out of the list and its tab count
+ * until real server-side pagination + counts replace this — accepted tradeoff
+ * for now, not the final shape.
+ */
 export async function listOnboardingRequests(scopeFilter: { sql: string; params: unknown[] }) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT r.id, r.status, r.created_at,
@@ -485,7 +496,8 @@ export async function listOnboardingRequests(scopeFilter: { sql: string; params:
      LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
      LEFT JOIN candidate_onboarding_bank_detail bank ON bank.candidate_id = c.id
      WHERE (${scopeFilter.sql})
-     ORDER BY r.created_at DESC`,
+     ORDER BY r.created_at DESC
+     LIMIT 500`,
     scopeFilter.params,
   );
   return rows;
