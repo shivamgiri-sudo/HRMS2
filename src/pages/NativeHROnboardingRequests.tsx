@@ -890,7 +890,7 @@ export default function NativeHROnboardingRequests() {
     hrmsApi.get<unknown>('/api/org/branches')
       .then((r: any) => setAllBranches(r?.data ?? []))
       .catch(() => setAllBranches([]));
-    hrmsApi.get<unknown>('/api/org/cost-centres')
+    hrmsApi.get<unknown>('/api/org/cost-centres?active_status=1&limit=500')
       .then((r: any) => setAllCostCentres(r?.data ?? []))
       .catch(() => setAllCostCentres([]));
   }, []);
