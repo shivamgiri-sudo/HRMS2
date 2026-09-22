@@ -24,10 +24,12 @@ import { BankLedgerReportContent } from "./BankLedgerReportPage";
 import { LedgerReportsContent } from "./LedgerReportsPage";
 import { BankReconciliationContent } from "./BankReconciliationPage";
 import { FinanceAnalyticsContent } from "./FinanceAnalyticsPage";
+import { JournalVouchersContent } from "./JournalVouchersPage";
 
 const TABS = [
   { key: "analytics", label: "Finance Analytics" },
   { key: "payments", label: "Payments" },
+  { key: "journal", label: "Journal Vouchers" },
   { key: "bank-accounts", label: "Bank Accounts" },
   { key: "bank-ledger", label: "Bank Ledger" },
   { key: "reconciliation", label: "Reconciliation" },
@@ -83,6 +85,8 @@ export default function FinanceLedgerHubPage() {
               <TabsContent value="dispatch"><VendorPaymentDispatchContent /></TabsContent>
             </Tabs>
           </TabsContent>
+
+          <TabsContent value="journal"><JournalVouchersContent /></TabsContent>
 
           <TabsContent value="bank-accounts"><CompanyBankAccountsContent /></TabsContent>
           <TabsContent value="bank-ledger"><BankLedgerReportContent /></TabsContent>

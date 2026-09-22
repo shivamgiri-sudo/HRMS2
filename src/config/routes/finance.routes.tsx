@@ -41,6 +41,7 @@ const LedgerHeadsPage              = lazy(() => import("@/pages/finance/LedgerHe
 const BankDirectoryPage            = lazy(() => import("@/pages/finance/BankDirectoryPage"));
 const LedgerReportsPage             = lazy(() => import("@/pages/finance/LedgerReportsPage"));
 const FinanceLedgerHubPage          = lazy(() => import("@/pages/finance/FinanceLedgerHubPage"));
+const JournalVouchersPage           = lazy(() => import("@/pages/finance/JournalVouchersPage"));
 
 const financeRoles = ['super_admin','admin','finance','finance_head','accounts_head','payroll_head'] as const;
 // Branch roles raise GRNs — the backend already grants them GRN write access and
@@ -107,6 +108,7 @@ export const financeRouteElements = (
       <Route path="/finance/bank-directory"   element={<Navigate to="/finance/ledger?tab=bank-directory" replace />} />
       <Route path="/finance/ledger-reports"   element={<Navigate to="/finance/ledger?tab=ledger-reports" replace />} />
       <Route path="/finance/vendor-payment-tracking" element={<Navigate to="/finance/ledger?tab=payments" replace />} />
+      <Route path="/finance/journal-vouchers" element={<Navigate to="/finance/ledger?tab=journal" replace />} />
 
       {/* Finance */}
       <Route path="/finance/grn"                     element={<ProtectedRoute roles={grnRoles}><Gate pageCode="FINANCE_GRN"><NativeGRNManagement /></Gate></ProtectedRoute>} />

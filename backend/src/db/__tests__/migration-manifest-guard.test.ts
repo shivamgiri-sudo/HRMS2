@@ -299,6 +299,10 @@ describe("migration manifest — duplicates", () => {
     // 90 -> 91 (2026-09-14): 1700_noc_case_opened_event.sql registered alongside the
     // already-registered 1700_email_ticket_daily_actual.sql — same concurrent-session
     // number collision pattern as every jump above.
-    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(91);
+    //
+    // 91 -> 92 (2026-09-22): 1836_journal_voucher.sql registered alongside the
+    // already-registered 1836_user_assignment_scope_cost_centre.sql — same concurrent-session
+    // number collision pattern as every jump above.
+    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(92);
   });
 });
