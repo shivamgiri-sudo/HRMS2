@@ -75,6 +75,14 @@ export type EligibilityResult = {
   /** Already issued — carries the existing letter number. */
   alreadyIssued: boolean;
   existingLetterNumber: string | null;
+  /**
+   * True when the joining-kit EMPLOYMENT_CONTRACT document is already signed
+   * for this employee even though no row exists in appointment_letter_issue
+   * (e.g. signed outside this issue flow, or migrated data) — alreadyIssued
+   * above only checks appointment_letter_issue, so this is the signal that a
+   * fresh "Issue" click here would be a duplicate contract, not a first one.
+   */
+  contractAlreadySigned: boolean;
   /** Days since `employees.created_at` — the employee ID creation SLA clock. */
   daysSinceIdCreated: number;
   /** `daysSinceIdCreated > 3`. */
@@ -166,7 +174,7 @@ export async function evaluateAppointmentLetterEligibility(employeeId: string): 
     return {
       employeeId, employeeCode: null, employeeName: null, eligible: false,
       blockers: [{ code: "employee_not_found", reason: "No such employee.", severity: "critical" }],
-      warnings: [], alreadyIssued: false, existingLetterNumber: null,
+      warnings: [], alreadyIssued: false, existingLetterNumber: null, contractAlreadySigned: false,
       daysSinceIdCreated: 0, idCreationSlaBreached: false,
     };
   }
@@ -179,6 +187,27 @@ export async function evaluateAppointmentLetterEligibility(employeeId: string): 
     [employeeId],
   ).catch(() => [[]] as unknown as [RowDataPacket[]]);
   const existing = (issued as RowDataPacket[])[0];
+
+  // ── already-signed employment contract, outside appointment_letter_issue ───
+  // Catches an employee whose joining-kit EMPLOYMENT_CONTRACT was already
+  // signed (through eSign or a verified wet-signed upload) but who has no
+  // matching appointment_letter_issue row — alreadyIssued above would
+  // otherwise report false and invite HR to issue a duplicate contract.
+  const [contractRows] = await db.execute<RowDataPacket[]>(
+    `SELECT status FROM employee_joining_document_checklist
+      WHERE employee_id = ? AND document_code = 'EMPLOYMENT_CONTRACT'
+        AND status IN ('verified', 'signed_verified', 'completed', 'esign_completed', 'wet_signed_uploaded')
+      LIMIT 1`,
+    [employeeId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const contractAlreadySigned = (contractRows as RowDataPacket[]).length > 0;
+  if (contractAlreadySigned && !existing) {
+    warnings.push({
+      code: "contract_already_signed",
+      reason: "The joining-kit Employment Agreement is already signed for this employee, but no appointment letter has been recorded as issued. Confirm this is not a duplicate before issuing.",
+      severity: "warning",
+    });
+  }
 
   // ── BGV ───────────────────────────────────────────────────────────────────
   const candidateId = emp.candidate_id ? String(emp.candidate_id) : null;
@@ -413,6 +442,7 @@ export async function evaluateAppointmentLetterEligibility(employeeId: string): 
     warnings,
     alreadyIssued: Boolean(existing),
     existingLetterNumber: existing ? String(existing.letter_number) : null,
+    contractAlreadySigned,
     daysSinceIdCreated,
     idCreationSlaBreached: daysSinceIdCreated > 3,
   };

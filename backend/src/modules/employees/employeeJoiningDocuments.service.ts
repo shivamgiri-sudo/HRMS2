@@ -494,6 +494,7 @@ export async function recalculateDocumentProgress(employeeId: string) {
   const done = Number(row?.mandatory_completed ?? row?.completed_count ?? 0);
   const pct = total > 0 ? Number(((done / total) * 100).toFixed(2)) : 0;
   const status = total > 0 && done >= total ? "completed" : done > 0 ? "in_progress" : "pending";
+  const epf = await getEpfFormsStatus(employeeId);
 
   try {
     await db.execute(
@@ -534,6 +535,31 @@ export async function recalculateDocumentProgress(employeeId: string) {
       [pct, status, employeeId],
     ).catch(() => undefined);
   }
+
+  return { status, pct, epfFormsStatus: epf.status, epfFormsPending: epf.pending };
+}
+
+/**
+ * EPF_DECLARATION / EPF_NOMINATION_FORM2 are deliberately excluded from
+ * joining_document_status/pct (owner directive, 2026-09-18 — see
+ * COMPLETION_EXCLUDED_DOCUMENT_CODES above) because they're reviewed on a
+ * separate track. That directive was about the completion GATE, not about
+ * hiding that they're still outstanding — so this reports their own status
+ * next to it instead of folding them back into the main percentage.
+ */
+async function getEpfFormsStatus(employeeId: string): Promise<{ status: "completed" | "pending"; pending: string[] }> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT document_code, document_name, status
+       FROM employee_joining_document_checklist
+      WHERE employee_id = ?
+        AND document_code IN (${COMPLETION_EXCLUDED_DOCUMENT_CODES.map(() => "?").join(",")})`,
+    [employeeId, ...COMPLETION_EXCLUDED_DOCUMENT_CODES],
+  );
+  const terminal = new Set(["verified", "signed_verified", "completed", "esign_completed", "wet_signed_uploaded", "employee_confirmed"]);
+  const pending = (rows as RowDataPacket[])
+    .filter((r) => !terminal.has(String(r.status)))
+    .map((r) => String(r.document_name ?? r.document_code));
+  return { status: pending.length === 0 ? "completed" : "pending", pending };
 }
 
 function resolveRoleForUpload(ownerType: string): FileRole {
@@ -936,7 +962,7 @@ const JOINING_TO_GENERAL_DOC_TYPE: Record<string, string[]> = {
 export async function getJoiningDocumentPack(employeeId: string, userId: string) {
   const access = await resolveEmployeeDocumentAccessContext(userId, employeeId);
   await ensureChecklistRows(access.target, userId);
-  await recalculateDocumentProgress(employeeId);
+  const progress = await recalculateDocumentProgress(employeeId);
   const checklist = await getChecklistBundle(employeeId);
 
   // Cross-reference: fetch general employee_documents and attach matching ones to checklist items
@@ -984,8 +1010,10 @@ export async function getJoiningDocumentPack(employeeId: string, userId: string)
       full_name: access.target.full_name,
       official_email: access.target.official_email,
       mobile: access.target.mobile,
-      joining_document_status: access.target.joining_document_status,
-      joining_document_completion_pct: access.target.joining_document_completion_pct ?? 0,
+      joining_document_status: progress.status,
+      joining_document_completion_pct: progress.pct,
+      epf_forms_status: progress.epfFormsStatus,
+      epf_forms_pending: progress.epfFormsPending,
       candidate_id: access.target.candidate_id,
     },
     permissions: {

@@ -111,6 +111,7 @@ router.get("/appointment-letters/queue", requireRole(...VIEW_ROLES), h(async (re
       eligible: rows.filter((r) => r.eligible),
       blocked: rows.filter((r) => !r.eligible),
       counts: { eligible: rows.filter((r) => r.eligible).length, blocked: rows.filter((r) => !r.eligible).length },
+      scope: scope.sql === "1=1" ? "all" : "branch",
     },
   });
 }));

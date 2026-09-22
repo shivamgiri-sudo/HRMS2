@@ -26,6 +26,7 @@ type QueueRow = {
   warnings: Blocker[];
   alreadyIssued: boolean;
   existingLetterNumber: string | null;
+  contractAlreadySigned: boolean;
   daysSinceIdCreated: number;
   idCreationSlaBreached: boolean;
 };
@@ -41,7 +42,7 @@ type DrawerState =
   | null;
 
 export default function NativeAppointmentLetterQueue() {
-  const [queue, setQueue] = useState<{ eligible: QueueRow[]; blocked: QueueRow[] } | null>(null);
+  const [queue, setQueue] = useState<{ eligible: QueueRow[]; blocked: QueueRow[]; scope: "all" | "branch" } | null>(null);
   const [issued, setIssued] = useState<IssuedRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -122,21 +123,29 @@ export default function NativeAppointmentLetterQueue() {
     setSearching(true);
     setError(null);
     const qs = appliedSearch ? `?search=${encodeURIComponent(appliedSearch)}` : "";
-    try {
-      const [q, i] = await Promise.all([
-        hrmsApi.get<{ data: { eligible: QueueRow[]; blocked: QueueRow[] } }>(`/api/letters/appointment-letters/queue${qs}`),
-        hrmsApi.get<{ data: IssuedRow[] }>(`/api/letters/appointment-letters${qs}`),
-      ]);
-      setQueue(q.data);
-      setIssued(i.data ?? []);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Unable to load the appointment letter queue.");
-    } finally {
-      // The skeleton is for the first load only. A search that blanked the list
-      // on every keystroke would hide the result it was about to show.
-      setLoading(false);
-      setSearching(false);
+    // Fetched independently, not via Promise.all: the two calls used to fail
+    // together, so an error on the issued-letters call (the smaller, less
+    // important half) was blanking the eligible/blocked queue too, showing
+    // 0/0/0 even though the queue call itself had already succeeded.
+    const [qResult, iResult] = await Promise.allSettled([
+      hrmsApi.get<{ data: { eligible: QueueRow[]; blocked: QueueRow[]; scope: "all" | "branch" } }>(`/api/letters/appointment-letters/queue${qs}`),
+      hrmsApi.get<{ data: IssuedRow[] }>(`/api/letters/appointment-letters${qs}`),
+    ]);
+    if (qResult.status === "fulfilled") {
+      setQueue(qResult.value.data);
+    } else {
+      setError(qResult.reason instanceof Error ? qResult.reason.message : "Unable to load the appointment letter queue.");
     }
+    if (iResult.status === "fulfilled") {
+      setIssued(iResult.value.data ?? []);
+    } else if (qResult.status === "fulfilled") {
+      // Queue loaded fine; only mention the issued-letters failure if nothing else already did.
+      setError(iResult.reason instanceof Error ? iResult.reason.message : "Unable to load issued letters.");
+    }
+    // The skeleton is for the first load only. A search that blanked the list
+    // on every keystroke would hide the result it was about to show.
+    setLoading(false);
+    setSearching(false);
   }, [appliedSearch]);
 
   useEffect(() => { void load(); }, [load]);
@@ -268,7 +277,7 @@ export default function NativeAppointmentLetterQueue() {
                 letter reaches the employee, who then accepts it with Aadhaar eSign.
               </p>
               <p className="mt-1.5 text-xs text-blue-200">
-                Shows the employees in your assigned branch.
+                {queue?.scope === "branch" ? "Shows the employees in your assigned branch." : "Shows employees company-wide."}
               </p>
             </div>
             <button
