@@ -878,7 +878,8 @@
     "1838_ops_control_tower_page_access.sql",
     "1839_meta_lead_calling_feedback.sql",
     "1840_attendance_reconciliation_issue_branch_rollup_index.sql",
-    "1836_journal_voucher.sql"
+    "1836_journal_voucher.sql",
+    "1841_ats_onboarding_request_created_at_index.sql"
   ],
   "approvedDeletions": [
     {
