@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1186,
-  "columnCount": 17683,
+  "columnCount": 17684,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -13235,6 +13235,7 @@
       "voucher_type",
       "source_type",
       "bank_account_id",
+      "destination_bank_account_id",
       "payable_account_id",
       "linked_vendor_payment_id",
       "linked_vendor_id",
