@@ -456,7 +456,14 @@ export async function submitProfile(token: string, profile: Record<string, unkno
  * for now, not the final shape.
  */
 export async function listOnboardingRequests(scopeFilter: { sql: string; params: unknown[] }) {
-  const [rows] = await db.execute<RowDataPacket[]>(
+  // db.query, not db.execute — load-bearing. Measured live 2026-09-22: this exact
+  // SQL/data ran in 561ms via a direct mysql client (text protocol) but 8.7s
+  // through db.execute() (prepared/binary protocol) — MySQL's prepared-statement
+  // planner picked a far worse plan for this multi-join query than the ad-hoc
+  // text-protocol planner did. Same fix already applied to the joining-documents
+  // tracker's main query for the identical reason (see that file's own comment);
+  // this query just hadn't been touched yet.
+  const [rows] = await db.query<RowDataPacket[]>(
     `SELECT r.id, r.status, r.created_at,
             c.id AS candidate_id, c.candidate_code, c.full_name, c.mobile,
             c.email, c.profile_status, c.applied_for_process,

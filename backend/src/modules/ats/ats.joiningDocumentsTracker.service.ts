@@ -800,7 +800,13 @@ async function queryTrackerSummary(
     .map(([bucket, field]) => `SUM(${summaryBucketCaseSql('t.pct')} = '${bucket}') AS ${field}`)
     .join(',\n      ');
 
-  const [summaryRows] = await db.execute<TrackerSummaryRow[]>(
+  // db.query, not db.execute — same reason the main row query above already
+  // uses it (see that query's own comment): this shares the same UNION-based
+  // fromWhereGroupSQL population subquery, so it is exposed to the identical
+  // prepared-statement-plan regression. Confirmed live 2026-09-22 on the
+  // sibling onboarding-requests query (561ms via db.query vs 8.7s via
+  // db.execute for the same SQL/data).
+  const [summaryRows] = await db.query<TrackerSummaryRow[]>(
     `SELECT
       COUNT(*) AS total_employees,
       ${bucketCountSelects},

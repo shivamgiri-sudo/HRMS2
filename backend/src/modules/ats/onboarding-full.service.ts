@@ -2401,7 +2401,12 @@ export async function listFullOnboardingRequests(scopeFilter?: OnboardingScopeFi
   // out before GROUP BY collapses it back down, for nothing. Only pull them in
   // when the normalized WHERE text actually references one.
   const needsScopeJoins = whereSql.includes("br_scope") || whereSql.includes("pm_scope");
-  const [rows] = await db.execute<RowDataPacket[]>(
+  // db.query, not db.execute — this is the same class of multi-join query as
+  // listOnboardingRequests() (ats.onboarding.service.ts), which measured 561ms
+  // via db.query vs 8.7s via db.execute for identical SQL/data live on
+  // 2026-09-22 (MySQL's prepared-statement planner picking a far worse plan
+  // than the ad-hoc text-protocol planner for this join shape).
+  const [rows] = await db.query<RowDataPacket[]>(
     `SELECT req.id, req.status, req.candidate_id,
             req.created_at, req.updated_at,
             p.profile_status, p.reviewed_at,
