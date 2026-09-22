@@ -15,6 +15,7 @@ import { LiveQueueTab } from "@/components/ats/command-center/LiveQueueTab";
 import { JourneyTab } from "@/components/ats/command-center/JourneyTab";
 import { HealthTab } from "@/components/ats/command-center/HealthTab";
 import { BMIBenchmarkTab } from "@/components/ats/command-center/BMIBenchmarkTab";
+import BranchActivityReportTab from "@/pages/ats/BranchActivityReportTab";
 import { ProvenanceBar } from "@/components/analytics/analytics-kit";
 
 type AnyRow = Record<string, unknown>;
@@ -69,7 +70,7 @@ type CommandCenterData = {
 };
 
 const periods = ["ALL", "FTD", "WTD", "MTD"];
-const TAB_IDS = ["Cover", "Dashboard", "Trends", "Rejections", "Recruiters", "Sourcing", "Live Queue", "Journey", "Health", "BMI"];
+const TAB_IDS = ["Cover", "Dashboard", "Trends", "Rejections", "Recruiters", "Sourcing", "Live Queue", "Branch Activity", "Journey", "Health", "BMI"];
 
 export default function NativeATSFullParityCommandCenter() {
   const [data, setData] = useState<CommandCenterData | null>(null);
@@ -367,6 +368,11 @@ export default function NativeATSFullParityCommandCenter() {
               queueRows={data?.queueRows || []}
               loading={loading}
             />
+          </TabsContent>
+
+          {/* Branch Activity tab — the same FTD/WTD/MTD report the daily branch email sends, live and date-pickable. Self-fetching, like Journey/Health/BMI below. */}
+          <TabsContent value="Branch Activity" className="mt-4">
+            <BranchActivityReportTab />
           </TabsContent>
 
           {/* Journey tab - Candidate 360° View */}

@@ -1122,6 +1122,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1837_payment_voucher_internal_transfer.sql", // Registered 2026-09-22. Adds destination_bank_account_id CHAR(36) to payment_voucher for internal_transfer purpose: moving money between two company bank accounts. Also adds partial unique index for internal-transfer release numbers.
   "1838_ops_control_tower_page_access.sql", // Registered 2026-09-22. INSERT IGNORE grants for the new OPS_CONTROL_TOWER page_catalog/role_page_access rows, same shape as 1763's NOC-cases grant. Without it Gate admits only super_admin (its own bypass) and every other role Gate would otherwise let onto /ops/control-tower 403s the moment the summary query fires.
   "1839_meta_lead_calling_feedback.sql", // Adds calling_feedback, calling_feedback_at, calling_feedback_notes, calling_feedback_by columns to meta_lead_raw for recruiter call dispositions on META leads (same options as Hiring Entry).
+  "1840_attendance_reconciliation_issue_branch_rollup_index.sql", // Registered 2026-09-22, owner approved after a live 78s failure. Adds idx_att_recon_issue_employee_resolved (employee_id, resolved_at) as a covering index for the Ops Control Tower's branch-wise attendance-mismatch rollup, which previously read every row (including a wide JSON column) with no WHERE clause. Additive, ONLINE DDL, idempotent.
   ];
 
 export type MigrationHealth = {
