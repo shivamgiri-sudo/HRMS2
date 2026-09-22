@@ -670,12 +670,16 @@ export async function listAppointmentLetterQueue(
   filters: AppointmentLetterQueueFilters = {},
 ): Promise<EligibilityResult[]> {
   const conds: string[] = [
-    "e.active_status = 1",
-    // Was active_status alone, with no employment_status check at all — unlike the
-    // Joining Documents Tracker, which excludes exited employees explicitly. An
-    // employee routed through Exit Management stayed in this queue until
-    // active_status happened to catch up. nonReactivatableSqlList() is the same
-    // canonical guard list the tracker uses (exitEmploymentStatus.ts).
+    // Include preboarding employees (active_status = 0, employment_status = 'preboarding'):
+    // the appointment letter is issued during onboarding, before activation fires.
+    // An employee code is generated at Branch Head approval and the employee record is
+    // created immediately, but active_status stays 0 until the nightly activation job
+    // runs after joining date. Restricting to active_status = 1 silently hid every
+    // preboarding candidate from the queue, making HR unable to issue their letter.
+    "(e.active_status = 1 OR e.employment_status = 'preboarding')",
+    // Guard against exited employees — the same canonical list used by the Joining
+    // Documents Tracker (exitEmploymentStatus.ts). nonReactivatableSqlList() covers
+    // all terminal exit statuses including legacy spellings.
     `(e.employment_status IS NULL OR e.employment_status NOT IN (${nonReactivatableSqlList()}))`,
     "e.legacy_emp_id IS NULL",
     `NOT EXISTS (SELECT 1 FROM appointment_letter_issue i
