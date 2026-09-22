@@ -105,12 +105,32 @@ async function parseResponse(res: Response): Promise<unknown> {
   return text;
 }
 
+/**
+ * Friendly text for the proxy-layer statuses a real deploy restart produces (nginx answers
+ * before the backend is listening again). These never carry a JSON body, so without this map
+ * `buildApiError` below would otherwise surface nginx's raw HTML error page as the error
+ * message — seen live 2026-09-22 on the Branch Ledger tab mid-deploy (a raw
+ * "<html><title>502 Bad Gateway</title>..." string rendered straight into the UI).
+ */
+const GATEWAY_STATUS_MESSAGES: Record<number, string> = {
+  502: "The server is temporarily unavailable. This usually happens for a few minutes during a deploy — please try again shortly.",
+  503: "The service is temporarily unavailable. Please try again in a moment.",
+  504: "The server took too long to respond. Please try again.",
+};
+
+/** A non-JSON error body that is HTML (an nginx/proxy error page) rather than plain text. */
+function looksLikeHtml(text: string): boolean {
+  return /^\s*<(!doctype|html)/i.test(text) || /<\/html>\s*$/i.test(text.trim());
+}
+
 function buildApiError(status: number, payload: unknown, fallbackMessage: string): HrmsApiError {
   const errorPayload = payload as { error?: unknown; message?: unknown; code?: unknown } | null;
   const raw = errorPayload?.error ?? errorPayload?.message ?? (typeof payload === "string" ? payload : null);
   let message: string;
 
-  if (typeof raw === "string") {
+  if (typeof raw === "string" && looksLikeHtml(raw)) {
+    message = GATEWAY_STATUS_MESSAGES[status] ?? fallbackMessage;
+  } else if (typeof raw === "string") {
     message = raw;
   } else if (raw && typeof raw === "object") {
     const fieldErrors = (raw as Record<string, unknown>).fieldErrors;
