@@ -1036,6 +1036,7 @@
     "1767_onfido_external_audit_add_total_columns.sql",
     "1788_gnc_sale_order_id_unique.sql",
     "1831_meta_lead_interview_slot.sql",
+    "1837_payment_voucher_internal_transfer.sql",
     "204_personal_contact_fields.sql",
     "205_branch_alias_examples.sql",
     "206_ats_recruiter_contact_details.sql",

@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   joinBucketFor,
   emptyBucketTally,
-  classifyAppointmentLetter,
+  classifyIdCreationSla,
   severityForCount,
+  JOINING_DOCUMENT_SLA_DAYS,
   APPOINTMENT_LETTER_SLA_DAYS,
   JOIN_BUCKETS,
 } from '../ops-control-tower.logic.js';
@@ -35,22 +36,22 @@ describe('emptyBucketTally', () => {
   });
 });
 
-describe('classifyAppointmentLetter', () => {
+describe('classifyIdCreationSla', () => {
   const createdAtMs = Date.UTC(2026, 8, 15); // 15 Sep
 
-  it('is due, not pending, before Day 7', () => {
-    const r = classifyAppointmentLetter({ createdAtMs, signedAtMs: null, nowMs: createdAtMs + 3 * DAY_MS });
+  it('is due, not pending, before the deadline', () => {
+    const r = classifyIdCreationSla({ createdAtMs, doneAtMs: null, nowMs: createdAtMs + 1 * DAY_MS }, APPOINTMENT_LETTER_SLA_DAYS);
     expect(r).toMatchObject({ status: 'due', pending: false, daysOverdue: null });
   });
 
-  it('is on time exactly at the Day-7 deadline', () => {
+  it('is on time exactly at the deadline', () => {
     const dueAt = createdAtMs + APPOINTMENT_LETTER_SLA_DAYS * DAY_MS;
-    expect(classifyAppointmentLetter({ createdAtMs, signedAtMs: dueAt, nowMs: dueAt }).status).toBe('signed_on_time');
+    expect(classifyIdCreationSla({ createdAtMs, doneAtMs: dueAt, nowMs: dueAt }, APPOINTMENT_LETTER_SLA_DAYS).status).toBe('done_on_time');
   });
 
-  it('is overdue and pending one millisecond past Day 7 with nothing signed', () => {
+  it('is overdue and pending one millisecond past the deadline with nothing done', () => {
     const dueAt = createdAtMs + APPOINTMENT_LETTER_SLA_DAYS * DAY_MS;
-    const r = classifyAppointmentLetter({ createdAtMs, signedAtMs: null, nowMs: dueAt + 1 });
+    const r = classifyIdCreationSla({ createdAtMs, doneAtMs: null, nowMs: dueAt + 1 }, APPOINTMENT_LETTER_SLA_DAYS);
     expect(r.status).toBe('overdue');
     expect(r.pending).toBe(true);
     expect(r.daysOverdue).toBe(0);
@@ -58,15 +59,21 @@ describe('classifyAppointmentLetter', () => {
 
   it('reports whole days overdue', () => {
     const dueAt = createdAtMs + APPOINTMENT_LETTER_SLA_DAYS * DAY_MS;
-    const r = classifyAppointmentLetter({ createdAtMs, signedAtMs: null, nowMs: dueAt + 5 * DAY_MS + 1 });
+    const r = classifyIdCreationSla({ createdAtMs, doneAtMs: null, nowMs: dueAt + 5 * DAY_MS + 1 }, APPOINTMENT_LETTER_SLA_DAYS);
     expect(r.daysOverdue).toBe(5);
   });
 
-  it('is signed_late when it eventually gets signed after Day 7 — and never pending', () => {
+  it('is done_late when it eventually completes after the deadline — and never pending', () => {
     const dueAt = createdAtMs + APPOINTMENT_LETTER_SLA_DAYS * DAY_MS;
-    const r = classifyAppointmentLetter({ createdAtMs, signedAtMs: dueAt + 2 * DAY_MS, nowMs: dueAt + 3 * DAY_MS });
-    expect(r.status).toBe('signed_late');
+    const r = classifyIdCreationSla({ createdAtMs, doneAtMs: dueAt + 2 * DAY_MS, nowMs: dueAt + 3 * DAY_MS }, APPOINTMENT_LETTER_SLA_DAYS);
+    expect(r.status).toBe('done_late');
     expect(r.pending).toBe(false);
+  });
+
+  it('applies whatever slaDays it is given — the 3-day eSign deadline lands 4 days earlier than the 7-day letter deadline', () => {
+    const nowMs = createdAtMs + 4 * DAY_MS;
+    expect(classifyIdCreationSla({ createdAtMs, doneAtMs: null, nowMs }, JOINING_DOCUMENT_SLA_DAYS).status).toBe('overdue');
+    expect(classifyIdCreationSla({ createdAtMs, doneAtMs: null, nowMs }, APPOINTMENT_LETTER_SLA_DAYS).status).toBe('due');
   });
 });
 

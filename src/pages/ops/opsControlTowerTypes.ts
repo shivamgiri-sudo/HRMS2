@@ -46,7 +46,8 @@ export interface JoiningBlock {
 
 export interface OpsControlTowerSummary {
   nowMs: number;
-  slaDays: number;
+  esignSlaDays: number;
+  appointmentLetterSlaDays: number;
   attendanceMismatch: MismatchBlock;
   rosterUploaded: DateBlock;
   joining: JoiningBlock;
@@ -95,7 +96,8 @@ export interface OnboardingDetailRow {
   status: string;
   daysOpen: number;
 }
-export interface AppointmentLetterDetailRow {
+/** Shared by the two Day-N SLA blocks: eSign (Day 3) and Appointment letter (Day 7). */
+export interface SlaDetailRow {
   employeeId: string;
   employeeCode: string;
   employeeName: string;
@@ -108,4 +110,4 @@ export type DetailRow =
   | FnfDetailRow
   | NocDetailRow
   | OnboardingDetailRow
-  | AppointmentLetterDetailRow;
+  | SlaDetailRow;

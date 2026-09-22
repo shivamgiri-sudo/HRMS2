@@ -151,22 +151,43 @@ describe('getNocPendingBlock', () => {
   });
 });
 
-describe('getDigilockerPendingBlock and getEsignPendingBlock', () => {
-  it('scope to recently-created employee codes', async () => {
+describe('getDigilockerPendingBlock', () => {
+  it('scopes to recently-created employee codes and counts everything not received', async () => {
     dbExecute.mockImplementation(async (sql: string, params?: unknown[]) => {
       if (sql.includes('FROM branch_master')) return [BRANCHES];
-      if (sql.includes('FROM ats_onboarding_bridge')) {
+      if (sql.includes('FROM ats_onboarding_bridge') && sql.includes('digilocker_status')) {
         expect(params?.[0]).toBe(30);
         return [[{ branch_id: NOIDA, n: 3 }]];
       }
       return [[]];
     });
     expect((await getDigilockerPendingBlock()).grandTotal).toBe(3);
-    expect((await getEsignPendingBlock()).grandTotal).toBe(3);
   });
 });
 
-describe('getAppointmentLetterBlock', () => {
+describe('getEsignPendingBlock (joining-kit, Day-3 SLA)', () => {
+  const nowMs = Date.UTC(2026, 8, 22, 6, 0);
+
+  it('counts only employees past Day 3 whose joining documents are not done', async () => {
+    dbExecute.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM branch_master')) return [BRANCHES];
+      if (sql.includes('FROM ats_onboarding_bridge') && sql.includes('joining_document')) {
+        return [[
+          { branch_id: NOIDA, employee_id: 'e1', created_at: '2026-09-15 09:00:00', done_at: null }, // 7 days old, overdue
+          { branch_id: NOIDA, employee_id: 'e2', created_at: '2026-09-21 09:00:00', done_at: null }, // 1 day old, due
+          { branch_id: AHM, employee_id: 'e3', created_at: '2026-09-10 09:00:00', done_at: '2026-09-12 09:00:00' }, // done on time
+        ]];
+      }
+      return [[]];
+    });
+    const block = await getEsignPendingBlock(nowMs);
+    expect(block.grandTotal).toBe(1);
+    expect(block.branches.find((b) => b.branchId === NOIDA)!.count).toBe(1);
+    expect(block.branches.find((b) => b.branchId === AHM)!.count).toBe(0);
+  });
+});
+
+describe('getAppointmentLetterBlock (Day-7 SLA)', () => {
   const nowMs = Date.UTC(2026, 8, 22, 6, 0);
 
   it('counts only employees past the Day-7 SLA with nothing signed', async () => {
@@ -174,9 +195,9 @@ describe('getAppointmentLetterBlock', () => {
       if (sql.includes('FROM branch_master')) return [BRANCHES];
       if (sql.includes('FROM employees') && sql.includes('appointment_letter_issue')) {
         return [[
-          { branch_id: NOIDA, employee_id: 'e1', created_at: '2026-09-10 09:00:00', employee_esign_status: null, employee_esign_at: null }, // 12 days old, overdue
-          { branch_id: NOIDA, employee_id: 'e2', created_at: '2026-09-20 09:00:00', employee_esign_status: null, employee_esign_at: null }, // 2 days old, due
-          { branch_id: AHM, employee_id: 'e3', created_at: '2026-09-01 09:00:00', employee_esign_status: 'signed', employee_esign_at: '2026-09-05 09:00:00' }, // signed on time
+          { branch_id: NOIDA, employee_id: 'e1', created_at: '2026-09-10 09:00:00', done_at: null }, // 12 days old, overdue
+          { branch_id: NOIDA, employee_id: 'e2', created_at: '2026-09-20 09:00:00', done_at: null }, // 2 days old, due
+          { branch_id: AHM, employee_id: 'e3', created_at: '2026-09-01 09:00:00', done_at: '2026-09-05 09:00:00' }, // signed on time
         ]];
       }
       return [[]];
@@ -191,7 +212,8 @@ describe('getAppointmentLetterBlock', () => {
 describe('getOpsControlTowerSummary', () => {
   it('assembles all eight blocks', async () => {
     const summary = await getOpsControlTowerSummary('2026-09-22', Date.UTC(2026, 8, 22));
-    expect(summary.slaDays).toBe(7);
+    expect(summary.esignSlaDays).toBe(3);
+    expect(summary.appointmentLetterSlaDays).toBe(7);
     expect(summary).toHaveProperty('attendanceMismatch');
     expect(summary).toHaveProperty('rosterUploaded');
     expect(summary).toHaveProperty('joining');

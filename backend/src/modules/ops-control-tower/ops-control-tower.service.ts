@@ -7,14 +7,19 @@
 // roster-upload-tracker.service.ts and mismatch-escalation.service.ts. Two blocks (eSign and
 // Appointment letter) read a free-text/VARCHAR status column whose exact live values were not
 // confirmed against the database when this was written (SSH to the DB host was unreachable that
-// session) — see the "done" value lists below, each called out at its definition.
+// session) — see the "done" value lists below, each called out at its definition. The SLA day
+// counts themselves (3 for eSign, 7 for the appointment letter) ARE confirmed — owner ruling
+// 2026-09-22 — and the eSign figure independently matches appointmentLetterEligibility.
+// service.ts's own `idCreationSlaBreached: daysSinceIdCreated > 3`, the same employees.created_at
+// clock used there.
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { logger } from '../../logger.js';
 import {
   APPOINTMENT_LETTER_SLA_DAYS,
+  JOINING_DOCUMENT_SLA_DAYS,
   JOIN_BUCKETS,
-  classifyAppointmentLetter,
+  classifyIdCreationSla,
   emptyBucketTally,
   joinBucketFor,
   type JoinBucket,
@@ -328,84 +333,37 @@ export async function getDigilockerPendingDetail(branchId: string): Promise<Onbo
   }));
 }
 
-// ── 7. eSign pending (joining kit) ──────────────────────────────────────────────────────────
-// ats_onboarding_bridge.joining_document_status is a free-text status this session could not
-// confirm live values for (SSH unreachable) — treated as pending unless it reads as one of the
-// values below or completion is recorded at 100%. Verify DONE_VALUES against real data before
-// trusting this block's count.
-const JOINING_DOC_DONE_VALUES = ['completed', 'signed', 'all_signed'];
-
-export async function getEsignPendingBlock(): Promise<CountBlock> {
-  const branches = await allBranches();
-  const rows = await query<RowDataPacket>(
-    'esign-pending',
-    `SELECT e.branch_id, COUNT(*) AS n
-       FROM ats_onboarding_bridge b
-       JOIN employees e ON e.id = b.employee_id
-      WHERE e.created_at >= NOW() - INTERVAL ? DAY
-        AND COALESCE(b.joining_document_completion_pct, 0) < 100
-        AND (b.joining_document_status IS NULL OR LOWER(b.joining_document_status) NOT IN (${JOINING_DOC_DONE_VALUES.map(() => '?').join(',')}))
-      GROUP BY e.branch_id`,
-    [NEW_JOINER_WINDOW_DAYS, ...JOINING_DOC_DONE_VALUES],
-  );
-  return rollupCounts(branches, new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])));
+// ── Shared shape for the two Day-N SLA blocks (eSign, Appointment letter) ──────────────────────
+// Both ask the same question — "is this done within N days of employees.created_at?" — of a
+// different source table, with a different "done" definition. classifyIdCreationSla carries the
+// actual date arithmetic; this just runs one query, classifies each row, and rolls up/lists only
+// the ones that are overdue ('pending' per classifyIdCreationSla).
+interface SlaSourceRow extends RowDataPacket {
+  branch_id: unknown;
+  employee_id: unknown;
+  employee_code: unknown;
+  full_name: unknown;
+  created_at: unknown;
+  done_at: unknown;
 }
 
-export async function getEsignPendingDetail(branchId: string): Promise<OnboardingDetailRow[]> {
-  const rows = await query<RowDataPacket>(
-    'esign-pending-detail',
-    `SELECT e.id AS employee_id, e.employee_code, e.full_name,
-            COALESCE(b.joining_document_status, 'pending') AS status, DATEDIFF(CURDATE(), e.created_at) AS days_open
-       FROM ats_onboarding_bridge b
-       JOIN employees e ON e.id = b.employee_id
-      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY
-        AND COALESCE(b.joining_document_completion_pct, 0) < 100
-        AND (b.joining_document_status IS NULL OR LOWER(b.joining_document_status) NOT IN (${JOINING_DOC_DONE_VALUES.map(() => '?').join(',')}))
-      ORDER BY e.created_at ASC
-      LIMIT 200`,
-    [branchId, NEW_JOINER_WINDOW_DAYS, ...JOINING_DOC_DONE_VALUES],
-  );
-  return rows.map((r) => ({
-    employeeId: String(r.employee_id),
-    employeeCode: String(r.employee_code ?? ''),
-    employeeName: String(r.full_name ?? ''),
-    status: String(r.status),
-    daysOpen: Number(r.days_open ?? 0),
-  }));
-}
-
-// ── 8. Appointment letter — eSigned before Day 7 ────────────────────────────────────────────
-// appointment_letter_issue.employee_esign_status defaults 'not_sent'; this session could not
-// confirm the live value used for "signed" (SSH unreachable) — DONE_VALUES below is a best
-// guess from the migration's own naming and should be checked against real data.
-const APPOINTMENT_ESIGN_DONE_VALUES = ['signed', 'esigned', 'completed'];
-
-export async function getAppointmentLetterBlock(nowMs = Date.now()): Promise<CountBlock> {
+async function slaPendingBlock(label: string, sql: string, params: unknown[], slaDays: number, nowMs: number): Promise<CountBlock> {
   const branches = await allBranches();
-  const rows = await query<RowDataPacket>(
-    'appointment-letter',
-    `SELECT e.branch_id, e.id AS employee_id, e.created_at, al.employee_esign_status, al.employee_esign_at
-       FROM employees e
-       LEFT JOIN appointment_letter_issue al ON al.employee_id = e.id
-      WHERE e.created_at >= NOW() - INTERVAL ? DAY`,
-    [NEW_JOINER_WINDOW_DAYS],
-  );
+  const rows = await query<SlaSourceRow>(label, sql, params);
   const counts = new Map<string, number>();
   for (const r of rows) {
     const branchId = String(r.branch_id ?? '');
     if (!branchId) continue;
-    const done = r.employee_esign_status && APPOINTMENT_ESIGN_DONE_VALUES.includes(String(r.employee_esign_status).toLowerCase());
-    const result = classifyAppointmentLetter({
-      createdAtMs: new Date(String(r.created_at)).getTime(),
-      signedAtMs: done && r.employee_esign_at ? new Date(String(r.employee_esign_at)).getTime() : null,
-      nowMs,
-    });
+    const result = classifyIdCreationSla(
+      { createdAtMs: new Date(String(r.created_at)).getTime(), doneAtMs: r.done_at ? new Date(String(r.done_at)).getTime() : null, nowMs },
+      slaDays,
+    );
     if (result.pending) counts.set(branchId, (counts.get(branchId) ?? 0) + 1);
   }
   return rollupCounts(branches, counts);
 }
 
-export interface AppointmentLetterDetailRow {
+export interface SlaDetailRow {
   employeeId: string;
   employeeCode: string;
   employeeName: string;
@@ -413,26 +371,14 @@ export interface AppointmentLetterDetailRow {
   daysOverdue: number;
 }
 
-export async function getAppointmentLetterDetail(branchId: string, nowMs = Date.now()): Promise<AppointmentLetterDetailRow[]> {
-  const rows = await query<RowDataPacket>(
-    'appointment-letter-detail',
-    `SELECT e.id AS employee_id, e.employee_code, e.full_name, e.created_at, al.employee_esign_status, al.employee_esign_at
-       FROM employees e
-       LEFT JOIN appointment_letter_issue al ON al.employee_id = e.id
-      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY
-      ORDER BY e.created_at ASC
-      LIMIT 200`,
-    [branchId, NEW_JOINER_WINDOW_DAYS],
-  );
-  const out: AppointmentLetterDetailRow[] = [];
+async function slaPendingDetail(label: string, sql: string, params: unknown[], slaDays: number, nowMs: number): Promise<SlaDetailRow[]> {
+  const rows = await query<SlaSourceRow>(label, sql, params);
+  const out: SlaDetailRow[] = [];
   for (const r of rows) {
-    const done = r.employee_esign_status && APPOINTMENT_ESIGN_DONE_VALUES.includes(String(r.employee_esign_status).toLowerCase());
-    const createdAtMs = new Date(String(r.created_at)).getTime();
-    const result = classifyAppointmentLetter({
-      createdAtMs,
-      signedAtMs: done && r.employee_esign_at ? new Date(String(r.employee_esign_at)).getTime() : null,
-      nowMs,
-    });
+    const result = classifyIdCreationSla(
+      { createdAtMs: new Date(String(r.created_at)).getTime(), doneAtMs: r.done_at ? new Date(String(r.done_at)).getTime() : null, nowMs },
+      slaDays,
+    );
     if (!result.pending) continue;
     out.push({
       employeeId: String(r.employee_id),
@@ -445,9 +391,65 @@ export async function getAppointmentLetterDetail(branchId: string, nowMs = Date.
   return out;
 }
 
+// ── 7. eSign pending (joining kit) — must be signed within Day 3 ───────────────────────────────
+// ats_onboarding_bridge has no single "signed at" timestamp, only a status/percentage pair — a
+// row is "done" the moment completion reaches 100%, and joining_document_status is carried along
+// only for display in the drawer. This session could not confirm the live status strings used
+// for "complete" (SSH unreachable) — DONE_STATUS_VALUES is a fallback for a NULL/0% row whose
+// status text nonetheless already reads as finished; verify against real data. done_at is
+// approximated as created_at (i.e. "already done, exact timing unknown") because the bridge
+// table does not record when completion_pct crossed 100 — good enough to decide pending vs not,
+// not to say precisely when it finished.
+const JOINING_DOC_DONE_STATUS_VALUES = ['completed', 'signed', 'all_signed'];
+
+function esignSql(scoped: boolean): string {
+  const doneClause = `LOWER(COALESCE(b.joining_document_status, '')) IN (${JOINING_DOC_DONE_STATUS_VALUES.map(() => '?').join(',')})`;
+  return `SELECT e.branch_id, e.id AS employee_id, e.employee_code, e.full_name, e.created_at,
+                 CASE WHEN COALESCE(b.joining_document_completion_pct, 0) >= 100 OR ${doneClause}
+                      THEN e.created_at ELSE NULL END AS done_at
+            FROM ats_onboarding_bridge b
+            JOIN employees e ON e.id = b.employee_id
+           WHERE ${scoped ? 'e.branch_id = ? AND ' : ''}e.created_at >= NOW() - INTERVAL ? DAY`;
+}
+
+export async function getEsignPendingBlock(nowMs = Date.now()): Promise<CountBlock> {
+  return slaPendingBlock('esign-pending', esignSql(false), [...JOINING_DOC_DONE_STATUS_VALUES, NEW_JOINER_WINDOW_DAYS], JOINING_DOCUMENT_SLA_DAYS, nowMs);
+}
+
+export async function getEsignPendingDetail(branchId: string, nowMs = Date.now()): Promise<SlaDetailRow[]> {
+  // Param order follows the ? placeholders left to right: the CASE/done clause is in the SELECT
+  // list, ahead of the WHERE branch filter, so DONE_STATUS_VALUES comes before branchId.
+  return slaPendingDetail('esign-pending-detail', esignSql(true), [...JOINING_DOC_DONE_STATUS_VALUES, branchId, NEW_JOINER_WINDOW_DAYS], JOINING_DOCUMENT_SLA_DAYS, nowMs);
+}
+
+// ── 8. Appointment letter — eSigned before Day 7 ────────────────────────────────────────────
+// appointment_letter_issue.employee_esign_status defaults 'not_sent'; this session could not
+// confirm the live value used for "signed" (SSH unreachable) — DONE_VALUES below is a best
+// guess from the migration's own naming and should be checked against real data.
+const APPOINTMENT_ESIGN_DONE_VALUES = ['signed', 'esigned', 'completed'];
+
+function appointmentLetterSql(scoped: boolean): string {
+  const doneClause = `LOWER(COALESCE(al.employee_esign_status, '')) IN (${APPOINTMENT_ESIGN_DONE_VALUES.map(() => '?').join(',')})`;
+  return `SELECT e.branch_id, e.id AS employee_id, e.employee_code, e.full_name, e.created_at,
+                 CASE WHEN ${doneClause} THEN al.employee_esign_at ELSE NULL END AS done_at
+            FROM employees e
+            LEFT JOIN appointment_letter_issue al ON al.employee_id = e.id
+           WHERE ${scoped ? 'e.branch_id = ? AND ' : ''}e.created_at >= NOW() - INTERVAL ? DAY`;
+}
+
+export async function getAppointmentLetterBlock(nowMs = Date.now()): Promise<CountBlock> {
+  return slaPendingBlock('appointment-letter', appointmentLetterSql(false), [...APPOINTMENT_ESIGN_DONE_VALUES, NEW_JOINER_WINDOW_DAYS], APPOINTMENT_LETTER_SLA_DAYS, nowMs);
+}
+
+export async function getAppointmentLetterDetail(branchId: string, nowMs = Date.now()): Promise<SlaDetailRow[]> {
+  // Same left-to-right placeholder order as esignSql: the done clause precedes the branch filter.
+  return slaPendingDetail('appointment-letter-detail', appointmentLetterSql(true), [...APPOINTMENT_ESIGN_DONE_VALUES, branchId, NEW_JOINER_WINDOW_DAYS], APPOINTMENT_LETTER_SLA_DAYS, nowMs);
+}
+
 export interface OpsControlTowerSummary {
   nowMs: number;
-  slaDays: number;
+  esignSlaDays: number;
+  appointmentLetterSlaDays: number;
   attendanceMismatch: MismatchBlock;
   rosterUploaded: DateBlock;
   joining: JoiningBlock;
@@ -467,12 +469,13 @@ export async function getOpsControlTowerSummary(onDate: string, nowMs = Date.now
       getFnfPendingBlock(),
       getNocPendingBlock(),
       getDigilockerPendingBlock(),
-      getEsignPendingBlock(),
+      getEsignPendingBlock(nowMs),
       getAppointmentLetterBlock(nowMs),
     ]);
   return {
     nowMs,
-    slaDays: APPOINTMENT_LETTER_SLA_DAYS,
+    esignSlaDays: JOINING_DOCUMENT_SLA_DAYS,
+    appointmentLetterSlaDays: APPOINTMENT_LETTER_SLA_DAYS,
     attendanceMismatch,
     rosterUploaded,
     joining,

@@ -187,7 +187,8 @@ function rowLabel(block: DetailBlockKey, row: DetailRow): { days: number; note: 
     case "attendance-mismatch": { const r = row as import("./opsControlTowerTypes").AttendanceMismatchDetailRow; return { days: r.daysOpen, note: r.issueType.replace(/_/g, " ") }; }
     case "fnf-pending": { const r = row as import("./opsControlTowerTypes").FnfDetailRow; return { days: r.daysOpen, note: `${r.status} · ₹${r.netPayable.toLocaleString("en-IN")}` }; }
     case "noc-pending": { const r = row as import("./opsControlTowerTypes").NocDetailRow; return { days: r.daysOpen, note: r.status.replace(/_/g, " ") }; }
-    case "appointment-letter": { const r = row as import("./opsControlTowerTypes").AppointmentLetterDetailRow; return { days: r.daysOverdue, note: `Day 7 was ${formatDate(r.dueDateMs)}` }; }
+    case "esign-pending": { const r = row as import("./opsControlTowerTypes").SlaDetailRow; return { days: r.daysOverdue, note: `Day 3 was ${formatDate(r.dueDateMs)}` }; }
+    case "appointment-letter": { const r = row as import("./opsControlTowerTypes").SlaDetailRow; return { days: r.daysOverdue, note: `Day 7 was ${formatDate(r.dueDateMs)}` }; }
     default: { const r = row as import("./opsControlTowerTypes").OnboardingDetailRow; return { days: r.daysOpen, note: r.status.replace(/_/g, " ") }; }
   }
 }
@@ -254,7 +255,7 @@ export default function OpsControlTowerPage() {
     { id: "fnf", title: "F&F pending", meaning: "Exited employees whose full-and-final settlement has not been paid.", source: "full_final_calculation.status", block: "fnf-pending", mediumAt: 3, highAt: 8 },
     { id: "noc", title: "NOC pending", meaning: "Exit clearance certificates not yet issued — asset return or signatory sign-off outstanding.", source: "noc_case.status", block: "noc-pending", mediumAt: 2, highAt: 6 },
     { id: "digilocker", title: "DigiLocker documents pending", meaning: "New joiners (last 30 days) whose Aadhaar/PAN pull via DigiLocker has not completed.", source: "ats_onboarding_bridge.digilocker_status", block: "digilocker-pending", mediumAt: 5, highAt: 15 },
-    { id: "esign", title: "eSign pending", meaning: "Joining-kit documents sent for e-signature, not yet signed back (last 30 days).", source: "ats_onboarding_bridge.joining_document_status", block: "esign-pending", mediumAt: 5, highAt: 15 },
+    { id: "esign", title: "eSign overdue — joining kit (Day 3)", meaning: "Joining-kit documents not e-signed within 3 days of the employee code being created.", source: "ats_onboarding_bridge vs created_at + 3d", block: "esign-pending", mediumAt: 5, highAt: 15 },
     { id: "appt", title: "Appointment letter eSigned before Day 7", meaning: "Employees whose appointment letter should have been e-signed within 7 days of their code being created, and has not.", source: "appointment_letter_issue vs created_at + 7d", block: "appointment-letter", mediumAt: 2, highAt: 6 },
   ];
 
@@ -298,8 +299,8 @@ export default function OpsControlTowerPage() {
               <SummaryTile label="F&F pending" n={data.fnfPending.grandTotal} sub="not yet paid" onClick={() => document.getElementById("fnf")?.scrollIntoView({ behavior: "smooth" })} />
               <SummaryTile label="NOC pending" n={data.nocPending.grandTotal} sub="clearance open" onClick={() => document.getElementById("noc")?.scrollIntoView({ behavior: "smooth" })} />
               <SummaryTile label="DigiLocker pending" n={data.digilockerPending.grandTotal} sub="new joiners" onClick={() => document.getElementById("digilocker")?.scrollIntoView({ behavior: "smooth" })} />
-              <SummaryTile label="eSign pending" n={data.esignPending.grandTotal} sub="joining kit" onClick={() => document.getElementById("esign")?.scrollIntoView({ behavior: "smooth" })} />
-              <SummaryTile label="Appointment letter overdue" n={data.appointmentLetter.grandTotal} sub={`past Day ${data.slaDays}`} onClick={() => document.getElementById("appt")?.scrollIntoView({ behavior: "smooth" })} />
+              <SummaryTile label="eSign overdue" n={data.esignPending.grandTotal} sub={`past Day ${data.esignSlaDays}`} onClick={() => document.getElementById("esign")?.scrollIntoView({ behavior: "smooth" })} />
+              <SummaryTile label="Appointment letter overdue" n={data.appointmentLetter.grandTotal} sub={`past Day ${data.appointmentLetterSlaDays}`} onClick={() => document.getElementById("appt")?.scrollIntoView({ behavior: "smooth" })} />
               <SummaryTile label="Roster not current" n={data.rosterUploaded.branches.filter((b) => b.stale).length} sub="branches overdue" onClick={() => document.getElementById("roster")?.scrollIntoView({ behavior: "smooth" })} />
             </div>
 
