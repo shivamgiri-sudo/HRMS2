@@ -58,11 +58,20 @@ export default function NativeAppointmentLetterQueue() {
   const [drawerPdfLoading, setDrawerPdfLoading] = useState(false);
   const [drawerPdfError, setDrawerPdfError] = useState<string | null>(null);
   const drawerBlobRef = useRef<string | null>(null);
+  // Inline field, not window.prompt() — a native prompt() dialog is easy to
+  // dismiss without realizing an action was waiting on it, and gives no
+  // visible trace afterward. That is the leading theory for why
+  // appointment_letter_issue stayed empty in production: every eligible
+  // candidate today carries at least one warning, so every issuance requires
+  // this reason, and a cancelled/misunderstood native prompt looks identical
+  // to a user who simply moved on — no error, no record, nothing to debug.
+  const [overrideReasonInput, setOverrideReasonInput] = useState("");
 
   const closeDrawer = useCallback(() => {
     setDrawer(null);
     setDrawerPdfError(null);
     setDrawerPdfUrl(null);
+    setOverrideReasonInput("");
     if (drawerBlobRef.current) {
       URL.revokeObjectURL(drawerBlobRef.current);
       drawerBlobRef.current = null;
@@ -138,25 +147,21 @@ export default function NativeAppointmentLetterQueue() {
    * made a failed or cancelled issue look identical to a successful one: the
    * drawer disappeared either way, and the only sign of failure was a banner
    * near the top of the page, easy to miss when the user's attention was on
-   * the drawer and moving straight to the next candidate. This is why
-   * appointment_letter_issue stayed empty in production while HR believed
-   * several letters had gone out — every attempt with a warning (the common
-   * case; BGV "pending, not adverse" alone produces one) needs the override
-   * reason prompt below, and cancelling it, or any API failure, must reopen
-   * to the same state instead of silently closing.
+   * the drawer and moving straight to the next candidate.
+   *
+   * The override reason is now a field the caller passes in, not a
+   * window.prompt() this function opened itself — a native prompt is easy to
+   * dismiss without registering that anything was waiting on it, and leaves
+   * no visible trace either way. Every eligible candidate today carries at
+   * least one warning (BGV "pending, not adverse" alone produces one), so
+   * every issuance needed this reason, and appointment_letter_issue stayed
+   * empty in production with no error anyone could point to — consistent
+   * with the prompt being the thing silently failing, not the API.
    */
-  const issue = async (row: QueueRow, force = false): Promise<boolean> => {
+  const issue = async (row: QueueRow, force: boolean, overrideReason: string | null): Promise<boolean> => {
     // Warnings can be overridden with a stated reason; critical blockers cannot
     // be forced at all, so the button is never offered for them.
-    let overrideReason: string | null = null;
-    if (force) {
-      overrideReason = window.prompt(
-        `Issuing to ${row.employeeName ?? row.employeeCode} despite warnings.\n\n` +
-        row.warnings.map((w) => `• ${w.reason}`).join("\n") +
-        "\n\nWhy are you overriding? This is recorded against the letter.",
-      );
-      if (!overrideReason || !overrideReason.trim()) return false;
-    }
+    if (force && !overrideReason?.trim()) return false;
     setBusy(row.employeeId);
     setError(null);
     setNotice(null);
@@ -660,6 +665,21 @@ export default function NativeAppointmentLetterQueue() {
                 <div className="flex gap-2.5"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" /><p className="font-medium">{error}</p></div>
               </div>
             )}
+            {drawer.mode === "preview" && drawer.row.warnings.length > 0 && (
+              <div>
+                <label htmlFor="override-reason" className="block text-xs font-semibold text-slate-600 mb-1">
+                  Why are you overriding these warnings? (required, recorded against the letter)
+                </label>
+                <textarea
+                  id="override-reason"
+                  value={overrideReasonInput}
+                  onChange={(e) => setOverrideReasonInput(e.target.value)}
+                  rows={2}
+                  placeholder="e.g. BGV pending but manager confirmed identity in person"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                />
+              </div>
+            )}
             <div className="flex flex-wrap items-center justify-between gap-3">
             {drawer.mode === "preview" && (
               <>
@@ -676,13 +696,15 @@ export default function NativeAppointmentLetterQueue() {
                     Cancel
                   </button>
                   <button
-                    type="button" disabled={busy === drawer.row.employeeId}
+                    type="button"
+                    disabled={busy === drawer.row.employeeId || (drawer.row.warnings.length > 0 && !overrideReasonInput.trim())}
                     onClick={async () => {
                       const row = drawer.row;
-                      // Only close on success — an error or a cancelled override-reason
-                      // prompt must leave the drawer (and the error banner) visible, not
-                      // read to the user as "done" because the modal went away.
-                      const succeeded = await issue(row, row.warnings.length > 0);
+                      const force = row.warnings.length > 0;
+                      // Only close on success — an error must leave the drawer (and the
+                      // error banner) visible, not read to the user as "done" because the
+                      // modal went away.
+                      const succeeded = await issue(row, force, force ? overrideReasonInput.trim() : null);
                       if (succeeded) closeDrawer();
                     }}
                     className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 text-sm font-semibold text-white shadow-sm hover:from-blue-700 hover:to-indigo-700 disabled:opacity-60 transition-all"

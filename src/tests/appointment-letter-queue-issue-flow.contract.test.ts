@@ -45,3 +45,36 @@ describe("Appointment Letter Queue — issue drawer only closes on success", () 
     expect(page.slice(page.indexOf("{/* Footer actions */}"))).toContain('drawer.mode === "preview" && error &&');
   });
 });
+
+/**
+ * Second pass on the same bug: window.prompt() for the override reason is
+ * itself a plausible reason issuance never succeeded even once — every
+ * eligible candidate carries at least one warning today, so every issuance
+ * needs this reason, and a native prompt is trivial to dismiss without
+ * realizing an action was waiting on it, with zero trace either way if it is.
+ * Replaced with an inline field the Issue button's own disabled state depends
+ * on, so the button simply cannot be clicked with no reason recorded.
+ */
+describe("Appointment Letter Queue — override reason is an inline field, not window.prompt()", () => {
+  it("issue() takes the reason as a parameter instead of calling window.prompt() itself", () => {
+    const fn = page.slice(page.indexOf("const issue = async"), page.indexOf("const markLeft = async"));
+    expect(fn).not.toContain("window.prompt");
+    expect(fn).toContain("overrideReason: string | null");
+  });
+
+  it("the drawer renders a bound textarea for the reason when warnings are present", () => {
+    expect(page).toContain('id="override-reason"');
+    expect(page).toContain("value={overrideReasonInput}");
+    expect(page).toContain("onChange={(e) => setOverrideReasonInput(e.target.value)}");
+  });
+
+  it("the Issue button is disabled until a reason is typed, for a candidate with warnings", () => {
+    const button = page.slice(page.indexOf('type="button"\n                    disabled={busy'), page.indexOf("Issue with override"));
+    expect(button).toContain("drawer.row.warnings.length > 0 && !overrideReasonInput.trim()");
+  });
+
+  it("closing the drawer clears the reason field, so it cannot leak into the next candidate", () => {
+    const closeDrawerFn = page.slice(page.indexOf("const closeDrawer = useCallback"), page.indexOf("}, []);"));
+    expect(closeDrawerFn).toContain('setOverrideReasonInput("");');
+  });
+});
