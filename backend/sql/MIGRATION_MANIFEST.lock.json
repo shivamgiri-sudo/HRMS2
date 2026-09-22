@@ -874,7 +874,10 @@
     "1835_meta_campaign_screening_config.sql",
     "1834_wfm_roster_upload_alert.sql",
     "1836_user_assignment_scope_cost_centre.sql",
-    "1838_ops_control_tower_page_access.sql"
+    "1837_payment_voucher_internal_transfer.sql",
+    "1838_ops_control_tower_page_access.sql",
+    "1839_meta_lead_calling_feedback.sql",
+    "1840_attendance_reconciliation_issue_branch_rollup_index.sql"
   ],
   "approvedDeletions": [
     {
@@ -1036,7 +1039,6 @@
     "1767_onfido_external_audit_add_total_columns.sql",
     "1788_gnc_sale_order_id_unique.sql",
     "1831_meta_lead_interview_slot.sql",
-    "1837_payment_voucher_internal_transfer.sql",
     "204_personal_contact_fields.sql",
     "205_branch_alias_examples.sql",
     "206_ats_recruiter_contact_details.sql",
