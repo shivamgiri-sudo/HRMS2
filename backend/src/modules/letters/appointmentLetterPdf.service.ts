@@ -55,6 +55,11 @@ export type AppointmentLetterInput = {
   employeeCode: string;
   designation: string;
   dateOfJoining: Date | string | null;
+  /** employees.salary_start_date — defaults to dateOfJoining when the employee
+   *  record has none set (same fallback the column itself defines). Printed on
+   *  the Salary Date line and the closing reference date, which is what "date
+   *  of joining" on this letter actually meant when the two dates can differ. */
+  salaryStartDate: Date | string | null;
   issueDate?: Date;
   letterNumber: string;
   verificationUrl: string;
@@ -308,7 +313,7 @@ export async function renderAppointmentLetterPdf(input: AppointmentLetterInput):
     heading(doc, "2. DESIGNATION");
     body(doc, `2.1 You will be designated as '${input.designation || "—"}' and you would be reporting to your Reporting Manager.`);
     heading(doc, "3. REMUNERATION");
-    body(doc, `3.1 Salary Date: ${istDisplayDate(input.dateOfJoining)}`);
+    body(doc, `3.1 Salary Date: ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}`);
     body(doc, "3.2 Your monthly salary breakup would be as follows (in INR):");
     salaryTable(doc, input.salary);
 
@@ -322,11 +327,11 @@ export async function renderAppointmentLetterPdf(input: AppointmentLetterInput):
     body(doc, "Please return the duplicate copy of this letter duly signed in token of your having accepted the offer, and initial each page in acceptance of the terms and conditions set out herein, within 10 days of the issuance of this letter, failing which this offer stands automatically withdrawn.");
     body(doc, `We welcome you and wish you every success in your career with ${COMPANY_NAME}`);
     // Keep the closing block together — ensureRoom for both lines prevents
-    // "Sincerely," landing alone at the bottom with "Date of Joining:" orphaned on the next page.
+    // "Sincerely," landing alone at the bottom with "Salary Start Date:" orphaned on the next page.
     ensureRoom(doc, 60);
     doc.moveDown(0.4);
     body(doc, "Sincerely,");
-    body(doc, `Date of Joining: ${istDisplayDate(input.dateOfJoining)}`);
+    body(doc, `Salary Start Date: ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}`);
 
     // The company block goes on the final page, inside the reserved band.
     signaturePage(doc, { ...input, issueDate: issue });
