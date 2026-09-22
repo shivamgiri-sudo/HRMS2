@@ -602,9 +602,10 @@ export function Step3AddressKyc({
             <p className="text-xs text-amber-800 leading-relaxed">
               {digilockerSyncing
                 ? "Checking with DigiLocker for your documents…"
-                : digilockerStale
-                ? "This DigiLocker attempt has been open a while with no update. If you finished on the government portal, check below first — if not, you can safely start over."
-                : "If you finished on the government portal, your documents are collected automatically — there is no need to start again. If you did not finish, use the link below to continue where you left off."}
+                : "If you finished on the government portal, your documents are collected automatically — tap \"Check for my documents\" below. If you did not finish, or want to redo it, tap \"Retry DigiLocker\" to start a fresh session."}
+              {digilockerStale && !digilockerSyncing && (
+                <span className="block mt-1 text-amber-700">This attempt has been open a while with no update — retrying is safe.</span>
+              )}
             </p>
             <div className="flex flex-wrap gap-2 pt-1">
               <Button
@@ -624,17 +625,28 @@ export function Step3AddressKyc({
                   Continue on DigiLocker
                 </a>
               )}
-              {digilockerStale && (
-                <Button
-                  onClick={onDigilocker}
-                  disabled={saving || !consentAccepted}
-                  size="sm"
-                  variant="outline"
-                  className="border-amber-500 text-amber-900 bg-amber-100 hover:bg-amber-200"
-                >
-                  Start Over
-                </Button>
-              )}
+              {/*
+                Previously gated behind digilockerStale (2-hour backend timeout,
+                DIGILOCKER_STALE_AFTER_MS in onboarding-full.service.ts) — a candidate
+                who closed the tab or failed the provider's OTP had no way to retry for
+                up to 2 hours, with only "Check for my documents" (which can never
+                succeed, since nothing was ever completed) visible. The backend has
+                never actually required the old session to be stale or resolved before
+                starting a new one: startDigilockerByToken() is a plain INSERT with no
+                "already have one" check, and getLatestDigilockerStatus() always reads
+                the most recent row (ORDER BY updated_at DESC LIMIT 1), so a fresh
+                session immediately becomes the one the status/sync endpoints report.
+                Retry was always backend-safe; only the frontend was withholding it.
+              */}
+              <Button
+                onClick={onDigilocker}
+                disabled={saving || !consentAccepted}
+                size="sm"
+                variant="outline"
+                className="border-amber-500 text-amber-900 bg-amber-100 hover:bg-amber-200"
+              >
+                {saving ? "Starting…" : "Retry DigiLocker"}
+              </Button>
             </div>
           </div>
         ) : (
