@@ -742,19 +742,36 @@ export const employeeService = {
       }
     }
 
-    // Sync auth_user.email = official_email when official_email updated
-    if (input.officialEmail) {
-      const newEmail = input.officialEmail.toLowerCase().trim();
+    // Sync auth_user.email when official_email is updated; also create the account
+    // on the spot if the employee still has no user_id (e.g. added without email,
+    // email filled in later via profile edit).
+    if (input.officialEmail !== undefined || input.email !== undefined) {
       const [empRows] = await db.execute<RowDataPacket[]>(
-        'SELECT user_id FROM employees WHERE id = ? LIMIT 1', [id]
+        'SELECT user_id, email, official_email FROM employees WHERE id = ? LIMIT 1', [id]
       );
-      const userId = (empRows as any[])[0]?.user_id;
-      if (userId) {
+      const empRow = (empRows as any[])[0];
+      const userId: string | null = empRow?.user_id ?? null;
+
+      if (userId && input.officialEmail) {
+        // Employee has an account — sync the official email onto it
+        const newEmail = input.officialEmail.toLowerCase().trim();
         const [conflict] = await db.execute<RowDataPacket[]>(
           'SELECT id FROM auth_user WHERE LOWER(email) = ? AND id != ? LIMIT 1', [newEmail, userId]
         );
         if (!(conflict as any[]).length) {
           await db.execute('UPDATE auth_user SET email = ? WHERE id = ?', [newEmail, userId]);
+        }
+      } else if (!userId) {
+        // No auth account yet — create one now using the best available email
+        const bestEmail = [input.officialEmail, input.email, empRow?.official_email, empRow?.email]
+          .map((e: string | null | undefined) => (e ?? '').trim().toLowerCase())
+          .find((e: string) => e.includes('@') && e !== 'n/a');
+        if (bestEmail) {
+          try {
+            await createAuthUserForEmployee(id, bestEmail);
+          } catch {
+            // Non-fatal — account creation failure should not block the profile save
+          }
         }
       }
     }
