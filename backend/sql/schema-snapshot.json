@@ -10939,6 +10939,7 @@
       "actioned_at",
       "actioned_by",
       "evidence_note",
+      "bgv_result",
       "evidence_file_url",
       "ad_log_type",
       "ad_account_name",

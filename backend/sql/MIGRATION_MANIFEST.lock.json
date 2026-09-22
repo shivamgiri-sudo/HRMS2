@@ -879,7 +879,8 @@
     "1839_meta_lead_calling_feedback.sql",
     "1840_attendance_reconciliation_issue_branch_rollup_index.sql",
     "1836_journal_voucher.sql",
-    "1841_ats_onboarding_request_created_at_index.sql"
+    "1841_ats_onboarding_request_created_at_index.sql",
+    "1842_it_provisioning_bgv_result_column.sql"
   ],
   "approvedDeletions": [
     {
