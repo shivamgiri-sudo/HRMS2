@@ -55,6 +55,30 @@ const LOOKBACK_DAYS = 45;
 /** Consecutive recorded absent days before a no-show is raised for confirmation. */
 const CONSECUTIVE_ABSENT_DAYS = 7;
 
+/**
+ * The last date this employee was actually present, re-derived live.
+ *
+ * Same query runAwolDetectionScan's SELECT uses for last_worked_date — extracted so the
+ * Confirm Absconding action (work-inbox/awol-confirm.service.ts) can recompute it fresh at
+ * confirm-time rather than trusting the value baked into the work item's description text
+ * when it was raised, which can be stale by the time a manager acts on it.
+ */
+export async function getLastWorkedDate(
+  employeeId: string,
+  lookbackDays: number = LOOKBACK_DAYS,
+): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT MAX(record_date) AS last_worked_date
+       FROM attendance_daily_record
+      WHERE employee_id = ?
+        AND record_date >= DATE_SUB(CURDATE(), INTERVAL ${Number(lookbackDays)} DAY)
+        AND attendance_status <> 'absent'`,
+    [employeeId],
+  );
+  const value = (rows as RowDataPacket[])[0]?.last_worked_date as string | Date | null;
+  return value ? new Date(value).toISOString().slice(0, 10) : null;
+}
+
 // Matches the per-row try/catch isolation pattern in ats-reminders.cron.ts:
 // one employee's trigger failure must never abort the sweep for the rest.
 export async function runAwolDetectionScan(): Promise<void> {
