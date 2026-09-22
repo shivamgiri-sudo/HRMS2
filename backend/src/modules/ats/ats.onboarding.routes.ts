@@ -148,14 +148,20 @@ router.get(
   // (branch_hr already has the page grant) but show an empty/403 list.
   requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr', 'branch_hr', 'payroll_head'),
   h(async (req: AuthenticatedRequest, res) => {
+    const __t0 = Date.now();
     const scopeFilter = await buildScopeWhereClause(
       req.authUser!.id,
       ['hr', 'recruiter', 'branch_hr', 'payroll_head', 'payroll_hr'],
       { branchId: 'r.branch_id' },
       { allowAdminBypass: true },
     );
+    const __t1 = Date.now();
     const rows = await listOnboardingRequests(scopeFilter);
+    const __t2 = Date.now();
     res.json({ ok: true, data: rows });
+    const __t3 = Date.now();
+    // TEMP DIAGNOSTIC — remove after the perf investigation is done.
+    console.log(`[PERF /ats/onboarding/requests] scope=${__t1 - __t0}ms query=${__t2 - __t1}ms serialize+send=${__t3 - __t2}ms total=${__t3 - __t0}ms rows=${rows.length}`);
   }),
 );
 
