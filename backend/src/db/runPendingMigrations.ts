@@ -1119,6 +1119,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1835_meta_campaign_screening_config.sql", // Registered 2026-09-21. Adds meta_campaign.screening_config (nullable JSON): shortlisting criteria for campaigns with no job requisition yet ("JR pending"). Used only while the campaign has no requisition; the linked requisition's criteria take over afterwards. Additive, information_schema-guarded.
   "1834_wfm_roster_upload_alert.sql", // Registered 2026-09-21 on owner approval. One new table wfm_roster_upload_alert (CREATE TABLE IF NOT EXISTS, no other object touched, no data read or written): the send log and per-recipient claim for roster-upload-tracker reminders and escalation. The tracker grid works without it; the escalation sweep and the Send reminder now button need it.
   "1836_user_assignment_scope_cost_centre.sql", // Registered 2026-09-22. Adds cost_centre_id CHAR(36) to user_assignment_scope. reporting.scope.ts expects this column for cost-centre-level scoping; the code has a fallback but the primary query logged ER_BAD_FIELD_ERROR warnings. Column already added to production; this migration documents it. Additive, IF NOT EXISTS.
+  "1838_ops_control_tower_page_access.sql", // Registered 2026-09-22. INSERT IGNORE grants for the new OPS_CONTROL_TOWER page_catalog/role_page_access rows, same shape as 1763's NOC-cases grant. Without it Gate admits only super_admin (its own bypass) and every other role Gate would otherwise let onto /ops/control-tower 403s the moment the summary query fires.
   ];
 
 export type MigrationHealth = {

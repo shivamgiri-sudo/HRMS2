@@ -22,6 +22,7 @@ const ProcessDataSourcePage = lazy(() => import("@/pages/ProcessDataSourcePage")
 const KpiStudioPage = lazy(() => import("@/pages/KpiStudioPage"));
 const DashboardBuilderPage = lazy(() => import("@/pages/DashboardBuilderPage"));
 const ProcessOperationsPage = lazy(() => import("@/pages/ProcessOperationsPage"));
+const OpsControlTowerPage = lazy(() => import("@/pages/ops/OpsControlTowerPage"));
 const ProcessPerformanceV2Page = lazy(() => import("@/pages/ProcessPerformanceV2Page"));
 const ProcessOperationsDemoPage = lazy(() => import("@/pages/ProcessOperationsDemoPage"));
 const NativeQAFileAudit = lazy(() => import("@/pages/NativeQAFileAudit"));
@@ -126,6 +127,7 @@ export const performanceRouteElements = (
       <Route path="/kpi-studio" element={<ProtectedRoute roles={['super_admin','admin','hr','process_manager','qa','tq_head','manager','branch_head','ceo','team_leader']}><Gate pageCode="KPI_STUDIO"><KpiStudioPage /></Gate></ProtectedRoute>} />
       <Route path="/dashboard-builder" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader']}><Gate pageCode="DASHBOARD_BUILDER"><DashboardBuilderPage /></Gate></ProtectedRoute>} />
       <Route path="/process-operations" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader','wfm','branch_wfm']}><Gate pageCode="PROCESS_OPERATIONS"><ProcessOperationsPage /></Gate></ProtectedRoute>} />
+      <Route path="/ops/control-tower" element={<ProtectedRoute roles={['super_admin','admin','ceo','hr','hr_admin','branch_head','operations_manager','wfm','payroll_head']}><Gate pageCode="OPS_CONTROL_TOWER"><OpsControlTowerPage /></Gate></ProtectedRoute>} />
       <Route path="/performance/process-performance-v2" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head','hr','team_leader','wfm','branch_wfm']}><Gate pageCode="PROCESS_OPERATIONS"><ProcessPerformanceV2Page /></Gate></ProtectedRoute>} />
       <Route path="/process-performance-v2" element={<Navigate to="/performance/process-performance-v2" replace />} />
       <Route path="/process-operations-demo" element={<ProcessOperationsDemoPage />} />

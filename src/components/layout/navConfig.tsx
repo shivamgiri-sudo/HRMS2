@@ -285,6 +285,11 @@ export const navGroups: NavGroup[] = [
     title: "Operations",
     items: [
       {
+        label: "Ops Control Tower", href: "/ops/control-tower", icon: ic(LayoutDashboard), pageCode: "OPS_CONTROL_TOWER",
+        roles: ["super_admin","admin","ceo","hr","hr_admin","branch_head","operations_manager","wfm","payroll_head"],
+        description: "Branch-wise: attendance mismatch, roster upload, joining, F&F, NOC, DigiLocker, eSign, appointment letter",
+      },
+      {
         label: "Call Master",  href: "/call-master", icon: ic(Activity), roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager","qa","quality_analyst"], description: "Call analytics & quality",
         children: [
           { label: "Call Master",       href: "/call-master",          icon: ic(Activity),    roles: ["super_admin","admin","ceo","manager","process_manager","operations_manager","qa","quality_analyst"], description: "KPIs, quality, agents" },

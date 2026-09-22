@@ -155,6 +155,7 @@ import { biometricSummaryRouter } from "./modules/wfm/biometric-summary.routes.j
 import { attendanceExceptionBucketRouter } from "./modules/wfm/attendance-exception-bucket.routes.js";
 import { rosterImportRouter } from "./modules/wfm/roster-import.routes.js";
 import { rosterUploadTrackerRouter } from "./modules/wfm/roster-upload-tracker.routes.js";
+import { opsControlTowerRouter } from "./modules/ops-control-tower/ops-control-tower.routes.js";
 import { rosterBuilderRouter } from "./modules/wfm/roster-builder.routes.js";
 import { rosterIntelligenceRouter } from "./modules/wfm/roster-intelligence.routes.js";
 import { rosterAnalyticsRouter } from "./modules/wfm/roster-analytics.routes.js";
@@ -791,6 +792,9 @@ app.use("/api/wfm/attendance-ledger", attendanceLedgerRouter);
 app.use("/api/wfm/roster-imports", rosterImportRouter);
 // Weekly roster-upload status grid + missing-upload escalation (reads only; alerts need migration 1834).
 app.use("/api/wfm/roster-upload-tracker", rosterUploadTrackerRouter);
+// Branch-wise rollup of 8 operational deliverables (attendance, roster, joining, F&F, NOC,
+// DigiLocker, eSign, appointment letter). Read-only; page access needs migration 1838.
+app.use("/api/ops-control-tower", opsControlTowerRouter);
 app.use("/api/wfm/roster-builder", rosterBuilderRouter);
 app.use("/api/wfm/shift-aliases", shiftAliasRouter);
 app.use("/api/wfm/header-mapping-profiles", headerMappingProfileRouter);
