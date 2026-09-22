@@ -188,6 +188,16 @@ export function PaymentVouchersContent() {
   });
   const flaggedManagerIds = new Set((replenishmentFlagsQuery.data ?? []).map((f: any) => f.id));
 
+  // True when the user is in GRN-payment mode, has picked a vendor, the dues query has
+  // settled, and there are no ticked GRN rows to submit. Without this guard the backend
+  // throws "At least one vendor GRN payment record must be selected", which is confusing
+  // when the vendor genuinely has no outstanding dues.
+  const grnRequiredButMissing =
+    raiseForm.sourceType === "vendor_grn" &&
+    !!raiseForm.vendorId &&
+    !vendorDuesQuery.isLoading &&
+    (filteredDues.length === 0 || Object.values(raiseForm.grnAllocations).every((a) => Number(a) <= 0));
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["payment-vouchers"] });
     queryClient.invalidateQueries({ queryKey: ["payment-voucher-detail"] });
@@ -474,7 +484,10 @@ export function PaymentVouchersContent() {
                     {!raiseForm.vendorId ? (
                       <p className="mt-1 text-xs text-slate-400">Select a vendor first</p>
                     ) : filteredDues.length === 0 ? (
-                      <p className="mt-1 text-xs text-slate-400">No outstanding GRNs for this vendor</p>
+                      <div className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                        No outstanding GRNs for this vendor — to make a direct payment without a GRN,
+                        switch <strong>Purpose</strong> to <strong>Vendor Advance</strong>.
+                      </div>
                     ) : (
                       <ul className="mt-1 max-h-48 space-y-1.5 overflow-y-auto rounded-lg border border-slate-100 p-2">
                         {filteredDues.map((r: any) => {
@@ -601,7 +614,7 @@ export function PaymentVouchersContent() {
           </div>
           <DialogFooter>
             <Button variant="outline" className="cursor-pointer" onClick={() => setRaiseOpen(false)}>Cancel</Button>
-            <Button className="cursor-pointer bg-blue-600 hover:bg-blue-700" disabled={raiseMutation.isPending || (expenseRequired && !raiseForm.expenseKey)} onClick={() => raiseMutation.mutate()}>
+            <Button className="cursor-pointer bg-blue-600 hover:bg-blue-700" disabled={raiseMutation.isPending || (expenseRequired && !raiseForm.expenseKey) || grnRequiredButMissing} onClick={() => raiseMutation.mutate()}>
               Raise Voucher
             </Button>
           </DialogFooter>
