@@ -924,6 +924,77 @@ metaCampaignRouter.post(
   })
 );
 
+// ── Calling Feedback — same dispositions as Hiring Entry ─────────────────────
+
+const VALID_CALLING_FEEDBACKS = [
+  'Interested',
+  'Not Interested',
+  'No Response',
+  'Rescheduled',
+  'Already Joined',
+  'Declined Offer',
+  'Wrong Number',
+] as const;
+
+/**
+ * POST /api/meta/leads/:id/calling-feedback
+ * Log a call outcome for a META lead — same statuses as Hiring Entry.
+ * Body: { calling_feedback: string, notes?: string }
+ */
+metaCampaignRouter.post(
+  '/leads/:id/calling-feedback',
+  requireAuth,
+  requireRole(...INBOX_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { calling_feedback, notes } = req.body ?? {};
+    const feedback = String(calling_feedback ?? '').trim();
+    if (!feedback) {
+      return res.status(400).json({ success: false, message: 'calling_feedback is required' });
+    }
+    if (!VALID_CALLING_FEEDBACKS.includes(feedback as typeof VALID_CALLING_FEEDBACKS[number])) {
+      return res.status(400).json({ success: false, message: `Invalid calling_feedback. Must be one of: ${VALID_CALLING_FEEDBACKS.join(', ')}` });
+    }
+    if (!(await requireLeadInScope(req, res, req.params.id!))) return;
+
+    const { db: dbConn } = await import('../../db/mysql.js');
+    await dbConn.execute(
+      `UPDATE meta_lead_raw
+          SET calling_feedback = ?,
+              calling_feedback_at = NOW(),
+              calling_feedback_notes = ?,
+              calling_feedback_by = ?
+        WHERE id = ?`,
+      [feedback, notes ? String(notes).trim() : null, req.authUser!.id, req.params.id]
+    );
+
+    return res.json({ success: true, message: 'Calling feedback saved' });
+  })
+);
+
+/**
+ * GET /api/meta/leads/:id/calling-feedback
+ * Get current calling feedback for a lead.
+ */
+metaCampaignRouter.get(
+  '/leads/:id/calling-feedback',
+  requireAuth,
+  requireRole(...INBOX_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    if (!(await requireLeadInScope(req, res, req.params.id!))) return;
+
+    const { db: dbConn } = await import('../../db/mysql.js');
+    const [rows] = await dbConn.execute<import('mysql2').RowDataPacket[]>(
+      `SELECT calling_feedback, calling_feedback_at, calling_feedback_notes, calling_feedback_by
+         FROM meta_lead_raw WHERE id = ?`,
+      [req.params.id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Lead not found' });
+    }
+    return res.json({ success: true, data: rows[0] });
+  })
+);
+
 // ── Job-requisition list for inbox filter dropdown ────────────────────────────
 
 metaCampaignRouter.get(

@@ -51,6 +51,35 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+type CallingFeedback =
+  | "Interested"
+  | "Not Interested"
+  | "No Response"
+  | "Rescheduled"
+  | "Already Joined"
+  | "Declined Offer"
+  | "Wrong Number";
+
+const CALLING_FEEDBACK_OPTIONS: CallingFeedback[] = [
+  "Interested",
+  "Not Interested",
+  "No Response",
+  "Rescheduled",
+  "Already Joined",
+  "Declined Offer",
+  "Wrong Number",
+];
+
+const CALLING_FEEDBACK_BADGE: Record<CallingFeedback, string> = {
+  Interested: "bg-emerald-100 text-emerald-700",
+  "Not Interested": "bg-rose-100 text-rose-700",
+  "No Response": "bg-slate-100 text-slate-600",
+  Rescheduled: "bg-amber-100 text-amber-700",
+  "Already Joined": "bg-blue-100 text-blue-700",
+  "Declined Offer": "bg-rose-100 text-rose-700",
+  "Wrong Number": "bg-gray-100 text-gray-600",
+};
+
 type Lead = {
   id: string;
   metaFormId: string;
@@ -76,6 +105,9 @@ type Lead = {
   designationName: string | null;
   branchName: string | null;
   campaignName: string | null;
+  callingFeedback: CallingFeedback | null;
+  callingFeedbackAt: string | null;
+  callingFeedbackNotes: string | null;
 };
 
 type LeadDetail = Lead & {
@@ -177,6 +209,40 @@ export default function MetaLeadsPage() {
   // Notify preview dialog state
   const [previewFor, setPreviewFor] = useState<{ id: string; preview: NotifyPreview } | null>(null);
   const [loadingPreview, setLoadingPreview] = useState<string | null>(null);
+
+  // Calling feedback state
+  const [savingFeedback, setSavingFeedback] = useState(false);
+  const [feedbackNotes, setFeedbackNotes] = useState("");
+
+  const saveCallingFeedback = useCallback(async (leadId: string, feedback: CallingFeedback, notes?: string) => {
+    setSavingFeedback(true);
+    try {
+      const res = await hrmsApi.post(`/meta/leads/${leadId}/calling-feedback`, {
+        calling_feedback: feedback,
+        notes: notes || undefined,
+      });
+      if (!res.success) throw new Error(res.message || "Failed to save feedback");
+      // Update detail and row list with new feedback
+      setDetail((prev) =>
+        prev && prev.id === leadId
+          ? { ...prev, callingFeedback: feedback, callingFeedbackAt: new Date().toISOString(), callingFeedbackNotes: notes || null }
+          : prev
+      );
+      setRows((prev) =>
+        prev.map((r) =>
+          r.id === leadId
+            ? { ...r, callingFeedback: feedback, callingFeedbackAt: new Date().toISOString(), callingFeedbackNotes: notes || null }
+            : r
+        )
+      );
+      setFeedbackNotes("");
+    } catch (err) {
+      console.error("Failed to save calling feedback:", err);
+      setDetailError(err instanceof Error ? err.message : "Failed to save feedback");
+    } finally {
+      setSavingFeedback(false);
+    }
+  }, []);
 
   const load = useCallback(
     async (isRefresh = false) => {
@@ -769,6 +835,56 @@ export default function MetaLeadsPage() {
                   ) : (
                     <p className="mt-0.5 text-xs text-slate-400">Not notified</p>
                   )}
+                </div>
+              </section>
+            )}
+
+            {/* Calling Feedback */}
+            {detail && (
+              <section className="rounded-lg border border-slate-200 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Calling Feedback</p>
+                {detail.callingFeedback && (
+                  <div className="mt-2">
+                    <span className={`inline-flex rounded-full px-2.5 py-0.5 text-sm font-bold ${CALLING_FEEDBACK_BADGE[detail.callingFeedback]}`}>
+                      {detail.callingFeedback}
+                    </span>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {fmtDateTime(detail.callingFeedbackAt)}
+                    </p>
+                    {detail.callingFeedbackNotes && (
+                      <p className="mt-1 text-xs italic text-slate-600">{detail.callingFeedbackNotes}</p>
+                    )}
+                  </div>
+                )}
+                <div className="mt-3 space-y-2">
+                  <Select
+                    value={detail.callingFeedback ?? ""}
+                    onValueChange={(val) => {
+                      if (val && val !== detail.callingFeedback) {
+                        void saveCallingFeedback(detail.id, val as CallingFeedback, feedbackNotes);
+                      }
+                    }}
+                    disabled={savingFeedback}
+                  >
+                    <SelectTrigger className="h-9 text-sm">
+                      <SelectValue placeholder="Select call outcome…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CALLING_FEEDBACK_OPTIONS.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <input
+                    type="text"
+                    placeholder="Notes (optional)"
+                    value={feedbackNotes}
+                    onChange={(e) => setFeedbackNotes(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                  />
+                  {savingFeedback && <p className="text-xs text-slate-500">Saving…</p>}
                 </div>
               </section>
             )}

@@ -92,6 +92,10 @@ export interface MetaLeadRow {
   voice_call_status: string | null;
   voice_call_outcome: string | null;
   voice_called_at: Date | string | null;
+  calling_feedback: string | null;
+  calling_feedback_at: Date | string | null;
+  calling_feedback_notes: string | null;
+  calling_feedback_by: string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -118,6 +122,9 @@ export interface MetaLead {
   voiceCallStatus: string | null;
   voiceCallOutcome: string | null;
   voiceCalledAt: string | null;
+  callingFeedback: string | null;
+  callingFeedbackAt: string | null;
+  callingFeedbackNotes: string | null;
   createdAt: string;
 }
 

@@ -129,6 +129,9 @@ function toLead(row: RowDataPacket | MetaLeadRow): MetaLead {
     voiceCallStatus: r.voice_call_status,
     voiceCallOutcome: r.voice_call_outcome,
     voiceCalledAt: iso(r.voice_called_at),
+    callingFeedback: r.calling_feedback,
+    callingFeedbackAt: iso(r.calling_feedback_at),
+    callingFeedbackNotes: r.calling_feedback_notes,
     createdAt: iso(r.created_at) ?? '',
   };
 }
