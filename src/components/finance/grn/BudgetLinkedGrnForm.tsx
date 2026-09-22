@@ -782,17 +782,18 @@ export function BudgetLinkedGrnForm({
   // ── Cascade: cost centre → head → sub-head → (item, only when ambiguous) ──
 
   const costCentreOptions = useMemo<SearchableOption[]>(() => {
+    // Build the active CC id set so budget-line entries for inactive/closed CCs are excluded.
+    const activeCCIds = new Set(activeCostCentres.map((cc) => cc.id));
     const seen = new Map<string, string>();
     budgetLines.forEach((line) => {
       const key = line.cost_centre_id ?? NO_COST_CENTRE;
+      // Skip CCs from budget lines that are no longer active — the backend validates
+      // active_status=1 at save time, so showing inactive ones only causes confusion.
+      if (key !== NO_COST_CENTRE && !activeCCIds.has(key)) return;
       if (!seen.has(key)) {
         seen.set(key, line.cost_centre_name ?? "Branch (no cost centre)");
       }
     });
-    // Merge in every active cost centre for the branch, not only ones that already have a
-    // budget line — mirrors vendorCostCentreGroups' use of the same activeCostCentres list.
-    // Without this, a cost centre with no budget line raised yet couldn't be selected at all,
-    // which cascaded into Head/Sub-head being unreachable for it too.
     activeCostCentres.forEach((cc) => {
       if (!seen.has(cc.id)) {
         seen.set(cc.id, cc.costCentreName || cc.costCentreCode || "Cost centre");
@@ -3193,6 +3194,13 @@ export function BudgetLinkedGrnForm({
                 </div>
               </div>
             ) : null
+          )}
+
+          {Boolean(form.branchId) && Boolean(effectivePeriod) && !linesLoading &&
+           activeCostCentres.length > 0 && (!form.head || !form.subHead) && (
+            <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-[12px] text-blue-800">
+              Select an expense <strong>Head</strong> and <strong>Sub-head</strong> above to load the cost-centre split and the Apply button.
+            </div>
           )}
 
           {Boolean(form.branchId) && Boolean(effectivePeriod) && !linesLoading && vendorCostCentreGroups.length > 0 && (
