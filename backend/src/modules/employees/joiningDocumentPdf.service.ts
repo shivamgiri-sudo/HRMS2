@@ -98,6 +98,10 @@ function drawLetterhead(doc: Doc, letterhead?: PdfLetterhead) {
   doc.moveTo(PAGE.margin, ruleY).lineTo(doc.page.width - PAGE.margin, ruleY)
     .lineWidth(1.2).strokeColor(ACCENT).stroke();
   doc.y = ruleY + 18;
+  // Reset doc.x to the left margin. The right-aligned letterhead text leaves
+  // doc.x somewhere on the right side of the page, which then shifts all
+  // subsequent content that uses PDFKit's implicit x positioning.
+  doc.x = PAGE.margin;
   doc.fillColor(INK);
 }
 
