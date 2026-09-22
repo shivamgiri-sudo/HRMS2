@@ -222,7 +222,10 @@ async function loadLeadContext(
   };
 }
 
-export async function notifyQualifiedLead(leadId: string, options: { force?: boolean } = {}): Promise<OutreachOutcome> {
+export async function notifyQualifiedLead(
+  leadId: string,
+  options: { force?: boolean; skipVoice?: boolean } = {}
+): Promise<OutreachOutcome> {
   const outcome: OutreachOutcome = { leadId, attempted: [], succeeded: [], skipped: [], failed: [] };
 
   const loaded = await loadLeadContext(leadId);
@@ -376,7 +379,9 @@ export async function notifyQualifiedLead(leadId: string, options: { force?: boo
   // Fires AFTER the text channels: a candidate who gets a call with no prior written context
   // is far more likely to treat it as spam. Priority: Vapi.ai (AI conversation, Hindi/English)
   // → legacy VOICEBOT_TRIGGER_URL (simple HTTP trigger).
-  if (!ctx.phone) {
+  if (options.skipVoice) {
+    outcome.skipped.push({ channel: 'voice', reason: 'Voice call skipped by caller (bulk send)' });
+  } else if (!ctx.phone) {
     outcome.skipped.push({ channel: 'voice', reason: 'Lead has no phone number' });
   } else if (isVapiConfigured()) {
     outcome.attempted.push('voice');

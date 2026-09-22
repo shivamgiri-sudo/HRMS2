@@ -117,4 +117,18 @@ describe('notifyQualifiedLead refuses a closed or filled batch', () => {
     expect(out.attempted).toEqual([]);
     expect(out.skipped[0]?.reason).toMatch(/cancelled/);
   });
+
+  it('skipVoice keeps voice out of both attempted and succeeded, for the bulk sender', async () => {
+    // First call is loadLeadContext's SELECT; every other query (interview slot lookup/write,
+    // provider config, notification_sent_at stamp) is content-irrelevant here — generic empty rows.
+    (db.execute as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce([[leadRow({})], []])
+      .mockResolvedValue([[], []]);
+
+    const out = await notifyQualifiedLead('lead-1', { skipVoice: true });
+
+    expect(out.attempted).not.toContain('voice');
+    expect(out.succeeded).not.toContain('voice');
+    expect(out.skipped.find((s) => s.channel === 'voice')?.reason).toMatch(/skipped by caller/);
+  });
 });
