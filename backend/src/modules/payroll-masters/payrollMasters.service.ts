@@ -312,6 +312,40 @@ export async function createPackage(data: any, createdBy: string) {
 }
 
 /**
+ * Create the same package definition across multiple branch+cost-centre combinations.
+ * Skips any combination that already has a row with the same (branch_name, cost_centre_code, band_code)
+ * so repeated submissions are safe. Returns a summary of created vs skipped counts.
+ */
+export async function bulkCreatePackages(
+  data: { branch_names: string[]; cost_centre_codes?: string[]; band_code: string; [key: string]: unknown },
+  createdBy: string,
+): Promise<{ created: number; skipped: number; packages: unknown[] }> {
+  const { branch_names, cost_centre_codes = [], ...packageFields } = data;
+  const results: unknown[] = [];
+  let created = 0;
+  let skipped = 0;
+
+  for (const branch_name of branch_names) {
+    const ccList = cost_centre_codes.length > 0 ? cost_centre_codes : [null];
+    for (const cost_centre_code of ccList) {
+      try {
+        const pkg = await createPackage({ ...packageFields, branch_name, cost_centre_code }, createdBy);
+        results.push(pkg);
+        created++;
+      } catch (err: unknown) {
+        const code = (err as any)?.code ?? (err as any)?.sqlState;
+        if (code === 'ER_DUP_ENTRY' || code === '23000') {
+          skipped++;
+        } else {
+          throw err;
+        }
+      }
+    }
+  }
+  return { created, skipped, packages: results };
+}
+
+/**
  * Update a salary package. Same column correction as createPackage above.
  *
  * Merged over the existing row so a partial payload cannot blank a money column

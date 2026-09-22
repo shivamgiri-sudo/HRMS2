@@ -61,6 +61,14 @@ export const CreatePackageSchema = z.object({
 
 export const UpdatePackageSchema = CreatePackageSchema.partial();
 
+/** For creating one package definition across multiple branches/cost-centres in one shot. */
+export const BulkCreatePackageSchema = CreatePackageSchema
+  .omit({ branch_name: true, cost_centre_code: true })
+  .extend({
+    branch_names:      z.array(z.string().min(1)).min(1, 'Select at least one branch'),
+    cost_centre_codes: z.array(z.string()).optional().default([]),
+  });
+
 export const CreateMatrixEntrySchema = z.object({
   department_id: z.string().uuid(),
   designation_id: z.string().uuid(),

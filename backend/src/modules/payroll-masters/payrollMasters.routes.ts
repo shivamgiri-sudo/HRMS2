@@ -6,7 +6,7 @@ import * as svc from './payrollMasters.service.js';
 import {
   CreateSlabSchema, UpdateSlabSchema,
   CreateBandSchema, UpdateBandSchema,
-  CreatePackageSchema, UpdatePackageSchema,
+  CreatePackageSchema, UpdatePackageSchema, BulkCreatePackageSchema,
   CreateMatrixEntrySchema, UpdateMatrixEntrySchema, BulkMatrixUpsertSchema,
   CreateMinWageSchema, UpdateMinWageSchema,
 } from './payrollMasters.validation.js';
@@ -92,6 +92,14 @@ payrollMastersRouter.get('/packages/:id', h(async (req, res) => {
   const data = await svc.getPackageById(req.params.id);
   if (!data) return res.status(404).json({ error: 'Package not found' });
   res.json({ success: true, data });
+}));
+
+// bulk-create MUST be registered before the single POST so Express doesn't treat
+// "bulk-create" as an :id param.
+payrollMastersRouter.post('/packages/bulk-create', requireRole('admin', 'finance', 'payroll_head'), h(async (req, res) => {
+  const parsed = BulkCreatePackageSchema.parse(req.body);
+  const result = await svc.bulkCreatePackages(parsed as any, req.authUser?.id ?? '');
+  res.status(201).json({ success: true, ...result });
 }));
 
 payrollMastersRouter.post('/packages', requireRole('admin', 'finance', 'payroll_head'), h(async (req, res) => {

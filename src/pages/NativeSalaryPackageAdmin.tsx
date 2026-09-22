@@ -88,6 +88,9 @@ export default function NativeSalaryPackageAdmin() {
   const [pkgBand, setPkgBand] = useState('');
   const [pkgCC, setPkgCC] = useState('');
   const [editPkg, setEditPkg] = useState<Partial<Package> | null>(null);
+  // Multi-select for new package creation
+  const [newPkgBranches, setNewPkgBranches] = useState<string[]>([]);
+  const [newPkgCostCentres, setNewPkgCostCentres] = useState<string[]>([]);
 
   // Calculator state
   const [calcMode, setCalcMode] = useState<'ctc' | 'inhand' | 'manual'>('ctc');
@@ -182,7 +185,6 @@ export default function NativeSalaryPackageAdmin() {
 
   // ── Save Package ───────────────────────────────────────────────────────────
   const savePkg = async () => {
-    if (!editPkg?.branch_name) { setMsg('Select a branch first.'); setMsgType('error'); return; }
     if (!editPkg?.band_code)   { setMsg('Select a band first.'); setMsgType('error'); return; }
     if (!editPkg?.package_amount) {
       setMsg(calcMode === 'manual'
@@ -191,16 +193,38 @@ export default function NativeSalaryPackageAdmin() {
       setMsgType('error');
       return;
     }
+
+    // Edit flow — single package
+    if (editPkg.id) {
+      if (!editPkg?.branch_name) { setMsg('Select a branch first.'); setMsgType('error'); return; }
+      setSaving(true); setMsg('');
+      try {
+        await hrmsApi.put(`/api/payroll-masters/packages/${editPkg.id}`, editPkg);
+        setEditPkg(null);
+        await loadPackages();
+        setMsg('Package saved'); setMsgType('success');
+      } catch (e: any) { setMsg(e?.message || 'Save failed — check your role or network.'); setMsgType('error'); }
+      finally { setSaving(false); }
+      return;
+    }
+
+    // Create flow — bulk (multiple branches × cost centres)
+    if (newPkgBranches.length === 0) { setMsg('Select at least one branch.'); setMsgType('error'); return; }
     setSaving(true); setMsg('');
     try {
-      if (editPkg.id) {
-        await hrmsApi.put(`/api/payroll-masters/packages/${editPkg.id}`, editPkg);
-      } else {
-        await hrmsApi.post('/api/payroll-masters/packages', editPkg);
-      }
+      const payload = {
+        ...editPkg,
+        branch_names: newPkgBranches,
+        cost_centre_codes: newPkgCostCentres,
+      };
+      const res = await hrmsApi.post<{ created: number; skipped: number }>('/api/payroll-masters/packages/bulk-create', payload);
       setEditPkg(null);
+      setNewPkgBranches([]);
+      setNewPkgCostCentres([]);
       await loadPackages();
-      setMsg('Package saved'); setMsgType('success');
+      const skippedNote = res.skipped > 0 ? ` (${res.skipped} duplicate${res.skipped > 1 ? 's' : ''} skipped)` : '';
+      setMsg(`${res.created} package${res.created !== 1 ? 's' : ''} created${skippedNote}`);
+      setMsgType('success');
     } catch (e: any) { setMsg(e?.message || 'Save failed — check your role or network.'); setMsgType('error'); }
     finally { setSaving(false); }
   };
@@ -402,7 +426,12 @@ It will stop appearing in salary package dropdowns. Employees already assigned t
                     </select>
                   </div>
                   <div className="flex items-end">
-                    <Button size="sm" onClick={() => { setCtcInput(''); setInHandInput(''); setCalcMode('ctc'); setEditPkg({ branch_name: pkgBranch || '', band_code: pkgBand || '', cost_centre_code: pkgCC || '', package_amount: 0, basic: 0, hra: 0, lta: 0, conveyance: 0, gross: 0, epf_employee: 0, esic_employee: 0, net_in_hand: 0, epf_employer: 0, esic_employer: 0, admin_charges: 0, ctc: 0, bonus: 0, pli: 0, special_allowance: 0, other_allowance: 0, portfolio: 0, medical: 0 }); }} className="gap-1.5 w-full">
+                    <Button size="sm" onClick={() => {
+                      setCtcInput(''); setInHandInput(''); setCalcMode('ctc');
+                      setNewPkgBranches(pkgBranch ? [pkgBranch] : []);
+                      setNewPkgCostCentres(pkgCC ? [pkgCC] : []);
+                      setEditPkg({ band_code: pkgBand || '', cost_centre_code: pkgCC || '', package_amount: 0, basic: 0, hra: 0, lta: 0, conveyance: 0, gross: 0, epf_employee: 0, esic_employee: 0, net_in_hand: 0, epf_employer: 0, esic_employer: 0, admin_charges: 0, ctc: 0, bonus: 0, pli: 0, special_allowance: 0, other_allowance: 0, portfolio: 0, medical: 0 });
+                    }} className="gap-1.5 w-full">
                       <Plus className="h-3.5 w-3.5" /> New Package
                     </Button>
                   </div>
@@ -415,40 +444,134 @@ It will stop appearing in salary package dropdowns. Employees already assigned t
                     <div className="flex items-center gap-2">
                       <Calculator className="h-4 w-4 text-blue-600" />
                       <p className="text-sm font-bold text-blue-700">
-                        {editPkg.id ? 'Edit' : 'New'} Package — {editPkg.branch_name || 'Select branch'} / Band {editPkg.band_code || '?'}
+                        {editPkg.id ? `Edit Package — ${editPkg.branch_name} / Band ${editPkg.band_code || '?'}` : 'New Package'}
                       </p>
                     </div>
 
                     {/* Row 0: Header fields */}
-                    <div className="grid gap-3 sm:grid-cols-4">
-                      <div>
-                        <Label className="text-xs">Branch *</Label>
-                        <select className={`mt-1 ${SEL} h-9`} value={editPkg.branch_name ?? ''} onChange={e => setEditPkg(p => ({ ...p!, branch_name: e.target.value }))}>
-                          <option value="">Select Branch</option>
-                          {branches.map(b => <option key={b} value={b}>{b}</option>)}
-                        </select>
+                    {editPkg.id ? (
+                      /* Edit mode — single branch/CC selects */
+                      <div className="grid gap-3 sm:grid-cols-4">
+                        <div>
+                          <Label className="text-xs">Branch *</Label>
+                          <select className={`mt-1 ${SEL} h-9`} value={editPkg.branch_name ?? ''} onChange={e => setEditPkg(p => ({ ...p!, branch_name: e.target.value }))}>
+                            <option value="">Select Branch</option>
+                            {branches.map(b => <option key={b} value={b}>{b}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <Label className="text-xs">Cost Centre</Label>
+                          <select className={`mt-1 ${SEL} h-9`} value={editPkg.cost_centre_code ?? ''} onChange={e => setEditPkg(p => ({ ...p!, cost_centre_code: e.target.value }))}>
+                            <option value="">All / None</option>
+                            {costCentres.filter(c => !editPkg.branch_name || c.branch_name === editPkg.branch_name).map(c => (
+                              <option key={c.cost_centre_code} value={c.cost_centre_code}>{c.cost_centre_code}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <Label className="text-xs">Band *</Label>
+                          <select className={`mt-1 ${SEL} h-9`} value={editPkg.band_code ?? ''} onChange={e => setEditPkg(p => ({ ...p!, band_code: e.target.value }))}>
+                            <option value="">Select Band</option>
+                            {bands.map(b => <option key={b.band_code} value={b.band_code}>Band {b.band_code} ({fmt(b.slab_from)}–{fmt(b.slab_to)})</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <Label className="text-xs">Package Amount (CTC/mo)</Label>
+                          <Input className="h-9 bg-slate-100 font-semibold text-blue-700" readOnly value={editPkg.ctc ? fmt(editPkg.ctc) : ''} placeholder="Auto-calculated" />
+                        </div>
                       </div>
-                      <div>
-                        <Label className="text-xs">Cost Centre</Label>
-                        <select className={`mt-1 ${SEL} h-9`} value={editPkg.cost_centre_code ?? ''} onChange={e => setEditPkg(p => ({ ...p!, cost_centre_code: e.target.value }))}>
-                          <option value="">All / None</option>
-                          {costCentres.filter(c => !editPkg.branch_name || c.branch_name === editPkg.branch_name).map(c => (
-                            <option key={c.cost_centre_code} value={c.cost_centre_code}>{c.cost_centre_code}</option>
-                          ))}
-                        </select>
+                    ) : (
+                      /* Create mode — multi-checkbox branch + CC + band */
+                      <div className="space-y-3">
+                        {/* Branch checkboxes */}
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <Label className="text-xs font-semibold">
+                              Branches *{' '}
+                              <span className="font-normal text-slate-500">({newPkgBranches.length} selected)</span>
+                            </Label>
+                            <div className="flex gap-2">
+                              <button type="button" className="text-[11px] text-blue-600 hover:underline" onClick={() => setNewPkgBranches(branches)}>All</button>
+                              <button type="button" className="text-[11px] text-slate-500 hover:underline" onClick={() => setNewPkgBranches([])}>None</button>
+                            </div>
+                          </div>
+                          <div className="max-h-28 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 grid grid-cols-2 sm:grid-cols-3 gap-1">
+                            {branches.map(b => (
+                              <label key={b} className="flex items-center gap-2 text-xs cursor-pointer px-1.5 py-1 rounded hover:bg-slate-50">
+                                <input
+                                  type="checkbox"
+                                  className="h-3.5 w-3.5 accent-blue-600"
+                                  checked={newPkgBranches.includes(b)}
+                                  onChange={e => setNewPkgBranches(s => e.target.checked ? [...s, b] : s.filter(x => x !== b))}
+                                />
+                                <span className="truncate">{b}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Cost Centre checkboxes (only CCs belonging to selected branches) */}
+                        {newPkgBranches.length > 0 && (() => {
+                          const visibleCCs = costCentres.filter(c => newPkgBranches.includes(c.branch_name));
+                          return (
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <Label className="text-xs font-semibold">
+                                  Cost Centres{' '}
+                                  <span className="font-normal text-slate-500">
+                                    {newPkgCostCentres.length === 0 ? '— branch-wide (no CC)' : `(${newPkgCostCentres.length} selected)`}
+                                  </span>
+                                </Label>
+                                <div className="flex gap-2">
+                                  <button type="button" className="text-[11px] text-blue-600 hover:underline" onClick={() => setNewPkgCostCentres(visibleCCs.map(c => c.cost_centre_code))}>All</button>
+                                  <button type="button" className="text-[11px] text-slate-500 hover:underline" onClick={() => setNewPkgCostCentres([])}>None (branch-wide)</button>
+                                </div>
+                              </div>
+                              <div className="max-h-28 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 grid grid-cols-1 sm:grid-cols-2 gap-1">
+                                {visibleCCs.map(c => (
+                                  <label key={c.cost_centre_code} className="flex items-center gap-2 text-xs cursor-pointer px-1.5 py-1 rounded hover:bg-slate-50">
+                                    <input
+                                      type="checkbox"
+                                      className="h-3.5 w-3.5 accent-blue-600"
+                                      checked={newPkgCostCentres.includes(c.cost_centre_code)}
+                                      onChange={e => setNewPkgCostCentres(s => e.target.checked ? [...s, c.cost_centre_code] : s.filter(x => x !== c.cost_centre_code))}
+                                    />
+                                    <span className="font-mono">{c.cost_centre_code}</span>
+                                    <span className="text-slate-400 text-[10px] truncate">{c.branch_name}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Band + preview row */}
+                        <div className="grid gap-3 sm:grid-cols-3 items-end">
+                          <div>
+                            <Label className="text-xs">Band *</Label>
+                            <select className={`mt-1 ${SEL} h-9`} value={editPkg.band_code ?? ''} onChange={e => setEditPkg(p => ({ ...p!, band_code: e.target.value }))}>
+                              <option value="">Select Band</option>
+                              {bands.map(b => <option key={b.band_code} value={b.band_code}>Band {b.band_code} ({fmt(b.slab_from)}–{fmt(b.slab_to)})</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <Label className="text-xs">Package Amount (CTC/mo)</Label>
+                            <Input className="h-9 bg-slate-100 font-semibold text-blue-700" readOnly value={editPkg.ctc ? fmt(editPkg.ctc) : ''} placeholder="Auto-calculated" />
+                          </div>
+                          {newPkgBranches.length > 0 && editPkg.ctc && editPkg.band_code && (
+                            <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-800 font-medium">
+                              Will create{' '}
+                              <span className="font-black text-blue-700">
+                                {newPkgBranches.length * (newPkgCostCentres.length || 1)}
+                              </span>{' '}
+                              package{newPkgBranches.length * (newPkgCostCentres.length || 1) !== 1 ? 's' : ''}{' '}
+                              ({newPkgBranches.length} branch{newPkgBranches.length !== 1 ? 'es' : ''}
+                              {newPkgCostCentres.length > 0 ? ` × ${newPkgCostCentres.length} CC` : ', branch-wide'})
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <div>
-                        <Label className="text-xs">Band *</Label>
-                        <select className={`mt-1 ${SEL} h-9`} value={editPkg.band_code ?? ''} onChange={e => setEditPkg(p => ({ ...p!, band_code: e.target.value }))}>
-                          <option value="">Select Band</option>
-                          {bands.map(b => <option key={b.band_code} value={b.band_code}>Band {b.band_code} ({fmt(b.slab_from)}–{fmt(b.slab_to)})</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <Label className="text-xs">Package Amount (CTC/mo)</Label>
-                        <Input className="h-9 bg-slate-100 font-semibold text-blue-700" readOnly value={editPkg.ctc ? fmt(editPkg.ctc) : ''} placeholder="Auto-calculated" />
-                      </div>
-                    </div>
+                    )}
 
                     {/* Row 1: Calc mode + toggles */}
                     <div className="flex flex-wrap items-center gap-4 rounded-lg bg-white border border-blue-100 px-4 py-3">
@@ -605,29 +728,24 @@ It will stop appearing in salary package dropdowns. Employees already assigned t
                       </div>
                     </div>
 
-                    <div className="flex gap-2 pt-2 border-t items-center">
-                      <Button
-                        size="sm"
-                        onClick={savePkg}
-                        disabled={saving || !editPkg?.branch_name || !editPkg?.band_code || !editPkg?.package_amount}
-                        title={
-                          !editPkg?.branch_name ? 'Select a branch' :
-                          !editPkg?.band_code   ? 'Select a band' :
-                          !editPkg?.package_amount ? 'Build the package first (enter CTC or components)' : ''
-                        }
-                        className="gap-1"
-                      >
-                        <Save className="h-3.5 w-3.5" />{saving ? 'Saving...' : 'Save Package'}
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => { setEditPkg(null); setCtcInput(''); setInHandInput(''); }}>Cancel</Button>
-                      {(!editPkg?.branch_name || !editPkg?.band_code || !editPkg?.package_amount) && (
-                        <span className="text-xs text-amber-600 ml-1">
-                          {!editPkg?.branch_name ? 'Branch required' :
-                           !editPkg?.band_code   ? 'Band required' :
-                           'Enter CTC or build components'}
-                        </span>
-                      )}
-                    </div>
+                    {(() => {
+                      const isEdit = !!editPkg.id;
+                      const branchOk = isEdit ? !!editPkg.branch_name : newPkgBranches.length > 0;
+                      const disabled = saving || !branchOk || !editPkg.band_code || !editPkg.package_amount;
+                      const hint = !branchOk ? (isEdit ? 'Select a branch' : 'Select at least one branch') :
+                                   !editPkg.band_code ? 'Select a band' :
+                                   !editPkg.package_amount ? 'Build the package first' : '';
+                      return (
+                        <div className="flex gap-2 pt-2 border-t items-center">
+                          <Button size="sm" onClick={savePkg} disabled={disabled} title={hint} className="gap-1">
+                            <Save className="h-3.5 w-3.5" />
+                            {saving ? 'Saving...' : isEdit ? 'Save Package' : `Create Package${!isEdit && newPkgBranches.length * (newPkgCostCentres.length || 1) > 1 ? 's' : ''}`}
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => { setEditPkg(null); setCtcInput(''); setInHandInput(''); setNewPkgBranches([]); setNewPkgCostCentres([]); }}>Cancel</Button>
+                          {hint && <span className="text-xs text-amber-600 ml-1">{hint}</span>}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
 
