@@ -240,6 +240,7 @@ import { tatRouter } from "./modules/governance/tat.routes.js";
 import { qualityLearningRouter } from "./modules/quality-learning/quality-learning.routes.js";
 import { nameConsistencyRouter } from "./modules/ats/name-consistency.routes.js";
 import { jclrRouter } from "./modules/ats/jclr.routes.js";
+import { branchActivityReportRouter } from "./modules/ats/branch-activity-report/branch-activity-report.routes.js";
 import { joiningControlRoomRouter } from "./modules/ats/joining-control-room.routes.js";
 import { secureDocumentsRouter } from "./modules/ats/secure-documents.routes.js";
 import { salaryComponentAssignmentRouter } from "./modules/ats/salary-component-assignment.routes.js";
@@ -835,6 +836,7 @@ app.use("/api/quality-learning", qualityLearningRouter);
 app.use("/api/ats/name-consistency", nameConsistencyRouter);
 app.use("/api/ats/jclr", jclrRouter);
 app.use("/api/ats/joining-control-room", joiningControlRoomRouter);
+app.use("/api/ats/branch-activity-report", branchActivityReportRouter);
 // Secure candidate document viewer (JCLR "Documents" tab). Mounted here, after
 // clientRouter has applied requireAuth, because verify/reject read req.authUser.
 // The router shipped in 03ee489e but was never mounted — every endpoint 404'd.
