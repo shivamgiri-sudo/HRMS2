@@ -64,6 +64,10 @@ module.exports = {
       cwd: "/var/www/HRMS2/backend",
       exec_mode: "fork",
       instances: 1,
+
+      // Memory limit: 5GB for the workers process. The report-generation worker
+      // builds large XLSX exports in memory and was crashing at the default heap.
+      node_args: "--max-old-space-size=5120",
       out_file: "logs/workers-out.log",
       error_file: "logs/workers-err.log",
       restart_delay: 5000,
