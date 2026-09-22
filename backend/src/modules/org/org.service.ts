@@ -592,13 +592,16 @@ export const costCentreService = {
     const whereClauses: string[] = [];
     const params: (string | number)[] = [];
 
-    // Status filter
+    // Status filter - when fetching "active" cost centres, also require status='active'.
+    // 83 cost centres have active_status=1 but status='closed', and 85 have status='draft'.
+    // Those shouldn't appear in operational dropdowns (offer creation, employee assignment, etc).
     if (active_status === "0" || active_status === 0) {
       whereClauses.push("cc.active_status = 0");
     } else if (active_status === "all") {
       // No filter
     } else {
-      whereClauses.push("cc.active_status = 1"); // Default
+      whereClauses.push("cc.active_status = 1");
+      whereClauses.push("cc.status = 'active'"); // Exclude draft and closed
     }
 
     /**
