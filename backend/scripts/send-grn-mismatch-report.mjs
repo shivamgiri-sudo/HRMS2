@@ -89,19 +89,20 @@ async function getDbBillGrns(conn) {
           WHEN 17 THEN 'CHANDIGARH' WHEN 18 THEN 'NOIDA'
           ELSE CONCAT('Branch-', CAST(eem.BranchId AS CHAR)) END
       ) AS branch_name,
-      COALESCE(hm.HeadName, 'Unknown Head') AS head,
-      COALESCE(shm.SubHeadName, 'Unknown Sub-Head') AS sub_head,
+      COALESCE(hm.HeadingDesc, 'Unknown Head') AS head,
+      COALESCE(shm.SubHeadingDesc, 'Unknown Sub-Head') AS sub_head,
       COALESCE(vm.CompanyName, 'Unknown Vendor') AS vendor_name,
       eem.GrnNo AS grn_no,
       CAST(COALESCE(NULLIF(eem.Amount,''), '0') AS DECIMAL(18,2)) AS amount,
       eem.EntryStatus AS entry_status
     FROM expense_entry_master eem
     LEFT JOIN branch_master bm ON bm.Id = eem.BranchId
-    LEFT JOIN head_master hm ON hm.Id = eem.HeadId
-    LEFT JOIN sub_head_master shm ON shm.Id = eem.SubHeadId
+    LEFT JOIN tbl_bgt_expenseheadingmaster hm ON hm.HeadingId = eem.HeadId
+    LEFT JOIN tbl_bgt_expensesubheadingmaster shm ON shm.SubHeadingId = eem.SubHeadId
     LEFT JOIN vendor_master vm ON vm.Id = eem.Vendor
     WHERE eem.FinanceYear = ? AND eem.FinanceMonth = ?
       AND COALESCE(eem.EntryStatus,'') != 'Rejected'
+      AND eem.GrnNo LIKE 'Mas/%'
     ORDER BY branch_name, head, sub_head, vendor_name
   `, [FINANCE_YEAR, DB_BILL_MONTH]);
   return rows;
@@ -122,6 +123,7 @@ async function getHrmsGrns(conn) {
     WHERE gr.financial_year = ?
       AND gr.grn_number REGEXP ?
       AND gr.grn_type = 'vendor'
+      AND gr.grn_number LIKE 'Mas/%'
       AND gr.status NOT IN ('cancelled','rejected')
     ORDER BY bm.branch_name, gr.head, gr.sub_head, gr.vendor_name
   `, [FINANCE_YEAR, `/${periodMon.replace(/^0/,'')}/[0-9]{2}/`]);
