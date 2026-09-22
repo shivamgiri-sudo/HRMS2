@@ -507,6 +507,140 @@ describe("paymentVoucherService.raise — vendor_advance / vendor_advance_applic
   });
 });
 
+// ─── internal_transfer: moving funds between two of the company's own accounts ─
+
+function mockInternalTransferConnection(opts: { destOpeningBalance?: number; destLastRunningBalance?: number } = {}) {
+  const execute = vi.fn(async (sql: string, params?: any[]) => {
+    const text = String(sql);
+    if (text.includes("branch_code")) return [[{ branch_code: "HQ" }]]; // nextVoucherNumber
+    if (text.includes("COUNT(*) AS n FROM payment_voucher")) return [[{ n: 0 }]]; // nextVoucherNumber sequence
+    if (text.includes("FROM company_bank_account") && text.includes("FOR UPDATE")) {
+      const id = params?.[0];
+      if (id === "acct-2") {
+        return [[{
+          id: "acct-2", active_status: 1,
+          opening_balance: opts.destOpeningBalance ?? 50000,
+        }]];
+      }
+      return [[{ id: "acct-1", bank_id: "bank-5", branch_id: "b1", opening_balance: 100000, active_status: 1 }]];
+    }
+    if (text.includes("FROM payable_account_master")) {
+      return [[{ id: "pam-transfer", active_status: 1 }]];
+    }
+    if (text.includes("FROM bank_reconciliation_period")) return [[]]; // assertNotInClosedPeriod
+    if (text.includes("FROM bank_account_ledger_entry") && text.includes("running_balance")) {
+      const id = params?.[0];
+      if (id === "acct-2" && opts.destLastRunningBalance != null) {
+        return [[{ running_balance: opts.destLastRunningBalance }]];
+      }
+      if (id === "acct-2") return [[]]; // no prior entry — falls back to opening_balance
+      return [[{ running_balance: 100000 }]]; // source account's last entry
+    }
+    if (text.includes("SELECT * FROM payment_voucher WHERE id")) {
+      return [[VOUCHER_INTERNAL_TRANSFER_ROW]];
+    }
+    return [{ affectedRows: 1 }];
+  });
+  return { execute, beginTransaction: vi.fn(), commit: vi.fn(), rollback: vi.fn(), release: vi.fn() };
+}
+
+const VOUCHER_INTERNAL_TRANSFER_ROW = {
+  id: "pv-xfer-1", voucher_number: "PV/HQ/202609/0004", source_type: "internal_transfer",
+  bank_account_id: "acct-1", destination_bank_account_id: "acct-2", payable_account_id: "pam-transfer",
+  amount: "5000.00", status: "ceo_approved", raised_by: "fh-1", ceo_approved_by: "ceo-1", released_by: null,
+  voucher_type: "payment",
+};
+
+describe("paymentVoucherService.raise — internal_transfer", () => {
+  it("requires a destination bank account", async () => {
+    getConnection.mockResolvedValueOnce(mockInternalTransferConnection());
+    await expect(
+      paymentVoucherService.raise(
+        { sourceType: "internal_transfer", bankAccountId: "acct-1", payableAccountId: "pam-transfer", amount: 5000 } as any,
+        "fh-1", "finance_head",
+      ),
+    ).rejects.toThrow(/destination bank account is required/i);
+  });
+
+  it("rejects a destination account equal to the source account", async () => {
+    getConnection.mockResolvedValueOnce(mockInternalTransferConnection());
+    await expect(
+      paymentVoucherService.raise(
+        {
+          sourceType: "internal_transfer", bankAccountId: "acct-1", destinationBankAccountId: "acct-1",
+          payableAccountId: "pam-transfer", amount: 5000,
+        } as any,
+        "fh-1", "finance_head",
+      ),
+    ).rejects.toThrow(/destination.*same|same.*account/i);
+  });
+
+  it("raises a valid internal transfer", async () => {
+    getConnection.mockResolvedValueOnce(mockInternalTransferConnection());
+    await expect(
+      paymentVoucherService.raise(
+        {
+          sourceType: "internal_transfer", bankAccountId: "acct-1", destinationBankAccountId: "acct-2",
+          payableAccountId: "pam-transfer", amount: 5000,
+        } as any,
+        "fh-1", "finance_head",
+      ),
+    ).resolves.toBeDefined();
+  });
+});
+
+describe("paymentVoucherService.release — internal_transfer lane", () => {
+  beforeEach(() => {
+    execute.mockReset();
+    execute.mockImplementation(async (sql: string) => {
+      if (String(sql).includes("finance_action_audit_log")) return [[]];
+      return [[VOUCHER_INTERNAL_TRANSFER_ROW]];
+    });
+  });
+
+  it("posts one debit row on the source account and one credit row on the destination account", async () => {
+    const conn = mockInternalTransferConnection();
+    getConnection.mockResolvedValueOnce(conn);
+
+    await paymentVoucherService.release("pv-xfer-1", "fh-1", "finance_head", { paymentMode: "NEFT", paymentDate: "2026-09-22" });
+
+    const ledgerInserts = conn.execute.mock.calls.filter(([sql]: [string]) =>
+      String(sql).includes("INSERT INTO bank_account_ledger_entry"));
+    expect(ledgerInserts).toHaveLength(2);
+
+    const [debitCall, creditCall] = ledgerInserts;
+    // debit_amount and credit_amount are never both bound params in the same INSERT — whichever
+    // side is 0 is a SQL literal, so the amount is at params index 4 on both rows.
+    expect(debitCall[1][1]).toBe("acct-1");
+    expect(debitCall[1][4]).toBe(5000); // debit_amount
+    expect(creditCall[1][1]).toBe("acct-2");
+    expect(creditCall[1][4]).toBe(5000); // credit_amount
+  });
+
+  it("computes the destination account's running_balance independently of the source account's", async () => {
+    const conn = mockInternalTransferConnection({ destLastRunningBalance: 20000 });
+    getConnection.mockResolvedValueOnce(conn);
+
+    await paymentVoucherService.release("pv-xfer-1", "fh-1", "finance_head", { paymentMode: "NEFT", paymentDate: "2026-09-22" });
+
+    const ledgerInserts = conn.execute.mock.calls.filter(([sql]: [string]) =>
+      String(sql).includes("INSERT INTO bank_account_ledger_entry"));
+    const creditCall = ledgerInserts.find((c: [string, any[]]) => c[1][1] === "acct-2");
+    // running_balance is the 9th bound value (index 8) in both INSERT statements.
+    expect(creditCall![1][8]).toBe(25000); // 20000 + 5000
+  });
+
+  it("posts no journal lines for an internal transfer", async () => {
+    const conn = mockInternalTransferConnection();
+    getConnection.mockResolvedValueOnce(conn);
+
+    await paymentVoucherService.release("pv-xfer-1", "fh-1", "finance_head", { paymentMode: "NEFT", paymentDate: "2026-09-22" });
+
+    const journalInserts = conn.execute.mock.calls.filter(([sql]: [string]) => String(sql).includes("INSERT INTO journal_entry"));
+    expect(journalInserts).toHaveLength(0);
+  });
+});
+
 describe("paymentVoucherService.release — vendor_advance lane", () => {
   it("writes one bank debit and one vendor_advance_ledger credit, no dispatch() calls", async () => {
     const conn = mockAdvanceConnection({ advanceBalance: 0 });

@@ -217,9 +217,12 @@ async function resolveExpenseClassification(
 }
 
 export interface RaiseVoucherInput {
-  sourceType: "vendor_grn" | "imprest_allocation" | "general" | "vendor_advance" | "vendor_advance_application" | "sales_receipt";
+  sourceType: "vendor_grn" | "imprest_allocation" | "general" | "vendor_advance" | "vendor_advance_application" | "sales_receipt" | "internal_transfer";
   bankAccountId: string;
   payableAccountId: string;
+  /** Required for 'internal_transfer' — the company_bank_account receiving the funds.
+   *  Must differ from bankAccountId (the paying/source account). */
+  destinationBankAccountId?: string | null;
   /** Required when sourceType === 'general' — the free-text description a GRN/imprest name
    *  would otherwise supply (e.g. "March statutory PF challan", "Bank charges Q2"). */
   particulars?: string | null;
@@ -493,7 +496,7 @@ export const paymentVoucherService = {
 
   async raise(input: RaiseVoucherInput, actorUserId: string, actorRole?: string) {
     const isSalesReceipt = input.sourceType === "sales_receipt";
-    if (!["vendor_grn", "imprest_allocation", "general", "vendor_advance", "vendor_advance_application", "sales_receipt"].includes(input.sourceType)) {
+    if (!["vendor_grn", "imprest_allocation", "general", "vendor_advance", "vendor_advance_application", "sales_receipt", "internal_transfer"].includes(input.sourceType)) {
       throw new PaymentVoucherError("Invalid source type");
     }
     if (input.sourceType === "general" && !input.particulars?.trim()) {
@@ -574,6 +577,19 @@ export const paymentVoucherService = {
             `This vendor's available advance balance (${available}) is less than the amount being applied (${amount})`,
           );
         }
+      } else if (input.sourceType === "internal_transfer") {
+        if (!input.destinationBankAccountId) {
+          throw new PaymentVoucherError("A destination bank account is required for an internal transfer");
+        }
+        if (input.destinationBankAccountId === input.bankAccountId) {
+          throw new PaymentVoucherError("The destination account cannot be the same as the source account");
+        }
+        const [[destAccount]] = await connection.execute<RowDataPacket[]>(
+          `SELECT id, active_status FROM company_bank_account WHERE id = ? FOR UPDATE`,
+          [input.destinationBankAccountId],
+        );
+        if (!destAccount) throw new PaymentVoucherError("Destination bank account not found", 404);
+        if (!(destAccount as any).active_status) throw new PaymentVoucherError("The destination bank account is closed");
       }
       // 'general' has no linkage to validate — Payable Account (already validated above) is the
       // category, and input.particulars (already required-checked above) is the description.
@@ -586,18 +602,19 @@ export const paymentVoucherService = {
 
       await connection.execute(
         `INSERT INTO payment_voucher
-           (id, voucher_number, voucher_type, source_type, bank_account_id, payable_account_id,
+           (id, voucher_number, voucher_type, source_type, bank_account_id, destination_bank_account_id, payable_account_id,
             linked_vendor_payment_id, linked_imprest_manager_id, linked_vendor_id, amount, remarks, reason,
             particulars, expense_head_code, expense_head_name, expense_sub_head_code, expense_sub_head_name,
             payment_mode, transaction_ref,
             status, raised_by, raised_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'raised', ?, NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'raised', ?, NOW())`,
         [
           id,
           voucherNumber,
           isSalesReceipt ? "receipt" : (input.voucherType ?? "payment"),
           input.sourceType,
           input.bankAccountId,
+          input.sourceType === "internal_transfer" ? input.destinationBankAccountId : null,
           input.payableAccountId,
           grnAllocations[0]?.vendorPaymentTrackingId ?? null,
           input.linkedImprestManagerId ?? null,
@@ -1469,6 +1486,54 @@ export const paymentVoucherService = {
           ],
         );
         // No journal lines required for the receipt lane — journalLines stays empty.
+      } else if (v.source_type === "internal_transfer") {
+        // Both legs are the company's own accounts — no vendor, GRN, or imprest link, and no
+        // journal lines: the two bank_account_ledger_entry rows below are the authoritative
+        // record of this movement (same reasoning as the sales_receipt lane just above —
+        // nothing external to reconcile against).
+        branchCandidate = narrow(branchCandidate, (bankAccount as any).branch_id ?? null);
+
+        // Debit leg — source account (already locked above as `bankAccount`).
+        runningBalance = roundMoney(runningBalance - amount);
+        await connection.execute(
+          `INSERT INTO bank_account_ledger_entry
+             (id, bank_account_id, entry_date, voucher_id, debit_amount, credit_amount,
+              payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
+           VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'voucher', ?)`,
+          [
+            randomUUID(), v.bank_account_id, paymentDate, id, amount, v.payable_account_id,
+            `Internal transfer out — voucher ${v.voucher_number}`, transactionRef, runningBalance, actorUserId,
+          ],
+        );
+
+        // Credit leg — destination account, locked and given its own running_balance lineage,
+        // same FOR UPDATE discipline the source account got above. Re-locked and re-validated
+        // here rather than trusted from raise()'s earlier check, since the balance being
+        // written now is computed under THIS lock, not that one.
+        const [[destAccount]] = await connection.execute<RowDataPacket[]>(
+          `SELECT opening_balance, active_status FROM company_bank_account WHERE id = ? FOR UPDATE`,
+          [v.destination_bank_account_id],
+        );
+        if (!destAccount) throw new PaymentVoucherError("Destination bank account not found", 404);
+        if (!(destAccount as any).active_status) throw new PaymentVoucherError("The destination bank account is closed");
+        const [[destLastEntry]] = await connection.execute<RowDataPacket[]>(
+          `SELECT running_balance FROM bank_account_ledger_entry
+             WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+          [v.destination_bank_account_id],
+        );
+        const destRunningBalance = roundMoney(
+          (destLastEntry ? Number((destLastEntry as any).running_balance) : Number((destAccount as any).opening_balance)) + amount,
+        );
+        await connection.execute(
+          `INSERT INTO bank_account_ledger_entry
+             (id, bank_account_id, entry_date, voucher_id, debit_amount, credit_amount,
+              payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
+           VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 'voucher', ?)`,
+          [
+            randomUUID(), v.destination_bank_account_id, paymentDate, id, amount, v.payable_account_id,
+            `Internal transfer in — voucher ${v.voucher_number}`, transactionRef, destRunningBalance, actorUserId,
+          ],
+        );
       } else {
         // 'general' lane — no vendor GRN or imprest manager to update, just the bank debit
         // against whatever Payable Account (Salary Payable / Statutory Dues / Bank Charges /
