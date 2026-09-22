@@ -56,6 +56,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getApplicableChecks } from "../ats/bgv-verification.service.js";
+import { nonReactivatableSqlList } from "../exit/exitEmploymentStatus.js";
 
 export type EligibilityBlocker = {
   code: string;
@@ -74,6 +75,10 @@ export type EligibilityResult = {
   /** Already issued — carries the existing letter number. */
   alreadyIssued: boolean;
   existingLetterNumber: string | null;
+  /** Days since `employees.created_at` — the employee ID creation SLA clock. */
+  daysSinceIdCreated: number;
+  /** `daysSinceIdCreated > 3`. */
+  idCreationSlaBreached: boolean;
 };
 
 /** Statuses that mean a checklist item is genuinely finished. */
@@ -144,7 +149,7 @@ export async function evaluateAppointmentLetterEligibility(employeeId: string): 
   const warnings: EligibilityBlocker[] = [];
 
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id, e.employee_code, e.branch_id, e.date_of_joining,
+    `SELECT e.id, e.employee_code, e.branch_id, e.date_of_joining, e.created_at,
             COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS full_name,
             b.branch_name, COALESCE(b.address, '') AS branch_address,
             d.designation_name,
@@ -162,6 +167,7 @@ export async function evaluateAppointmentLetterEligibility(employeeId: string): 
       employeeId, employeeCode: null, employeeName: null, eligible: false,
       blockers: [{ code: "employee_not_found", reason: "No such employee.", severity: "critical" }],
       warnings: [], alreadyIssued: false, existingLetterNumber: null,
+      daysSinceIdCreated: 0, idCreationSlaBreached: false,
     };
   }
 
@@ -394,6 +400,10 @@ export async function evaluateAppointmentLetterEligibility(employeeId: string): 
     });
   }
 
+  const daysSinceIdCreated = emp.created_at
+    ? Math.floor((Date.now() - new Date(emp.created_at).getTime()) / 86_400_000)
+    : 0;
+
   return {
     employeeId,
     employeeCode: emp.employee_code ? String(emp.employee_code) : null,
@@ -403,6 +413,8 @@ export async function evaluateAppointmentLetterEligibility(employeeId: string): 
     warnings,
     alreadyIssued: Boolean(existing),
     existingLetterNumber: existing ? String(existing.letter_number) : null,
+    daysSinceIdCreated,
+    idCreationSlaBreached: daysSinceIdCreated > 3,
   };
 }
 
@@ -452,6 +464,12 @@ export async function listAppointmentLetterQueue(
 ): Promise<EligibilityResult[]> {
   const conds: string[] = [
     "e.active_status = 1",
+    // Was active_status alone, with no employment_status check at all — unlike the
+    // Joining Documents Tracker, which excludes exited employees explicitly. An
+    // employee routed through Exit Management stayed in this queue until
+    // active_status happened to catch up. nonReactivatableSqlList() is the same
+    // canonical guard list the tracker uses (exitEmploymentStatus.ts).
+    `(e.employment_status IS NULL OR e.employment_status NOT IN (${nonReactivatableSqlList()}))`,
     "e.legacy_emp_id IS NULL",
     `NOT EXISTS (SELECT 1 FROM appointment_letter_issue i
                    WHERE i.employee_id = e.id AND i.status <> 'revoked')`,

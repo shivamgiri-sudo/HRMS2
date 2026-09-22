@@ -23,4 +23,14 @@ describe("Appointment letter queue — list/detail agreement", () => {
     const queueFn = service.slice(service.indexOf("export async function listAppointmentLetterQueue"));
     expect(queueFn).toContain("e.legacy_emp_id IS NULL");
   });
+
+  // The queue's population filter used to be `e.active_status = 1` alone, with no
+  // employment_status check at all — unlike the Joining Documents Tracker, which
+  // excludes exited employees explicitly. An employee routed through Exit
+  // Management stayed in this queue until active_status happened to catch up.
+  it("excludes exited employees by employment_status, not just active_status", () => {
+    const queueFn = service.slice(service.indexOf("export async function listAppointmentLetterQueue"));
+    expect(queueFn).toContain("e.active_status = 1");
+    expect(queueFn).toContain("nonReactivatableSqlList");
+  });
 });

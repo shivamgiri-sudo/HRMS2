@@ -49,6 +49,8 @@ const READY = {
   branch_id: "b1", branch_name: "NOIDA-2", branch_address: "A-45, Sector 63",
   designation_name: "EXECUTIVE", date_of_joining: new Date("2025-09-25T18:30:00Z"),
   candidate_id: "cand-1",
+  // 10 days ago, fixed relative to "now" so the SLA test below is not a moving target.
+  created_at: new Date(Date.now() - 10 * 86_400_000),
 };
 
 function setup(over: Partial<typeof state> = {}) {
@@ -238,5 +240,27 @@ describe("every failing reason is reported, not just the first", () => {
       "bgv_adverse", "joining_documents_incomplete", "branch_address_missing", "salary_not_reviewed",
     ]));
     expect(r.blockers.length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("employee-ID creation SLA", () => {
+  it("reports days_since_id_created and breaches past 3 days", async () => {
+    const r = await evaluateAppointmentLetterEligibility("emp-1");
+    expect(r.daysSinceIdCreated).toBe(10);
+    expect(r.idCreationSlaBreached).toBe(true);
+  });
+
+  it("does not breach at or under 3 days", async () => {
+    setup({ employee: [{ ...READY, created_at: new Date(Date.now() - 2 * 86_400_000) }] });
+    const r = await evaluateAppointmentLetterEligibility("emp-1");
+    expect(r.daysSinceIdCreated).toBe(2);
+    expect(r.idCreationSlaBreached).toBe(false);
+  });
+
+  it("is false/0 when the employee is not found", async () => {
+    setup({ employee: [] });
+    const r = await evaluateAppointmentLetterEligibility("emp-1");
+    expect(r.daysSinceIdCreated).toBe(0);
+    expect(r.idCreationSlaBreached).toBe(false);
   });
 });
