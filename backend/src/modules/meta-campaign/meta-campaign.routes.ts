@@ -937,7 +937,7 @@ metaCampaignRouter.get(
          FROM job_requisition jr
          LEFT JOIN designation_master dm ON dm.id = jr.designation_id
          LEFT JOIN branch_master bm ON bm.branch_name = jr.branch_name
-        WHERE jr.status IN ('open','approved','active')
+        WHERE jr.approval_status IN ('open','approved','active')
           ${branchFilter}
         ORDER BY jr.created_at DESC
         LIMIT ?`,
