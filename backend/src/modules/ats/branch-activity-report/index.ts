@@ -11,7 +11,7 @@ import { env } from "../../../config/env.js";
 import { getCurrentDateIST, getGeneratedAtIST } from "../../../shared/istDate.js";
 import { canonicalBranch, recruiterKey } from "../ats-vocabulary.js";
 import { fetchRawFacts } from "./query.js";
-import { addDays, buildReport, monthStartOf, toFact, type ReportData } from "./metrics.js";
+import { addDays, buildReport, monthStartOf, toFact, type ReportData, type TokenFact } from "./metrics.js";
 import { renderEmail, subjectLine } from "./template.js";
 import { resolveRecipients } from "./recipients.js";
 
@@ -46,6 +46,79 @@ async function loadFacts(reportDate: string) {
 export async function getBranchActivityReportData(reportDate: string = getCurrentDateIST()): Promise<ReportData> {
   const facts = await loadFacts(reportDate);
   return buildReport({ facts, reportDate });
+}
+
+function escapeCsv(v: string | number | null | undefined): string {
+  const s = v == null ? "" : String(v);
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function outcomeLabel(o: string): string {
+  const map: Record<string, string> = {
+    selected: "Selected",
+    rejected: "Rejected",
+    no_show: "No Show",
+    walkout: "Walk Out",
+    hold: "On Hold",
+    client_round: "Client Round",
+    other_closed: "Other/Closed",
+    open: "Open/Pending",
+  };
+  return map[o] || o;
+}
+
+export interface ExportRow {
+  branch: string;
+  tokenNumber: string;
+  candidateName: string;
+  process: string;
+  recruiter: string;
+  arrivalDate: string;
+  arrivalTime: string;
+  formDate: string;
+  status: string;
+  waitMinutes: string;
+  handleMinutes: string;
+}
+
+export async function getBranchActivityExportData(
+  reportDate: string = getCurrentDateIST(),
+  branchFilter?: string
+): Promise<{ rows: ExportRow[]; csv: string }> {
+  const facts = await loadFacts(reportDate);
+  const filtered = branchFilter
+    ? facts.filter((f) => f.branch.toLowerCase() === branchFilter.toLowerCase())
+    : facts;
+
+  const exportRows: ExportRow[] = filtered.map((f) => ({
+    branch: f.branch,
+    tokenNumber: f.tokenNumber,
+    candidateName: f.candidateName,
+    process: f.process,
+    recruiter: f.recruiter,
+    arrivalDate: f.arrivalDate,
+    arrivalTime: f.arrivalHhmm,
+    formDate: f.formDate || "",
+    status: outcomeLabel(f.outcome),
+    waitMinutes: f.waitMin != null ? String(f.waitMin) : "",
+    handleMinutes: f.handleMin != null ? String(f.handleMin) : "",
+  }));
+
+  const headers = [
+    "Branch", "Token Number", "Candidate Name", "Process", "Recruiter",
+    "Arrival Date", "Arrival Time", "Form Date", "Status", "Wait (min)", "Handle (min)",
+  ];
+  const csvLines = [
+    headers.join(","),
+    ...exportRows.map((r) =>
+      [
+        r.branch, r.tokenNumber, r.candidateName, r.process, r.recruiter,
+        r.arrivalDate, r.arrivalTime, r.formDate, r.status, r.waitMinutes, r.handleMinutes,
+      ].map(escapeCsv).join(",")
+    ),
+  ];
+  return { rows: exportRows, csv: csvLines.join("\r\n") };
 }
 
 /** One report per branch, each computed from that branch's tokens only. */

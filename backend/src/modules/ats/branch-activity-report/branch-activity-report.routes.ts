@@ -7,7 +7,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../../../middleware/authMiddleware.js";
 import { requireRole } from "../../../middleware/requireRole.js";
 import { getCurrentDateIST } from "../../../shared/istDate.js";
-import { getBranchActivityReportData } from "./index.js";
+import { getBranchActivityReportData, getBranchActivityExportData } from "./index.js";
 
 export const branchActivityReportRouter = Router();
 
@@ -32,6 +32,27 @@ branchActivityReportRouter.get("/", async (req: Request, res: Response) => {
   try {
     const data = await getBranchActivityReportData(date || getCurrentDateIST());
     return res.json({ success: true, data });
+  } catch (error: unknown) {
+    return res.status(500).json({ success: false, message: getErrorMessage(error) });
+  }
+});
+
+// ── GET /export — downloadable CSV with complete candidate details ─────────────────────────
+branchActivityReportRouter.get("/export", async (req: Request, res: Response) => {
+  const date = typeof req.query.date === "string" ? req.query.date : undefined;
+  const branch = typeof req.query.branch === "string" ? req.query.branch : undefined;
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ success: false, message: "date must be YYYY-MM-DD" });
+  }
+  try {
+    const reportDate = date || getCurrentDateIST();
+    const { rows, csv } = await getBranchActivityExportData(reportDate, branch);
+    const filename = branch
+      ? `recruitment-activity-${branch}-${reportDate}.csv`
+      : `recruitment-activity-all-branches-${reportDate}.csv`;
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.send(csv);
   } catch (error: unknown) {
     return res.status(500).json({ success: false, message: getErrorMessage(error) });
   }
