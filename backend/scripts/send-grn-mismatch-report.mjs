@@ -81,7 +81,7 @@ const money = (n) => new Intl.NumberFormat('en-IN', { minimumFractionDigits: 0, 
 async function getDbBillGrns(conn) {
   const [rows] = await conn.execute(`
     SELECT
-      COALESCE(bm.BranchName,
+      COALESCE(bm.branch_name,
         CASE eem.BranchId
           WHEN 2 THEN 'NOIDA' WHEN 3 THEN 'HEAD OFFICE' WHEN 5 THEN 'AHMEDABAD-JALDARSHAN'
           WHEN 6 THEN 'AHMEDABAD-NEELAKANTH' WHEN 7 THEN 'NOIDA' WHEN 9 THEN 'NOIDA-2'
