@@ -29,14 +29,12 @@ import {
   Phone,
   RefreshCcw,
   Search,
-  Send,
   Users,
   X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EmptyState, num } from "@/components/analytics/analytics-kit";
 import {
   Select,
@@ -146,15 +144,14 @@ export default function MetaLeadsPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
 
-  // WhatsApp notification
-  const [notifying, setNotifying] = useState<Set<string>>(new Set());
-  const [notifyResult, setNotifyResult] = useState<Record<string, { ok: boolean; msg: string }>>({});
+  // WhatsApp notification — per-lead status
+  const [notifyResults, setNotifyResults] = useState<Record<string, 'sending' | 'sent' | 'failed'>>({});
+  // sentOverrides tracks leads notified this session (before next server reload)
+  const [sentOverrides, setSentOverrides] = useState<Set<string>>(new Set());
 
-  // Compose modal
-  const [composeFor, setComposeFor] = useState<{ id: string; name: string | null; phone: string | null } | null>(null);
-  const [composeText, setComposeText] = useState("");
-  const [composeSending, setComposeSending] = useState(false);
-  const [composeResult, setComposeResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  // Bulk notify state
+  const [bulkNotifying, setBulkNotifying] = useState(false);
+  const [bulkResult, setBulkResult] = useState<{ sent: number; failed: number } | null>(null);
 
   const load = useCallback(
     async (isRefresh = false) => {
@@ -231,59 +228,41 @@ export default function MetaLeadsPage() {
 
   const notifyLead = useCallback(async (leadId: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    setNotifying((prev) => new Set(prev).add(leadId));
+    setNotifyResults((prev) => ({ ...prev, [leadId]: 'sending' }));
     try {
-      const res = await hrmsApi.post<{
-        success: boolean;
-        data: { succeeded: string[]; failed: Array<{ channel: string; error: string }> };
-      }>(`/api/meta/leads/${leadId}/notify`, {});
-      const succeeded = res.data?.succeeded ?? [];
-      const failed = res.data?.failed ?? [];
-      const ok = succeeded.length > 0;
-      const msg = ok
-        ? `Sent via: ${succeeded.join(", ")}`
-        : failed.length
-        ? `Failed: ${failed.map((f) => f.channel).join(", ")}`
-        : "No channels succeeded";
-      setNotifyResult((prev) => ({ ...prev, [leadId]: { ok, msg } }));
-      // Update the row and drawer so "Notified" shows immediately
-      if (ok) {
-        const now = new Date().toISOString();
-        setRows((prev) => prev.map((r) => (r.id === leadId ? { ...r, notificationSentAt: now } : r)));
-        setDetail((prev) => (prev?.id === leadId ? { ...prev, notificationSentAt: now } : prev));
-      }
-    } catch (err: unknown) {
-      setNotifyResult((prev) => ({
-        ...prev,
-        [leadId]: { ok: false, msg: (err as { message?: string })?.message || "Request failed" },
-      }));
-    } finally {
-      setNotifying((prev) => {
-        const next = new Set(prev);
-        next.delete(leadId);
-        return next;
-      });
+      await hrmsApi.post(`/api/meta/leads/${leadId}/notify`, {});
+      setNotifyResults((prev) => ({ ...prev, [leadId]: 'sent' }));
+      setSentOverrides((prev) => new Set([...prev, leadId]));
+      const now = new Date().toISOString();
+      setRows((prev) => prev.map((r) => (r.id === leadId ? { ...r, notificationSentAt: now } : r)));
+      setDetail((prev) => (prev?.id === leadId ? { ...prev, notificationSentAt: now } : prev));
+    } catch {
+      setNotifyResults((prev) => ({ ...prev, [leadId]: 'failed' }));
     }
   }, []);
 
-  async function handleComposeSend() {
-    if (!composeFor || !composeText.trim()) return;
-    setComposeSending(true);
-    setComposeResult(null);
-    try {
-      await hrmsApi.post(`/api/meta/leads/${composeFor.id}/reply`, { message: composeText.trim() });
-      setComposeResult({ ok: true, msg: "Message sent — visible in WhatsApp Inbox." });
-      setComposeText("");
-      setRows((prev) => prev.map((r) => r.id === composeFor.id ? { ...r, notificationSentAt: new Date().toISOString() } : r));
-      setTimeout(() => { setComposeFor(null); setComposeResult(null); }, 1500);
-    } catch (err: unknown) {
-      const msg = err && typeof err === "object" && "response" in err
-        ? (err as { response?: { data?: { message?: string } } }).response?.data?.message
-        : undefined;
-      setComposeResult({ ok: false, msg: msg ?? "Send failed. Check Wassenger config." });
-    } finally {
-      setComposeSending(false);
+  async function notifyAllQualified() {
+    if (bulkNotifying) return;
+    const unnotified = rows.filter(
+      (r) => r.screeningResult === 'qualified' && !sentOverrides.has(r.id) && !r.notificationSentAt
+    );
+    if (unnotified.length === 0) return;
+    setBulkNotifying(true);
+    setBulkResult(null);
+    let sent = 0, failed = 0;
+    for (const lead of unnotified) {
+      try {
+        await hrmsApi.post(`/api/meta/leads/${lead.id}/notify`, {});
+        sent++;
+        setSentOverrides((prev) => new Set([...prev, lead.id]));
+        setRows((prev) => prev.map((r) => r.id === lead.id ? { ...r, notificationSentAt: new Date().toISOString() } : r));
+      } catch {
+        failed++;
+      }
+      await new Promise((r) => setTimeout(r, 300));
     }
+    setBulkNotifying(false);
+    setBulkResult({ sent, failed });
   }
 
   const page = Math.floor(offset / PAGE_SIZE) + 1;
@@ -472,6 +451,25 @@ export default function MetaLeadsPage() {
               <X className="h-4 w-4" /> Clear
             </button>
           )}
+          {screening === "qualified" && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => void notifyAllQualified()}
+                disabled={bulkNotifying}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
+              >
+                <MessageCircle className="h-4 w-4" />
+                {bulkNotifying
+                  ? 'Notifying…'
+                  : `Notify All (${rows.filter((r) => r.screeningResult === 'qualified' && !sentOverrides.has(r.id) && !r.notificationSentAt).length})`}
+              </button>
+              {bulkResult && (
+                <span className="text-sm font-medium text-emerald-700">
+                  {bulkResult.sent} sent{bulkResult.failed > 0 ? `, ${bulkResult.failed} failed` : ''}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -600,18 +598,23 @@ export default function MetaLeadsPage() {
                             <span className="text-slate-400">—</span>
                           )}
                         </div>
-                        {l.screeningResult === "qualified" && !l.notificationSentAt && (
+                        {l.screeningResult === "qualified" && !(sentOverrides.has(l.id) || l.notificationSentAt) && (
                           <button
-                            onClick={(e) => { e.stopPropagation(); setComposeFor({ id: l.id, name: l.parsedName, phone: l.parsedPhone }); setComposeText(""); setComposeResult(null); }}
-                            className="mt-1 inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-0.5 text-xs font-semibold text-white hover:bg-emerald-700"
-                            title="Compose WhatsApp message"
+                            onClick={(e) => void notifyLead(l.id, e)}
+                            disabled={notifyResults[l.id] === 'sending'}
+                            className="mt-1 inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-0.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                           >
                             <MessageCircle className="h-3 w-3" />
-                            Notify
+                            {notifyResults[l.id] === 'sending' ? '…' : notifyResults[l.id] === 'failed' ? 'Retry' : 'Notify'}
                           </button>
                         )}
-                        {l.notificationSentAt && (
-                          <div className="text-xs text-emerald-600">✓ notified</div>
+                        {notifyResults[l.id] === 'failed' && (
+                          <div className="text-xs text-rose-500">send failed</div>
+                        )}
+                        {(sentOverrides.has(l.id) || l.notificationSentAt) && (
+                          <div className="text-xs text-emerald-600">
+                            ✓ notified {l.notificationSentAt ? fmtDateTime(l.notificationSentAt) : 'just now'}
+                          </div>
                         )}
                       </td>
                       <td className="px-3 py-2.5 text-xs text-slate-400">{fmtDateTime(l.createdAt)}</td>
@@ -706,22 +709,22 @@ export default function MetaLeadsPage() {
                   <p className="mt-1 text-sm font-semibold text-slate-700">
                     {detail.atsCandidateId ? "Created" : "Not created"}
                   </p>
-                  {detail.notificationSentAt ? (
-                    <p className="mt-0.5 text-xs text-emerald-600">✓ Notified {fmtDateTime(detail.notificationSentAt)}</p>
+                  {(sentOverrides.has(detail.id) || detail.notificationSentAt) ? (
+                    <p className="mt-0.5 text-xs text-emerald-600">
+                      ✓ Notified {detail.notificationSentAt ? fmtDateTime(detail.notificationSentAt) : 'just now'}
+                    </p>
                   ) : detail.screeningResult === "qualified" ? (
                     <div className="mt-1.5 space-y-1">
                       <button
                         onClick={() => void notifyLead(detail.id)}
-                        disabled={notifying.has(detail.id)}
+                        disabled={notifyResults[detail.id] === 'sending'}
                         className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                       >
                         <MessageCircle className="h-3.5 w-3.5" />
-                        {notifying.has(detail.id) ? "Sending…" : "Send WhatsApp Notification"}
+                        {notifyResults[detail.id] === 'sending' ? "Sending…" : "Send WhatsApp Notification"}
                       </button>
-                      {notifyResult[detail.id] && (
-                        <p className={`text-xs ${notifyResult[detail.id].ok ? "text-emerald-600" : "text-rose-600"}`}>
-                          {notifyResult[detail.id].msg}
-                        </p>
+                      {notifyResults[detail.id] === 'failed' && (
+                        <p className="text-xs text-rose-600">Send failed — check Wassenger config and retry.</p>
                       )}
                     </div>
                   ) : (
@@ -796,56 +799,6 @@ export default function MetaLeadsPage() {
           </div>
         </SheetContent>
       </Sheet>
-      {/* Compose WhatsApp modal */}
-      <Dialog open={!!composeFor} onOpenChange={(o) => { if (!o) { setComposeFor(null); setComposeResult(null); setComposeText(""); } }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <MessageCircle className="h-5 w-5 text-emerald-600" />
-              Send WhatsApp Message
-            </DialogTitle>
-            <DialogDescription>
-              {composeFor?.name ?? "Candidate"} · {composeFor?.phone ?? "no phone"}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 pt-2">
-            <textarea
-              className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none min-h-[100px]"
-              placeholder="Type your WhatsApp message here…"
-              value={composeText}
-              onChange={(e) => setComposeText(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void handleComposeSend(); }}
-              autoFocus
-            />
-            {composeResult && (
-              <p className={`text-sm font-medium ${composeResult.ok ? "text-emerald-600" : "text-rose-600"}`}>
-                {composeResult.msg}
-              </p>
-            )}
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-slate-400">Sent via Wassenger · Ctrl+Enter to send</p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => { setComposeFor(null); setComposeResult(null); setComposeText(""); }}
-                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleComposeSend()}
-                  disabled={composeSending || !composeText.trim()}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  <Send className="h-3.5 w-3.5" />
-                  {composeSending ? "Sending…" : "Send"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </DashboardLayout>
   );
 }
