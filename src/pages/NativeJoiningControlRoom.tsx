@@ -423,6 +423,7 @@ export default function NativeJoiningControlRoom() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const esignRecheckFiredFor = React.useRef<string | null>(null);
 
   const selected = useMemo(() => queue.find((row) => row.candidate_id === selectedId) || null, [queue, selectedId]);
 
@@ -462,7 +463,12 @@ export default function NativeJoiningControlRoom() {
   };
 
   useEffect(() => { loadQueue(); }, []);
-  useEffect(() => { if (selectedId) loadDetail(selectedId); }, [selectedId]);
+  useEffect(() => {
+    if (selectedId) {
+      esignRecheckFiredFor.current = null; // reset so the new candidate gets a fresh check
+      loadDetail(selectedId);
+    }
+  }, [selectedId]);
 
   const saveDates = async () => {
     if (!selectedId) return;
@@ -500,6 +506,20 @@ export default function NativeJoiningControlRoom() {
       setError(err.message || `Unable to save ${section}`);
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Called automatically when the E-Sign tab is opened — fires the provider recheck
+  // without touching `busy` or showing a message so it doesn't disrupt the HR flow.
+  const silentEsignRecheck = async (candidateId: string) => {
+    if (esignRecheckFiredFor.current === candidateId) return; // already checked this session
+    esignRecheckFiredFor.current = candidateId;
+    try {
+      await hrmsApi.post(`/api/ats/joining-control-room/candidates/${candidateId}/esign/recheck`, {});
+      const res = await hrmsApi.get<{ success: boolean; data: Detail }>(`/api/ats/joining-control-room/candidates/${candidateId}`);
+      setDetail(res.data);
+    } catch {
+      // Silently swallow — the manual "Check e-sign status now" button is still there
     }
   };
 
@@ -657,7 +677,16 @@ export default function NativeJoiningControlRoom() {
                   )}
                 </div>
 
-                <Tabs defaultValue="summary" className="p-4">
+                <Tabs defaultValue="summary" className="p-4"
+                  onValueChange={(tab) => {
+                    // Auto-pull fresh eSign status when HR opens the tab, unless the kit
+                    // is already fully completed — avoids a stale "esign_initiated" display
+                    // caused by the reconciliation worker's backoff schedule (up to 60 min).
+                    if (tab === "esign" && selectedId && detail?.esign?.kit_status !== "completed") {
+                      void silentEsignRecheck(selectedId);
+                    }
+                  }}
+                >
                   <TabsList className="mb-4 flex h-auto flex-wrap justify-start">
                     {[
                       ["summary", "Summary"],
