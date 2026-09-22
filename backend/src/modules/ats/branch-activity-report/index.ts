@@ -1,8 +1,10 @@
 /**
  * Branch Recruitment Activity Report — orchestrator.
  *
- * NOT wired to any cron, route or worker. Nothing sends until a caller invokes
- * sendBranchActivityReport() with recipients and dryRun:false.
+ * Three consumers share the same facts/buildReport core: the daily email (scheduler.ts,
+ * off by default until ATS_BRANCH_ACTIVITY_REPORT_ENABLED=true), the in-app read
+ * (branch-activity-report.routes.ts → getBranchActivityReportData, for the ATS Command
+ * Centre "Branch Activity" tab), and any manual/on-demand send.
  */
 import nodemailer from "nodemailer";
 import { env } from "../../../config/env.js";
@@ -29,11 +31,26 @@ function dateLabel(iso: string): string {
   return d.toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
 }
 
-/** One report per branch, each computed from that branch's tokens only. */
-export async function buildBranchActivityReports(reportDate: string = getCurrentDateIST(), dashboardUrl?: string): Promise<BranchActivityReport[]> {
+/** The same token facts every consumer (email, API read, scheduler) builds its report from. */
+async function loadFacts(reportDate: string) {
   const from = [monthStartOf(reportDate), addDays(reportDate, -OPEN_TOKEN_LOOKBACK_DAYS)].sort()[0];
   const { rows } = await fetchRawFacts(from, reportDate);
-  const facts = rows.map((r) => toFact(r, canonicalBranch, recruiterKey));
+  return rows.map((r) => toFact(r, canonicalBranch, recruiterKey));
+}
+
+/**
+ * One combined report across every branch with activity, each branch broken out under
+ * `data.branches`. Read-only — no email is built or sent. Backs the ATS Command Centre's
+ * "Branch Activity" tab (branch-activity-report.routes.ts).
+ */
+export async function getBranchActivityReportData(reportDate: string = getCurrentDateIST()): Promise<ReportData> {
+  const facts = await loadFacts(reportDate);
+  return buildReport({ facts, reportDate });
+}
+
+/** One report per branch, each computed from that branch's tokens only. */
+export async function buildBranchActivityReports(reportDate: string = getCurrentDateIST(), dashboardUrl?: string): Promise<BranchActivityReport[]> {
+  const facts = await loadFacts(reportDate);
   const generatedAt = getGeneratedAtIST();
   const branches = [...new Set(facts.map((f) => f.branch))].sort();
 

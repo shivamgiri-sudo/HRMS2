@@ -7,7 +7,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../../../middleware/authMiddleware.js";
 import { requireRole } from "../../../middleware/requireRole.js";
 import { getCurrentDateIST } from "../../../shared/istDate.js";
-import { buildBranchActivityReports as getBranchActivityReportData } from "./index.js";
+import { getBranchActivityReportData } from "./index.js";
 
 export const branchActivityReportRouter = Router();
 
