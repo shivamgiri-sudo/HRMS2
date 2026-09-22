@@ -242,4 +242,47 @@ describe('agreed criteria data', () => {
     expect(CAMPAIGN_CRITERIA.map((c) => c.formId)).not.toContain('2524199738118576');
     expect(CAMPAIGN_CRITERIA[0]!.config.auto_notify).toBe(false);
   });
+
+  it('Ahmedabad DRA/Collections: DRA=yes, freshers allowed, can work from Ahmedabad = yes or willing to relocate', () => {
+    const ahmedabad = CAMPAIGN_CRITERIA.find((c) => c.formId === '2856996751366206')!;
+    const idx = indexRequisitions([req({})], [
+      { formId: ahmedabad.formId, campaignName: ahmedabad.campaignName, requisitionId: null, screeningConfig: ahmedabad.config },
+    ]);
+    const run = (dra: string, workLocation: string, experience = '0 months') =>
+      evaluateLeadRow(
+        lead({
+          requisition_id: null,
+          meta_form_id: ahmedabad.formId,
+          fields: [
+            ['full_name', 'A'],
+            ['do_you_hold_a_valid_dra_certification?', dra],
+            ['can_you_work_from_our_ahmedabad_location?', workLocation],
+            ['how_many_months_of_telecalling-collections_experience_do_you_have?', experience],
+          ],
+        }),
+        idx
+      ).proposedResult;
+
+    expect(run('Yes', 'Yes')).toBe('qualified');
+    expect(run('Yes', 'Willing to relocate')).toBe('qualified');
+    expect(run('Yes', 'Yes', 'Fresher')).toBe('qualified'); // freshers explicitly allowed
+    expect(run('No', 'Yes')).toBe('disqualified'); // no DRA
+    expect(run('Yes', 'No')).toBe('disqualified'); // cannot work from Ahmedabad, not willing to relocate
+
+    // An unclear work-location answer is not verified, never treated as a rejection.
+    const ambiguous = evaluateLeadRow(
+      lead({
+        requisition_id: null,
+        meta_form_id: ahmedabad.formId,
+        fields: [
+          ['full_name', 'A'],
+          ['do_you_hold_a_valid_dra_certification?', 'Yes'],
+          ['can_you_work_from_our_ahmedabad_location?', 'Inkamtex'],
+        ],
+      }),
+      idx
+    );
+    expect(ambiguous.proposedResult).toBe('qualified');
+    expect(ambiguous.skipped.join(' ')).toContain('Can work from Ahmedabad');
+  });
 });

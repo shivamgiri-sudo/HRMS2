@@ -9,7 +9,11 @@
  * --apply only sets criteria (job_requisition.education_requirement + meta_screening_config, and
  * meta_campaign.screening_config once migration 1835 exists). It does NOT re-screen any lead and
  * messages nobody; run rescreen-meta-leads.ts afterwards for that.
- * A requisition that already has a screening config is skipped, never overwritten.
+ *
+ * A requisition/campaign that already has a screening config is skipped, never silently overwritten
+ * — pass --force to intentionally overwrite one whose criteria in shortlist-criteria.ts changed
+ * (recruitment refining a rule after it went live). --force still saves the pre-change values to the
+ * rollback SQL first, and still leaves alone anything not listed in shortlist-criteria.ts.
  */
 import "dotenv/config";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -25,6 +29,7 @@ import type { RequisitionIndex } from "../src/modules/meta-campaign/shortlist-re
 import { CAMPAIGN_CRITERIA, REQUISITION_CRITERIA } from "../src/modules/meta-campaign/shortlist-criteria.js";
 
 const apply = process.argv.includes("--apply");
+const force = process.argv.includes("--force");
 const sqlStr = (v: unknown) =>
   v === null || v === undefined ? "NULL" : `'${String(v).replace(/\\/g, "\\\\").replace(/'/g, "''")}'`;
 
@@ -78,8 +83,8 @@ async function writeCriteria(stamp: string): Promise<void> {
       console.warn(`requisition ${code} not found - skipped`);
       continue;
     }
-    if (row.meta_screening_config) {
-      console.warn(`requisition ${code} already has a screening config - skipped, not overwritten`);
+    if (row.meta_screening_config && !force) {
+      console.warn(`requisition ${code} already has a screening config - skipped, not overwritten (pass --force to update it)`);
       continue;
     }
     rollback.push(
@@ -104,11 +109,11 @@ async function writeCriteria(stamp: string): Promise<void> {
         console.warn(`campaign for form ${c.formId} not found - skipped`);
         continue;
       }
-      if (row.screening_config) {
-        console.warn(`campaign ${c.campaignName} already has criteria - skipped`);
+      if (row.screening_config && !force) {
+        console.warn(`campaign ${c.campaignName} already has criteria - skipped (pass --force to update it)`);
         continue;
       }
-      rollback.push(`UPDATE meta_campaign SET screening_config=NULL WHERE id=${sqlStr(row.id)};`);
+      rollback.push(`UPDATE meta_campaign SET screening_config=${sqlStr(row.screening_config)} WHERE id=${sqlStr(row.id)};`);
       await db.execute("UPDATE meta_campaign SET screening_config = ? WHERE id = ?", [JSON.stringify(c.config), row.id]);
       console.log(`set campaign criteria on ${c.campaignName}: ${c.note}`);
     }
@@ -123,7 +128,7 @@ async function writeCriteria(stamp: string): Promise<void> {
 
 async function main(): Promise<void> {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  console.log(`mode: ${apply ? "APPLY CRITERIA" : "PREVIEW"}  db=${process.env.DB_HOST}:${process.env.DB_PORT}`);
+  console.log(`mode: ${apply ? "APPLY CRITERIA" : "PREVIEW"}${force ? " (force)" : ""}  db=${process.env.DB_HOST}:${process.env.DB_PORT}`);
 
   const base = await loadRequisitionIndex();
   const before = summarise((await evaluateAllLeads(base)).evaluations, base);

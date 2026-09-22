@@ -80,7 +80,20 @@ export const CAMPAIGN_CRITERIA: CampaignCriteriaDef[] = [
   {
     formId: '2856996751366206',
     campaignName: 'AHMEDABAD DRA/Collections (JR pending)',
-    config: { certifications: ['DRA'], auto_notify: false },
-    note: 'Valid DRA certification = yes.',
+    config: {
+      certifications: ['DRA'],
+      auto_notify: false,
+      // Experience is deliberately NOT gated: freshers are explicitly allowed alongside experienced
+      // candidates, so no custom_field_rules entry is added for the months-of-experience question.
+      custom_field_rules: [
+        {
+          field: 'can_you_work_from_our_ahmedabad_location',
+          op: 'is_yes',
+          value: '',
+          label: 'Can work from Ahmedabad (yes or willing to relocate)',
+        },
+      ],
+    },
+    note: 'Valid DRA certification = yes; freshers also allowed; can work from Ahmedabad = yes or willing to relocate.',
   },
 ];
