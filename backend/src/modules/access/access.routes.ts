@@ -37,8 +37,8 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
 };
 
 type UserListRow = {
-  id: string;
-  email: string;
+  id: string | null;
+  email: string | null;
   full_name: string | null;
   employee_code: string | null;
   employee_id: string | null;
@@ -48,6 +48,7 @@ type UserListRow = {
   failed_login_attempts: number;
   last_login_at: string | null;
   roles: string | null;
+  no_account: number;
 };
 
 type RoleSummaryRow = {
@@ -147,10 +148,14 @@ router.get("/users", requireRole("admin", "hr", "super_admin"), h(async (req: Au
   const searchFilter = search
     ? `AND (au.email LIKE ? OR e.full_name LIKE ? OR e.employee_code LIKE ?)`
     : "";
-  const params: unknown[] = search ? [like, like, like] : [];
+  // Arm 1 params: auth_user search (email, full_name, employee_code)
+  const arm1Params: unknown[] = search ? [like, like, like] : [];
+  // Arm 2: active employees with no auth account — only included when there is a search term
+  const arm2SearchFilter = search ? `AND (e.full_name LIKE ? OR e.employee_code LIKE ?)` : "";
+  const arm2Params: unknown[] = search ? [like, like] : [];
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
+  const unionSql = `
+    SELECT
        au.id,
        au.email,
        au.is_blocked,
@@ -161,24 +166,42 @@ router.get("/users", requireRole("admin", "hr", "super_admin"), h(async (req: Au
        e.id AS employee_id,
        e.employee_code,
        e.employment_status,
-       GROUP_CONCAT(DISTINCT ur.role_key ORDER BY ur.role_key) AS roles
+       GROUP_CONCAT(DISTINCT ur.role_key ORDER BY ur.role_key) AS roles,
+       0 AS no_account
      FROM auth_user au
      LEFT JOIN employees e ON e.user_id = au.id AND e.active_status = 1
      LEFT JOIN user_roles ur ON ur.user_id = au.id AND ur.active_status = 1
      WHERE 1=1 ${blockFilter} ${searchFilter}
      GROUP BY au.id, au.email, au.is_blocked, au.locked_until, au.failed_login_attempts,
               au.last_login_at, e.id, e.full_name, e.employee_code, e.employment_status
-     ORDER BY COALESCE(e.full_name, au.email)
+     ${search ? `UNION ALL
+     SELECT
+       NULL AS id,
+       NULL AS email,
+       0 AS is_blocked,
+       NULL AS locked_until,
+       0 AS failed_login_attempts,
+       NULL AS last_login_at,
+       e.full_name,
+       e.id AS employee_id,
+       e.employee_code,
+       e.employment_status,
+       NULL AS roles,
+       1 AS no_account
+     FROM employees e
+     WHERE e.user_id IS NULL AND e.active_status = 1 ${arm2SearchFilter}` : ""}
+  `;
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM (${unionSql}) AS combined
+     ORDER BY full_name
      LIMIT ${limit} OFFSET ${offset}`,
-    params
+    [...arm1Params, ...arm2Params]
   );
 
   const [countRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(DISTINCT au.id) AS total
-     FROM auth_user au
-     LEFT JOIN employees e ON e.user_id = au.id AND e.active_status = 1
-     WHERE 1=1 ${blockFilter} ${searchFilter}`,
-    params
+    `SELECT COUNT(*) AS total FROM (${unionSql}) AS combined`,
+    [...arm1Params, ...arm2Params]
   );
 
   const total = Number((countRows as RowDataPacket[])[0]?.total ?? 0);
@@ -186,8 +209,8 @@ router.get("/users", requireRole("admin", "hr", "super_admin"), h(async (req: Au
   res.json({
     success: true,
     data: (rows as UserListRow[]).map((row) => ({
-      id: row.id,
-      email: row.email,
+      id: row.id ?? null,
+      email: row.email ?? null,
       is_blocked: !!row.is_blocked,
       locked_until: row.locked_until ?? null,
       failed_login_attempts: row.failed_login_attempts ?? 0,
@@ -197,6 +220,7 @@ router.get("/users", requireRole("admin", "hr", "super_admin"), h(async (req: Au
       employee_code: row.employee_code ?? null,
       employment_status: row.employment_status ?? null,
       roles: row.roles ? String(row.roles).split(",") : [],
+      no_account: !!row.no_account,
     })),
     total,
     meta: { limit, offset, total },

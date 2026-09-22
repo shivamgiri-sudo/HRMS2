@@ -74,11 +74,13 @@ interface RoleInfo {
 }
 
 interface UserOption {
-  id: string;
-  email: string;
+  id: string | null;
+  email: string | null;
   full_name: string;
   employee_code?: string | null;
+  employee_id?: string | null;
   roles?: string[];
+  no_account?: boolean;
 }
 
 interface UserRole {
@@ -870,22 +872,27 @@ export default function UnifiedAccessControl() {
                 ) : (
                   users.map((user) => (
                     <button
-                      key={user.id}
+                      key={user.id ?? user.employee_id}
                       type="button"
                       onClick={() => {
                         setSelectedUser(user);
                         setAssignOpen(false);
                       }}
                       className={`w-full rounded-xl border p-3 text-left transition ${
-                        selectedUser?.id === user.id
+                        selectedUser?.id === user.id && selectedUser?.employee_id === user.employee_id
                           ? "border-indigo-300 bg-indigo-50"
                           : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
                       }`}
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <div className="font-bold text-slate-950">{user.full_name || user.email}</div>
-                          <div className="text-xs text-slate-500">{user.employee_code ?? "No employee code"} • {user.email}</div>
+                          <div className="font-bold text-slate-950 flex items-center gap-2">
+                            {user.full_name || user.email}
+                            {user.no_account && (
+                              <span className="text-[10px] font-semibold bg-amber-100 text-amber-700 rounded px-1.5 py-0.5">No Login</span>
+                            )}
+                          </div>
+                          <div className="text-xs text-slate-500">{user.employee_code ?? "No employee code"} • {user.email ?? "No email"}</div>
                         </div>
                         <ChevronRight className="h-4 w-4 text-slate-400" />
                       </div>
@@ -907,13 +914,19 @@ export default function UnifiedAccessControl() {
                     <h2 className="text-lg font-black text-slate-950">Selected User Roles</h2>
                     <p className="text-sm text-slate-500">Assign and revoke roles with security audit logging.</p>
                   </div>
-                  <Button disabled={!selectedUser} onClick={() => setAssignOpen(true)}>
+                  <Button disabled={!selectedUser || !!selectedUser.no_account} onClick={() => setAssignOpen(true)}>
                     <Plus className="mr-2 h-4 w-4" />
                     Assign Role
                   </Button>
                 </div>
                 {!selectedUser ? (
                   <EmptyState text="Select a user from the search panel to manage roles." />
+                ) : selectedUser.no_account ? (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                    <div className="font-black text-slate-950">{selectedUser.full_name}</div>
+                    <div className="text-sm text-slate-500 mt-0.5">{selectedUser.employee_code ?? "No employee code"}</div>
+                    <p className="mt-3 text-sm text-amber-800">This employee does not have a login account yet. Create an account for them first via the Employee Profile page, then return here to assign roles.</p>
+                  </div>
                 ) : (
                   <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
                     <div className="font-black text-slate-950">{selectedUser.full_name || selectedUser.email}</div>
