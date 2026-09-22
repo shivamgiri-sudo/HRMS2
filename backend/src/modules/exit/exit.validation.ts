@@ -13,7 +13,7 @@ export const createExitRequestSchema = z.object({
   lastWorkingDayProposed: z.string().regex(DATE_REGEX, "Date must be YYYY-MM-DD").optional(),
   exitType: z.enum(["voluntary", "involuntary"]),
   exitSubType: z
-    .enum(["resignation", "retirement", "mutual_separation", "termination", "absconding", "contract_end", "abandonment"])
+    .enum(["resignation", "retirement", "mutual_separation", "termination", "absconding", "contract_end", "abandonment", "did_not_join"])
     .optional()
     .default("resignation"),
   exitReasonCategory: z.string().trim().max(100).nullable().optional(),
