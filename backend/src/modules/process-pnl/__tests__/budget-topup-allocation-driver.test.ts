@@ -117,7 +117,11 @@ function makeExecute(state: ReturnType<typeof makeState>) {
     // listActiveCostCentres' real query prefixes every column with "ccm." (ccm.branch_id,
     // ccm.active_status), so a bare "branch_id = ? AND active_status = 1" substring never matches
     // it — checked separately below for exactly that reason.
-    if (/FROM cost_centre_master/i.test(s) && /branch_id = \?/i.test(s) && /active_status = 1/i.test(s) && !/WHERE\s+\w*\.?id = \?/i.test(s)) {
+    // The status = 'active' requirement is asserted here too (not just active_status = 1): without
+    // it, draft/pending/rejected cost centres with active_status = 1 slip into GRN and budget
+    // allocation pickers — this regex would stop matching if that clause were ever dropped, so the
+    // mock falls through unmatched and the test fails instead of silently passing.
+    if (/FROM cost_centre_master/i.test(s) && /branch_id = \?/i.test(s) && /active_status = 1/i.test(s) && /status = 'active'/i.test(s) && !/WHERE\s+\w*\.?id = \?/i.test(s)) {
       const [branchId] = params;
       const list = [...state.costCentres.values()].filter((cc) => cc.branch_id === branchId);
       return [list.map((cc) => ({ id: cc.id, cost_centre_code: cc.id, cost_centre_name: cc.id, resolved_process_name: null })), []];
