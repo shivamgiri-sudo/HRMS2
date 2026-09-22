@@ -200,7 +200,7 @@ describe("notifyOverdueProvisioning", () => {
     expect(notify).toHaveBeenCalledWith(
       expect.objectContaining({
         eventCode: "provisioning_overdue",
-        dedupeKey: "it_provisioning_request:req-9:overdue",
+        dedupeKey: "it_provisioning_request:req-9:overdue:37", // 4-hour bucket: floor(148 / 4)
         entityType: "it_provisioning_request",
         data: expect.objectContaining({ hours_overdue: 148, unassigned: false }),
       }),
