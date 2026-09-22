@@ -26,6 +26,8 @@ type QueueRow = {
   warnings: Blocker[];
   alreadyIssued: boolean;
   existingLetterNumber: string | null;
+  daysSinceIdCreated: number;
+  idCreationSlaBreached: boolean;
 };
 type IssuedRow = {
   id: string; letter_number: string; employee_code: string | null; employee_name: string | null;
@@ -157,6 +159,39 @@ export default function NativeAppointmentLetterQueue() {
       await load();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Unable to issue this appointment letter.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Routes through the existing Exit Management flow rather than a parallel
+  // status — an employee ID already exists, so this is a real exit request
+  // (exitSubType "did_not_join"), not a shortcut. The employee stays in this
+  // queue until that request is processed through to a terminal status.
+  const markLeft = async (row: QueueRow) => {
+    const reason = window.prompt(
+      `Mark ${row.employeeName ?? row.employeeCode} as Left / Dropped?\n\n` +
+      "This raises an exit request through Exit Management — the employee stays in this " +
+      "queue until it's processed, this does not remove them immediately.\n\n" +
+      "Reason (optional):",
+    );
+    if (reason === null) return; // Cancelled
+    setBusy(row.employeeId);
+    setError(null);
+    setNotice(null);
+    try {
+      await hrmsApi.post("/api/exit/", {
+        employeeId: row.employeeId,
+        exitType: "involuntary",
+        exitSubType: "did_not_join",
+        exitDate: new Date().toISOString().slice(0, 10),
+        reason: reason.trim() || "Employee ID created but candidate never joined",
+        noticePeriodDays: 0,
+      });
+      setNotice(`Exit request raised for ${row.employeeName ?? row.employeeCode}.`);
+      await load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unable to raise the exit request.");
     } finally {
       setBusy(null);
     }
@@ -340,6 +375,11 @@ export default function NativeAppointmentLetterQueue() {
                       <div>
                         <p className="text-sm font-bold text-slate-800">{row.employeeName ?? "Unnamed"}</p>
                         <p className="text-xs text-slate-500">{row.employeeCode}</p>
+                        {row.idCreationSlaBreached && (
+                          <span className="mt-1 inline-block rounded-md bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700 border border-red-300">
+                            ID SLA breached ({row.daysSinceIdCreated}d)
+                          </span>
+                        )}
                         {row.warnings.length > 0 && (
                           <ul className="mt-2 space-y-1">
                             {row.warnings.map((w) => (
@@ -358,6 +398,14 @@ export default function NativeAppointmentLetterQueue() {
                         >
                           <Eye className="h-4 w-4" /> Preview & Issue
                         </button>
+                        <button
+                          type="button"
+                          disabled={busy === row.employeeId}
+                          onClick={() => void markLeft(row)}
+                          className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-rose-300 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 transition-colors disabled:opacity-50"
+                        >
+                          <Ban className="h-4 w-4" /> Mark Left / Dropped
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -369,11 +417,18 @@ export default function NativeAppointmentLetterQueue() {
             {tab === "blocked" && (
               queue?.blocked.length ? (
                 <div className="space-y-3">
-                  {queue.blocked.map((row) => (
+                  {[...queue.blocked]
+                    .sort((a, b) => Number(b.idCreationSlaBreached) - Number(a.idCreationSlaBreached))
+                    .map((row) => (
                     <div key={row.employeeId} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                       <p className="text-sm font-bold text-slate-800">{row.employeeName ?? "Unnamed"}</p>
-                      <p className="text-xs text-slate-500 mb-2.5">{row.employeeCode}</p>
-                      <ul className="space-y-2">
+                      <p className="text-xs text-slate-500">{row.employeeCode}</p>
+                      {row.idCreationSlaBreached && (
+                        <span className="mt-1 mb-2 inline-block rounded-md bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700 border border-red-300">
+                          ID SLA breached ({row.daysSinceIdCreated}d)
+                        </span>
+                      )}
+                      <ul className="mt-2.5 space-y-2">
                         {row.blockers.map((b) => (
                           <li
                             key={b.code}
@@ -394,6 +449,14 @@ export default function NativeAppointmentLetterQueue() {
                       <p className="mt-3 text-[11px] text-slate-400 italic">
                         Resolve all critical blockers before the appointment letter can be issued.
                       </p>
+                      <button
+                        type="button"
+                        disabled={busy === row.employeeId}
+                        onClick={() => void markLeft(row)}
+                        className="mt-2.5 inline-flex min-h-[36px] items-center gap-2 rounded-lg border border-rose-300 bg-white px-3 text-xs font-semibold text-rose-700 hover:bg-rose-50 transition-colors disabled:opacity-50"
+                      >
+                        <Ban className="h-3.5 w-3.5" /> Mark Left / Dropped
+                      </button>
                     </div>
                   ))}
                 </div>

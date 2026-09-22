@@ -52,6 +52,11 @@ interface EmployeeRow {
   esign_completed_count: number | null;
   esign_pending_count: number | null;
   updated_at: string;
+  // Employee ID creation SLA — days since `employees.created_at`, and whether
+  // that has crossed the 3-day threshold. Mirrors `overdue_count`'s pattern:
+  // a cross-cutting signal, not a bucket.
+  days_since_id_created: number;
+  id_creation_sla_breached: boolean;
 }
 
 /**
@@ -71,6 +76,7 @@ interface TrackerSummary {
   in_progress_count: number;
   pending_count: number;
   overdue_count: number;
+  id_creation_overdue_count: number;
 }
 
 interface TrackerResponse {
@@ -132,8 +138,11 @@ export default function JoiningDocumentsTrackerPage() {
   const [appliedSearch, setAppliedSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [overdueOnly, setOverdueOnly] = useState(false);
+  const [idSlaOnly, setIdSlaOnly] = useState(false);
   const [page, setPage] = useState(1);
   const limit = 50;
+  const [markLeftRow, setMarkLeftRow] = useState<EmployeeRow | null>(null);
+  const [markLeftReason, setMarkLeftReason] = useState("");
 
   // Bulk action state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -161,12 +170,13 @@ export default function JoiningDocumentsTrackerPage() {
     // meant something else — the failure mode of a positional key, where two
     // different filter states hash to the same entry and the cache serves the
     // wrong page.
-    queryKey: ["joining-documents-tracker", { search: appliedSearch, statusFilter, overdueOnly, page, limit }],
+    queryKey: ["joining-documents-tracker", { search: appliedSearch, statusFilter, overdueOnly, idSlaOnly, page, limit }],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (appliedSearch) params.set("search", appliedSearch);
       if (statusFilter && statusFilter !== "all") params.set("status", statusFilter);
       if (overdueOnly) params.set("overdue_only", "true");
+      if (idSlaOnly) params.set("id_creation_sla_only", "true");
       params.set("page", String(page));
       params.set("limit", String(limit));
       return await hrmsApi.get(`/api/ats/joining-documents-tracker?${params.toString()}`);
@@ -191,6 +201,7 @@ export default function JoiningDocumentsTrackerPage() {
     in_progress_count: 0,
     pending_count: 0,
     overdue_count: 0,
+    id_creation_overdue_count: 0,
   };
 
   const rows = data?.data?.rows ?? [];
@@ -284,6 +295,29 @@ export default function JoiningDocumentsTrackerPage() {
     onError: (err: any) => toast({ title: "Failed to resend notification", description: err?.response?.data?.message ?? err?.message, variant: "destructive" }),
   });
 
+  // Routes through the existing Exit Management flow rather than a parallel
+  // status — an employee ID already exists, so this is a real exit request
+  // (exitSubType "did_not_join"), not a shortcut. The employee stays on this
+  // page until that request is processed through to a terminal status.
+  const markLeftMutation = useMutation({
+    mutationFn: (vars: { employeeId: string; reason: string }) =>
+      hrmsApi.post("/api/exit/", {
+        employeeId: vars.employeeId,
+        exitType: "involuntary",
+        exitSubType: "did_not_join",
+        exitDate: new Date().toISOString().slice(0, 10),
+        reason: vars.reason || "Employee ID created but candidate never joined",
+        noticePeriodDays: 0,
+      }),
+    onSuccess: () => {
+      toast({ title: "Marked left/dropped", description: "An exit request has been raised — this employee will drop off once it's processed through Exit Management." });
+      queryClient.invalidateQueries({ queryKey: ["joining-documents-tracker"] });
+      setMarkLeftRow(null);
+      setMarkLeftReason("");
+    },
+    onError: (err: any) => toast({ title: "Failed to raise exit request", description: err?.response?.data?.message ?? err?.message, variant: "destructive" }),
+  });
+
   const handleBulkDownload = async () => {
     try {
       const token = getAuthToken();
@@ -351,7 +385,7 @@ export default function JoiningDocumentsTrackerPage() {
           cannot reach the total while any employee sits at 0% (Requirement 7,
           criterion 3).
         */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <HrmsBentoTile
             icon={<Users className="h-5 w-5" />}
             title="Total Employees"
@@ -381,6 +415,12 @@ export default function JoiningDocumentsTrackerPage() {
             title="Overdue"
             value={summary.overdue_count}
             className="bg-rose-50 text-rose-700"
+          />
+          <HrmsBentoTile
+            icon={<Clock className="h-5 w-5" />}
+            title="ID SLA Breached"
+            value={summary.id_creation_overdue_count}
+            className="bg-red-50 text-red-700"
           />
         </div>
 
@@ -415,6 +455,16 @@ export default function JoiningDocumentsTrackerPage() {
                 />
                 <Label htmlFor="overdue" className="cursor-pointer text-sm font-medium">
                   Overdue only
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="id-sla"
+                  checked={idSlaOnly}
+                  onCheckedChange={checked => { setIdSlaOnly(!!checked); setPage(1); }}
+                />
+                <Label htmlFor="id-sla" className="cursor-pointer text-sm font-medium">
+                  ID SLA breached only
                 </Label>
               </div>
               {/* Bulk Actions Dropdown */}
@@ -469,7 +519,7 @@ export default function JoiningDocumentsTrackerPage() {
                 <FileCheck className="mx-auto h-12 w-12 text-slate-300" />
                 <p className="mt-4 text-base font-medium text-slate-600">No employees found</p>
                 <p className="mt-1 text-sm text-slate-500">
-                  {search || statusFilter !== "all" || overdueOnly
+                  {search || statusFilter !== "all" || overdueOnly || idSlaOnly
                     ? "Try adjusting your filters"
                     : "No joining documents to track yet"}
                 </p>
@@ -497,6 +547,7 @@ export default function JoiningDocumentsTrackerPage() {
                       <th className="px-4 py-3">Documents</th>
                       <th className="px-4 py-3">E-Sign</th>
                       <th className="px-4 py-3">Overdue</th>
+                      <th className="px-4 py-3">ID SLA</th>
                       <th className="px-4 py-3">Actions</th>
                     </tr>
                   </thead>
@@ -561,6 +612,15 @@ export default function JoiningDocumentsTrackerPage() {
                           )}
                         </td>
                         <td className="px-4 py-3">
+                          {row.id_creation_sla_breached ? (
+                            <Badge variant="outline" className="bg-red-100 text-red-800 border-red-300">
+                              {row.days_since_id_created}d
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-slate-400">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
                           <div className="flex items-center gap-1">
                             <button
                               title="View documents"
@@ -590,6 +650,14 @@ export default function JoiningDocumentsTrackerPage() {
                               >
                                 <Bell className="h-3.5 w-3.5 mr-2" />
                                 Resend Payroll HR Notification
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={e => { e.stopPropagation(); setMarkLeftRow(row); }}
+                                className="text-rose-600"
+                              >
+                                <AlertTriangle className="h-3.5 w-3.5 mr-2" />
+                                Mark Left / Dropped
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -760,6 +828,35 @@ export default function JoiningDocumentsTrackerPage() {
             >
               {bulkVerifyMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
               Verify All
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!markLeftRow} onOpenChange={open => !open && setMarkLeftRow(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Mark {markLeftRow?.full_name} as Left / Dropped</DialogTitle>
+            <DialogDescription>
+              This raises an exit request through Exit Management. The employee stays visible here
+              until that request is processed and closed — this does not remove them immediately.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            placeholder="Reason (optional)"
+            value={markLeftReason}
+            onChange={e => setMarkLeftReason(e.target.value)}
+            rows={3}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMarkLeftRow(null)}>Cancel</Button>
+            <Button
+              className="bg-rose-600 hover:bg-rose-700"
+              disabled={markLeftMutation.isPending}
+              onClick={() => markLeftRow && markLeftMutation.mutate({ employeeId: markLeftRow.employee_id, reason: markLeftReason })}
+            >
+              {markLeftMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Raise Exit Request
             </Button>
           </DialogFooter>
         </DialogContent>

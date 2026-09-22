@@ -31,9 +31,11 @@ import { PaymentVoucherDrawer } from "@/components/finance/vendor/PaymentVoucher
 
 
 const emptyRaiseForm = {
-  sourceType: "vendor_grn" as "vendor_grn" | "imprest_allocation" | "general" | "vendor_advance" | "vendor_advance_application",
+  sourceType: "vendor_grn" as "vendor_grn" | "imprest_allocation" | "general" | "vendor_advance" | "vendor_advance_application" | "internal_transfer",
   vendorId: "",
   bankAccountId: "",
+  /** Only for sourceType === "internal_transfer" — the company_bank_account receiving the funds. */
+  destinationBankAccountId: "",
   payableAccountId: "",
   /** GRN id -> allocated amount (as a string, mirroring the Amount input pattern). Supports
    *  paying several outstanding GRNs of the same vendor with one voucher, and (for
@@ -164,6 +166,15 @@ export function PaymentVouchersContent() {
       setRaiseForm((f) => ({ ...f, expenseKey: `${only.head_code}${EXPENSE_KEY_SEP}${only.sub_head_code}` }));
     }
   }, [vendorExpenseOptions, raiseForm.expenseKey]);
+  // Internal Transfer has no vendor/GRN/imprest ledger head to pick — the Payable
+  // Account field is hidden for it and auto-filled with the seeded system row
+  // (1837_payment_voucher_internal_transfer.sql) instead, same "Inter-Account
+  // Transfer" name raise()/release() look up on the backend.
+  useEffect(() => {
+    if (raiseForm.sourceType !== "internal_transfer" || raiseForm.payableAccountId) return;
+    const transferAccount = (payableAccountsQuery.data ?? []).find((a: any) => a.account_name === "Inter-Account Transfer");
+    if (transferAccount) setRaiseForm((f) => ({ ...f, payableAccountId: transferAccount.id }));
+  }, [raiseForm.sourceType, raiseForm.payableAccountId, payableAccountsQuery.data]);
   // Backs both the raise form's inline balance display and the checklist cap for
   // vendor_advance_application.
   const advanceBalanceQuery = useQuery({
@@ -207,6 +218,7 @@ export function PaymentVouchersContent() {
     mutationFn: async () => (await hrmsApi.post("/api/finance/payment-vouchers", {
       sourceType: raiseForm.sourceType,
       bankAccountId: raiseForm.bankAccountId,
+      destinationBankAccountId: raiseForm.sourceType === "internal_transfer" ? raiseForm.destinationBankAccountId : undefined,
       payableAccountId: raiseForm.payableAccountId,
       grnAllocations: (raiseForm.sourceType === "vendor_grn" || raiseForm.sourceType === "vendor_advance_application")
         ? Object.entries(raiseForm.grnAllocations)
@@ -378,13 +390,14 @@ export function PaymentVouchersContent() {
           <div className="grid gap-3">
             <div>
               <Label>Purpose</Label>
-              <Select value={raiseForm.sourceType} onValueChange={(v) => setRaiseForm((f) => ({ ...f, sourceType: v as any, vendorId: "", grnAllocations: {}, linkedImprestManagerId: "", particulars: "", amount: "" }))}>
+              <Select value={raiseForm.sourceType} onValueChange={(v) => setRaiseForm((f) => ({ ...f, sourceType: v as any, vendorId: "", grnAllocations: {}, linkedImprestManagerId: "", particulars: "", amount: "", destinationBankAccountId: "", payableAccountId: "" }))}>
                 <SelectTrigger className="cursor-pointer"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="vendor_grn">Vendor GRN Payment</SelectItem>
                   <SelectItem value="imprest_allocation">Imprest Float Replenishment</SelectItem>
                   <SelectItem value="vendor_advance">Vendor Advance</SelectItem>
                   <SelectItem value="vendor_advance_application">Apply Vendor Advance</SelectItem>
+                  <SelectItem value="internal_transfer">Internal Transfer (own accounts)</SelectItem>
                   <SelectItem value="general">Other / General Payment</SelectItem>
                 </SelectContent>
               </Select>
@@ -559,6 +572,23 @@ export function PaymentVouchersContent() {
                   </SelectContent>
                 </Select>
               </div>
+            ) : raiseForm.sourceType === "internal_transfer" ? (
+              <div>
+                <Label>Destination Bank Account (receiving)</Label>
+                <SearchableSelect
+                  id="payment-voucher-destination-bank-account"
+                  aria-label="Destination Bank Account"
+                  loading={bankAccountsQuery.isLoading}
+                  options={(bankAccountsQuery.data ?? [])
+                    .filter((a: any) => a.id !== raiseForm.bankAccountId)
+                    .map((a: any) => ({ value: a.id, label: a.account_name, hint: a.account_number_masked ?? undefined }))}
+                  value={raiseForm.destinationBankAccountId}
+                  onChange={(v) => setRaiseForm((f) => ({ ...f, destinationBankAccountId: v }))}
+                  placeholder="Select destination account"
+                  searchPlaceholder="Type an account name…"
+                />
+                <p className="mt-1 text-xs text-slate-500">Moves funds between two of the company's own bank accounts — no vendor or GRN involved.</p>
+              </div>
             ) : (
               <div>
                 <Label>Particulars (what this payment is for)</Label>
@@ -592,17 +622,19 @@ export function PaymentVouchersContent() {
                 searchPlaceholder="Type an account name…"
               />
             </div>
-            <div>
-              <Label>Payable Account (bank ledger — Vendor Payables, TDS Payable, etc.)</Label>
-              <Select value={raiseForm.payableAccountId} onValueChange={(v) => setRaiseForm((f) => ({ ...f, payableAccountId: v }))}>
-                <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Select ledger account" /></SelectTrigger>
-                <SelectContent>
-                  {(payableAccountsQuery.data ?? []).map((a: any) => (
-                    <SelectItem key={a.id} value={a.id}>{a.account_name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {raiseForm.sourceType !== "internal_transfer" && (
+              <div>
+                <Label>Payable Account (bank ledger — Vendor Payables, TDS Payable, etc.)</Label>
+                <Select value={raiseForm.payableAccountId} onValueChange={(v) => setRaiseForm((f) => ({ ...f, payableAccountId: v }))}>
+                  <SelectTrigger className="cursor-pointer"><SelectValue placeholder="Select ledger account" /></SelectTrigger>
+                  <SelectContent>
+                    {(payableAccountsQuery.data ?? []).map((a: any) => (
+                      <SelectItem key={a.id} value={a.id}>{a.account_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div>
               <Label>Amount (net payable)</Label>
               <Input type="number" value={raiseForm.amount} onChange={(e) => setRaiseForm((f) => ({ ...f, amount: e.target.value }))} />
@@ -614,7 +646,7 @@ export function PaymentVouchersContent() {
           </div>
           <DialogFooter>
             <Button variant="outline" className="cursor-pointer" onClick={() => setRaiseOpen(false)}>Cancel</Button>
-            <Button className="cursor-pointer bg-blue-600 hover:bg-blue-700" disabled={raiseMutation.isPending || (expenseRequired && !raiseForm.expenseKey) || grnRequiredButMissing} onClick={() => raiseMutation.mutate()}>
+            <Button className="cursor-pointer bg-blue-600 hover:bg-blue-700" disabled={raiseMutation.isPending || (expenseRequired && !raiseForm.expenseKey) || grnRequiredButMissing || (raiseForm.sourceType === "internal_transfer" && !raiseForm.destinationBankAccountId)} onClick={() => raiseMutation.mutate()}>
               Raise Voucher
             </Button>
           </DialogFooter>
