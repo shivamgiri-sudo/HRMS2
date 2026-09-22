@@ -22,9 +22,9 @@ module.exports = {
       exec_mode: "cluster",
       instances: 2,
 
-      // Memory limit: 2GB per worker. The default 1.4GB is insufficient for large
+      // Memory limit: 5GB per worker. The default 1.4GB is insufficient for large
       // XLSX exports (employee-master with 60,000+ rows and 74 columns).
-      node_args: "--max-old-space-size=2048",
+      node_args: "--max-old-space-size=5120",
 
       // Readiness handshake — server.ts calls process.send('ready') once
       // httpServer is listening. PM2 waits up to 30s for this signal before
