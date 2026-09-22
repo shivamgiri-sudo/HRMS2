@@ -39,6 +39,8 @@ export async function syncKitEsignStatus(
 
   // Reset next_poll_at so the reconciliation worker picks this up in its very
   // next tick (≤ 5 min) even if it was pushed far into the future by backoff.
+  // This write is the safety net: even if the live Luckpay call below times out,
+  // the worker will still reconcile within a few minutes.
   await db.execute(
     `UPDATE employee_document_esign_transaction
         SET next_poll_at = NULL
@@ -46,12 +48,30 @@ export async function syncKitEsignStatus(
     [String(tx.id)],
   );
 
-  const { syncEsignStatus } = await import("../integrations/luckpay/luckpay-status.service.js");
-  const outcome = await syncEsignStatus(String(tx.client_transaction_id));
+  // Race the Luckpay call against a 20s timeout so nginx (30s proxy_read_timeout)
+  // never kills this connection. If Luckpay is slow the worker handles it instead.
+  try {
+    const { syncEsignStatus } = await import("../integrations/luckpay/luckpay-status.service.js");
+    const outcome = await Promise.race([
+      syncEsignStatus(String(tx.client_transaction_id)),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000)),
+    ]);
+    if (outcome !== null) {
+      return {
+        synced: true,
+        message: outcome.message ?? "Status checked from provider.",
+        providerStatus: outcome.providerStatus ?? undefined,
+      };
+    }
+  } catch (err) {
+    console.warn("[syncKitEsignStatus] Luckpay call failed:", (err as Error)?.message ?? err);
+  }
 
+  // Luckpay timed out or errored; next_poll_at is already NULL so the
+  // reconciliation worker will complete the check within ~5 minutes.
   return {
     synced: true,
-    message: outcome.message ?? "Status checked from provider.",
-    providerStatus: outcome.providerStatus ?? undefined,
+    message: "Status check queued. The page will update automatically once the provider responds (usually within 5 minutes).",
+    providerStatus: undefined,
   };
 }
