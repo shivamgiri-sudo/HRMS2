@@ -169,6 +169,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
   // `capabilities.canReviewAccountsStage`, a field the backend had already stopped sending,
   // which made it permanently `undefined` and every check below it permanently false.
   const canReviewAccountsStage = useHasRole("accounts_head", "super_admin");
+  const isSuperAdmin = useHasRole("super_admin");
 
   useEffect(() => {
     if (!capabilities || didSetInitialTab.current) return;
@@ -271,6 +272,32 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
     if (target.status === "accounts_head_approved") return capabilities.canReviewFinanceStage;
     return false;
   }, [capabilities, canReviewAccountsStage, target]);
+
+  // Show only the tabs relevant to the current user's role.
+  // Super admins and while capabilities are still loading: show everything.
+  const visibleTabs = useMemo((): string[][] => {
+    if (!capabilities || isSuperAdmin) return STATUS_TABS.map((t) => [...t]);
+    const tabs: string[][] = [];
+    if (capabilities.canCreate) {
+      tabs.push(["_all", "All"]);
+      tabs.push(["draft", "Draft"]);
+    }
+    if (capabilities.canReviewBranchStage) {
+      tabs.push(["submitted", "Branch Head Queue"]);
+    }
+    if (canReviewAccountsStage) {
+      tabs.push(["branch_head_approved", "Accounts Head Queue"]);
+      tabs.push(["pending_accounts_payment", "Accounts Payment"]);
+      tabs.push(["partially_paid", "Partially Paid"]);
+    }
+    if (capabilities.canReviewFinanceStage) {
+      tabs.push(["accounts_head_approved", "Finance Head Queue"]);
+    }
+    tabs.push(["paid", "Paid"]);
+    tabs.push(["rejected", "Rejected"]);
+    tabs.push(["cancelled", "Cancelled"]);
+    return tabs;
+  }, [capabilities, canReviewAccountsStage, isSuperAdmin]);
 
   const submitMutation = useMutation({
     mutationFn: (id: string) => hrmsApi.post(`/api/finance/grns/${id}/submit`, {}),
@@ -682,7 +709,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
         </div>
 
         <div className="flex flex-wrap gap-1.5 border-b border-grn-line-soft px-4 pb-3">
-          {STATUS_TABS.map(([value, label]) => (
+          {visibleTabs.map(([value, label]) => (
             <GrnChip
               key={value}
               active={status === value}
