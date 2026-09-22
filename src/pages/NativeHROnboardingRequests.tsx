@@ -2549,7 +2549,11 @@ export default function NativeHROnboardingRequests() {
                         }}
                       >
                         <option value="">Select</option>
-                        {costCentres.map((c) => <option key={c.id} value={c.id}>{c.cost_centre_name || c.cost_centre_code}{c.process_name ? ` (${c.process_name})` : ''}</option>)}
+                        {costCentres.map((c) => {
+                          const label = c.cost_centre_code || c.cost_centre_name || '';
+                          const showProcess = c.process_name && c.process_name.trim().toUpperCase() !== label.trim().toUpperCase();
+                          return <option key={c.id} value={c.id}>{label}{showProcess ? ` (${c.process_name})` : ''}</option>;
+                        })}
                       </select>
                     </Field>
 
