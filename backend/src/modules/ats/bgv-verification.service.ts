@@ -263,32 +263,20 @@ const CHECK_WEIGHTS: Record<string, number> = {
  * DigiLocker note: handled in computeAndSaveScore — if digilocker is verified
  * it covers both aadhaar and pan without requiring separate manual checks.
  */
-export async function getApplicableChecks(candidateId: string): Promise<{
+/** The row shape {@link deriveApplicableChecksFromRow} and the batch loader in appointmentLetterEligibility.service.ts both key off. */
+export type ApplicableChecksRow = RowDataPacket | undefined;
+
+/**
+ * The pure decision extracted from {@link getApplicableChecks} so a caller that
+ * already has this row for many candidates at once (a batch/bulk join) can reuse
+ * the exact same fresher/criminal rules instead of a second hand-copied version
+ * that could drift from this one.
+ */
+export function deriveApplicableChecksFromRow(row: ApplicableChecksRow): {
   includeEmployment: boolean;
   includeCriminal: boolean;
   denominator: number;
-}> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       exp.working_experience,
-       exp.experience_year,
-       dept.dept_name AS department_name,
-       desig.designation_name,
-       desig.bgv_requirements
-     FROM ats_candidate c
-     LEFT JOIN ats_employment_offer o
-            ON o.candidate_id = c.id AND o.status != 'cancelled'
-     LEFT JOIN department_master dept  ON dept.id  = o.department_id
-     LEFT JOIN designation_master desig ON desig.id = o.designation_id
-     LEFT JOIN candidate_onboarding_experience exp ON exp.candidate_id = c.id
-     WHERE c.id = ?
-     ORDER BY o.submitted_at DESC, o.created_at DESC
-     LIMIT 1`,
-    [candidateId]
-  );
-
-  const row = (rows as RowDataPacket[])[0];
-
+} {
   // Fresher: no experience record, explicitly 'fresher', years = 0, or null working_experience
   const isFresher = !row
     || !row.working_experience
@@ -316,6 +304,39 @@ export async function getApplicableChecks(candidateId: string): Promise<{
   const denominator = 80 + (includeEmployment ? 10 : 0) + (includeCriminal ? 10 : 0);
 
   return { includeEmployment, includeCriminal, denominator };
+}
+
+/** The SELECT {@link deriveApplicableChecksFromRow} is derived from — shared so a bulk loader can run it once with `WHERE c.id IN (...)` instead of once per candidate. */
+export const APPLICABLE_CHECKS_ROW_SQL = `
+       exp.working_experience,
+       exp.experience_year,
+       dept.dept_name AS department_name,
+       desig.designation_name,
+       desig.bgv_requirements
+     FROM ats_candidate c
+     LEFT JOIN ats_employment_offer o
+            ON o.id = (
+              SELECT o2.id FROM ats_employment_offer o2
+               WHERE o2.candidate_id = c.id AND o2.status != 'cancelled'
+               ORDER BY o2.submitted_at DESC, o2.created_at DESC LIMIT 1
+            )
+     LEFT JOIN department_master dept  ON dept.id  = o.department_id
+     LEFT JOIN designation_master desig ON desig.id = o.designation_id
+     LEFT JOIN candidate_onboarding_experience exp ON exp.candidate_id = c.id`;
+
+export async function getApplicableChecks(candidateId: string): Promise<{
+  includeEmployment: boolean;
+  includeCriminal: boolean;
+  denominator: number;
+}> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ${APPLICABLE_CHECKS_ROW_SQL}
+     WHERE c.id = ?
+     LIMIT 1`,
+    [candidateId]
+  );
+
+  return deriveApplicableChecksFromRow((rows as RowDataPacket[])[0]);
 }
 
 /** Auto-derived reading of candidate_bgv_report.overall_status (a subset of its ENUM). */

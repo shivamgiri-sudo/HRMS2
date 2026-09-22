@@ -409,16 +409,19 @@ async function auditDocumentAction(input: {
 }
 
 async function ensureChecklistRows(target: EmployeeDocumentTarget, actorUserId?: string | null) {
-  const [templates] = await db.execute<RowDataPacket[]>(
-    `SELECT id, document_code, document_name, template_version, requires_candidate_esign, requires_hr_upload, is_mandatory
-       FROM employee_joining_document_template
-      WHERE active_status = 1
-      ORDER BY is_mandatory DESC, document_name ASC`,
-  );
-  const [existing] = await db.execute<RowDataPacket[]>(
-    `SELECT document_code FROM employee_joining_document_checklist WHERE employee_id = ?`,
-    [target.id],
-  );
+  // Independent reads — run together instead of one after the other.
+  const [[templates], [existing]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT id, document_code, document_name, template_version, requires_candidate_esign, requires_hr_upload, is_mandatory
+         FROM employee_joining_document_template
+        WHERE active_status = 1
+        ORDER BY is_mandatory DESC, document_name ASC`,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT document_code FROM employee_joining_document_checklist WHERE employee_id = ?`,
+      [target.id],
+    ),
+  ]);
   const existingCodes = new Set((existing as RowDataPacket[]).map((row) => String(row.document_code)));
 
   for (const template of templates as RowDataPacket[]) {
@@ -496,14 +499,22 @@ export async function recalculateDocumentProgress(employeeId: string) {
   const status = total > 0 && done >= total ? "completed" : done > 0 ? "in_progress" : "pending";
   const epf = await getEpfFormsStatus(employeeId);
 
+  // The WHERE guard below is the whole optimization: this function is the single
+  // writer and runs on every plain GET of the joining-documents page (as well as
+  // after every real change), so on a GET where nothing actually changed since
+  // last time it turned every page view into two unconditional writes — binlog
+  // entries and row locks for a value that was already correct. MySQL still
+  // matches the row and reports it, it just doesn't rewrite it when nothing in
+  // the SET differs, so a real change is never silently skipped.
   try {
     await db.execute(
       `UPDATE employees
           SET joining_document_status = ?,
               joining_document_completion_pct = ?,
               joining_document_completed_at = CASE WHEN ? = 'completed' THEN COALESCE(joining_document_completed_at, NOW()) ELSE NULL END
-        WHERE id = ?`,
-      [status, pct, status, employeeId],
+        WHERE id = ?
+          AND (joining_document_status <> ? OR joining_document_completion_pct <> ?)`,
+      [status, pct, status, employeeId, status, pct],
     );
   } catch (error) {
     if (!isMissingJoiningDocumentStatusColumn(error)) throw error;
@@ -511,8 +522,9 @@ export async function recalculateDocumentProgress(employeeId: string) {
       `UPDATE employees
           SET joining_document_completion_pct = ?,
               joining_document_completed_at = CASE WHEN ? = 'completed' THEN COALESCE(joining_document_completed_at, NOW()) ELSE NULL END
-        WHERE id = ?`,
-      [pct, status, employeeId],
+        WHERE id = ?
+          AND joining_document_completion_pct <> ?`,
+      [pct, status, employeeId, pct],
     );
   }
 
@@ -522,8 +534,9 @@ export async function recalculateDocumentProgress(employeeId: string) {
           SET joining_document_status = ?,
               joining_document_completion_pct = ?,
               joining_document_completed_at = CASE WHEN ? = 'completed' THEN COALESCE(joining_document_completed_at, NOW()) ELSE NULL END
-        WHERE employee_id = ?`,
-      [status, pct, status, employeeId],
+        WHERE employee_id = ?
+          AND (joining_document_status <> ? OR joining_document_completion_pct <> ?)`,
+      [status, pct, status, employeeId, status, pct],
     );
   } catch (error) {
     if (!isMissingJoiningDocumentStatusColumn(error)) throw error;
@@ -531,8 +544,9 @@ export async function recalculateDocumentProgress(employeeId: string) {
       `UPDATE ats_onboarding_bridge
           SET joining_document_completion_pct = ?,
               joining_document_completed_at = CASE WHEN ? = 'completed' THEN COALESCE(joining_document_completed_at, NOW()) ELSE NULL END
-        WHERE employee_id = ?`,
-      [pct, status, employeeId],
+        WHERE employee_id = ?
+          AND joining_document_completion_pct <> ?`,
+      [pct, status, employeeId, pct],
     ).catch(() => undefined);
   }
 
@@ -963,19 +977,26 @@ export async function getJoiningDocumentPack(employeeId: string, userId: string)
   const access = await resolveEmployeeDocumentAccessContext(userId, employeeId);
   await ensureChecklistRows(access.target, userId);
   const progress = await recalculateDocumentProgress(employeeId);
-  const checklist = await getChecklistBundle(employeeId);
 
-  // Cross-reference: fetch general employee_documents and attach matching ones to checklist items
-  let generalDocs: RowDataPacket[] = [];
-  try {
-    const [rows] = await db.execute<RowDataPacket[]>(
+  // Three independent reads, run together rather than one after another —
+  // none of them depends on the others' result.
+  const [checklist, generalDocs, auditRows] = await Promise.all([
+    getChecklistBundle(employeeId),
+    db.execute<RowDataPacket[]>(
       `SELECT doc_type, doc_name, file_url, verified
          FROM employee_documents
         WHERE employee_id = ? AND file_url IS NOT NULL AND file_url <> ''`,
       [employeeId],
-    );
-    generalDocs = rows;
-  } catch (_e) { /* table may not exist */ }
+    ).then(([rows]) => rows as RowDataPacket[]).catch(() => [] as RowDataPacket[]),
+    db.execute<RowDataPacket[]>(
+      `SELECT action_type, remarks, actor_type, created_at, document_code
+         FROM employee_joining_document_audit_log
+        WHERE employee_id = ?
+        ORDER BY created_at DESC
+        LIMIT 20`,
+      [employeeId],
+    ).then(([rows]) => rows as RowDataPacket[]),
+  ]);
 
   const checklistWithLinks = checklist.map((item) => {
     if (item.latest_file_id) return item; // already has its own file
@@ -993,15 +1014,6 @@ export async function getJoiningDocumentPack(employeeId: string, userId: string)
       } as LinkedGeneralDoc,
     };
   });
-
-  const [auditRows] = await db.execute<RowDataPacket[]>(
-    `SELECT action_type, remarks, actor_type, created_at, document_code
-       FROM employee_joining_document_audit_log
-      WHERE employee_id = ?
-      ORDER BY created_at DESC
-      LIMIT 20`,
-    [employeeId],
-  );
 
   return {
     employee: {

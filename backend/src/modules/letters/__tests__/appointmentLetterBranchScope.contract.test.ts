@@ -137,7 +137,8 @@ describe("Appointment letters — the BGV blocker is specific", () => {
   });
 
   it("names the outstanding categories in the blocker reason", () => {
-    expect(eligibility).toContain("outstandingBgvCategories(candidateId, report)");
+    expect(eligibility).toContain("outstandingBgvCategories(");
+    expect(eligibility).toContain("candidateId,\n          report,");
     expect(eligibility).toContain("Outstanding: ${outstanding.join(\", \")}");
   });
 
@@ -159,6 +160,6 @@ describe("Appointment letters — the BGV blocker is specific", () => {
 
   it("keeps the blocker even when applicability cannot be resolved", () => {
     const fn = eligibility.slice(eligibility.indexOf("async function outstandingBgvCategories"));
-    expect(fn).toContain(".catch(() => ({ includeEmployment: false, includeCriminal: false }))");
+    expect(fn).toContain(".catch(() => ({ includeEmployment: false, includeCriminal: false, denominator: 80 }))");
   });
 });

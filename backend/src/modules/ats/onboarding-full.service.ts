@@ -2390,6 +2390,17 @@ export async function getOnboardingCandidateScope(candidateId: string) {
 export async function listFullOnboardingRequests(scopeFilter?: OnboardingScopeFilter) {
   const whereSql = scopeFilter?.sql ? `WHERE (${normalizeCandidateScopeSql(scopeFilter.sql)})` : "";
   const params = scopeFilter?.params ?? [];
+  // br_scope/pm_scope only exist to give normalizeCandidateScopeSql() a
+  // COALESCE(br_scope.id, c.applied_for_branch) target — applied_for_branch is
+  // a legacy free-text-ish field that can hold a branch's id, name or code, so
+  // scope comparisons need whichever of those three actually matches. For
+  // super_admin and any admin-bypass caller, buildScopeWhereClause() returns a
+  // bare "1=1" that never mentions br_scope/pm_scope at all, so the joins were
+  // running unconditionally on every call for zero effect on that (by far the
+  // most common) case — each OR-across-three-columns join fans a candidate row
+  // out before GROUP BY collapses it back down, for nothing. Only pull them in
+  // when the normalized WHERE text actually references one.
+  const needsScopeJoins = whereSql.includes("br_scope") || whereSql.includes("pm_scope");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT req.id, req.status, req.candidate_id,
             req.created_at, req.updated_at,
@@ -2407,14 +2418,14 @@ export async function listFullOnboardingRequests(scopeFilter?: OnboardingScopeFi
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = req.candidate_id
        LEFT JOIN branch_master br ON br.id = c.applied_for_branch
        LEFT JOIN process_master pm ON pm.id = c.applied_for_process
-       LEFT JOIN branch_master br_scope
+       ${needsScopeJoins ? `LEFT JOIN branch_master br_scope
          ON br_scope.id = c.applied_for_branch
          OR br_scope.branch_name = c.applied_for_branch
          OR br_scope.branch_code = c.applied_for_branch
        LEFT JOIN process_master pm_scope
          ON pm_scope.id = c.applied_for_process
          OR pm_scope.process_name = c.applied_for_process
-         OR pm_scope.process_code = c.applied_for_process
+         OR pm_scope.process_code = c.applied_for_process` : ""}
        LEFT JOIN candidate_onboarding_bank_detail bank ON bank.candidate_id = req.candidate_id
        LEFT JOIN candidate_onboarding_document doc ON doc.candidate_id = req.candidate_id AND doc.deleted_at IS NULL
        LEFT JOIN ats_employment_offer offer
