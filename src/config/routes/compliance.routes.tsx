@@ -37,6 +37,7 @@ export const complianceRouteElements = (
       <Route path="/provisioning/admin"                  element={<ProtectedRoute roles={['branch_admin','hr','admin','super_admin','branch_head','it_head','payroll_hr']}><Gate pageCode="PROVISIONING_ADMIN"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
       {/* Was a redirect to the control room, which has no issuance UI. */}
       <Route path="/provisioning/appointment-letter"     element={<ProtectedRoute><NativeAppointmentLetterQueue /></ProtectedRoute>} />
+      <Route path="/provisioning/hr-bgv"                 element={<ProtectedRoute roles={['hr','admin','super_admin']}><Gate pageCode="PROVISIONING_HR_BGV"><NativeITProvisioningTracker /></Gate></ProtectedRoute>} />
 
       {/* Exit clearance — dedicated per-role queues, one per exit_clearance_task owner_role
           that has no existing provisioning-style page (manager/hr/payroll). Admin and WFM's

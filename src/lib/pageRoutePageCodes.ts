@@ -243,6 +243,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/profile": "MY_PROFILE",
   "/provisioning/admin": "PROVISIONING_ADMIN",
   "/provisioning/appointment-letter": "PROVISIONING_APPOINTMENT_LETTER",
+  "/provisioning/hr-bgv": "PROVISIONING_HR_BGV",
   "/provisioning/it": "PROVISIONING_IT",
   "/provisioning/wfm-alignment": "PROVISIONING_WFM_ALIGNMENT",
   "/quality-dashboard": "QUALITY_DASHBOARD",
