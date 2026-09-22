@@ -51,6 +51,7 @@ interface OnfidoAnalystPerformance {
   email: string; tlName: string | null; amName: string | null; qaName: string | null;
   totalTasks: OnfidoKpiValue; avgManualProcessingTime: OnfidoKpiValue;
   overallErrorRate: OnfidoKpiValue;
+  manualFarRate?: OnfidoKpiValue; manualFrrRate?: OnfidoKpiValue;
   poaTasks: OnfidoKpiValue; poaAvgAht: OnfidoKpiValue; poaErrorRate: OnfidoKpiValue;
   monthly: { month: string; tasks: number; errorRate: number | null }[];
   peers: { email: string; tlName: string | null; tasks: number; errorRate: number | null }[];
@@ -777,8 +778,29 @@ export default function MyKpiDashboard() {
                   </div>
                 </div>
 
+                {/* DOC Quality: FAR / FRR */}
+                {(onfidoPerf.manualFarRate || onfidoPerf.manualFrrRate) && (
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">DOC Quality Rates</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      {[
+                        onfidoPerf.manualFarRate && { kpi: onfidoPerf.manualFarRate, color: "bg-purple-50 border-purple-200 text-purple-700" },
+                        onfidoPerf.manualFrrRate && { kpi: onfidoPerf.manualFrrRate, color: "bg-pink-50 border-pink-200 text-pink-700" },
+                      ].filter(Boolean).map(({ kpi, color }) => (
+                        <div key={kpi.key} className={`rounded-xl border p-4 ${color}`}>
+                          <p className="text-[10px] font-bold uppercase tracking-widest opacity-70">{kpi.label}</p>
+                          <p className="text-2xl font-extrabold font-mono mt-1">
+                            {kpi.value === null ? "—" : kpi.unit === "percent" ? `${kpi.value}%` : kpi.value.toLocaleString("en-IN")}
+                          </p>
+                          {kpi.note && <p className="text-[10px] opacity-60 mt-0.5">{kpi.note}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Month-wise chart */}
-                {onfidoPerf.monthly.length > 0 && (
+                {(onfidoPerf.monthly ?? []).length > 0 && (
                   <div className="rounded-xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm p-5">
                     <p className="text-xs font-bold text-slate-700 mb-3">Month-wise DOC Task Volume</p>
                     <ResponsiveContainer width="100%" height={200}>
@@ -796,7 +818,7 @@ export default function MyKpiDashboard() {
                 )}
 
                 {/* Peer ranking */}
-                {onfidoPerf.peers.length > 0 && (
+                {(onfidoPerf.peers ?? []).length > 0 && (
                   <div className="rounded-xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm p-5">
                     <p className="text-xs font-bold text-slate-700 mb-3">Peer Ranking (Same TL)</p>
                     <div className="overflow-x-auto">
@@ -810,7 +832,7 @@ export default function MyKpiDashboard() {
                           </tr>
                         </thead>
                         <tbody>
-                          {[...onfidoPerf.peers].sort((a, b) => b.tasks - a.tasks).slice(0, 20).map((p, i) => (
+                          {[...(onfidoPerf.peers ?? [])].sort((a, b) => b.tasks - a.tasks).slice(0, 20).map((p, i) => (
                             <tr key={p.email}
                               className={`border-b border-slate-50 ${p.email.toLowerCase() === onfidoPerf.email.toLowerCase() ? "bg-blue-50 font-bold" : ""}`}
                             >
