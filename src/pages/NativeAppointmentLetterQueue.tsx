@@ -132,7 +132,20 @@ export default function NativeAppointmentLetterQueue() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const issue = async (row: QueueRow, force = false) => {
+  /**
+   * Returns whether the letter was actually issued. The caller (the drawer's
+   * "Issue" button) must check this before closing — closing unconditionally
+   * made a failed or cancelled issue look identical to a successful one: the
+   * drawer disappeared either way, and the only sign of failure was a banner
+   * near the top of the page, easy to miss when the user's attention was on
+   * the drawer and moving straight to the next candidate. This is why
+   * appointment_letter_issue stayed empty in production while HR believed
+   * several letters had gone out — every attempt with a warning (the common
+   * case; BGV "pending, not adverse" alone produces one) needs the override
+   * reason prompt below, and cancelling it, or any API failure, must reopen
+   * to the same state instead of silently closing.
+   */
+  const issue = async (row: QueueRow, force = false): Promise<boolean> => {
     // Warnings can be overridden with a stated reason; critical blockers cannot
     // be forced at all, so the button is never offered for them.
     let overrideReason: string | null = null;
@@ -142,7 +155,7 @@ export default function NativeAppointmentLetterQueue() {
         row.warnings.map((w) => `• ${w.reason}`).join("\n") +
         "\n\nWhy are you overriding? This is recorded against the letter.",
       );
-      if (!overrideReason || !overrideReason.trim()) return;
+      if (!overrideReason || !overrideReason.trim()) return false;
     }
     setBusy(row.employeeId);
     setError(null);
@@ -157,8 +170,10 @@ export default function NativeAppointmentLetterQueue() {
         (res.data?.warning ? ` ${res.data.warning}` : ""),
       );
       await load();
+      return true;
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Unable to issue this appointment letter.");
+      return false;
     } finally {
       setBusy(null);
     }
@@ -635,7 +650,17 @@ export default function NativeAppointmentLetterQueue() {
           </div>
 
           {/* Footer actions */}
-          <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 px-6 py-4 border-t border-slate-200 bg-white">
+          <div className="shrink-0 flex flex-col gap-3 px-6 py-4 border-t border-slate-200 bg-white">
+            {/* The drawer is a full-screen overlay (fixed inset-0), so the page-level
+                error banner behind it is invisible while this is open — an issue
+                attempt that fails here needs its own visible error, not just the one
+                on the page underneath. */}
+            {drawer.mode === "preview" && error && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-800">
+                <div className="flex gap-2.5"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" /><p className="font-medium">{error}</p></div>
+              </div>
+            )}
+            <div className="flex flex-wrap items-center justify-between gap-3">
             {drawer.mode === "preview" && (
               <>
                 <p className="text-xs text-slate-500">
@@ -654,8 +679,11 @@ export default function NativeAppointmentLetterQueue() {
                     type="button" disabled={busy === drawer.row.employeeId}
                     onClick={async () => {
                       const row = drawer.row;
-                      await issue(row, row.warnings.length > 0);
-                      closeDrawer();
+                      // Only close on success — an error or a cancelled override-reason
+                      // prompt must leave the drawer (and the error banner) visible, not
+                      // read to the user as "done" because the modal went away.
+                      const succeeded = await issue(row, row.warnings.length > 0);
+                      if (succeeded) closeDrawer();
                     }}
                     className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 text-sm font-semibold text-white shadow-sm hover:from-blue-700 hover:to-indigo-700 disabled:opacity-60 transition-all"
                   >
@@ -692,6 +720,7 @@ export default function NativeAppointmentLetterQueue() {
                 )}
               </div>
             )}
+            </div>
           </div>
 
         </div>
