@@ -93,8 +93,9 @@ export default function SalaryTrendExport() {
   const ccQ = useQuery({
     queryKey: ['salary-trend-cc', branchId],
     queryFn: () => {
-      const p = branchId !== 'all' ? `?branch_id=${branchId}` : '';
-      return hrmsApi.get<{ data: CcRow[] }>(`/api/org/cost-centres${p}`).then((r) => r.data ?? []);
+      const params = new URLSearchParams({ active_status: '1', limit: '500' });
+      if (branchId !== 'all') params.set('branch_id', branchId);
+      return hrmsApi.get<{ data: CcRow[] }>(`/api/org/cost-centres?${params.toString()}`).then((r) => r.data ?? []);
     },
     staleTime: 120_000,
   });

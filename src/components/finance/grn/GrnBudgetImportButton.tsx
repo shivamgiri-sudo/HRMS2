@@ -78,7 +78,7 @@ export function GrnBudgetImportButton({
 
   // Only fetched once the dialog is opened — three lookups on every GRN page load, for a button
   // most sessions never press, is not a trade worth making.
-  const costCentreQuery = useLookup("budget-cost-centres", "/api/org/cost-centres?limit=500", open && ready);
+  const costCentreQuery = useLookup("budget-cost-centres", "/api/org/cost-centres?active_status=1&limit=500", open && ready);
   const processQuery = useLookup("budget-processes", "/api/org/processes?limit=500", open && ready);
   const vendorQuery = useLookup("budget-vendors", "/api/erp/vendors?limit=500", open && ready);
 

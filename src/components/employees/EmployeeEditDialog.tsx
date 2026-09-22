@@ -352,12 +352,13 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     staleTime: 120_000,
   });
 
-  // Fetch cost centres — filter by selected branch when set
+  // Fetch cost centres — filter by selected branch when set, only active
   const { data: costCentres = [] } = useQuery({
     queryKey: ["cost-centres", formData.branch_id],
     queryFn: async () => {
-      const params = formData.branch_id ? `?branch_id=${formData.branch_id}` : "";
-      const res = await hrmsApi.get<{data: any[]}>(`/api/org/cost-centres${params}`);
+      const params = new URLSearchParams({ active_status: "1", limit: "500" });
+      if (formData.branch_id) params.set("branch_id", formData.branch_id);
+      const res = await hrmsApi.get<{data: any[]}>(`/api/org/cost-centres?${params.toString()}`);
       return res.data ?? [];
     },
     staleTime: 60_000,

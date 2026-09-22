@@ -1076,7 +1076,7 @@ export default function BranchBudgetManagementWorkspace() {
   });
   const { data: costCentreResponse } = useQuery({
     queryKey: ["budget-cost-centres"],
-    queryFn: () => hrmsApi.get<any>("/api/org/cost-centres?limit=500"),
+    queryFn: () => hrmsApi.get<any>("/api/org/cost-centres?active_status=1&limit=500"),
   });
   const { data: vendorResponse } = useQuery({
     queryKey: ["budget-vendors"],
