@@ -409,7 +409,10 @@ function buildFiltersForReport(code: string): FilterDef[] {
     //
     // Reports that DO honour a date range — keep the pickers:
     "left-employee-export":                    [...dateFilters, ...branchProcess],
-    "new-join-export":                         [...dateFilters, ...branchProcess],
+    // Month/year quick-filters on top of the from/to range: pick either one to jump
+    // straight to that period instead of typing exact dates (backend narrows
+    // date_of_joining to the chosen month/year when either is set, from/to when neither is).
+    "new-join-export":                         [...dateFilters, ...monthFilter, YEAR_FILTER, ...branchProcess],
     "payroll-population-reconciliation":       [...dateFilters, ...branchProcess],
     "attendance-enrollment-gap":               [...dateFilters, ...branchProcess],
     "leave-trend-monthly":                     [...dateFilters, ...branchProcess],
