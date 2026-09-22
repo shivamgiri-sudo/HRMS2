@@ -33,6 +33,10 @@ describe("Appointment letter — Salary Date uses salary_start_date, not date_of
     expect(pdf).toContain("3.1 Salary Date: ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}");
   });
 
+  it("the 'effective from' line (1.1) reads salaryStartDate too, not just dateOfJoining", () => {
+    expect(pdf).toContain("This appointment shall be effective from ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}");
+  });
+
   it("the closing reference date is now labelled and sourced as Salary Start Date", () => {
     expect(pdf).toContain("Salary Start Date: ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}");
     expect(pdf).not.toMatch(/Date of Joining: \$\{istDisplayDate\(input\.dateOfJoining\)\}/);

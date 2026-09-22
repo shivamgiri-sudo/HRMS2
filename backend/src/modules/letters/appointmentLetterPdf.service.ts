@@ -106,6 +106,13 @@ function drawLetterhead(doc: Doc, lh: BranchLetterhead) {
   const ruleY = top + 34;
   doc.moveTo(PAGE.margin, ruleY).lineTo(doc.page.width - PAGE.margin, ruleY)
     .lineWidth(1.2).strokeColor(ACCENT).stroke();
+  // The company-name/address lines above are right-aligned at textX (~166pt in from the
+  // margin), and pdfkit left doc.x sitting there afterwards — only doc.y was reset here.
+  // Confirmed by rendering a sample letter: every unpositioned .text() call from "Original
+  // Copy" through "With reference to..." inherited that ~110pt indent, misaligning the
+  // whole top block against the true left margin. Same fix salaryTable() already applies
+  // below, for the same reason.
+  doc.x = PAGE.margin;
   doc.y = ruleY + 16;
   doc.fillColor(INK);
 }
@@ -309,7 +316,7 @@ export async function renderAppointmentLetterPdf(input: AppointmentLetterInput):
 
     heading(doc, "ON THE FOLLOWING TERMS AND CONDITIONS");
     heading(doc, "1. APPOINTMENT DATE");
-    body(doc, `1.1 This appointment shall be effective from ${istDisplayDate(input.dateOfJoining)}.`);
+    body(doc, `1.1 This appointment shall be effective from ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}.`);
     heading(doc, "2. DESIGNATION");
     body(doc, `2.1 You will be designated as '${input.designation || "—"}' and you would be reporting to your Reporting Manager.`);
     heading(doc, "3. REMUNERATION");
