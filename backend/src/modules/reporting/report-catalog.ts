@@ -5054,6 +5054,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "od_count", label: "OD", format: "number", width: 40, align: "center" },
       { key: "hd_count", label: "HD", format: "number", width: 70, align: "center" },
       { key: "leave_count", label: "L", format: "number", width: 40, align: "center" },
+      { key: "lwp_count", label: "LWP", format: "number", width: 50, align: "center" },
       { key: "holiday_count", label: "H", format: "number", width: 40, align: "center" },
       { key: "weekoff_count", label: "W", format: "number", width: 40, align: "center" },
       { key: "total_working_days", label: "Total Working Days", format: "number", width: 110, align: "right" },

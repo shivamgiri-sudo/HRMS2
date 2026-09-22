@@ -396,7 +396,7 @@ export async function attendanceRegisterMonthly(
     }
 
     const counts = countDayCodes((d) => emp[`day_${d}`], daysInMonth);
-    const { absent, present, od, hd, leave, holiday } = counts;
+    const { absent, present, od, hd, leave, holiday, lwp } = counts;
 
     // Straight from the payroll engine — same function the payslip uses, same policy-backed
     // slabs, same month-relative "worked every available day" rule.
@@ -443,6 +443,7 @@ export async function attendanceRegisterMonthly(
       od_count:      od,
       hd_count:      hd,
       leave_count:   leave,
+      lwp_count:     lwp,
       holiday_count: holiday,
       weekoff_count: eligibleWO,
       total_working_days: totalWorkingDays,
