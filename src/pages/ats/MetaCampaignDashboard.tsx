@@ -24,11 +24,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   BadgeCheck,
-  Eye,
   Filter,
   Footprints,
   Megaphone,
-  MousePointerClick,
   RefreshCcw,
   Send,
   ThumbsUp,
@@ -48,6 +46,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   ChartCard,
   EmptyState,
@@ -161,11 +167,11 @@ const SCREENING_BADGE: Record<Lead["screeningResult"], string> = {
 };
 
 /**
- * "12.3% of clicks", or "no clicks yet" when the denominator is zero.
+ * "12.3% of form fills", or "no form fills yet" when the denominator is zero.
  *
  * The `pct(ratio(a, b) ?? 0)` shorthand is wrong and this exists to stop it: ratio() deliberately
- * returns null for a zero denominator, and coercing that to 0 renders "0.0% of clicks" on a
- * campaign that has had no clicks at all. That reads as a measured failure rather than as an
+ * returns null for a zero denominator, and coercing that to 0 renders "0.0% of form fills" on a
+ * campaign that has had no form fills at all. That reads as a measured failure rather than as an
  * absence of data — exactly the confusion analytics-kit's ratio() was written to avoid.
  */
 function shareOf(numerator: number | undefined, denominator: number | undefined, unit: string): string {
@@ -329,23 +335,29 @@ export default function MetaCampaignDashboard() {
   return (
     <DashboardLayout>
       <div className="space-y-4">
-        <header className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3.5 shadow-sm">
-          <div className="min-w-0">
-            <h1 className="flex items-center gap-2 text-lg font-bold text-slate-900">
-              <Megaphone className="h-5 w-5 text-blue-600" /> META Campaign Automation
-            </h1>
-            <p className="mt-0.5 text-[12px] text-slate-500">
-              Lead Gen ad performance, automated screening outcomes and the impressions-to-onboarded funnel per requisition.
-            </p>
+        {/* Modern gradient page header */}
+        <header className="rounded-2xl bg-gradient-to-br from-[#073f78] to-indigo-800 px-6 py-5 text-white shadow-lg">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20">
+                  <Megaphone className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-black tracking-tight">META Campaign Automation</h1>
+                  <p className="mt-0.5 text-sm text-blue-200">Lead Gen → Screening → WhatsApp → Walk-in pipeline</p>
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => void load(true)}
+              disabled={refreshing}
+              className="inline-flex items-center gap-2 rounded-xl bg-white/15 px-4 py-2 text-sm font-bold text-white hover:bg-white/25 disabled:opacity-60 transition-all"
+            >
+              <RefreshCcw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+              {refreshing ? "Loading…" : "Refresh"}
+            </button>
           </div>
-          <button
-            onClick={() => void load(true)}
-            disabled={refreshing}
-            className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg bg-slate-900 px-3 text-sm font-semibold text-white transition-colors duration-150 hover:bg-slate-700 disabled:opacity-60"
-          >
-            <RefreshCcw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
-            {refreshing ? "Loading…" : "Refresh"}
-          </button>
         </header>
 
         {errorMsg && (
@@ -464,109 +476,46 @@ export default function MetaCampaignDashboard() {
           ]}
         />
 
+        {/* Unified 8-tile bento KPI grid */}
         {loading ? (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
-            {Array.from({ length: 10 }).map((_, i) => (
-              <div key={i} className="h-24 animate-pulse rounded-xl bg-slate-100" />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="h-24 animate-pulse rounded-2xl bg-slate-100" />
             ))}
           </div>
         ) : (
-          <>
-            {/* META Funnel: Impressions → Clicks → Form Fills → Qualified/Disqualified */}
-            <div className="rounded-xl border border-slate-200 bg-gradient-to-r from-blue-50 to-indigo-50 p-4">
-              <h3 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-blue-700">
-                <Megaphone className="h-4 w-4" /> META Ad Funnel
-              </h3>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-                <StatTile
-                  label="Impressions"
-                  value={num(overview?.impressions ?? 0)}
-                  denominator="Across all campaigns"
-                  icon={<Eye className="h-4 w-4" />}
-                />
-                <StatTile
-                  label="Clicks"
-                  value={num(overview?.clicks ?? 0)}
-                  denominator={shareOf(overview?.clicks, overview?.impressions, "impressions")}
-                  icon={<MousePointerClick className="h-4 w-4" />}
-                />
-                <StatTile
-                  label="Form Fills"
-                  value={num(overview?.formFills ?? 0)}
-                  denominator={shareOf(overview?.formFills, overview?.clicks, "clicks")}
-                  icon={<Send className="h-4 w-4" />}
-                />
-                <StatTile
-                  label="Qualified"
-                  value={num(overview?.qualified ?? 0)}
-                  denominator={`${shareOf(overview?.qualified, overview?.formFills, "form fills")} · ${num(overview?.pending ?? 0)} pending`}
-                  intent="good"
-                  icon={<UserCheck className="h-4 w-4" />}
-                />
-                <StatTile
-                  label="Disqualified"
-                  value={num(overview?.disqualified ?? 0)}
-                  denominator={shareOf(overview?.disqualified, overview?.formFills, "form fills")}
-                  intent="critical"
-                  icon={<UserX className="h-4 w-4" />}
-                />
-                <StatTile
-                  label="Ad Spend"
-                  value={inrShort(overview?.spendInr ?? 0)}
-                  denominator={
-                    overview?.costPerQualified != null
-                      ? `${inrShort(overview.costPerQualified)} per qualified`
-                      : "Cost per qualified — not measurable"
-                  }
-                  icon={<Wallet className="h-4 w-4" />}
-                />
-              </div>
-            </div>
-
-            {/* ATS Funnel: Walk-ins → Selections → Onboardings */}
-            <div className="rounded-xl border border-slate-200 bg-gradient-to-r from-emerald-50 to-teal-50 p-4">
-              <h3 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-emerald-700">
-                <Footprints className="h-4 w-4" /> Recruitment Funnel (from Campaign Leads)
-              </h3>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                <StatTile
-                  label="ATS Candidates"
-                  value={num(overview?.candidatesCreated ?? 0)}
-                  denominator={shareOf(overview?.candidatesCreated, overview?.qualified, "qualified leads")}
-                  icon={<UserPlus className="h-4 w-4" />}
-                />
-                <StatTile
-                  label="Walk-ins"
-                  value={num(overview?.walkins ?? 0)}
-                  denominator={
-                    overview?.costPerWalkin != null
-                      ? `${inrShort(overview.costPerWalkin)} per walk-in`
-                      : shareOf(overview?.walkins, overview?.candidatesCreated, "ATS candidates")
-                  }
-                  intent="good"
-                  icon={<Footprints className="h-4 w-4" />}
-                />
-                <StatTile
-                  label="Selected"
-                  value={num(overview?.selected ?? 0)}
-                  denominator={shareOf(overview?.selected, overview?.walkins, "walk-ins")}
-                  intent="good"
-                  icon={<ThumbsUp className="h-4 w-4" />}
-                />
-                <StatTile
-                  label="Onboarded"
-                  value={num(overview?.onboarded ?? 0)}
-                  denominator={
-                    overview?.costPerOnboarded != null
-                      ? `${inrShort(overview.costPerOnboarded)} per onboarding`
-                      : shareOf(overview?.onboarded, overview?.selected, "selected")
-                  }
-                  intent="good"
-                  icon={<BadgeCheck className="h-4 w-4" />}
-                />
-              </div>
-            </div>
-          </>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
+            {(
+              [
+                { label: "Form Fills", value: overview?.formFills ?? 0, display: undefined, icon: Send, color: "bg-blue-50 border-blue-200", val: "text-blue-700", sub: "Total applicants" },
+                { label: "Qualified", value: overview?.qualified ?? 0, display: undefined, icon: UserCheck, color: "bg-emerald-50 border-emerald-200", val: "text-emerald-700", sub: `${overview?.pending ?? 0} pending` },
+                { label: "Disqualified", value: overview?.disqualified ?? 0, display: undefined, icon: UserX, color: "bg-rose-50 border-rose-200", val: "text-rose-700", sub: "Did not meet criteria" },
+                { label: "ATS Candidates", value: overview?.candidatesCreated ?? 0, display: undefined, icon: UserPlus, color: "bg-violet-50 border-violet-200", val: "text-violet-700", sub: "Moved to ATS" },
+                { label: "Walk-ins", value: overview?.walkins ?? 0, display: undefined, icon: Footprints, color: "bg-teal-50 border-teal-200", val: "text-teal-700", sub: overview?.costPerWalkin != null ? `${inrShort(overview.costPerWalkin)}/walkin` : "—" },
+                { label: "Selected", value: overview?.selected ?? 0, display: undefined, icon: ThumbsUp, color: "bg-green-50 border-green-200", val: "text-green-700", sub: "Offer accepted" },
+                { label: "Onboarded", value: overview?.onboarded ?? 0, display: undefined, icon: BadgeCheck, color: "bg-green-50 border-green-200", val: "text-green-800", sub: overview?.costPerOnboarded != null ? `${inrShort(overview.costPerOnboarded)}/hire` : "—" },
+                { label: "Ad Spend", value: null as number | null, display: inrShort(overview?.spendInr ?? 0), icon: Wallet, color: "bg-amber-50 border-amber-200", val: "text-amber-700", sub: overview?.costPerQualified != null ? `${inrShort(overview.costPerQualified)}/qualified` : "No spend data" },
+              ] as const
+            ).map(({ label, value, display, icon: Icon, color, val, sub }) => {
+              const iconBg = color.replace("50", "100").replace("border-", "bg-").split(" ")[0] ?? "bg-slate-100";
+              return (
+                <div key={label} className={`rounded-2xl border p-3 ${color}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
+                      <p className={`mt-1 text-2xl font-black tabular-nums ${val}`}>
+                        {display !== undefined ? display : num(value ?? 0)}
+                      </p>
+                      <p className="mt-0.5 truncate text-[10px] text-slate-400">{sub}</p>
+                    </div>
+                    <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${iconBg}`}>
+                      <Icon className={`h-4 w-4 ${val}`} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
 
         <ChartCard
@@ -616,149 +565,85 @@ export default function MetaCampaignDashboard() {
             />
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] border-collapse text-sm">
-                <thead className="sticky top-0 z-10 bg-slate-50 text-left">
-                  <tr className="border-b border-slate-200">
-                    <th className="sr-only">Campaign details</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filtered.map((c) => {
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-slate-50 hover:bg-slate-50">
+                    <TableHead className="text-xs font-bold uppercase tracking-wider text-slate-500 w-8">#</TableHead>
+                    <TableHead className="text-xs font-bold uppercase tracking-wider text-slate-500">Campaign</TableHead>
+                    <TableHead className="text-xs font-bold uppercase tracking-wider text-slate-500">Designation · Branch</TableHead>
+                    <TableHead className="text-xs font-bold uppercase tracking-wider text-slate-500">Process</TableHead>
+                    <TableHead className="text-xs font-bold uppercase tracking-wider text-slate-500 text-right">Leads</TableHead>
+                    <TableHead className="text-xs font-bold uppercase tracking-wider text-slate-500 text-right">Spend</TableHead>
+                    <TableHead className="text-xs font-bold uppercase tracking-wider text-slate-500">Status</TableHead>
+                    <TableHead className="text-xs font-bold uppercase tracking-wider text-slate-500 text-right">Last Sync</TableHead>
+                    <TableHead className="w-16" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((c, idx) => {
                     const isActive = selected?.id === c.id && sheetOpen;
-                    const PRIORITY_BADGE: Record<string, string> = {
-                      urgent: "bg-red-100 text-red-700",
-                      high: "bg-amber-100 text-amber-700",
-                      normal: "bg-slate-100 text-slate-600",
-                      low: "bg-slate-50 text-slate-400",
-                    };
                     return (
-                      <tr
+                      <TableRow
                         key={c.id}
                         onClick={() => void openCampaign(c)}
-                        className={`cursor-pointer transition-colors ${isActive ? "bg-blue-50/60" : "hover:bg-slate-50/70"}`}
+                        className={`cursor-pointer transition-colors ${isActive ? "bg-blue-50" : "hover:bg-slate-50/70"}`}
                       >
-                        <td className="px-4 py-3">
-                          {/* ── Row: two-column grid — left=context, right=metrics ── */}
-                          <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:gap-6">
-
-                            {/* LEFT — Campaign + Requisition context */}
-                            <div className="min-w-0 flex-1 space-y-1.5">
-                              {/* Row 1: campaign name + status + priority */}
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <span className="text-sm font-bold text-slate-900 leading-tight">{c.campaignName}</span>
-                                <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${STATUS_BADGE[c.campaignStatus]}`}>
-                                  {c.campaignStatus}
-                                </span>
-                                {c.requisitionPriority && c.requisitionPriority !== "normal" && (
-                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${PRIORITY_BADGE[c.requisitionPriority] ?? "bg-slate-100 text-slate-600"}`}>
-                                    {c.requisitionPriority}
-                                  </span>
-                                )}
-                                <span className="font-mono text-[10px] text-slate-400">
-                                  {c.metaFormId ? `form ${c.metaFormId}` : "no form ID"}
-                                </span>
-                              </div>
-
-                              {/* Row 2: Designation · Branch · Process */}
-                              <div className="flex flex-wrap items-center gap-1 text-[11px] text-slate-600">
-                                {c.designationName && <span className="font-semibold">{c.designationName}</span>}
-                                {c.branchName && <><span className="text-slate-300">·</span><span>{c.branchName}</span></>}
-                                {c.processName && <><span className="text-slate-300">·</span><span className="text-blue-600 font-medium">{c.processName}</span></>}
-                                {c.requisitionCode && <><span className="text-slate-300">·</span><span className="font-mono text-slate-500">{c.requisitionCode}</span></>}
-                              </div>
-
-                              {/* Row 3: Batch no + name */}
-                              {(c.plannedBatchNo || c.plannedBatchName) && (
-                                <div className="flex items-center gap-1.5 text-[11px]">
-                                  <span className="text-slate-400 uppercase tracking-wide font-bold text-[9px]">Batch</span>
-                                  <span className="font-semibold text-indigo-700">{[c.plannedBatchNo, c.plannedBatchName].filter(Boolean).join(" — ")}</span>
-                                </div>
-                              )}
-
-                              {/* Row 4: Key dates + who raised */}
-                              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-slate-500">
-                                {c.demandRaisedDate && (
-                                  <span>
-                                    <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Raised </span>
-                                    {fmtDate(c.demandRaisedDate)}
-                                  </span>
-                                )}
-                                {c.trainingStartDate && (
-                                  <span>
-                                    <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Training </span>
-                                    <span className="font-semibold text-emerald-700">{fmtDate(c.trainingStartDate)}</span>
-                                  </span>
-                                )}
-                                {c.targetJoiningDate && (
-                                  <span>
-                                    <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400">Target join </span>
-                                    {fmtDate(c.targetJoiningDate)}
-                                  </span>
-                                )}
-                                {c.requestedByName && (
-                                  <span>
-                                    <span className="text-[9px] font-bold uppercase tracking-wide text-slate-400">By </span>
-                                    {c.requestedByName}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* RIGHT — Metrics */}
-                            <div className="flex flex-shrink-0 flex-wrap items-center gap-3 lg:justify-end">
-                              {c.requestedHeadcount && (
-                                <div className="text-center">
-                                  <div className="text-sm font-bold text-slate-900">{c.requestedHeadcount}</div>
-                                  <div className="text-[9px] uppercase tracking-wide text-slate-400">HC</div>
-                                </div>
-                              )}
-                              <div className="text-center">
-                                <div className="text-sm font-bold text-emerald-700">{num(c.leadsCount)}</div>
-                                <div className="text-[9px] uppercase tracking-wide text-slate-400">Leads</div>
-                              </div>
-                              {c.impressions > 0 && (
-                                <div className="text-center">
-                                  <div className="text-sm font-bold text-slate-700">{num(c.impressions)}</div>
-                                  <div className="text-[9px] uppercase tracking-wide text-slate-400">Impressions</div>
-                                </div>
-                              )}
-                              {c.clicks > 0 && (
-                                <div className="text-center">
-                                  <div className="text-sm font-bold text-slate-700">{num(c.clicks)}</div>
-                                  <div className="text-[9px] uppercase tracking-wide text-slate-400">Clicks</div>
-                                </div>
-                              )}
-                              {c.spendInr > 0 && (
-                                <div className="text-center">
-                                  <div className="text-sm font-bold text-slate-700">{inrShort(c.spendInr)}</div>
-                                  <div className="text-[9px] uppercase tracking-wide text-slate-400">Spend</div>
-                                </div>
-                              )}
-                              <div className="text-center">
-                                {c.lastSyncError ? (
-                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-600">
-                                    <AlertTriangle className="h-3 w-3" /> sync failed
-                                  </span>
-                                ) : c.lastSyncedAt ? (
-                                  <div>
-                                    <div className="text-[10px] text-slate-400">{fmtDate(c.lastSyncedAt)}</div>
-                                    <div className="text-[9px] uppercase tracking-wide text-slate-400">Last sync</div>
-                                  </div>
-                                ) : (
-                                  <span className="text-[10px] text-slate-300">no sync</span>
-                                )}
-                              </div>
-                              <span className={`inline-flex items-center rounded-lg px-2.5 py-1 text-[11px] font-bold ${isActive ? "bg-blue-600 text-white" : "border border-slate-200 text-slate-700"}`}>
-                                {isActive ? "Open" : "View"}
-                              </span>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
+                        <TableCell className="text-xs text-slate-400">{idx + 1}</TableCell>
+                        <TableCell>
+                          <div className="font-semibold text-slate-900 leading-tight">{c.campaignName}</div>
+                          {c.requisitionCode && <div className="font-mono text-[10px] text-slate-400 mt-0.5">{c.requisitionCode}</div>}
+                          {c.metaFormId && <div className="font-mono text-[9px] text-slate-300">form {c.metaFormId}</div>}
+                        </TableCell>
+                        <TableCell>
+                          {c.designationName && <div className="text-sm font-semibold text-slate-800">{c.designationName}</div>}
+                          {c.branchName && <div className="text-xs text-slate-500">{c.branchName}</div>}
+                        </TableCell>
+                        <TableCell>
+                          {c.processName
+                            ? <span className="text-xs font-medium text-blue-700">{c.processName}</span>
+                            : <span className="text-xs text-slate-300">—</span>
+                          }
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <span className="text-sm font-bold text-emerald-700">{num(c.leadsCount)}</span>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {c.spendInr > 0
+                            ? <span className="text-sm font-semibold text-slate-700">{inrShort(c.spendInr)}</span>
+                            : <span className="text-xs text-slate-300">—</span>
+                          }
+                        </TableCell>
+                        <TableCell>
+                          <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold ${STATUS_BADGE[c.campaignStatus]}`}>
+                            {c.campaignStatus}
+                          </span>
+                          {c.requisitionPriority && c.requisitionPriority !== "normal" && (
+                            <span className={`ml-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                              ({ urgent: "bg-red-100 text-red-700", high: "bg-amber-100 text-amber-700" } as Record<string, string>)[c.requisitionPriority] ?? "bg-slate-100 text-slate-600"
+                            }`}>
+                              {c.requisitionPriority}
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right text-[10px] text-slate-400">
+                          {c.lastSyncError ? (
+                            <span className="flex items-center justify-end gap-1 text-rose-500">
+                              <AlertTriangle className="h-3 w-3" /> failed
+                            </span>
+                          ) : c.lastSyncedAt ? fmtDate(c.lastSyncedAt) : "—"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <span className={`inline-flex items-center rounded-lg px-2.5 py-1 text-[11px] font-bold cursor-pointer ${
+                            isActive ? "bg-blue-600 text-white" : "border border-slate-200 text-slate-700 hover:bg-slate-50"
+                          }`}>
+                            {isActive ? "Open" : "View"}
+                          </span>
+                        </TableCell>
+                      </TableRow>
                     );
                   })}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           )}
         </ChartCard>
@@ -778,29 +663,29 @@ export default function MetaCampaignDashboard() {
         }}
       >
         <SheetContent side="right" className="flex w-full flex-col overflow-hidden p-0 sm:max-w-2xl">
-          <SheetHeader className="border-b border-slate-100 px-5 py-4">
+          <SheetHeader className="bg-gradient-to-r from-[#073f78] to-indigo-700 px-5 py-4 text-white">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <SheetTitle className="text-base font-bold text-slate-900 leading-snug">
+                <SheetTitle className="text-base font-bold text-white leading-snug">
                   {selected?.campaignName ?? "Campaign"}
                 </SheetTitle>
-                <div className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-slate-600">
-                  {selected?.designationName && <span className="font-semibold">{selected.designationName}</span>}
-                  {selected?.branchName && <><span className="text-slate-300">·</span><span>{selected.branchName}</span></>}
-                  {selected?.processName && <><span className="text-slate-300">·</span><span className="text-blue-600 font-medium">{selected.processName}</span></>}
-                  {selected?.requisitionCode && <><span className="text-slate-300">·</span><span className="font-mono text-slate-500">{selected.requisitionCode}</span></>}
+                <div className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-blue-200">
+                  {selected?.designationName && <span className="font-semibold text-white">{selected.designationName}</span>}
+                  {selected?.branchName && <><span className="text-blue-300">·</span><span>{selected.branchName}</span></>}
+                  {selected?.processName && <><span className="text-blue-300">·</span><span className="text-blue-100 font-medium">{selected.processName}</span></>}
+                  {selected?.requisitionCode && <><span className="text-blue-300">·</span><span className="font-mono text-blue-200">{selected.requisitionCode}</span></>}
                 </div>
                 {(selected?.plannedBatchNo || selected?.plannedBatchName) && (
-                  <div className="mt-1 text-[11px] font-semibold text-indigo-700">
+                  <div className="mt-1 text-[11px] font-semibold text-blue-100">
                     Batch: {[selected.plannedBatchNo, selected.plannedBatchName].filter(Boolean).join(" — ")}
                   </div>
                 )}
-                <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-500">
-                  {selected?.requestedHeadcount && <span><span className="font-bold text-slate-700">{selected.requestedHeadcount}</span> HC required</span>}
-                  {selected?.demandRaisedDate && <span>Raised: <span className="font-medium">{fmtDate(selected.demandRaisedDate)}</span></span>}
-                  {selected?.trainingStartDate && <span>Training: <span className="font-semibold text-emerald-700">{fmtDate(selected.trainingStartDate)}</span></span>}
-                  {selected?.targetJoiningDate && <span>Target join: <span className="font-medium">{fmtDate(selected.targetJoiningDate)}</span></span>}
-                  {selected?.requestedByName && <span>By: <span className="font-medium">{selected.requestedByName}</span></span>}
+                <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-blue-200">
+                  {selected?.requestedHeadcount && <span><span className="font-bold text-white">{selected.requestedHeadcount}</span> HC required</span>}
+                  {selected?.demandRaisedDate && <span>Raised: <span className="font-medium text-white">{fmtDate(selected.demandRaisedDate)}</span></span>}
+                  {selected?.trainingStartDate && <span>Training: <span className="font-semibold text-emerald-300">{fmtDate(selected.trainingStartDate)}</span></span>}
+                  {selected?.targetJoiningDate && <span>Target join: <span className="font-medium text-white">{fmtDate(selected.targetJoiningDate)}</span></span>}
+                  {selected?.requestedByName && <span>By: <span className="font-medium text-white">{selected.requestedByName}</span></span>}
                 </div>
               </div>
               {selected && (
@@ -846,8 +731,8 @@ export default function MetaCampaignDashboard() {
                 <section>
                   <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Campaign Funnel</h3>
                   <p className="mt-0.5 text-[11px] text-slate-500">
-                    Bar width is each stage's share of the first stage. Both denominators are labelled, so no percentage is
-                    ambiguous. ATS stages appear only once a candidate has reached them.
+                    Bar width is each stage's share of the widest stage. Conversion rate is shown against the preceding stage.
+                    ATS stages appear only once a candidate has reached them.
                   </p>
                   {activeStage && (
                     <div className="mt-2 flex items-center gap-2">
@@ -860,48 +745,47 @@ export default function MetaCampaignDashboard() {
                       <EmptyState label="No funnel data yet" hint="The funnel populates as leads arrive." />
                     </div>
                   ) : (
-                    <div className="mt-3 space-y-1">
+                    <div className="mt-3 space-y-0.5">
                       {funnelBars.map((stage, i) => {
                         const isActive = activeStage === stage.key;
+                        const widthPct = Math.max((stage.ofMax ?? 0) * 100, stage.count > 0 ? 15 : 5);
+                        const STAGE_COLORS = ["#3b82f6", "#6366f1", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444", "#06b6d4", "#ec4899"];
+                        const color = isActive ? "#1d4ed8" : (STAGE_COLORS[i % STAGE_COLORS.length] ?? "#3b82f6");
+                        // keep FUNNEL_RAMP in scope
+                        void FUNNEL_RAMP;
                         return (
-                        <div key={stage.key}>
-                          {i > 0 && stage.dropped > 0 && (
-                            <div className="flex items-center gap-2 py-0.5 pl-[124px]">
-                              <span className="h-px w-5 bg-rose-200" />
-                              <span className="text-[10px] font-semibold text-rose-500">−{num(stage.dropped)} dropped</span>
-                            </div>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => setActiveStage(isActive ? null : stage.key)}
-                            className={`group flex w-full items-center gap-3 rounded-lg px-1 py-0.5 text-left transition-colors ${isActive ? "bg-blue-50 ring-1 ring-blue-200" : "hover:bg-slate-50"}`}
-                            title={`Click to filter leads to ${stage.label} stage`}
-                          >
-                            <span className={`w-[112px] shrink-0 text-right text-[11px] font-semibold transition-colors ${isActive ? "text-blue-700" : "text-slate-700 group-hover:text-blue-600"}`}>
-                              {stage.label}
-                            </span>
-                            <div className="relative h-9 flex-1 overflow-hidden rounded-lg bg-slate-100">
-                              <div
-                                className="flex h-full items-center rounded-lg px-3 transition-[width] duration-700"
-                                style={{
-                                  width: `${Math.max(stage.ofMax ?? 0, stage.count > 0 ? 8 : 4)}%`,
-                                  backgroundColor: isActive ? "#2563eb" : FUNNEL_RAMP[i % FUNNEL_RAMP.length],
-                                }}
-                              >
-                                <span className="text-[12px] font-bold tabular-nums text-white drop-shadow-sm">
-                                  {num(stage.count)}
-                                </span>
+                          <div key={stage.key}>
+                            {i > 0 && stage.dropped > 0 && (
+                              <div className="flex items-center gap-2 py-0.5 pl-4 text-[10px] font-semibold text-rose-400">
+                                <span className="h-px w-4 bg-rose-200" />
+                                −{num(stage.dropped)} dropped ({stage.ofPrev !== null ? pct(1 - (stage.ofPrev ?? 0)) : "??"} exit rate)
                               </div>
-                              <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center gap-1.5">
-                                {stage.ofPrev !== null && stage.ofPrev !== undefined && (
-                                  <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${isActive ? "bg-blue-100 text-blue-700" : "bg-slate-200/80 text-slate-700"}`}>
-                                    {pct(stage.ofPrev)} of prev
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setActiveStage(isActive ? null : stage.key)}
+                              className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-all ${isActive ? "bg-blue-50 ring-2 ring-blue-200" : "hover:bg-slate-50"}`}
+                            >
+                              <div className="w-28 shrink-0 text-right">
+                                <span className={`text-[11px] font-bold ${isActive ? "text-blue-700" : "text-slate-600"}`}>{stage.label}</span>
+                              </div>
+                              <div className="flex-1 overflow-hidden rounded-lg bg-slate-100" style={{ height: "36px" }}>
+                                <div
+                                  className="flex h-full items-center gap-2 rounded-lg px-3 transition-[width] duration-700"
+                                  style={{ width: `${widthPct}%`, backgroundColor: color }}
+                                >
+                                  <span className="text-sm font-black tabular-nums text-white drop-shadow">{num(stage.count)}</span>
+                                </div>
+                              </div>
+                              {stage.ofPrev !== null && (
+                                <div className="w-16 shrink-0 text-right">
+                                  <span className={`text-[10px] font-bold ${(stage.ofPrev ?? 0) >= 0.5 ? "text-emerald-600" : "text-amber-600"}`}>
+                                    {pct(stage.ofPrev ?? 0)}
                                   </span>
-                                )}
-                              </div>
-                            </div>
-                          </button>
-                        </div>
+                                </div>
+                              )}
+                            </button>
+                          </div>
                         );
                       })}
                     </div>

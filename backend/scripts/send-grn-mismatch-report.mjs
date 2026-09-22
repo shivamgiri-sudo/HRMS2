@@ -91,7 +91,7 @@ async function getDbBillGrns(conn) {
       ) AS branch_name,
       COALESCE(hm.HeadingDesc, 'Unknown Head') AS head,
       COALESCE(shm.SubHeadingDesc, 'Unknown Sub-Head') AS sub_head,
-      COALESCE(vm.CompanyName, 'Unknown Vendor') AS vendor_name,
+      COALESCE(vm.vendor, 'Unknown Vendor') AS vendor_name,
       eem.GrnNo AS grn_no,
       CAST(COALESCE(NULLIF(eem.Amount,''), '0') AS DECIMAL(18,2)) AS amount,
       eem.EntryStatus AS entry_status
