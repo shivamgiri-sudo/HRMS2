@@ -207,7 +207,7 @@ router.get("/appointment-letters/preview/:employeeId", requireRole(...VIEW_ROLES
     return res.status(403).json({ success: false, message: OUT_OF_SCOPE });
   }
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id, e.employee_code, e.full_name, e.date_of_joining,
+    `SELECT e.id, e.employee_code, e.full_name, e.date_of_joining, e.salary_start_date,
             d.designation_name
        FROM employees e
        LEFT JOIN designation_master d ON d.id = e.designation_id
@@ -256,6 +256,7 @@ router.get("/appointment-letters/preview/:employeeId", requireRole(...VIEW_ROLES
     employeeCode: String(emp.employee_code ?? ""),
     designation: String(emp.designation_name ?? ""),
     dateOfJoining: emp.date_of_joining ?? null,
+    salaryStartDate: emp.salary_start_date ?? null,
     issueDate: new Date(),
     letterNumber: "PREVIEW-DRAFT",
     verificationUrl: "https://mcnhrms.teammas.in/verify/appointment/PREVIEW",

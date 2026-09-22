@@ -90,7 +90,7 @@ export async function issueAppointmentLetter(params: {
   }
 
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id, e.employee_code, e.branch_id, e.date_of_joining, e.personal_email,
+    `SELECT e.id, e.employee_code, e.branch_id, e.date_of_joining, e.salary_start_date, e.personal_email,
             COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS official_email,
             COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS full_name,
             d.designation_name, b.branch_name,
@@ -135,6 +135,7 @@ export async function issueAppointmentLetter(params: {
     employeeCode: String(emp.employee_code ?? ""),
     designation: String(emp.designation_name ?? ""),
     dateOfJoining: (emp.date_of_joining as Date | string | null) ?? null,
+    salaryStartDate: (emp.salary_start_date as Date | string | null) ?? null,
     letterNumber,
     verificationUrl: verifyUrl,
     qrPngDataUrl: qr,
@@ -157,6 +158,7 @@ export async function issueAppointmentLetter(params: {
     employeeCode: String(emp.employee_code ?? ""),
     designation: String(emp.designation_name ?? ""),
     dateOfJoining: (emp.date_of_joining as Date | string | null) ?? null,
+    salaryStartDate: (emp.salary_start_date as Date | string | null) ?? null,
     letterNumber,
     verificationUrl: verifyUrl,
     qrPngDataUrl: qr,
