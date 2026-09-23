@@ -75,12 +75,20 @@ interface RecruiterRow {
   worstOpenMin: number;
 }
 
+interface ProcessRow {
+  process: string;
+  ftd: Summary;
+  wtd: Summary;
+  mtd: Summary;
+}
+
 interface BranchBlock {
   branch: string;
   ftd: Summary;
   wtd: Summary;
   mtd: Summary;
   recruiters: RecruiterRow[];
+  processes: ProcessRow[];
   escalations: Escalation[];
 }
 
@@ -400,6 +408,55 @@ function RecruiterTable({ recruiters }: { recruiters: RecruiterRow[] }) {
   );
 }
 
+// ── Process breakdown table (per branch) ─────────────────────────────────────────────────
+
+function ProcessTable({ processes, period }: { processes: ProcessRow[]; period: Period }) {
+  if (processes.length === 0) return <p className="text-sm text-gray-500">No process data recorded.</p>;
+  return (
+    <div className="overflow-x-auto border border-gray-200 rounded-lg">
+      <Table>
+        <TableHeader>
+          <TableRow className="bg-gray-50">
+            <TableHead>Process</TableHead>
+            <TableHead className="text-right">Walk-ins</TableHead>
+            <TableHead className="text-right">Called</TableHead>
+            <TableHead className="text-right">Closed</TableHead>
+            <TableHead className="text-right">Selected</TableHead>
+            <TableHead className="text-right">Rejected</TableHead>
+            <TableHead className="text-right">No-show</TableHead>
+            <TableHead className="text-right">Open</TableHead>
+            <TableHead className="text-right">Sel%</TableHead>
+            <TableHead className="text-right">Yield%</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {processes.map((p) => {
+            const s = p[period];
+            return (
+              <TableRow key={p.process}>
+                <TableCell className="text-sm font-medium">{p.process}</TableCell>
+                <TableCell className="text-right text-sm font-semibold">{n(s.walkins)}</TableCell>
+                <TableCell className="text-right text-sm">{n(s.called)}</TableCell>
+                <TableCell className="text-right text-sm">{n(s.closed)}</TableCell>
+                <TableCell className="text-right text-sm font-semibold text-green-600">{n(s.selected)}</TableCell>
+                <TableCell className="text-right text-sm">{n(s.rejected)}</TableCell>
+                <TableCell className="text-right text-sm">{n(s.noShow)}</TableCell>
+                <TableCell className="text-right text-sm">
+                  {s.open > 0
+                    ? <span className="font-semibold text-red-600">{s.open}</span>
+                    : <span className="text-green-600">0</span>}
+                </TableCell>
+                <TableCell className="text-right text-sm">{pct(s.selectionPct)}</TableCell>
+                <TableCell className="text-right text-sm">{pct(s.yieldPct)}</TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
 // ── Branch panel ─────────────────────────────────────────────────────────────────────────
 
 function BranchPanel({ branch, period }: { branch: BranchBlock; period: Period }) {
@@ -425,6 +482,12 @@ function BranchPanel({ branch, period }: { branch: BranchBlock; period: Period }
               <b>{branch.escalations.length} token{branch.escalations.length > 1 ? 's' : ''} past SLA</b>
               {' — oldest: '}{branch.escalations[0].tokenNumber} · {branch.escalations[0].recruiter} · {fmtMin(branch.escalations[0].runningMin)}
             </span>
+          </div>
+        )}
+        {branch.processes && branch.processes.length > 0 && (
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2">Process-wise activity</p>
+            <ProcessTable processes={branch.processes} period={period} />
           </div>
         )}
         <div>

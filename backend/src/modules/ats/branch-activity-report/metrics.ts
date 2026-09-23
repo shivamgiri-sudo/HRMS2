@@ -160,12 +160,20 @@ export interface RecruiterRow {
   worstOpenMin: number;
 }
 
+export interface ProcessRow {
+  process: string;
+  ftd: Summary;
+  wtd: Summary;
+  mtd: Summary;
+}
+
 export interface BranchBlock {
   branch: string;
   ftd: Summary;
   wtd: Summary;
   mtd: Summary;
   recruiters: RecruiterRow[];
+  processes: ProcessRow[];
   escalations: Escalation[];
 }
 
@@ -419,10 +427,18 @@ export function buildReport({ facts, reportDate }: BuildInput): ReportData {
         worstOpenMin: Math.max(0, ...open.map((f) => (f.called ? f.sinceCallMin ?? 0 : f.sinceArrivalMin))),
       };
     }).sort((a, b) => b.ftd.tokens - a.ftd.tokens || b.mtd.tokens - a.mtd.tokens);
+
+    const processNames = [...new Set(rows.map((f) => f.process))].sort();
+    const processes: ProcessRow[] = processNames.map((proc) => {
+      const pr = rows.filter((f) => f.process === proc);
+      return { process: proc, ...periodSummaries(pr) };
+    }).sort((a, b) => b.ftd.walkins - a.ftd.walkins || b.mtd.walkins - a.mtd.walkins);
+
     return {
       branch,
       ...periodSummaries(rows),
       recruiters,
+      processes,
       escalations: allEsc.filter((e) => e.branch === branch).sort(byWorst),
     };
   }).sort((a, b) => b.ftd.walkins - a.ftd.walkins || b.mtd.walkins - a.mtd.walkins);
