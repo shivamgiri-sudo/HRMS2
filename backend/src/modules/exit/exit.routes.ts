@@ -22,6 +22,7 @@ import {
   saveExitInterview,
 } from "./exit-intelligence.service.js";
 import { resignationRouter } from "./resignation.routes.js";
+import { transitionExitStatus } from "./exit.service.js";
 
 export const exitRouter = Router();
 exitRouter.use(requireAuth);
@@ -648,6 +649,58 @@ exitRouter.get(
     const data = await computeFfPreview(req.params.exitRequestId);
     return res.json({ success: true, data });
   }),
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FSM transition routes — dedicated endpoints for the new 4-state flow
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Manager approves voluntary resignation → notice_active
+exitRouter.patch(
+  '/:id/approve',
+  requireRole('manager', 'assistant_manager', 'process_manager', 'branch_head', 'admin', 'hr', 'super_admin'),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const actor = { userId: req.authUser!.id, userRole: (req.authUser!.roles ?? ['manager'])[0] };
+    await transitionExitStatus(id, 'notice_active', actor, {
+      lwdOverride: req.body.lwd_override,
+      lwdOverrideReason: req.body.lwd_override_reason,
+    });
+    return res.json({ success: true });
+  })
+);
+
+// Manager returns (push-back) with reason
+exitRouter.patch(
+  '/:id/return',
+  requireRole('manager', 'assistant_manager', 'process_manager', 'branch_head', 'admin', 'hr', 'super_admin'),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    if (!req.body.reason?.trim()) return res.status(400).json({ success: false, message: 'reason is required' });
+    const actor = { userId: req.authUser!.id, userRole: (req.authUser!.roles ?? ['manager'])[0] };
+    await transitionExitStatus(id, 'returned', actor, { reason: req.body.reason });
+    return res.json({ success: true });
+  })
+);
+
+// Employee revokes own resignation (also callable by admin/hr on behalf)
+exitRouter.patch(
+  '/:id/revoke',
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const [rows] = await db.execute<RowDataPacket[]>('SELECT employee_id FROM exit_request WHERE id = ? LIMIT 1', [id]);
+    const rec = rows[0] as any;
+    if (!rec) return res.status(404).json({ success: false, message: 'Not found' });
+    const callerEmployee = await getEmployeeForUser(req.authUser!.id);
+    const callerRoles: string[] = req.authUser!.roles ?? [];
+    const isPrivileged = callerRoles.some(r => ['admin', 'hr', 'super_admin'].includes(r));
+    if (!isPrivileged && (!callerEmployee || callerEmployee.id !== rec.employee_id)) {
+      return res.status(403).json({ success: false, message: 'You can only revoke your own resignation.' });
+    }
+    const actor = { userId: req.authUser!.id, userRole: callerRoles[0] ?? 'employee' };
+    await transitionExitStatus(id, 'revoked', actor, { reason: req.body.reason });
+    return res.json({ success: true });
+  })
 );
 
 // ── Resignation Routes (mounted sub-router) ───────────────────────────────────

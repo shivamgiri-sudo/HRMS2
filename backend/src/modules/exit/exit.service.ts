@@ -141,6 +141,89 @@ function exitStateChanged(message: string): Error & { statusCode: number; code: 
   return Object.assign(new Error(message), { statusCode: 409, code: "EXIT_STATE_CHANGED" });
 }
 
+const ALLOWED_TRANSITIONS: Record<string, string[]> = {
+  submitted:     ['notice_active', 'returned', 'revoked'],
+  returned:      ['submitted', 'revoked'],
+  notice_active: ['exited', 'revoked'],
+  terminated:    ['exited'],
+  exited:        ['closed'],
+  // Legacy compat paths
+  draft:          ['submitted'],
+  manager_review: ['notice_active', 'returned', 'accepted'],
+  hr_review:      ['accepted', 'rejected'],
+  accepted:       ['notice_serving', 'notice_active'],
+  notice_serving: ['exited', 'notice_active'],
+};
+
+export async function transitionExitStatus(
+  exitRequestId: string,
+  newStatus: string,
+  actor: { userId: string; userRole: string; name?: string },
+  opts: {
+    reason?: string;
+    lwdOverride?: string;
+    lwdOverrideReason?: string;
+  } = {}
+): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, employee_id, status, exit_type, exit_sub_type FROM exit_request WHERE id = ? LIMIT 1`,
+    [exitRequestId]
+  );
+  const rec = rows[0] as any;
+  if (!rec) throw Object.assign(new Error('Exit request not found'), { statusCode: 404 });
+
+  const allowed = ALLOWED_TRANSITIONS[rec.status] ?? [];
+  if (!allowed.includes(newStatus)) {
+    throw Object.assign(
+      new Error(`Cannot transition from ${rec.status} to ${newStatus}`),
+      { statusCode: 409, code: 'invalid_transition' }
+    );
+  }
+
+  const updates: string[] = ['status = ?', 'updated_at = NOW()'];
+  const params: unknown[] = [newStatus];
+
+  if (newStatus === 'returned' && opts.reason) {
+    updates.push('return_reason = ?');
+    params.push(opts.reason);
+    updates.push('manager_actioned_at = NOW()');
+  }
+  if (newStatus === 'notice_active') {
+    updates.push('manager_actioned_at = NOW()');
+    if (opts.lwdOverride) {
+      updates.push('lwd_override = ?');
+      params.push(opts.lwdOverride);
+      if (opts.lwdOverrideReason) {
+        updates.push('lwd_override_reason = ?');
+        params.push(opts.lwdOverrideReason);
+      }
+    }
+  }
+  if (newStatus === 'exited') {
+    updates.push('exit_confirmed_at = NOW()');
+  }
+  if (newStatus === 'revoked') {
+    updates.push('revoked_at = NOW()', 'revoke_reason = ?', 'revoked_by = ?');
+    params.push(opts.reason ?? null, actor.userId);
+  }
+
+  params.push(exitRequestId);
+  await db.execute(`UPDATE exit_request SET ${updates.join(', ')} WHERE id = ?`, params);
+
+  // Write approval log
+  await db.execute(
+    `INSERT INTO exit_approval_log
+       (id, exit_request_id, stage, action, action_by, action_by_role, discussion_remarks, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+    [randomUUID(), exitRequestId, newStatus, newStatus, actor.userId, actor.userRole, opts.reason ?? null]
+  );
+
+  // Auto-generate clearance tasks when entering active notice
+  if (newStatus === 'notice_active' || newStatus === 'terminated') {
+    await createDefaultClearanceTasks(exitRequestId, rec.employee_id);
+  }
+}
+
 export const exitService = {
   async listExitRequests(filters: {
     status?: string;
