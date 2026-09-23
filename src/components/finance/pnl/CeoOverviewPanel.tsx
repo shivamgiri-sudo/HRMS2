@@ -217,6 +217,16 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
         </section>
       )}
 
+      {/* Same condition and wording as Live P&L's idcMissing blocker, so both tabs blank the margin
+          for the same reason and say why. */}
+      {data.idcMissing && (
+        <p className="rounded-xl border border-amber-300 bg-amber-50/70 px-4 py-2.5 text-[13px] text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/25 dark:text-amber-200">
+          No indirect cost (GRN) maps to any MAS cost centre for {period}, so every margin is shown as NA
+          rather than an inflated figure that excludes all overheads. Revenue, people cost and profit are
+          still shown as recorded.
+        </p>
+      )}
+
       {/* Headline figures */}
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -359,6 +369,16 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
             payroll and no spend this month
             {hiddenHeads > 0 && `, though ${hiddenHeads.toLocaleString("en-IN")} people still sit against them in the payroll run`}
             : {data.closedBranchesHidden.map((b) => b.branchName).join(", ")}.
+          </p>
+        )}
+        {/* Money with no branch is in the headline but in no row above — say how much, so the
+            rows not adding up to the headline is explained rather than silent. */}
+        {data.unbranched && (Math.abs(data.unbranched.revenue) + Math.abs(data.unbranched.peopleCost) + Math.abs(data.unbranched.indirectCost)) > 0.5 && (
+          <p className="border-t border-slate-100 px-5 py-2.5 text-[12.5px] text-slate-500 dark:border-slate-800">
+            Included in the totals but in no branch row (no branch on the cost centre or employee):
+            revenue {lakh(data.unbranched.revenue)}, people cost {lakh(data.unbranched.peopleCost)}
+            {data.unbranched.staffPaid > 0 && ` (${data.unbranched.staffPaid.toLocaleString("en-IN")} people)`},
+            indirect {lakh(data.unbranched.indirectCost)}.
           </p>
         )}
       </section>

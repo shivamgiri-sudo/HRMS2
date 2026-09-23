@@ -184,6 +184,11 @@ export interface CeoOverview {
    * selected, so headline minus the branch rows equals this. All zero under a branch selection.
    */
   unbranched?: { revenue: number; revenueEstimated: number; peopleCost: number; staffPaid: number; indirectCost: number };
+  /**
+   * No GRN maps to any MAS cost centre this month (company-wide) while people cost exists — every
+   * margin on this tab is NA. Same condition and meaning as Live P&L's `idcMissing`.
+   */
+  idcMissing?: boolean;
 }
 
 const n = (v: unknown): number => {
@@ -895,6 +900,24 @@ function payrollPending(peopleCost: number, estimated: number): boolean {
   return estimated > 0 && peopleCost <= 0;
 }
 
+/**
+ * Does ANY GRN (indirect cost) map to a MAS cost centre for this month, company-wide?
+ *
+ * Same rule as Live P&L's `idcMissing` (pnl-reconciliation.service.ts): its readGrn() is
+ * company-wide whatever the branch filter, and it counts reserved GRN as IDC data only inside the
+ * estimate window — exactly what spendByBranch() reads. When no GRN exists anywhere the overhead
+ * data is absent rather than nil (March 2026 read 40.6% with Rs 0 of indirect cost), so the margin
+ * is NA. Audit item 11: CEO Overview used to show that misleading margin while Live P&L blanked it.
+ *
+ * `spend` is the caller's already-read spendByBranch() map; with no process/cost-centre scope it is
+ * company-wide already (spendByBranch never narrows by branch), so no extra query is needed.
+ */
+async function grnExistsCompanyWide(period: string, s: CeoScope, spend: Map<string, number>): Promise<boolean> {
+  if (!s.processIds.length && !s.costCentreIds.length) return spend.size > 0;
+  const all = await spendByBranch(period, { branchIds: [], processIds: [], costCentreIds: [] });
+  return all.size > 0;
+}
+
 const estimateCache = new Map<string, { at: number; value: Promise<Map<string, number>> }>();
 function estimateByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
   if (s.processIds.length || !isEstimateWindow(period, getCurrentDateIST())) return Promise.resolve(new Map());
@@ -956,9 +979,12 @@ async function marginTrend(
       const revenue = sum(rev) + sum(est);
       const people = [...ppl.entries()].reduce((a, [key, p]) => (inScope(key) ? a + p.cost : a), 0);
       const operatingProfit = revenue - people - sum(spend);
+      const idcMissing = people > 0 && !(await grnExistsCompanyWide(period, s, spend));
       return {
         period, revenue, operatingProfit,
-        marginPct: revenue > 0 && !payrollPending(people, sum(est)) ? (operatingProfit / revenue) * 100 : null,
+        marginPct: revenue > 0 && !payrollPending(people, sum(est)) && !idcMissing
+          ? (operatingProfit / revenue) * 100
+          : null,
       };
     }),
   );
@@ -1384,7 +1410,14 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
     revenueEstimated += unbranchedTotals.revenueEstimated;
   }
   const operatingProfit = totals.revenue - totals.peopleCost - totals.indirectCost;
-  const headlineMargin = totals.revenue > 0 && !payrollPending(totals.peopleCost, revenueEstimated)
+  // Live P&L's idcMissing rule (audit item 11): no GRN mapped anywhere in the company this month,
+  // with people cost present, means the overhead data is absent — every margin on the tab is NA,
+  // exactly as Live P&L blanks its totals, branch and row margins under the same condition.
+  const idcMissing = totals.peopleCost > 0 && !(await grnExistsCompanyWide(period, scope, spend));
+  if (idcMissing) {
+    for (const t of traded) t.row.marginPct = null;
+  }
+  const headlineMargin = totals.revenue > 0 && !payrollPending(totals.peopleCost, revenueEstimated) && !idcMissing
     ? (operatingProfit / totals.revenue) * 100
     : null;
 
@@ -1415,7 +1448,8 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
       peopleCost: totals.peopleCost,
       indirectCost: totals.indirectCost,
       staffPaid: totals.staffPaid,
-    }),
+    }).then((f) => (f && idcMissing ? { ...f, marginPct: null } : f)),
+    idcMissing,
     trend: trend.map((point) =>
       point.period === period
         ? { ...point, revenue: totals.revenue, operatingProfit, marginPct: headlineMargin }

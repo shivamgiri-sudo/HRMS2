@@ -116,6 +116,12 @@ export interface CeoOverview {
   billing: CeoBillingCompleteness;
   /** Closed branches left out of `branches` because every money column was zero. */
   closedBranchesHidden: { branchName: string; staffPaid: number }[];
+  /** Part of the headline that belongs to no branch row (no branch set, or a branch id missing
+   *  from branch_master). All zero under a branch selection. Optional: older backends omit it. */
+  unbranched?: { revenue: number; revenueEstimated: number; peopleCost: number; staffPaid: number; indirectCost: number };
+  /** No GRN maps to any MAS cost centre this month company-wide — every margin is NA (same rule
+   *  as Live P&L's idcMissing). Optional: older backends omit it. */
+  idcMissing?: boolean;
 }
 
 export interface CeoOverviewFilters {

@@ -256,6 +256,36 @@ describe("CEO overview", () => {
     expect(scoped.unbranched?.revenue).toBe(0);
   });
 
+  it("shows margin as NA when no GRN exists company-wide this month, same rule as Live P&L (audit item 11)", async () => {
+    // March 2026 read 40.6% on Live P&L before its idcMissing rule, with Rs 0 of indirect cost —
+    // the overhead data was absent, not nil. CEO Overview had no such rule.
+    mockDb({
+      branches: [{ id: "a", branch_name: "NOIDA", active_status: 1 }, { id: "b", branch_name: "NOIDA-2", active_status: 1 }],
+      revenue: [{ branch_id: "a", amount: L(170) }, { branch_id: "b", amount: L(110) }],
+      people: [{ branch_id: "a", staff: 496, cost: L(100) }, { branch_id: "b", staff: 448, cost: L(70) }],
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-03");
+    expect(out.idcMissing).toBe(true);
+    expect(out.marginPct).toBeNull();
+    expect(out.branches.every((b) => b.marginPct === null)).toBe(true);
+    expect(out.trend.every((t) => t.marginPct === null)).toBe(true);
+    // Money is still shown — only the ratio is withheld.
+    expect(out.operatingProfit).toBeCloseTo(L(110), 0);
+
+    // Under a branch filter the check stays company-wide: GRN on ANOTHER branch still means IDC data
+    // exists for the month (Live P&L's readGrn is company-wide whatever the branch filter).
+    mockDb({
+      branches: [{ id: "a", branch_name: "NOIDA", active_status: 1 }, { id: "b", branch_name: "NOIDA-2", active_status: 1 }],
+      revenue: [{ branch_id: "a", amount: L(170) }, { branch_id: "b", amount: L(110) }],
+      people: [{ branch_id: "a", staff: 496, cost: L(100) }, { branch_id: "b", staff: 448, cost: L(70) }],
+      spend: [{ branch_id: "b", amount: L(20) }],
+    });
+    const scoped = await getCeoOverview("2026-03", { branchId: "a" });
+    expect(scoped.idcMissing).toBe(false);
+    expect(scoped.marginPct).toBeCloseTo(((170 - 100) / 170) * 100, 5);
+  });
+
   it("hides a closed branch whose every money column is zero, without losing its people", async () => {
     /*
      * branch_master holds 45 branches and 5 are active. In July 2026 nine closed ones still
@@ -754,6 +784,8 @@ describe("accrued running-salary fallback — parity with Live P&L's readPayroll
     withRunningSalary({
       branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
       revenue: [{ branch_id: "n", amount: L(150) }],
+      // Some GRN exists this month, so the margin is not NA'd by the no-IDC rule (audit item 11).
+      spend: [{ branch_id: "n", amount: L(2) }],
       // payrollRows: 0 -> salary_prep_line COUNT(*) rows = 0 -> peopleByBranch's own query returns
       // nothing either (no fixture rows), matching a month where final payroll never ran.
     }, [{ branch_id: "n", staff: 300, cost: L(58) }]);
@@ -761,7 +793,7 @@ describe("accrued running-salary fallback — parity with Live P&L's readPayroll
     const out = await getCeoOverview(openMonth);
     expect(out.peopleCost).toBeCloseTo(L(58), 0);
     expect(out.staffPaid).toBe(300);
-    expect(out.marginPct).toBeCloseTo(((150 - 58) / 150) * 100, 5);
+    expect(out.marginPct).toBeCloseTo(((150 - 58 - 2) / 150) * 100, 5);
   });
 
   it("never uses the accrual once final payroll has actually posted", async () => {
