@@ -324,18 +324,18 @@ export async function leaveUtilization(
            lt.leave_name,
            lt.leave_code AS leave_type,
            lr.total_days AS days_used,
-           DATE_FORMAT(lr.from_date, '%d-%b-%y') AS start_date,
-           DATE_FORMAT(lr.to_date,   '%d-%b-%y') AS end_date,
+           DATE_FORMAT(lr.from_date, '%d-%m-%Y') AS start_date,
+           DATE_FORMAT(lr.to_date,   '%d-%m-%Y') AS end_date,
            COALESCE(b.branch_name, '')  AS branch_name,
            COALESCE(p.process_name, '') AS process_name,
-           COALESCE(DATE_FORMAT(COALESCE(lr.requested_at, lr.applied_at), '%d-%b-%y'), '') AS leave_request_date,
+           COALESCE(DATE_FORMAT(COALESCE(lr.requested_at, lr.applied_at), '%d-%m-%Y'), '') AS leave_request_date,
            -- Both of these render blank on every row today, and it is the data not the SQL:
            -- leave_request.approved_at and approved_by are NULL on all 2,678 rows (measured
            -- 2026-08-10), even for requests whose status IS 'approved'. So the approval is
            -- recorded as a status but never stamped with who or when. Left as-is rather than
            -- substituted with updated_at, which would put a fabricated approval date in front of
            -- a reader; the columns start filling the moment the approval path writes them.
-           COALESCE(DATE_FORMAT(lr.approved_at, '%d-%b-%y'), '') AS leave_approved_date,
+           COALESCE(DATE_FORMAT(lr.approved_at, '%d-%m-%Y'), '') AS leave_approved_date,
            COALESCE(NULLIF(appr.employee_code,''), NULLIF(lr.approved_by,''), '') AS approved_by,
            COALESCE(NULLIF(lr.reason,''), '') AS leave_remarks
       FROM leave_request lr

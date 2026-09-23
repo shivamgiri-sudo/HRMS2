@@ -194,7 +194,7 @@ function blank(v: unknown): boolean {
   return v === null || v === undefined || (typeof v === "string" && v.trim() === "");
 }
 
-/** DD-MMM-YYYY, matching this file's DATE_FORMAT(..., '%d-%b-%Y') convention. */
+/** DD-MMM-YYYY, matching this file's DATE_FORMAT(..., '%d-%m-%Y') convention. */
 function formatLegacyDate(value: unknown): string | null {
   if (!value) return null;
   const d = value instanceof Date ? value : new Date(String(value));
@@ -555,7 +555,7 @@ export async function employeeMasterLive(
            e.gender,
            COALESCE(en.nominee_name, e.nominee_name) AS nominee_name,
            COALESCE(en.relationship, e.nominee_relation) AS nominee_relation,
-           DATE_FORMAT(en.date_of_birth, '%d-%b-%Y') AS nominee_dob,
+           DATE_FORMAT(en.date_of_birth, '%d-%m-%Y') AS nominee_dob,
            ${statusExpr} AS status,
            e.official_email,
            e.personal_email,
@@ -568,12 +568,12 @@ export async function employeeMasterLive(
            COALESCE(NULLIF(e.alternate_mobile,''), cop.alt_mobile_number) AS temporary_mobile,
            lm.land_line_p AS permanent_landline,
            lm.land_line_t AS temporary_landline,
-           DATE_FORMAT(e.date_of_birth, '%d-%b-%Y') AS date_of_birth,
-           DATE_FORMAT(e.date_of_joining, '%d-%b-%Y') AS date_of_joining,
+           DATE_FORMAT(e.date_of_birth, '%d-%m-%Y') AS date_of_birth,
+           DATE_FORMAT(e.date_of_joining, '%d-%m-%Y') AS date_of_joining,
            -- Joining Month, MMM'YY (e.g. Aug'26) -- purely derived from date_of_joining, never a
            -- separately-stored value, so it can never disagree with DOJ above.
            DATE_FORMAT(e.date_of_joining, '%b''%y') AS joining_month,
-           DATE_FORMAT(e.date_of_exit, '%d-%b-%Y') AS date_of_leaving,
+           DATE_FORMAT(e.date_of_exit, '%d-%m-%Y') AS date_of_leaving,
            -- Tenure/AON: joined-to-(exit or today), in whole years + months. Never guessed for
            -- an employee with no joining date.
            CASE WHEN e.date_of_joining IS NULL THEN NULL ELSE
@@ -633,7 +633,7 @@ export async function employeeMasterLive(
            -- via updateSalaryStartDate) calls syncSalaryStartDateEverywhere() which keeps it
            -- current. sca.effective_date / esa.effective_from are fallbacks for employees
            -- created before that sync existed.
-           DATE_FORMAT(COALESCE(e.salary_start_date, sca.effective_date, esa.effective_from), '%d-%b-%Y') AS salary_effective_date,
+           DATE_FORMAT(COALESCE(e.salary_start_date, sca.effective_date, esa.effective_from), '%d-%m-%Y') AS salary_effective_date,
            esa.ctc_annual           AS ctc_annual,
            ssm.structure_name       AS salary_structure_name,
            -- Gross/CTC/NetInHand: reported as MONTHLY figures.
@@ -668,7 +668,7 @@ export async function employeeMasterLive(
            -- fallback for anyone hired through the live ATS onboarding flow since (coverage
            -- there is separately near-zero — employees.candidate_id is barely populated — but
            -- it costs nothing to check).
-           COALESCE(DATE_FORMAT(lm.entry_date, '%d-%b-%Y'), DATE_FORMAT(cop.submitted_at, '%d-%b-%Y')) AS entry_date,
+           COALESCE(DATE_FORMAT(lm.entry_date, '%d-%m-%Y'), DATE_FORMAT(cop.submitted_at, '%d-%m-%Y')) AS entry_date,
            -- LeftRmks = exit reason. Free-text resignation_reason wins when present (matches the
            -- field's literal meaning); falls back to the coded exit_reason_category (same source
            -- leftEmployeeExport() elsewhere in this file uses), then to
@@ -1121,7 +1121,7 @@ export async function newJoinExport(
       COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
       COALESCE(dept.dept_name, '') AS department,
       COALESCE(desig.designation_name, '') AS designation,
-      DATE_FORMAT(e.date_of_joining, '%d-%b-%Y') AS doj,
+      DATE_FORMAT(e.date_of_joining, '%d-%m-%Y') AS doj,
       COALESCE(e.source, '') AS source,
       COALESCE(e.sub_source, '') AS sub_source,
       COALESCE(e.mobile, '') AS mobile_no,
@@ -1258,8 +1258,8 @@ export async function leftEmployeeExport(
       COALESCE(cc.cost_centre_name, '') AS cost_center,
       COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
       COALESCE(e.mobile, '') AS mobile_no,
-      DATE_FORMAT(e.date_of_joining, '%d-%b-%Y') AS doj,
-      DATE_FORMAT(COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed, e.date_of_leaving, e.date_of_exit), '%d-%b-%Y') AS left_date,
+      DATE_FORMAT(e.date_of_joining, '%d-%m-%Y') AS doj,
+      DATE_FORMAT(COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed, e.date_of_leaving, e.date_of_exit), '%d-%m-%Y') AS left_date,
       COALESCE(er.exit_reason_category, '') AS left_remarks,
       COALESCE(e.source, '') AS source,
       COALESCE(e.sub_source, '') AS sub_source,
@@ -1335,8 +1335,8 @@ export async function bankMissing(
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-           DATE_FORMAT(e.date_of_joining, '%d-%b-%Y') AS date_of_joining,
-           DATE_FORMAT(esa.effective_from, '%d-%b-%Y') AS salary_effective_date,
+           DATE_FORMAT(e.date_of_joining, '%d-%m-%Y') AS date_of_joining,
+           DATE_FORMAT(esa.effective_from, '%d-%m-%Y') AS salary_effective_date,
            CASE WHEN ebd.id IS NULL THEN 'MISSING_BANK' WHEN COALESCE(ebd.verified,0)=0 THEN 'UNVERIFIED_BANK' ELSE 'OK' END AS bank_status,
            CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status
       FROM employees e

@@ -37,11 +37,11 @@ function first(columns: Map<string, SourceColumn>, candidates: string[]) {
 }
 
 function fmtDate(expression: string) {
-  return `CASE WHEN ${expression} IS NULL THEN NULL ELSE UPPER(DATE_FORMAT(${expression},'%d-%b-%Y')) END`;
+  return `CASE WHEN ${expression} IS NULL THEN NULL ELSE UPPER(DATE_FORMAT(${expression},'%d-%m-%Y')) END`;
 }
 
 function fmtTimeStamp(expression: string) {
-  return `CASE WHEN ${expression} IS NULL THEN NULL ELSE DATE_FORMAT(${expression},'%d-%b-%Y %H:%i:%s') END`;
+  return `CASE WHEN ${expression} IS NULL THEN NULL ELSE DATE_FORMAT(${expression},'%d-%m-%Y %H:%i:%s') END`;
 }
 
 async function employeeOrganisation(alias: string) {

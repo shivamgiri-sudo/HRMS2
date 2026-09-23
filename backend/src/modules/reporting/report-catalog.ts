@@ -4972,6 +4972,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "emp_name", label: "Employee Name", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 120 },
       { key: "cost_center", label: "Cost Centre", format: "text", width: 120 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
       { key: "department", label: "Department", format: "text", width: 120 },
       { key: "designation", label: "Designation", format: "text", width: 120 },
       { key: "doj", label: "Date of Joining", format: "date", width: 120 },

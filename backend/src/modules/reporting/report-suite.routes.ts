@@ -2945,7 +2945,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const to = dateParam(req.query.to, from);
       if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT DATE_FORMAT(adr.record_date,'%d-%b-%Y') AS report_date,
+      sql = `SELECT DATE_FORMAT(adr.record_date,'%d-%m-%Y') AS report_date,
                     COUNT(DISTINCT e.id) AS active_agents,
                     SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END) AS present_count,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
@@ -3073,8 +3073,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
         SELECT
           e.employee_code,
           CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
-          DATE_FORMAT(e.date_of_joining,  '%d-%b-%Y') AS date_of_joining,
-          DATE_FORMAT(e.date_of_leaving,  '%d-%b-%Y') AS date_of_leaving,
+          DATE_FORMAT(e.date_of_joining,  '%d-%m-%Y') AS date_of_joining,
+          DATE_FORMAT(e.date_of_leaving,  '%d-%m-%Y') AS date_of_leaving,
           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
           ipr.request_type,

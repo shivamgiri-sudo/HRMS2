@@ -26,11 +26,11 @@ function col(columns: Map<string, SourceColumn>, candidates: string[]) {
 }
 
 function dateSql(expression: string) {
-  return `CASE WHEN ${expression} IS NULL THEN NULL ELSE UPPER(DATE_FORMAT(${expression},'%d-%b-%Y')) END`;
+  return `CASE WHEN ${expression} IS NULL THEN NULL ELSE UPPER(DATE_FORMAT(${expression},'%d-%m-%Y')) END`;
 }
 
 function timestampSql(expression: string) {
-  return `CASE WHEN ${expression} IS NULL THEN NULL ELSE UPPER(DATE_FORMAT(${expression},'%d-%b-%Y %H:%i:%s')) END`;
+  return `CASE WHEN ${expression} IS NULL THEN NULL ELSE UPPER(DATE_FORMAT(${expression},'%d-%m-%Y %H:%i:%s')) END`;
 }
 
 function safeJsonText(expression: string, path: string) {

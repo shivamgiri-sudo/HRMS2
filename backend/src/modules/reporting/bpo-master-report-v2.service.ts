@@ -27,7 +27,7 @@ export interface BpoMasterReportFilters {
   export?: boolean;
 }
 
-// All date columns use DD-MMM-YYYY display format (DATE_FORMAT expression: %d-%b-%Y).
+// All date columns use DD-MM-YYYY display format (DATE_FORMAT expression: %d-%m-%Y).
 const MONTH = /^\d{4}-\d{2}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
