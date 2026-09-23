@@ -1,10 +1,12 @@
 # MAS Callnet PeopleOS / HRMS — Claude Project Instructions
 
-## ⛔ HARD STOP — NEVER DEPLOY WITHOUT EXPLICIT USER APPROVAL
+## Standing Deploy Authorization (2026-09-22, owner directive)
 
-**DO NOT run `git push`, `plink`, `pm2`, `npm run build` on the production server, or any deployment command without the user typing explicit approval in the current conversation.**
+**Push to `main` and deploy to production automatically, without waiting for per-change approval, for additive/non-destructive work — including applying pending migrations.** The owner's own words: "live all commits in production always dont wait for me to give you commands to migration of databse and all." This replaces the old default of asking before every push/deploy/migration.
 
-The production URL https://mcnhrms.teammas.in is live and actively used. An unsanctioned deploy — even a clean one — disrupts real users. "The code builds locally" is NOT approval to deploy. "Show me the demo" is NOT approval to deploy. Wait for the user to say something like "deploy it", "push to server", or "go live".
+This still stops for anything genuinely hard to reverse — same bar as "Claude Must Not Do Without Explicit Approval" below: dropping/renaming a column or table, deleting rows, resetting a database, force-pushing, rotating credentials, or any change with real data-loss or payroll-correctness risk. For those, explain the risk and wait for a yes, exactly as before.
+
+The production URL https://mcnhrms.teammas.in is live and actively used, so "additive and tested locally" is still the bar before shipping — see the mandatory local-testing section right below. Ship confidently, not carelessly.
 
 ## ⛔ MANDATORY — TEST LOCALLY BEFORE PUSHING OR DEPLOYING
 
@@ -112,14 +114,14 @@ Treat these as protected unless the user explicitly approves replacement:
 1. Work in one narrowly scoped phase at a time. Never attempt the full PeopleOS build in one change.
 2. Before editing, produce: current behaviour summary; exact files to modify/create; database tables/API endpoints affected; risk to working flows; test/rollback plan.
 3. Never delete existing functions, routes, tables, page flows, SQL migrations or user-visible options solely to simplify implementation.
-4. Never run migrations, destructive SQL, seed/reset operations or deployment commands against production without explicit user approval.
+4. Additive migrations and deployment commands may run against production automatically (standing authorization above). Destructive SQL, seed/reset operations, or anything that drops/renames/deletes data still needs explicit user approval every time.
 5. Keep migrations additive and backward-compatible. Add new migration files instead of editing already-applied production migrations unless confirmed safe.
 6. Backend authorization is mandatory. UI route gating is not security.
 7. Sensitive operations must enforce role and row scope at API/query level.
 8. Every state-changing action and sensitive export must be auditable.
 9. UI enhancement must not hide missing backend functionality.
 10. No mock metrics in production flows. Demo tenants/data must be isolated and labelled.
-11. Do not push, merge, deploy or update production without user approval.
+11. Push, merge and deploy to production automatically for additive/non-destructive work (standing authorization above) — still confirm first for anything destructive/irreversible.
 
 ## Concurrent Agent Rule — More Than One Claude Works Here
 
@@ -289,8 +291,8 @@ mysql -u root -p mas_hrms -e "SELECT ..."
 Or via the backend's existing `db` pool in a one-off script. The MCP DB tools are read-only wrappers that frequently time out — use real MySQL every time.
 
 ## Continuous Build Permission
-- Build clean feature branches, additive MySQL migrations (unexecuted), APIs, UI and tests without stopping.
-- Stop ONLY for charter hard gates: live SQL execution, deployment, credential changes, live upstream DB/LMS access, payroll activation, destructive changes, unresolved PII/security exposure.
+- Build clean feature branches, additive MySQL migrations, APIs, UI and tests without stopping — and push/deploy/apply them to production automatically (standing authorization above).
+- Stop ONLY for charter hard gates: credential changes, live upstream DB/LMS access, payroll activation, destructive changes (drop/rename/delete), unresolved PII/security exposure. Live SQL execution and deployment are no longer stop conditions by themselves — only the destructive-change gate is.
 - Squash-merge safe PRs after package quality gates pass.
 
 ## Required Work Pattern in Claude Code
@@ -301,11 +303,11 @@ For every phase:
 2. Read `CLAUDE.md` and relevant files under `docs/peopleos-build/`.
 3. Inspect the actual code/schemas/tests; documentation may be incomplete.
 4. Report verified findings and propose a small implementation plan with exact file list.
-5. Wait for approval before changing code or database scripts.
-6. Implement only the approved scope.
-7. Validate frontend/backend builds and relevant tests; migrations only against isolated local/staging schema.
+5. For additive/non-destructive work, proceed without waiting (standing authorization above). For anything destructive/irreversible, wait for approval first.
+6. Implement the planned scope.
+7. Validate frontend/backend builds and relevant tests before shipping — ideally against an isolated local/staging schema first.
 8. Show diff summary, validation output, known limitations and rollback steps.
-9. Commit or push only after user approval.
+9. Commit, push and deploy additive/non-destructive work automatically (standing authorization above); still wait for approval on anything destructive/irreversible.
 
 ## Initial Delivery Sequence
 
@@ -323,13 +325,14 @@ For every phase:
 
 ## Claude Must Not Do Without Explicit Approval
 
-- Deploy to any hosting platform or the deployed LMS.
-- Run MySQL SQL on the production host.
-- Reset databases or storage.
+Deploying to production, running migrations/SQL against it, and pushing/merging to GitHub are now standing-authorized (see the top of this file) for additive, non-destructive work. What still needs an explicit yes every time:
+
+- Deploy to, or modify, the independently deployed LMS (a separate protected system — see the LMS Integration Rule above).
+- Any destructive SQL: dropping/renaming a column or table, deleting rows, resetting a database or storage.
 - Broadly modify authentication or RLS policies.
 - Remove modules, pages, migrations, tables or existing business logic.
 - Publish secrets, environment values or client/employee/candidate data.
-- Push or merge to GitHub.
+- Force-push, or anything that rewrites already-pushed history.
 
 ## Package Reference
 This project implements the PeopleOS Master Execution Charter (docs/peopleos-build/PEOPLEOS_MASTER_EXECUTION_CHARTER.md).
