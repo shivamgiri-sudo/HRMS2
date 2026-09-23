@@ -414,6 +414,9 @@ function startServer() {
         console.log(
           "[workers] WORKERS_PROCESS=external - ALL schedulers/workers handled by external process",
         );
+        // Meta lead sync is a lightweight external API call — safe to run in the API process
+        // even when WORKERS_PROCESS=external. No DB-intensive workers here.
+        startMetaLeadSyncScheduler();
       }
     } else {
       console.log("[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)");
