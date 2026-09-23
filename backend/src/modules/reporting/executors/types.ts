@@ -23,6 +23,9 @@ export interface ExecFilters {
   employeeName?: string;
   from?: string;
   to?: string;
+  /** DOJ range for employee-master: filter by date_of_joining (not tenure window) */
+  dojFrom?: string;
+  dojTo?: string;
   month?: string;
   year?: string;
   financialYear?: string;

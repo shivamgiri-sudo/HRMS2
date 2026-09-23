@@ -409,6 +409,10 @@ export async function employeeMaster(
     params.push(...inForce.params);
   }
 
+  // DOJ date range — filter by date_of_joining only (clear, unambiguous to users)
+  if (filters.dojFrom) { clauses.push("e.date_of_joining >= ?"); params.push(dateParam(filters.dojFrom, "1900-01-01")); }
+  if (filters.dojTo)   { clauses.push("e.date_of_joining <= ?"); params.push(dateParam(filters.dojTo,   "9999-12-31")); }
+
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("e.id > ?");
     params.push(options.cursor);
@@ -520,6 +524,10 @@ export async function employeeMasterLive(
     clauses.push(inForce.clause);
     params.push(...inForce.params);
   }
+
+  // DOJ date range — filter by date_of_joining only (clear, unambiguous to users)
+  if (filters.dojFrom) { clauses.push("e.date_of_joining >= ?"); params.push(dateParam(filters.dojFrom, "1900-01-01")); }
+  if (filters.dojTo)   { clauses.push("e.date_of_joining <= ?"); params.push(dateParam(filters.dojTo,   "9999-12-31")); }
 
   // Cursor-based pagination for worker mode
   if (options.mode === "worker" && options.cursor != null) {

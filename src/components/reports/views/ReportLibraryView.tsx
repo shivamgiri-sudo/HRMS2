@@ -256,21 +256,14 @@ function buildFiltersForReport(code: string): FilterDef[] {
 
   const filterMap: Record<string, FilterDef[]> = {
     "headcount": [...branchProcess, DEPT_FILTER, EMPLOYEE_STATUS_FILTER],
-    // No date filter — deliberately removed 2026-09-14. It used to be offered here and the
-    // backend does honour it (a "tenure window" filter in employeeMaster: only employees
-    // in force sometime between From/To), but that is fundamentally the wrong shape for
-    // this report. The catalog entry's own name and description promise "Complete employee
-    // directory ... one row per employee" — nothing here told a user that filling in either
-    // date silently switches the report from "every employee" to "only employees employed
-    // during this window", with no warning that ~98% of the directory had just vanished.
-    // Live-reported 2026-09-14: a user with From/To populated (01-08 to 14-09) saw 1,009
-    // rows instead of ~59,000, and every column on the visible ones looked "blank" only
-    // because that narrow recent-hires subset happens to be the one slice of the workforce
-    // the legacy data migration never covered — not because the report was actually broken.
-    // A tenure window belongs on period-scoped reports (New Join/Left Employee Export,
-    // both of which keep dateFilters below); a complete directory should not have one.
-    // STATUS_FILTER replaced by EMPLOYEE_STATUS_FILTER: see the note on that const.
-    "employee-master": [...branchProcess, DEPT_FILTER, EMPLOYEE_STATUS_FILTER],
+    // Date filters here are DOJ-scoped (filter by date_of_joining), NOT a tenure window.
+    // The old tenure window was removed 2026-09-14 because it silently dropped ~98% of rows
+    // with no warning. DOJ filters are unambiguous: "show employees who joined between these
+    // dates" — leave both blank to get the full directory.
+    "employee-master": [...branchProcess, DEPT_FILTER, EMPLOYEE_STATUS_FILTER,
+      { key: "dojFrom", label: "Joining Date From", type: "date" } as FilterDef,
+      { key: "dojTo",   label: "Joining Date To",   type: "date" } as FilterDef,
+    ],
     "manager-mapping": [...branchProcess, EMPLOYEE_STATUS_FILTER],
     "org-structure-snapshot": [...branchOnly, EMPLOYEE_STATUS_FILTER],
     "cost-centre-headcount": [...branchOnly, EMPLOYEE_STATUS_FILTER],
