@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1190,
-  "columnCount": 17757,
+  "columnCount": 17764,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -8406,6 +8406,9 @@
       "remarks",
       "attachment_url",
       "cleared_by",
+      "cleared_by_name",
+      "cleared_by_role",
+      "clearing_reason",
       "cleared_at",
       "created_at",
       "updated_at"
@@ -9315,6 +9318,10 @@
       "created_at",
       "updated_at",
       "is_ff_provisional",
+      "verified_by",
+      "verified_by_name",
+      "verified_at",
+      "verification_reason",
       "nominee_distribution_status",
       "gratuity_distribution_id",
       "ff_paid_by",
