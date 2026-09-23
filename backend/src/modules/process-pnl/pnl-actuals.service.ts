@@ -344,6 +344,26 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
  *   the whole thing moved into readGrnSpend() so CEO Overview and Live P&L read the same rows.
  */
 
+/**
+ * Process each cost centre resolves to, by the SAME rule getInvoicedRevenueActuals attributes
+ * invoice revenue with (modal employee process, else cost_centre_master.process_id) — so a
+ * per-cost-centre figure from elsewhere (e.g. Live P&L's seat-rate estimate) lands on the same
+ * process column as that cost centre's invoices.
+ */
+export async function getCostCentreProcessIds(costCentreIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (costCentreIds.length === 0) return out;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ccm.id AS cost_centre_id, COALESCE(pc.process_id, ccm.process_id) AS process_id
+       FROM cost_centre_master ccm
+       LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
+      WHERE ccm.id IN (${inMarks(costCentreIds)})`,
+    costCentreIds,
+  );
+  for (const row of rows) if (row.process_id) out.set(String(row.cost_centre_id), String(row.process_id));
+  return out;
+}
+
 /** Recognised revenue for a period, from the budget's own monthly drivers. */
 export async function getDriverRevenueActuals(periodCode: string): Promise<ActualsByKey> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptyActuals();

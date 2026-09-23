@@ -15,7 +15,9 @@ import {
   type RevenueRuleInput,
 } from "./bpo-pnl.calculation.js";
 import { PROCESS_BY_COST_CENTRE, getInvoicedRevenueActuals, getApprovedCostCentreSplits } from "./pnl-actuals.service.js";
-import { isOpenPeriod } from "./pnl-statement.service.js";
+import { isOpenPeriod, getLiveRevenueEstimate } from "./pnl-statement.service.js";
+import { isEstimateWindow } from "./pnl-seat-billing.service.js";
+import { getCurrentDateIST } from "../../shared/istDate.js";
 import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.service.js";
 import { processPnlService, getClosedBranchIds } from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
@@ -1478,6 +1480,12 @@ async function computeBranchRows(scope: PnlQueryFilters) {
      */
     getActualPeopleCost(scope.period ?? ""),
   ]);
+  // Live P&L's seat-rate estimate for not-yet-billed cost centres — only for the month just
+  // closed (closed per isOpenPeriod, still inside isEstimateWindow). Same figure the Statement,
+  // Live P&L and CEO Overview add; see pnl-statement.service.ts enrichColumn. Degrades to none.
+  const lastMonthEstimate = !isOpenPeriod(scope.period ?? "") && isEstimateWindow(scope.period ?? "", getCurrentDateIST())
+    ? await getLiveRevenueEstimate(scope.period ?? "").catch(() => null)
+    : null;
 
   const rows: BpoPnlRow[] = baseRows.map((base) => {
     const configuredRules = rulesMap.get(base.processId) ?? [];
@@ -1586,7 +1594,10 @@ async function computeBranchRows(scope: PnlQueryFilters) {
      *     real billed number and the estimate must not outrank it. Falls back to the rule estimate
      *     only if nothing was invoiced for the process (e.g. billing not yet recorded).
      */
-    const invoicedForProcess = invoiced.byProcess.get(base.processId) ?? 0;
+    // + last month's seat estimate for this process's unbilled cost centres (zero otherwise), so
+    // header KPIs / Full Waterfall agree with the Statement and Live P&L for the default month.
+    const invoicedForProcess = (invoiced.byProcess.get(base.processId) ?? 0)
+      + (lastMonthEstimate?.byProcess.get(base.processId) ?? 0);
     const ruleRevenue = toNumber(base.revenueMtd) > 0 ? toNumber(base.revenueMtd) : revenue.earnedRevenue;
     const periodOpen = isOpenPeriod(scope.period ?? "");
     const usedInvoicedFallback = !periodOpen && invoicedForProcess > 0;
