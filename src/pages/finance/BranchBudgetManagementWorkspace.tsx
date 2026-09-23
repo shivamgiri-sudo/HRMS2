@@ -955,10 +955,10 @@ export default function BranchBudgetManagementWorkspace() {
     const lines = detailQuery.data?.lines ?? [];
     return lines.reduce(
       (acc, line) => ({
-        budgeted: acc.budgeted + Number(line.gross_amount ?? 0),
-        reserved: acc.reserved + Number(line.reserved_amount ?? 0),
-        consumed: acc.consumed + Number(line.consumed_amount ?? 0),
-        available: acc.available + Number(line.available_gross_amount ?? 0),
+        budgeted:  acc.budgeted  + Number(line.gross_amount ?? 0),
+        reserved:  acc.reserved  + Number(line.reserved_amount ?? 0),
+        consumed:  acc.consumed  + Number(line.consumed_amount ?? 0),
+        available: acc.available + Number(line.gross_amount ?? 0) - Number(line.reserved_amount ?? 0) - Number(line.consumed_amount ?? 0),
       }),
       { budgeted: 0, reserved: 0, consumed: 0, available: 0 }
     );
@@ -976,11 +976,12 @@ export default function BranchBudgetManagementWorkspace() {
     for (const line of detailQuery.data?.lines ?? []) {
       const k = `${line.head}|${line.sub_head ?? ""}`;
       const row = map.get(k);
+      const lineAvailable = Number(line.gross_amount ?? 0) - Number(line.reserved_amount ?? 0) - Number(line.consumed_amount ?? 0);
       if (row) {
         row.budgeted  += Number(line.gross_amount ?? 0);
         row.reserved  += Number(line.reserved_amount ?? 0);
         row.consumed  += Number(line.consumed_amount ?? 0);
-        row.available += Number(line.available_gross_amount ?? 0);
+        row.available += lineAvailable;
         row.lineIds.push(String(line.id));
       } else {
         map.set(k, {
@@ -988,12 +989,12 @@ export default function BranchBudgetManagementWorkspace() {
           budgeted:  Number(line.gross_amount ?? 0),
           reserved:  Number(line.reserved_amount ?? 0),
           consumed:  Number(line.consumed_amount ?? 0),
-          available: Number(line.available_gross_amount ?? 0),
+          available: lineAvailable,
           lineIds: [String(line.id)],
         });
       }
     }
-    return [...map.values()];
+    return [...map.values()].sort((a, b) => a.head.localeCompare(b.head) || (a.subHead ?? "").localeCompare(b.subHead ?? ""));
   }, [detailQuery.data?.lines]);
   /** Data-quality signals surfaced as warning banners in both tabs.
    *  consumptionDrift: variance tab consumed exceeds CC tab total consumed — simple GRNs that
