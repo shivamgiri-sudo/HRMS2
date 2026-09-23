@@ -247,13 +247,24 @@ export async function setMappingActive(actor: Actor, id: string, active: boolean
 
 export async function getMappingDetail(actor: Actor, id: string) {
   const mapping = await loadMappingInScope(actor, id);
-  const auditRows = rows(await db.execute(
-    `SELECT a.id, a.action_type, a.actor_user_id, u.email AS actor_email, a.metadata_json, a.created_at
-       FROM audit_action_log a LEFT JOIN auth_user u ON u.id = a.actor_user_id
+  const rawAudit = rows(await db.execute(
+    `SELECT a.id, a.action_type, a.actor_user_id, a.metadata_json, a.created_at
+       FROM audit_action_log a
       WHERE a.module_key = ? AND a.entity_type = 'process_lob_map' AND a.entity_id = ?
       ORDER BY a.created_at DESC LIMIT 100`,
     [LOB_MODULE_KEY, id],
   ));
+  // Actor emails are looked up by parameter, not joined: audit_action_log and auth_user do not
+  // share a collation in every environment and a column-to-column join would raise
+  // ER_CANT_AGGREGATE_2COLLATIONS.
+  const actorIds = Array.from(new Set(rawAudit.map((a) => a.actor_user_id).filter(Boolean)));
+  const emails = new Map<string, string>();
+  if (actorIds.length) {
+    for (const u of rows(await db.execute(`SELECT id, email FROM auth_user WHERE id IN (${placeholders(actorIds.length)})`, actorIds))) {
+      emails.set(u.id, u.email);
+    }
+  }
+  const auditRows = rawAudit.map((a) => ({ ...a, actor_email: emails.get(a.actor_user_id) ?? null }));
   const emp = rows(await db.execute(
     `SELECT COUNT(*) AS c FROM employees WHERE process_id = ? AND lob_id = ?`, [mapping.process_id, mapping.lob_id],
   ))[0]?.c ?? 0;
