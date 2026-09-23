@@ -286,6 +286,27 @@ describe("CEO overview", () => {
     expect(scoped.marginPct).toBeCloseTo(((170 - 100) / 170) * 100, 5);
   });
 
+  it("YTD budget follows the branch filter instead of summing every branch (audit item 18)", async () => {
+    mockDb({
+      branches: [
+        { id: "a", branch_name: "NOIDA", active_status: 1 },
+        { id: "b", branch_name: "NOIDA-2", active_status: 1 },
+      ],
+      revenue: [{ branch_id: "a", amount: L(100) }, { branch_id: "b", amount: L(50) }],
+      people: [{ branch_id: "a", staff: 10, cost: L(60) }, { branch_id: "b", staff: 5, cost: L(30) }],
+      spend: [{ branch_id: "a", amount: L(5) }, { branch_id: "b", amount: L(4) }],
+      budget: [{ branch_id: "a", amount: L(8) }, { branch_id: "b", amount: L(6) }],
+    });
+    const { getYtdSummary } = await import("../ceo-overview.service.js");
+    const all = await getYtdSummary("2026-05");
+    const scoped = await getYtdSummary("2026-05", { branchId: "a" });
+    expect(all.months).toEqual(["2026-04", "2026-05"]);
+    expect(all.totalBudget).toBeCloseTo(L(28), 0);
+    expect(scoped.totalBudget, "NOIDA's budget only, for both months").toBeCloseTo(L(16), 0);
+    expect(scoped.totalRevenue).toBeCloseTo(L(200), 0);
+    expect(scoped.scope?.branchIds).toEqual(["a"]);
+  });
+
   it("hides a closed branch whose every money column is zero, without losing its people", async () => {
     /*
      * branch_master holds 45 branches and 5 are active. In July 2026 nine closed ones still

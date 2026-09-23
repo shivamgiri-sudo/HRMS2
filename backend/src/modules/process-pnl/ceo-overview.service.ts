@@ -593,6 +593,31 @@ async function budgetByBranch(period: string): Promise<Map<string, number>> {
 }
 
 /**
+ * Approved budget for a set of cost centre CODES: their 'CostCenter' lines, plus header-level
+ * top-ups ONLY where every line of that budget is one of these codes (see focusBudgetTopUps —
+ * audit item 16; a shared budget's top-up is never pro-rated, it is returned as `sharedTopUps` so
+ * the caller can say so). Used by the focus panel and by the YTD strip under a process /
+ * cost-centre scope, so both report the same figure.
+ */
+async function budgetForCodes(period: string, codes: string[]): Promise<{ budget: number; sharedTopUps: number }> {
+  if (codes.length === 0 || !(await tableExists("finance_budget_line_snapshot"))) return { budget: 0, sharedTopUps: 0 };
+  // Approved budgets only — see budgetByBranch. Summing every mirrored row counts 367 rows that
+  // never got past the first approval.
+  const [bud] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(l.amount), 0) AS a
+       FROM finance_budget_line_snapshot l
+       JOIN finance_budget_snapshot b
+         ON b.bill_source_id = l.budget_source_id AND b.period_code = l.period_code
+      WHERE l.period_code = ? AND l.expense_type = 'CostCenter'
+        AND l.expense_type_name IN (${marks(codes)})
+        AND b.active_status = 1 AND b.is_rejected = 0`,
+    [period, ...codes],
+  );
+  const topUps = await focusBudgetTopUps(period, codes);
+  return { budget: n(bud[0]?.a) + topUps.attributable, sharedTopUps: topUps.shared };
+}
+
+/**
  * Is this month's invoicing finished, or is it still being raised?
  *
  * MAS bills in arrears, and a large part of any month is invoiced during the NEXT one. June 2026's
@@ -1141,32 +1166,12 @@ async function buildFocus(
       invoiceLines = n(inv[0]?.n);
     }
 
-    // Approved budgets only — see budgetByBranch. Summing every mirrored row counts 367 rows
-    // that never got past the first approval.
     if (hasBudgetSnap) {
-      const [bud] = await db.execute<RowDataPacket[]>(
-        `SELECT COALESCE(SUM(l.amount), 0) AS a
-           FROM finance_budget_line_snapshot l
-           JOIN finance_budget_snapshot b
-             ON b.bill_source_id = l.budget_source_id AND b.period_code = l.period_code
-          WHERE l.period_code = ? AND l.expense_type = 'CostCenter'
-            AND l.expense_type_name IN (${codeMarks})
-            AND b.active_status = 1 AND b.is_rejected = 0`,
-        [period, ...codeList],
-      );
-      budget = n(bud[0]?.a);
-
-      // Header-level top-ups (reopen_additional_amount), which budgetByBranch() adds for every
-      // branch but this panel used to leave out entirely (audit item 16). A top-up has no cost
-      // centre of its own, so it is attributed here ONLY when every CostCenter line of its budget
-      // is in this focus — then the whole budget, top-up included, belongs to it. A top-up on a
-      // budget shared with other cost centres is NOT pro-rated (same no-guessing rule as the budget
-      // drilldown and budget-cost-centre-utilization.service.ts); it is named in a note instead.
-      const topUps = await focusBudgetTopUps(period, codeList);
-      budget += topUps.attributable;
-      if (topUps.shared !== 0) {
+      const scoped = await budgetForCodes(period, codeList);
+      budget = scoped.budget;
+      if (scoped.sharedTopUps !== 0) {
         notes.push(
-          `${lakh(topUps.shared)} of sanctioned top-ups sit on budgets shared with other cost centres `
+          `${lakh(scoped.sharedTopUps)} of sanctioned top-ups sit on budgets shared with other cost centres `
           + `and are not included in the budget above — a header-level top-up names no cost centre, `
           + `so it is not split by guesswork.`,
         );
@@ -1503,6 +1508,49 @@ export interface CeoYtdSummary {
   totalBudget: number;
   marginPct: number | null;
   monthly: Array<{ period: string; revenue: number; peopleCost: number; indirectCost: number; operatingProfit: number; budget: number }>;
+  /** The scope every figure above was computed under (empty lists = company-wide), so the page can
+   *  label the strip instead of leaving the reader to guess. */
+  scope?: { branchIds: string[]; processIds: string[]; costCentreIds: string[] };
+}
+
+/**
+ * Approved budget for a CEO scope — the budget counterpart of the scoped money figures.
+ *   - process / cost-centre scope: the budget lines of the cost centres in scope (budgetForCodes,
+ *     the focus panel's rule), narrowed to the selected branches when a branch is also chosen;
+ *   - branch scope only: budgetByBranch() for every duplicate spelling of the selected branches
+ *     (the same expansion the headline applies);
+ *   - no scope: every branch.
+ */
+async function scopedBudget(period: string, s: CeoScope): Promise<number> {
+  if (s.processIds.length || s.costCentreIds.length) {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (s.costCentreIds.length) {
+      where.push(`ccm.id IN (${marks(s.costCentreIds)})`);
+      params.push(...s.costCentreIds);
+    }
+    if (s.processIds.length) {
+      where.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
+                             WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
+      params.push(...s.processIds);
+    }
+    if (s.branchIds.length) {
+      where.push(`ccm.branch_id IN (${marks(s.branchIds)})`);
+      params.push(...s.branchIds);
+    }
+    const [codes] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT ccm.cost_centre_code AS code FROM cost_centre_master ccm WHERE ${where.join(" AND ")}`,
+      params,
+    );
+    return (await budgetForCodes(period, codes.map((r) => String(r.code ?? "")).filter(Boolean))).budget;
+  }
+  const byBranch = await budgetByBranch(period);
+  if (!s.branchIds.length) return [...byBranch.values()].reduce((t, v) => t + v, 0);
+  const [branchRows] = await db.execute<RowDataPacket[]>(`SELECT id, branch_name FROM branch_master`);
+  const norm = (r: RowDataPacket) => String(r.branch_name ?? "").trim().toUpperCase();
+  const selectedNames = new Set(branchRows.filter((r) => s.branchIds.includes(String(r.id))).map(norm));
+  const keys = new Set(branchRows.filter((r) => selectedNames.has(norm(r))).map((r) => String(r.id)));
+  return [...byBranch.entries()].reduce((t, [key, v]) => (keys.has(key) ? t + v : t), 0);
 }
 
 export async function getYtdSummary(upToMonth: string, filters: CeoFilters = {}): Promise<CeoYtdSummary> {
@@ -1522,14 +1570,17 @@ export async function getYtdSummary(upToMonth: string, filters: CeoFilters = {})
 
   const monthly: CeoYtdSummary["monthly"] = [];
   let totalRevenue = 0, totalPeopleCost = 0, totalIndirectCost = 0, totalBudget = 0, totalOp = 0;
+  const scope = scopeOf(filters);
 
   await Promise.all(
     months.map(async (period) => {
-      const [overview, budgetMap] = await Promise.all([
+      // Budget under the SAME scope as the money beside it (audit item 18): this summed every
+      // branch's budget whatever the filter, so a branch-scoped YTD strip compared that branch's
+      // indirect spend against the whole company's budget.
+      const [overview, budget] = await Promise.all([
         getCeoOverview(period, filters),
-        budgetByBranch(period),
+        scopedBudget(period, scope),
       ]);
-      const budget = Array.from(budgetMap.values()).reduce((s, v) => s + v, 0);
       monthly.push({ period, revenue: overview.revenue, peopleCost: overview.peopleCost, indirectCost: overview.indirectCost, operatingProfit: overview.operatingProfit, budget });
     })
   );
@@ -1554,6 +1605,7 @@ export async function getYtdSummary(upToMonth: string, filters: CeoFilters = {})
     totalBudget,
     marginPct: totalRevenue > 0 ? (totalOperatingProfit / totalRevenue) * 100 : null,
     monthly,
+    scope,
   };
 }
 

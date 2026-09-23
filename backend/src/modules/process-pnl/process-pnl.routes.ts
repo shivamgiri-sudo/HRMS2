@@ -1440,14 +1440,21 @@ router.get(
     const upTo = req.query.upTo ? String(req.query.upTo) : "";
     if (!/^\d{4}-\d{2}$/.test(upTo)) throw Object.assign(new Error("upTo must be YYYY-MM"), { statusCode: 400 });
     const user = actor(req);
-    const confinedBranch = await resolveFinanceBranchScope({
+    // The page's own branch selection is honoured (audit item 18: the strip used to be company-wide
+    // beside a branch-scoped panel). A requested branch goes through resolveFinanceBranchScope,
+    // which returns it only when the caller may read it and THROWS for anyone else's — so a
+    // request can narrow a scoped user's view, never widen it. With no request, the user's own
+    // confinement applies exactly as before.
+    const requestedBranchId = req.query.branchId ? String(req.query.branchId).trim() : "";
+    const branchFilter = await resolveFinanceBranchScope({
       userId: user.id, primaryRole: user.role, userRoles: user.roles,
+      requestedBranchId: requestedBranchId || undefined,
     });
     const confinedProcess = await resolveFinanceProcessScope({
       userId: user.id, primaryRole: user.role, userRoles: user.roles,
     });
     const filters: CeoFilters = {};
-    if (confinedBranch !== undefined) filters.branchId = confinedBranch;
+    if (branchFilter !== undefined) filters.branchId = branchFilter;
     if (confinedProcess !== undefined) filters.processId = confinedProcess;
     const data = await getYtdSummary(upTo, filters);
     res.json({ success: true, data });

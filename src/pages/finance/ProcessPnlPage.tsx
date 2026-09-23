@@ -141,9 +141,13 @@ export default function ProcessPnlPage() {
   const liveQuery = usePnlLiveReconciliation(liveBasisEligible ? period : "", { branchIds: branchId ? [branchId] : [] });
   const [showYtd, setShowYtd] = useState(false);
   const ytdQuery = useQuery({
-    queryKey: ["pnl-ytd-summary", period],
+    // Scoped by the page's branch filter like the panel beside it (audit item 18). The branch is
+    // in the key so switching branches never shows the previous scope's cached YTD.
+    queryKey: ["pnl-ytd-summary", period, branchId],
     queryFn: async () => {
-      const response = await hrmsApi.get<{ success: boolean; data: any }>(`/api/finance/pnl/ytd-summary?upTo=${period}`);
+      const params = new URLSearchParams({ upTo: period });
+      if (branchId) params.set("branchId", branchId);
+      const response = await hrmsApi.get<{ success: boolean; data: any }>(`/api/finance/pnl/ytd-summary?${params.toString()}`);
       // hrmsApi returns the envelope itself, so the payload is one level in. Typing data as
       // `any` meant the extra unwrap here type-checked while still being undefined at runtime,
       // which is why this one survived the sweep that fixed the rest.
@@ -175,6 +179,7 @@ export default function ProcessPnlPage() {
   const byLabel = (a: [string, string], b: [string, string]) => a[1].localeCompare(b[1]);
   const branches = Array.from(seenBranches.current.entries()).sort(byLabel);
   const clients = Array.from(seenClients.current.entries()).sort(byLabel);
+  const branchLabel = branchId ? (seenBranches.current.get(branchId) ?? "Selected branch") : "All branches";
 
   function updateFilters(next: { period?: string; branchId?: string; clientId?: string; search?: string }) {
     const params = new URLSearchParams(searchParams);
@@ -554,6 +559,10 @@ export default function ProcessPnlPage() {
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-slate-700">
                       Year-to-Date Summary {ytdQuery.data ? `(FY ${ytdQuery.data.fy} · ${ytdQuery.data.months.length} month${ytdQuery.data.months.length !== 1 ? "s" : ""})` : ""}
+                      {/* Say which population the strip covers — it follows the page's branch filter. */}
+                      <span className="ml-2 text-xs font-normal text-slate-500">
+                        {branchId ? branchLabel : "All branches"}
+                      </span>
                     </span>
                     <Button
                       size="sm"
