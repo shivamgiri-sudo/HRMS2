@@ -2,10 +2,10 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { assertNotFuturePeriod } from "./pnl-period-guard.js";
-import { focusBudgetTopUps } from "./budget-top-up-attribution.js";
+import { entriesForCodes, readBudgetEntries, topUpsForCodes, type BudgetEntry } from "./pnl-budget-source.js";
 import { readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
 import { getSeatBillingEstimate, isEstimateWindow } from "./pnl-seat-billing.service.js";
-import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
+import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 
 /**
@@ -125,14 +125,19 @@ async function effectivePeopleScope(
   scope: PnlDrilldownScope,
   cols: { personId: string; homeCostCentre: string; homeBranch: string; process: string },
 ): Promise<{ join: string; sql: string; param: string }> {
-  const ov = await overrideJoinSql(cols.personId, cols.homeCostCentre);
-  const join = `${ov.join}
-       LEFT JOIN cost_centre_master pcc ON pcc.id = ${ov.effectiveCostCentreExpr}`;
+  // payrollAttributionSql: the one attribution the summaries use. Process scope too (2026-09-23,
+  // owner rule): a mapped employee sits under the MAPPED cost centre's process, as on CEO Overview
+  // and the Statement's process view, never under their home process as well.
+  const ov = await payrollAttributionSql({
+    employeeIdExpr: cols.personId, homeCostCentreExpr: cols.homeCostCentre,
+    homeBranchExpr: cols.homeBranch, homeProcessExpr: cols.process, ccAlias: "pcc",
+  });
+  const join = ov.join;
   if (scope.costCentreId) return { join, sql: `${ov.effectiveCostCentreExpr} = ?`, param: scope.costCentreId };
-  if (scope.processId) return { join, sql: `${cols.process} = ?`, param: scope.processId };
+  if (scope.processId) return { join, sql: `${ov.effectiveProcessExpr} = ?`, param: scope.processId };
   return {
     join,
-    sql: `(CASE WHEN pcc.id IS NULL THEN ${cols.homeBranch} ELSE pcc.branch_id END) = ?`,
+    sql: `(${ov.effectiveBranchExpr}) = ?`,
     param: scope.branchId!,
   };
 }
@@ -285,17 +290,6 @@ async function seatEstimateRows(period: string, costCentreId: string): Promise<D
 }
 
 /**
- * The employee-side scope predicate against pnl_running_salary_snapshot, which carries its own
- * branch/process/cost-centre attribution (resolved once at snapshot time) rather than joining
- * back to employees.
- */
-function snapshotScopeSql(scope: PnlDrilldownScope): { sql: string; param: string } {
-  if (scope.costCentreId) return { sql: "s.cost_centre_id = ?", param: scope.costCentreId };
-  if (scope.processId) return { sql: "s.process_id = ?", param: scope.processId };
-  return { sql: "s.branch_id = ?", param: scope.branchId! };
-}
-
-/**
  * Running-salary fallback for a period payroll has not run for yet.
  *
  * Without this the people drilldown was silently empty for every open period. Measured live
@@ -316,12 +310,11 @@ async function peopleSnapshotRows(
   bucket?: PnlPeopleBucket,
 ): Promise<DrilldownRow[]> {
   if (!(await tableExists("pnl_running_salary_snapshot"))) return [];
-  // A bucketed request answers a Statement Agent/DSC/BMC cell, which scopes on the snapshot's own
-  // attribution — unchanged. The un-bucketed accrual fallback answers a Live P&L / CEO cell, so it
-  // uses the same effective-cost-centre attribution as those summaries (audit item 17b).
-  const s = bucket
-    ? { join: "", ...snapshotScopeSql(scope) }
-    : await effectivePeopleScope(scope, SNAPSHOT_COLS);
+  // Both the un-bucketed accrual fallback (a Live P&L / CEO cell, audit item 17b) and a bucketed
+  // Statement Agent/DSC/BMC cell use the effective (post-mapping) attribution: since 2026-09-23 the
+  // Statement's running-salary reader (pnl-running-salary.service.ts getRunningPeopleCost) groups
+  // the snapshot by the same effective branch/process, so this still ties to the clicked cell.
+  const s = await effectivePeopleScope(scope, SNAPSHOT_COLS);
   const bucketSql = bucket ? " AND s.pnl_bucket = ?" : "";
   const bucketParams = bucket ? [bucket] : [];
   const rows: DrilldownRow[] = [];
@@ -509,39 +502,9 @@ async function indirectDrilldownRows(period: string, scope: PnlDrilldownScope): 
   };
 }
 
-/**
- * The cost-centre-side scope predicate for budget lines.
- *
- * finance_budget_line_snapshot carries no cost_centre_id (or code) column of its own: for
- * expense_type='CostCenter' rows the cost centre lives in `expense_type_name`, holding the centre's
- * code (e.g. 'BSS/BO/CORP/318'). Measured live on 2026-09 data, all 93 of that period's CostCenter
- * lines join cleanly to cost_centre_master on that code, so process/cost-centre scope is resolvable
- * without a schema change — it just has to go through this join rather than a direct column.
- */
-function budgetCostCentreScopeSql(scope: PnlDrilldownScope): { sql: string; param: string } | null {
-  if (scope.costCentreId) {
-    return {
-      sql: `l.expense_type_name COLLATE utf8mb4_unicode_ci IN (
-              SELECT ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-                FROM cost_centre_master ccm WHERE ccm.id = ?)`,
-      param: scope.costCentreId,
-    };
-  }
-  if (scope.processId) {
-    return {
-      sql: `l.expense_type_name COLLATE utf8mb4_unicode_ci IN (
-              SELECT ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-                FROM cost_centre_master ccm
-               WHERE ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
-                                 WHERE e.process_id = ? AND e.cost_centre_id IS NOT NULL))`,
-      param: scope.processId,
-    };
-  }
-  return null;
-}
-
 /** The cost centre codes a process / cost-centre scope covers — the same resolution the CEO focus
- *  panel (buildFocus) uses for its budget lines. */
+ *  panel (buildFocus) uses for its budget lines. The mirror carries no cost_centre_id, only the
+ *  centre's code (expense_type_name), so budget scope is always matched on the code. */
 async function scopeCostCentreCodes(scope: PnlDrilldownScope): Promise<string[]> {
   const [codes] = await db.execute<RowDataPacket[]>(
     scope.costCentreId
@@ -554,83 +517,53 @@ async function scopeCostCentreCodes(scope: PnlDrilldownScope): Promise<string[]>
   return codes.map((r) => String(r.code ?? "")).filter(Boolean);
 }
 
+const BUDGET_SOURCE_LABEL: Record<string, string> = { hrms: "HRMS budget", mirror: "db_bill budget" };
+
+function budgetEntryRow(e: BudgetEntry): DrilldownRow {
+  const where = e.kind === "top_up"
+    ? `Header-level addition${e.branchName ? ` — ${e.branchName}` : ""}, not tied to a specific line`
+    : [e.costCentreCode && e.costCentreCode !== e.label ? e.costCentreCode : null, e.branchName]
+        .filter(Boolean).join(" · ");
+  return {
+    id: e.entryRef,
+    label: e.label,
+    detail: [where || null, BUDGET_SOURCE_LABEL[e.source]].filter(Boolean).join(" · ") || null,
+    amount: e.amount,
+    date: null,
+  };
+}
+
+/**
+ * The rows behind a budget cell. Read from pnl-budget-source.ts readBudgetEntries() — the SAME
+ * reader Live P&L's allocatedBudget/branchBudget and CEO Overview's budget use (owner rule
+ * 2026-09-23: HRMS budget for any branch + month with an active HRMS budget, db_bill mirror
+ * otherwise), so a budget cell and the drawer it opens always total the same. Before this the
+ * drawer read the mirror only while Live's cell read HRMS only.
+ *
+ *   - branch scope: every entry keyed to that branch id, including mirror header-level top-ups
+ *     (without them the drawer under-totalled CEO's figure — Rs 36,500 mismatch caught live
+ *     2026-08-22).
+ *   - process / cost-centre scope: the lines of the cost centres in scope (matched on code), plus
+ *     only those top-ups whose budget funds nothing but this scope (focusBudgetTopUps' rule, the
+ *     CEO focus panel's figure). A shared budget's top-up is never pro-rated.
+ */
 async function budgetDrilldownRows(period: string, scope: PnlDrilldownScope): Promise<PnlDrilldownResult> {
+  const entries = await readBudgetEntries(period);
   const rows: DrilldownRow[] = [];
-  const cc = budgetCostCentreScopeSql(scope);
-  if (await tableExists("finance_budget_line_snapshot")) {
-    // Branch scope filters on the budget header's branch; process/cost-centre scope filters on the
-    // line's own cost centre and deliberately leaves the header unrestricted, since a budget header
-    // for one branch can carry lines for a cost centre a process spans.
-    const lineScopeSql = cc ? cc.sql : "bm.id = ?";
-    const lineScopeParam = cc ? cc.param : scope.branchId!;
-    const [lineRows] = await db.execute<RowDataPacket[]>(
-      `SELECT l.bill_source_id, l.expense_type_name, l.amount, b.branch_name
-         FROM finance_budget_line_snapshot l
-         JOIN finance_budget_snapshot b
-           ON b.bill_source_id = l.budget_source_id AND b.period_code = l.period_code
-         LEFT JOIN (SELECT MIN(id) AS id, UPPER(TRIM(branch_name)) AS nm FROM branch_master GROUP BY UPPER(TRIM(branch_name))) bm
-                ON bm.nm COLLATE utf8mb4_unicode_ci = UPPER(TRIM(b.branch_name)) COLLATE utf8mb4_unicode_ci
-        WHERE l.period_code = ? AND l.expense_type = 'CostCenter' AND ${lineScopeSql}
-          AND b.active_status = 1 AND b.is_rejected = 0
-        ORDER BY l.amount DESC`,
-      [period, lineScopeParam],
-    );
-    for (const r of lineRows) {
+  if (!scope.costCentreId && !scope.processId) {
+    for (const e of entries) if (e.branchId === scope.branchId) rows.push(budgetEntryRow(e));
+  } else {
+    const codes = await scopeCostCentreCodes(scope);
+    for (const e of entriesForCodes(entries, codes)) rows.push(budgetEntryRow(e));
+    const topUps = topUpsForCodes(entries, codes);
+    if (topUps.attributable !== 0) {
       rows.push({
-        id: `bud-${r.bill_source_id}`,
-        label: r.expense_type_name ? String(r.expense_type_name) : "Budget line",
-        detail: r.branch_name ? String(r.branch_name) : null,
-        amount: n(r.amount),
+        id: "topup-in-scope",
+        label: "Sanctioned top-up",
+        detail: "Header-level additions on budgets that fund only this scope's cost centres",
+        amount: topUps.attributable,
         date: null,
       });
-    }
-    // Header-level top-ups (expense_reopen_master.AdditionalAmount, mirrored as
-    // reopen_additional_amount) — sanctioned extra budget with no lines of its own, added once
-    // per header. budgetByBranch() (ceo-overview.service.ts) UNIONs this into its summary; a
-    // drilldown that only listed lines would under-total by exactly this amount, caught live by
-    // this session's own reconciliation strip (Rs 36,500 mismatch, 2026-08-22) before shipping.
-    //
-    // This block is branch scope only. A top-up is recorded against the budget HEADER with no cost
-    // centre of its own, so it is never pro-rated to a process or cost centre — including a shared
-    // budget's top-up under those scopes would inflate their total by another scope's money,
-    // matching how budget-cost-centre-utilization.service.ts refuses to pro-rate unattributed
-    // spend. The one exception (a budget funding ONLY this scope) is handled just below.
-    if (!cc && (await tableExists("finance_budget_snapshot"))) {
-      const [topUpRows] = await db.execute<RowDataPacket[]>(
-        `SELECT b.bill_source_id, b.reopen_additional_amount, b.branch_name
-           FROM finance_budget_snapshot b
-           LEFT JOIN (SELECT MIN(id) AS id, UPPER(TRIM(branch_name)) AS nm FROM branch_master GROUP BY UPPER(TRIM(branch_name))) bm
-                  ON bm.nm COLLATE utf8mb4_unicode_ci = UPPER(TRIM(b.branch_name)) COLLATE utf8mb4_unicode_ci
-          WHERE b.period_code = ? AND bm.id = ? AND b.active_status = 1 AND b.is_rejected = 0
-            AND b.reopen_additional_amount <> 0`,
-        [period, scope.branchId!],
-      );
-      for (const r of topUpRows) {
-        rows.push({
-          id: `topup-${r.bill_source_id}`,
-          label: "Sanctioned top-up",
-          detail: `Header-level addition${r.branch_name ? ` — ${r.branch_name}` : ""}, not tied to a specific line`,
-          amount: n(r.reopen_additional_amount),
-          date: null,
-        });
-      }
-    }
-    // Process / cost-centre scope: the one honest attribution — a top-up whose budget funds ONLY
-    // cost centres in this scope belongs to it whole. Same rule and same figure as the CEO focus
-    // panel's budget (ceo-overview.service.ts focusBudgetTopUps), so the drilldown ties to it.
-    // Top-ups on budgets shared with other cost centres stay out, as before.
-    if (cc) {
-      const codes = await scopeCostCentreCodes(scope);
-      const topUps = await focusBudgetTopUps(period, codes);
-      if (topUps.attributable !== 0) {
-        rows.push({
-          id: "topup-in-scope",
-          label: "Sanctioned top-up",
-          detail: "Header-level additions on budgets that fund only this scope's cost centres",
-          amount: topUps.attributable,
-          date: null,
-        });
-      }
     }
   }
   rows.sort((a, b) => b.amount - a.amount);

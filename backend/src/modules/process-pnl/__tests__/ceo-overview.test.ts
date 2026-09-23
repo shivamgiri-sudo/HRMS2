@@ -307,6 +307,37 @@ describe("CEO overview", () => {
     expect(scoped.scope?.branchIds).toEqual(["a"]);
   });
 
+  it("budget: a branch with an active HRMS budget reads HRMS only; the other branch keeps its db_bill mirror figure", async () => {
+    // Owner rule 2026-09-23, via the shared reader (pnl-budget-source.ts).
+    mockDb({
+      branches: [
+        { id: "a", branch_name: "NOIDA", active_status: 1 },
+        { id: "b", branch_name: "NOIDA-2", active_status: 1 },
+      ],
+      revenue: [{ branch_id: "a", amount: L(100) }, { branch_id: "b", amount: L(50) }],
+      people: [{ branch_id: "a", staff: 10, cost: L(60) }, { branch_id: "b", staff: 5, cost: L(30) }],
+      spend: [{ branch_id: "a", amount: L(5) }, { branch_id: "b", amount: L(4) }],
+      // Mirror rows for BOTH branches; NOIDA's must be dropped.
+      budget: [{ branch_id: "a", amount: L(8) }, { branch_id: "b", amount: L(6) }],
+    });
+    const base = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql: string, params?: unknown[]) => {
+      const q = String(sql);
+      if (q.includes("FROM finance_budget_header h") && q.includes("JOIN finance_budget_line l")) {
+        return [[{ budget_id: "h1", branch_id: "a", branch_name: "NOIDA", line_id: "l1", allocation_id: null,
+          head: "Admin", sub_head: null, item_name: "Rent", cost_centre_id: "cc", cost_centre_code: "CC/TEST", amount: L(3) }], []];
+      }
+      if (q.includes("FROM finance_budget_header h")) return [[{ id: "h1", branch_id: "a", branch_name: "NOIDA" }], []];
+      return base(sql, params);
+    });
+    const { getCeoOverview, getYtdSummary } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-05");
+    expect(out.branches.find((b) => b.branchId === "a")?.budget).toBeCloseTo(L(3), 0);
+    expect(out.branches.find((b) => b.branchId === "b")?.budget).toBeCloseTo(L(6), 0);
+    const ytd = await getYtdSummary("2026-04");
+    expect(ytd.totalBudget, "YTD uses the same reader").toBeCloseTo(L(9), 0);
+  });
+
   it("hides a closed branch whose every money column is zero, without losing its people", async () => {
     /*
      * branch_master holds 45 branches and 5 are active. In July 2026 nine closed ones still

@@ -20,12 +20,16 @@ import { refuse } from "./finance-error.js";
  * mapped replaces it rather than adding a second row, so there is exactly one current answer.
  * Deactivating reverts that employee to their real cost centre everywhere this is read.
  *
- * WIRING — every place Live P&L / CEO Overview aggregates payroll cost by cost centre reads this
- * via `overrideJoinSql()` below and folds cost centre 577 into 576 automatically:
+ * WIRING — every place payroll cost is attributed to a cost centre, branch or process reads this
+ * via `overrideJoinSql()` / `payrollAttributionSql()` below and folds cost centre 577 into 576
+ * automatically (owner rule 2026-09-23: a mapped employee counts in the MAPPED cost centre only):
  *   pnl-reconciliation.service.ts   readPayroll(), readUnallocatedPayroll(), exceptions()
- *   ceo-overview.service.ts         peopleByBranch()
- * Insights and Trend consume getPnlReconciliation()'s rows, so they inherit the fix with no
- * separate wiring.
+ *   ceo-overview.service.ts         peopleByBranch() (branch and process scope)
+ *   bpo-pnl.service.ts              getPayrollPeople() -> Statement byBranch/byProcess, BMC pools
+ *   pnl-running-salary.service.ts   getRunningPeopleCost() (Statement running-salary path, coverage)
+ *   pnl-drilldown.service.ts        people drilldown (posted, accrual and bucketed)
+ *   pnl-trend.service.ts, pnl-daily-trend.service.ts, cost-centre-activity.service.ts
+ * Insights consume getPnlReconciliation()'s rows, so they inherit the fix with no separate wiring.
  */
 
 export interface PnlCostCentreOverrideSql {
@@ -51,6 +55,52 @@ export async function overrideJoinSql(
   return {
     join: `LEFT JOIN pnl_employee_cost_centre_override ${alias} ON ${alias}.employee_id = ${employeeIdExpr} AND ${alias}.active_status = 1`,
     effectiveCostCentreExpr: `COALESCE(${alias}.target_cost_centre_id, ${fallbackExpr})`,
+  };
+}
+
+export interface PayrollAttributionSql {
+  /** The override join plus a LEFT JOIN of the EFFECTIVE cost centre as `ccAlias`. */
+  join: string;
+  effectiveCostCentreExpr: string;
+  /** Branch pay counts against: the effective cost centre's branch; the home branch only when the
+   *  person has no cost centre at all. */
+  effectiveBranchExpr: string;
+  /** Process pay counts against: for an overridden employee the MAPPED cost centre's process (home
+   *  process only when that cost centre carries none); everyone else keeps `homeProcessExpr`. */
+  effectiveProcessExpr: string;
+}
+
+/**
+ * CANONICAL payroll attribution (owner rule, 2026-09-23): an employee mapped to a payroll cost
+ * centre through pnl_employee_cost_centre_override is counted in the MAPPED cost centre only —
+ * never in their home cost centre or home branch, and never in two places. One row in, one row out:
+ * the override table is unique on employee_id and the cost centre join is on its primary key, so
+ * neither join can fan a salary line out into two rows.
+ *
+ * Every payroll-by-cost-centre/branch reader builds its attribution from this (or from
+ * overrideJoinSql, which it extends), so Live P&L, CEO Overview, trend, the Statement (actual and
+ * running-salary paths) and the people drilldown all put the same rupee in the same place.
+ */
+export async function payrollAttributionSql(opts: {
+  employeeIdExpr: string;
+  homeCostCentreExpr: string;
+  homeBranchExpr: string;
+  homeProcessExpr: string;
+  ccAlias?: string;
+  ovAlias?: string;
+}): Promise<PayrollAttributionSql> {
+  const cc = opts.ccAlias ?? "pacc";
+  const ovAlias = opts.ovAlias ?? "pecco";
+  const ov = await overrideJoinSql(opts.employeeIdExpr, opts.homeCostCentreExpr, ovAlias);
+  const overridden = ov.join ? `${ovAlias}.target_cost_centre_id IS NOT NULL` : "";
+  return {
+    join: `${ov.join}
+       LEFT JOIN cost_centre_master ${cc} ON ${cc}.id = ${ov.effectiveCostCentreExpr}`,
+    effectiveCostCentreExpr: ov.effectiveCostCentreExpr,
+    effectiveBranchExpr: `CASE WHEN ${cc}.id IS NULL THEN ${opts.homeBranchExpr} ELSE ${cc}.branch_id END`,
+    effectiveProcessExpr: overridden
+      ? `CASE WHEN ${overridden} THEN COALESCE(${cc}.process_id, ${opts.homeProcessExpr}) ELSE ${opts.homeProcessExpr} END`
+      : opts.homeProcessExpr,
   };
 }
 

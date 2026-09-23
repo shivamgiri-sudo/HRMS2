@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { getSeatRevenueForecast } from "./pnl-seat-revenue-forecast.service.js";
+import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 
 /**
  * Revenue, cost and operating margin day by day through a month.
@@ -129,28 +130,44 @@ function dateKey(year: number, month: number, day: number): string {
 
 /** The month's people cost: posted payroll when it exists, otherwise the running snapshot. */
 async function monthlyPeopleCost(period: string, branchId?: string): Promise<number> {
-  const branchSql = branchId ? "AND e.branch_id = ?" : "";
+  // Branch filter (2026-09-23, owner rule): pay counts against the branch of the EFFECTIVE cost
+  // centre — the mapped payroll cost centre (pnl_employee_cost_centre_override) else the HR one —
+  // and the home branch only for staff with no cost centre; the same rule as Live P&L, CEO Overview
+  // and the Statement. Company-wide (no branch) totals are unaffected.
   const params = branchId ? [period, branchId] : [period];
   if (await tableExists("salary_prep_line")) {
+    const attr = branchId
+      ? await payrollAttributionSql({
+          employeeIdExpr: "e.id", homeCostCentreExpr: "e.cost_centre_id",
+          homeBranchExpr: "e.branch_id", homeProcessExpr: "e.process_id",
+        })
+      : null;
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT SUM(COALESCE(l.gross_salary,0)+COALESCE(l.pf_employer,0)
                  +COALESCE(l.esic_employer,0)+COALESCE(l.gratuity,0)) AS amount
          FROM salary_prep_line l
          JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ?
          JOIN employees e ON e.id = l.employee_id
-        WHERE 1=1 ${branchSql}`,
+         ${attr ? attr.join : ""}
+        WHERE 1=1 ${attr ? `AND ${attr.effectiveBranchExpr} = ?` : ""}`,
       params,
     );
     const posted = n(rows[0]?.amount);
     if (posted > 0) return posted;
   }
   if (await tableExists("pnl_running_salary_snapshot")) {
-    const snapBranch = branchId ? "AND s.branch_id = ?" : "";
+    const attr = branchId
+      ? await payrollAttributionSql({
+          employeeIdExpr: "s.employee_id", homeCostCentreExpr: "s.cost_centre_id",
+          homeBranchExpr: "s.branch_id", homeProcessExpr: "s.process_id",
+        })
+      : null;
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT SUM(COALESCE(s.earned_salary_till_date,0)) AS amount
          FROM pnl_running_salary_snapshot s
-        WHERE s.period_code = ? ${snapBranch}`,
-      branchId ? [period, branchId] : [period],
+         ${attr ? attr.join : ""}
+        WHERE s.period_code = ? ${attr ? `AND ${attr.effectiveBranchExpr} = ?` : ""}`,
+      params,
     );
     return n(rows[0]?.amount);
   }

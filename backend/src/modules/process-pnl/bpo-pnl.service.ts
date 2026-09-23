@@ -18,6 +18,7 @@ import { PROCESS_BY_COST_CENTRE, getInvoicedRevenueActuals, getApprovedCostCentr
 import { isOpenPeriod, getLiveRevenueEstimate } from "./pnl-statement.service.js";
 import { isEstimateWindow } from "./pnl-seat-billing.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
+import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.service.js";
 import { processPnlService, getClosedBranchIds } from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
@@ -125,8 +126,13 @@ interface AllocationPolicyRow extends RowDataPacket {
 interface PayrollPersonRow extends RowDataPacket {
   employee_id: string;
   employee_code: string | null;
+  /** EFFECTIVE process/branch — where the pay is counted (see getPayrollPeople). */
   process_id: string | null;
   branch_id: string | null;
+  /** HR home process/branch — classification-rule matching only. Absent in older callers/tests,
+   *  in which case matching falls back to the effective values. */
+  home_process_id?: string | null;
+  home_branch_id?: string | null;
   designation_id: string | null;
   designation_name: string | null;
   department_id: string | null;
@@ -611,9 +617,13 @@ function matchClassification(person: PayrollPersonRow, rules: ClassificationRule
     designation: [lower(person.designation_id), lower(person.designation_name)],
     department: [lower(person.department_id), lower(person.department_name)],
   };
+  // Rules match the person's HOME process/branch (who they are), not where a cost-centre mapping
+  // sends their pay — see getPayrollPeople.
+  const processId = person.home_process_id !== undefined ? person.home_process_id : person.process_id;
+  const branchId = person.home_branch_id !== undefined ? person.home_branch_id : person.branch_id;
   return rules.find((rule) => {
-    if (rule.process_id && String(rule.process_id) !== String(person.process_id ?? "")) return false;
-    if (rule.branch_id && String(rule.branch_id) !== String(person.branch_id ?? "")) return false;
+    if (rule.process_id && String(rule.process_id) !== String(processId ?? "")) return false;
+    if (rule.branch_id && String(rule.branch_id) !== String(branchId ?? "")) return false;
     return (values[rule.scope_type] ?? []).includes(lower(rule.scope_key));
   }) ?? null;
 }
@@ -680,20 +690,35 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
   const ccJoin = hasCostCentreId
     ? "LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id"
     : "";
-  const processExpr = employeeColumns.has("process_id")
+  const homeProcessExpr = employeeColumns.has("process_id")
     ? (hasCostCentreId ? "COALESCE(e.process_id, ccm.process_id)" : "e.process_id")
     : "NULL";
-  // KNOWN INCONSISTENCY (tracked 2026-09-23, not yet aligned): this is the employee's HOME branch.
-  // The canonical rule for "which branch does a person's pay count against" — used by Live P&L
-  // (pnl-reconciliation readPayroll/readUnallocatedPayroll), CEO Overview (peopleByBranch) and the
-  // trend (pnl-trend.service.ts) — is the branch of the EFFECTIVE cost centre (post-override, via
-  // overrideJoinSql), else e.branch_id when the person has no cost centre. It is NOT switched here
-  // because this one branch_id also drives classification-rule matching (rule.branch_id), the BMC
-  // branch pools the allocator spreads over a branch's processes, and the Statement branch view's
-  // people cost (getActualPeopleCost.byBranch) whose coverage is counted by e.branch_id in
-  // pnl-running-salary.service.ts. Changing it moves money between branches in the canonical engine
-  // and needs its own verified change against live payroll.
-  const branchExpr = employeeColumns.has("branch_id") ? "e.branch_id" : "NULL";
+  const homeBranchExpr = employeeColumns.has("branch_id") ? "e.branch_id" : "NULL";
+  /*
+   * WHERE a person's pay is counted (owner rule 2026-09-23, aligned with Live P&L, CEO Overview,
+   * trend and the drilldown via payrollAttributionSql): the EFFECTIVE cost centre — the payroll cost
+   * centre an employee is mapped to in pnl_employee_cost_centre_override, else their HR cost
+   * centre — decides the branch (its branch; home e.branch_id only for staff with no cost centre)
+   * and, for a mapped employee, the process (the mapped cost centre's process when it has one).
+   * A mapped employee is therefore in exactly one branch and one process, never also in their home
+   * ones: the query still returns one row per employee (GROUP BY e.id; both joins are 1:1).
+   *
+   * branch_id / process_id below are these EFFECTIVE values, so the Statement branch view's
+   * byBranch/byProcess, its coverage counts and the BMC branch pools all follow the mapping.
+   * home_branch_id / home_process_id are kept ONLY for classification-rule matching
+   * (matchClassification): a rule classifies who a person is (Agent / DSC / BMC), and reclassifying
+   * people because Finance mapped their cost elsewhere was not asked for.
+   */
+  const attribution = employeeColumns.has("cost_centre_id")
+    ? await payrollAttributionSql({
+        employeeIdExpr: "e.id",
+        homeCostCentreExpr: "e.cost_centre_id",
+        homeBranchExpr,
+        homeProcessExpr,
+      })
+    : { join: "", effectiveBranchExpr: homeBranchExpr, effectiveProcessExpr: homeProcessExpr };
+  const processExpr = attribution.effectiveProcessExpr;
+  const branchExpr = attribution.effectiveBranchExpr;
   const designationIdExpr = employeeColumns.has("designation_id") ? "e.designation_id" : "NULL";
   const departmentIdExpr = employeeColumns.has("department_id") ? "e.department_id" : "NULL";
   const designationJoin = designationExists && employeeColumns.has("designation_id")
@@ -711,24 +736,34 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
       : "NULL"
     : "NULL";
 
+  // ONE ROW PER EMPLOYEE, grouped on e.id alone. Every join here is 1:1 with the employee (cost
+  // centre and designation/department on their primary keys; the override on its unique
+  // employee_id), so each non-summed column has exactly one value per employee and MAX() only
+  // satisfies ONLY_FULL_GROUP_BY. This used to also GROUP BY the bare aliases process_id / branch_id,
+  // which MySQL resolves against the FROM columns first (e.branch_id, ccm.branch_id, ...) — with the
+  // effective cost centre joined in as well that would have been ambiguous, and grouping by a home
+  // column could never split one person across two places anyway.
   return safeRows<PayrollPersonRow>(
     `SELECT
         e.id AS employee_id,
-        e.employee_code,
-        ${processExpr} AS process_id,
-        ${branchExpr} AS branch_id,
-        ${designationIdExpr} AS designation_id,
-        ${designationNameExpr} AS designation_name,
-        ${departmentIdExpr} AS department_id,
-        ${departmentNameExpr} AS department_name,
+        MAX(e.employee_code) AS employee_code,
+        MAX(${processExpr}) AS process_id,
+        MAX(${branchExpr}) AS branch_id,
+        MAX(${homeProcessExpr}) AS home_process_id,
+        MAX(${homeBranchExpr}) AS home_branch_id,
+        MAX(${designationIdExpr}) AS designation_id,
+        MAX(${designationNameExpr}) AS designation_name,
+        MAX(${departmentIdExpr}) AS department_id,
+        MAX(${departmentNameExpr}) AS department_name,
         SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS loaded_cost
        FROM salary_prep_line spl
        JOIN employees e ON e.id = spl.employee_id
        ${ccJoin}
+       ${attribution.join}
        ${designationJoin}
        ${departmentJoin}
       WHERE spl.run_id IN (${runIds.map(() => "?").join(", ")})
-      GROUP BY e.id, e.employee_code, process_id, branch_id, designation_id, designation_name, department_id, department_name`,
+      GROUP BY e.id`,
     runIds
   );
 }

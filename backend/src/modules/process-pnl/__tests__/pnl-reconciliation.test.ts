@@ -53,14 +53,23 @@ function mockDb(options: { payrollRows?: number } = {}) {
         { cost_centre_id: "cc-noida-2", amount: L(5) },
       ], []];
     }
-    if (q.includes("FROM finance_budget_line l")) {
+    // Shared budget reader (pnl-budget-source.ts): NOIDA has an ACTIVE HRMS budget this month, so
+    // its lines are the budget and the mirror is not consulted for NOIDA.
+    if (q.includes("FROM finance_budget_header h") && q.includes("JOIN finance_budget_line l")) {
       return [[
-        { cost_centre_id: "cc-noida-1", amount: L(50) },
-        { cost_centre_id: "cc-noida-2", amount: L(4) },
+        { budget_id: "fbh-1", branch_id: "branch-noida", branch_name: "NOIDA", line_id: "l1", allocation_id: null,
+          head: "Admin", sub_head: null, item_name: "Rent", cost_centre_id: "cc-noida-1", cost_centre_code: "BSS/IB/Noida/534", amount: L(50) },
+        { budget_id: "fbh-1", branch_id: "branch-noida", branch_name: "NOIDA", line_id: "l2", allocation_id: null,
+          head: "Admin", sub_head: null, item_name: "Power", cost_centre_id: "cc-noida-2", cost_centre_code: "BSS/BO/Noida/999", amount: L(4) },
       ], []];
     }
-    if (q.includes("FROM finance_budget_header")) {
-      return [[{ branch_id: "branch-noida", amount: L(200) }], []];
+    if (q.includes("FROM finance_budget_header h")) {
+      return [[{ id: "fbh-1", branch_id: "branch-noida", branch_name: "NOIDA" }], []];
+    }
+    if (q.includes("FROM finance_budget_line_snapshot l")) {
+      return [[
+        { bill_source_id: 1, budget_source_id: 9, expense_type_name: "BSS/IB/Noida/534", amount: L(999), branch_name: "Noida", branch_id: "branch-noida", cost_centre_id: "cc-noida-1" },
+      ], []];
     }
     if (q.includes("COUNT(l.id) AS `rows`")) {
       return [[{ rows: payrollRows, latest_synced_at: "2026-08-31 10:00:00" }], []];
@@ -181,6 +190,10 @@ describe("P&L reconciliation", () => {
     expect(out.totals.revenue).toBe(L(120));
     expect(out.branches[0].branchName).toBe("NOIDA");
     expect(out.branches[0].operatingProfit).toBe(L(35));
+    // Budget from the shared reader: HRMS only (the mirror's L(999) for the same branch is ignored).
+    expect(row?.allocatedBudget).toBe(L(50));
+    expect(row?.branchBudget).toBe(L(54));
+    expect(out.totals.allocatedBudget).toBe(L(54));
   });
 
   it("labels an open month as live when payroll is not posted", async () => {

@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
+import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
 
 /**
  * Whether a cost centre is actually working, on one definition, in one place.
@@ -87,15 +88,19 @@ export async function getCostCentreActivity(endPeriod: string): Promise<CostCent
   );
 
   // Salary is the signal that needs no mirror — payroll is native to mas_hrms.
+  // 2026-09-23 (owner rule): grouped by the EFFECTIVE cost centre, so an employee mapped to a payroll
+  // cost centre (pnl_employee_cost_centre_override) is counted there and not in their HR one.
+  const ov = await overrideJoinSql("e.id", "e.cost_centre_id");
   const [salary] = await db.execute<RowDataPacket[]>(
-    `SELECT e.cost_centre_id AS id,
+    `SELECT ${ov.effectiveCostCentreExpr} AS id,
             COUNT(DISTINCT l.employee_id) AS people_paid,
             SUM(l.gross_salary + COALESCE(l.pf_employer, 0) + COALESCE(l.esic_employer, 0)) AS salary_cost
        FROM salary_prep_line l
        JOIN salary_prep_run run ON run.id = l.run_id
        JOIN employees e ON e.id = l.employee_id
-      WHERE run.run_month IN (${placeholders}) AND e.cost_centre_id IS NOT NULL
-      GROUP BY e.cost_centre_id`,
+       ${ov.join}
+      WHERE run.run_month IN (${placeholders}) AND ${ov.effectiveCostCentreExpr} IS NOT NULL
+      GROUP BY ${ov.effectiveCostCentreExpr}`,
     periods,
   );
 

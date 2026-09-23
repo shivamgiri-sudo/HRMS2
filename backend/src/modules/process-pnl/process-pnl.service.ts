@@ -4,6 +4,7 @@ import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { getInvoicedRevenueActuals, OWN_COMPANY_SQL, getApprovedCostCentreSplits } from "./pnl-actuals.service.js";
 import { resolveRevenueAtRisk } from "./canonical-pnl.service.js";
+import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import type {
   PnlQueryFilters,
   PnlSummaryResponse,
@@ -796,11 +797,19 @@ async function getPayrollMap(processIds: string[], period: string, end: string):
     // gets this right; the Revenue/Costs/GRN tabs (this function) did not, silently disagreeing
     // with the statement whenever a split employee existed. Not restricted to `processIds` here
     // because a split target can land outside the caller's current filter scope.
+    // "home_process_id" is the process the pay is ATTRIBUTED to (2026-09-23 owner rule, same as the
+    // Statement's getPayrollPeople): an employee mapped to a payroll cost centre
+    // (pnl_employee_cost_centre_override) counts under that cost centre's process, never their HR
+    // process as well; everyone else keeps e.process_id. One row per employee (both joins 1:1).
+    const attr = await payrollAttributionSql({
+      employeeIdExpr: "e.id", homeCostCentreExpr: "e.cost_centre_id",
+      homeBranchExpr: "e.branch_id", homeProcessExpr: "e.process_id",
+    });
     const [employeeRows, splits] = await Promise.all([
       queryRows<RowDataPacket>(
         `SELECT
             spl.employee_id,
-            e.process_id AS home_process_id,
+            MAX(${attr.effectiveProcessExpr}) AS home_process_id,
             SUM(${grossExpr}) AS gross_total,
             SUM(${pfExpr}) AS pf_employer_total,
             SUM(${esicExpr}) AS esic_employer_total,
@@ -808,9 +817,10 @@ async function getPayrollMap(processIds: string[], period: string, end: string):
             SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS loaded_total
           FROM salary_prep_line spl
           JOIN employees e ON e.id = spl.employee_id
+          ${attr.join}
           WHERE spl.run_id IN (${placeholders(runIds)})
-            AND e.process_id IS NOT NULL
-          GROUP BY spl.employee_id, e.process_id`,
+            AND ${attr.effectiveProcessExpr} IS NOT NULL
+          GROUP BY spl.employee_id`,
         runIds
       ),
       getApprovedCostCentreSplits(period),
