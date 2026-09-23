@@ -1121,10 +1121,16 @@ export async function newJoinExport(
       COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
       COALESCE(dept.dept_name, '') AS department,
       COALESCE(desig.designation_name, '') AS designation,
-      DATE_FORMAT(e.date_of_joining, '%d-%m-%Y') AS doj,
+      DATE_FORMAT(e.date_of_joining, '%d-%b-%Y') AS doj,
       COALESCE(e.source, '') AS source,
       COALESCE(e.sub_source, '') AS sub_source,
       COALESCE(e.mobile, '') AS mobile_no,
+      COALESCE(NULLIF(TRIM(e.official_email),''), COALESCE(e.email,''), '') AS email_id,
+      COALESCE(e.gender, '') AS gender,
+      COALESCE(si.pf_eligible, '') AS pf_eligibility,
+      COALESCE(si.esi_eligible, '') AS esi_eligibility,
+      CONCAT(COALESCE(mgr.first_name,''), IF(COALESCE(mgr.last_name,'')='','',CONCAT(' ',COALESCE(mgr.last_name,'')))) AS reporting_manager,
+      DATE_FORMAT(esa.effective_from, '%d-%b-%Y') AS salary_start_date,
       COALESCE(ess.net_in_hand, esa.ctc_annual / 12, 0) AS net_in_hand,
       COALESCE(esa.ctc_annual, 0) AS offered_ctc
     FROM employees e
@@ -1133,6 +1139,8 @@ export async function newJoinExport(
     LEFT JOIN process_master p ON p.id = e.process_id
     LEFT JOIN department_master dept ON dept.id = e.department_id
     LEFT JOIN designation_master desig ON desig.id = e.designation_id
+    LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
+    LEFT JOIN (SELECT employee_id, MAX(pf_eligible) AS pf_eligible, MAX(esi_eligible) AS esi_eligible FROM employee_statutory_info GROUP BY employee_id) si ON si.employee_id = e.id
     LEFT JOIN (
       SELECT employee_id, net_in_hand
       FROM employee_salary_snapshot
@@ -1258,11 +1266,17 @@ export async function leftEmployeeExport(
       COALESCE(cc.cost_centre_name, '') AS cost_center,
       COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
       COALESCE(e.mobile, '') AS mobile_no,
-      DATE_FORMAT(e.date_of_joining, '%d-%m-%Y') AS doj,
-      DATE_FORMAT(COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed, e.date_of_leaving, e.date_of_exit), '%d-%m-%Y') AS left_date,
+      COALESCE(NULLIF(TRIM(e.official_email),''), COALESCE(e.email,''), '') AS email_id,
+      COALESCE(e.gender, '') AS gender,
+      COALESCE(si.pf_eligible, '') AS pf_eligibility,
+      COALESCE(si.esi_eligible, '') AS esi_eligibility,
+      CONCAT(COALESCE(mgr.first_name,''), IF(COALESCE(mgr.last_name,'')='','',CONCAT(' ',COALESCE(mgr.last_name,'')))) AS reporting_manager,
+      DATE_FORMAT(e.date_of_joining, '%d-%b-%Y') AS doj,
+      DATE_FORMAT(COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed, e.date_of_leaving, e.date_of_exit), '%d-%b-%Y') AS left_date,
       COALESCE(er.exit_reason_category, '') AS left_remarks,
       COALESCE(e.source, '') AS source,
       COALESCE(e.sub_source, '') AS sub_source,
+      DATE_FORMAT(esa.effective_from, '%d-%b-%Y') AS salary_start_date,
       COALESCE(ess.net_in_hand, esa.ctc_annual / 12, 0) AS net_in_hand,
       COALESCE(esa.ctc_annual, 0) AS offered_ctc
     FROM employees e
@@ -1271,6 +1285,8 @@ export async function leftEmployeeExport(
     LEFT JOIN branch_master b ON b.id = e.branch_id
     LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
     LEFT JOIN process_master p ON p.id = e.process_id
+    LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
+    LEFT JOIN (SELECT employee_id, MAX(pf_eligible) AS pf_eligible, MAX(esi_eligible) AS esi_eligible FROM employee_statutory_info GROUP BY employee_id) si ON si.employee_id = e.id
     -- Was 'confirmed'/'cleared'/'completed' — none of those values occur in exit_request (real
     -- values are submitted/accepted/exited/revoked), so this join matched zero rows and
     -- left_remarks was silently blank for every exited employee. Fixed 2026-09-11.
