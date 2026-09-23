@@ -85,19 +85,32 @@ export interface GncChatDashboardData {
     totalChats: number;
     uniqueChats: number;
     repeatChats: number;
+    frtInTatCount: number;
+    frtOutTatCount: number;
     frtInTatPct: number;
     resolutionInTatPct: number;
     orders: number;
     conversionPct: number;
     grossRevenue: number;
     netRevenue: number;
+    /** grossRevenue / orders, per explicit user request (2026-09-23). */
+    aov: number;
     avgCsat: number;
     csatResponses: number;
+    codCount: number;
+    paidCount: number;
+    codGross: number;
+    codNet: number;
+    paidGross: number;
+    paidNet: number;
   };
   dateWiseTrend: Array<{
-    date: string; totalChats: number; uniqueChats: number;
-    frtInTatPct: number; resolutionInTatPct: number; orders: number; revenue: number;
+    date: string; totalChats: number; uniqueChats: number; repeatChats: number;
+    frtInTatCount: number; frtOutTatCount: number; frtInTatPct: number; resolutionInTatPct: number;
+    orders: number; revenue: number; netRevenue: number; aov: number; codCount: number; paidCount: number;
   }>;
+  /** One row per (date, qrc bucket) -- pivoted client-side into the Chat Type Trend stacked bar. */
+  qrcDailyTrend: Array<{ date: string; qrc: string; count: number }>;
   qrcBreakdown: Array<{ qrc: string; count: number; pct: number }>;
   channelBreakdown: Array<{ channel: string; count: number; pct: number }>;
   statusBreakdown: Array<{ status: string; count: number; pct: number }>;
@@ -137,7 +150,7 @@ export async function getGncChatDashboard(fromInput: string, toInput: string): P
 
   const [
     [headlineRows], [saleHeadlineRows], [trendRows], [saleTrendRows],
-    [qrcRows], [channelRows], [statusRows], [csatRows], [tagRows], [agentRows], [saleAgentRows],
+    [qrcRows], [channelRows], [statusRows], [csatRows], [tagRows], [agentRows], [saleAgentRows], [qrcDailyRows],
   ] = await Promise.all([
     db.execute<RowDataPacket[]>(
       `SELECT
@@ -153,13 +166,19 @@ export async function getGncChatDashboard(fromInput: string, toInput: string): P
       range,
     ),
     db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS orders, SUM(gross_amount) AS gross, SUM(sum_before_gst) AS net
+      `SELECT COUNT(*) AS orders, SUM(gross_amount) AS gross, SUM(sum_before_gst) AS net,
+         SUM(CASE WHEN payment_status = 'COD' THEN 1 ELSE 0 END) AS cod_count,
+         SUM(CASE WHEN payment_status = 'Prepaid' THEN 1 ELSE 0 END) AS paid_count,
+         SUM(CASE WHEN payment_status = 'COD' THEN gross_amount ELSE 0 END) AS cod_gross,
+         SUM(CASE WHEN payment_status = 'COD' THEN sum_before_gst ELSE 0 END) AS cod_net,
+         SUM(CASE WHEN payment_status = 'Prepaid' THEN gross_amount ELSE 0 END) AS paid_gross,
+         SUM(CASE WHEN payment_status = 'Prepaid' THEN sum_before_gst ELSE 0 END) AS paid_net
        FROM db_masmis.gnc_sale
        WHERE campaign = 'Chat' AND sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY)`,
       range,
     ),
     db.execute<RowDataPacket[]>(
-      `SELECT ${CHAT_DATE} AS d, COUNT(*) AS total, SUM(unique_flag = 'Unique') AS uniq,
+      `SELECT ${CHAT_DATE} AS d, COUNT(*) AS total, SUM(unique_flag = 'Unique') AS uniq, SUM(unique_flag = 'Repeat') AS rep,
          SUM(frt_in_tat = 'IN TAT') AS frt_in, SUM(response_in_tat = 'IN TAT') AS res_in
        FROM db_masmis.gnc_chat
        WHERE ${CHAT_DATE} >= ? AND ${CHAT_DATE} < DATE_ADD(?, INTERVAL 1 DAY)
@@ -167,7 +186,9 @@ export async function getGncChatDashboard(fromInput: string, toInput: string): P
       range,
     ),
     db.execute<RowDataPacket[]>(
-      `SELECT sale_date AS d, COUNT(*) AS orders, SUM(gross_amount) AS revenue
+      `SELECT sale_date AS d, COUNT(*) AS orders, SUM(gross_amount) AS revenue, SUM(sum_before_gst) AS net_revenue,
+         SUM(CASE WHEN payment_status = 'COD' THEN 1 ELSE 0 END) AS cod_count,
+         SUM(CASE WHEN payment_status = 'Prepaid' THEN 1 ELSE 0 END) AS paid_count
        FROM db_masmis.gnc_sale
        WHERE campaign = 'Chat' AND sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY)
        GROUP BY d`,
@@ -219,6 +240,12 @@ export async function getGncChatDashboard(fromInput: string, toInput: string): P
        GROUP BY emp_name ORDER BY revenue DESC`,
       range,
     ),
+    db.execute<RowDataPacket[]>(
+      `SELECT ${CHAT_DATE} AS d, qrc, COUNT(*) AS n FROM db_masmis.gnc_chat
+       WHERE ${CHAT_DATE} >= ? AND ${CHAT_DATE} < DATE_ADD(?, INTERVAL 1 DAY) AND qrc IS NOT NULL AND qrc != ''
+       GROUP BY d, qrc ORDER BY d`,
+      range,
+    ),
   ]);
 
   const h = headlineRows[0];
@@ -227,8 +254,13 @@ export async function getGncChatDashboard(fromInput: string, toInput: string): P
   const uniqueChats = num(h?.uniq);
   const orders = num(sh?.orders);
 
-  const revenueByDay = new Map<string, { orders: number; revenue: number }>();
-  for (const r of saleTrendRows) revenueByDay.set(String(r.d), { orders: num(r.orders), revenue: num(r.revenue) });
+  const revenueByDay = new Map<string, { orders: number; revenue: number; netRevenue: number; codCount: number; paidCount: number }>();
+  for (const r of saleTrendRows) {
+    revenueByDay.set(String(r.d), {
+      orders: num(r.orders), revenue: num(r.revenue), netRevenue: num(r.net_revenue),
+      codCount: num(r.cod_count), paidCount: num(r.paid_count),
+    });
+  }
 
   const agentNameSet = new Set(agentRows.map((r) => normalizeAgentName(String(r.agent))));
   const matched: GncChatDashboardData["saleLinkage"]["matched"] = [];
@@ -260,29 +292,49 @@ export async function getGncChatDashboard(fromInput: string, toInput: string): P
       totalChats,
       uniqueChats,
       repeatChats: num(h?.rep),
+      frtInTatCount: num(h?.frt_in),
+      frtOutTatCount: totalChats - num(h?.frt_in),
       frtInTatPct: pct(num(h?.frt_in), totalChats),
       resolutionInTatPct: pct(num(h?.res_in), totalChats),
       orders,
       conversionPct: pct(orders, uniqueChats),
       grossRevenue: num(sh?.gross),
       netRevenue: num(sh?.net),
+      aov: orders > 0 ? Math.round((num(sh?.gross) / orders) * 100) / 100 : 0,
       avgCsat: Math.round(num(h?.avg_csat) * 100) / 100,
       csatResponses: num(h?.csat_n),
+      codCount: num(sh?.cod_count),
+      paidCount: num(sh?.paid_count),
+      codGross: num(sh?.cod_gross),
+      codNet: num(sh?.cod_net),
+      paidGross: num(sh?.paid_gross),
+      paidNet: num(sh?.paid_net),
     },
     dateWiseTrend: trendRows.map((r) => {
       const d = String(r.d);
       const sale = revenueByDay.get(d);
       const total = num(r.total);
+      const frtIn = num(r.frt_in);
+      const orders = sale?.orders ?? 0;
+      const revenue = sale?.revenue ?? 0;
       return {
         date: d,
         totalChats: total,
         uniqueChats: num(r.uniq),
-        frtInTatPct: pct(num(r.frt_in), total),
+        repeatChats: num(r.rep),
+        frtInTatCount: frtIn,
+        frtOutTatCount: total - frtIn,
+        frtInTatPct: pct(frtIn, total),
         resolutionInTatPct: pct(num(r.res_in), total),
-        orders: sale?.orders ?? 0,
-        revenue: sale?.revenue ?? 0,
+        orders,
+        revenue,
+        netRevenue: sale?.netRevenue ?? 0,
+        aov: orders > 0 ? Math.round((revenue / orders) * 100) / 100 : 0,
+        codCount: sale?.codCount ?? 0,
+        paidCount: sale?.paidCount ?? 0,
       };
     }),
+    qrcDailyTrend: qrcDailyRows.map((r) => ({ date: String(r.d), qrc: String(r.qrc), count: num(r.n) })),
     qrcBreakdown: qrcRows.map((r) => ({ qrc: String(r.qrc), count: num(r.n), pct: pct(num(r.n), totalChats) })),
     channelBreakdown: channelRows.map((r) => ({ channel: String(r.channel), count: num(r.n), pct: pct(num(r.n), totalChats) })),
     statusBreakdown: statusRows.map((r) => ({ status: String(r.ticket_status), count: num(r.n), pct: pct(num(r.n), totalChats) })),

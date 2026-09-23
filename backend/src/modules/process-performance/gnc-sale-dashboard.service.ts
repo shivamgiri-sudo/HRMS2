@@ -53,6 +53,16 @@ export interface GncSaleDashboardData {
     totalAllocation: number;
     sameDayConnectedPct: number;
   };
+  /** Total Allocation -> Attempted -> Connected -> Same Day Connected -> Sale,
+   * all from db_masmis.gnc_allocation (calling_status/same_day_connect) and
+   * gnc_sale. Attempted/Connected are dialer row counts, not deduplicated by
+   * customer -- gnc_allocation has no natural customer key confirmed reliable
+   * enough to dedupe on, so this stays row-level rather than claiming a
+   * "unique" figure it can't back up. Sale is Abandon Cart's own sale count
+   * (gnc_allocation is cart-calling data only), NOT the overall sale count --
+   * using the overall figure would mix in Chat/Inbound sales this funnel's
+   * earlier stages have nothing to do with. */
+  funnel: Array<{ stage: string; count: number; pctOfBase: number }>;
   from: string;
   to: string;
   dateWiseTrend: Array<{
@@ -70,6 +80,12 @@ export interface GncSaleDashboardData {
     codPct: number;
     paidPct: number;
     turnover: number;
+    /** Abandon Cart: Sale Count / Total Allocation (Connected + Not
+     * Connected, excluding pending-to-call), from db_masmis.gnc_allocation.
+     * Chat: Sale Count / Total chat tickets, from db_masmis.gnc_chat.
+     * Inbound has no addressable-contact table in this app (no allocation/
+     * ticket source), so it shows null rather than a fabricated ratio. */
+    conversionPct: number | null;
   }>;
   tlRevenue: Array<{ tl: string; saleCount: number; turnover: number }>;
   topPerformers: Array<{
@@ -124,6 +140,8 @@ interface ActiveAgentsRow extends RowDataPacket {
 interface AllocationHeadlineRow extends RowDataPacket {
   total_allocation: number;
   connected_count: number;
+  attempted_count: number;
+  dial_connected_count: number;
 }
 interface TrendRow extends RowDataPacket {
   d: string;
@@ -255,7 +273,9 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
   const [[allocationHeadlineRow]] = await db.execute<AllocationHeadlineRow[]>(
     `SELECT
        COUNT(*) AS total_allocation,
-       SUM(CASE WHEN same_day_connect = 'Connected' THEN 1 ELSE 0 END) AS connected_count
+       SUM(CASE WHEN same_day_connect = 'Connected' THEN 1 ELSE 0 END) AS connected_count,
+       SUM(CASE WHEN calling_status != 'pending to call' THEN 1 ELSE 0 END) AS attempted_count,
+       SUM(CASE WHEN calling_status = 'Connected' THEN 1 ELSE 0 END) AS dial_connected_count
      FROM db_masmis.gnc_allocation
      WHERE alloc_date >= ? AND alloc_date < DATE_ADD(?, INTERVAL 1 DAY)`,
     range,
@@ -306,6 +326,38 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
      LIMIT 5`,
     range,
   );
+
+  // Abandon Cart's own Connected + Not Connected allocation total (excludes
+  // "pending to call", which is neither connected nor not-connected) -- the
+  // denominator for Abandon Cart's Conversion %, per gnc_allocation being
+  // cart-calling data only (no campaign split, so this can't be computed
+  // for any other LOB).
+  const [[cartConnectRow]] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       SUM(CASE WHEN LOWER(TRIM(calling_status)) = 'connected' THEN 1 ELSE 0 END) AS connected,
+       SUM(CASE WHEN LOWER(TRIM(calling_status)) = 'not connected' THEN 1 ELSE 0 END) AS not_connected
+     FROM db_masmis.gnc_allocation
+     WHERE alloc_date >= ? AND alloc_date < DATE_ADD(?, INTERVAL 1 DAY)`,
+    range,
+  );
+  const cartAllocationTotal = num(cartConnectRow?.connected) + num(cartConnectRow?.not_connected);
+
+  // Chat's own denominator: total chat tickets handled in the range, from
+  // db_masmis.gnc_chat (the GNC Chat uploader's destination table). Its
+  // own "is_checkout_created" flag is unusable for this -- confirmed live
+  // 2026-09-22 that all 6,019 rows in the table hold the literal string
+  // 'FALSE', including rows that have a real order_id -- so ticket COUNT(*)
+  // is used as the denominator instead, same structural idea as Abandon
+  // Cart's Connected+Not Connected total. report_date is stored as text
+  // ("1-Sep-26"), parsed with STR_TO_DATE to match the ISO `range`.
+  const [[chatTicketRow]] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS total_tickets
+     FROM db_masmis.gnc_chat
+     WHERE STR_TO_DATE(report_date, '%e-%b-%y') >= ?
+       AND STR_TO_DATE(report_date, '%e-%b-%y') < DATE_ADD(?, INTERVAL 1 DAY)`,
+    range,
+  );
+  const chatTicketTotal = num(chatTicketRow?.total_tickets);
 
   const [allocationStatusRows] = await db.execute<AllocationStatusRow[]>(
     `SELECT calling_status, COUNT(*) AS n
@@ -394,6 +446,13 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
   const codCount = num(headlineRow?.cod_count);
   const totalAllocation = num(allocationHeadlineRow?.total_allocation);
   const connectedCount = num(allocationHeadlineRow?.connected_count);
+  const attemptedCount = num(allocationHeadlineRow?.attempted_count);
+  const dialConnectedCount = num(allocationHeadlineRow?.dial_connected_count);
+  // gnc_allocation is Abandon-Cart-only data (cart-calling), so the funnel's
+  // final "Sale" stage must be Abandon Cart's own sale count, not the overall
+  // `saleCount` (which also includes Chat/Inbound sales and would overstate
+  // this funnel's true conversion rate).
+  const cartSaleCount = num(campaignRows.find((r) => r.campaign === "Abandon Cart")?.sale_count);
 
   return {
     headline: {
@@ -406,6 +465,13 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
       totalAllocation,
       sameDayConnectedPct: pct(connectedCount, totalAllocation),
     },
+    funnel: [
+      { stage: "Total Allocation", count: totalAllocation, pctOfBase: 100 },
+      { stage: "Attempted", count: attemptedCount, pctOfBase: pct(attemptedCount, totalAllocation) },
+      { stage: "Connected", count: dialConnectedCount, pctOfBase: pct(dialConnectedCount, totalAllocation) },
+      { stage: "Same Day Connected", count: connectedCount, pctOfBase: pct(connectedCount, totalAllocation) },
+      { stage: "Sale", count: cartSaleCount, pctOfBase: pct(cartSaleCount, totalAllocation) },
+    ],
     from,
     to,
     dateWiseTrend: trendRows.map((r) => ({
@@ -423,6 +489,11 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
       codPct: pct(num(r.cod_count), num(r.sale_count)),
       paidPct: pct(num(r.paid_count), num(r.sale_count)),
       turnover: num(r.turnover),
+      conversionPct: (r.campaign === "Abandon Cart" && cartAllocationTotal > 0)
+        ? pct(num(r.sale_count), cartAllocationTotal)
+        : (r.campaign === "Chat" && chatTicketTotal > 0)
+          ? pct(num(r.sale_count), chatTicketTotal)
+          : null,
     })),
     tlRevenue: tlRows.map((r) => ({
       tl: r.tl || "Unknown",
@@ -470,6 +541,197 @@ export async function getGncSaleDashboard(fromInput: string, toInput: string): P
         attendanceDays: attendanceByEmpId.get(r.emp_id) ?? 0,
       };
     }),
+  };
+}
+
+export interface GncAgentDetail {
+  empId: string;
+  empName: string;
+  tl: string;
+  lob: string;
+  doj: string | null;
+  tenureDays: number | null;
+  bucket: string;
+  from: string;
+  to: string;
+  totals: { saleCount: number; codCount: number; paidCount: number; revenue: number; aov: number };
+  daily: Array<{
+    date: string; saleCount: number; codCount: number; paidCount: number; revenue: number;
+    present: boolean | null;
+  }>;
+}
+
+interface AgentDayRow extends RowDataPacket {
+  d: string;
+  sale_count: number;
+  cod_count: number;
+  paid_count: number;
+  turnover: string | null;
+}
+interface AgentAttendanceDayRow extends RowDataPacket {
+  report_date: string;
+  atten: number;
+}
+
+/** One agent's own day-by-day Sale Made / COD / Paid / Revenue, plus their
+ * attendance flag from gnc_apr for each of those days -- the drill-down
+ * behind a row click on Agent-wise Performance. Same tables and the same
+ * DOJ/tenure/bucket logic getGncSaleDashboard already uses for that agent,
+ * just scoped to one emp_id instead of every agent. */
+export async function getGncAgentDetail(empId: string, fromInput: string, toInput: string): Promise<GncAgentDetail | null> {
+  const fallback = currentMonthRange();
+  const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
+  const to = DATE_RE.test(toInput) ? toInput : fallback.to;
+  const range = [empId, from, to];
+
+  const [[identityRow]] = await db.execute<RowDataPacket[]>(
+    `SELECT MAX(emp_name) AS emp_name, MAX(tl) AS tl, MAX(campaign) AS campaign
+     FROM db_masmis.gnc_sale WHERE emp_id = ? AND sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY)`,
+    range,
+  );
+  if (!identityRow?.emp_name) return null;
+
+  const [dayRows] = await db.execute<AgentDayRow[]>(
+    `SELECT DATE(sale_date) AS d, COUNT(*) AS sale_count,
+       SUM(CASE WHEN payment_status = 'COD' THEN 1 ELSE 0 END) AS cod_count,
+       SUM(CASE WHEN payment_status = 'Prepaid' THEN 1 ELSE 0 END) AS paid_count,
+       SUM(gross_amount) AS turnover
+     FROM db_masmis.gnc_sale
+     WHERE emp_id = ? AND sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY)
+     GROUP BY DATE(sale_date) ORDER BY d ASC`,
+    range,
+  );
+
+  const [attendanceRows] = await db.execute<AgentAttendanceDayRow[]>(
+    `SELECT report_date, MAX(atten) AS atten FROM db_masmis.gnc_apr
+     WHERE emp_id = ? AND report_date >= ? AND report_date < DATE_ADD(?, INTERVAL 1 DAY)
+     GROUP BY report_date`,
+    range,
+  );
+  const presentByDate = new Map(attendanceRows.map((r) => [String(r.report_date), num(r.atten) > 0]));
+
+  const [employeeRows] = await db.execute<EmployeeRow[]>(
+    `SELECT employee_code, first_name, last_name, date_of_joining FROM mas_hrms.employees WHERE employee_code = ?`,
+    [empId],
+  );
+  const employee = employeeRows[0] ?? null;
+  const doj = employee?.date_of_joining ?? null;
+  const tenureDays = doj ? Math.floor((Date.now() - new Date(doj).getTime()) / 86400000) : null;
+
+  const daily = dayRows.map((r) => ({
+    date: String(r.d), saleCount: num(r.sale_count), codCount: num(r.cod_count), paidCount: num(r.paid_count),
+    revenue: num(r.turnover), present: presentByDate.get(String(r.d)) ?? null,
+  }));
+  const saleCount = daily.reduce((s, d) => s + d.saleCount, 0);
+  const codCount = daily.reduce((s, d) => s + d.codCount, 0);
+  const paidCount = daily.reduce((s, d) => s + d.paidCount, 0);
+  const revenue = daily.reduce((s, d) => s + d.revenue, 0);
+
+  return {
+    empId,
+    empName: String(identityRow.emp_name),
+    tl: String(identityRow.tl ?? "Unassigned"),
+    lob: String(identityRow.campaign ?? "Unknown"),
+    doj, tenureDays, bucket: tenureBucket(tenureDays),
+    from, to,
+    totals: { saleCount, codCount, paidCount, revenue, aov: saleCount > 0 ? Math.round((revenue / saleCount) * 100) / 100 : 0 },
+    daily,
+  };
+}
+
+export interface GncCampaignDetail {
+  campaign: string;
+  from: string;
+  to: string;
+  totals: {
+    saleCount: number; codCount: number; paidCount: number; revenue: number; aov: number;
+    /** Same Sale Count / addressable-contacts definition the LOB-wise Summary
+     * table's headline conversionPct uses -- null when this LOB has no
+     * addressable-contact source in this app (see that field's own comment). */
+    conversionPct: number | null;
+  };
+  daily: Array<{
+    date: string; saleCount: number; codCount: number; paidCount: number; revenue: number; conversionPct: number | null;
+  }>;
+}
+
+interface CampaignDayRow extends RowDataPacket {
+  d: string;
+  sale_count: number;
+  cod_count: number;
+  paid_count: number;
+  turnover: string | null;
+}
+
+/** One LOB's own day-by-day Sale Made / COD / Paid / Revenue / Conversion% --
+ * the drill-down behind a row click on the LOB-wise Summary table. Reuses
+ * the same campaign===Abandon Cart/Chat denominator logic getGncSaleDashboard
+ * uses for the aggregate conversionPct, just grouped by day too. */
+export async function getGncCampaignDetail(campaignInput: string, fromInput: string, toInput: string): Promise<GncCampaignDetail | null> {
+  const fallback = currentMonthRange();
+  const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
+  const to = DATE_RE.test(toInput) ? toInput : fallback.to;
+  const campaign = campaignInput.trim();
+  if (!campaign) return null;
+
+  const [dayRows] = await db.execute<CampaignDayRow[]>(
+    `SELECT DATE(sale_date) AS d, COUNT(*) AS sale_count,
+       SUM(CASE WHEN payment_status = 'COD' THEN 1 ELSE 0 END) AS cod_count,
+       SUM(CASE WHEN payment_status = 'Prepaid' THEN 1 ELSE 0 END) AS paid_count,
+       SUM(gross_amount) AS turnover
+     FROM db_masmis.gnc_sale
+     WHERE campaign = ? AND sale_date >= ? AND sale_date < DATE_ADD(?, INTERVAL 1 DAY)
+     GROUP BY DATE(sale_date) ORDER BY d ASC`,
+    [campaign, from, to],
+  );
+  if (dayRows.length === 0) return null;
+
+  const denomByDay = new Map<string, number>();
+  if (campaign === "Abandon Cart") {
+    const [cartRows] = await db.execute<RowDataPacket[]>(
+      `SELECT alloc_date AS d,
+         SUM(CASE WHEN LOWER(TRIM(calling_status)) = 'connected' THEN 1 ELSE 0 END) AS connected,
+         SUM(CASE WHEN LOWER(TRIM(calling_status)) = 'not connected' THEN 1 ELSE 0 END) AS not_connected
+       FROM db_masmis.gnc_allocation
+       WHERE alloc_date >= ? AND alloc_date < DATE_ADD(?, INTERVAL 1 DAY)
+       GROUP BY alloc_date`,
+      [from, to],
+    );
+    for (const r of cartRows) denomByDay.set(String(r.d), num(r.connected) + num(r.not_connected));
+  } else if (campaign === "Chat") {
+    const [chatRows] = await db.execute<RowDataPacket[]>(
+      `SELECT STR_TO_DATE(report_date, '%e-%b-%y') AS d, COUNT(*) AS n
+       FROM db_masmis.gnc_chat
+       WHERE STR_TO_DATE(report_date, '%e-%b-%y') >= ? AND STR_TO_DATE(report_date, '%e-%b-%y') < DATE_ADD(?, INTERVAL 1 DAY)
+       GROUP BY STR_TO_DATE(report_date, '%e-%b-%y')`,
+      [from, to],
+    );
+    for (const r of chatRows) denomByDay.set(String(r.d), num(r.n));
+  }
+
+  const daily = dayRows.map((r) => {
+    const d = String(r.d);
+    const saleCount = num(r.sale_count);
+    const denom = denomByDay.get(d) ?? 0;
+    return {
+      date: d, saleCount, codCount: num(r.cod_count), paidCount: num(r.paid_count), revenue: num(r.turnover),
+      conversionPct: denom > 0 ? pct(saleCount, denom) : null,
+    };
+  });
+  const saleCount = daily.reduce((s, d) => s + d.saleCount, 0);
+  const codCount = daily.reduce((s, d) => s + d.codCount, 0);
+  const paidCount = daily.reduce((s, d) => s + d.paidCount, 0);
+  const revenue = daily.reduce((s, d) => s + d.revenue, 0);
+  const totalDenom = [...denomByDay.values()].reduce((s, v) => s + v, 0);
+
+  return {
+    campaign, from, to,
+    totals: {
+      saleCount, codCount, paidCount, revenue,
+      aov: saleCount > 0 ? Math.round((revenue / saleCount) * 100) / 100 : 0,
+      conversionPct: totalDenom > 0 ? pct(saleCount, totalDenom) : null,
+    },
+    daily,
   };
 }
 

@@ -1,18 +1,22 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
-  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, Area, AreaChart,
+  LineChart, Line, BarChart, Bar, ComposedChart, PieChart, Pie, Cell, Area, AreaChart,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   IndianRupee, ShoppingBag, CreditCard, Wallet, TrendingUp, Users, CalendarDays,
-  PhoneCall, PhoneOff, Search, Sparkles, Layers, Trophy, ListFilter,
+  Search, Sparkles, Layers, Trophy, ListFilter,
 } from "lucide-react";
 import {
   Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
   localDateStr, currentMonthRange, formatINR, formatShortDate, formatDDMMYYYY,
   type ExportSlide,
 } from "./DashboardKit";
+import { GncAgentDrawer } from "./GncAgentDrawer";
+import { GncCampaignDrawer } from "./GncCampaignDrawer";
+import { useSortableRows } from "./useSortableRows";
+import { SortTh } from "./SortTh";
 
 interface DashboardData {
   headline: {
@@ -22,19 +26,16 @@ interface DashboardData {
     codPct: number;
     aov: number;
     activeAgents: number;
-    totalAllocation: number;
-    sameDayConnectedPct: number;
   };
   from: string;
   to: string;
   dateWiseTrend: Array<{ date: string; saleCount: number; turnover: number; prepaidCount: number; codCount: number }>;
   campaignRevenue: Array<{
     campaign: string; saleCount: number; codCount: number; paidCount: number;
-    codPct: number; paidPct: number; turnover: number;
+    codPct: number; paidPct: number; turnover: number; conversionPct: number | null;
   }>;
   tlRevenue: Array<{ tl: string; saleCount: number; turnover: number }>;
   topPerformers: Array<{ empId: string; empName: string; tl: string; campaign: string; saleCount: number; turnover: number; prepaidPct: number }>;
-  allocationStatus: Array<{ status: string; count: number; pct: number }>;
   campaigns: string[];
   dateWiseBreakdown: Array<{
     date: string;
@@ -81,6 +82,8 @@ export function GncSaleDashboard() {
   const [to, setTo] = useState(defaultRange.to);
   const [tab, setTab] = useState<TabKey>("overall");
   const [agentSearch, setAgentSearch] = useState("");
+  const [drawerEmpId, setDrawerEmpId] = useState<string | null>(null);
+  const [drawerCampaign, setDrawerCampaign] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -106,6 +109,54 @@ export function GncSaleDashboard() {
     return rows.filter((a) => a.empName.toLowerCase().includes(q) || a.empId.toLowerCase().includes(q) || a.tl.toLowerCase().includes(q));
   }, [data, agentSearch]);
 
+  const agentSort = useSortableRows<DashboardData["agentPerformance"][number]>(filteredAgents, (a, key) => {
+    switch (key) {
+      case "empName": return a.empName;
+      case "empId": return a.empId;
+      case "doj": return a.doj;
+      case "tenureDays": return a.tenureDays;
+      case "bucket": return a.bucket;
+      case "tl": return a.tl;
+      case "lob": return a.lob;
+      case "saleCount": return a.saleCount;
+      case "codCount": return a.codCount;
+      case "paidCount": return a.paidCount;
+      case "codPct": return a.codPct;
+      case "paidPct": return a.paidPct;
+      case "revenue": return a.revenue;
+      case "attendanceDays": return a.attendanceDays;
+      default: return null;
+    }
+  });
+
+  const lobSummarySort = useSortableRows<DashboardData["campaignRevenue"][number]>(data?.campaignRevenue ?? [], (c, key) => {
+    switch (key) {
+      case "campaign": return c.campaign;
+      case "saleCount": return c.saleCount;
+      case "codCount": return c.codCount;
+      case "paidCount": return c.paidCount;
+      case "codPct": return c.codPct;
+      case "paidPct": return c.paidPct;
+      case "conversionPct": return c.conversionPct;
+      case "turnover": return c.turnover;
+      default: return null;
+    }
+  });
+
+  /** COD/Prepaid orders as a share of that day's total, for the side lines
+   * on "COD vs Prepaid Orders" -- computed from the same counts the stacked
+   * bars already show, not re-fetched. */
+  const codVsPrepaidTrend = useMemo(() => {
+    return (data?.dateWiseTrend ?? []).map((d) => {
+      const total = d.prepaidCount + d.codCount;
+      return {
+        ...d,
+        prepaidPct: total > 0 ? Math.round((d.prepaidCount / total) * 1000) / 10 : 0,
+        codPct: total > 0 ? Math.round((d.codCount / total) * 1000) / 10 : 0,
+      };
+    });
+  }, [data]);
+
   /** Export slides for "Download Snap"/"Download Excel" — one per tab,
    * built from the same data already rendered on screen, not re-fetched. */
   const exportSlides = useMemo<ExportSlide[]>(() => {
@@ -119,14 +170,12 @@ export function GncSaleDashboard() {
         { label: "COD %", value: `${data.headline.codPct}%` },
         { label: "AOV", value: formatINR(data.headline.aov) },
         { label: "Active Agents", value: String(data.headline.activeAgents) },
-        { label: "Total Allocation", value: data.headline.totalAllocation.toLocaleString("en-IN") },
-        { label: "Same Day Connected %", value: `${data.headline.sameDayConnectedPct}%` },
       ],
       tables: [
         {
           title: "LOB-wise Summary",
-          columns: ["LOB", "Sale Count", "COD", "Paid", "COD %", "Paid %", "Revenue"],
-          rows: data.campaignRevenue.map((c) => [c.campaign, c.saleCount, c.codCount, c.paidCount, `${c.codPct}%`, `${c.paidPct}%`, formatINR(c.turnover)]),
+          columns: ["LOB", "Sale Count", "COD", "Paid", "COD %", "Paid %", "Conversion %", "Revenue"],
+          rows: data.campaignRevenue.map((c) => [c.campaign, c.saleCount, c.codCount, c.paidCount, `${c.codPct}%`, `${c.paidPct}%`, c.conversionPct === null ? "—" : `${c.conversionPct}%`, formatINR(c.turnover)]),
         },
         {
           title: "TL-wise Revenue",
@@ -137,11 +186,6 @@ export function GncSaleDashboard() {
           title: "Top Performers",
           columns: ["Agent", "Emp ID", "TL", "Campaign", "Sale Count", "Revenue", "Prepaid %"],
           rows: data.topPerformers.map((p) => [p.empName, p.empId, p.tl, p.campaign, p.saleCount, formatINR(p.turnover), `${p.prepaidPct}%`]),
-        },
-        {
-          title: "Allocation Connect Status",
-          columns: ["Status", "Count", "Share"],
-          rows: data.allocationStatus.map((s) => [s.status, s.count, `${s.pct}%`]),
         },
         {
           title: "Date & Campaign-wise Overall Sale",
@@ -187,14 +231,14 @@ export function GncSaleDashboard() {
   return (
     <div className="space-y-5">
       <DashboardHero<TabKey>
-        icon={Sparkles} eyebrow="GNC · Process Performance" title="Sale Performance"
+        icon={Sparkles} eyebrow="GNC · Process Performance" title="Overall Dashboard"
         tabs={TABS} activeTab={tab} onTabChange={setTab}
         gradient="from-emerald-600 via-teal-600 to-emerald-700"
       />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <DashboardExportMenu
-          reportTitle="GNC — Sale Performance"
+          reportTitle="GNC — Overall Dashboard"
           fileBaseName="GNC_Sale_Performance"
           raw={{ dashboard: "gnc_sale", from, to }}
           subtitle={`${from} to ${to}`}
@@ -217,14 +261,12 @@ export function GncSaleDashboard() {
         <KpiCard icon={Wallet} label="COD %" value={`${headline.codPct}%`} tone="amber" />
         <KpiCard icon={TrendingUp} label="AOV" value={formatINR(headline.aov)} tone="violet" />
         <KpiCard icon={Users} label="Active" value={String(headline.activeAgents)} sub="agents in range" tone="indigo" />
-        <KpiCard icon={PhoneCall} label="Total Allocation" value={headline.totalAllocation.toLocaleString("en-IN")} tone="rose" />
-        <KpiCard icon={PhoneOff} label="Same Day Connected %" value={`${headline.sameDayConnectedPct}%`} tone="cyan" />
       </div>
 
       {/* Date-wise trend + Campaign revenue */}
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
-        <SectionCard icon={TrendingUp} title="Date-wise Sale & Turnover" tone="emerald">
+        <SectionCard icon={TrendingUp} title="Date-wise Sale & Gross Revenue" tone="emerald">
           <ResponsiveContainer width="100%" height={240}>
             <AreaChart data={data.dateWiseTrend} margin={{ top: 4, right: 12, left: -16, bottom: 0 }}>
               <defs>
@@ -239,73 +281,55 @@ export function GncSaleDashboard() {
               <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} />
               <Tooltip
                 labelFormatter={(v: unknown) => formatShortDate(String(v))}
-                formatter={(value: number, name: string) => (name === "Turnover" ? formatINR(value) : value)}
+                formatter={(value: number, name: string) => (name === "Gross Revenue" ? formatINR(value) : value)}
                 contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #e2e8f0" }}
               />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Line yAxisId="left" type="monotone" dataKey="saleCount" name="Sale Count" stroke="#0ea5e9" strokeWidth={2} dot={false} />
-              <Area yAxisId="right" type="monotone" dataKey="turnover" name="Turnover" stroke="#059669" strokeWidth={2.5} fill="url(#gncSaleFill)" />
+              <Area yAxisId="right" type="monotone" dataKey="turnover" name="Gross Revenue" stroke="#059669" strokeWidth={2.5} fill="url(#gncSaleFill)" />
             </AreaChart>
           </ResponsiveContainer>
         </SectionCard>
         </div>
 
         <SectionCard icon={Layers} title="Campaign-wise Revenue" tone="teal">
-          <ResponsiveContainer width="100%" height={240}>
-            <PieChart>
-              <Pie data={data.campaignRevenue} dataKey="turnover" nameKey="campaign" cx="50%" cy="50%" innerRadius={44} outerRadius={82} paddingAngle={2} label={(p: { campaign?: string }) => p.campaign ?? ""}>
+          <ResponsiveContainer width="100%" height={280}>
+            <PieChart margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+              <Pie
+                data={data.campaignRevenue} dataKey="turnover" nameKey="campaign"
+                cx="50%" cy="46%" innerRadius={46} outerRadius={80} paddingAngle={2}
+                labelLine={false}
+                label={(p: { percent?: number }) => (p.percent ? `${Math.round(p.percent * 100)}%` : "")}
+              >
                 {data.campaignRevenue.map((entry, i) => (
                   <Cell key={entry.campaign} fill={CAMPAIGN_COLORS[i % CAMPAIGN_COLORS.length]} stroke="white" strokeWidth={2} />
                 ))}
               </Pie>
-              <Tooltip formatter={(value: number) => formatINR(value)} contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #e2e8f0" }} />
+              <Tooltip formatter={(value: number, name: string) => [formatINR(value), name]} contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #e2e8f0" }} />
+              <Legend verticalAlign="bottom" wrapperStyle={{ fontSize: 11 }} />
             </PieChart>
           </ResponsiveContainer>
         </SectionCard>
       </div>
 
-      {/* COD vs Prepaid + Allocation connect status */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        <SectionCard icon={Wallet} title="COD vs Prepaid Orders" tone="amber">
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={data.dateWiseTrend} margin={{ top: 4, right: 12, left: -16, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis dataKey="date" tickFormatter={formatShortDate} tick={{ fontSize: 9 }} />
-              <YAxis tick={{ fontSize: 10 }} />
-              <Tooltip labelFormatter={(v: unknown) => formatShortDate(String(v))} contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #e2e8f0" }} />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar dataKey="prepaidCount" name="Prepaid" stackId="pay" fill="#059669" radius={[0, 0, 0, 0]} />
-              <Bar dataKey="codCount" name="COD" stackId="pay" fill="#f59e0b" radius={[3, 3, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </SectionCard>
-
-        <SectionCard icon={PhoneOff} title="Allocation Connect Status" tone="cyan">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">Status</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Count</th>
-                  <th className="py-2 pr-0 text-right font-semibold">Share</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.allocationStatus.map((s) => (
-                  <tr key={s.status} className="border-b border-slate-50 transition-colors last:border-0 hover:bg-slate-50/70">
-                    <td className="py-2.5 pr-3 font-medium text-slate-700">{s.status}</td>
-                    <td className="py-2.5 pr-3 text-right text-slate-600">{s.count.toLocaleString("en-IN")}</td>
-                    <td className="py-2.5 pr-0 text-right font-semibold text-slate-800">{s.pct}%</td>
-                  </tr>
-                ))}
-                {data.allocationStatus.length === 0 && (
-                  <tr><td colSpan={3} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </SectionCard>
-      </div>
+      {/* COD vs Prepaid */}
+      <SectionCard icon={Wallet} title="COD vs Prepaid Orders" tone="amber" footnote="Each day's Prepaid % and COD % share of that day's orders.">
+        <ResponsiveContainer width="100%" height={220}>
+          <ComposedChart data={codVsPrepaidTrend} margin={{ top: 4, right: 12, left: -16, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+            <XAxis dataKey="date" tickFormatter={formatShortDate} tick={{ fontSize: 9 }} />
+            <YAxis tick={{ fontSize: 10 }} domain={[0, 100]} unit="%" />
+            <Tooltip
+              labelFormatter={(v: unknown) => formatShortDate(String(v))}
+              formatter={(value: number, name: string) => [`${value}%`, name]}
+              contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #e2e8f0" }}
+            />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Bar dataKey="prepaidPct" name="Prepaid %" stackId="pay" fill="#059669" radius={[0, 0, 0, 0]} />
+            <Bar dataKey="codPct" name="COD %" stackId="pay" fill="#f59e0b" radius={[3, 3, 0, 0]} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </SectionCard>
 
       {/* TL-wise revenue */}
       <SectionCard icon={Trophy} title="TL-wise Revenue" tone="violet">
@@ -321,38 +345,43 @@ export function GncSaleDashboard() {
       </SectionCard>
 
       {/* Top performers */}
-      <SectionCard icon={Trophy} title="Top 5 Performers" tone="amber">
+      <SectionCard icon={Trophy} title="Top 5 Performers" tone="amber" footnote="Click a row to see that agent's full date-wise performance.">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full text-center text-xs">
             <thead>
               <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                <th className="py-2 pr-3 font-semibold">Agent</th>
-                <th className="py-2 pr-3 font-semibold">TL</th>
-                <th className="py-2 pr-3 font-semibold">Campaign</th>
-                <th className="py-2 pr-3 text-right font-semibold">Sale Count</th>
-                <th className="py-2 pr-3 text-right font-semibold">Revenue</th>
-                <th className="py-2 pr-0 text-right font-semibold">Prepaid%</th>
+                <th className="py-2 px-3 font-semibold">Agent</th>
+                <th className="py-2 px-3 font-semibold">TL</th>
+                <th className="py-2 px-3 font-semibold">Campaign</th>
+                <th className="py-2 px-3 font-semibold">Sale Count</th>
+                <th className="py-2 px-3 font-semibold">Revenue</th>
+                <th className="py-2 px-3 font-semibold">Prepaid%</th>
               </tr>
             </thead>
             <tbody>
               {data.topPerformers.map((p, i) => (
-                <tr key={p.empId} className={`border-b border-slate-50 transition-colors last:border-0 hover:bg-amber-50/40 ${i % 2 === 1 ? "bg-amber-50/20" : "bg-white"}`}>
-                  <td className="py-2.5 pr-3">
-                    <div className="flex items-center gap-2">
+                <tr
+                  key={p.empId} role="button" tabIndex={0}
+                  onClick={() => setDrawerEmpId(p.empId)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDrawerEmpId(p.empId); } }}
+                  className={`cursor-pointer border-b border-slate-50 transition-colors last:border-0 hover:bg-amber-50/40 ${i % 2 === 1 ? "bg-amber-50/20" : "bg-white"}`}
+                >
+                  <td className="py-2.5 px-3">
+                    <div className="flex items-center justify-center gap-2">
                       <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
                         i === 0 ? "bg-amber-400 text-white" : i === 1 ? "bg-slate-300 text-white" : i === 2 ? "bg-orange-300 text-white" : "bg-slate-100 text-slate-400"
                       }`}>{i + 1}</span>
-                      <div>
+                      <div className="text-left">
                         <div className="font-medium text-slate-700">{p.empName}</div>
                         <div className="text-[11px] text-slate-400">{p.empId}</div>
                       </div>
                     </div>
                   </td>
-                  <td className="py-2.5 pr-3 text-slate-500">{p.tl}</td>
-                  <td className="py-2.5 pr-3 text-slate-500">{p.campaign}</td>
-                  <td className="py-2.5 pr-3 text-right text-slate-600">{p.saleCount}</td>
-                  <td className="py-2.5 pr-3 text-right font-semibold text-slate-800">{formatINR(p.turnover)}</td>
-                  <td className="py-2.5 pr-0 text-right text-slate-600">{p.prepaidPct}%</td>
+                  <td className="py-2.5 px-3 text-slate-500">{p.tl}</td>
+                  <td className="py-2.5 px-3 text-slate-500">{p.campaign}</td>
+                  <td className="py-2.5 px-3 text-slate-600">{p.saleCount}</td>
+                  <td className="py-2.5 px-3 font-semibold text-slate-800">{formatINR(p.turnover)}</td>
+                  <td className="py-2.5 px-3 text-slate-600">{p.prepaidPct}%</td>
                 </tr>
               ))}
               {data.topPerformers.length === 0 && (
@@ -366,50 +395,70 @@ export function GncSaleDashboard() {
       {/* LOB-wise summary */}
       <SectionCard
         icon={Layers} title="LOB-wise Summary" tone="teal"
-        footnote="Mandate/Target and Achv% columns from the reference sheet are not shown — no real GNC target/mandate data source exists in this app yet."
+        footnote="Conversion % (Achi%) = Sale Count ÷ addressable contacts. Abandon Cart: ÷ Total Allocation (Connected + Not Connected) from gnc_allocation. Chat: ÷ Total chat tickets from gnc_chat. Inbound has no allocation/ticket source in this app, so it shows “—” rather than a guessed figure. Mandate/Target columns from the reference sheet still aren't shown — no real GNC target/mandate data source exists in this app."
       >
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full border-collapse text-center text-xs">
             <thead>
-              <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                <th className="py-2 pr-3 font-semibold">LOB</th>
-                <th className="py-2 pr-3 text-right font-semibold">Sale Count</th>
-                <th className="py-2 pr-3 text-right font-semibold">COD</th>
-                <th className="py-2 pr-3 text-right font-semibold">Paid</th>
-                <th className="py-2 pr-3 text-right font-semibold">COD %</th>
-                <th className="py-2 pr-3 text-right font-semibold">Paid %</th>
-                <th className="py-2 pr-0 text-right font-semibold">Revenue</th>
+              <tr className="bg-teal-800 text-[11px] uppercase tracking-wide text-white">
+                <SortTh label="LOB" sortKey="campaign" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 text-left font-bold text-white" />
+                <SortTh label="Sale Count" sortKey="saleCount" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
+                <SortTh label="COD" sortKey="codCount" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
+                <SortTh label="Paid" sortKey="paidCount" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
+                <SortTh label="COD %" sortKey="codPct" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
+                <SortTh label="Paid %" sortKey="paidPct" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
+                <SortTh label="Conversion % (Achi%)" sortKey="conversionPct" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
+                <SortTh label="Revenue" sortKey="turnover" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
               </tr>
             </thead>
             <tbody>
-              {data.campaignRevenue.map((c, i) => (
-                <tr key={c.campaign} className={`border-b border-slate-50 transition-colors last:border-0 hover:bg-teal-50/40 ${i % 2 === 1 ? "bg-teal-50/20" : "bg-white"}`}>
-                  <td className="py-2.5 pr-3 font-medium text-slate-700">{c.campaign}</td>
-                  <td className="py-2.5 pr-3 text-right text-slate-600">{c.saleCount}</td>
-                  <td className="py-2.5 pr-3 text-right text-slate-600">{c.codCount}</td>
-                  <td className="py-2.5 pr-3 text-right text-slate-600">{c.paidCount}</td>
-                  <td className="py-2.5 pr-3 text-right text-slate-600">{c.codPct}%</td>
-                  <td className="py-2.5 pr-3 text-right text-slate-600">{c.paidPct}%</td>
-                  <td className="py-2.5 pr-0 text-right font-semibold text-slate-800">{formatINR(c.turnover)}</td>
+              {lobSummarySort.sorted.map((c, i) => (
+                <tr
+                  key={c.campaign} onClick={() => setDrawerCampaign(c.campaign)} role="button" tabIndex={0}
+                  className={`cursor-pointer border-b border-slate-100 transition-colors last:border-0 hover:bg-teal-50/60 ${i % 2 === 1 ? "bg-teal-50/40" : "bg-white"}`}
+                >
+                  <td className="py-2.5 px-3 text-left font-semibold text-teal-700 underline-offset-2 hover:underline">{c.campaign}</td>
+                  <td className="py-2.5 px-3 text-slate-600">{c.saleCount}</td>
+                  <td className="py-2.5 px-3 font-medium text-amber-600">{c.codCount}</td>
+                  <td className="py-2.5 px-3 font-medium text-emerald-600">{c.paidCount}</td>
+                  <td className="py-2.5 px-3 font-medium text-amber-600">{c.codPct}%</td>
+                  <td className="py-2.5 px-3 font-medium text-emerald-600">{c.paidPct}%</td>
+                  <td className="py-2.5 px-3">
+                    {c.conversionPct === null
+                      ? <span className="text-slate-400">—</span>
+                      : <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 font-bold text-indigo-700">{c.conversionPct}%</span>}
+                  </td>
+                  <td className="py-2.5 px-3 font-bold text-teal-700">{formatINR(c.turnover)}</td>
                 </tr>
               ))}
-              {data.campaignRevenue.length > 0 && (
-                <tr className="bg-slate-50 font-bold text-slate-800">
-                  <td className="py-2.5 pr-3">Grand Total</td>
-                  <td className="py-2.5 pr-3 text-right">{data.campaignRevenue.reduce((s, c) => s + c.saleCount, 0)}</td>
-                  <td className="py-2.5 pr-3 text-right">{data.campaignRevenue.reduce((s, c) => s + c.codCount, 0)}</td>
-                  <td className="py-2.5 pr-3 text-right">{data.campaignRevenue.reduce((s, c) => s + c.paidCount, 0)}</td>
-                  <td className="py-2.5 pr-3 text-right">
-                    {(() => { const t = data.campaignRevenue.reduce((s, c) => s + c.saleCount, 0); const cod = data.campaignRevenue.reduce((s, c) => s + c.codCount, 0); return t > 0 ? `${Math.round((cod / t) * 10000) / 100}%` : "0%"; })()}
-                  </td>
-                  <td className="py-2.5 pr-3 text-right">
-                    {(() => { const t = data.campaignRevenue.reduce((s, c) => s + c.saleCount, 0); const paid = data.campaignRevenue.reduce((s, c) => s + c.paidCount, 0); return t > 0 ? `${Math.round((paid / t) * 10000) / 100}%` : "0%"; })()}
-                  </td>
-                  <td className="py-2.5 pr-0 text-right">{formatINR(data.campaignRevenue.reduce((s, c) => s + c.turnover, 0))}</td>
-                </tr>
-              )}
+              {data.campaignRevenue.length > 0 && (() => {
+                const totalSale = data.campaignRevenue.reduce((s, c) => s + c.saleCount, 0);
+                const totalCod = data.campaignRevenue.reduce((s, c) => s + c.codCount, 0);
+                const totalPaid = data.campaignRevenue.reduce((s, c) => s + c.paidCount, 0);
+                // Conversion % isn't directly summable across LOBs (each has its
+                // own denominator: cart allocations vs chat tickets), so the
+                // grand total is recomputed as combined sale / combined
+                // denominator (denominator backed out from each row's own
+                // saleCount ÷ conversionPct).
+                const conversionRows = data.campaignRevenue.filter((c) => c.conversionPct !== null);
+                const totalConvSale = conversionRows.reduce((s, c) => s + c.saleCount, 0);
+                const totalConvDenom = conversionRows.reduce((s, c) => s + c.saleCount / ((c.conversionPct as number) / 100), 0);
+                const grandConversionPct = totalConvDenom > 0 ? Math.round((totalConvSale / totalConvDenom) * 10000) / 100 : null;
+                return (
+                  <tr className="bg-slate-800 font-bold text-white">
+                    <td className="py-2.5 px-3 text-left text-white">Grand Total</td>
+                    <td className="py-2.5 px-3 text-white">{totalSale}</td>
+                    <td className="py-2.5 px-3 text-amber-300">{totalCod}</td>
+                    <td className="py-2.5 px-3 text-emerald-300">{totalPaid}</td>
+                    <td className="py-2.5 px-3 text-amber-300">{totalSale > 0 ? `${Math.round((totalCod / totalSale) * 10000) / 100}%` : "0%"}</td>
+                    <td className="py-2.5 px-3 text-emerald-300">{totalSale > 0 ? `${Math.round((totalPaid / totalSale) * 10000) / 100}%` : "0%"}</td>
+                    <td className="py-2.5 px-3 text-indigo-300">{grandConversionPct !== null ? `${grandConversionPct}%` : "—"}</td>
+                    <td className="py-2.5 px-3 text-teal-300">{formatINR(data.campaignRevenue.reduce((s, c) => s + c.turnover, 0))}</td>
+                  </tr>
+                );
+              })()}
               {data.campaignRevenue.length === 0 && (
-                <tr><td colSpan={7} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
+                <tr><td colSpan={8} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
               )}
             </tbody>
           </table>
@@ -545,31 +594,36 @@ export function GncSaleDashboard() {
         </div>
 
         <SectionCard icon={Users} title="Agent-wise Performance" tone="indigo"
-          footnote="Target/Achv%/TQ-MQ-BQ and every RTO column from the reference sheet are not shown — no real GNC target/mandate source exists, and db_masmis.gnc_sale has no RTO/return-status column."
+          footnote="Click a row to see that agent's date-wise performance. Target/Achv%/TQ-MQ-BQ and every RTO column from the reference sheet are not shown — no real GNC target/mandate source exists, and db_masmis.gnc_sale has no RTO/return-status column."
         >
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                  <th className="py-2 pr-3 font-semibold">EMP Id</th>
-                  <th className="py-2 pr-3 font-semibold">Agent Name</th>
-                  <th className="py-2 pr-3 font-semibold">DOJ</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Tenure</th>
-                  <th className="py-2 pr-3 font-semibold">Bucket</th>
-                  <th className="py-2 pr-3 font-semibold">TL Name</th>
-                  <th className="py-2 pr-3 font-semibold">LOB</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Sale Made</th>
-                  <th className="py-2 pr-3 text-right font-semibold">COD</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Paid</th>
-                  <th className="py-2 pr-3 text-right font-semibold">COD %</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Paid %</th>
-                  <th className="py-2 pr-3 text-right font-semibold">Revenue</th>
-                  <th className="py-2 pr-0 text-right font-semibold">Attendance</th>
+                  <SortTh label="EMP Id" sortKey="empId" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 font-semibold" />
+                  <SortTh label="Agent Name" sortKey="empName" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 font-semibold" />
+                  <SortTh label="DOJ" sortKey="doj" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 font-semibold" />
+                  <SortTh label="Tenure" sortKey="tenureDays" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
+                  <SortTh label="Bucket" sortKey="bucket" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 font-semibold" />
+                  <SortTh label="TL Name" sortKey="tl" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 font-semibold" />
+                  <SortTh label="LOB" sortKey="lob" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 font-semibold" />
+                  <SortTh label="Sale Made" sortKey="saleCount" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
+                  <SortTh label="COD" sortKey="codCount" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
+                  <SortTh label="Paid" sortKey="paidCount" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
+                  <SortTh label="COD %" sortKey="codPct" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
+                  <SortTh label="Paid %" sortKey="paidPct" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
+                  <SortTh label="Revenue" sortKey="revenue" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
+                  <SortTh label="Attendance" sortKey="attendanceDays" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-0 text-right font-semibold" />
                 </tr>
               </thead>
               <tbody>
-                {filteredAgents.map((a, i) => (
-                  <tr key={a.empId} className={`border-b border-slate-50 transition-colors last:border-0 hover:bg-indigo-50/40 ${i % 2 === 1 ? "bg-indigo-50/20" : "bg-white"}`}>
+                {agentSort.sorted.map((a, i) => (
+                  <tr
+                    key={a.empId} role="button" tabIndex={0} aria-label={`Open ${a.empName}'s date-wise performance`}
+                    onClick={() => setDrawerEmpId(a.empId)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDrawerEmpId(a.empId); } }}
+                    className={`cursor-pointer border-b border-slate-50 transition-colors last:border-0 hover:bg-indigo-50/60 focus:bg-indigo-50/70 focus:outline-none ${i % 2 === 1 ? "bg-indigo-50/20" : "bg-white"}`}
+                  >
                     <td className="py-2.5 pr-3 text-slate-500">{a.empId}</td>
                     <td className="py-2.5 pr-3 font-medium text-slate-700">{a.empName}</td>
                     <td className="py-2.5 pr-3 text-slate-500">{formatDDMMYYYY(a.doj)}</td>
@@ -602,6 +656,13 @@ export function GncSaleDashboard() {
           </div>
         </SectionCard>
       </div>
+      )}
+
+      {drawerEmpId && (
+        <GncAgentDrawer empId={drawerEmpId} from={from} to={to} onClose={() => setDrawerEmpId(null)} />
+      )}
+      {drawerCampaign && (
+        <GncCampaignDrawer campaign={drawerCampaign} from={from} to={to} onClose={() => setDrawerCampaign(null)} />
       )}
     </div>
   );

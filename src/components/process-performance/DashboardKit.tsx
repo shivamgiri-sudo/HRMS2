@@ -89,23 +89,37 @@ export const KPI_TONES = {
 } as const;
 export type KpiTone = keyof typeof KPI_TONES;
 
+/** Compact, horizontal KPI tile -- icon left, value+label right, one thin
+ * accent stripe instead of a full-width bar. Roughly half the height of the
+ * old stacked layout, so a row of 6-8 of these leaves far more of the page
+ * visible without scrolling. Shared by every Process Performance V2
+ * dashboard, so this one definition sets the density everywhere. */
 export function KpiCard({
-  icon: Icon, label, value, sub, tone,
-}: { icon: ComponentType<{ className?: string }>; label: string; value: string; sub?: string; tone: KpiTone }) {
+  icon: Icon, label, value, sub, tone, onClick,
+}: {
+  icon: ComponentType<{ className?: string }>; label: string; value: string; sub?: string; tone: KpiTone;
+  /** Optional -- when set, the card becomes a button (e.g. to open a "View details" drawer). Omitted by every existing caller, so this is a no-op for them. */
+  onClick?: () => void;
+}) {
   const t = KPI_TONES[tone];
+  const Tag = onClick ? "button" : "div";
   return (
-    <div className="group relative overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
-      <div className={`absolute inset-x-0 top-0 h-1 ${t.accent}`} />
+    <Tag
+      type={onClick ? "button" : undefined}
+      onClick={onClick}
+      className={`group relative flex w-full items-center gap-2.5 overflow-hidden rounded-xl border border-slate-100 bg-white py-2 pl-3 pr-2.5 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${onClick ? "cursor-pointer" : ""}`}
+    >
+      <div className={`absolute inset-y-0 left-0 w-1 ${t.accent}`} />
       <div className={`absolute inset-0 bg-gradient-to-br ${t.wash} to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100`} />
-      <div className="relative p-4">
-        <div className={`mb-3 inline-flex rounded-xl p-2.5 ${t.badge}`}>
-          <Icon className="h-4.5 w-4.5" />
-        </div>
-        <p className={`text-[22px] font-bold leading-tight tracking-tight ${t.value}`}>{value}</p>
-        <p className="mt-1 text-xs font-medium text-slate-500">{label}</p>
-        {sub && <p className="mt-0.5 text-[10px] text-slate-400">{sub}</p>}
+      <span className={`relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${t.badge}`}>
+        <Icon className="h-3.5 w-3.5" />
+      </span>
+      <div className="relative min-w-0">
+        <p className={`truncate text-[15px] font-bold leading-tight tracking-tight ${t.value}`}>{value}</p>
+        <p className="truncate text-[10px] font-medium leading-tight text-slate-500">{label}</p>
+        {sub && <p className="truncate text-[9px] leading-tight text-slate-400">{sub}</p>}
       </div>
-    </div>
+    </Tag>
   );
 }
 
@@ -113,19 +127,24 @@ export function KpiCard({
  * white box with the app's glass-card convention (soft border, translucent
  * fill, hover lift) and a consistent icon+title header row. */
 export function SectionCard({
-  icon: Icon, title, tone = "slate", children, footnote,
+  icon: Icon, title, tone = "slate", children, footnote, action,
 }: {
   icon: ComponentType<{ className?: string }>; title: string; tone?: KpiTone | "slate";
   children: ReactNode; footnote?: string;
+  /** Optional right-aligned header slot, e.g. a "View details" button. Omitted by every existing caller, so this is a no-op for them. */
+  action?: ReactNode;
 }) {
   const badge = tone === "slate" ? "bg-slate-100 text-slate-500" : KPI_TONES[tone].badge;
   return (
     <div className="rounded-2xl border border-slate-100 bg-white/95 p-4 shadow-sm backdrop-blur-sm transition-shadow duration-200 hover:shadow-md sm:p-5">
-      <div className="mb-3 flex items-center gap-2">
-        <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${badge}`}>
-          <Icon className="h-3.5 w-3.5" />
-        </span>
-        <p className="text-sm font-semibold text-slate-700">{title}</p>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${badge}`}>
+            <Icon className="h-3.5 w-3.5" />
+          </span>
+          <p className="text-sm font-semibold text-slate-700">{title}</p>
+        </div>
+        {action}
       </div>
       {children}
       {footnote && <p className="mt-3 border-t border-slate-50 pt-2 text-[11px] leading-relaxed text-slate-400">{footnote}</p>}

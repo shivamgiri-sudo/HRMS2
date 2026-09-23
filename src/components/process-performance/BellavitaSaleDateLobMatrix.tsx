@@ -122,7 +122,7 @@ export function BellavitaSaleDateLobMatrix({ from, to }: { from: string; to: str
           <table className="border-collapse text-center text-[11px]">
             <thead>
               <tr>
-                <th className="sticky left-0 z-10 border border-slate-200 bg-slate-800 px-3 py-1.5 text-white" rowSpan={3}>Date</th>
+                <th className="sticky left-0 z-10 min-w-[86px] whitespace-nowrap border border-slate-200 bg-slate-800 px-3 py-1.5 text-white" rowSpan={3}>Date</th>
                 {data.lobOrder.map((lob) => <BlockGroupHeader key={lob} label={lob} tone={LOB_TONE[lob] ?? DEFAULT_TONE} />)}
                 <BlockGroupHeader label="Overall Sale Performance" tone={OVERALL_TONE} />
                 <BlockGroupHeader label="RTO , RTD & Revenue" tone={RTO_TONE} colSpan={2} />
@@ -144,7 +144,7 @@ export function BellavitaSaleDateLobMatrix({ from, to }: { from: string; to: str
             <tbody>
               {data.rows.map((r, i) => (
                 <tr key={r.date} className={i % 2 === 1 ? "bg-slate-50/60" : "bg-white"}>
-                  <td className="sticky left-0 z-10 border border-slate-200 bg-inherit px-3 py-1.5 text-left font-medium text-slate-700">{fmtDate(r.date)}</td>
+                  <td className="sticky left-0 z-10 min-w-[86px] whitespace-nowrap border border-slate-200 bg-inherit px-3 py-1.5 text-center font-medium text-slate-700">{fmtDate(r.date)}</td>
                   {data.lobOrder.map((lob) => <BlockCells key={lob} b={r.lobs[lob] ?? { codSale: 0, codRevenue: 0, paidSale: 0, paidRevenue: 0, totalSale: 0, totalRevenue: 0, codPct: 0, paidPct: 0 }} />)}
                   <BlockCells b={r.overall} />
                   <td className={td}>{r.rtoCount.toLocaleString("en-IN")}</td>
@@ -160,7 +160,7 @@ export function BellavitaSaleDateLobMatrix({ from, to }: { from: string; to: str
             {data.rows.length > 0 && (
               <tfoot>
                 <tr className="bg-amber-50 font-bold text-slate-800">
-                  <td className="sticky left-0 z-10 border border-slate-200 bg-amber-50 px-3 py-1.5 text-left">G. Total</td>
+                  <td className="sticky left-0 z-10 min-w-[86px] whitespace-nowrap border border-slate-200 bg-amber-50 px-3 py-1.5 text-center">G. Total</td>
                   {data.lobOrder.map((lob) => <BlockCells key={lob} b={data.grandTotal.lobs[lob] ?? { codSale: 0, codRevenue: 0, paidSale: 0, paidRevenue: 0, totalSale: 0, totalRevenue: 0, codPct: 0, paidPct: 0 }} />)}
                   <BlockCells b={data.grandTotal.overall} />
                   <td className={td}>{data.grandTotal.rtoCount.toLocaleString("en-IN")}</td>

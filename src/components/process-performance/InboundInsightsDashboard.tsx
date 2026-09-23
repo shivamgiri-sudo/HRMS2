@@ -5,7 +5,7 @@ import {
 } from "recharts";
 import {
   PhoneIncoming, PhoneCall, PhoneOff, Gauge, Timer, Users, Search, Radio, Clock3, Repeat,
-  Hourglass, PauseCircle, ArrowRightLeft, Lightbulb, CalendarDays, Layers, UserX, TrendingUp,
+  Hourglass, ArrowRightLeft, Lightbulb, CalendarDays, Layers, TrendingUp,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
@@ -32,9 +32,13 @@ import {
 export type InboundInsightProject = "dubangladesh" | "exicom" | "viega" | "dalmia" | "neemans" | "gnc" | "bellavita" | "clovia";
 
 interface Metrics {
-  offered: number; answered: number; abandoned: number; answeredPct: number; abandonPct: number;
-  slPct: number; slOfAnsweredPct: number; aht: number; avgTalk: number; avgHold: number; avgAcw: number;
-  asa: number; avgAbandonWait: number; maxWait: number; transfers: number; afterHours: number;
+  offered: number; answered: number; abandoned: number; answeredPct: number;
+  /** AL % = Answered / Offered (redefined 2026-09-23 -- previously Abandoned / Offered). */
+  abandonPct: number;
+  /** SL % = answered-within-threshold / Answered (redefined 2026-09-23 -- previously / Offered). */
+  slPct: number;
+  aht: number; avgTalk: number; avgHold: number; avgAcw: number;
+  asa: number; avgAbandonWait: number; maxWait: number; transfers: number;
 }
 interface Headline extends Metrics {
   slThresholdSec: number; uniqueCallers: number; repeatCallers: number; repeatCallerPct: number; repeatCallPct: number;
@@ -48,6 +52,11 @@ interface HourRow extends Metrics { hour: number; label: string; avgPerDay: numb
 interface QuarterRow extends Metrics { slot: string; sharePct: number }
 interface WeekdayRow extends Metrics { weekday: string; days: number; avgPerDay: number }
 interface HeatCell { date: string; hour: number; offered: number; abandoned: number; answeredInSl: number }
+type HeatMetric = "offered" | "answered" | "abandoned";
+/** Every offered call is either answered or abandoned (the backend counts
+ * `!answered` as abandoned), so answered = offered - abandoned -- no separate
+ * field needed on the heatmap payload. */
+const heatValue = (c: HeatCell, m: HeatMetric): number => (m === "answered" ? c.offered - c.abandoned : c[m]);
 interface AgentRow {
   agentId: string; agentName: string; handled: number; sharePct: number; slWithinPct: number; aht: number;
   avgTalk: number; avgHold: number; avgAcw: number; asa: number; maxDuration: number; shortCalls: number;
@@ -77,7 +86,7 @@ interface Insights {
 }
 interface CallDetail {
   id: number; date: string; time: string; hour: number; campaign: string; agentId: string | null; agentName: string | null;
-  caller: string; callerKey: string | null; callsInPeriod: number; outcome: "Answered" | "Abandoned" | "After-hours";
+  caller: string; callerKey: string | null; callsInPeriod: number; outcome: "Answered" | "Abandoned";
   disposition: string; disconnBy: string; waitSec: number; talkSec: number; holdSec: number; acwSec: number;
   durationSec: number; withinSl: boolean; transferred: boolean;
 }
@@ -98,7 +107,7 @@ const PROJECT_LABEL: Record<InboundInsightProject, { name: string; gradient: str
   clovia: { name: "Clovia", gradient: "from-purple-600 via-fuchsia-600 to-purple-700" },
 };
 
-type TabKey = "overview" | "hourly" | "datewise" | "agents" | "lobs" | "wait" | "callers";
+type TabKey = "overview" | "hourly" | "datewise" | "agents" | "lobs" | "wait";
 
 const fmtSec = (s: number) => {
   if (!s) return "0s";
@@ -112,12 +121,17 @@ const fmtDate = (iso: string) => {
   return y && m && d ? `${d}/${m}/${y}` : iso;
 };
 const slTone = (v: number) => (v >= 90 ? "text-emerald-600" : v >= 75 ? "text-amber-600" : "text-red-600");
-const abTone = (v: number) => (v <= 5 ? "text-emerald-600" : v <= 10 ? "text-amber-600" : "text-red-600");
+// abandonPct is AL% (Answered/Offered) now -- high is good, so the thresholds
+// are the old 5%/10% abandon-rate bands mirrored around 100.
+const abTone = (v: number) => (v >= 95 ? "text-emerald-600" : v >= 90 ? "text-amber-600" : "text-red-600");
 
-function last30DaysRange() {
+/** 1st of the current month .. today, local time -- every Inbound dashboard
+ * defaults to and resets to this (never a rolling window), so "Inbound" always
+ * opens on the current month's data, same convention the rest of Process
+ * Performance V2 uses. */
+function currentMonthRange() {
   const now = new Date();
-  const from = new Date(now);
-  from.setDate(from.getDate() - 29);
+  const from = new Date(now.getFullYear(), now.getMonth(), 1);
   return { from: localDateStr(from), to: localDateStr(now) };
 }
 
@@ -126,6 +140,27 @@ const LOB_COLORS = [
   "#84cc16", "#64748b", "#f97316", "#06b6d4", "#8b5cf6", "#ef4444", "#22c55e", "#eab308",
 ];
 const TOOLTIP_STYLE = { fontSize: 12, borderRadius: 10, border: "1px solid #e2e8f0" } as const;
+
+/** Custom tooltip for the per-agent bar charts -- reads the agent's full
+ * AgentRow off the hovered bar's payload so it can show every real stat in
+ * one hover, not just the one dataKey that chart's Bar happens to plot.
+ * "Offered"/"AL %" are deliberately NOT shown here: abandoned calls carry
+ * AgentId='VDCL' (never reached an agent), so inbound-insights.service.ts
+ * groups only answered rows by agent -- there is no real per-agent offered/
+ * abandoned count anywhere in this data, only queue-level ones. */
+function AgentBarTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload: AgentRow }> }) {
+  if (!active || !payload?.length) return null;
+  const a = payload[0].payload;
+  return (
+    <div style={TOOLTIP_STYLE} className="bg-white px-3 py-2 shadow-lg">
+      <p className="mb-1 font-semibold text-slate-700">{a.agentName}</p>
+      <p className="text-emerald-600">Answered (Handled) : {a.handled}</p>
+      <p className="text-slate-500">Share of total : {a.sharePct}%</p>
+      <p className="text-indigo-500">SL % : {a.slWithinPct}%</p>
+      <p className="text-violet-500">AHT : {fmtSec(a.aht)}</p>
+    </div>
+  );
+}
 const th = "py-2.5 pr-3 text-right font-semibold";
 const td = "py-2.5 pr-3 text-right text-slate-600";
 
@@ -168,7 +203,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
   onRangeChange?: (from: string, to: string) => void;
 }) {
   const meta = PROJECT_LABEL[projectKey];
-  const initial = useMemo(() => initialRange ?? last30DaysRange(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const initial = useMemo(() => initialRange ?? currentMonthRange(), []); // eslint-disable-line react-hooks/exhaustive-deps
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
   useEffect(() => { onRangeChange?.(from, to); }, [from, to]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -184,7 +219,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
   const [unavailable, setUnavailable] = useState(false);
   const [error, setError] = useState("");
   const [agentSearch, setAgentSearch] = useState("");
-  const [heatMetric, setHeatMetric] = useState<"offered" | "abandoned">("offered");
+  const [heatMetric, setHeatMetric] = useState<HeatMetric>("offered");
   const [agentGrid, setAgentGrid] = useState<"date" | "hour">("date");
   const [drill, setDrill] = useState<DrillSpec | null>(null);
   const [insightsOpen, setInsightsOpen] = useState(false);
@@ -232,7 +267,6 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
       { key: "agents", label: "Agent-wise" },
       { key: "lobs", label: "LOB-wise" },
       { key: "wait", label: "Wait & Abandon" },
-      { key: "callers", label: "Callers" },
     ];
     return showLobs ? all : all.filter((t) => t.key !== "lobs");
   }, [showLobs]);
@@ -254,7 +288,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
     let max = 0;
     for (const c of data?.heatmap ?? []) {
       cells.set(`${c.date}|${c.hour}`, c);
-      max = Math.max(max, c[heatMetric]);
+      max = Math.max(max, heatValue(c, heatMetric));
     }
     const dates = (data?.daily ?? []).map((d) => d.date);
     const hours = (data?.hourly ?? []).map((h) => h.hour);
@@ -295,9 +329,8 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
           { label: "Answered", value: fmtNum(h.answered) },
           { label: "Abandoned", value: fmtNum(h.abandoned) },
           { label: "Answer %", value: `${h.answeredPct}%` },
-          { label: "Abandon % (AL)", value: `${h.abandonPct}%` },
-          { label: `Service Level (${h.slThresholdSec}s, of offered)`, value: `${h.slPct}%` },
-          { label: `Service Level (${h.slThresholdSec}s, of answered)`, value: `${h.slOfAnsweredPct}%` },
+          { label: "AL %", value: `${h.abandonPct}%` },
+          { label: `Service Level (${h.slThresholdSec}s, of answered)`, value: `${h.slPct}%` },
           { label: "AHT", value: fmtSec(h.aht) },
           { label: "Avg Talk", value: fmtSec(h.avgTalk) },
           { label: "Avg Hold", value: fmtSec(h.avgHold) },
@@ -308,7 +341,6 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
           { label: "Unique Callers", value: fmtNum(h.uniqueCallers) },
           { label: "Repeat Callers", value: `${fmtNum(h.repeatCallers)} (${h.repeatCallerPct}%)` },
           { label: "Callers Never Answered", value: fmtNum(h.unservedCallers) },
-          ...(h.afterHours > 0 ? [{ label: "After-hours calls (counted as answered)", value: fmtNum(h.afterHours) }] : []),
           ...(h.fcrPct != null ? [{ label: "FCR %", value: `${h.fcrPct}%` }] : []),
           { label: "Active Agents", value: String(h.agentsActive) },
           { label: "Calls Handled / Agent", value: String(h.callsPerAgent) },
@@ -393,14 +425,6 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
           { title: "Abandon reason (disposition / disconnected by)", columns: ["Reason", "Calls"], rows: data.abandonReasons.map((d) => [d.label, d.count]) },
         ],
       },
-      {
-        title: "Callers",
-        tables: [
-          { title: "Repeat frequency", columns: ["Calls in period", "Callers"], rows: data.repeatDist.map((d) => [d.label, d.callers]) },
-          { title: "Top repeat callers (numbers masked)", columns: ["Caller", "Calls", "Answered", "Abandoned", "Last call"], rows: data.topRepeatCallers.map((c) => [c.masked, c.calls, c.answered, c.abandoned, fmtDate(c.lastDate)]) },
-          { title: "Callers who never reached an agent (numbers masked)", columns: ["Caller", "Calls", "Last call"], rows: data.unservedCallers.map((c) => [c.masked, c.calls, fmtDate(c.lastDate)]) },
-        ],
-      },
     );
     return slides;
   }, [data, showLobs, periods]);
@@ -410,7 +434,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
 
   const h = data?.headline;
   const activeSlide = tab === "overview" ? "Overview" : tab === "hourly" ? "Hour-wise" : tab === "datewise" ? "Date-wise"
-    : tab === "agents" ? "Agent-wise" : tab === "lobs" ? "LOB-wise" : tab === "wait" ? "Wait & Abandon" : "Callers";
+    : tab === "agents" ? "Agent-wise" : tab === "lobs" ? "LOB-wise" : "Wait & Abandon";
 
   return (
     <div className="space-y-5">
@@ -461,8 +485,8 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
         </div>
         <DateRangeToolbar
           from={from} to={to} onFrom={setFrom} onTo={setTo}
-          onReset={() => { const r = last30DaysRange(); setFrom(r.from); setTo(r.to); }}
-          resetLabel="Last 30 Days" accentFocus="focus:border-blue-400"
+          onReset={() => { const r = currentMonthRange(); setFrom(r.from); setTo(r.to); }}
+          resetLabel="This Month" accentFocus="focus:border-blue-400"
         />
       </div>
 
@@ -492,19 +516,11 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
                 <KpiCard icon={PhoneCall} label="Offered Calls" value={fmtNum(h.offered)} sub={`${h.avgCallsPerDay}/day over ${h.daysWithCalls} days`} tone="blue" />
                 <KpiCard icon={PhoneIncoming} label="Answered" value={fmtNum(h.answered)} sub={`${h.answeredPct}% of offered`} tone="emerald" />
-                <KpiCard icon={PhoneOff} label="Abandoned (AL %)" value={`${h.abandonPct}%`} sub={`${fmtNum(h.abandoned)} calls`} tone="rose" />
-                <KpiCard icon={Radio} label={`SL % (${h.slThresholdSec}s)`} value={`${h.slPct}%`} sub={`${h.slOfAnsweredPct}% of answered`} tone="indigo" />
+                <KpiCard icon={Gauge} label="AL %" value={`${h.abandonPct}%`} sub="Answered / Offered" tone="emerald" />
+                <KpiCard icon={Radio} label={`SL % (${h.slThresholdSec}s)`} value={`${h.slPct}%`} sub="of answered calls" tone="indigo" />
                 <KpiCard icon={Timer} label="AHT" value={fmtSec(h.aht)} sub={`Talk ${fmtSec(h.avgTalk)}`} tone="violet" />
-                <KpiCard icon={Hourglass} label="Avg Speed of Answer" value={fmtSec(h.asa)} sub={`Longest wait ${fmtSec(h.maxWait)}`} tone="amber" />
-                <KpiCard icon={Clock3} label="Avg Abandon Wait" value={fmtSec(h.avgAbandonWait)} sub={`${h.shortAbandonPct}% drop ≤${h.slThresholdSec}s`} tone="red" />
-                <KpiCard icon={PauseCircle} label="Avg Hold" value={fmtSec(h.avgHold)} sub={`${h.holdCallPct}% calls put on hold`} tone="cyan" />
-                <KpiCard icon={Timer} label="Avg After-call Work" value={fmtSec(h.avgAcw)} tone="teal" />
                 <KpiCard icon={Users} label="Active Agents" value={String(h.agentsActive)} sub={`${h.callsPerAgent} calls / agent`} tone="sky" />
                 <KpiCard icon={Repeat} label="Repeat Callers" value={`${h.repeatCallerPct}%`} sub={`${fmtNum(h.repeatCallers)} of ${fmtNum(h.uniqueCallers)} callers`} tone="violet" />
-                <KpiCard icon={UserX} label="Never Answered" value={fmtNum(h.unservedCallers)} sub="callers, whole range" tone="rose" />
-                {h.afterHours > 0 && (
-                  <KpiCard icon={Clock3} label="After-hours calls" value={fmtNum(h.afterHours)} sub="counted as answered by the client report" tone="amber" />
-                )}
                 {h.fcrPct != null && <KpiCard icon={Gauge} label="FCR %" value={`${h.fcrPct}%`} sub="first-contact resolution" tone="teal" />}
               </div>
 
@@ -519,32 +535,55 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                         <YAxis yAxisId="r" orientation="right" domain={[0, 100]} unit="%" tick={{ fontSize: 10 }} />
                         <Tooltip labelFormatter={(v: unknown) => fmtDate(String(v))} contentStyle={TOOLTIP_STYLE} />
                         <Legend wrapperStyle={{ fontSize: 11 }} />
-                        <Bar yAxisId="l" dataKey="answered" name="Answered" stackId="c" fill="#10b981" radius={[0, 0, 0, 0]} />
-                        <Bar yAxisId="l" dataKey="abandoned" name="Abandoned" stackId="c" fill="#f43f5e" radius={[3, 3, 0, 0]} />
+                        <Bar yAxisId="l" dataKey="answered" name="Answered" fill="#10b981" radius={[3, 3, 0, 0]} />
                         <Line yAxisId="r" type="monotone" dataKey="slPct" name="SL %" stroke="#6366f1" strokeWidth={2} dot={false} />
+                        <Line yAxisId="r" type="monotone" dataKey="abandonPct" name="AL %" stroke="#f59e0b" strokeWidth={2} dot={false} />
                       </ComposedChart>
                     </ResponsiveContainer>
                   </SectionCard>
                 </div>
-                <SectionCard icon={Gauge} title="Answered vs abandoned" tone="indigo">
-                  <ResponsiveContainer width="100%" height={250}>
-                    <PieChart>
-                      <Pie
-                        data={[{ name: "Answered", value: h.answered }, { name: "Abandoned", value: h.abandoned }]}
-                        dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={48} outerRadius={84} paddingAngle={2}
-                        label={(p: { name?: string; percent?: number }) => `${p.name ?? ""} ${Math.round((p.percent ?? 0) * 100)}%`}
-                      >
-                        <Cell fill="#10b981" stroke="white" strokeWidth={2} />
-                        <Cell fill="#f43f5e" stroke="white" strokeWidth={2} />
-                      </Pie>
-                      <Tooltip contentStyle={TOOLTIP_STYLE} />
-                    </PieChart>
-                  </ResponsiveContainer>
+                <SectionCard icon={Gauge} title="Offered vs answered" tone="indigo">
+                  <div className="relative" style={{ height: 190 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={[{ name: "Answered", value: h.answered }, { name: "Not answered", value: h.offered - h.answered }]}
+                          dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="62%" outerRadius="90%" paddingAngle={2}
+                          stroke="none" label={false}
+                        >
+                          <Cell fill="#10b981" />
+                          <Cell fill="#94a3b8" />
+                        </Pie>
+                        <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => fmtNum(Number(v))} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                      <span className="text-lg font-bold leading-tight text-slate-800">{fmtNum(h.offered)}</span>
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Offered</span>
+                    </div>
+                  </div>
+                  <ul className="mt-3 space-y-1.5 text-[11px]">
+                    {[
+                      { name: "Offered", value: h.offered, color: "#6366f1" },
+                      { name: "Answered", value: h.answered, color: "#10b981" },
+                      { name: "Not answered", value: h.offered - h.answered, color: "#94a3b8" },
+                    ].map((r) => (
+                      <li key={r.name} className="flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-2">
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: r.color }} />
+                          <span className="font-medium text-slate-600">{r.name}</span>
+                        </span>
+                        <span className="text-slate-500">
+                          {fmtNum(r.value)} <span className="font-semibold text-slate-700">· {h.offered > 0 ? Math.round((r.value / h.offered) * 1000) / 10 : 0}%</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
                 </SectionCard>
               </div>
 
               <div className="grid gap-4 lg:grid-cols-2">
-                <SectionCard icon={Clock3} title="Hourly volume & abandon %" tone="teal">
+                <SectionCard icon={Clock3} title="Hourly volume & AL %" tone="teal">
                   <ResponsiveContainer width="100%" height={240}>
                     <ComposedChart data={data.hourly} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -558,7 +597,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                     </ComposedChart>
                   </ResponsiveContainer>
                 </SectionCard>
-                <SectionCard icon={CalendarDays} title="Weekday pattern" tone="violet" footnote="Average calls per day of that weekday within the selected range.">
+                <SectionCard icon={CalendarDays} title="Weekday pattern" tone="violet" footnote="Weekday rows show average calls per day of that weekday within the selected range. Date-wise rows below show each day in the range; click any row to open its calls.">
                   <TableShell minWidth={420}>
                     <thead><tr className={THEAD}><Head first>Day</Head><Head>Days</Head><Head>Avg / day</Head><Head>AL %</Head><Head>SL %</Head><Head>AHT</Head></tr></thead>
                     <tbody>
@@ -574,6 +613,30 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                       ))}
                     </tbody>
                   </TableShell>
+
+                  <p className="mb-2 mt-5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Date-wise performance</p>
+                  <div className="max-h-80 overflow-y-auto rounded-xl">
+                    <TableShell minWidth={520}>
+                      <thead><tr className={THEAD}><Head first>Date</Head><Head>Offered</Head><Head>Answered</Head><Head>AL %</Head><Head>SL %</Head><Head>AHT</Head></tr></thead>
+                      <tbody>
+                        {data.daily.map((r, i) => (
+                          <tr key={r.date} className={rowCls(i)} onClick={() => openDrill(`${fmtDate(r.date)} (${r.weekday})`, { date: r.date })}>
+                            <td className="whitespace-nowrap py-2.5 pl-3 pr-3 font-medium text-slate-700">
+                              {formatShortDate(r.date)} <span className="text-[11px] font-normal text-slate-400">{r.weekday}</span>
+                            </td>
+                            <td className={`${td} font-semibold`}>{fmtNum(r.offered)}</td>
+                            <td className={`${td} text-emerald-700`}>{fmtNum(r.answered)}</td>
+                            <td className={`${td} font-semibold ${abTone(r.abandonPct)}`}>{r.abandonPct}%</td>
+                            <td className={`${td} font-semibold ${slTone(r.slPct)}`}>{r.slPct}%</td>
+                            <td className={td}>{fmtSec(r.aht)}</td>
+                          </tr>
+                        ))}
+                        {data.daily.length === 0 && (
+                          <tr><td colSpan={6} className="py-6 text-center text-slate-400">No calls in this range.</td></tr>
+                        )}
+                      </tbody>
+                    </TableShell>
+                  </div>
                 </SectionCard>
               </div>
             </div>
@@ -652,10 +715,11 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
               <SectionCard icon={TrendingUp} title="Date × hour heatmap" tone="rose" footnote="Darker = more calls. Click any cell to open the calls behind it.">
                 <div className="mb-3 flex items-center gap-2">
                   <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Show</span>
-                  <Select value={heatMetric} onValueChange={(v) => setHeatMetric(v as "offered" | "abandoned")}>
+                  <Select value={heatMetric} onValueChange={(v) => setHeatMetric(v as HeatMetric)}>
                     <SelectTrigger className="h-8 w-[170px] bg-white text-xs" aria-label="Heatmap metric"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="offered">Offered calls</SelectItem>
+                      <SelectItem value="answered">Answered calls</SelectItem>
                       <SelectItem value="abandoned">Abandoned calls</SelectItem>
                     </SelectContent>
                   </Select>
@@ -677,14 +741,14 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                             <td className="sticky left-0 z-10 whitespace-nowrap bg-white px-3 py-1.5 text-left font-medium text-slate-600">{formatShortDate(d)}</td>
                             {heat.hours.map((hr) => {
                               const c = heat.cells.get(`${d}|${hr}`);
-                              const v = c ? c[heatMetric] : 0;
+                              const v = c ? heatValue(c, heatMetric) : 0;
                               rowTotal += v;
                               return (
                                 <td
                                   key={hr}
-                                  onClick={v ? () => openDrill(`${fmtDate(d)} · ${String(hr).padStart(2, "0")}:00`, { date: d, hour: hr, ...(heatMetric === "abandoned" ? { outcome: "abandoned" } : {}) }) : undefined}
+                                  onClick={v ? () => openDrill(`${fmtDate(d)} · ${String(hr).padStart(2, "0")}:00`, { date: d, hour: hr, ...(heatMetric !== "offered" ? { outcome: heatMetric } : {}) }) : undefined}
                                   className={`h-8 min-w-[34px] px-1 font-medium ${v ? "cursor-pointer text-slate-800 hover:ring-2 hover:ring-inset hover:ring-blue-400" : "text-slate-300"}`}
-                                  style={{ background: heatBg(v, heat.max, heatMetric === "offered" ? "14, 165, 233" : "244, 63, 94") }}
+                                  style={{ background: heatBg(v, heat.max, heatMetric === "offered" ? "14, 165, 233" : heatMetric === "answered" ? "16, 185, 129" : "244, 63, 94") }}
                                 >
                                   {v || "·"}
                                 </td>
@@ -774,7 +838,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
                       <XAxis type="number" tick={{ fontSize: 10 }} />
                       <YAxis type="category" dataKey="agentName" width={110} tick={{ fontSize: 10 }} />
-                      <Tooltip contentStyle={TOOLTIP_STYLE} />
+                      <Tooltip content={<AgentBarTooltip />} />
                       <Bar dataKey="handled" name="Handled" fill="#6366f1" radius={[0, 4, 4, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -1048,47 +1112,8 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
             </div>
           )}
 
-          {/* ───────────────────────────── Callers ───────────────────────────── */}
-          {tab === "callers" && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <KpiCard icon={Users} label="Unique callers" value={fmtNum(h.uniqueCallers)} tone="sky" />
-                <KpiCard icon={Repeat} label="Repeat callers" value={fmtNum(h.repeatCallers)} sub={`${h.repeatCallerPct}% of callers`} tone="violet" />
-                <KpiCard icon={PhoneCall} label="Calls from repeat callers" value={`${h.repeatCallPct}%`} sub="of all calls" tone="amber" />
-                <KpiCard icon={UserX} label="Never reached an agent" value={fmtNum(h.unservedCallers)} sub="need a callback" tone="rose" />
-              </div>
-
-              {h.sharedNumber && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium leading-relaxed text-amber-800">
-                  {h.sharedNumber.sharePct}% of calls ({fmtNum(h.sharedNumber.calls)}) come from a single number ({h.sharedNumber.masked}). That is a shared line, not a
-                  customer, so it is left out of the caller, repeat and never-answered figures on this tab.
-                </div>
-              )}
-              <SectionCard icon={Repeat} title="How often callers call" tone="violet" footnote="Callers grouped by number of calls in the selected range. Numbers are masked; rows open that caller's calls.">
-                <ResponsiveContainer width="100%" height={200}>
-                  <BarChart data={data.repeatDist} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                    <YAxis tick={{ fontSize: 10 }} />
-                    <Tooltip contentStyle={TOOLTIP_STYLE} />
-                    <Bar dataKey="callers" name="Callers" fill="#8b5cf6" radius={[3, 3, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </SectionCard>
-
-              <div className="grid gap-4 lg:grid-cols-2">
-                <SectionCard icon={Repeat} title="Top repeat callers" tone="amber">
-                  <CallerTable rows={data.topRepeatCallers} showLobs={showLobs} onOpen={(c) => openDrill(`Caller ${c.masked}`, { callerKey: c.key })} />
-                </SectionCard>
-                <SectionCard icon={UserX} title="Callers who never reached an agent" tone="rose" footnote="Every call from these numbers was abandoned in the selected range — priority callback list.">
-                  <CallerTable rows={data.unservedCallers} showLobs={showLobs} onOpen={(c) => openDrill(`Caller ${c.masked}`, { callerKey: c.key })} />
-                </SectionCard>
-              </div>
-            </div>
-          )}
-
           <p className="text-[11px] leading-relaxed text-slate-400">
-            Offered = every call routed to the queue · Answered = handled by an agent{h.afterHours > 0 ? " (plus after-hours calls, as the client report counts them)" : ""} · Abandoned = never reached an agent · SL % = answered within {h.slThresholdSec}s as % of offered ·
+            Offered = every call routed to the queue · Answered = handled by an agent · Abandoned = never reached an agent · AL % = Answered / Offered · SL % = answered within {h.slThresholdSec}s as % of ANSWERED calls ·
             AHT = average duration of answered calls · ASA = average queue wait of answered calls. Occupancy and staffing-plan views are not shown because the dialer data has no login-time or roster source.
           </p>
         </>
@@ -1123,29 +1148,6 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
 
       <CallDrawer projectKey={projectKey} from={from} to={to} campaign={campaign} spec={drill} onClose={() => setDrill(null)} />
     </div>
-  );
-}
-
-function CallerTable({ rows, showLobs, onOpen }: { rows: CallerRow[]; showLobs: boolean; onOpen: (c: CallerRow) => void }) {
-  if (rows.length === 0) return <div className="py-6 text-center text-xs text-slate-400">None</div>;
-  return (
-    <TableShell minWidth={showLobs ? 520 : 400}>
-      <thead><tr className={THEAD}><Head first>Caller</Head><Head>Calls</Head><Head>Answered</Head><Head>Abandoned</Head><Head>Last call</Head></tr></thead>
-      <tbody>
-        {rows.map((c, i) => (
-          <tr key={c.key} className={rowCls(i)} onClick={() => onOpen(c)}>
-            <td className="py-2.5 pl-3 pr-3 font-mono text-[11px] font-medium text-slate-700">
-              {c.masked}
-              {showLobs && c.campaigns.length > 0 && <div className="font-sans text-[10px] font-normal text-slate-400">{c.campaigns.join(", ")}</div>}
-            </td>
-            <td className={`${td} font-bold`}>{c.calls}</td>
-            <td className={`${td} text-emerald-700`}>{c.answered}</td>
-            <td className={`${td} text-rose-600`}>{c.abandoned}</td>
-            <td className={td}>{fmtDate(c.lastDate)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </TableShell>
   );
 }
 
@@ -1220,7 +1222,7 @@ function CallDrawer({
                           {r.transferred && <div className="text-[10px] text-amber-600">transferred</div>}
                         </td>
                         <td className="px-2 py-2">
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${r.outcome === "Answered" ? "bg-emerald-100 text-emerald-700" : r.outcome === "After-hours" ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>{r.outcome}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${r.outcome === "Answered" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{r.outcome}</span>
                           <div className="mt-0.5 text-[10px] text-slate-400">{r.disposition} · {r.disconnBy}{r.withinSl ? " · in SL" : ""}</div>
                           <div className="text-[10px] text-slate-400">{r.campaign}</div>
                         </td>
