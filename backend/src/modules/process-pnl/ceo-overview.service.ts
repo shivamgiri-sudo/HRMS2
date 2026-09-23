@@ -391,6 +391,17 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
   await idcContaminationCheck(period);
   // Cost-centre scope filters on the EFFECTIVE cost centre (post-override), so selecting 576 also
   // picks up 577's staff whose pay is now mapped to it — same rule as readPayroll()'s GROUP BY.
+  //
+  // WHICH BRANCH a person's pay counts against (2026-09-23, canonical rule — keep in step with
+  // pnl-reconciliation.service.ts readPayroll/readUnallocatedPayroll): the branch of their
+  // EFFECTIVE cost centre (post-override) — where they actually worked and were billed — falling
+  // back to the employee's home branch (e.branch_id) only when they have no cost centre at all.
+  // This used to group by e.branch_id alone, so a person posted to another branch's cost centre
+  // counted against a different branch here than on Live P&L. Deliberate remaining difference:
+  // this tab keeps payroll on a non-MAS cost centre (owner rule, "does NOT filter payroll by
+  // company" test) while Live P&L's rows are MAS cost centres only.
+  // Still on e.branch_id (tracked, not yet aligned): the Statement's branch view
+  // (bpo-pnl.service.ts getPayrollPeople -> getActualPeopleCost.byBranch).
   const ov = await overrideJoinSql("e.id", "e.cost_centre_id");
   const where: string[] = ["r.run_month = ?"];
   const params: unknown[] = [period];
@@ -403,7 +414,7 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
     params.push(...s.costCentreIds);
   }
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.branch_id AS branch_id,
+    `SELECT CASE WHEN pcc.id IS NULL THEN e.branch_id ELSE pcc.branch_id END AS branch_id,
             COUNT(*) AS staff,
             SUM(COALESCE(l.gross_salary, 0)
               + COALESCE(l.pf_employer, 0)
@@ -413,8 +424,9 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
        JOIN salary_prep_run r ON r.id = l.run_id
        JOIN employees e ON e.id = l.employee_id
        ${ov.join}
+       LEFT JOIN cost_centre_master pcc ON pcc.id = ${ov.effectiveCostCentreExpr}
       WHERE ${where.join(" AND ")}
-      GROUP BY e.branch_id`,
+      GROUP BY CASE WHEN pcc.id IS NULL THEN e.branch_id ELSE pcc.branch_id END`,
     params,
   );
   for (const r of rows) {
@@ -440,11 +452,13 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
     runningParams.push(...s.costCentreIds);
   }
   const [runningRows] = await db.execute<RowDataPacket[]>(
-    `SELECT s.branch_id AS branch_id, COUNT(*) AS staff, SUM(s.earned_salary_till_date) AS cost
+    `SELECT CASE WHEN pcc.id IS NULL THEN s.branch_id ELSE pcc.branch_id END AS branch_id,
+            COUNT(*) AS staff, SUM(s.earned_salary_till_date) AS cost
        FROM pnl_running_salary_snapshot s
        ${ovSnapshot.join}
+       LEFT JOIN cost_centre_master pcc ON pcc.id = ${ovSnapshot.effectiveCostCentreExpr}
       WHERE ${runningWhere.join(" AND ")}
-      GROUP BY s.branch_id`,
+      GROUP BY CASE WHEN pcc.id IS NULL THEN s.branch_id ELSE pcc.branch_id END`,
     runningParams,
   );
   for (const r of runningRows) {

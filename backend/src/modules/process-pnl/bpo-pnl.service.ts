@@ -683,6 +683,16 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
   const processExpr = employeeColumns.has("process_id")
     ? (hasCostCentreId ? "COALESCE(e.process_id, ccm.process_id)" : "e.process_id")
     : "NULL";
+  // KNOWN INCONSISTENCY (tracked 2026-09-23, not yet aligned): this is the employee's HOME branch.
+  // The canonical rule for "which branch does a person's pay count against" — used by Live P&L
+  // (pnl-reconciliation readPayroll/readUnallocatedPayroll), CEO Overview (peopleByBranch) and the
+  // trend (pnl-trend.service.ts) — is the branch of the EFFECTIVE cost centre (post-override, via
+  // overrideJoinSql), else e.branch_id when the person has no cost centre. It is NOT switched here
+  // because this one branch_id also drives classification-rule matching (rule.branch_id), the BMC
+  // branch pools the allocator spreads over a branch's processes, and the Statement branch view's
+  // people cost (getActualPeopleCost.byBranch) whose coverage is counted by e.branch_id in
+  // pnl-running-salary.service.ts. Changing it moves money between branches in the canonical engine
+  // and needs its own verified change against live payroll.
   const branchExpr = employeeColumns.has("branch_id") ? "e.branch_id" : "NULL";
   const designationIdExpr = employeeColumns.has("designation_id") ? "e.designation_id" : "NULL";
   const departmentIdExpr = employeeColumns.has("department_id") ? "e.department_id" : "NULL";

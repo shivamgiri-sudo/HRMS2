@@ -521,9 +521,19 @@ describe("legal entity — this page is one company's P&L, not a consolidation",
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     await getCeoOverview("2026-06");
     const payroll = execute.mock.calls.map((c) => String(c[0]))
-      .find((q) => q.includes("salary_prep_line") && q.includes("GROUP BY e.branch_id"));
+      .find((q) => q.includes("salary_prep_line") && q.includes("GROUP BY CASE WHEN pcc.id IS NULL THEN e.branch_id ELSE pcc.branch_id END"));
     expect(payroll).toBeDefined();
     expect(payroll, "payroll must not be confined by cost-centre company").not.toMatch(/mascallnet/i);
+  });
+
+  it("counts pay against the effective cost centre's branch, home branch only when unmapped (same rule as Live P&L)", async () => {
+    mockDb({ branches: [{ id: "b", branch_name: "NOIDA", active_status: 1 }] });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    await getCeoOverview("2026-06");
+    const payroll = execute.mock.calls.map((c) => String(c[0]))
+      .find((q) => q.includes("FROM salary_prep_line l") && q.includes("GROUP BY CASE"));
+    expect(payroll).toMatch(/LEFT JOIN cost_centre_master pcc ON pcc\.id = /);
+    expect(payroll).toContain("CASE WHEN pcc.id IS NULL THEN e.branch_id ELSE pcc.branch_id END AS branch_id");
   });
 
   it("matches the company however the source spells it", async () => {

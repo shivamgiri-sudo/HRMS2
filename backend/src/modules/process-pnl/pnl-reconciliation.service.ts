@@ -445,6 +445,13 @@ async function readBudgets(period: string) {
   return { byCostCentre, byBranch };
 }
 
+/**
+ * CANONICAL branch-attribution rule for payroll (2026-09-23): pay is grouped by the EFFECTIVE cost
+ * centre (post-override) and so lands on that cost centre's branch; only staff with no cost centre
+ * at all fall back to their home branch (readUnallocatedPayroll, e.branch_id). CEO Overview
+ * (ceo-overview.service.ts peopleByBranch) and the trend (pnl-trend.service.ts) use the same rule.
+ * Not yet aligned: bpo-pnl.service.ts getPayrollPeople (Statement branch view) — see its comment.
+ */
 async function readPayroll(period: string): Promise<Map<string, { cost: number; staff: number }>> {
   const out = new Map<string, { cost: number; staff: number }>();
   if (!(await tableExists("salary_prep_line"))) return out;
