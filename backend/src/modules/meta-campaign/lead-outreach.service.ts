@@ -91,12 +91,12 @@ function buildWhatsAppBody(ctx: LeadContext, slot?: InterviewSlot): string {
   body += `Congratulations! Your profile has been shortlisted for the *${role}* position at *Mas Callnet India Pvt. Ltd.*\n\n`;
 
   if (ctx.bmiUrl) {
-    body += `👉 *Complete Assessment & Confirm Interview:*\n${ctx.bmiUrl}\n\n`;
+    body += `To proceed, please complete your assessment and confirm your interview slot:\n👉 ${ctx.bmiUrl}\n\n`;
   }
 
   if (slot) {
-    body += `📅 Interview Date: ${slot.dateLabel}\n`;
-    body += `🕒 Interview Time: ${slot.timeLabel}\n`;
+    body += `📅 Date: ${slot.dateLabel}\n`;
+    body += `🕒 Time: ${slot.timeLabel}\n`;
   }
 
   if (ctx.branchCity || ctx.branch) {
