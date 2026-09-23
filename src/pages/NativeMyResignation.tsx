@@ -52,9 +52,14 @@ type ApiListResponse<T> = { success: boolean; data: T[] };
 const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
   submitted: { label: "Submitted", cls: "bg-blue-50 text-blue-700 border-blue-200" },
   accepted: { label: "Accepted", cls: "bg-amber-50 text-amber-700 border-amber-200" },
+  notice_active: { label: "Notice Active", cls: "bg-cyan-50 text-cyan-700 border-cyan-200" },
+  notice_serving: { label: "Serving Notice", cls: "bg-cyan-50 text-cyan-700 border-cyan-200" },
+  returned: { label: "Returned — Action Needed", cls: "bg-orange-50 text-orange-700 border-orange-200" },
   withdrawn: { label: "Withdrawn", cls: "bg-slate-100 text-slate-600 border-slate-200" },
+  revoked: { label: "Revoked", cls: "bg-rose-50 text-rose-700 border-rose-200" },
   clearance_pending: { label: "Clearance Pending", cls: "bg-orange-50 text-orange-700 border-orange-200" },
   fnf_pending: { label: "F&F Pending", cls: "bg-red-50 text-red-700 border-red-200" },
+  exited: { label: "Exited", cls: "bg-green-100 text-green-800 border-green-200" },
   closed: { label: "Closed", cls: "bg-green-50 text-green-700 border-green-200" },
 };
 

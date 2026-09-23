@@ -87,6 +87,8 @@ const STATUS_COLORS: Record<string, string> = {
   admin_review: "bg-orange-50 text-orange-700",
   accepted: "bg-emerald-50 text-emerald-700",
   notice_serving: "bg-cyan-50 text-cyan-700",
+  notice_active: "bg-cyan-100 text-cyan-800",
+  returned: "bg-orange-50 text-orange-700",
   exited: "bg-green-100 text-green-800",
   exit_confirmed: "bg-green-100 text-green-800",
   revoked: "bg-rose-50 text-rose-700",
@@ -293,6 +295,11 @@ export default function NativeExitManagement() {
     data: Record<string, unknown> | null; loading: boolean;
   }>({ open: false, exitId: "", data: null, loading: false });
 
+  // — Return resignation modal —
+  const [returnModal, setReturnModal] = useState<{
+    open: boolean; exitId: string; reason: string;
+  }>({ open: false, exitId: "", reason: "" });
+
   const load = async () => {
     setLoading(true);
     setMessage("");
@@ -437,13 +444,56 @@ export default function NativeExitManagement() {
     });
   };
 
+  const approveExit = async (id: string, lwdOverride?: string, overrideReason?: string) => {
+    setUpdating(id);
+    try {
+      await hrmsApi.patch(`/api/exit/${id}/approve`, {
+        ...(lwdOverride ? { lwd_override: lwdOverride } : {}),
+        ...(overrideReason ? { lwd_override_reason: overrideReason } : {}),
+      });
+      setMessage("Resignation approved — notice period is now active.");
+      await load();
+    } catch (err: unknown) { setMessage((err as Error)?.message || "Approval failed."); }
+    finally { setUpdating(null); }
+  };
+
+  const revokeExit = async (id: string) => {
+    setUpdating(id);
+    try {
+      await hrmsApi.patch(`/api/exit/${id}/revoke`, {});
+      setMessage("Exit request revoked.");
+      await load();
+    } catch (err: unknown) { setMessage((err as Error)?.message || "Revoke failed."); }
+    finally { setUpdating(null); }
+  };
+
   const confirmReview = async () => {
-    await updateStatus(reviewModal.exitId, reviewModal.targetStatus, {
-      remarks: reviewModal.remarks || `Status changed to ${reviewModal.targetStatus}`,
-      confirmedLwd: reviewModal.confirmedLwd || undefined,
-      noticeDays: reviewModal.noticeDays || undefined,
-    });
+    if (reviewModal.targetStatus === "approve") {
+      await approveExit(
+        reviewModal.exitId,
+        reviewModal.confirmedLwd || undefined,
+        reviewModal.remarks || undefined,
+      );
+    } else {
+      await updateStatus(reviewModal.exitId, reviewModal.targetStatus, {
+        remarks: reviewModal.remarks || `Status changed to ${reviewModal.targetStatus}`,
+        confirmedLwd: reviewModal.confirmedLwd || undefined,
+        noticeDays: reviewModal.noticeDays || undefined,
+      });
+    }
     setReviewModal((m) => ({ ...m, open: false }));
+  };
+
+  const returnExit = async () => {
+    if (!returnModal.reason.trim()) return setMessage("Please provide a reason for returning.");
+    setUpdating(returnModal.exitId);
+    try {
+      await hrmsApi.patch(`/api/exit/${returnModal.exitId}/return`, { reason: returnModal.reason });
+      setReturnModal({ open: false, exitId: "", reason: "" });
+      setMessage("Resignation returned for revision.");
+      await load();
+    } catch (err: unknown) { setMessage((err as Error)?.message || "Return failed."); }
+    finally { setUpdating(null); }
   };
 
   // — Clearance —
@@ -553,7 +603,7 @@ export default function NativeExitManagement() {
     }
   };
 
-  const STATUSES = ["all", "submitted", "manager_review", "accepted", "notice_serving", "exited", "revoked", "rejected", "withdrawn"];
+  const STATUSES = ["all", "submitted", "returned", "manager_review", "accepted", "notice_serving", "notice_active", "exited", "revoked", "rejected", "withdrawn"];
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -564,7 +614,7 @@ export default function NativeExitManagement() {
   }, [requests, search]);
 
   const agedCount = filtered.filter((r) => !["exited", "rejected", "revoked"].includes(normalizeStatus(r.status)) && ageDays(r.created_at) > 7).length;
-  const clearanceBlocked = filtered.filter((r) => normalizeStatus(r.status) === "notice_serving" && Number(r.clearance_total ?? 0) > Number(r.clearance_cleared ?? 0)).length;
+  const clearanceBlocked = filtered.filter((r) => ["notice_serving", "notice_active"].includes(normalizeStatus(r.status)) && Number(r.clearance_total ?? 0) > Number(r.clearance_cleared ?? 0)).length;
 
 
   return (
@@ -721,21 +771,36 @@ export default function NativeExitManagement() {
                         <td className="p-4"><Badge status={status} /></td>
                         <td className="p-4">
                           <div className="flex flex-wrap gap-1 items-center">
-                            {/* Governance-aware action buttons */}
+                            {/* New FSM: submitted → Approve or Return */}
                             {status === "submitted" && (
-                              <button onClick={() => openReviewModal(r.id, "manager_review", r.last_working_day_proposed ?? "", r.notice_period_days)} disabled={updating === r.id} className="rounded-lg bg-amber-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-50">Review</button>
+                              <button onClick={() => openReviewModal(r.id, "approve", r.last_working_day_proposed ?? "", r.notice_period_days)} disabled={updating === r.id} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50">Approve</button>
                             )}
+                            {status === "submitted" && (
+                              <button onClick={() => setReturnModal({ open: true, exitId: r.id, reason: "" })} disabled={updating === r.id} className="rounded-lg bg-orange-500 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-orange-600 disabled:opacity-50">Return</button>
+                            )}
+                            {/* Legacy flow: manager_review → notice_active */}
                             {status === "manager_review" && (
-                              <button onClick={() => openReviewModal(r.id, "accepted", r.last_working_day_proposed ?? "", r.notice_period_days)} disabled={updating === r.id} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50">Accept</button>
+                              <button onClick={() => openReviewModal(r.id, "approve", r.last_working_day_proposed ?? "", r.notice_period_days)} disabled={updating === r.id} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50">Approve</button>
                             )}
+                            {/* Legacy flow: accepted → notice_serving */}
                             {status === "accepted" && (
                               <button onClick={() => updateStatus(r.id, "notice_serving")} disabled={updating === r.id} className="rounded-lg bg-cyan-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-cyan-700 disabled:opacity-50">Notice</button>
                             )}
+                            {/* Legacy: notice_serving → exited (manual confirm) */}
                             {status === "notice_serving" && (
                               <button onClick={() => updateStatus(r.id, "exited")} disabled={updating === r.id || Number(r.clearance_total ?? 0) > Number(r.clearance_cleared ?? 0)} className="rounded-lg bg-slate-950 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-slate-700 disabled:opacity-40">Confirm Exit</button>
                             )}
-                            {!["exited", "revoked", "rejected"].includes(status) && (
-                              <button onClick={() => updateStatus(r.id, "revoked")} disabled={updating === r.id} className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50 disabled:opacity-50">Revoke</button>
+                            {/* New FSM: notice_active — auto-confirmed by nightly cron */}
+                            {status === "notice_active" && (
+                              <span className="rounded-lg bg-cyan-50 border border-cyan-200 px-2.5 py-1.5 text-xs font-semibold text-cyan-700">On Notice · Auto-exits on LWD</span>
+                            )}
+                            {/* returned — pending employee re-submission */}
+                            {status === "returned" && (
+                              <span className="rounded-lg bg-orange-50 border border-orange-200 px-2.5 py-1.5 text-xs font-semibold text-orange-700">Returned · Awaiting employee</span>
+                            )}
+                            {/* Revoke — new endpoint */}
+                            {!["exited", "revoked", "rejected", "returned", "closed"].includes(status) && (
+                              <button onClick={() => revokeExit(r.id)} disabled={updating === r.id} className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50 disabled:opacity-50">Revoke</button>
                             )}
 
                             {/* Kebab menu */}
@@ -937,7 +1002,11 @@ export default function NativeExitManagement() {
               <button onClick={() => setReviewModal((m) => ({ ...m, open: false }))} className="text-slate-400 hover:text-slate-700"><X className="h-5 w-5" /></button>
             </div>
             <div className="space-y-4 p-6">
-              <p className="text-sm text-slate-600">Status will move to <span className="font-bold capitalize">{label(reviewModal.targetStatus)}</span>.</p>
+              <p className="text-sm text-slate-600">
+                {reviewModal.targetStatus === "approve"
+                  ? "Resignation will be approved and the notice period will begin (status → Notice Active)."
+                  : <>Status will move to <span className="font-bold capitalize">{label(reviewModal.targetStatus)}</span>.</>}
+              </p>
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1.5">Confirm Last Working Day</label>
                 <input type="date" value={reviewModal.confirmedLwd} onChange={(e) => setReviewModal((m) => ({ ...m, confirmedLwd: e.target.value }))} className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400" />
@@ -1161,6 +1230,31 @@ export default function NativeExitManagement() {
               <button onClick={() => setRetentionModal((m) => ({ ...m, open: false }))} className="flex-1 rounded-2xl border py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">Cancel</button>
               <button onClick={submitRetention} disabled={retentionModal.saving || !retentionModal.action_summary.trim()} className="flex-1 rounded-2xl bg-slate-950 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50">
                 {retentionModal.saving ? "Saving…" : "Record Action"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Return Resignation Modal ── */}
+      {returnModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b p-6">
+              <h2 className="text-lg font-black text-slate-950">Return Resignation</h2>
+              <button onClick={() => setReturnModal({ open: false, exitId: "", reason: "" })} className="text-slate-400 hover:text-slate-700"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="space-y-4 p-6">
+              <p className="text-sm text-slate-600">The resignation will be returned to the employee with your feedback. They can revise and re-submit.</p>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Reason for returning <span className="text-red-500">*</span></label>
+                <textarea value={returnModal.reason} onChange={(e) => setReturnModal((m) => ({ ...m, reason: e.target.value }))} placeholder="Explain why this is being returned…" rows={3} className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 resize-none" />
+              </div>
+            </div>
+            <div className="flex gap-3 border-t p-6">
+              <button onClick={() => setReturnModal({ open: false, exitId: "", reason: "" })} className="flex-1 rounded-2xl border py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">Cancel</button>
+              <button onClick={returnExit} disabled={!returnModal.reason.trim() || updating !== null} className="flex-1 rounded-2xl bg-orange-500 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50">
+                {updating ? "Returning…" : "Return to Employee"}
               </button>
             </div>
           </div>
