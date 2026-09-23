@@ -8,7 +8,14 @@ import { logger } from "../../lib/logger.js";
 import { sendSMS } from "../communication/sms.helper.js";
 import type { ExitRequest, ExitStats, PaginatedResult } from "./exit.types.js";
 import { createDefaultClearanceTasks, createExitHealthSnapshot } from "./exit-intelligence.service.js";
-import { notifyResignationSubmitted, notifyResignationDecision } from "./exit.notifications.js";
+import {
+  notifyResignationSubmitted,
+  notifyResignationDecision,
+  notifyResignationSubmittedToManager,
+  notifyManagerDecision,
+  notifyAutoExited,
+  notifyResignationRevoked,
+} from "./exit.notifications.js";
 import { revokeSessionsForEmployee } from "../../shared/sessionRevocation.js";
 import { recordExitFollowUpFailure } from "./exit-followup-recovery.js";
 import { deprovisionEmployeeAccess } from "../../shared/employeeDeprovisioning.js";
@@ -222,6 +229,21 @@ export async function transitionExitStatus(
   if (newStatus === 'notice_active' || newStatus === 'terminated') {
     await createDefaultClearanceTasks(exitRequestId, rec.employee_id);
   }
+
+  // Fire notifications (non-blocking)
+  setImmediate(() => {
+    if (newStatus === 'submitted') {
+      notifyResignationSubmittedToManager(exitRequestId).catch(() => {});
+    } else if (newStatus === 'notice_active') {
+      notifyManagerDecision(exitRequestId, 'approved').catch(() => {});
+    } else if (newStatus === 'returned') {
+      notifyManagerDecision(exitRequestId, 'returned', opts.reason).catch(() => {});
+    } else if (newStatus === 'exited' && actor.userId === 'system') {
+      notifyAutoExited(exitRequestId).catch(() => {});
+    } else if (newStatus === 'revoked') {
+      notifyResignationRevoked(exitRequestId, opts.reason ?? '').catch(() => {});
+    }
+  });
 }
 
 export const exitService = {

@@ -6,7 +6,7 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordMoneyEventAudit } from "../../shared/moneyEventAudit.js";
 import { calculateGratuity } from "../payroll/payrollCalculate.service.js";
 import { nocReleaseStatusForEmployee } from "../payroll/noc-release-gate.service.js";
-import { notifyFullFinalReady } from "./exit.notifications.js";
+import { notifyFullFinalReady, notifyFFApproved } from "./exit.notifications.js";
 // Type-only import — does not create a runtime circular dependency with
 // ff-compute.service.ts, which imports ffService from this file.
 import type { ComputedStatus } from "./ff-compute.service.js";
@@ -420,6 +420,10 @@ export const ffService = {
     });
 
     void notifyFullFinalReady(rec.exit_request_id);
+
+    // Notify employee of F&F approval
+    const netPayable = Number(rec.net_payable ?? 0);
+    void notifyFFApproved(rec.exit_request_id, netPayable);
 
     return this.getFF(rec.exit_request_id);
   },
