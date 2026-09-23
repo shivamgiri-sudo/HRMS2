@@ -227,6 +227,35 @@ describe("CEO overview", () => {
     }
   });
 
+  it("carries unbranched revenue in the headline, same as payroll and the trend (audit item 25)", async () => {
+    mockDb({
+      branches: [{ id: "a", branch_name: "NOIDA", active_status: 1 }],
+      revenue: [{ branch_id: "a", amount: L(100) }, { branch_id: null, amount: L(5) }, { branch_id: "gone", amount: L(2) }],
+      people: [{ branch_id: "a", staff: 400, cost: L(60) }, { branch_id: null, staff: 7, cost: L(1.11) }],
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-06");
+    expect(out.revenue, "no-branch and orphan-branch revenue must reach the headline").toBeCloseTo(L(107), 0);
+    expect(out.peopleCost).toBeCloseTo(L(61.11), 0);
+    expect(out.staffPaid).toBe(407);
+    expect(out.unbranched?.revenue).toBeCloseTo(L(7), 0);
+    expect(out.unbranched?.peopleCost).toBeCloseTo(L(1.11), 0);
+    // Branch rows stay branch-only; the gap to the headline is exactly `unbranched`.
+    expect(out.branches[0].revenue).toBeCloseTo(L(100), 0);
+    // Every trend month agrees with the headline (the mock answers every period alike).
+    for (const point of out.trend) expect(point.revenue).toBeCloseTo(L(107), 0);
+
+    // Under a process filter (no branch selected) the same buckets still count, as they do in the trend.
+    const filtered = await getCeoOverview("2026-06", { processId: "p1" });
+    expect(filtered.revenue).toBeCloseTo(L(107), 0);
+    for (const point of filtered.trend) expect(point.revenue).toBeCloseTo(L(107), 0);
+
+    // A branch selection genuinely excludes them.
+    const scoped = await getCeoOverview("2026-06", { branchId: "a" });
+    expect(scoped.revenue).toBeCloseTo(L(100), 0);
+    expect(scoped.unbranched?.revenue).toBe(0);
+  });
+
   it("hides a closed branch whose every money column is zero, without losing its people", async () => {
     /*
      * branch_master holds 45 branches and 5 are active. In July 2026 nine closed ones still

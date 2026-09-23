@@ -178,6 +178,12 @@ export interface CeoOverview {
    * normal case.
    */
   exceptions: { code: string; label: string; count: number; amount: number }[];
+  /**
+   * Part of the headline that belongs to no branch row (no branch on the cost centre / employee, or
+   * a branch id missing from branch_master). Included in the headline whenever no branch is
+   * selected, so headline minus the branch rows equals this. All zero under a branch selection.
+   */
+  unbranched?: { revenue: number; revenueEstimated: number; peopleCost: number; staffPaid: number; indirectCost: number };
 }
 
 const n = (v: unknown): number => {
@@ -1341,15 +1347,41 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
     }),
     { revenue: 0, peopleCost: 0, indirectCost: 0, staffPaid: 0 },
   );
-  const revenueEstimated = allRows.reduce((acc, b) => acc + (b.revenueEstimated ?? 0), 0);
+  let revenueEstimated = allRows.reduce((acc, b) => acc + (b.revenueEstimated ?? 0), 0);
   const unbranched = people.get("")?.staff ?? 0;
-  // Staff with no branch are still MAS payroll (the rule in peopleByBranch's header): they belong
-  // to no branch row, but the company total must carry them or it disagrees with Live P&L, which
-  // counts every MAS wage. Only in the unfiltered view — a branch/process/cost-centre filter
-  // cannot contain someone with no branch.
-  if (!scope.branchIds.length && !scope.processIds.length && !scope.costCentreIds.length) {
-    totals.peopleCost += people.get("")?.cost ?? 0;
-    totals.staffPaid += unbranched;
+  /*
+   * Money that reaches no branch_master row — the "" key (a cost centre / employee with no branch)
+   * or a branch id that no longer exists in branch_master. It belongs to no branch row, but it is
+   * still MAS money, so the headline carries it whenever NO BRANCH is selected (a branch selection
+   * genuinely cannot contain it). The trend's prior months already counted these buckets (they sum
+   * the maps directly), so the headline — which replaces the trend's current month — must too.
+   *
+   * Audit item 25 (2026-09-23): only payroll's "" bucket used to be added here, and only in the
+   * fully unfiltered view, so unbranched revenue and GRN were silently dropped from the headline
+   * while the same buckets stayed in every prior trend month. The old "a process/cost-centre filter
+   * cannot contain someone with no branch" reasoning was also not true: a selected cost centre with
+   * no branch_id keys its revenue, GRN and payroll to "" in revenueByBranch/spendByBranch/
+   * peopleByBranch. Exposed as `unbranched` so the gap between the branch rows and the headline is
+   * explained rather than silent.
+   */
+  const knownBranchIds = new Set(branchRows.map((r) => String(r.id)));
+  const outsideBranches = (m: Map<string, number>) =>
+    [...m.entries()].reduce((t, [key, v]) => (knownBranchIds.has(key) ? t : t + v), 0);
+  const unbranchedTotals = { revenue: 0, revenueEstimated: 0, peopleCost: 0, staffPaid: 0, indirectCost: 0 };
+  if (!scope.branchIds.length) {
+    unbranchedTotals.revenueEstimated = outsideBranches(estimate);
+    unbranchedTotals.revenue = outsideBranches(revenue) + unbranchedTotals.revenueEstimated;
+    unbranchedTotals.indirectCost = outsideBranches(spend);
+    for (const [key, p] of people) {
+      if (knownBranchIds.has(key)) continue;
+      unbranchedTotals.peopleCost += p.cost;
+      unbranchedTotals.staffPaid += p.staff;
+    }
+    totals.revenue += unbranchedTotals.revenue;
+    totals.indirectCost += unbranchedTotals.indirectCost;
+    totals.peopleCost += unbranchedTotals.peopleCost;
+    totals.staffPaid += unbranchedTotals.staffPaid;
+    revenueEstimated += unbranchedTotals.revenueEstimated;
   }
   const operatingProfit = totals.revenue - totals.peopleCost - totals.indirectCost;
   const headlineMargin = totals.revenue > 0 && !payrollPending(totals.peopleCost, revenueEstimated)
@@ -1360,6 +1392,7 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
     period,
     ...totals,
     revenueEstimated,
+    unbranched: unbranchedTotals,
     operatingProfit,
     marginPct: headlineMargin,
     revenuePerHead: totals.staffPaid > 0 ? totals.revenue / totals.staffPaid : null,
