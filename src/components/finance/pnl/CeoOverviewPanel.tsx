@@ -58,9 +58,13 @@ export interface CeoOverviewPanelProps {
   /** Branch chosen on the page's own filter bar; empty means all branches. */
   branchId?: string;
   onBranchChange?: (branchId: string) => void;
+  /** The page's Client / Search filters. Applied server-side as the processes they match, the same
+   *  population the header strip shows (audit item 19). */
+  clientId?: string;
+  search?: string;
 }
 
-export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOverviewPanelProps) {
+export function CeoOverviewPanel({ period, branchId, onBranchChange, clientId, search }: CeoOverviewPanelProps) {
   /*
    * All three filters are lists. The question this panel answers is comparative — "Noida and
    * Noida-2 against Ahmedabad", "these four processes only" — and asking it one branch at a time
@@ -89,8 +93,10 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
     onBranchChange?.(ids.length === 1 ? ids[0] : "");
   };
 
-  const { data, isLoading, error } = useCeoOverview(period, { branchIds, processIds, costCentreIds });
+  const { data, isLoading, error } = useCeoOverview(period, { branchIds, processIds, costCentreIds, clientId, search });
   const narrowed = branchIds.length > 0 || processIds.length > 0 || costCentreIds.length > 0;
+  /** Narrowed by the page's own Client / Search filters, which this panel cannot clear itself. */
+  const pageNarrowed = Boolean(clientId) || Boolean(search);
 
   /** Company-average margin, used as the comparison baseline. Excludes the rows that would skew
    *  it: cost centres, closed branches, and any branch flagged as missing a cost line. */
@@ -438,12 +444,12 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
 
       {/* Where profit is recoverable. Suppressed under a filter: comparing one branch against
           itself finds nothing, and an empty panel would read as a clean bill of health. */}
-      {narrowed && (
+      {(narrowed || pageNarrowed) && (
         <p className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-[13px] text-slate-500 shadow-sm dark:border-slate-800 dark:bg-slate-900">
           Opportunities are ranked across the whole company. Clear the filters to see them.
         </p>
       )}
-      {!narrowed && data.opportunities.length > 0 && (
+      {!narrowed && !pageNarrowed && data.opportunities.length > 0 && (
         <section className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3 dark:border-slate-800">
             <h3 className="text-sm font-semibold">Where operating profit can be lifted</h3>

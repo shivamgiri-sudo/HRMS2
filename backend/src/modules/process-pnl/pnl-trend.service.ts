@@ -108,7 +108,14 @@ async function getRealMonths(): Promise<string[]> {
   return rows.map((r) => String(r.period_code));
 }
 
-export async function getPnlTrend(filters: { branchId?: string; processId?: string } = {}): Promise<PnlTrendResult> {
+export async function getPnlTrend(
+  filters: { branchId?: string; processId?: string; processIds?: string[] } = {},
+): Promise<PnlTrendResult> {
+  // A process LIST (the page's Client / Search filters resolved to process ids, audit item 19) is
+  // applied exactly like the single processId — both queries are already per-process. An empty
+  // list matches nothing (the resolver never sends one; it sends a no-match sentinel instead).
+  const processList = filters.processIds ?? (filters.processId ? [filters.processId] : null);
+  const narrowed = Boolean(filters.branchId) || processList !== null;
   const realMonths = await getRealMonths();
   if (realMonths.length === 0) {
     return {
@@ -134,10 +141,10 @@ export async function getPnlTrend(filters: { branchId?: string; processId?: stri
   }
 
   const branchClause = filters.branchId ? "AND ccm.branch_id = ?" : "";
-  const processClause = filters.processId ? "AND pm.id = ?" : "";
+  const processClause = processList === null ? "" : processList.length ? "AND pm.id IN (?)" : "AND 1 = 0";
   const revenueParams: unknown[] = [realMonths];
   if (filters.branchId) revenueParams.push(filters.branchId);
-  if (filters.processId) revenueParams.push(filters.processId);
+  if (processList?.length) revenueParams.push(processList);
 
   const [revenueRows] = await db.query<RowDataPacket[]>(
     `SELECT pm.id AS processId, pm.process_name AS processName,
@@ -154,7 +161,7 @@ export async function getPnlTrend(filters: { branchId?: string; processId?: stri
 
   const costParams: unknown[] = [realMonths];
   if (filters.branchId) costParams.push(filters.branchId);
-  if (filters.processId) costParams.push(filters.processId);
+  if (processList?.length) costParams.push(processList);
 
   // Branch filter on payroll (2026-09-23): the canonical rule shared with Live P&L
   // (pnl-reconciliation readPayroll/readUnallocatedPayroll) and CEO Overview (peopleByBranch) —
@@ -245,7 +252,7 @@ export async function getPnlTrend(filters: { branchId?: string; processId?: stri
     caveat: "Historical db_bill trend is only available on the unfiltered company view (no branch/process filter).",
   };
 
-  if (!filters.branchId && !filters.processId) {
+  if (!narrowed) {
     try {
       const history = await getDbBillHistory(new Set(realMonths));
       companyHistory = history.months;
@@ -274,7 +281,7 @@ export async function getPnlTrend(filters: { branchId?: string; processId?: stri
   // evidence this is real (86% row coverage) and why it is revenue-only (no per-process cost side
   // exists in db_bill for this era). Unfiltered-only, same restriction as companyHistory.
   let processHistoryRevenue: PnlTrendResult["processHistoryRevenue"] = [];
-  if (!filters.branchId && !filters.processId) {
+  if (!narrowed) {
     try {
       const [processRows] = await db.query<RowDataPacket[]>(`SELECT id, process_name FROM process_master`);
       const byNormalizedName = new Map<string, { id: string; name: string }>();

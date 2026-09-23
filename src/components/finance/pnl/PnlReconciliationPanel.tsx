@@ -74,11 +74,16 @@ const CELL_METRIC: Record<string, PnlDrilldownMetric> = {
 export function PnlReconciliationPanel({
   period,
   branchId,
+  clientId,
+  search,
 }: {
   period: string;
   branchId?: string;
+  /** The page's Client / Search filters (audit item 19) — narrow to the matching processes' cost centres. */
+  clientId?: string;
+  search?: string;
 }) {
-  const query = usePnlLiveReconciliation(period, { branchIds: branchId ? [branchId] : [] });
+  const query = usePnlLiveReconciliation(period, { branchIds: branchId ? [branchId] : [], clientId, search });
   const data = query.data;
   /* Declared above the loading/error early returns so the hook order stays stable across renders. */
   const [drilldown, setDrilldown] = useState<{ params: PnlDrilldownParams; label: string } | null>(null);

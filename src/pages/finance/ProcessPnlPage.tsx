@@ -143,10 +143,13 @@ export default function ProcessPnlPage() {
   const ytdQuery = useQuery({
     // Scoped by the page's branch filter like the panel beside it (audit item 18). The branch is
     // in the key so switching branches never shows the previous scope's cached YTD.
-    queryKey: ["pnl-ytd-summary", period, branchId],
+    queryKey: ["pnl-ytd-summary", period, branchId, clientId, search],
     queryFn: async () => {
       const params = new URLSearchParams({ upTo: period });
       if (branchId) params.set("branchId", branchId);
+      // Client / Search too (audit item 19), so the strip covers the header's population.
+      if (clientId) params.set("clientId", clientId);
+      if (search) params.set("search", search);
       const response = await hrmsApi.get<{ success: boolean; data: any }>(`/api/finance/pnl/ytd-summary?${params.toString()}`);
       // hrmsApi returns the envelope itself, so the payload is one level in. Typing data as
       // `any` meant the extra unwrap here type-checked while still being undefined at runtime,
@@ -180,6 +183,7 @@ export default function ProcessPnlPage() {
   const branches = Array.from(seenBranches.current.entries()).sort(byLabel);
   const clients = Array.from(seenClients.current.entries()).sort(byLabel);
   const branchLabel = branchId ? (seenBranches.current.get(branchId) ?? "Selected branch") : "All branches";
+  const clientLabel = clientId ? (seenClients.current.get(clientId) ?? "Selected client") : "";
 
   function updateFilters(next: { period?: string; branchId?: string; clientId?: string; search?: string }) {
     const params = new URLSearchParams(searchParams);
@@ -516,6 +520,8 @@ export default function ProcessPnlPage() {
                   period={period}
                   branchId={branchId || undefined}
                   onBranchChange={(id) => updateFilters({ branchId: id })}
+                  clientId={clientId || undefined}
+                  search={search || undefined}
                 />
 
                 {/* Cost mix — Agent salary / DSC / BMC as a share of recognized revenue, from the
@@ -552,16 +558,18 @@ export default function ProcessPnlPage() {
 
                 {/* Revenue/cost/margin trend + headcount-vs-revenue trend, over the real months
                     of invoicing data only (see PnlTrendCharts's own doc comment). */}
-                <PnlTrendCharts filters={{ branchId: branchId || undefined }} />
+                <PnlTrendCharts filters={{ branchId: branchId || undefined, clientId: clientId || undefined, search: search || undefined }} />
 
                 {/* YTD summary strip */}
                 <div className="rounded-2xl border border-slate-200 bg-card px-4 py-3">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-slate-700">
                       Year-to-Date Summary {ytdQuery.data ? `(FY ${ytdQuery.data.fy} · ${ytdQuery.data.months.length} month${ytdQuery.data.months.length !== 1 ? "s" : ""})` : ""}
-                      {/* Say which population the strip covers — it follows the page's branch filter. */}
+                      {/* Say which population the strip covers — it follows the page's filters. */}
                       <span className="ml-2 text-xs font-normal text-slate-500">
                         {branchId ? branchLabel : "All branches"}
+                        {clientId ? ` · ${clientLabel}` : ""}
+                        {search ? ` · matching "${search}"` : ""}
                       </span>
                     </span>
                     <Button
@@ -614,7 +622,12 @@ export default function ProcessPnlPage() {
           </TabsContent>
 
           <TabsContent value="live" className="flex-1 overflow-auto px-4 py-3 m-0">
-            <PnlReconciliationPanel period={period} branchId={branchId || undefined} />
+            <PnlReconciliationPanel
+              period={period}
+              branchId={branchId || undefined}
+              clientId={clientId || undefined}
+              search={search || undefined}
+            />
           </TabsContent>
 
           {/* Daily / weekly / monthly P&L trend for the company, a branch or a cost centre,

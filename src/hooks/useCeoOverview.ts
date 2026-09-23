@@ -129,17 +129,22 @@ export interface CeoOverviewFilters {
   branchIds?: string[];
   processIds?: string[];
   costCentreIds?: string[];
+  /** The page's Client / Search filters — resolved server-side to the processes they match. */
+  clientId?: string;
+  search?: string;
 }
 
 export function useCeoOverview(period: string, filters: CeoOverviewFilters = {}) {
   const branchIds = filters.branchIds ?? [];
   const processIds = filters.processIds ?? [];
   const costCentreIds = filters.costCentreIds ?? [];
+  const clientId = filters.clientId ?? "";
+  const search = filters.search ?? "";
   /* Sorted in the key so ticking A then B and B then A are one cached query rather than two. The
    * server treats the list as a set, so the order genuinely carries no meaning. */
   const key = (ids: string[]) => [...ids].sort().join(",");
   return useQuery({
-    queryKey: ["ceo-overview", period, key(branchIds), key(processIds), key(costCentreIds)],
+    queryKey: ["ceo-overview", period, key(branchIds), key(processIds), key(costCentreIds), clientId, search],
     enabled: Boolean(period),
     /*
      * Keep the previous month's data on screen while the next one loads.
@@ -158,6 +163,8 @@ export function useCeoOverview(period: string, filters: CeoOverviewFilters = {})
       if (branchIds.length) params.set("branchIds", branchIds.join(","));
       if (processIds.length) params.set("processIds", processIds.join(","));
       if (costCentreIds.length) params.set("costCentreIds", costCentreIds.join(","));
+      if (clientId) params.set("clientId", clientId);
+      if (search) params.set("search", search);
       const response = await hrmsApi.get<{ success: boolean; data: CeoOverview }>(
         `/api/finance/pnl/ceo-overview?${params.toString()}`,
       );

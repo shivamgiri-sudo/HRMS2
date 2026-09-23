@@ -246,6 +246,28 @@ describe("P&L reconciliation — OP% scope rules (2026-09-15 OP% check)", () => 
     expect(runningCall?.[1], "branch filter applies to the snapshot's home branch").toEqual(["2026-08", "branch-noida"]);
   });
 
+  it("narrows cost centres and unallocated payroll to the Client / Search processes (audit item 19)", async () => {
+    mockDb();
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    await getPnlReconciliation("2026-08", { branchIds: ["branch-noida"], processIds: ["p1", "p2"] });
+    const calls = execute.mock.calls.map(([sql, params]) => ({ sql: String(sql), params: (params ?? []) as unknown[] }));
+    const ccCall = calls.find((c) => c.sql.includes("FROM cost_centre_master ccm") && c.sql.includes("LEFT JOIN branch_master"))!;
+    expect(ccCall.sql).toContain("e.process_id IN (?,?)");
+    expect(ccCall.params).toEqual(["branch-noida", "p1", "p2"]);
+    const unallocatedCall = calls.find((c) => c.sql.includes("IS NULL") && c.sql.includes("GROUP BY e.branch_id"))!;
+    expect(unallocatedCall.sql).toContain("AND e.process_id IN (?,?)");
+    expect(unallocatedCall.params).toEqual(["2026-08", "branch-noida", "p1", "p2"]);
+  });
+
+  it("an explicitly empty process list matches nothing rather than everything", async () => {
+    mockDb();
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    await getPnlReconciliation("2026-08", { processIds: [] });
+    const ccCall = execute.mock.calls.map(([sql]) => String(sql))
+      .find((sql) => sql.includes("FROM cost_centre_master ccm") && sql.includes("LEFT JOIN branch_master"))!;
+    expect(ccCall).toContain("1 = 0");
+  });
+
   it("shows NA, not an inflated margin, when no GRN exists anywhere for the month", async () => {
     withOverrides((q) => (q.includes("FROM grn_cost_allocation") || q.includes("FROM grn_entry_line_snapshot") ? [] : undefined));
     const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
