@@ -214,7 +214,8 @@ function enrichColumn(
    * True only for a "process" view column, where `data` IS one single, unmodified canonical
    * BpoPnlRow (see the plain `row as unknown as Record<string, unknown>` mapping in getStatement)
    * — the same row bpoPnlAllocationOverlayService.getProcessDetail's sub-tab reads its own `ebit`
-   * from. A2 below trusts `data.ebit` ONLY in that case.
+   * from. Since 2026-09-23 it only decides whether that ebit is published alongside as
+   * `canonicalEbit`; Operating Profit itself is always Revenue − Total Cost (see below).
    *
    * NOT for "branch": aggregateByBranch() pre-sums every ADDITIVE_FIELDS entry including `ebit`
    * via sumField()/n(), which defaults a row with no `ebit` field at all to 0 — indistinguishable
@@ -494,10 +495,23 @@ function enrichColumn(
    * produces on its own terms, not a stand-in for a missing better answer, so this is not a case of
    * silently accepting worse data — the two are cross-checked in lob reconciliation elsewhere.
    */
+  /*
+   * SUPERSEDED 2026-09-23 — Operating Profit is Revenue − Total Cost in EVERY view, process
+   * included. The A2 note above is kept for its history, but its premise no longer holds: the
+   * sign flip it describes came from the branch-broadcast revenue/IDC bugs (A3, A6), both fixed
+   * at the source since. What A2 left behind was a process column whose Operating Profit row
+   * (canonical ebit: bpo-pnl's own people cost, payables-based BMC and GRN) could not be derived
+   * from the Revenue and Total Cost rows printed directly above it (this function's snapshot /
+   * actual payroll and readGrnSpend IDC) — OP ≠ Revenue − Total Cost inside one column, while the
+   * branch and LOB views held the identity. Now all three views print a self-consistent
+   * waterfall. The canonical figure is still published, as `canonicalEbit`, so a reader
+   * reconciling against the Process Detail sub-tab can see both.
+   */
   const canonicalEbit = out.ebit;
-  out.operatingProfit = (trustCanonicalEbit && canonicalEbit !== undefined && canonicalEbit !== null)
-    ? n(canonicalEbit)
-    : recognizedRevenue - totalCost;
+  if (trustCanonicalEbit && canonicalEbit !== undefined && canonicalEbit !== null) {
+    out.canonicalEbit = n(canonicalEbit);
+  }
+  out.operatingProfit = recognizedRevenue - totalCost;
 
   // How much of this column's headcount the people cost actually covers. An employee who earned
   // nothing this month — no present days, or no salary assigned — contributes no cost, so a column

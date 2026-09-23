@@ -10,11 +10,18 @@ import { costComponentDataFlags, type CostComponentDataFlags } from "./pnl-cost-
  * adjustedRow in bpo-pnl-allocation-overlay.service.ts for how each process's row is corrected for
  * its true share of branch-pool costs).
  *
- * This is NOT the "Operating Profit" figure CEO Overview and the P&L Statement show. That figure
- * is a separate, simpler calculation (revenue − lump peopleCost − indirectCost) in
- * ceo-overview.service.ts / pnl-statement.service.ts, deliberately reconciled against the
- * business's real reported P&L Excel file (see migration 435_pnl_components_real_shape.sql) — and
- * this module never reads or writes anything either of those two touch. A reader who wants to
+ * This is NOT the "Operating Profit" figure CEO Overview and the P&L Statement show, and its `ebit`
+ * is not derived from their lines:
+ *   - P&L Statement (pnl-statement.service.ts enrichColumn), EVERY view — process, branch and LOB
+ *     alike since 2026-09-23: Operating Profit = Recognised Revenue − Total Cost, where Total Cost =
+ *     DC Total (Agent + DSC + BMC salary, from actual payroll / the running-salary snapshot) + IDC
+ *     (the shared GRN reader, readGrnSpend). Before that date the process view alone printed the
+ *     canonical `ebit` summed here, which did not equal its own Revenue − Total Cost rows; the
+ *     canonical figure is still published on a process column as `canonicalEbit`.
+ *   - CEO Overview (ceo-overview.service.ts): revenue − peopleCost − indirectCost per branch.
+ * Both are reconciled against the business's real reported P&L Excel file (see migration
+ * 435_pnl_components_real_shape.sql), and this module never reads or writes anything either of
+ * them touches. This module sums the canonical rows' own waterfall fields. A reader who wants to
  * verify this total by hand can add up the branch's own processes on their individual detail pages
  * (same source, same fields, same math) and land on exactly this number — that reconciliation is
  * this feature's whole point, and is exercised in bpo-pnl-full-waterfall.test.ts.
