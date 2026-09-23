@@ -54,6 +54,9 @@ export interface PnlStatement {
   /** "invoiced" once the month has closed, "planned" while it is still running. */
   revenueBasis?: "invoiced" | "planned";
   periodOpen?: boolean;
+  /** Rs of Live P&L's seat-rate estimate (not-yet-billed cost centres) inside Recognised Revenue.
+   *  Non-zero only for the month just closed, while invoices may still arrive. */
+  revenueEstimated?: number;
   columns: PnlStatementColumn[];
   rows: PnlStatementRow[];
 }

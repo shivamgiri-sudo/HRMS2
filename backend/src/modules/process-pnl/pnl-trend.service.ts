@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getDbBillHistory, getDbBillHistoryByProcess } from "./pnl-trend-history.service.js";
+import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
 
 /**
  * Revenue / cost / margin trend, and headcount-vs-revenue trend, per process across the months
@@ -155,6 +156,12 @@ export async function getPnlTrend(filters: { branchId?: string; processId?: stri
   if (filters.branchId) costParams.push(filters.branchId);
   if (filters.processId) costParams.push(filters.processId);
 
+  // Branch filter on payroll (2026-09-23): the canonical rule shared with Live P&L
+  // (pnl-reconciliation readPayroll/readUnallocatedPayroll) and CEO Overview (peopleByBranch) —
+  // the branch of the EFFECTIVE cost centre (post-override), else the employee's home branch when
+  // they have no cost centre. It used to read the HR cost centre's branch only, ignoring overrides
+  // and dropping anyone without a cost centre from every branch.
+  const costOv = await overrideJoinSql("e.id", "e.cost_centre_id");
   const [costRows] = await db.query<RowDataPacket[]>(
     `SELECT pm.id AS processId, pm.process_name AS processName,
             sr.run_month AS period,
@@ -164,8 +171,9 @@ export async function getPnlTrend(filters: { branchId?: string; processId?: stri
        JOIN salary_prep_line spl ON spl.run_id = sr.id
        JOIN employees e ON e.id = spl.employee_id
        JOIN process_master pm ON pm.id = e.process_id
-       LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
-      WHERE sr.status <> 'draft' AND sr.run_month IN (?) ${branchClause ? "AND ccm.branch_id = ?" : ""} ${processClause}
+       ${costOv.join}
+       LEFT JOIN cost_centre_master ccm ON ccm.id = ${costOv.effectiveCostCentreExpr}
+      WHERE sr.status <> 'draft' AND sr.run_month IN (?) ${branchClause ? "AND (CASE WHEN ccm.id IS NULL THEN e.branch_id ELSE ccm.branch_id END) = ?" : ""} ${processClause}
       GROUP BY pm.id, pm.process_name, sr.run_month`,
     costParams
   );

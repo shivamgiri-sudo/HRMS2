@@ -15,9 +15,11 @@ import {
   type RevenueRuleInput,
 } from "./bpo-pnl.calculation.js";
 import { PROCESS_BY_COST_CENTRE, getInvoicedRevenueActuals, getApprovedCostCentreSplits } from "./pnl-actuals.service.js";
-import { isOpenPeriod } from "./pnl-statement.service.js";
+import { isOpenPeriod, getLiveRevenueEstimate } from "./pnl-statement.service.js";
+import { isEstimateWindow } from "./pnl-seat-billing.service.js";
+import { getCurrentDateIST } from "../../shared/istDate.js";
 import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.service.js";
-import { processPnlService } from "./process-pnl.service.js";
+import { processPnlService, getClosedBranchIds } from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
 
 type NumericMap = Map<string, number>;
@@ -681,6 +683,16 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
   const processExpr = employeeColumns.has("process_id")
     ? (hasCostCentreId ? "COALESCE(e.process_id, ccm.process_id)" : "e.process_id")
     : "NULL";
+  // KNOWN INCONSISTENCY (tracked 2026-09-23, not yet aligned): this is the employee's HOME branch.
+  // The canonical rule for "which branch does a person's pay count against" — used by Live P&L
+  // (pnl-reconciliation readPayroll/readUnallocatedPayroll), CEO Overview (peopleByBranch) and the
+  // trend (pnl-trend.service.ts) — is the branch of the EFFECTIVE cost centre (post-override, via
+  // overrideJoinSql), else e.branch_id when the person has no cost centre. It is NOT switched here
+  // because this one branch_id also drives classification-rule matching (rule.branch_id), the BMC
+  // branch pools the allocator spreads over a branch's processes, and the Statement branch view's
+  // people cost (getActualPeopleCost.byBranch) whose coverage is counted by e.branch_id in
+  // pnl-running-salary.service.ts. Changing it moves money between branches in the canonical engine
+  // and needs its own verified change against live payroll.
   const branchExpr = employeeColumns.has("branch_id") ? "e.branch_id" : "NULL";
   const designationIdExpr = employeeColumns.has("designation_id") ? "e.designation_id" : "NULL";
   const departmentIdExpr = employeeColumns.has("department_id") ? "e.department_id" : "NULL";
@@ -1412,6 +1424,26 @@ function statusFrom(row: {
   return "profitable" as const;
 }
 
+/**
+ * For a CLOSED period, getBaseProcesses (process-pnl.service.ts) keeps processes of branches that
+ * have since been closed, so their real money for that month is still summed. This drops only the
+ * ones with nothing at all for the month — no revenue, no cost, no GRN — so a branch closed long
+ * ago does not reappear in dropdowns built from these rows. Runs AFTER allocation, so no pool is
+ * ever re-spread because of it. The open period is already filtered in SQL.
+ */
+async function dropDormantClosedBranchRows(rows: BpoPnlRow[], period: string): Promise<BpoPnlRow[]> {
+  if (isOpenPeriod(period)) return rows;
+  const closed = await getClosedBranchIds().catch(() => new Set<string>());
+  if (closed.size === 0) return rows;
+  return rows.filter((row) => {
+    if (!row.branchId || !closed.has(String(row.branchId))) return true;
+    return row.recognizedRevenue !== 0
+      || row.totalOperatingCost !== 0
+      || row.grnVendorActual !== 0
+      || row.pat !== 0;
+  });
+}
+
 async function computeBranchRows(scope: PnlQueryFilters) {
   const baseRows = await processPnlService.listProcesses(scope);
   const processIds = baseRows.map((row) => row.processId);
@@ -1458,6 +1490,12 @@ async function computeBranchRows(scope: PnlQueryFilters) {
      */
     getActualPeopleCost(scope.period ?? ""),
   ]);
+  // Live P&L's seat-rate estimate for not-yet-billed cost centres — only for the month just
+  // closed (closed per isOpenPeriod, still inside isEstimateWindow). Same figure the Statement,
+  // Live P&L and CEO Overview add; see pnl-statement.service.ts enrichColumn. Degrades to none.
+  const lastMonthEstimate = !isOpenPeriod(scope.period ?? "") && isEstimateWindow(scope.period ?? "", getCurrentDateIST())
+    ? await getLiveRevenueEstimate(scope.period ?? "").catch(() => null)
+    : null;
 
   const rows: BpoPnlRow[] = baseRows.map((base) => {
     const configuredRules = rulesMap.get(base.processId) ?? [];
@@ -1566,7 +1604,10 @@ async function computeBranchRows(scope: PnlQueryFilters) {
      *     real billed number and the estimate must not outrank it. Falls back to the rule estimate
      *     only if nothing was invoiced for the process (e.g. billing not yet recorded).
      */
-    const invoicedForProcess = invoiced.byProcess.get(base.processId) ?? 0;
+    // + last month's seat estimate for this process's unbilled cost centres (zero otherwise), so
+    // header KPIs / Full Waterfall agree with the Statement and Live P&L for the default month.
+    const invoicedForProcess = (invoiced.byProcess.get(base.processId) ?? 0)
+      + (lastMonthEstimate?.byProcess.get(base.processId) ?? 0);
     const ruleRevenue = toNumber(base.revenueMtd) > 0 ? toNumber(base.revenueMtd) : revenue.earnedRevenue;
     const periodOpen = isOpenPeriod(scope.period ?? "");
     const usedInvoicedFallback = !periodOpen && invoicedForProcess > 0;
@@ -1720,7 +1761,7 @@ async function computeBranchRows(scope: PnlQueryFilters) {
 
   return {
     filters: scope,
-    rows,
+    rows: await dropDormantClosedBranchRows(rows, scope.period ?? ""),
     rulesMap,
     deliveryMap,
     componentsMap,

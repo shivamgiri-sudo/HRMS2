@@ -1,7 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
-import { OWN_COMPANY_SQL } from "./pnl-actuals.service.js";
+import { OWN_COMPANY_SQL, readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
 import { getSeatBillingEstimate, isEstimateWindow, type CostCentreSeatBilling } from "./pnl-seat-billing.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { ccProcessJoin, ccProcessNameSql } from "./cost-centre-label.js";
@@ -153,6 +153,7 @@ interface CostCentreRow extends RowDataPacket {
   process_name: string | null;
   company_name: string | null;
   active_status: number | null;
+  branch_active_status: number | null;
   branch_id: string | null;
   branch_name: string | null;
 }
@@ -187,23 +188,41 @@ function addIssue(target: string[], condition: boolean, issue: string) {
   if (condition) target.push(issue);
 }
 
+/**
+ * Is this cost centre open RIGHT NOW? Its own flag AND its branch's — a cost centre can still be
+ * individually flagged active while its branch has since been closed (bm.active_status = 0), and
+ * counting those inflated "Active Cost Centres" (70cb00ac).
+ *
+ * This is a TODAY fact and is used only for the "Active Cost Centres" count, the row's `active`
+ * flag and eligibility for a fresh seat-rate estimate. It must never decide whether a cost
+ * centre's real money for a period is summed — see readCostCentres().
+ */
+function isCurrentlyActive(cc: CostCentreRow): boolean {
+  return Number(cc.active_status ?? 0) === 1 && Number(cc.branch_active_status ?? 1) === 1;
+}
+
+/**
+ * EVERY own-company cost centre in the branch scope, open or closed today.
+ *
+ * Deliberately NOT filtered by active_status in SQL (2026-09-23). This row set is the base the
+ * whole panel's revenue / GRN / payroll / OP totals are summed over, so filtering it by TODAY's
+ * status (as 70cb00ac briefly did with COALESCE(bm.active_status,1) = 1) made closing a branch
+ * retroactively erase its real August revenue, GRN and payroll from the August Live P&L.
+ * getPnlReconciliation() instead keeps a cost centre when it is open today OR has real money in
+ * the requested period (hasPeriodActivity), and counts "Active Cost Centres" with
+ * isCurrentlyActive() only.
+ */
 async function readCostCentres(filters: PnlReconciliationFilters): Promise<CostCentreRow[]> {
   const where = [OWN_COMPANY_SQL];
   const params: unknown[] = [];
-  if (!filters.includeInactive) {
-    // ccm.active_status alone isn't enough: a cost centre can still be individually flagged
-    // active while its branch has since been closed (bm.active_status = 0). Same bug class as
-    // process-pnl.service.ts's getBaseProcesses fix — without this, "Active Cost Centres" counts
-    // cost centres orphaned under a closed branch, inflating the count.
-    where.push("ccm.active_status = 1", "COALESCE(bm.active_status, 1) = 1");
-  }
   if (filters.branchIds?.length) {
     where.push(`ccm.branch_id IN (${marks(filters.branchIds)})`);
     params.push(...filters.branchIds);
   }
   const [rows] = await db.execute<CostCentreRow[]>(
     `SELECT ccm.id, ccm.cost_centre_code, ccm.cost_centre_name, ccm.company_name,
-            ccm.active_status, ccm.branch_id, bm.branch_name, ${ccProcessNameSql()} AS process_name
+            ccm.active_status, bm.active_status AS branch_active_status,
+            ccm.branch_id, bm.branch_name, ${ccProcessNameSql()} AS process_name
        FROM cost_centre_master ccm
        LEFT JOIN branch_master bm ON bm.id = ccm.branch_id
        ${ccProcessJoin()}
@@ -319,47 +338,23 @@ async function readRevenue(period: string): Promise<Map<string, RevenueRow>> {
  * spend. The app's own grn_cost_allocation (carrying pnl_cost_amount, proper tax treatment) is now
  * the primary source; the mirror UNION only ever contributes a GRN the app has not captured.
  */
-async function readGrn(period: string): Promise<Map<string, number>> {
+/*
+ * 2026-09-23: both readers below are thin groupings over pnl-actuals.service.ts's readGrnSpend(),
+ * the single GRN reader shared with the P&L Statement (getIndirectCostActuals) and CEO Overview
+ * (spendByBranch). Before this, the app leg here had no OWN_COMPANY_SQL filter and no ordinary
+ * (non-Smart) GRN leg, so Live P&L's GRN disagreed with the other two tabs.
+ */
+function sumByCostCentre(rows: GrnSpendRow[]): Map<string, number> {
   const out = new Map<string, number>();
-
-  const [appRows] = await db.execute<MoneyRow[]>(
-    `SELECT a.cost_centre_id AS cost_centre_id, SUM(a.pnl_cost_amount) AS amount
-       FROM grn_cost_allocation a
-       JOIN grn_request gr ON gr.id = a.grn_request_id
-      WHERE a.lifecycle_status = 'consumed'
-        AND gr.accounting_period = ?
-      GROUP BY a.cost_centre_id`,
-    [period],
-  );
-  for (const row of appRows) if (row.cost_centre_id) out.set(String(row.cost_centre_id), n(row.amount));
-
-  if (await tableExists("grn_entry_line_snapshot")) {
-    const [rows] = await db.execute<MoneyRow[]>(
-      `SELECT ccm.id AS cost_centre_id, SUM(l.amount) AS amount
-         FROM grn_entry_line_snapshot l
-         JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
-         LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-                 = l.cost_centre_code COLLATE utf8mb4_unicode_ci
-        WHERE g.period_code = ? AND g.is_rejected = 0 AND ${OWN_COMPANY_SQL}
-          AND NOT EXISTS (
-                SELECT 1
-                  FROM grn_request gr2
-                  JOIN grn_cost_allocation a2 ON a2.grn_request_id = gr2.id
-                 WHERE gr2.grn_number = g.grn_no
-                   AND a2.lifecycle_status = 'consumed'
-              )
-        GROUP BY ccm.id`,
-      [period],
-    );
-    for (const row of rows) {
-      if (!row.cost_centre_id) continue;
-      const key = String(row.cost_centre_id);
-      out.set(key, (out.get(key) ?? 0) + n(row.amount));
-    }
+  for (const row of rows) {
+    if (!row.costCentreId) continue;
+    out.set(row.costCentreId, (out.get(row.costCentreId) ?? 0) + row.amount);
   }
-
   return out;
+}
+
+async function readGrn(period: string): Promise<Map<string, number>> {
+  return sumByCostCentre(await readGrnSpend(period, "consumed"));
 }
 
 /**
@@ -377,18 +372,7 @@ async function readGrn(period: string): Promise<Map<string, number>> {
  * not something the legacy db_bill snapshot (a bill inventory, not an approval queue) ever holds.
  */
 async function readGrnCommitted(period: string): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
-  const [rows] = await db.execute<MoneyRow[]>(
-    `SELECT a.cost_centre_id AS cost_centre_id, SUM(a.pnl_cost_amount) AS amount
-       FROM grn_cost_allocation a
-       JOIN grn_request gr ON gr.id = a.grn_request_id
-      WHERE a.lifecycle_status = 'reserved'
-        AND gr.accounting_period = ?
-      GROUP BY a.cost_centre_id`,
-    [period],
-  );
-  for (const row of rows) if (row.cost_centre_id) out.set(String(row.cost_centre_id), n(row.amount));
-  return out;
+  return sumByCostCentre(await readGrnSpend(period, "reserved"));
 }
 
 /**
@@ -461,6 +445,13 @@ async function readBudgets(period: string) {
   return { byCostCentre, byBranch };
 }
 
+/**
+ * CANONICAL branch-attribution rule for payroll (2026-09-23): pay is grouped by the EFFECTIVE cost
+ * centre (post-override) and so lands on that cost centre's branch; only staff with no cost centre
+ * at all fall back to their home branch (readUnallocatedPayroll, e.branch_id). CEO Overview
+ * (ceo-overview.service.ts peopleByBranch) and the trend (pnl-trend.service.ts) use the same rule.
+ * Not yet aligned: bpo-pnl.service.ts getPayrollPeople (Statement branch view) — see its comment.
+ */
 async function readPayroll(period: string): Promise<Map<string, { cost: number; staff: number }>> {
   const out = new Map<string, { cost: number; staff: number }>();
   if (!(await tableExists("salary_prep_line"))) return out;
@@ -640,7 +631,7 @@ export async function getPnlReconciliation(
     throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
   }
 
-  const [costCentres, revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut, unallocated] = await Promise.all([
+  const [allCostCentres, revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut, unallocated] = await Promise.all([
     readCostCentres(filters),
     readRevenue(period),
     readGrn(period),
@@ -673,14 +664,31 @@ export async function getPnlReconciliation(
     (seatBilling?.costCentres ?? []).map((item) => [item.costCentreId, item]),
   );
 
+  // Real money booked to this cost centre for THIS period — invoice/provision/credit note, consumed
+  // GRN, reserved GRN inside the estimate window, or payroll. Such a cost centre is always summed,
+  // whatever its (or its branch's) status is today: closing a branch must not erase its history.
+  const hasPeriodActivity = (id: string): boolean => {
+    const rev = revenue.get(id);
+    const hasRevenue = !!rev && (n(rev.invoice_amount) !== 0 || n(rev.provision_amount) !== 0 || n(rev.credit_note) !== 0);
+    return hasRevenue
+      || (grn.get(id) ?? 0) !== 0
+      || (estimateApplies && (grnCommitted.get(id) ?? 0) !== 0)
+      || (payroll.get(id)?.cost ?? 0) !== 0;
+  };
+  const costCentres = allCostCentres.filter(
+    (cc) => filters.includeInactive || isCurrentlyActive(cc) || hasPeriodActivity(String(cc.id)),
+  );
+
   const rows: PnlReconciliationRow[] = costCentres.map((cc) => {
+    const currentlyActive = isCurrentlyActive(cc);
     const rev = revenue.get(cc.id);
     const revenueInvoice = n(rev?.invoice_amount);
     const revenueProvision = n(rev?.provision_amount);
     const revenueAccrual = n(rev?.accrual_amount);
     const creditNote = n(rev?.credit_note);
     const seat = seatByCc.get(String(cc.id));
-    const useEstimate = estimateApplies && revenueInvoice === 0 && revenueAccrual === 0 && (seat?.toDate ?? 0) > 0;
+    // A cost centre closed today gets no fresh seat-rate estimate — it keeps only its real money.
+    const useEstimate = estimateApplies && currentlyActive && revenueInvoice === 0 && revenueAccrual === 0 && (seat?.toDate ?? 0) > 0;
     const revenueEstimated = useEstimate ? seat!.toDate : 0;
     const revenueBasis: PnlRevenueBasis = revenueInvoice > 0 ? "INVOICE" : revenueAccrual > 0 ? "ACCRUAL" : useEstimate ? "ESTIMATED" : "NONE";
     const recognisedRevenue = revenueInvoice + revenueAccrual + revenueEstimated - creditNote;
@@ -712,7 +720,7 @@ export async function getPnlReconciliation(
       costCentreName: String(cc.cost_centre_name ?? cc.cost_centre_code ?? "Unnamed cost centre"),
       costCentreProcess: cc.process_name ? String(cc.process_name) : null,
       companyName: cc.company_name ? String(cc.company_name) : null,
-      active: Number(cc.active_status ?? 0) === 1,
+      active: currentlyActive,
       revenueInvoice,
       revenueProvision,
       revenueAccrual,

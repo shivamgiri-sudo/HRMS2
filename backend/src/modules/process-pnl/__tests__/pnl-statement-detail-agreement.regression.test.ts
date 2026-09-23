@@ -68,12 +68,21 @@ function component(key: string, field: string, order: number) {
   };
 }
 
-async function buildStatement() {
+/** Same statement, also printing Total Cost and the published canonical ebit. */
+function getStatementWithTotals() {
+  return buildStatement([
+    component("total_cost", "totalCost", 3),
+    component("canonical_ebit", "canonicalEbit", 4),
+  ]);
+}
+
+async function buildStatement(extraComponents: ReturnType<typeof component>[] = []) {
   const period = closedPeriod();
   return getStatement({ period, branchId: BRANCH_ID } as never, "process", {
     getComponents: async () => [
       component("recognized_revenue", "recognizedRevenue", 1),
       component("operating_profit", "operatingProfit", 2),
+      ...extraComponents,
     ],
     getSummary: async () => ({
       rows: [{
@@ -111,14 +120,19 @@ describe("P&L Statement / Process Detail agreement (regression, 2026-09-01 sign-
     expect(revenue).not.toBe(BRANCH_WIDE_INVOICED_REVENUE);
   });
 
-  it("reads Operating Profit from the canonical ebit instead of a local recompute that can flip sign (A2)", async () => {
-    const statement = await buildStatement();
-    const operatingProfit = statement.rows.find((r) => r.componentKey === "operating_profit")?.values[PROCESS_ID];
-    expect(
-      operatingProfit,
-      "Operating Profit must equal the canonical row's own ebit for a process column",
-    ).toBe(CANONICAL_EBIT);
-    expect(Number(operatingProfit)).toBeLessThan(0);
+  /*
+   * A2 SUPERSEDED 2026-09-23: Operating Profit is Revenue − Total Cost in the process view too,
+   * like branch/LOB, so the column's own lines add up. The sign flip A2 guarded against came from
+   * the A3 broadcast (asserted above) and is still asserted below; the canonical ebit stays
+   * published as `canonicalEbit`.
+   */
+  it("prints Operating Profit = Revenue − Total Cost in a process column, and keeps canonical ebit alongside", async () => {
+    const statement = await getStatementWithTotals();
+    const value = (key: string) => Number(statement.rows.find((r) => r.componentKey === key)?.values[PROCESS_ID]);
+    expect(value("operating_profit")).toBe(value("recognized_revenue") - value("total_cost"));
+    expect(value("operating_profit")).toBe(-300_000); // 0 revenue − 3L agent salary − 0 IDC
+    expect(value("canonical_ebit")).toBe(CANONICAL_EBIT);
+    expect(value("operating_profit")).toBeLessThan(0);
   });
 
   it("agrees in sign with what the process detail sub-tab reports for the same process/period", async () => {

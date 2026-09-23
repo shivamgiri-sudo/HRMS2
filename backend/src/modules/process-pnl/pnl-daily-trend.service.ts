@@ -176,6 +176,11 @@ export async function getDailyTrend(
   const monthlyRevenue = forecast.projectedMonthEnd;
 
   // GRN spend by bill date.
+  // INTENTIONALLY diverges from pnl-actuals.service.ts's readGrnSpend() (the shared month-level GRN
+  // reader behind Statement / CEO / Live, 2026-09-23): this chart needs a DAY, which only bill_date
+  // carries (accounting_period is a month), and it reads grn_request headers only. Its
+  // COALESCE(pnl_cost_amount, amount_with_tax) fallback can include full GST on a legacy row with
+  // no pnl_cost_amount, so a month's daily bars need not sum exactly to the Statement's IDC.
   const grnByDay = new Map<string, number>();
   if (await tableExists("grn_request")) {
     const branchSql = options.branchId ? "AND g.branch_id = ?" : "";

@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
+import { getCurrentDateIST } from "../../shared/istDate.js";
 import { getInvoicedRevenueActuals, OWN_COMPANY_SQL, getApprovedCostCentreSplits } from "./pnl-actuals.service.js";
 import { resolveRevenueAtRisk } from "./canonical-pnl.service.js";
 import type {
@@ -295,12 +296,40 @@ function effectiveProcessExpr(alias: string, costCentreProcessIdSupported: boole
     : `${alias}.process_id`;
 }
 
+/**
+ * Same rule as pnl-statement.service.ts's isOpenPeriod (current IST month or later), duplicated
+ * rather than imported because pnl-statement -> canonical-pnl -> bpo-pnl -> this module would make
+ * the import circular.
+ */
+function isCurrentOrFuturePeriod(periodCode: string | undefined): boolean {
+  if (!periodCode) return true;
+  return periodCode >= getCurrentDateIST().slice(0, 7);
+}
+
+/** Branch ids explicitly closed today (branch_master.active_status = 0). */
+export async function getClosedBranchIds(): Promise<Set<string>> {
+  const rows = await queryRows<RowDataPacket>(
+    "SELECT id FROM branch_master WHERE active_status = 0",
+    []
+  );
+  return new Set(rows.map((row) => String(row.id)));
+}
+
 async function getBaseProcesses(filters: PnlQueryFilters): Promise<ProcessBaseRow[]> {
   // COALESCE(bm.active_status, 1) = 1 keeps a process visible even when its branch link is NULL
   // (unbranched process) or the joined branch has no active_status set, but drops any process
   // still attached to a branch explicitly closed (active_status = 0) — otherwise that branch
   // keeps surfacing in every "All branches" dropdown derived from this row set forever.
-  const conds = ["COALESCE(p.active_status, 1) = 1", "COALESCE(bm.active_status, 1) = 1"];
+  //
+  // PERIOD-AWARE (2026-09-23): this row set is also the base every money total is summed over
+  // (bpo-pnl.service.ts computeBranchRows -> getCachedAllocationSummary -> Statement columns,
+  // header KPIs, Full Waterfall). Filtering a CLOSED month by TODAY's branch status made closing a
+  // branch retroactively erase its real revenue/payroll/GRN from every past month. So the
+  // closed-branch filter applies only to the open (current/future) month; a past month keeps the
+  // closed branch's processes, and computeBranchRows then drops only those with no money at all
+  // (dropDormantClosedBranchRows) so a long-closed branch still does not reappear in dropdowns.
+  const conds = ["COALESCE(p.active_status, 1) = 1"];
+  if (isCurrentOrFuturePeriod(filters.period)) conds.push("COALESCE(bm.active_status, 1) = 1");
   const params: unknown[] = [];
 
   if (filters.branchId) {
@@ -1067,6 +1096,18 @@ async function getIndirectAllocationMap(
   const branchIds = Array.from(branchProcessMap.keys()).filter((id) => id !== "unassigned");
   const poolByBranch = new Map<string, number>();
 
+  /*
+   * INTENTIONALLY NOT pnl-actuals.service.ts's readGrnSpend() (the shared GRN reader the Statement,
+   * CEO Overview and Live P&L use — see its banner, 2026-09-23). This pool answers a different
+   * question: vendor PAYABLES classified 'indirect' (directCostClassExpr) falling DUE in the month
+   * (vendor_payment_tracking.due_amount by due_date), spread over a branch's processes by
+   * headcount — a payables/cash view for this legacy per-process engine, not accrual GRN
+   * consumption by accounting_period. The grn_request fallback below only runs when the payables
+   * table does not exist at all. Do not "reconcile" the two by editing one of them: a payable and
+   * the GRN it settles can sit in different months by design. Known consequence: bpo-pnl's
+   * bmcNonPeople reads this pool (base.indirectCost), so that one line is payables-based, while
+   * every GRN/IDC figure on Statement / CEO / Live comes from readGrnSpend().
+   */
   if (branchIds.length > 0 && await tableExists("vendor_payment_tracking")) {
     const resolvedProcessExpr = effectiveProcessExpr("vpt", costCentreProcessIdSupported);
     const rows = await queryRows<RowDataPacket>(

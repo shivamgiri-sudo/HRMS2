@@ -3,8 +3,11 @@ import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { getCachedAllocationSummary, normalizePeriod } from "./canonical-pnl.service.js";
 import {
   getDriverRevenueActuals, getIndirectCostActuals, getInvoicedRevenueActuals, getSeatRevenueActuals,
-  type ActualsByKey, type SeatRevenueActuals,
+  getCostCentreProcessIds, type ActualsByKey, type SeatRevenueActuals,
 } from "./pnl-actuals.service.js";
+import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
+import { isEstimateWindow } from "./pnl-seat-billing.service.js";
+import { getCurrentDateIST } from "../../shared/istDate.js";
 import { getRunningPeopleCost, type PeopleCostByKey } from "./pnl-running-salary.service.js";
 import { processLobService } from "./process-lob.service.js";
 import { getActualPeopleCost } from "./bpo-pnl.service.js";
@@ -211,7 +214,8 @@ function enrichColumn(
    * True only for a "process" view column, where `data` IS one single, unmodified canonical
    * BpoPnlRow (see the plain `row as unknown as Record<string, unknown>` mapping in getStatement)
    * — the same row bpoPnlAllocationOverlayService.getProcessDetail's sub-tab reads its own `ebit`
-   * from. A2 below trusts `data.ebit` ONLY in that case.
+   * from. Since 2026-09-23 it only decides whether that ebit is published alongside as
+   * `canonicalEbit`; Operating Profit itself is always Revenue − Total Cost (see below).
    *
    * NOT for "branch": aggregateByBranch() pre-sums every ADDITIVE_FIELDS entry including `ebit`
    * via sumField()/n(), which defaults a row with no `ebit` field at all to 0 — indistinguishable
@@ -226,7 +230,9 @@ function enrichColumn(
    * NOT for "lob": buildLobColumns() rows come from processLobService.getProcessSummary and carry
    * no `ebit` field at all — a different engine, different waterfall shape.
    */
-  trustCanonicalEbit: boolean
+  trustCanonicalEbit: boolean,
+  /** Live P&L's seat-rate estimate for not-yet-billed cost centres; see the revenue block below. */
+  estimate?: ActualsByKey
 ): Record<string, unknown> {
   /*
    * A6 FIX (2026-09-01): idc/seat must never inherit the WHOLE branch's total just because a
@@ -323,12 +329,34 @@ function enrichColumn(
    * invoiced/plannedRevenue are now the process's OWN figures only (pickOwnRevenue, no branch
    * broadcast — see A3 fix above), so this chain can no longer inherit branch-wide revenue.
    */
-  const recognizedRevenue = (!periodOpen && invoiced > 0)
-    ? invoiced
+  /*
+   * 2026-09-23 — the just-closed month (the page's DEFAULT view) now matches Live P&L and CEO.
+   *
+   * isOpenPeriod (this file) and isEstimateWindow (pnl-seat-billing.service.ts) deliberately
+   * answer different questions and are NOT merged: "is the month still running" (current IST month
+   * only — decides planned-vs-invoiced here and the people-cost source) versus "may invoices still
+   * be arriving" (current + previous month — decides whether an unbilled cost centre gets a seat
+   * rate x seats estimate). Merging them either way breaks a pinned rule: treating last month as
+   * open would swap its real invoices for the budget driver; treating it as outside the window
+   * would drop Live P&L's estimate for cost centres billed late.
+   *
+   * What was wrong is that Statement ignored the window entirely, so for last month it showed
+   * invoices only while Live P&L and CEO Overview showed invoices + the seat estimate for cost
+   * centres not yet billed. `estimate` is that SAME per-cost-centre figure (read from
+   * getPnlReconciliation, exactly as CEO Overview's estimateByBranch does), non-zero only for a
+   * closed month still inside the estimate window. Added to invoiced, it makes the three tabs'
+   * Recognised Revenue identical for that month. The current (running) month still shows planned
+   * revenue here by design (pnl-revenue-basis.test.ts pins it) — see getStatement's revenueBasis.
+   */
+  const estimated = periodOpen || !estimate ? 0 : (pickOwnRevenue(estimate) ?? 0);
+  const billedPlusEstimate = invoiced + estimated;
+  const recognizedRevenue = (!periodOpen && billedPlusEstimate > 0)
+    ? billedPlusEstimate
     : (existingRevenue > 0 ? existingRevenue : plannedRevenue);
   out.recognizedRevenue = recognizedRevenue;
   out.plannedRevenue = plannedRevenue;
   out.invoicedRevenue = invoiced;
+  out.revenueEstimated = (!periodOpen && billedPlusEstimate > 0) ? estimated : 0;
   /*
    * A4: surface "no revenue rule configured" on the statement the same way bpo-pnl.service.ts's
    * REVENUE_RULE_MISSING alert already does for the per-process detail — the canonical row already
@@ -336,7 +364,7 @@ function enrichColumn(
    * "accounting_fallback") via the `...data` spread below reads from the source row; passed through
    * unchanged here for a process column so both surfaces agree on WHY a revenue figure is what it is.
    */
-  out.revenueBasis = (!periodOpen && invoiced > 0)
+  out.revenueBasis = (!periodOpen && billedPlusEstimate > 0)
     ? "invoiced"
     : (existingRevenue > 0 ? "row" : "planned");
 
@@ -467,10 +495,23 @@ function enrichColumn(
    * produces on its own terms, not a stand-in for a missing better answer, so this is not a case of
    * silently accepting worse data — the two are cross-checked in lob reconciliation elsewhere.
    */
+  /*
+   * SUPERSEDED 2026-09-23 — Operating Profit is Revenue − Total Cost in EVERY view, process
+   * included. The A2 note above is kept for its history, but its premise no longer holds: the
+   * sign flip it describes came from the branch-broadcast revenue/IDC bugs (A3, A6), both fixed
+   * at the source since. What A2 left behind was a process column whose Operating Profit row
+   * (canonical ebit: bpo-pnl's own people cost, payables-based BMC and GRN) could not be derived
+   * from the Revenue and Total Cost rows printed directly above it (this function's snapshot /
+   * actual payroll and readGrnSpend IDC) — OP ≠ Revenue − Total Cost inside one column, while the
+   * branch and LOB views held the identity. Now all three views print a self-consistent
+   * waterfall. The canonical figure is still published, as `canonicalEbit`, so a reader
+   * reconciling against the Process Detail sub-tab can see both.
+   */
   const canonicalEbit = out.ebit;
-  out.operatingProfit = (trustCanonicalEbit && canonicalEbit !== undefined && canonicalEbit !== null)
-    ? n(canonicalEbit)
-    : recognizedRevenue - totalCost;
+  if (trustCanonicalEbit && canonicalEbit !== undefined && canonicalEbit !== null) {
+    out.canonicalEbit = n(canonicalEbit);
+  }
+  out.operatingProfit = recognizedRevenue - totalCost;
 
   // How much of this column's headcount the people cost actually covers. An employee who earned
   // nothing this month — no present days, or no salary assigned — contributes no cost, so a column
@@ -519,6 +560,43 @@ export interface StatementDependencies {
   getManualAdjustments?: (period: string) => Promise<Map<string, {
     approvedProjectedRevenue: number; approvedRewards: number; approvedPenalties: number; pendingCount: number;
   }>>;
+  /** Live P&L's seat-rate revenue estimate for not-yet-billed cost centres (see enrichColumn). */
+  getRevenueEstimate?: (period: string) => Promise<ActualsByKey>;
+}
+
+const emptyEstimate = (): ActualsByKey => ({ byBranch: new Map(), byProcess: new Map(), byCostCentre: new Map() });
+
+const LIVE_ESTIMATE_TTL_MS = 60_000;
+const liveEstimateCache = new Map<string, { at: number; value: Promise<ActualsByKey> }>();
+
+/**
+ * The seat-rate estimate Live P&L adds for cost centres a month has not invoiced yet, keyed by
+ * branch / process / cost centre. Read from getPnlReconciliation itself (company-wide, same as
+ * CEO Overview's estimateByBranch) so the figure is the identical one, not a re-derivation.
+ * Process attribution uses getCostCentreProcessIds — the rule invoice revenue is attributed by.
+ * Cached for 60s (same as CEO Overview): the reconciliation is not cheap.
+ */
+export async function getLiveRevenueEstimate(period: string): Promise<ActualsByKey> {
+  const hit = liveEstimateCache.get(period);
+  if (hit && Date.now() - hit.at < LIVE_ESTIMATE_TTL_MS) return hit.value;
+  const value = (async () => {
+    const out = emptyEstimate();
+    const rec = await getPnlReconciliation(period);
+    const estimated = rec.rows.filter((row) => row.revenueEstimated > 0);
+    const processByCc = await getCostCentreProcessIds(estimated.map((row) => row.costCentreId));
+    for (const row of estimated) {
+      const amount = row.revenueEstimated;
+      out.byCostCentre.set(row.costCentreId, (out.byCostCentre.get(row.costCentreId) ?? 0) + amount);
+      if (row.branchId) out.byBranch.set(row.branchId, (out.byBranch.get(row.branchId) ?? 0) + amount);
+      const processId = processByCc.get(row.costCentreId);
+      if (processId) out.byProcess.set(processId, (out.byProcess.get(processId) ?? 0) + amount);
+    }
+    return out;
+  })();
+  liveEstimateCache.set(period, { at: Date.now(), value });
+  value.catch(() => liveEstimateCache.delete(period));
+  if (liveEstimateCache.size > 12) liveEstimateCache.delete(liveEstimateCache.keys().next().value as string);
+  return value;
 }
 
 /*
@@ -627,6 +705,12 @@ export async function getStatement(
     (deps.getPeopleCost ?? getRunningPeopleCost)(periodCode),
     (deps.getManualAdjustments ?? getApprovedAdjustmentsByProcess)(periodCode),
   ]);
+  // Only a CLOSED month still inside the estimate window can carry one (see enrichColumn). Any
+  // failure degrades to "no estimate", exactly as Live P&L and CEO Overview degrade.
+  const estimateApplies = !periodOpen && isEstimateWindow(periodCode, getCurrentDateIST());
+  const estimate = estimateApplies
+    ? await (deps.getRevenueEstimate ?? getLiveRevenueEstimate)(periodCode).catch(() => emptyEstimate())
+    : emptyEstimate();
   columnData = columnData.map((item) => {
     const data = enrichColumn(
       item.data,
@@ -640,7 +724,8 @@ export async function getStatement(
       seat,
       people,
       periodOpen,
-      viewBy === "process"
+      viewBy === "process",
+      estimate
     );
     // Coverage belongs on the column, not among the money rows: it qualifies how far the whole
     // column can be trusted, and a consumer must be able to see that before reading any figure in it.
@@ -703,6 +788,8 @@ export async function getStatement(
      */
     revenueBasis: periodOpen ? "planned" : "invoiced",
     periodOpen,
+    /** Rs of Live P&L's seat-rate estimate included in Recognised Revenue (last month only). */
+    revenueEstimated: columnData.reduce((t, item) => t + n(item.data.revenueEstimated), 0),
     columns: columnData.map((item) => item.column),
     rows: statementRows,
   };
