@@ -11,6 +11,7 @@ const MIGRATIONS_VERIFY_ONLY = process.env.MIGRATIONS_VERIFY_ONLY === "true";
 import { initBusinessActionSyncJobs } from "./cron/business-action-sync.cron.js";
 import { startEmployeeMasterSnapshotScheduler } from "./cron/employee-master-snapshot.cron.js";
 import { startExitAutoAdvanceScheduler, stopExitAutoAdvanceScheduler } from "./cron/exitAutoAdvance.cron.js";
+import { startMetaLeadSyncScheduler, stopMetaLeadSyncScheduler } from "./cron/metaLeadSync.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
 import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
 import { startCelebrationScheduler } from "./modules/engagement/celebration.cron.js";
@@ -118,6 +119,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     stopPerformanceIngestionScheduler();
     stopDailyGamesScheduler();
     stopExitAutoAdvanceScheduler();
+    stopMetaLeadSyncScheduler();
 
     // Clear all registered timers
     clearAllTimers();
@@ -276,6 +278,9 @@ function startServer() {
         // Auto-advances exits from notice_active/terminated → exited when LWD has passed
         // and all clearance tasks are cleared. Runs daily at 00:30 IST.
         startExitAutoAdvanceScheduler();
+        // Hourly pull of new Meta Lead Ads leads + campaign metrics.
+        // Idempotent safety net — skips already-imported leads, no-ops if META_MARKETING_ACCESS_TOKEN unset.
+        startMetaLeadSyncScheduler();
         startBreachSlaCron();
         startRetentionCron();
         // D-SLA-01: replaces the inline refreshSlaBreachFlags() call removed from
