@@ -80,6 +80,18 @@ describe("Process P&L page matrix contracts", () => {
   });
 });
 
+describe("Header fallback is independent of the Statement tab's View-by (audit item 8)", () => {
+  it("reads a statement query pinned to the branch view, not the tab's selection", () => {
+    expect(pageSource).toContain('usePnlStatement(filters, "branch", { enabled:');
+    const start = pageSource.indexOf("const statementTotal =");
+    expect(start).toBeGreaterThan(-1);
+    const totalFn = pageSource.slice(start, start + 400);
+    expect(totalFn).toContain("headerStatementQuery.data?.rows");
+    // Case-sensitive: "headerStatementQuery" does not contain "statementQuery".
+    expect(totalFn).not.toContain("statementQuery.data?.rows");
+  });
+});
+
 describe("P&L running-salary snapshot freshness", () => {
   const statementSource = readFileSync(
     resolve(process.cwd(), "src/components/finance/pnl/PnlStatementView.tsx"),

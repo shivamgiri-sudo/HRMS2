@@ -212,19 +212,28 @@ export default function ProcessPnlPage() {
    * this quietly hides that the process-level configuration was never done, and nobody ever
    * fills those four tables in.
    */
+  const bpoHasMoney = Boolean(summary) && [
+    summary?.kpis.recognizedRevenue, summary?.kpis.agentSalary,
+    summary?.kpis.dsc, summary?.kpis.bmc,
+  ].some((v) => Math.abs(Number(v ?? 0)) > 0.5);
+
+  /*
+   * The header's fallback reads its OWN statement query, pinned to the branch view (audit item 8).
+   * It used to sum whichever view the Statement tab's "View by" dropdown had selected, so toggling
+   * Process ↔ Branch on that tab changed the header figures — the process view counts only
+   * process-attributable revenue, the branch view the whole company. The branch view is the
+   * company-level total, so it is the fixed basis. Same query key as the Statement tab's branch
+   * view (shared cache), and only fetched when the fallback can actually be needed.
+   */
+  const headerStatementQuery = usePnlStatement(filters, "branch", { enabled: Boolean(summary) && !bpoHasMoney });
   const statementTotal = (componentKey: string): number | null => {
-    const rows = statementQuery.data?.rows;
-    const columns = statementQuery.data?.columns;
+    const rows = headerStatementQuery.data?.rows;
+    const columns = headerStatementQuery.data?.columns;
     if (!rows || !columns) return null;
     const row = rows.find((r) => r.componentKey === componentKey);
     if (!row) return null;
     return columns.reduce((total, column) => total + Number(row.values[column.id] ?? 0), 0);
   };
-
-  const bpoHasMoney = Boolean(summary) && [
-    summary?.kpis.recognizedRevenue, summary?.kpis.agentSalary,
-    summary?.kpis.dsc, summary?.kpis.bmc,
-  ].some((v) => Math.abs(Number(v ?? 0)) > 0.5);
 
   const fallbackRevenue = statementTotal("recognized_revenue");
   const useStatementFallback = Boolean(summary) && !bpoHasMoney
