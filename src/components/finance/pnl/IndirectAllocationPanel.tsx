@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { PnlPeriodCloseData } from "@/hooks/usePnlReconciliation";
+import { pnlLabel } from "./pnlLabels";
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-IN", {
@@ -29,7 +30,7 @@ export function IndirectAllocationPanel({
               <thead>
                 <tr className="border-b border-slate-100 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                   <th className="px-4 py-2">Branch</th>
-                  <th className="px-4 py-2 text-right">Active HC</th>
+                  <th className="px-4 py-2 text-right">{pnlLabel("ACTIVE_HEADCOUNT")}</th>
                   <th className="px-4 py-2 text-right">Share of overhead</th>
                   <th className="px-4 py-2 text-right">Revenue</th>
                   <th className="px-4 py-2 text-right">Indirect cost</th>

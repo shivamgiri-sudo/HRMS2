@@ -1,4 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { pnlLabel } from "./pnlLabels";
 
 function formatNumber(value: number | null | undefined, digits = 0) {
   if (value == null) return "-";
@@ -34,7 +35,7 @@ export function WorkforceCostBridge({
   const items = [
     { label: "Required productive HC", value: formatNumber(metrics.requiredProductiveHc) },
     { label: "Required roster HC", value: formatNumber(metrics.requiredRosterHc) },
-    { label: "Active HC", value: formatNumber(metrics.activeHc) },
+    { label: pnlLabel("ACTIVE_HEADCOUNT"), value: formatNumber(metrics.activeHc) },
     { label: "Deployed HC", value: formatNumber(metrics.deployedHc) },
     { label: "Billable HC", value: formatNumber(metrics.billableHc) },
     { label: "Planned buffer", value: `${formatNumber(metrics.plannedBufferPct, 1)}%` },

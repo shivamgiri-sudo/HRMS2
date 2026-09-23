@@ -117,8 +117,9 @@ describe("P&L running-salary snapshot freshness", () => {
   });
 
   it("states the snapshot's age rather than implying the cost is current", () => {
-    expect(statementSource).toContain("People cost as of");
-    expect(statementSource).toContain("No people-cost snapshot for this period");
+    // Capitalised to the shared glossary's "People Cost" (audit items 23/24/28); same meaning.
+    expect(statementSource).toContain("People Cost as of");
+    expect(statementSource).toContain("No People Cost snapshot for this period");
     expect(statementSource).toContain("isStale");
   });
 

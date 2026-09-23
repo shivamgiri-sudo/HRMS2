@@ -36,6 +36,7 @@ import {
   type HeaderCostLineKey,
   type HeaderKpiBasis,
 } from "@/components/finance/pnl/headerKpiBasis";
+import { pnlLabel, pnlTooltip } from "@/components/finance/pnl/pnlLabels";
 import { getIssueCounts, type ProcessPnlDensity, type ProcessPnlIssueFilter, type ProcessPnlMatrixPreset, type ProcessPnlStatusFilter } from "@/components/finance/pnl/processPnlMatrixConfig";
 
 const MATRIX_VIEW_STORAGE_KEY = "process-pnl-matrix:view";
@@ -281,20 +282,24 @@ export default function ProcessPnlPage() {
   const revenueV = basis?.revenue ?? 0;
   const pct = pctOf;
 
+  // Names and tooltips from the shared P&L glossary (audit items 23/24/28).
   const costLineLabel: Record<HeaderCostLineKey, string> = {
-    people: "People Cost",
-    indirect: "Indirect Cost (GRN)",
-    grnConsumed: "GRN Consumed",
-    grnCommitted: "GRN Committed (reserved)",
+    people: pnlLabel("PEOPLE_COST"),
+    indirect: pnlLabel("INDIRECT_COST"),
+    grnConsumed: pnlLabel("GRN_CONSUMED"),
+    grnCommitted: pnlLabel("GRN_COMMITTED"),
     other: "Other cost (engine residual)",
   };
   const costLineHint: Record<HeaderCostLineKey, string> = {
-    people: "Salary cost of staff: posted payroll where the month's run exists, otherwise the running salary snapshot.",
-    indirect: "Vendor spend booked through GRNs against the month.",
-    grnConsumed: "GRN spend already consumed against bills for the month.",
-    grnCommitted: "Approved GRN spend reserved but not yet consumed — a committed estimate, subtracted in Operating Profit.",
-    other: "The engine's Operating Profit differs from Revenue minus the cost lines it publishes by this amount; shown so the tiles still add up.",
+    people: pnlTooltip("PEOPLE_COST"),
+    indirect: pnlTooltip("INDIRECT_COST"),
+    grnConsumed: pnlTooltip("GRN_CONSUMED"),
+    grnCommitted: pnlTooltip("GRN_COMMITTED"),
+    other: "The engine's Operating Profit differs from Recognised Revenue minus the cost lines it publishes by this amount; shown so the tiles still add up.",
   };
+  // Under the Live basis the header shows the Live P&L's own figure, so it carries that figure's
+  // name — the same "Operating Profit (contribution)" as the Live P&L and CEO Overview tabs.
+  const opTerm = basis?.source === "live" ? "OPERATING_PROFIT_CONTRIBUTION" : "OPERATING_PROFIT";
 
   const buildKpiItems = (b: HeaderKpiBasis) => {
     const liveTotals = b.source === "live" ? live?.totals : undefined;
@@ -305,7 +310,7 @@ export default function ProcessPnlPage() {
     const splitPct = (value: number, enginePct: number | null | undefined) =>
       b.source === "process" && enginePct != null ? enginePct : pct(value, b.revenue);
     return [
-      { label: "Recognised Revenue", value: b.revenue, kind: "currency" as const, tone: "good" as const },
+      { label: pnlLabel("RECOGNISED_REVENUE"), value: b.revenue, kind: "currency" as const, tone: "good" as const, hint: pnlTooltip("RECOGNISED_REVENUE") },
       ...(liveTotals && (liveTotals.revenueEstimated ?? 0) > 0 ? [{
         label: `of which estimated (seat rate · ${liveTotals.estimatedCostCentres} CC)`,
         value: liveTotals.revenueEstimated,
@@ -314,13 +319,13 @@ export default function ProcessPnlPage() {
       }] : []),
       ...(liveTotals ? [{ label: "Revenue per day", value: liveTotals.perDayRevenue ?? 0, kind: "currency" as const }] : []),
       {
-        label: b.peopleCostMissing ? "People Cost (not run yet)" : "People Cost",
+        label: b.peopleCostMissing ? `${pnlLabel("PEOPLE_COST")} (not run yet)` : pnlLabel("PEOPLE_COST"),
         value: peopleCost,
         kind: "currency" as const,
         tone: "warning" as const,
         hint: costLineHint.people,
       },
-      ...(b.peopleCostMissing ? [] : [{ label: "People Cost / revenue", value: pct(peopleCost, b.revenue), kind: "percent" as const }]),
+      ...(b.peopleCostMissing ? [] : [{ label: `${pnlLabel("PEOPLE_COST")} / revenue`, value: pct(peopleCost, b.revenue), kind: "percent" as const }]),
       ...(split ? [
         { label: "of which Agent salary", value: split.agentSalary, kind: "currency" as const },
         { label: "Agent salary / revenue", value: splitPct(split.agentSalary, summary?.kpis.agentSalaryPctRevenue), kind: "percent" as const },
@@ -351,15 +356,15 @@ export default function ProcessPnlPage() {
         },
       ] : []),
       {
-        label: b.peopleCostMissing ? "Operating Profit (excl. people cost)" : "Operating Profit",
+        label: b.peopleCostMissing ? `${pnlLabel(opTerm)} (excl. People Cost)` : pnlLabel(opTerm),
         value: b.operatingProfit,
         kind: "currency" as const,
         tone: b.peopleCostMissing ? ("warning" as const) : b.operatingProfit >= 0 ? ("good" as const) : ("danger" as const),
-        hint: `Recognised Revenue minus ${b.costLines.map((line) => costLineLabel[line.key]).join(", ")}.`,
+        hint: `${pnlLabel("RECOGNISED_REVENUE")} minus ${b.costLines.map((line) => costLineLabel[line.key]).join(", ")}. ${pnlTooltip(opTerm)}`,
       },
       // Null when the engine says no margin is meaningful yet — omitted rather than shown as 0%.
       ...(b.marginPct == null ? [] : [{
-        label: "Operating Margin %",
+        label: pnlLabel("OPERATING_MARGIN"),
         value: b.marginPct,
         kind: "percent" as const,
         tone: b.marginPct >= 0 ? ("good" as const) : ("danger" as const),
@@ -407,7 +412,7 @@ export default function ProcessPnlPage() {
             {summary && (
               <>
                 <div className="border-l-[3px] border-primary pl-2.5">
-                  <p className="text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground">Recognized revenue</p>
+                  <p className="text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground" title={pnlTooltip("RECOGNISED_REVENUE")}>{pnlLabel("RECOGNISED_REVENUE")}</p>
                   <p className="text-lg font-extrabold tabular-nums text-foreground">{formatCurrency(revenueV, true)}</p>
                 </div>
                 {kpiSource === "statement" && (
@@ -579,7 +584,7 @@ export default function ProcessPnlPage() {
                 {basis && basis.revenue > 0 && (
                   <div className="border border-border bg-card px-4 py-3">
                     <p className="text-[10px] font-extrabold uppercase tracking-[0.11em] text-muted-foreground">
-                      Cost mix (% of Recognised Revenue · {kpiSource === "live" ? "Live P&L" : kpiSource === "statement" ? "P&L Statement" : "process engine"})
+                      Cost mix (% of {pnlLabel("RECOGNISED_REVENUE")} ·{kpiSource === "live" ? "Live P&L" : kpiSource === "statement" ? "P&L Statement" : "process engine"})
                     </p>
                     <div className="mt-2 flex h-6 w-full overflow-hidden rounded-sm border border-border">
                       {costMixSegments.map((seg) => (
@@ -595,11 +600,11 @@ export default function ProcessPnlPage() {
                       {costMixSegments.map((seg) => (
                         <span key={seg.key}><span className={`inline-block h-2 w-2 rounded-full ${seg.fill}`} /> {seg.label} {pct(seg.value, basis.revenue).toFixed(1)}%</span>
                       ))}
-                      <span>Operating Profit {pct(basis.operatingProfit, basis.revenue).toFixed(1)}%</span>
+                      <span>{pnlLabel(opTerm)} {pct(basis.operatingProfit, basis.revenue).toFixed(1)}%</span>
                     </div>
                     {basis.peopleSplit && (
                       <p className="mt-1 text-[11px] text-muted-foreground">
-                        People Cost split: Agent salary {pct(basis.peopleSplit.agentSalary, basis.revenue).toFixed(1)}%
+                        {pnlLabel("PEOPLE_COST")} split: Agent salary {pct(basis.peopleSplit.agentSalary, basis.revenue).toFixed(1)}%
                         {" · "}DSC {pct(basis.peopleSplit.dsc, basis.revenue).toFixed(1)}%
                         {" · "}BMC {pct(basis.peopleSplit.bmc, basis.revenue).toFixed(1)}%
                       </p>
@@ -644,10 +649,10 @@ export default function ProcessPnlPage() {
                         <div className="space-y-4">
                           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-5">
                             {[
-                              { label: "Revenue", value: ytdQuery.data.totalRevenue, tone: "text-slate-900" },
-                              { label: "People Cost", value: ytdQuery.data.totalPeopleCost, tone: "text-slate-700" },
-                              { label: "Indirect Cost", value: ytdQuery.data.totalIndirectCost, tone: "text-slate-700" },
-                              { label: "Operating Profit", value: ytdQuery.data.totalOperatingProfit, tone: ytdQuery.data.totalOperatingProfit >= 0 ? "text-emerald-700 font-semibold" : "text-rose-700 font-semibold" },
+                              { label: pnlLabel("RECOGNISED_REVENUE"), value: ytdQuery.data.totalRevenue, tone: "text-slate-900" },
+                              { label: pnlLabel("PEOPLE_COST"), value: ytdQuery.data.totalPeopleCost, tone: "text-slate-700" },
+                              { label: pnlLabel("INDIRECT_COST"), value: ytdQuery.data.totalIndirectCost, tone: "text-slate-700" },
+                              { label: pnlLabel("OPERATING_PROFIT"), value: ytdQuery.data.totalOperatingProfit, tone: ytdQuery.data.totalOperatingProfit >= 0 ? "text-emerald-700 font-semibold" : "text-rose-700 font-semibold" },
                               { label: "Budget (allocated)", value: ytdQuery.data.totalBudget, tone: "text-blue-700" },
                             ].map((item) => (
                               <div key={item.label} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
@@ -658,7 +663,7 @@ export default function ProcessPnlPage() {
                           </div>
                           {ytdQuery.data.marginPct != null && (
                             <p className="text-xs text-slate-500">
-                              YTD operating margin: <span className={`font-semibold ${ytdQuery.data.marginPct >= 8 ? "text-emerald-700" : "text-rose-700"}`}>{ytdQuery.data.marginPct.toFixed(1)}%</span>
+                              YTD {pnlLabel("OPERATING_MARGIN")}: <span className={`font-semibold ${ytdQuery.data.marginPct >= 8 ? "text-emerald-700" : "text-rose-700"}`}>{ytdQuery.data.marginPct.toFixed(1)}%</span>
                               {" · "}Budget consumed: <span className="font-semibold text-slate-700">{ytdQuery.data.totalBudget > 0 ? `${((ytdQuery.data.totalIndirectCost / ytdQuery.data.totalBudget) * 100).toFixed(1)}%` : "—"}</span>
                             </p>
                           )}

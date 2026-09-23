@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { costCentreText } from "./costCentreLabel";
+import { pnlLabel } from "./pnlLabels";
 import { usePnlTrendSeries, type TrendGrain, type TrendPoint, type TrendScopeType } from "@/hooks/usePnlTrendSeries";
 
 /**
@@ -21,9 +22,9 @@ import { usePnlTrendSeries, type TrendGrain, type TrendPoint, type TrendScopeTyp
  */
 
 const CHART_CONFIG = {
-  revenue: { label: "Revenue", theme: { light: "#2a78d6", dark: "#3987e5" } },
-  salary: { label: "Salary cost", theme: { light: "#eb6834", dark: "#d95926" } },
-  idc: { label: "IDC (vendor / GRN)", theme: { light: "#1baf7a", dark: "#199e70" } },
+  revenue: { label: pnlLabel("RECOGNISED_REVENUE"), theme: { light: "#2a78d6", dark: "#3987e5" } },
+  salary: { label: pnlLabel("PEOPLE_COST"), theme: { light: "#eb6834", dark: "#d95926" } },
+  idc: { label: pnlLabel("INDIRECT_COST"), theme: { light: "#1baf7a", dark: "#199e70" } },
   positive: { label: "Positive margin", theme: { light: "#2a78d6", dark: "#3987e5" } },
   negative: { label: "Negative margin", theme: { light: "#e34948", dark: "#e66767" } },
 } satisfies ChartConfig;
@@ -113,12 +114,12 @@ function TrendTooltip({ active, payload }: { active?: boolean; payload?: Array<{
   const row = active ? payload?.[0]?.payload : undefined;
   if (!row) return null;
   const lines: Array<{ key: string; label: string; value: string; colorVar?: string; dash?: boolean }> = [
-    { key: "rev", label: "Revenue", value: inrCompact(row.revenue), colorVar: "--color-revenue" },
+    { key: "rev", label: pnlLabel("RECOGNISED_REVENUE"), value: inrCompact(row.revenue), colorVar: "--color-revenue" },
     ...(row.revenueEstimated > 0 ? [{ key: "est", label: "of which estimated", value: inrCompact(row.revenueEstimated), colorVar: "--color-revenue", dash: true }] : []),
-    { key: "sal", label: row.salaryMissing ? "Salary cost (not run yet)" : "Salary cost", value: row.salaryMissing ? "—" : inrCompact(row.salary), colorVar: "--color-salary" },
-    { key: "idc", label: "IDC (vendor / GRN)", value: inrCompact(row.idc), colorVar: "--color-idc" },
-    { key: "op", label: "Operating profit", value: inrCompact(row.op) },
-    { key: "pct", label: "OP %", value: pctLabel(row.opPct) },
+    { key: "sal", label: row.salaryMissing ? `${pnlLabel("PEOPLE_COST")} (not run yet)` : pnlLabel("PEOPLE_COST"), value: row.salaryMissing ? "—" : inrCompact(row.salary), colorVar: "--color-salary" },
+    { key: "idc", label: pnlLabel("INDIRECT_COST"), value: inrCompact(row.idc), colorVar: "--color-idc" },
+    { key: "op", label: pnlLabel("OPERATING_PROFIT_CONTRIBUTION"), value: inrCompact(row.op) },
+    { key: "pct", label: pnlLabel("OPERATING_MARGIN"), value: pctLabel(row.opPct) },
   ];
   return (
     <div className="min-w-52 rounded-xl border border-border bg-popover/95 px-3 py-2 text-xs shadow-lg backdrop-blur-sm">
@@ -255,18 +256,18 @@ export function PnlTrendExplorer({ period, branchId }: { period: string; branchI
       ) : (
         <div className={`transition-opacity duration-200 ${dim ? "opacity-60" : ""}`}>
           <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-5">
-            <StatTile label="Revenue" value={inrCompact(t?.revenue)} sub={(t?.revenueEstimated ?? 0) > 0 ? `incl. ${inrCompact(t?.revenueEstimated)} estimated` : undefined} tone={(t?.revenueEstimated ?? 0) > 0 ? "warn" : undefined} />
-            <StatTile label="Salary cost" value={complete.length ? inrCompact(sumOf(complete, (r) => r.salary ?? 0)) : "Not run yet"} sub={excludedNote} tone={excludedNote ? "warn" : undefined} />
-            <StatTile label="IDC (vendor / GRN)" value={inrCompact(t?.idc)} />
-            <StatTile label="Operating profit" value={inrCompact(knownOp)} sub={excludedNote} tone={knownOp == null ? undefined : knownOp >= 0 ? "good" : "bad"} />
-            <StatTile label="OP %" value={pctLabel(knownOpPct)} sub={excludedNote ? "same periods as operating profit" : undefined} tone={knownOpPct == null ? undefined : knownOpPct >= 0 ? "good" : "bad"} />
+            <StatTile label={pnlLabel("RECOGNISED_REVENUE")} value={inrCompact(t?.revenue)} sub={(t?.revenueEstimated ?? 0) > 0 ? `incl. ${inrCompact(t?.revenueEstimated)} estimated` : undefined} tone={(t?.revenueEstimated ?? 0) > 0 ? "warn" : undefined} />
+            <StatTile label={pnlLabel("PEOPLE_COST")} value={complete.length ? inrCompact(sumOf(complete, (r) => r.salary ?? 0)) : "Not run yet"} sub={excludedNote} tone={excludedNote ? "warn" : undefined} />
+            <StatTile label={pnlLabel("INDIRECT_COST")} value={inrCompact(t?.idc)} />
+            <StatTile label={pnlLabel("OPERATING_PROFIT_CONTRIBUTION")} value={inrCompact(knownOp)} sub={excludedNote} tone={knownOp == null ? undefined : knownOp >= 0 ? "good" : "bad"} />
+            <StatTile label={pnlLabel("OPERATING_MARGIN")} value={pctLabel(knownOpPct)} sub={excludedNote ? "same periods as Operating Profit" : undefined} tone={knownOpPct == null ? undefined : knownOpPct >= 0 ? "good" : "bad"} />
           </div>
 
           {showTable ? (
             <div className="overflow-x-auto rounded-xl border border-border">
               <table className="w-full min-w-[640px] text-left text-xs">
                 <thead className="bg-muted/60 text-[11px] uppercase text-muted-foreground">
-                  <tr>{["Period", "Revenue", "of which est.", "Salary", "IDC", "Operating profit", "OP %"].map((h, i) => <th key={h} className={`px-3 py-2 ${i ? "text-right" : ""}`}>{h}</th>)}</tr>
+                  <tr>{["Period", pnlLabel("RECOGNISED_REVENUE"), "of which est.", pnlLabel("PEOPLE_COST"), pnlLabel("INDIRECT_COST"), pnlLabel("OPERATING_PROFIT_CONTRIBUTION"), pnlLabel("OPERATING_MARGIN")].map((h, i) => <th key={h} className={`px-3 py-2 ${i ? "text-right" : ""}`}>{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {rows.map((r) => (
@@ -334,7 +335,7 @@ export function PnlTrendExplorer({ period, branchId }: { period: string; branchI
 
               <div className="mt-3 flex items-center justify-between">
                 <p className="text-xs font-semibold text-foreground">
-                  Operating margin (OP %)
+                  {pnlLabel("OPERATING_MARGIN")}
                   {opCapped && <span className="ml-2 font-normal text-muted-foreground">axis capped at ±100% — hover or open the table for exact values</span>}
                 </p>
                 <span className="flex items-center gap-3">

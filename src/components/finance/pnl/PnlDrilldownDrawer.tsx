@@ -2,6 +2,7 @@ import { AlertTriangle, Info, Loader2 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { money, dateTimeLabel } from "@/components/finance/grn/grn-format";
+import { pnlLabel } from "./pnlLabels";
 import {
   usePnlDrilldown,
   type PnlDrilldownMetric,
@@ -23,9 +24,9 @@ import {
  */
 
 const METRIC_LABEL: Record<PnlDrilldownMetric, string> = {
-  revenue: "Revenue",
-  people: "People cost",
-  indirect: "Indirect / GRN spend",
+  revenue: pnlLabel("RECOGNISED_REVENUE"),
+  people: pnlLabel("PEOPLE_COST"),
+  indirect: pnlLabel("INDIRECT_COST"),
   budget: "Budget",
 };
 
