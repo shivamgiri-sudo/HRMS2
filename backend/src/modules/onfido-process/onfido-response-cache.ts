@@ -30,7 +30,8 @@ export function clearOnfidoResponseCache(): void {
 }
 
 function isCacheable(req: Request): boolean {
-  return req.method === "GET" && !req.path.startsWith("/live/") && !req.path.startsWith("/live");
+  // /wfm-inputs is hand-entered and can differ per viewer (can-edit), so it is never shared.
+  return req.method === "GET" && !req.path.startsWith("/live/") && !req.path.startsWith("/live") && !req.path.startsWith("/wfm-inputs");
 }
 
 function remember(key: string, body: unknown): void {

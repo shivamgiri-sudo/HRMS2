@@ -9,6 +9,10 @@ import {
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import OnfidoOverviewReport from "./OnfidoOverviewReport";
+import OnfidoAnalystReport from "./OnfidoAnalystReport";
+import OnfidoUtilizationReport from "./OnfidoUtilizationReport";
+import { shiftDays } from "./onfidoReportShared";
 import "./onfido-central-theme.css";
 
 /**
@@ -70,7 +74,7 @@ interface TableInfo { key: string; table: string; name: string; description: str
 type RawRecord = Record<string, unknown> & { id: string; raw_data: Record<string, unknown> };
 
 type ViewKey =
-  | "overview" | "analyst" | "trends" | "alerts" | "attrition" | "etm" | "taskskip" | "quality"
+  | "overview" | "analyst" | "utilization" | "trends" | "alerts" | "attrition" | "etm" | "taskskip" | "quality"
   | "escalations" | "docraw" | "poa" | "poatrial" | "clientdoc" | "poaexternal" | "gdmcnsla" | "live";
 type Granularity = "daily" | "weekly" | "monthly";
 
@@ -762,6 +766,7 @@ const FILTERABLE_VIEWS = new Set<ViewKey>([
 const VIEW_TABS: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
   { key: "overview", label: "Overview", icon: LayoutGrid },
   { key: "analyst", label: "Analyst Performance", icon: Users2 },
+  { key: "utilization", label: "Utilization", icon: Gauge },
   { key: "trends", label: "Trends", icon: TrendingUp },
   { key: "alerts", label: "Alerts", icon: AlertTriangle },
   { key: "attrition", label: "Attrition & Shrinkage", icon: TrendingDown },
@@ -4452,16 +4457,6 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
   const [drawerTableName, setDrawerTableName] = useState<string>("");
   const [metricDrilldown, setMetricDrilldown] = useState<KpiValue | null>(null);
 
-  const overviewQuery = useQuery({
-    queryKey: ["onfido-process", "overview", range, tlFilter, amFilter],
-    queryFn: () =>
-      hrmsApi.get<{ data: OverviewData }>(
-        `/api/onfido-process/overview?from=${range.from}&to=${range.to}` +
-        (tlFilter ? `&tlName=${encodeURIComponent(tlFilter)}` : "") +
-        (amFilter ? `&amName=${encodeURIComponent(amFilter)}` : "")
-      ),
-  });
-
   const filterOptionsQuery = useQuery({
     queryKey: ["onfido-process", "filter-options"],
     queryFn: () => hrmsApi.get<{ data: { tlNames: string[]; amNames: string[] } }>("/api/onfido-process/filter-options"),
@@ -4469,81 +4464,9 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
   });
   const filterOptions = filterOptionsQuery.data?.data ?? { tlNames: [], amNames: [] };
 
-  const tlQuery = useQuery({
-    queryKey: ["onfido-process", "tl-breakdown", range],
-    queryFn: () =>
-      hrmsApi.get<{ data: TlBreakdownRow[] }>(
-        `/api/onfido-process/tl-breakdown?from=${range.from}&to=${range.to}`
-      ),
-  });
-
-  const tablesQuery = useQuery({
-    queryKey: ["onfido-process", "tables"],
-    queryFn: () => hrmsApi.get<{ data: TableInfo[] }>("/api/onfido-process/tables"),
-  });
-
-  // Overview page's month-wise trend cards (2026-09-17 dashboard feedback) — gated to
-  // the overview tab since none of these are needed while another tab is active.
-  const docTaskAhtTrendQuery = useQuery({
-    queryKey: ["onfido-process", "doc-task-aht-trend-monthly", range],
-    queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/doc-raw/trend?from=${range.from}&to=${range.to}`),
-    enabled: view === "overview",
-  });
-  const docTaskTypeTrendQuery = useQuery({
-    queryKey: ["onfido-process", "doc-task-type-trend-monthly", range],
-    queryFn: () => hrmsApi.get<{ data: DocTaskTypeTrendPoint[] }>(`/api/onfido-process/doc-raw/task-type-trend?from=${range.from}&to=${range.to}`),
-    enabled: view === "overview",
-  });
-  const poaCombinedTrendQuery = useQuery({
-    queryKey: ["onfido-process", "poa-combined-trend-monthly", range],
-    queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/poa/combined-trend?from=${range.from}&to=${range.to}`),
-    enabled: view === "overview",
-  });
-  const gdMcnMonthlyTrendQuery = useQuery({
-    queryKey: ["onfido-process", "gd-mcn-trend-monthly", range],
-    queryFn: () => hrmsApi.get<{ data: GdMcnSlaTrendPoint[] }>(`/api/onfido-process/gd-mcn-sla/trend?from=${range.from}&to=${range.to}&granularity=monthly`),
-    enabled: view === "overview",
-  });
-  const clientEscalationTrendQuery = useQuery({
-    queryKey: ["onfido-process", "escalation-trend-monthly", range],
-    queryFn: () => hrmsApi.get<{ data: EscalationTrendPoint[] }>(`/api/onfido-process/escalations/trend?from=${range.from}&to=${range.to}`),
-    enabled: view === "overview",
-  });
-  const internalQualityTrendQuery = useQuery({
-    queryKey: ["onfido-process", "internal-quality-trend-monthly", range],
-    queryFn: () => hrmsApi.get<{ data: QualityTrendPoint[] }>(`/api/onfido-process/quality/internal-trend?from=${range.from}&to=${range.to}`),
-    enabled: view === "overview",
-  });
-  const externalQualityTrendQuery = useQuery({
-    queryKey: ["onfido-process", "external-quality-trend-monthly", range],
-    queryFn: () => hrmsApi.get<{ data: QualityTrendPoint[] }>(`/api/onfido-process/quality/trend?from=${range.from}&to=${range.to}`),
-    enabled: view === "overview",
-  });
-
-  const recordsQuery = useQuery({
-    queryKey: ["onfido-process", "records", activeTable, range],
-    queryFn: () =>
-      hrmsApi.get<{ data: { rows: RawRecord[]; total: number } }>(
-        `/api/onfido-process/records/${activeTable}?from=${range.from}&to=${range.to}&limit=50`
-      ),
-    enabled: !!activeTable,
-  });
-
-  const overview = overviewQuery.data?.data;
-  const tlRows = tlQuery.data?.data ?? [];
-  const docTaskAhtTrend = docTaskAhtTrendQuery.data?.data ?? [];
-  const docTaskTypeTrend = docTaskTypeTrendQuery.data?.data ?? [];
-  const poaCombinedTrend = poaCombinedTrendQuery.data?.data ?? [];
-  const gdMcnMonthlyTrend = gdMcnMonthlyTrendQuery.data?.data ?? [];
-  const clientEscalationTrend = clientEscalationTrendQuery.data?.data ?? [];
-  const internalQualityTrend = internalQualityTrendQuery.data?.data ?? [];
-  const externalQualityTrend = externalQualityTrendQuery.data?.data ?? [];
-  const tables = tablesQuery.data?.data ?? [];
-  const activeTableInfo = useMemo(() => tables.find((t) => t.key === activeTable), [tables, activeTable]);
-
   function openRecord(record: RawRecord, tableName?: string) {
     setDrawerRecord(record);
-    setDrawerTableName(tableName ?? activeTableInfo?.name ?? activeTable);
+    setDrawerTableName(tableName ?? activeTable);
     setDrawerOpen(true);
   }
 
@@ -4567,7 +4490,7 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
               deliberately always "today" / "this month" and ignores the range
               entirely (see LiveView/getLiveOverview) — showing date pickers
               that have zero effect there would be misleading, not helpful. */}
-          {view !== "live" && (
+          {view !== "live" && view !== "analyst" && view !== "utilization" && (
           <div className="oc-filterbar">
             <div className="oc-eyebrow" style={{ alignSelf: "center" }}><CalendarRange className="h-3.5 w-3.5" /> Executive Filters</div>
             <div className="oc-field">
@@ -4607,7 +4530,8 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
 
           {view === "trends" && <TrendsView range={range} />}
           {view === "alerts" && <AlertsView range={range} />}
-          {view === "analyst" && <AnalystPerformanceView range={range} />}
+          {view === "analyst" && <OnfidoAnalystReport initialRange={{ from: shiftDays(range.to, -29), to: range.to }} />}
+          {view === "utilization" && <OnfidoUtilizationReport />}
           {view === "attrition" && <AttritionView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "quality" && <QualityView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "etm" && <EtmView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
@@ -4626,171 +4550,7 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
           {view === "gdmcnsla" && <GdMcnSlaView range={range} onOpenRecord={openRecord} />}
           {view === "live" && <LiveView />}
 
-          {view === "overview" && (
-          <>
-          {/* DOC KPIs */}
-          <div>
-            <SectionHead hc="var(--blue)" title="DOC Queue" subtitle="Click any card to drill down" />
-            <div className="kr k5">
-              {overview && (
-                <>
-                  <KpiTile kpi={overview.doc.volume} onDrill={setMetricDrilldown} />
-                  <KpiTile kpi={overview.doc.avgAht} onDrill={setMetricDrilldown} />
-                  <KpiTile kpi={overview.doc.escalationRate} onDrill={setMetricDrilldown} />
-                  <KpiTile kpi={overview.doc.auditErrorRate} onDrill={setMetricDrilldown} />
-                  <KpiTile kpi={overview.doc.clientEscalationLines} onDrill={setMetricDrilldown} />
-                </>
-              )}
-            </div>
-          </div>
-
-
-          {/* POA KPIs */}
-          <div>
-            <SectionHead hc="var(--teal)" title="POA Queue" subtitle="Click any card to drill down" />
-            <div className="kr k6">
-              {overview && (
-                <>
-                  <KpiTile kpi={overview.poa.volume} onDrill={setMetricDrilldown} />
-                  <KpiTile kpi={overview.poa.avgAht} onDrill={setMetricDrilldown} />
-                  <KpiTile kpi={overview.poa.errorRate} onDrill={setMetricDrilldown} />
-                  <KpiTile kpi={overview.poa.classificationErrorRate} onDrill={setMetricDrilldown} />
-                  <KpiTile kpi={overview.poa.extractionErrorRate} onDrill={setMetricDrilldown} />
-                  <KpiTile kpi={overview.poa.dataComparisonErrorRate} onDrill={setMetricDrilldown} />
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Month-wise trend cards — 2026-09-17 dashboard feedback. Attrition and
-              Shrinkage are intentionally excluded per that session's instruction not
-              to touch Task Skip, ETM or Attrition. */}
-          <SectionHead hc="var(--orange)" title="Month-wise Trends" />
-          <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
-            <h3>Month-wise Performance — DOC Task &amp; AHT</h3>
-            <TaskAhtTrendChart points={docTaskAhtTrend} barLabel="DOC Tasks" lineLabel="DOC Avg AHT" barColor="var(--blue)" lineColor="var(--orange)" />
-          </div>
-          <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
-            <h3>Month-wise Performance — POA Task &amp; AHT</h3>
-            <TaskAhtTrendChart points={poaCombinedTrend} barLabel="POA Tasks" lineLabel="POA Avg AHT" barColor="var(--teal)" lineColor="var(--purple)" />
-          </div>
-          <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
-            <h3>Month-wise Task-Type-Wise Task Performance (DOC)</h3>
-            <TaskTypeSeriesChart points={docTaskTypeTrend} metric="taskCount" />
-          </div>
-          <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
-            <h3>Month-wise Task-Type-Wise AHT Performance (DOC)</h3>
-            <TaskTypeSeriesChart points={docTaskTypeTrend} metric="avgAht" valueSuffix="s" />
-          </div>
-          <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
-            <h3>Month-wise GD &amp; MCN Trend</h3>
-            <GdMcnPercentChart points={gdMcnMonthlyTrend} />
-          </div>
-          <div className="oc-card" style={{ "--hc": "var(--red)" } as React.CSSProperties}>
-            <h3>Month-wise Client Escalation Trend</h3>
-            <EscalationCountChart points={clientEscalationTrend} />
-          </div>
-          <QualityAreaChart points={internalQualityTrend} title="Month-wise Internal Quality Score" hc="var(--orange)" />
-          <QualityAreaChart points={externalQualityTrend} title="Month-wise External Quality Score" hc="var(--red)" />
-
-          {/* TL breakdown */}
-          <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
-            <h3>Breakdown by Team Leader</h3>
-            <div className="oc-card-sub">Click a row for that TL's records.</div>
-            <div style={{ overflowX: "auto" }}>
-              <table className="oc-table">
-                <thead>
-                  <tr>
-                    <th>TL Name</th>
-                    <th className="oc-right">DOC Volume</th>
-                    <th className="oc-right">Avg AHT</th>
-                    <th className="oc-right">Escalations</th>
-                    <th className="oc-right">Audit Error %</th>
-                    <th className="oc-right">Client Esc. Lines</th>
-                    <th className="oc-right">Class. Error %</th>
-                    <th className="oc-right">Ext. Error %</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tlRows.length === 0 && (
-                    <tr className="oc-empty-row"><td colSpan={8}>No data</td></tr>
-                  )}
-                  {tlRows.map((row) => (
-                    <tr
-                      key={row.tlName}
-                      className="oc-row-click"
-                      onClick={() => setTlFilter(row.tlName === "(unassigned)" ? "" : row.tlName)}
-                    >
-                      <td>
-                        <span className="oc-avatar" style={{ background: avatarTone(row.tlName) }}>{initials(row.tlName)}</span>
-                        {row.tlName}
-                      </td>
-                      <td className="oc-right">{row.docVolume.toLocaleString("en-IN")}</td>
-                      <td className="oc-right">{row.docAvgAht ?? "-"}s</td>
-                      <td className="oc-right">{row.docEscalations}</td>
-                      <td className="oc-right">{row.docAuditErrorRate !== null ? `${row.docAuditErrorRate}%` : "—"}</td>
-                      <td className="oc-right">{row.escalationLines}</td>
-                      <td className="oc-right">{row.classificationRate !== null ? `${row.classificationRate}%` : "—"}</td>
-                      <td className="oc-right">{row.extractionRate !== null ? `${row.extractionRate}%` : "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Raw data browser */}
-          <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h3>Browse Raw Data</h3>
-                {activeTableInfo && <div className="oc-card-sub">{activeTableInfo.description}</div>}
-              </div>
-              <select className="oc-select" value={activeTable} onChange={(e) => setActiveTable(e.target.value)} style={{ minWidth: 260 }}>
-                {tables.map((t) => (
-                  <option key={t.key} value={t.key}>{t.name}</option>
-                ))}
-              </select>
-            </div>
-            <div style={{ overflowX: "auto" }}>
-              <table className="oc-table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Analyst</th>
-                    <th>TL</th>
-                    <th>Result</th>
-                    <th className="oc-right">Uploaded</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(recordsQuery.data?.data.rows ?? []).length === 0 && (
-                    <tr className="oc-empty-row"><td colSpan={5}>No records</td></tr>
-                  )}
-                  {(recordsQuery.data?.data.rows ?? []).map((r) => (
-                    <tr key={r.id} className="oc-row-click" onClick={() => openRecord(r)}>
-                      <td>{formatDateTime((r as Record<string, unknown>).report_date ?? (r as Record<string, unknown>).report_completed_date ?? (r as Record<string, unknown>).task_complete_date)}</td>
-                      <td>{String((r as Record<string, unknown>).analyst_email ?? "-")}</td>
-                      <td>{String((r as Record<string, unknown>).tl_name ?? "-")}</td>
-                      <td>
-                        {(r as Record<string, unknown>).overall_result ? (
-                          <span className="oc-pill-outline">{String((r as Record<string, unknown>).overall_result)}</span>
-                        ) : "-"}
-                      </td>
-                      <td className="oc-right">{formatDateTime((r as Record<string, unknown>).uploaded_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {recordsQuery.data?.data && (
-              <div style={{ marginTop: 10, fontSize: 11, color: "var(--muted)" }}>
-                Showing {recordsQuery.data.data.rows.length} of {recordsQuery.data.data.total.toLocaleString("en-IN")}
-              </div>
-            )}
-          </div>
-          </>
-          )}
+          {view === "overview" && <OnfidoOverviewReport range={range} tlFilter={tlFilter} amFilter={amFilter} />}
         </div>
 
         <RecordDrawer
