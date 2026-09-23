@@ -10,6 +10,7 @@ import { checkRequiredTables, REQUIRED_TABLES } from "./db/schema-presence-check
 const MIGRATIONS_VERIFY_ONLY = process.env.MIGRATIONS_VERIFY_ONLY === "true";
 import { initBusinessActionSyncJobs } from "./cron/business-action-sync.cron.js";
 import { startEmployeeMasterSnapshotScheduler } from "./cron/employee-master-snapshot.cron.js";
+import { startExitAutoAdvanceScheduler, stopExitAutoAdvanceScheduler } from "./cron/exitAutoAdvance.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
 import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
 import { startCelebrationScheduler } from "./modules/engagement/celebration.cron.js";
@@ -116,6 +117,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     stopPayrollRecalcDrainerWorker();
     stopPerformanceIngestionScheduler();
     stopDailyGamesScheduler();
+    stopExitAutoAdvanceScheduler();
 
     // Clear all registered timers
     clearAllTimers();
@@ -271,6 +273,9 @@ function startServer() {
         // including db_bill fallback enrichment) fresh every 30 minutes so the report can
         // read a plain table instead of recomputing two cross-database fallbacks on request.
         startEmployeeMasterSnapshotScheduler();
+        // Auto-advances exits from notice_active/terminated → exited when LWD has passed
+        // and all clearance tasks are cleared. Runs daily at 00:30 IST.
+        startExitAutoAdvanceScheduler();
         startBreachSlaCron();
         startRetentionCron();
         // D-SLA-01: replaces the inline refreshSlaBreachFlags() call removed from
