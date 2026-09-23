@@ -116,6 +116,12 @@ export interface CeoOverview {
   billing: CeoBillingCompleteness;
   /** Closed branches left out of `branches` because every money column was zero. */
   closedBranchesHidden: { branchName: string; staffPaid: number }[];
+  /** Part of the headline that belongs to no branch row (no branch set, or a branch id missing
+   *  from branch_master). All zero under a branch selection. Optional: older backends omit it. */
+  unbranched?: { revenue: number; revenueEstimated: number; peopleCost: number; staffPaid: number; indirectCost: number };
+  /** No GRN maps to any MAS cost centre this month company-wide — every margin is NA (same rule
+   *  as Live P&L's idcMissing). Optional: older backends omit it. */
+  idcMissing?: boolean;
 }
 
 export interface CeoOverviewFilters {
@@ -123,17 +129,22 @@ export interface CeoOverviewFilters {
   branchIds?: string[];
   processIds?: string[];
   costCentreIds?: string[];
+  /** The page's Client / Search filters — resolved server-side to the processes they match. */
+  clientId?: string;
+  search?: string;
 }
 
 export function useCeoOverview(period: string, filters: CeoOverviewFilters = {}) {
   const branchIds = filters.branchIds ?? [];
   const processIds = filters.processIds ?? [];
   const costCentreIds = filters.costCentreIds ?? [];
+  const clientId = filters.clientId ?? "";
+  const search = filters.search ?? "";
   /* Sorted in the key so ticking A then B and B then A are one cached query rather than two. The
    * server treats the list as a set, so the order genuinely carries no meaning. */
   const key = (ids: string[]) => [...ids].sort().join(",");
   return useQuery({
-    queryKey: ["ceo-overview", period, key(branchIds), key(processIds), key(costCentreIds)],
+    queryKey: ["ceo-overview", period, key(branchIds), key(processIds), key(costCentreIds), clientId, search],
     enabled: Boolean(period),
     /*
      * Keep the previous month's data on screen while the next one loads.
@@ -152,6 +163,8 @@ export function useCeoOverview(period: string, filters: CeoOverviewFilters = {})
       if (branchIds.length) params.set("branchIds", branchIds.join(","));
       if (processIds.length) params.set("processIds", processIds.join(","));
       if (costCentreIds.length) params.set("costCentreIds", costCentreIds.join(","));
+      if (clientId) params.set("clientId", clientId);
+      if (search) params.set("search", search);
       const response = await hrmsApi.get<{ success: boolean; data: CeoOverview }>(
         `/api/finance/pnl/ceo-overview?${params.toString()}`,
       );

@@ -114,17 +114,26 @@ export interface PnlLiveReconciliation {
   };
 }
 
-export function usePnlLiveReconciliation(period: string, filters: { branchIds?: string[] } = {}) {
+export function usePnlLiveReconciliation(
+  period: string,
+  filters: { branchIds?: string[]; clientId?: string; search?: string } = {},
+) {
   const branchIds = filters.branchIds ?? [];
   const branchKey = [...branchIds].sort().join(",");
+  // The page's Client / Search filters (audit item 19): narrowed server-side to the cost centres
+  // the matching processes' staff are posted to. Empty strings keep the old query key shape.
+  const clientId = filters.clientId ?? "";
+  const search = filters.search ?? "";
   return useQuery({
-    queryKey: ["pnl-live-reconciliation", period, branchKey],
+    queryKey: ["pnl-live-reconciliation", period, branchKey, clientId, search],
     enabled: Boolean(period),
     placeholderData: (previous) => previous,
     staleTime: 60_000,
     queryFn: async () => {
       const params = new URLSearchParams({ period });
       if (branchIds.length) params.set("branchIds", branchIds.join(","));
+      if (clientId) params.set("clientId", clientId);
+      if (search) params.set("search", search);
       const response = await hrmsApi.get<{ success: boolean; data: PnlLiveReconciliation }>(
         `/api/finance/pnl/reconciliation?${params.toString()}`,
       );

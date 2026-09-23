@@ -72,6 +72,10 @@ function mockDb(options: { payrollRows?: number } = {}) {
         ? [[{ cost_centre_id: "cc-noida-1", staff: 2, amount: L(60) }], []]
         : [[], []];
     }
+    // readUnallocatedPayroll's "has final payroll posted?" probe.
+    if (q.includes("AS line_count") && q.includes("FROM salary_prep_line l")) {
+      return [[{ line_count: payrollRows }], []];
+    }
     if (q.includes("COUNT(*) AS `rows`") && q.includes("FROM pnl_running_salary_snapshot")) {
       return [[{ rows: 2, latest_synced_at: "2026-08-19 12:00:00" }], []];
     }
@@ -219,13 +223,49 @@ describe("P&L reconciliation — OP% scope rules (2026-09-15 OP% check)", () => 
     expect(out.blockers.join(" ")).toMatch(/no cost centre is included/);
   });
 
-  it("ignores unmapped payroll while payroll is not posted (running snapshot has no such staff)", async () => {
-    withOverrides((q) => (q.includes("cost_centre_id") && q.includes("IS NULL") && q.includes("GROUP BY e.branch_id")
-      ? [{ branch_id: "branch-noida", branch_name: "NOIDA", staff: 3, amount: L(6) }]
-      : undefined), { payrollRows: 0 });
+  it("while payroll is not posted, reads unmapped staff's ACCRUED pay from the running snapshot (audit item 13)", async () => {
+    // The running snapshot DOES hold cost_centre_id = NULL rows (flushRows writes every employee).
+    // They used to be dropped — readPayroll's snapshot leg skips them and this was final-run only —
+    // so an open month under-counted people cost. The final-run query must not be used here.
+    withOverrides((q) => {
+      if (q.includes("FROM pnl_running_salary_snapshot") && q.includes("IS NULL") && q.includes("GROUP BY s.branch_id")) {
+        return [{ branch_id: "branch-noida", branch_name: "NOIDA", staff: 3, amount: L(4) }];
+      }
+      if (q.includes("FROM salary_prep_line l") && q.includes("IS NULL") && q.includes("GROUP BY e.branch_id")) {
+        return [{ branch_id: "branch-noida", branch_name: "NOIDA", staff: 3, amount: L(6) }];
+      }
+      return undefined;
+    }, { payrollRows: 0 });
     const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
     const out = await getPnlReconciliation("2026-08", { branchIds: ["branch-noida"] });
-    expect(out.totals.unallocatedPayroll).toBe(0);
+    expect(out.totals.unallocatedPayroll, "accrued, from the snapshot — not the (absent) final run").toBe(L(4));
+    // Rows: running payroll 42 on cc-noida-1. Plus 4 unallocated.
+    expect(out.totals.payrollCost).toBe(L(46));
+    expect(out.branches[0]).toMatchObject({ unallocatedPayroll: L(4) });
+    const runningCall = execute.mock.calls.find(([sql]) => String(sql).includes("GROUP BY s.branch_id"));
+    expect(runningCall?.[1], "branch filter applies to the snapshot's home branch").toEqual(["2026-08", "branch-noida"]);
+  });
+
+  it("narrows cost centres and unallocated payroll to the Client / Search processes (audit item 19)", async () => {
+    mockDb();
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    await getPnlReconciliation("2026-08", { branchIds: ["branch-noida"], processIds: ["p1", "p2"] });
+    const calls = execute.mock.calls.map(([sql, params]) => ({ sql: String(sql), params: (params ?? []) as unknown[] }));
+    const ccCall = calls.find((c) => c.sql.includes("FROM cost_centre_master ccm") && c.sql.includes("LEFT JOIN branch_master"))!;
+    expect(ccCall.sql).toContain("e.process_id IN (?,?)");
+    expect(ccCall.params).toEqual(["branch-noida", "p1", "p2"]);
+    const unallocatedCall = calls.find((c) => c.sql.includes("IS NULL") && c.sql.includes("GROUP BY e.branch_id"))!;
+    expect(unallocatedCall.sql).toContain("AND e.process_id IN (?,?)");
+    expect(unallocatedCall.params).toEqual(["2026-08", "branch-noida", "p1", "p2"]);
+  });
+
+  it("an explicitly empty process list matches nothing rather than everything", async () => {
+    mockDb();
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    await getPnlReconciliation("2026-08", { processIds: [] });
+    const ccCall = execute.mock.calls.map(([sql]) => String(sql))
+      .find((sql) => sql.includes("FROM cost_centre_master ccm") && sql.includes("LEFT JOIN branch_master"))!;
+    expect(ccCall).toContain("1 = 0");
   });
 
   it("shows NA, not an inflated margin, when no GRN exists anywhere for the month", async () => {

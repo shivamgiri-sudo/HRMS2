@@ -200,6 +200,113 @@ describe("CEO overview", () => {
     expect(out.opportunities).toHaveLength(0);
   });
 
+  it("scopes EVERY sparkline month to the selected branch, not just the current one (audit item 10)", async () => {
+    // The mock answers every period with the same rows, so a correctly-scoped trend reads the same
+    // NOIDA-only revenue in all four bars. Before the fix the three prior bars summed every branch
+    // (177.4 + 117.45) beside a NOIDA-only current bar.
+    mockDb({
+      branches: [
+        { id: "a", branch_name: "NOIDA", active_status: 1 },
+        { id: "a2", branch_name: "Noida", active_status: 0 },
+        { id: "b", branch_name: "NOIDA-2", active_status: 1 },
+      ],
+      revenue: [
+        { branch_id: "a", amount: L(170) }, { branch_id: "a2", amount: L(7.4) },
+        { branch_id: "b", amount: L(117.45) }, { branch_id: null, amount: L(3) },
+      ],
+      people: [{ branch_id: "a", staff: 496, cost: L(102.22) }, { branch_id: "b", staff: 448, cost: L(76.24) }],
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-06", { branchId: "a" });
+    expect(out.revenue).toBeCloseTo(L(177.4), 0);
+    expect(out.trend).toHaveLength(4);
+    for (const point of out.trend) {
+      expect(point.revenue, `${point.period} must be NOIDA only (both spellings), no other branch, no unbranched`)
+        .toBeCloseTo(L(177.4), 0);
+      expect(point.operatingProfit).toBeCloseTo(L(177.4 - 102.22), 0);
+    }
+  });
+
+  it("carries unbranched revenue in the headline, same as payroll and the trend (audit item 25)", async () => {
+    mockDb({
+      branches: [{ id: "a", branch_name: "NOIDA", active_status: 1 }],
+      revenue: [{ branch_id: "a", amount: L(100) }, { branch_id: null, amount: L(5) }, { branch_id: "gone", amount: L(2) }],
+      people: [{ branch_id: "a", staff: 400, cost: L(60) }, { branch_id: null, staff: 7, cost: L(1.11) }],
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-06");
+    expect(out.revenue, "no-branch and orphan-branch revenue must reach the headline").toBeCloseTo(L(107), 0);
+    expect(out.peopleCost).toBeCloseTo(L(61.11), 0);
+    expect(out.staffPaid).toBe(407);
+    expect(out.unbranched?.revenue).toBeCloseTo(L(7), 0);
+    expect(out.unbranched?.peopleCost).toBeCloseTo(L(1.11), 0);
+    // Branch rows stay branch-only; the gap to the headline is exactly `unbranched`.
+    expect(out.branches[0].revenue).toBeCloseTo(L(100), 0);
+    // Every trend month agrees with the headline (the mock answers every period alike).
+    for (const point of out.trend) expect(point.revenue).toBeCloseTo(L(107), 0);
+
+    // Under a process filter (no branch selected) the same buckets still count, as they do in the trend.
+    const filtered = await getCeoOverview("2026-06", { processId: "p1" });
+    expect(filtered.revenue).toBeCloseTo(L(107), 0);
+    for (const point of filtered.trend) expect(point.revenue).toBeCloseTo(L(107), 0);
+
+    // A branch selection genuinely excludes them.
+    const scoped = await getCeoOverview("2026-06", { branchId: "a" });
+    expect(scoped.revenue).toBeCloseTo(L(100), 0);
+    expect(scoped.unbranched?.revenue).toBe(0);
+  });
+
+  it("shows margin as NA when no GRN exists company-wide this month, same rule as Live P&L (audit item 11)", async () => {
+    // March 2026 read 40.6% on Live P&L before its idcMissing rule, with Rs 0 of indirect cost —
+    // the overhead data was absent, not nil. CEO Overview had no such rule.
+    mockDb({
+      branches: [{ id: "a", branch_name: "NOIDA", active_status: 1 }, { id: "b", branch_name: "NOIDA-2", active_status: 1 }],
+      revenue: [{ branch_id: "a", amount: L(170) }, { branch_id: "b", amount: L(110) }],
+      people: [{ branch_id: "a", staff: 496, cost: L(100) }, { branch_id: "b", staff: 448, cost: L(70) }],
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-03");
+    expect(out.idcMissing).toBe(true);
+    expect(out.marginPct).toBeNull();
+    expect(out.branches.every((b) => b.marginPct === null)).toBe(true);
+    expect(out.trend.every((t) => t.marginPct === null)).toBe(true);
+    // Money is still shown — only the ratio is withheld.
+    expect(out.operatingProfit).toBeCloseTo(L(110), 0);
+
+    // Under a branch filter the check stays company-wide: GRN on ANOTHER branch still means IDC data
+    // exists for the month (Live P&L's readGrn is company-wide whatever the branch filter).
+    mockDb({
+      branches: [{ id: "a", branch_name: "NOIDA", active_status: 1 }, { id: "b", branch_name: "NOIDA-2", active_status: 1 }],
+      revenue: [{ branch_id: "a", amount: L(170) }, { branch_id: "b", amount: L(110) }],
+      people: [{ branch_id: "a", staff: 496, cost: L(100) }, { branch_id: "b", staff: 448, cost: L(70) }],
+      spend: [{ branch_id: "b", amount: L(20) }],
+    });
+    const scoped = await getCeoOverview("2026-03", { branchId: "a" });
+    expect(scoped.idcMissing).toBe(false);
+    expect(scoped.marginPct).toBeCloseTo(((170 - 100) / 170) * 100, 5);
+  });
+
+  it("YTD budget follows the branch filter instead of summing every branch (audit item 18)", async () => {
+    mockDb({
+      branches: [
+        { id: "a", branch_name: "NOIDA", active_status: 1 },
+        { id: "b", branch_name: "NOIDA-2", active_status: 1 },
+      ],
+      revenue: [{ branch_id: "a", amount: L(100) }, { branch_id: "b", amount: L(50) }],
+      people: [{ branch_id: "a", staff: 10, cost: L(60) }, { branch_id: "b", staff: 5, cost: L(30) }],
+      spend: [{ branch_id: "a", amount: L(5) }, { branch_id: "b", amount: L(4) }],
+      budget: [{ branch_id: "a", amount: L(8) }, { branch_id: "b", amount: L(6) }],
+    });
+    const { getYtdSummary } = await import("../ceo-overview.service.js");
+    const all = await getYtdSummary("2026-05");
+    const scoped = await getYtdSummary("2026-05", { branchId: "a" });
+    expect(all.months).toEqual(["2026-04", "2026-05"]);
+    expect(all.totalBudget).toBeCloseTo(L(28), 0);
+    expect(scoped.totalBudget, "NOIDA's budget only, for both months").toBeCloseTo(L(16), 0);
+    expect(scoped.totalRevenue).toBeCloseTo(L(200), 0);
+    expect(scoped.scope?.branchIds).toEqual(["a"]);
+  });
+
   it("hides a closed branch whose every money column is zero, without losing its people", async () => {
     /*
      * branch_master holds 45 branches and 5 are active. In July 2026 nine closed ones still
@@ -698,6 +805,8 @@ describe("accrued running-salary fallback — parity with Live P&L's readPayroll
     withRunningSalary({
       branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
       revenue: [{ branch_id: "n", amount: L(150) }],
+      // Some GRN exists this month, so the margin is not NA'd by the no-IDC rule (audit item 11).
+      spend: [{ branch_id: "n", amount: L(2) }],
       // payrollRows: 0 -> salary_prep_line COUNT(*) rows = 0 -> peopleByBranch's own query returns
       // nothing either (no fixture rows), matching a month where final payroll never ran.
     }, [{ branch_id: "n", staff: 300, cost: L(58) }]);
@@ -705,7 +814,7 @@ describe("accrued running-salary fallback — parity with Live P&L's readPayroll
     const out = await getCeoOverview(openMonth);
     expect(out.peopleCost).toBeCloseTo(L(58), 0);
     expect(out.staffPaid).toBe(300);
-    expect(out.marginPct).toBeCloseTo(((150 - 58) / 150) * 100, 5);
+    expect(out.marginPct).toBeCloseTo(((150 - 58 - 2) / 150) * 100, 5);
   });
 
   it("never uses the accrual once final payroll has actually posted", async () => {

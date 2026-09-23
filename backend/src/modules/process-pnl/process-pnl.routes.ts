@@ -49,6 +49,7 @@ import {
 import { getPnlTrendSeries } from "./pnl-trend-series.service.js";
 import { getPnlInsights } from "./pnl-insights.service.js";
 import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
+import { narrowProcessScope, resolveClientSearchProcessIds } from "./pnl-client-search-scope.js";
 import { refreshRunningSalarySnapshot } from "./pnl-running-salary.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
@@ -1368,31 +1369,46 @@ router.get(
      */
     const requestedBranchIds = csv(req.query.branchIds);
     const requestedProcessIds = csv(req.query.processIds);
+    // user.roles (actor()) is req.userRoles ?? [] — the roles requireRole just resolved — and the
+    // resolvers treat undefined and [] alike, so this is the same set as before. Read through
+    // actor() like /pnl/ytd-summary and /pnl/reconciliation so one page load can never be scoped
+    // from two differently-named sources (audit item 26).
     const branchId = await resolveFinanceBranchScope({
       userId: user.id,
       primaryRole: user.role,
-      userRoles: req.userRoles,
+      userRoles: user.roles,
       requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
     });
     const confinedBranch = await resolveFinanceBranchScope({
-      userId: user.id, primaryRole: user.role, userRoles: req.userRoles,
+      userId: user.id, primaryRole: user.role, userRoles: user.roles,
     });
     const period = req.query.period ? String(req.query.period) : "";
     const processId = await resolveFinanceProcessScope({
       userId: user.id,
       primaryRole: user.role,
-      userRoles: req.userRoles,
+      userRoles: user.roles,
       requestedProcessId: req.query.processId ? String(req.query.processId) : undefined,
     });
     const confinedProcess = await resolveFinanceProcessScope({
-      userId: user.id, primaryRole: user.role, userRoles: req.userRoles,
+      userId: user.id, primaryRole: user.role, userRoles: user.roles,
     });
+    // The page's Client / Search filters, as the process ids they match (audit item 19) —
+    // intersected with the process scope above, so they can only narrow it.
+    const clientSearch = await resolveClientSearchProcessIds({
+      clientId: req.query.clientId ? String(req.query.clientId) : null,
+      search: req.query.search ? String(req.query.search) : null,
+    });
+    const baseProcessIds = confinedProcess ? [confinedProcess] : requestedProcessIds;
     const data = await getCeoOverview(period, {
       branchId: branchId ?? undefined,
-      processId: processId ?? undefined,
+      // Folded into processIds when a client/search filter applies: scopeOf() UNIONS the singular
+      // with the list, which would otherwise re-widen past the intersection.
+      processId: clientSearch ? undefined : processId ?? undefined,
       costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
       branchIds: confinedBranch ? [confinedBranch] : requestedBranchIds,
-      processIds: confinedProcess ? [confinedProcess] : requestedProcessIds,
+      processIds: clientSearch
+        ? narrowProcessScope([...baseProcessIds, ...(processId && !confinedProcess ? [processId] : [])], clientSearch)
+        : baseProcessIds,
       costCentreIds: csv(req.query.costCentreIds),
     });
     res.json({ success: true, data });
@@ -1436,15 +1452,31 @@ router.get(
     const upTo = req.query.upTo ? String(req.query.upTo) : "";
     if (!/^\d{4}-\d{2}$/.test(upTo)) throw Object.assign(new Error("upTo must be YYYY-MM"), { statusCode: 400 });
     const user = actor(req);
-    const confinedBranch = await resolveFinanceBranchScope({
+    // The page's own branch selection is honoured (audit item 18: the strip used to be company-wide
+    // beside a branch-scoped panel). A requested branch goes through resolveFinanceBranchScope,
+    // which returns it only when the caller may read it and THROWS for anyone else's — so a
+    // request can narrow a scoped user's view, never widen it. With no request, the user's own
+    // confinement applies exactly as before.
+    const requestedBranchId = req.query.branchId ? String(req.query.branchId).trim() : "";
+    const branchFilter = await resolveFinanceBranchScope({
       userId: user.id, primaryRole: user.role, userRoles: user.roles,
+      requestedBranchId: requestedBranchId || undefined,
     });
     const confinedProcess = await resolveFinanceProcessScope({
       userId: user.id, primaryRole: user.role, userRoles: user.roles,
     });
     const filters: CeoFilters = {};
-    if (confinedBranch !== undefined) filters.branchId = confinedBranch;
-    if (confinedProcess !== undefined) filters.processId = confinedProcess;
+    if (branchFilter !== undefined) filters.branchId = branchFilter;
+    // Client / Search, as process ids, intersected with any process confinement (audit item 19).
+    const clientSearch = await resolveClientSearchProcessIds({
+      clientId: req.query.clientId ? String(req.query.clientId) : null,
+      search: req.query.search ? String(req.query.search) : null,
+    });
+    if (clientSearch) {
+      filters.processIds = narrowProcessScope(confinedProcess ? [confinedProcess] : [], clientSearch);
+    } else if (confinedProcess !== undefined) {
+      filters.processId = confinedProcess;
+    }
     const data = await getYtdSummary(upTo, filters);
     res.json({ success: true, data });
   })
@@ -1474,9 +1506,17 @@ router.get(
       : confinedRequestedBranch
         ? [confinedRequestedBranch]
         : requestedBranchIds;
+    // Client / Search, as the process ids they match (audit item 19). Live P&L's grain is the cost
+    // centre, so it narrows to the cost centres those processes' staff are posted to — the same
+    // rule CEO Overview uses for a process filter.
+    const clientSearch = await resolveClientSearchProcessIds({
+      clientId: req.query.clientId ? String(req.query.clientId) : null,
+      search: req.query.search ? String(req.query.search) : null,
+    });
     const data = await getPnlReconciliation(period, {
       branchIds,
       includeInactive: String(req.query.includeInactive ?? "false") === "true",
+      ...(clientSearch ? { processIds: clientSearch } : {}),
     });
     res.json({ success: true, data });
   })
@@ -1906,6 +1946,12 @@ router.post(
 
 // Transposed statement (P&L components as rows, entities as dynamic columns) — read-only
 // composition over the same canonical engine as /pnl/summary. See pnl-statement.service.ts.
+// ACCESS (audit item 26, 2026-09-23): no requireRole on this line, but NOT ungated — the
+// router.use("/pnl", requireRole(...PNL_READ_ROLES)) registered above runs first for every /pnl/*
+// path, and scopedFilters() applies the branch row scope. The gate is implicit, though: moving or
+// narrowing that router.use() would silently open this route. Adding an explicit
+// requireRole(...PNL_READ_ROLES) here would change nothing for any caller today; left for an owner
+// decision rather than added silently.
 router.get("/pnl/statement", h(async (req, res) => {
   const viewBy = (req.query.viewBy ? String(req.query.viewBy) : "process") as StatementViewBy;
   const data = await pnlStatementService.getStatement(await scopedFilters(req), viewBy);
@@ -2264,7 +2310,15 @@ async function scopedTrendFilters(req: AuthenticatedRequest) {
 }
 
 router.get("/pnl/trend", requireAuth, h(async (req, res) => {
-  const data = await getPnlTrend(await scopedTrendFilters(req));
+  const scoped = await scopedTrendFilters(req);
+  // Client / Search as process ids (audit item 19), intersected with any process scope above.
+  const clientSearch = await resolveClientSearchProcessIds({
+    clientId: req.query.clientId ? String(req.query.clientId) : null,
+    search: req.query.search ? String(req.query.search) : null,
+  });
+  const data = await getPnlTrend(clientSearch
+    ? { branchId: scoped.branchId, processIds: narrowProcessScope(scoped.processId ? [scoped.processId] : [], clientSearch) }
+    : scoped);
   res.json({ success: true, data });
 }));
 

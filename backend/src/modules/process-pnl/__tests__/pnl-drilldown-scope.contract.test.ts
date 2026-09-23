@@ -35,6 +35,17 @@ const { execute, tableExists } = vi.hoisted(() => ({
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../shared/dbHelpers.js", () => ({ tableExists }));
+// The seat-rate estimate is its own service (tested there); only its answer matters here.
+const { getSeatBillingEstimate } = vi.hoisted(() => ({ getSeatBillingEstimate: vi.fn() }));
+vi.mock("../pnl-seat-billing.service.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../pnl-seat-billing.service.js")>()),
+  getSeatBillingEstimate,
+}));
+// Pin "today" so the open estimate window is deterministic: 2026-08 and 2026-09 are inside it.
+vi.mock("../../../shared/istDate.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../shared/istDate.js")>()),
+  getCurrentDateIST: () => "2026-09-15",
+}));
 
 import { getPnlDrilldown } from "../pnl-drilldown.service.js";
 
@@ -48,6 +59,7 @@ beforeEach(() => {
   tableExists.mockReset();
   tableExists.mockResolvedValue(true);
   execute.mockResolvedValue([[], []]);
+  getSeatBillingEstimate.mockReset();
 });
 
 /** Every SQL string the call issued, joined — enough to assert on predicates and parameters. */
@@ -87,14 +99,29 @@ describe("budget drilldown scope", () => {
     ).toBe(true);
   });
 
-  it("omits header-level top-ups under process and cost-centre scope", async () => {
-    // A top-up is recorded against the budget header with no cost centre of its own. Attributing
-    // it to one process would inflate that process by another scope's money, so it is left out
-    // rather than guessed.
+  it("under process / cost-centre scope, includes a top-up only when its budget funds nothing else (never pro-rated)", async () => {
+    // A top-up is recorded against the budget header with no cost centre of its own. Attributing a
+    // SHARED budget's top-up to one process would inflate it by another scope's money, so that is
+    // left out rather than guessed. A budget whose every line is in scope is the scope's whole —
+    // the same rule as the CEO focus panel's budget (audit item 16), so the two tie.
     for (const scope of [{ processId: PROCESS_ID }, { costCentreId: COST_CENTRE_ID }]) {
-      execute.mockClear();
-      await getPnlDrilldown({ metric: "budget", period: PERIOD, ...scope });
-      expect(sqlCalls().some((c) => c.sql.includes("reopen_additional_amount"))).toBe(false);
+      execute.mockReset();
+      execute.mockImplementation(async (sql: string) => {
+        const q = String(sql);
+        if (q.includes("AS code")) return [[{ code: "CC/1" }], []];
+        if (q.includes("in_scope_lines")) {
+          return [[
+            { bill_source_id: "B1", top_up: 36500, in_scope_lines: 2, cost_centre_lines: 2 },
+            { bill_source_id: "B2", top_up: 99999, in_scope_lines: 1, cost_centre_lines: 3 },
+          ], []];
+        }
+        return [[], []];
+      });
+      const result = await getPnlDrilldown({ metric: "budget", period: PERIOD, ...scope });
+      expect(result.rows.map((r) => r.amount)).toEqual([36500]);
+      expect(result.total).toBe(36500);
+      // The branch-only header query (every top-up on the branch) never runs under these scopes.
+      expect(sqlCalls().some((c) => c.sql.includes("bm.id = ?") && c.sql.includes("reopen_additional_amount"))).toBe(false);
     }
   });
 });
@@ -197,5 +224,103 @@ describe("people drilldown — bucketed to one statement line", () => {
 
     expect(result.rows[0].detail).toContain("31 employees");
     expect(sqlCalls()[0].sql).not.toContain("full_name");
+  });
+});
+
+describe("drilldowns tie to the tiles they open from (audit item 17)", () => {
+  it("(a) indirect reads the shared GRN reader — app allocations, ordinary GRNs, mirror with the dedup guard", async () => {
+    execute.mockImplementation(async (sql: string) => {
+      const q = String(sql);
+      if (q.includes("grn_cost_allocation a") && q.includes("'consumed'")) {
+        return [[
+          { branch_id: BRANCH_ID, cost_centre_id: COST_CENTRE_ID, process_id: null, source: "app_allocation", grn_ref: "GRN/1", label: "Vendor A — Rent", bill_date: "2026-08-02", amount: "5000" },
+          { branch_id: BRANCH_ID, cost_centre_id: COST_CENTRE_ID, process_id: null, source: "db_bill_mirror", grn_ref: "Mas/5/1", label: "Vendor B", bill_date: null, amount: "1200" },
+          { branch_id: "other-branch", cost_centre_id: "cc-9", process_id: null, source: "app_grn", grn_ref: "GRN/9", label: "Elsewhere", bill_date: null, amount: "777" },
+        ], []];
+      }
+      if (q.includes("'reserved'")) {
+        return [[{ branch_id: BRANCH_ID, cost_centre_id: COST_CENTRE_ID, process_id: null, source: "app_allocation", grn_ref: "GRN/2", label: "Vendor C", bill_date: null, amount: "300" }], []];
+      }
+      return [[], []];
+    });
+    const result = await getPnlDrilldown({ metric: "indirect", period: PERIOD, branchId: BRANCH_ID });
+
+    const consumedSql = sqlCalls().find((c) => c.sql.includes("'consumed'"))!.sql;
+    expect(consumedSql).toContain("FROM grn_cost_allocation a");
+    expect(consumedSql).toContain("FROM grn_request gr");
+    expect(consumedSql).toContain("FROM grn_entry_line_snapshot l");
+    expect(consumedSql, "mirror rows for a GRN the app already consumed are excluded").toContain("NOT EXISTS");
+    // Branch scope keeps only this branch's rows; the reserved row is inside the open window.
+    expect(result.total).toBe(5000 + 1200 + 300);
+    expect(result.hasEstimatedRows).toBe(true);
+    expect(result.rows.find((r) => r.amount === 300)?.detail).toContain("not yet consumed");
+  });
+
+  it("(b) people under cost-centre scope filters on the EFFECTIVE (post-override) cost centre", async () => {
+    await getPnlDrilldown({ metric: "people", period: PERIOD, costCentreId: COST_CENTRE_ID });
+    const payrollSql = sqlCalls().find((c) => c.sql.includes("FROM salary_prep_line l"))!.sql;
+    expect(payrollSql).toContain("pnl_employee_cost_centre_override");
+    expect(payrollSql).toContain("COALESCE(pecco.target_cost_centre_id, e.cost_centre_id) = ?");
+    expect(payrollSql).not.toMatch(/AND e\.cost_centre_id = \?/);
+  });
+
+  it("(b) people under branch scope uses the effective cost centre's branch, home branch only when unmapped", async () => {
+    await getPnlDrilldown({ metric: "people", period: PERIOD, branchId: BRANCH_ID, aggregatePeople: true });
+    const payrollSql = sqlCalls().find((c) => c.sql.includes("FROM salary_prep_line l"))!.sql;
+    expect(payrollSql).toContain("CASE WHEN pcc.id IS NULL THEN e.branch_id ELSE pcc.branch_id END");
+  });
+
+  it("(c) revenue adds GREATEST(provision - invoice, 0) even when the cost centre has invoices", async () => {
+    execute.mockImplementation(async (sql: string) => {
+      const q = String(sql);
+      if (q.includes("FROM billing_invoice_particular_snapshot p") && !q.includes("billing_provision_snapshot")) {
+        return [[{ bill_source_id: 1, cost_centre_code: "CC/1", cost_centre_name: "CC One", particulars: "Seats", service: "", amount: "70000", source_created_at: null }], []];
+      }
+      if (q.includes("billing_provision_snapshot")) {
+        return [[{ cost_centre_code: "CC/1", cost_centre_name: "CC One", provision_amount: "100000", invoice_amount: "70000" }], []];
+      }
+      return [[], []];
+    });
+    const result = await getPnlDrilldown({ metric: "revenue", period: PERIOD, costCentreId: COST_CENTRE_ID });
+    expect(result.total, "invoice 70,000 + un-invoiced provision 30,000 = the tile's 100,000").toBe(100000);
+    expect(result.rows.find((r) => r.id.startsWith("prov-"))?.amount).toBe(30000);
+    // No estimate rows once there is an invoice.
+    expect(getSeatBillingEstimate).not.toHaveBeenCalled();
+  });
+
+  it("(d) an 'Est' revenue cell shows the seat-rate lines the estimate came from, totalling the cell", async () => {
+    getSeatBillingEstimate.mockResolvedValueOnce({
+      period: "2026-09", asOfDate: "2026-09-15", daysInMonth: 30, daysElapsed: 15, configurationAvailable: true,
+      costCentres: [{
+        costCentreId: COST_CENTRE_ID, costCentreCode: "CC/1", costCentreName: "CC One", processName: null,
+        branchId: BRANCH_ID, branchName: "B", source: "invoice", sourcePeriod: "2026-08",
+        lines: [
+          { id: null, lineLabel: "Inbound seat", lineKind: "seat", rateMonthly: 30000, seats: 10, monthlyValue: 300000, effectiveFrom: null, effectiveTo: null, notes: null, sourceBillId: 9 },
+          { id: null, lineLabel: "Platform fee", lineKind: "fixed", rateMonthly: 0, seats: 0, monthlyValue: 50000, effectiveFrom: null, effectiveTo: null, notes: null, sourceBillId: 9 },
+        ],
+        excludedLines: [], seats: 10, monthlyValue: 350000, perDay: 350000 / 30, toDate: 175000,
+      }],
+      totals: { costCentres: 1, configured: 0, fromInvoice: 1, withoutRate: 0, seats: 10, monthlyValue: 350000, perDay: 350000 / 30, toDate: 175000 },
+    });
+    execute.mockImplementation(async (sql: string) => {
+      if (String(sql).includes("AS cc_active")) return [[{ cc_active: 1, branch_active: 1 }], []];
+      return [[], []];
+    });
+    const result = await getPnlDrilldown({ metric: "revenue", period: "2026-09", costCentreId: COST_CENTRE_ID });
+    expect(result.rows).toHaveLength(2);
+    expect(result.total).toBeCloseTo(175000, 2);
+    expect(result.hasEstimatedRows).toBe(true);
+    expect(result.rows[0].detail).toContain("ESTIMATE");
+    expect(result.rows[0].detail).toContain("15 of 30 days");
+  });
+
+  it("(d) no estimate rows outside the open window or for a cost centre closed today", async () => {
+    execute.mockImplementation(async (sql: string) => {
+      if (String(sql).includes("AS cc_active")) return [[{ cc_active: 1, branch_active: 0 }], []];
+      return [[], []];
+    });
+    expect((await getPnlDrilldown({ metric: "revenue", period: "2026-09", costCentreId: COST_CENTRE_ID })).rows).toEqual([]);
+    expect((await getPnlDrilldown({ metric: "revenue", period: "2026-05", costCentreId: COST_CENTRE_ID })).rows).toEqual([]);
+    expect(getSeatBillingEstimate).not.toHaveBeenCalled();
   });
 });

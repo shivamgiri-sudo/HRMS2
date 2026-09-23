@@ -53,6 +53,9 @@ export interface PnlTrendData {
 export interface PnlTrendFilters {
   branchId?: string;
   processId?: string;
+  /** The page's Client / Search filters (audit item 19) — resolved server-side to process ids. */
+  clientId?: string;
+  search?: string;
 }
 
 /**
@@ -64,10 +67,12 @@ export function usePnlTrend(filters: PnlTrendFilters = {}) {
   const params = new URLSearchParams();
   if (filters.branchId) params.set("branchId", filters.branchId);
   if (filters.processId) params.set("processId", filters.processId);
+  if (filters.clientId) params.set("clientId", filters.clientId);
+  if (filters.search) params.set("search", filters.search);
   const qs = params.toString();
 
   return useQuery({
-    queryKey: ["pnl-trend", filters.branchId ?? "", filters.processId ?? ""],
+    queryKey: ["pnl-trend", filters.branchId ?? "", filters.processId ?? "", filters.clientId ?? "", filters.search ?? ""],
     queryFn: async () => {
       const response = await hrmsApi.get<{ success: boolean; data: PnlTrendData }>(
         `/api/finance/pnl/trend${qs ? `?${qs}` : ""}`
