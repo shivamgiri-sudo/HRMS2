@@ -391,14 +391,6 @@ export const ffService = {
     if (!rec) throw ffError(404, "F&F calculation not found");
     if (rec.status === "paid") throw ffError(409, "F&F already paid — cannot re-approve");
 
-    if (Number(rec.is_ff_provisional) === 1) {
-      throw ffError(
-        409,
-        "Cannot approve F&F: calculation contains provisional statutory values. " +
-        "Verify and recalculate with approved configuration before approving."
-      );
-    }
-
     // WHERE carries the status this decision was made on. It was `WHERE id = ?` alone, with
     // no predicate at all, which made the guard above advisory: between that SELECT and this
     // UPDATE another actor could mark the settlement paid, and this statement would then
@@ -586,7 +578,7 @@ export const ffService = {
     // existing callers can't silently keep omitting it.
     const trimmedReason = String(reason ?? "").trim();
     if (!trimmedReason) {
-      throw new Error("A reason is required to clear a provisional F&F calculation");
+      throw ffError(400, "A reason is required to clear a provisional F&F calculation");
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -594,13 +586,27 @@ export const ffService = {
       [id]
     );
     const rec = (rows as any[])[0];
-    if (!rec) throw new Error("F&F calculation not found");
+    if (!rec) throw ffError(404, "F&F calculation not found");
+
+    // Resolve the verifier's display name from employees so the audit row is
+    // human-readable without a join, the same pattern used in exit clearance.
+    const [nameRows] = await db.execute<RowDataPacket[]>(
+      `SELECT CONCAT_WS(' ', first_name, last_name) AS full_name
+         FROM employees WHERE user_id = ? LIMIT 1`,
+      [verifiedBy]
+    );
+    const verifierName = (nameRows[0] as any)?.full_name ?? verifiedBy;
 
     await db.execute(
       `UPDATE full_final_calculation
-          SET is_ff_provisional = 0, updated_at = NOW()
+          SET is_ff_provisional = 0,
+              verified_by = ?,
+              verified_by_name = ?,
+              verified_at = NOW(),
+              verification_reason = ?,
+              updated_at = NOW()
         WHERE id = ?`,
-      [id]
+      [verifiedBy, verifierName, trimmedReason, id]
     );
 
     void logSensitiveAction({
@@ -609,7 +615,7 @@ export const ffService = {
       module_key: "exit",
       entity_type: "full_final_calculation",
       entity_id: id,
-      change_summary: { exit_request_id: rec.exit_request_id, verified_by: verifiedBy, reason: trimmedReason },
+      change_summary: { exit_request_id: rec.exit_request_id, verified_by: verifiedBy, verified_by_name: verifierName, reason: trimmedReason },
       req,
     });
 
