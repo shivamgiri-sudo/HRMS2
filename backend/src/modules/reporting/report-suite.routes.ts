@@ -268,6 +268,8 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
     aonBucket:      req.query.aonBucket   as string | undefined,
     cohortMonth:    req.query.cohortMonth as string | undefined,
     dimension:      req.query.dimension   as string | undefined,
+    dojFrom:        req.query.dojFrom     as string | undefined,
+    dojTo:          req.query.dojTo       as string | undefined,
   };
 
   // Fetch at most EXPORT_ROW_CAP + 1 rows to detect overflow
