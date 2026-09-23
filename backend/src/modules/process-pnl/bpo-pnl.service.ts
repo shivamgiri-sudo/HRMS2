@@ -15,6 +15,7 @@ import {
   type RevenueRuleInput,
 } from "./bpo-pnl.calculation.js";
 import { PROCESS_BY_COST_CENTRE, getInvoicedRevenueActuals, getApprovedCostCentreSplits } from "./pnl-actuals.service.js";
+import { isOpenPeriod } from "./pnl-statement.service.js";
 import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.service.js";
 import { processPnlService } from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
@@ -1555,19 +1556,20 @@ async function computeBranchRows(scope: PnlQueryFilters) {
     }));
     const revenue = calculateRevenue(rules, deliveries, revenueComponents);
     /*
-     * Revenue, most-specific source first:
-     *   1. base.revenueMtd        accounting/invoice figure already on the row
-     *   2. revenue.earnedRevenue  computed from approved rules x validated delivery
-     *   3. invoiced               what the client was actually billed this month
-     *
-     * Three is a real number, not an estimate, and it is the only one populated today. It stays a
-     * fallback rather than the default because a configured rule knows things an invoice does not
-     * — minimum commitments, SLA deductions, incentive components — and must win wherever finance
-     * has set one up.
+     * Revenue source, matching pnl-statement.service.ts's periodOpen rule so this tile and the
+     * P&L Statement tab never disagree for the same branch/month:
+     *   - Period still open (current/future month): rule/plan estimate — base.revenueMtd, else
+     *     revenue.earnedRevenue from approved rules x validated delivery. Nothing has been billed
+     *     yet, so a plan figure is the only number available.
+     *   - Period closed (a past month): invoiced actuals from getInvoicedRevenueActuals win
+     *     whenever they exist, even if the rule estimate is also non-zero — a closed month has a
+     *     real billed number and the estimate must not outrank it. Falls back to the rule estimate
+     *     only if nothing was invoiced for the process (e.g. billing not yet recorded).
      */
     const invoicedForProcess = invoiced.byProcess.get(base.processId) ?? 0;
     const ruleRevenue = toNumber(base.revenueMtd) > 0 ? toNumber(base.revenueMtd) : revenue.earnedRevenue;
-    const usedInvoicedFallback = ruleRevenue <= 0 && invoicedForProcess > 0;
+    const periodOpen = isOpenPeriod(scope.period ?? "");
+    const usedInvoicedFallback = !periodOpen && invoicedForProcess > 0;
     const recognizedRevenue = usedInvoicedFallback ? invoicedForProcess : ruleRevenue;
     const cost = calculateBpoCostWaterfall({
       revenue: recognizedRevenue,

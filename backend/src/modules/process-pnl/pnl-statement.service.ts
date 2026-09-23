@@ -193,7 +193,7 @@ async function buildLobColumns(
  * either side of midnight UTC would otherwise flip a month a day early and switch the people
  * cost source under a report someone is reading.
  */
-function isOpenPeriod(periodCode: string): boolean {
+export function isOpenPeriod(periodCode: string): boolean {
   const nowIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
   return periodCode >= nowIst.toISOString().slice(0, 7);
 }

@@ -296,7 +296,11 @@ function effectiveProcessExpr(alias: string, costCentreProcessIdSupported: boole
 }
 
 async function getBaseProcesses(filters: PnlQueryFilters): Promise<ProcessBaseRow[]> {
-  const conds = ["COALESCE(p.active_status, 1) = 1"];
+  // COALESCE(bm.active_status, 1) = 1 keeps a process visible even when its branch link is NULL
+  // (unbranched process) or the joined branch has no active_status set, but drops any process
+  // still attached to a branch explicitly closed (active_status = 0) — otherwise that branch
+  // keeps surfacing in every "All branches" dropdown derived from this row set forever.
+  const conds = ["COALESCE(p.active_status, 1) = 1", "COALESCE(bm.active_status, 1) = 1"];
   const params: unknown[] = [];
 
   if (filters.branchId) {
