@@ -5,6 +5,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./work-inbox.service.js";
 import { resolveDashboardScopeForRequest } from "../../shared/dashboardScope.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { getAwolContext, confirmAwolAbsconding, rejectAwolSuspected } from "./awol-confirm.service.js";
 
 interface ResolvedRequest extends AuthenticatedRequest {
   resolvedRole: string;
@@ -130,6 +131,28 @@ router.post("/:id/reassign", h(async (req: AuthenticatedRequest, res: any) => {
   }
   await svc.assertWorkItemAccess(req.authUser!.id, req.params.id, 'reassign');
   await svc.reassignWorkItem(req.params.id, toUserId, req.authUser!.id, remarks);
+  return res.json({ success: true });
+}));
+
+router.get("/:id/awol-context", h(async (req: AuthenticatedRequest, res: any) => {
+  const data = await getAwolContext(req.params.id);
+  return res.json({ success: true, data });
+}));
+
+router.post("/:id/awol/confirm", h(async (req: AuthenticatedRequest, res: any) => {
+  await svc.assertWorkItemAccess(req.authUser!.id, req.params.id, "complete");
+  const { lastWorkedDate, remarks } = req.body as { lastWorkedDate?: string; remarks?: string };
+  if (!lastWorkedDate) {
+    return res.status(400).json({ success: false, error: "lastWorkedDate is required" });
+  }
+  const data = await confirmAwolAbsconding(req.params.id, req.authUser!.id, { lastWorkedDate, remarks });
+  return res.json({ success: true, data });
+}));
+
+router.post("/:id/awol/reject", h(async (req: AuthenticatedRequest, res: any) => {
+  await svc.assertWorkItemAccess(req.authUser!.id, req.params.id, "complete");
+  const { remarks } = req.body as { remarks?: string };
+  await rejectAwolSuspected(req.params.id, req.authUser!.id, String(remarks ?? ""));
   return res.json({ success: true });
 }));
 

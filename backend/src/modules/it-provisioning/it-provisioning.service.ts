@@ -433,7 +433,7 @@ async function createRequest(params: {
 
 // ── JOIN trigger ───────────────────────────────────────────────────────────────
 
-const JOIN_TASKS: ProvisioningTask[] = [
+export const JOIN_TASKS: ProvisioningTask[] = [
   {
     taskCode: 'WFM_PROCESS_ALIGNMENT',
     assignedRole: 'wfm',
@@ -473,6 +473,14 @@ const JOIN_TASKS: ProvisioningTask[] = [
     titleFn: (name, code) => `HR Action: Appointment letter e-sign for ${name} [${code}]`,
     descFn: (name, code) =>
       `New employee ${name} (${code}) has an employee code. Please generate the appointment letter and complete e-sign tracking.`,
+  },
+  {
+    taskCode: 'HR_BGV_INITIATION',
+    assignedRole: 'hr',
+    actionUrl: '/provisioning/hr-bgv',
+    titleFn: (name, code) => `HR Action: BGV initiation for ${name} [${code}]`,
+    descFn: (name, code) =>
+      `New employee ${name} (${code}) has an employee code. Please initiate background verification with the vendor and record the outcome (Red/Green) once received. This is separate from the candidate's own DigiLocker submission.`,
   },
 ];
 
@@ -937,8 +945,15 @@ export async function notifyOverdueProvisioning(limit = 25): Promise<{
     try {
       const result = await notificationGateway.notify({
         eventCode: 'provisioning_overdue',
-        // One per request, ever. The cron rescans the same breached row every hour.
-        dedupeKey: `it_provisioning_request:${req.id}:overdue`,
+        // One per request per 4-hour overdue window, not once ever — the deck's requirement
+        // is a repeating nag until the task closes, not a single flag. Bucketing hours_overdue
+        // into 4-hour windows and folding the bucket into the dedupe key gives that for free
+        // through the existing unique-dedupe machinery: a fresh bucket is a fresh key, so
+        // notify() treats it as a new notification, while `status IN ('pending',
+        // 'pending_unassigned')` in the query above still stops everything the moment the
+        // task is actioned or waived. The cron polls hourly (it-provisioning.cron.ts), well
+        // inside the 4-hour bucket width, so no bucket boundary is ever skipped.
+        dedupeKey: `it_provisioning_request:${req.id}:overdue:${Math.floor(Number(req.hours_overdue ?? 0) / 4)}`,
         context: {
           employeeId: req.employee_id,
           userId: req.assigned_user_id ?? undefined,

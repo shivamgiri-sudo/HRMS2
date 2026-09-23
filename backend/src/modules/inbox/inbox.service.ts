@@ -332,6 +332,7 @@ export interface PendingTask {
    * actioned. Faking a "complete" button here would mark nothing anywhere.
    */
   source: "tat" | "inbox" | "work_item" | "derived";
+  item_type?: string;
   module: string;
   title: string;
   description?: string;
@@ -651,6 +652,7 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
       return {
         id: String(row.id),
         source: "work_item",
+        item_type: row.item_type ? String(row.item_type) : undefined,
         module: String(row.module ?? "general"),
         title: String(row.title ?? ""),
         description: row.description ? String(row.description) : undefined,

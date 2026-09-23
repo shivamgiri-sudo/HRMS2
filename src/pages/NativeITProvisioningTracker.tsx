@@ -135,6 +135,7 @@ const TASK_LABELS: Record<string, string> = {
   IT_EMAIL_DOMAIN_ASSET: "Email, Domain & Asset Setup",
   ADMIN_BIOMETRIC_ID_CARD: "Biometric & ID Card",
   APPOINTMENT_LETTER_ESIGN: "Appointment Letter E-Sign",
+  HR_BGV_INITIATION: "BGV Initiation",
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -147,6 +148,7 @@ const QUEUE_PRESETS: Record<string, { role: string; taskCode: string; title: str
   "/provisioning/it":            { role: "it",  taskCode: "IT_EMAIL_DOMAIN_ASSET",  title: "IT Provisioning Queue" },
   "/provisioning/admin":         { role: "admin", taskCode: "ADMIN_BIOMETRIC_ID_CARD", title: "Admin Provisioning Queue" },
   "/provisioning/appointment-letter": { role: "hr", taskCode: "APPOINTMENT_LETTER_ESIGN", title: "Appointment Letter Queue" },
+  "/provisioning/hr-bgv":             { role: "hr", taskCode: "HR_BGV_INITIATION",       title: "BGV Initiation Queue" },
 };
 
 function StatusBadge({ status, locked }: { status: string; locked: number }) {
@@ -747,6 +749,7 @@ export default function NativeITProvisioningTracker() {
   // Same precedence as NativeEmployeeStatCard: uploaded avatar wins over the legacy photo.
   const statCardPhotoUrl = statCardData?.avatar_url ?? statCardData?.photo_url ?? null;
   const [evidenceNote, setEvidenceNote] = useState("");
+  const [bgvResult, setBgvResult] = useState<"red" | "green" | null>(null);
   const [itForm, setItForm]       = useState<ITForm>({ officialEmail: "", domainAccount: "", assetTag: "", evidenceNote: "", evidenceFile: null });
   const [adminForm, setAdminForm] = useState<AdminForm>({ biometricEnrolled: false, cosecUserId: "", idCardPrinted: false, idCardNumber: "", evidenceNote: "" });
   const [wfmForm, setWfmForm]     = useState<WfmForm>({ processId: "", shiftId: "", rosterEffectiveDate: "", weekOffDay: "", attendanceEffectiveDate: "", evidenceNote: "" });
@@ -893,6 +896,7 @@ export default function NativeITProvisioningTracker() {
 
   function resetForms() {
     setEvidenceNote("");
+    setBgvResult(null);
     setItForm({ officialEmail: "", domainAccount: "", assetTag: "", evidenceNote: "", evidenceFile: null });
     setAdminForm({ biometricEnrolled: false, cosecUserId: "", idCardPrinted: false, idCardNumber: "", evidenceNote: "" });
     setWfmForm({ processId: "", shiftId: "", rosterEffectiveDate: "", weekOffDay: "", attendanceEffectiveDate: "", evidenceNote: "" });
@@ -1017,6 +1021,15 @@ export default function NativeITProvisioningTracker() {
           attendance_effective_date: wfmForm.attendanceEffectiveDate,
           evidence_note: wfmForm.evidenceNote.trim() || `Process aligned: ${wfmForm.processId}`,
         };
+      } else if (request.task_code === "HR_BGV_INITIATION") {
+        if (!bgvResult) {
+          toast.error("Select a BGV result (Red or Green) before completing this task");
+          return;
+        }
+        body = {
+          bgv_result: bgvResult,
+          evidence_note: evidenceNote.trim() || `BGV result: ${bgvResult}`,
+        };
       } else {
         body = { evidence_note: evidenceNote.trim() || "Completed from provisioning queue" };
       }
@@ -1051,6 +1064,7 @@ export default function NativeITProvisioningTracker() {
   const isAdminTask = currentTaskCode === "ADMIN_BIOMETRIC_ID_CARD";
   const isWfmTask   = currentTaskCode === "WFM_PROCESS_ALIGNMENT";
   const isAppointmentLetterTask = currentTaskCode === "APPOINTMENT_LETTER_ESIGN";
+  const isBgvTask = currentTaskCode === "HR_BGV_INITIATION";
   const navigate = useNavigate();
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -1649,6 +1663,46 @@ export default function NativeITProvisioningTracker() {
                     />
                   </div>
                 </div>
+              ) : isBgvTask ? (
+                <div className="space-y-4">
+                  <div>
+                    <Label className="mb-2 block">BGV Result</Label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setBgvResult("green")}
+                        className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+                          bgvResult === "green"
+                            ? "bg-[#eaf8ef] text-[#15803d] border-[#d7f0df] ring-2 ring-[#15803d]/30"
+                            : "bg-white text-slate-500 border-slate-200 hover:border-[#d7f0df]"
+                        }`}
+                      >
+                        Green — Clear
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBgvResult("red")}
+                        className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+                          bgvResult === "red"
+                            ? "bg-[#fff0f1] text-[#dc2626] border-[#ffdadd] ring-2 ring-[#dc2626]/30"
+                            : "bg-white text-slate-500 border-slate-200 hover:border-[#ffdadd]"
+                        }`}
+                      >
+                        Red — Flagged
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="evidence_note">Vendor correspondence reference</Label>
+                    <Textarea
+                      id="evidence_note"
+                      placeholder="e.g., Vendor confirmed clean report, ref VEN-2026-441"
+                      value={evidenceNote}
+                      onChange={(e) => setEvidenceNote(e.target.value)}
+                      rows={3}
+                    />
+                  </div>
+                </div>
               ) : (
                 <div className="space-y-2">
                   <Label htmlFor="evidence_note">Evidence note (optional)</Label>
@@ -1673,13 +1727,17 @@ export default function NativeITProvisioningTracker() {
             </Button>
             <Button
               onClick={handleSubmitAction}
-              disabled={actionMutation.isPending || (actionDialog.mode === "reopen" && evidenceNote.trim().length < 10)}
+              disabled={
+                actionMutation.isPending ||
+                (actionDialog.mode === "reopen" && evidenceNote.trim().length < 10) ||
+                (actionDialog.mode === "action" && isBgvTask && !bgvResult)
+              }
               variant={actionDialog.mode === "waive" ? "destructive" : "default"}
               className="min-h-[44px]"
             >
               {actionMutation.isPending && <Loader2 className="animate-spin h-4 w-4 mr-1" aria-hidden="true" />}
               {actionMutation.isPending ? "Saving..." : (
-                actionDialog.mode === "action"  ? (isITTask ? "Submit & Mark Done" : isAdminTask ? "Save Status" : isWfmTask ? "Submit WFM Alignment" : "Confirm Action") :
+                actionDialog.mode === "action"  ? (isITTask ? "Submit & Mark Done" : isAdminTask ? "Save Status" : isWfmTask ? "Submit WFM Alignment" : isBgvTask ? "Submit BGV Result" : "Confirm Action") :
                 actionDialog.mode === "waive"   ? "Waive Request" :
                 actionDialog.mode === "reopen"  ? "Reopen Request" : "Lock Evidence"
               )}

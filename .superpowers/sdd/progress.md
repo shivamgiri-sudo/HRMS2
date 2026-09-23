@@ -29,3 +29,28 @@ Branch: worktree-hrms2-issue-fixes
 - HR-012: NI — field types cannot contain commas; naive join is safe
 - HR-028, HR-030, HR-036, HR-041, HR-042, HR-045, HR-046: P3 — deferred, no sprint scope
 - HR-039 (TS strict mode): deferred — infrastructure-wide, separate sprint
+
+---
+
+# Transition Manager Gaps — SDD Progress Ledger
+
+Started: 2026-09-22
+Base commit: 33f359c12a9c9590da2c04058c2eb324e2923905
+Branch: worktree-transition-manager-gaps
+Plan: docs/superpowers/plans/2026-09-22-transition-manager-gaps.md
+
+## Completed Tasks
+
+- [x] Task 1: extract getLastWorkedDate (commit 33f359c1..2d1347c0, review clean)
+- [x] Task 2: AWOL confirm/reject service — commit 6765469a
+- [x] Task 3: AWOL routes — commit cea132dc
+- [x] Task 4: expose item_type on PendingTask (backend) — commit 21b94991
+- [x] Task 5: frontend Confirm Absconding UI — commit adf75586
+- [x] Task 6: 4-hour repeat reminder dedupe key — commit 8c988d74
+- [x] Task 7: additive bgv_result migration — commit ab75d35b (not executed against any DB; schema-snapshot.json updated by hand, schema-column-refs guard passes)
+- [x] Task 8: HR_BGV_INITIATION task — commit 7fd74890 (not manually verified against a running server/sandbox DB)
+- [x] Task 9: frontend BGV completion UI — commit 688b290a (not manually verified in browser; tsc clean, drift contract test passes)
+
+## Remaining
+
+None — all 9 tasks complete. Outstanding before shipping: run migration 1842 against a real sandbox DB and manually verify Tasks 5, 8, 9 in a browser (no local DB/browser available in this session).
