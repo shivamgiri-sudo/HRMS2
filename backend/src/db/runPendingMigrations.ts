@@ -1129,6 +1129,8 @@ const MIGRATION_MANIFEST: string[] = [
   "1843_it_provisioning_bgv_result_column.sql", // Registered 2026-09-22. Adds nullable bgv_result ENUM('red','green') to it_provisioning_request for the new HR_BGV_INITIATION join task. Additive, idempotent, no effect on any existing task_code. Renumbered from 1842 to 1843 at merge time to avoid colliding with 1842_employee_master_report_window_function_indexes.sql, registered separately the same day.
   "1845_onfido_wfm_manual_inputs.sql", // Registered 2026-09-23. Onfido dashboard WFM inputs with no uploaded source: onfido_manpower_plan (effective-dated approved HC per queue) and onfido_utilization_daily_input (daily forecast/adhoc/cross-training/QC inputs). Two new tables, additive, idempotent (CREATE TABLE IF NOT EXISTS).
   "1846_provisioning_hr_bgv_page_access.sql", // Registered 2026-09-24. Seeds page_catalog + role_page_access (hr, branch_hr, admin, super_admin) for PROVISIONING_HR_BGV, which shipped without them. Additive idempotent upserts.
+  "1847_process_lob_map.sql", // Registered 2026-09-23. Creates process_lob_map (process x LOB mapping, no FKs) and soft-deactivates the ZZTEST-LOB lob_master row. Additive, idempotent.
+  "1848_process_lob_map_page_access.sql", // Registered 2026-09-23. page_catalog + role_page_access for WFM_PROCESS_LOB_MAP (wfm/wfm_spoc/branch_wfm/ho_wfm/admin/hr/super_admin). Additive, idempotent.
   ];
 
 export type MigrationHealth = {

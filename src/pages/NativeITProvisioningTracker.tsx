@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { WfmLobField } from "@/components/wfm/WfmLobField";
 import { ExitClearanceQueue } from "@/components/exit/ExitClearanceQueue";
 import { NoticePeriodDrawer } from "@/components/exit/NoticePeriodDrawer";
 import type { ClearanceOwnerRole } from "@/lib/exitClearance";
@@ -115,6 +116,7 @@ interface AdminForm {
 
 interface WfmForm {
   processId: string;
+  lobId: string;
   shiftId: string;
   rosterEffectiveDate: string;
   weekOffDay: string;
@@ -583,12 +585,18 @@ function WfmTaskForm({ form, setForm, disabled }: {
           <Input
             id="wfm-process-id"
             value={form.processId}
-            onChange={e => setForm(f => ({ ...f, processId: e.target.value }))}
+            onChange={e => setForm(f => ({ ...f, processId: e.target.value, lobId: "" }))}
             placeholder="Process UUID or code"
             disabled={disabled}
             className="mt-1"
           />
         </div>
+        <WfmLobField
+          processId={form.processId}
+          value={form.lobId}
+          onChange={lobId => setForm(f => ({ ...f, lobId }))}
+          disabled={disabled}
+        />
         <div>
           <Label htmlFor="wfm-shift-id">Shift ID <span className="text-slate-400 font-normal">(optional)</span></Label>
           <Input
@@ -752,7 +760,7 @@ export default function NativeITProvisioningTracker() {
   const [bgvResult, setBgvResult] = useState<"red" | "green" | null>(null);
   const [itForm, setItForm]       = useState<ITForm>({ officialEmail: "", domainAccount: "", assetTag: "", evidenceNote: "", evidenceFile: null });
   const [adminForm, setAdminForm] = useState<AdminForm>({ biometricEnrolled: false, cosecUserId: "", idCardPrinted: false, idCardNumber: "", evidenceNote: "" });
-  const [wfmForm, setWfmForm]     = useState<WfmForm>({ processId: "", shiftId: "", rosterEffectiveDate: "", weekOffDay: "", attendanceEffectiveDate: "", evidenceNote: "" });
+  const [wfmForm, setWfmForm]     = useState<WfmForm>({ processId: "", lobId: "", shiftId: "", rosterEffectiveDate: "", weekOffDay: "", attendanceEffectiveDate: "", evidenceNote: "" });
   const [reportTaskId, setReportTaskId] = useState<string | null>(null);
   const [reportOpen, setReportOpen]     = useState(false);
   const [bulkOpen, setBulkOpen]         = useState(false);
@@ -899,7 +907,7 @@ export default function NativeITProvisioningTracker() {
     setBgvResult(null);
     setItForm({ officialEmail: "", domainAccount: "", assetTag: "", evidenceNote: "", evidenceFile: null });
     setAdminForm({ biometricEnrolled: false, cosecUserId: "", idCardPrinted: false, idCardNumber: "", evidenceNote: "" });
-    setWfmForm({ processId: "", shiftId: "", rosterEffectiveDate: "", weekOffDay: "", attendanceEffectiveDate: "", evidenceNote: "" });
+    setWfmForm({ processId: "", lobId: "", shiftId: "", rosterEffectiveDate: "", weekOffDay: "", attendanceEffectiveDate: "", evidenceNote: "" });
   }
 
   function openDialog(request: ProvisioningRequest, mode: "action" | "waive" | "confirm" | "reopen") {
@@ -1015,6 +1023,7 @@ export default function NativeITProvisioningTracker() {
         }
         body = {
           process_id: wfmForm.processId.trim(),
+          lob_id: wfmForm.lobId || null,
           shift_id: wfmForm.shiftId.trim() || null,
           roster_effective_date: wfmForm.rosterEffectiveDate,
           week_off_day: wfmForm.weekOffDay || null,

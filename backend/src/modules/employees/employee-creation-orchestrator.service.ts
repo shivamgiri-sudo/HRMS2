@@ -58,6 +58,7 @@ import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { encryptField } from "../../shared/fieldEncryption.js";
 import { computeAccountBlindIndex } from "../../shared/bankAccountDuplicate.js";
+import { applySingleMappedLob } from "../wfm/process-lob-map.service.js";
 
 export interface EmployeeCreationInput {
   candidateId: string;
@@ -497,6 +498,16 @@ export async function createEmployeeFromCandidate(
           : null,
       ]
     );
+
+    // LOB default: a process with exactly ONE active mapped LOB (process_lob_map) gives the new
+    // employee that LOB; 0 or >1 mappings leave employees.lob_id NULL for WFM to pick at
+    // alignment. Additive follow-up UPDATE guarded by lob_id IS NULL; never blocks creation
+    // (e.g. before migration 1845 has been applied).
+    try {
+      await applySingleMappedLob(conn, employeeId, resolvedProcessId);
+    } catch (lobErr: unknown) {
+      console.warn('[EmployeeOrchestrator] Single-LOB default skipped:', lobErr instanceof Error ? lobErr.message : lobErr);
+    }
 
     // Father/Husband relation: no employees column holds this (only father_name does), and
     // employee_legacy_meta — where the Employee Master report already reads relationship_type

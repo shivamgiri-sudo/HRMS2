@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1192,
-  "columnCount": 17788,
+  "tableCount": 1193,
+  "columnCount": 17798,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -14685,6 +14685,17 @@
       "updated_by",
       "approved_by",
       "approved_at",
+      "created_at",
+      "updated_at"
+    ],
+    "process_lob_map": [
+      "id",
+      "process_id",
+      "lob_id",
+      "branch_id",
+      "active_status",
+      "created_by",
+      "updated_by",
       "created_at",
       "updated_at"
     ],
