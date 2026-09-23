@@ -2054,11 +2054,11 @@ export const grnService = {
          LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
          LEFT JOIN finance_budget_header h ON h.id = g.budget_id
          LEFT JOIN finance_budget_line l ON l.id = g.budget_line_id
-         LEFT JOIN employees cb ON cb.user_id = g.created_by
-         LEFT JOIN employees rb ON rb.user_id = g.reviewed_by
-         LEFT JOIN employees bhb ON bhb.user_id = g.branch_head_reviewed_by
-         LEFT JOIN employees ahb ON ahb.user_id = g.accounts_head_reviewed_by
-         LEFT JOIN employees fhb ON fhb.user_id = g.finance_head_reviewed_by
+         LEFT JOIN (SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees WHERE user_id IS NOT NULL GROUP BY user_id) cb ON cb.user_id = g.created_by
+         LEFT JOIN (SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees WHERE user_id IS NOT NULL GROUP BY user_id) rb ON rb.user_id = g.reviewed_by
+         LEFT JOIN (SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees WHERE user_id IS NOT NULL GROUP BY user_id) bhb ON bhb.user_id = g.branch_head_reviewed_by
+         LEFT JOIN (SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees WHERE user_id IS NOT NULL GROUP BY user_id) ahb ON ahb.user_id = g.accounts_head_reviewed_by
+         LEFT JOIN (SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees WHERE user_id IS NOT NULL GROUP BY user_id) fhb ON fhb.user_id = g.finance_head_reviewed_by
          ${contextAllocationJoin}
          ${where}
         ORDER BY g.created_at DESC

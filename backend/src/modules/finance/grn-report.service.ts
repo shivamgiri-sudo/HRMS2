@@ -235,7 +235,10 @@ export const grnReportService = {
           g.recognition_end_period
         FROM grn_request g
         LEFT JOIN branch_master bm ON bm.id = g.branch_id
-        LEFT JOIN employees u ON u.user_id = g.created_by
+        LEFT JOIN (
+          SELECT user_id, MIN(full_name) AS full_name
+            FROM employees WHERE user_id IS NOT NULL GROUP BY user_id
+        ) u ON u.user_id = g.created_by
         LEFT JOIN cost_centre_master cc ON cc.id = g.cost_centre_id
         LEFT JOIN (
           -- NOT IN ('released') also admitted 'reversed' and 'draft'. Reversed tax has been credited
