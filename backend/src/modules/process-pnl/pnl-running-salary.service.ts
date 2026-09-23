@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { computeRunningSalary } from "../payroll/running-salary.service.js";
 import { getCostCentrePeriods } from "./cost-centre-history.service.js";
+import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 
 /**
  * Snapshots each employee's running-month salary so the P&L can show a live Operating Profit %
@@ -400,13 +401,29 @@ export async function getRunningPeopleCost(periodCode: string): Promise<PeopleCo
   };
   if (!/^\d{4}-\d{2}$/.test(periodCode)) return out;
 
+  // WHERE the accrued pay is counted (owner rule 2026-09-23, same as the Statement's actual-payroll
+  // path bpo-pnl getPayrollPeople, Live P&L and CEO Overview): the EFFECTIVE cost centre — the
+  // mapped payroll cost centre (pnl_employee_cost_centre_override) else the row's own — decides the
+  // branch, and for a mapped employee the process. The snapshot itself keeps storing HR facts
+  // (branch_id / process_id / cost_centre_id as HR has them); the mapping is applied on read, so
+  // turning a mapping off needs no snapshot refresh. The override join is unique per employee, so
+  // each snapshot row still lands in exactly one branch and one process.
+  const attribution = await payrollAttributionSql({
+    employeeIdExpr: "s.employee_id",
+    homeCostCentreExpr: "s.cost_centre_id",
+    homeBranchExpr: "s.branch_id",
+    homeProcessExpr: "s.process_id",
+  });
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT branch_id, process_id, pnl_bucket,
-            SUM(earned_salary_till_date) AS amount,
-            MAX(as_of_date) AS as_of_date
-       FROM pnl_running_salary_snapshot
-      WHERE period_code = ?
-      GROUP BY branch_id, process_id, pnl_bucket`,
+    `SELECT ${attribution.effectiveBranchExpr} AS branch_id,
+            ${attribution.effectiveProcessExpr} AS process_id,
+            s.pnl_bucket,
+            SUM(s.earned_salary_till_date) AS amount,
+            MAX(s.as_of_date) AS as_of_date
+       FROM pnl_running_salary_snapshot s
+       ${attribution.join}
+      WHERE s.period_code = ?
+      GROUP BY ${attribution.effectiveBranchExpr}, ${attribution.effectiveProcessExpr}, s.pnl_bucket`,
     [periodCode]
   );
 
@@ -434,15 +451,25 @@ export async function getRunningPeopleCost(periodCode: string): Promise<PeopleCo
 
   // Counted from `employees` rather than from the snapshot, because the employees MISSING from the
   // snapshot are exactly what makes a column untrustworthy — a snapshot-only count can never see them.
+  // Coverage follows the same effective attribution as the money above, so a mapped employee is
+  // counted as headcount of the branch/process their pay now lands in, not their home one.
+  const coverageAttribution = await payrollAttributionSql({
+    employeeIdExpr: "e.id",
+    homeCostCentreExpr: "e.cost_centre_id",
+    homeBranchExpr: "e.branch_id",
+    homeProcessExpr: "e.process_id",
+  });
   const [coverage] = await db.execute<RowDataPacket[]>(
-    `SELECT e.branch_id, e.process_id,
+    `SELECT ${coverageAttribution.effectiveBranchExpr} AS branch_id,
+            ${coverageAttribution.effectiveProcessExpr} AS process_id,
             COUNT(*) AS active_employees,
             COUNT(s.id) AS covered_employees
        FROM employees e
        LEFT JOIN pnl_running_salary_snapshot s
               ON s.employee_id = e.id AND s.period_code = ?
+       ${coverageAttribution.join}
       WHERE e.active_status = 1
-      GROUP BY e.branch_id, e.process_id`,
+      GROUP BY ${coverageAttribution.effectiveBranchExpr}, ${coverageAttribution.effectiveProcessExpr}`,
     [periodCode]
   );
 

@@ -5,7 +5,7 @@ import { getCurrentDateIST } from "../../shared/istDate.js";
 import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
 import { readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
 import { isEstimateWindow } from "./pnl-seat-billing.service.js";
-import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
+import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { ccProcessJoin, ccProcessNameSql, costCentreLabel } from "./cost-centre-label.js";
 import { budgetByBranchId, entriesForCodes, readBudgetEntries, sumAmount, topUpsForCodes } from "./pnl-budget-source.js";
 
@@ -412,13 +412,18 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
   // counted against a different branch here than on Live P&L. Deliberate remaining difference:
   // this tab keeps payroll on a non-MAS cost centre (owner rule, "does NOT filter payroll by
   // company" test) while Live P&L's rows are MAS cost centres only.
-  // Still on e.branch_id (tracked, not yet aligned): the Statement's branch view
-  // (bpo-pnl.service.ts getPayrollPeople -> getActualPeopleCost.byBranch).
-  const ov = await overrideJoinSql("e.id", "e.cost_centre_id");
+  // The Statement's branch view (bpo-pnl.service.ts getPayrollPeople) follows the same rule since
+  // 2026-09-23. PROCESS scope (owner rule, same date): an employee mapped to a payroll cost centre
+  // counts under the MAPPED cost centre's process (payrollAttributionSql effectiveProcessExpr), not
+  // their home process as well — the Statement's process view uses the same expression.
+  const ov = await payrollAttributionSql({
+    employeeIdExpr: "e.id", homeCostCentreExpr: "e.cost_centre_id",
+    homeBranchExpr: "e.branch_id", homeProcessExpr: "e.process_id", ccAlias: "pcc",
+  });
   const where: string[] = ["r.run_month = ?"];
   const params: unknown[] = [period];
   if (s.processIds.length) {
-    where.push(`e.process_id IN (${marks(s.processIds)})`);
+    where.push(`${ov.effectiveProcessExpr} IN (${marks(s.processIds)})`);
     params.push(...s.processIds);
   }
   if (s.costCentreIds.length) {
@@ -426,7 +431,7 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
     params.push(...s.costCentreIds);
   }
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT CASE WHEN pcc.id IS NULL THEN e.branch_id ELSE pcc.branch_id END AS branch_id,
+    `SELECT ${ov.effectiveBranchExpr} AS branch_id,
             COUNT(*) AS staff,
             SUM(COALESCE(l.gross_salary, 0)
               + COALESCE(l.pf_employer, 0)
@@ -436,9 +441,8 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
        JOIN salary_prep_run r ON r.id = l.run_id
        JOIN employees e ON e.id = l.employee_id
        ${ov.join}
-       LEFT JOIN cost_centre_master pcc ON pcc.id = ${ov.effectiveCostCentreExpr}
       WHERE ${where.join(" AND ")}
-      GROUP BY CASE WHEN pcc.id IS NULL THEN e.branch_id ELSE pcc.branch_id END`,
+      GROUP BY ${ov.effectiveBranchExpr}`,
     params,
   );
   for (const r of rows) {
@@ -452,11 +456,14 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
   // and, without this, disagreed with Live P&L on people cost for every open month: Live P&L
   // correctly showed Rs 58.07 L accrued for Sep-26 company-wide while this tab showed Rs 0 and
   // margin NA. COUNT(*) not DISTINCT, matching that fallback: one row per employee per period.
-  const ovSnapshot = await overrideJoinSql("s.employee_id", "s.cost_centre_id");
+  const ovSnapshot = await payrollAttributionSql({
+    employeeIdExpr: "s.employee_id", homeCostCentreExpr: "s.cost_centre_id",
+    homeBranchExpr: "s.branch_id", homeProcessExpr: "s.process_id", ccAlias: "pcc",
+  });
   const runningWhere: string[] = ["s.period_code = ?"];
   const runningParams: unknown[] = [period];
   if (s.processIds.length) {
-    runningWhere.push(`s.process_id IN (${marks(s.processIds)})`);
+    runningWhere.push(`${ovSnapshot.effectiveProcessExpr} IN (${marks(s.processIds)})`);
     runningParams.push(...s.processIds);
   }
   if (s.costCentreIds.length) {
@@ -464,13 +471,12 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
     runningParams.push(...s.costCentreIds);
   }
   const [runningRows] = await db.execute<RowDataPacket[]>(
-    `SELECT CASE WHEN pcc.id IS NULL THEN s.branch_id ELSE pcc.branch_id END AS branch_id,
+    `SELECT ${ovSnapshot.effectiveBranchExpr} AS branch_id,
             COUNT(*) AS staff, SUM(s.earned_salary_till_date) AS cost
        FROM pnl_running_salary_snapshot s
        ${ovSnapshot.join}
-       LEFT JOIN cost_centre_master pcc ON pcc.id = ${ovSnapshot.effectiveCostCentreExpr}
       WHERE ${runningWhere.join(" AND ")}
-      GROUP BY CASE WHEN pcc.id IS NULL THEN s.branch_id ELSE pcc.branch_id END`,
+      GROUP BY ${ovSnapshot.effectiveBranchExpr}`,
     runningParams,
   );
   for (const r of runningRows) {

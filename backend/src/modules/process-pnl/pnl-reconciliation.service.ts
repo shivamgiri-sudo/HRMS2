@@ -449,7 +449,8 @@ async function readBudgets(period: string) {
  * centre (post-override) and so lands on that cost centre's branch; only staff with no cost centre
  * at all fall back to their home branch (readUnallocatedPayroll, e.branch_id). CEO Overview
  * (ceo-overview.service.ts peopleByBranch) and the trend (pnl-trend.service.ts) use the same rule.
- * Not yet aligned: bpo-pnl.service.ts getPayrollPeople (Statement branch view) — see its comment.
+ * Since 2026-09-23 the Statement (bpo-pnl.service.ts getPayrollPeople and the running-salary
+ * reader getRunningPeopleCost) follows it too, via payrollAttributionSql.
  */
 async function readPayroll(period: string): Promise<Map<string, { cost: number; staff: number }>> {
   const out = new Map<string, { cost: number; staff: number }>();

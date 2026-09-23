@@ -5,7 +5,7 @@ import { assertNotFuturePeriod } from "./pnl-period-guard.js";
 import { entriesForCodes, readBudgetEntries, topUpsForCodes, type BudgetEntry } from "./pnl-budget-source.js";
 import { readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
 import { getSeatBillingEstimate, isEstimateWindow } from "./pnl-seat-billing.service.js";
-import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
+import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 
 /**
@@ -125,14 +125,19 @@ async function effectivePeopleScope(
   scope: PnlDrilldownScope,
   cols: { personId: string; homeCostCentre: string; homeBranch: string; process: string },
 ): Promise<{ join: string; sql: string; param: string }> {
-  const ov = await overrideJoinSql(cols.personId, cols.homeCostCentre);
-  const join = `${ov.join}
-       LEFT JOIN cost_centre_master pcc ON pcc.id = ${ov.effectiveCostCentreExpr}`;
+  // payrollAttributionSql: the one attribution the summaries use. Process scope too (2026-09-23,
+  // owner rule): a mapped employee sits under the MAPPED cost centre's process, as on CEO Overview
+  // and the Statement's process view, never under their home process as well.
+  const ov = await payrollAttributionSql({
+    employeeIdExpr: cols.personId, homeCostCentreExpr: cols.homeCostCentre,
+    homeBranchExpr: cols.homeBranch, homeProcessExpr: cols.process, ccAlias: "pcc",
+  });
+  const join = ov.join;
   if (scope.costCentreId) return { join, sql: `${ov.effectiveCostCentreExpr} = ?`, param: scope.costCentreId };
-  if (scope.processId) return { join, sql: `${cols.process} = ?`, param: scope.processId };
+  if (scope.processId) return { join, sql: `${ov.effectiveProcessExpr} = ?`, param: scope.processId };
   return {
     join,
-    sql: `(CASE WHEN pcc.id IS NULL THEN ${cols.homeBranch} ELSE pcc.branch_id END) = ?`,
+    sql: `(${ov.effectiveBranchExpr}) = ?`,
     param: scope.branchId!,
   };
 }
@@ -285,17 +290,6 @@ async function seatEstimateRows(period: string, costCentreId: string): Promise<D
 }
 
 /**
- * The employee-side scope predicate against pnl_running_salary_snapshot, which carries its own
- * branch/process/cost-centre attribution (resolved once at snapshot time) rather than joining
- * back to employees.
- */
-function snapshotScopeSql(scope: PnlDrilldownScope): { sql: string; param: string } {
-  if (scope.costCentreId) return { sql: "s.cost_centre_id = ?", param: scope.costCentreId };
-  if (scope.processId) return { sql: "s.process_id = ?", param: scope.processId };
-  return { sql: "s.branch_id = ?", param: scope.branchId! };
-}
-
-/**
  * Running-salary fallback for a period payroll has not run for yet.
  *
  * Without this the people drilldown was silently empty for every open period. Measured live
@@ -316,12 +310,11 @@ async function peopleSnapshotRows(
   bucket?: PnlPeopleBucket,
 ): Promise<DrilldownRow[]> {
   if (!(await tableExists("pnl_running_salary_snapshot"))) return [];
-  // A bucketed request answers a Statement Agent/DSC/BMC cell, which scopes on the snapshot's own
-  // attribution — unchanged. The un-bucketed accrual fallback answers a Live P&L / CEO cell, so it
-  // uses the same effective-cost-centre attribution as those summaries (audit item 17b).
-  const s = bucket
-    ? { join: "", ...snapshotScopeSql(scope) }
-    : await effectivePeopleScope(scope, SNAPSHOT_COLS);
+  // Both the un-bucketed accrual fallback (a Live P&L / CEO cell, audit item 17b) and a bucketed
+  // Statement Agent/DSC/BMC cell use the effective (post-mapping) attribution: since 2026-09-23 the
+  // Statement's running-salary reader (pnl-running-salary.service.ts getRunningPeopleCost) groups
+  // the snapshot by the same effective branch/process, so this still ties to the clicked cell.
+  const s = await effectivePeopleScope(scope, SNAPSHOT_COLS);
   const bucketSql = bucket ? " AND s.pnl_bucket = ?" : "";
   const bucketParams = bucket ? [bucket] : [];
   const rows: DrilldownRow[] = [];
