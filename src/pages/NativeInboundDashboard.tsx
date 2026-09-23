@@ -84,8 +84,8 @@ function ProjectCard({ p, onClick }: { p: ProjectSummary; onClick: () => void })
           <p className="text-xs text-slate-500">Ans Rate</p>
         </div>
         <div>
-          <p className="text-lg font-bold text-red-500">{p.abandon_pct.toFixed(1)}%</p>
-          <p className="text-xs text-slate-500">Abandon</p>
+          <p className="text-lg font-bold text-emerald-600">{p.abandon_pct.toFixed(1)}%</p>
+          <p className="text-xs text-slate-500">AL %</p>
         </div>
       </div>
       <div className="mt-3 flex items-center justify-between border-t border-slate-50 pt-2">
@@ -212,7 +212,7 @@ function AllProjectsView({ from, to }: { from: string; to: string }) {
                   <td className="py-2 pr-3 text-right text-slate-600">{p.total.toLocaleString()}</td>
                   <td className="py-2 pr-3 text-right text-slate-600">{p.answered.toLocaleString()}</td>
                   <td className="py-2 pr-3 text-right text-slate-600">{p.ans_pct.toFixed(1)}%</td>
-                  <td className={`py-2 pr-3 text-right font-semibold ${p.abandon_pct > 10 ? "text-red-600" : "text-slate-600"}`}>{p.abandon_pct.toFixed(1)}%</td>
+                  <td className={`py-2 pr-3 text-right font-semibold ${p.abandon_pct < 90 ? "text-red-600" : "text-slate-600"}`}>{p.abandon_pct.toFixed(1)}%</td>
                   <td className="py-2 pr-3 text-right"><SLBadge pct={p.sl_pct} /></td>
                   <td className="py-2 pr-3 text-right text-slate-600">{p.avg_handle}s</td>
                   <td className="py-2 pr-0 text-right text-slate-600">{p.avg_wait}s</td>
@@ -283,7 +283,7 @@ export function ProjectDetailView({ projectKey, from, to }: { projectKey: string
         {[
           { label: "Total Calls", value: summary.total.toLocaleString(), color: "blue" },
           { label: "Answer Rate", value: `${summary.ans_pct.toFixed(1)}%`, color: "green" },
-          { label: "Abandon Rate", value: `${summary.abandon_pct.toFixed(1)}%`, color: "red" },
+          { label: "AL %", value: `${summary.abandon_pct.toFixed(1)}%`, color: "green" },
           { label: "Service Level", value: `${summary.sl_pct.toFixed(1)}%`, color: "amber" },
         ].map((s, i) => (
           <div key={i} className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
@@ -365,7 +365,7 @@ export function ProjectDetailView({ projectKey, from, to }: { projectKey: string
                   <td className="py-2 pr-3 text-right text-slate-600">{r.offered.toLocaleString()}</td>
                   <td className="py-2 pr-3 text-right text-slate-600">{r.answered.toLocaleString()}</td>
                   <td className="py-2 pr-3 text-right text-slate-600">{r.answeredPct}%</td>
-                  <td className={`py-2 pr-3 text-right font-semibold ${r.abandonPct > 10 ? "text-red-600" : "text-slate-600"}`}>{r.abandonPct}%</td>
+                  <td className={`py-2 pr-3 text-right font-semibold ${r.abandonPct < 90 ? "text-red-600" : "text-slate-600"}`}>{r.abandonPct}%</td>
                   <td className="py-2 pr-3 text-right"><SLBadge pct={r.slPct} /></td>
                   <td className="py-2 pr-3 text-right text-slate-600">{r.acht}s</td>
                   <td className="py-2 pr-0 text-right text-slate-600">{r.uniquePhones.toLocaleString()}</td>

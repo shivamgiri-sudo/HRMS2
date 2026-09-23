@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Layers, MessageSquare } from "lucide-react";
 import { Spinner, SectionCard, formatINR } from "./DashboardKit";
@@ -86,6 +87,8 @@ function LobMatrix({ snapshot, periods }: { snapshot: Snapshot; periods: Period[
   );
 }
 
+const LOB_LINE_COLOR: Record<string, string> = { Chat: "#e11d48", Bevzilla: "#7c3aed", Kenaz: "#059669" };
+
 export function BellavitaChatLobSnapshot() {
   const [data, setData] = useState<SnapshotData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -102,6 +105,25 @@ export function BellavitaChatLobSnapshot() {
     return () => { cancelled = true; };
   }, []);
 
+  /** Day-wise Overall Chat Volume for all 3 LOBs (including Chat), read
+   * straight out of each snapshot's own "Overall Chat Volume" row, keyed by
+   * the same day-period keys ("YYYY-MM-DD") the table's daily columns
+   * already use -- so the chart never disagrees with the table below it. */
+  const dailyVolume = useMemo(() => {
+    if (!data) return [];
+    const dayPeriods = data.periods.filter((p) => p.key !== "mtd" && !p.key.startsWith("w"));
+    const rowFor = (lob: string) => data.snapshots.find((s) => s.lob === lob)?.rows.find((r) => r.metric === "Overall Chat Volume");
+    const chatRow = rowFor("Chat");
+    const bevzillaRow = rowFor("Bevzilla");
+    const kenazRow = rowFor("Kenaz");
+    return dayPeriods.map((p) => ({
+      date: p.label,
+      Chat: chatRow?.values[p.key] ?? 0,
+      Bevzilla: bevzillaRow?.values[p.key] ?? 0,
+      Kenaz: kenazRow?.values[p.key] ?? 0,
+    }));
+  }, [data]);
+
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!data) return null;
@@ -112,6 +134,22 @@ export function BellavitaChatLobSnapshot() {
         MTD, weekly and daily breakdown for the current month, live from db_masmis.bb_chat — scoped to Chat, Bevzilla and Kenaz per request.
         The MTD column is highlighted. Scroll horizontally for daily figures.
       </p>
+
+      <SectionCard icon={MessageSquare} title="Day-wise Overall Chat Volume — Chat vs Bevzilla vs Kenaz" tone="slate" footnote="Same daily figures as the Overall Chat Volume row in each LOB's matrix below.">
+        <ResponsiveContainer width="100%" height={260}>
+          <LineChart data={dailyVolume} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+            <XAxis dataKey="date" tick={{ fontSize: 9 }} />
+            <YAxis tick={{ fontSize: 10 }} />
+            <Tooltip contentStyle={{ fontSize: 12, borderRadius: 10, border: "1px solid #e2e8f0" }} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Line type="monotone" dataKey="Chat" stroke={LOB_LINE_COLOR.Chat} strokeWidth={2.5} dot={{ r: 3 }} />
+            <Line type="monotone" dataKey="Bevzilla" stroke={LOB_LINE_COLOR.Bevzilla} strokeWidth={2.5} dot={{ r: 3 }} />
+            <Line type="monotone" dataKey="Kenaz" stroke={LOB_LINE_COLOR.Kenaz} strokeWidth={2.5} dot={{ r: 3 }} />
+          </LineChart>
+        </ResponsiveContainer>
+      </SectionCard>
+
       {data.snapshots.map((s) => (
         <LobMatrix key={s.lob} snapshot={s} periods={data.periods} />
       ))}

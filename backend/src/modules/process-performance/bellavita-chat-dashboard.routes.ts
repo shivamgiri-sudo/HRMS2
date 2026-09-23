@@ -1,9 +1,12 @@
 import { Router, type NextFunction, type Response } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { getBellavitaChatDashboard, getBellavitaChatLobSnapshot, getBellavitaChatPeriodBreakdown } from "./bellavita-chat-dashboard.service.js";
 import {
-  getBellavitaChatOverview, getBellavitaChatPeriodDetail, setPlannedCapacity,
+  getBellavitaChatDashboard, getBellavitaChatLobSnapshot, getBellavitaChatPeriodBreakdown,
+  getBellavitaChatTlTrend, getBellavitaChatAgentTrend,
+} from "./bellavita-chat-dashboard.service.js";
+import {
+  getBellavitaChatOverview, getBellavitaChatPeriodDetail, setPlannedCapacity, setFrtTarget,
   parseUserType, CHAT_USER_TYPES, type ChatUserType,
 } from "./bellavita-chat-overview.service.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
@@ -36,6 +39,23 @@ router.get("/bellavita-chat-dashboard/period-breakdown", requireRole(...VIEWER_R
   } catch (err) {
     res.status(400).json({ success: false, error: err instanceof Error ? err.message : "Invalid range" });
   }
+}));
+
+router.get("/bellavita-chat-dashboard/tl-trend", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const tlName = String(req.query.tlName ?? "").trim();
+  if (!tlName) return res.status(400).json({ success: false, error: "tlName is required" });
+  const lob = req.query.lob ? String(req.query.lob) : undefined;
+  const data = await getBellavitaChatTlTrend(String(req.query.from ?? ""), String(req.query.to ?? ""), tlName, lob);
+  res.json({ success: true, data });
+}));
+
+router.get("/bellavita-chat-dashboard/agent-trend", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const agent = String(req.query.agent ?? "").trim();
+  if (!agent) return res.status(400).json({ success: false, error: "agent is required" });
+  const lob = req.query.lob ? String(req.query.lob) : undefined;
+  const empId = req.query.empId ? String(req.query.empId) : undefined;
+  const data = await getBellavitaChatAgentTrend(String(req.query.from ?? ""), String(req.query.to ?? ""), agent, lob, empId);
+  res.json({ success: true, data });
 }));
 
 router.get("/bellavita-chat-dashboard/lob-snapshot", requireRole(...VIEWER_ROLES), h(async (_req, res) => {
@@ -83,6 +103,28 @@ router.put("/bellavita-chat-dashboard/planned-capacity", requireRole(...CAPACITY
     reason: body.reason ? String(body.reason) : undefined,
     old_value_json: { capacity: change.oldValue },
     new_value_json: { capacity: change.newValue, userType, month: change.month },
+    req,
+  });
+  res.json({ success: true, data: change });
+}));
+
+router.put("/bellavita-chat-dashboard/frt-target", requireRole(...CAPACITY_ADMIN_ROLES), h(async (req, res) => {
+  const body = (req.body ?? {}) as { month?: string; target?: number | string; reason?: string };
+  let change;
+  try {
+    change = await setFrtTarget(String(body.month ?? ""), Number(body.target), req.authUser!.id);
+  } catch (err) {
+    return res.status(400).json({ success: false, error: err instanceof Error ? err.message : "Invalid FRT target" });
+  }
+  await writeAuditLog({
+    actor_user_id: req.authUser!.id,
+    action_type: "BB_CHAT_FRT_TARGET_SET",
+    module_key: "process-performance",
+    entity_type: "dashboard_metric_target",
+    entity_id: `bellavita_chat:frt_target:${body.month}`,
+    reason: body.reason ? String(body.reason) : undefined,
+    old_value_json: { target: change.oldValue },
+    new_value_json: { target: change.newValue, month: body.month },
     req,
   });
   res.json({ success: true, data: change });

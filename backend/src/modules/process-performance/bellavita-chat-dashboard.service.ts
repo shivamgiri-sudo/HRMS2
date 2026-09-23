@@ -74,6 +74,10 @@ export interface BellavitaChatAgentRow {
    * chat, confirmed against real distinct disposition values. */
   saleChatCount: number; conversionPct: number;
   resolvedPct: number; avgWaitTimeMin: number;
+  /** SUM(bb_sale.amount) for this agent's own emp_id, campaign = 'Chat',
+   * same dedup-by-order-id convention as BellavitaChatTlRow.amount. null
+   * (not 0) when this agent row has no real emp_id to join by. */
+  revenue: number | null;
 }
 
 export interface BellavitaChatDashboardData {
@@ -100,6 +104,12 @@ export interface BellavitaChatDashboardData {
    * that goes stale whenever uploads lag behind the calendar. Computed only
    * on the empty-result path so the common case pays no extra query cost. */
   latestAvailableDate: string | null;
+  /** MAX(chat_date) actually present in bb_chat within [from,to] -- null only
+   * when totalTickets is 0 (latestAvailableDate covers that case instead).
+   * When this is earlier than `to`, Total Chat/Unique/Conversion%/Resolved%
+   * only reflect data through this date even though a wider range was
+   * requested; Amount/Revenue (from bb_sale) are not affected. */
+  chatDataThrough: string | null;
 }
 
 const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -208,6 +218,29 @@ export async function getBellavitaChatDashboard(
   const revenueByTl = new Map<string, number>();
   for (const r of salesByTlRows) revenueByTl.set(String(r.tl), num(r.revenue));
 
+  /** Same dedup shape as salesByTlRows above, keyed by bb_sale.emp_id instead
+   * of tl -- the same "MASxxxxx" employee-id scheme used to match bb_apr to
+   * bb_sale for the Bellavita Sale dashboard's own Agent Performance report
+   * (see bellavita-agent-performance.service.ts), so this is a real,
+   * ID-matched figure, not a name-based guess. Keys are upper-cased for the
+   * same case-insensitive-GROUP-BY reason documented there. */
+  const [salesByAgentRows] = await db.execute<RowDataPacket[]>(
+    `SELECT s.emp_id AS emp_id, SUM(s.amount) AS revenue
+     FROM db_masmis.bb_sale s
+     INNER JOIN (
+       SELECT bella_vita_order_id, MAX(id) AS keep_id
+       FROM db_masmis.bb_sale
+       WHERE campaign = 'Chat' AND calling_status = 'Sale Made' AND \`Date\` >= ? AND \`Date\` <= ?
+         AND bella_vita_order_id IS NOT NULL AND bella_vita_order_id != ''
+       GROUP BY bella_vita_order_id
+     ) dk ON dk.keep_id = s.id
+     WHERE s.emp_id IS NOT NULL AND s.emp_id != ''
+     GROUP BY s.emp_id`,
+    [from, to],
+  );
+  const revenueByAgent = new Map<string, number>();
+  for (const r of salesByAgentRows) revenueByAgent.set(String(r.emp_id).toUpperCase(), num(r.revenue));
+
   const [agentRows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(agent_name, ''), NULLIF(current_agent, ''), 'Unassigned') AS agent, MAX(emp_id) AS emp_id, COUNT(*) AS n,
        SUM(CASE WHEN ${RESOLVED_EXPR} THEN 1 ELSE 0 END) AS resolved,
@@ -232,6 +265,25 @@ export async function getBellavitaChatDashboard(
       `SELECT MAX(chat_date) AS latest FROM db_masmis.bb_chat`,
     );
     latestAvailableDate = latestRow?.latest ? String(latestRow.latest) : null;
+  }
+
+  // MAX(chat_date) actually present WITHIN the selected range -- distinct
+  // from latestAvailableDate above (only computed when the range is fully
+  // empty). Caught live: bb_chat.chat_date has real values for 2026-09-01
+  // through 2026-09-04 only (93,837 Shamsher rows total, 20,586 with a NULL
+  // chat_date) -- so Total Chat/Unique/Conversion%/Resolved% on the TL-wise
+  // and Agent-wise tabs silently only cover those few days even when a much
+  // wider range is selected, while Amount/Revenue (from the separate,
+  // unaffected bb_sale table) covers the FULL selected range. Exposed here
+  // so the frontend can disclose the gap rather than let the two kinds of
+  // figures silently disagree on what period they each actually cover.
+  let chatDataThrough: string | null = null;
+  if (total > 0) {
+    const [[throughRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(chat_date) AS latest FROM db_masmis.bb_chat WHERE chat_date >= ? AND chat_date < DATE_ADD(?, INTERVAL 1 DAY) ${lobClause}`,
+      range,
+    );
+    chatDataThrough = throughRow?.latest ? String(throughRow.latest) : null;
   }
 
   return {
@@ -265,15 +317,155 @@ export async function getBellavitaChatDashboard(
         amount: revenueByTl.get(tlName) ?? 0,
       };
     }),
-    agents: agentRows.map((r) => ({
-      agent: String(r.agent), empId: String(r.emp_id || ""), tickets: num(r.n),
-      uniqueCount: num(r.unique_count), saleChatCount: num(r.sale_chat_count),
-      conversionPct: pct(num(r.sale_chat_count), num(r.n)),
-      resolvedPct: pct(num(r.resolved), num(r.n)), avgWaitTimeMin: Math.round(num(r.avg_wait) * 100) / 100,
-    })),
+    agents: agentRows.map((r) => {
+      const empId = String(r.emp_id || "");
+      return {
+        agent: String(r.agent), empId, tickets: num(r.n),
+        uniqueCount: num(r.unique_count), saleChatCount: num(r.sale_chat_count),
+        conversionPct: pct(num(r.sale_chat_count), num(r.n)),
+        resolvedPct: pct(num(r.resolved), num(r.n)), avgWaitTimeMin: Math.round(num(r.avg_wait) * 100) / 100,
+        // null (not 0) when this agent has no real emp_id to join bb_sale by --
+        // "no data to join" is different from "joined and found zero sales".
+        revenue: empId ? (revenueByAgent.get(empId.toUpperCase()) ?? 0) : null,
+      };
+    }),
     lobOptions: lobRows.map((r) => String(r.lob)),
     latestAvailableDate,
+    chatDataThrough,
   };
+}
+
+export interface BellavitaChatTlTrendRow {
+  date: string; tickets: number; uniqueCount: number; saleCount: number; conversionPct: number; amount: number;
+}
+
+/** Day-wise trend for one TL -- the "TL-wise" table's own row click drill-down
+ * (date-wise + week-wise, week-wise summed client-side from these day rows,
+ * same convention as the Bellavita Sale dashboard's EntityDrillDrawer).
+ * Same two-query shape as getBellavitaChatDashboard's byTl/salesByTlRows
+ * above, just grouped by day and narrowed to one tl_name/s.tl instead of
+ * grouped by TL -- so this never disagrees with that table's own row. */
+export async function getBellavitaChatTlTrend(
+  fromInput: string, toInput: string, tlName: string, lobInput?: string,
+): Promise<BellavitaChatTlTrendRow[]> {
+  const { from, to } = resolveRange(fromInput, toInput);
+  const lob = lobInput && lobInput.trim() ? lobInput.trim() : null;
+  const lobClause = lob ? "AND lob = ?" : "";
+  const chatParams = lob ? [from, to, tlName, lob] : [from, to, tlName];
+
+  const [chatRows] = await db.execute<RowDataPacket[]>(
+    `SELECT chat_date AS d, COUNT(*) AS n,
+       SUM(CASE WHEN repeat_status = 'Unique' THEN 1 ELSE 0 END) AS unique_count,
+       SUM(CASE WHEN disposition = 'Saleschat' THEN 1 ELSE 0 END) AS sale_count
+     FROM db_masmis.bb_chat
+     WHERE chat_date >= ? AND chat_date < DATE_ADD(?, INTERVAL 1 DAY) AND tl_name = ? ${lobClause}
+     GROUP BY chat_date ORDER BY d ASC`,
+    chatParams,
+  );
+
+  // Same dedup shape as salesByTlRows in getBellavitaChatDashboard: keep the
+  // MAX(id) row per order across the WHOLE selected range first (the most
+  // recent upload of that order, whatever its date/tl/amount), THEN filter
+  // to this TL and group by that kept row's own Date -- never pre-filter by
+  // tl or take MAX(amount) before dedup, which silently picks a stale
+  // upload of an order and produces a different total than the summary
+  // table's own Amount column (caught live: 44,130 vs the table's 1,46,028).
+  const [revRows] = await db.execute<RowDataPacket[]>(
+    `SELECT s.\`Date\` AS d, SUM(s.amount) AS revenue
+     FROM db_masmis.bb_sale s
+     INNER JOIN (
+       SELECT bella_vita_order_id, MAX(id) AS keep_id
+       FROM db_masmis.bb_sale
+       WHERE campaign = 'Chat' AND calling_status = 'Sale Made' AND \`Date\` >= ? AND \`Date\` <= ?
+         AND bella_vita_order_id IS NOT NULL AND bella_vita_order_id != ''
+       GROUP BY bella_vita_order_id
+     ) dk ON dk.keep_id = s.id
+     WHERE s.tl = ?
+     GROUP BY s.\`Date\``,
+    [from, to, tlName],
+  );
+  const revenueByDate = new Map<string, number>(revRows.map((r) => [String(r.d), num(r.revenue)]));
+
+  return chatRows.map((r) => {
+    const d = String(r.d);
+    const n = num(r.n);
+    const saleCount = num(r.sale_count);
+    return {
+      date: d, tickets: n, uniqueCount: num(r.unique_count), saleCount,
+      conversionPct: pct(saleCount, n), amount: revenueByDate.get(d) ?? 0,
+    };
+  });
+}
+
+export interface BellavitaChatAgentTrendRow {
+  date: string; tickets: number; uniqueCount: number; saleChatCount: number; conversionPct: number; resolvedPct: number;
+  /** null when this agent has no real emp_id to join bb_sale by (see
+   * BellavitaChatAgentRow.revenue) -- not fetched at all in that case. */
+  revenue: number | null;
+}
+
+const AGENT_EXPR = "COALESCE(NULLIF(agent_name, ''), NULLIF(current_agent, ''), 'Unassigned')";
+
+/** Day-wise trend for one agent -- the "Agent-wise" table's own row click
+ * drill-down (date-wise + week-wise, week-wise summed client-side from
+ * these day rows). Grouped by the exact same AGENT_EXPR the agent-wise list
+ * itself groups by, so a click on any row (including "Unassigned") always
+ * matches back to that row's own totals -- never a coincidentally similar
+ * but different agent. `empId` is optional and separate from `agent`
+ * (bb_sale has no agent-name column, only emp_id) -- omitted entirely (not
+ * queried) when the row being drilled into has no real emp_id. */
+export async function getBellavitaChatAgentTrend(
+  fromInput: string, toInput: string, agent: string, lobInput?: string, empId?: string,
+): Promise<BellavitaChatAgentTrendRow[]> {
+  const { from, to } = resolveRange(fromInput, toInput);
+  const lob = lobInput && lobInput.trim() ? lobInput.trim() : null;
+  const lobClause = lob ? "AND lob = ?" : "";
+  const params = lob ? [from, to, agent, lob] : [from, to, agent];
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT chat_date AS d, COUNT(*) AS n,
+       SUM(CASE WHEN repeat_status = 'Unique' THEN 1 ELSE 0 END) AS unique_count,
+       SUM(CASE WHEN disposition = 'Saleschat' THEN 1 ELSE 0 END) AS sale_chat_count,
+       SUM(CASE WHEN ${RESOLVED_EXPR} THEN 1 ELSE 0 END) AS resolved
+     FROM db_masmis.bb_chat
+     WHERE chat_date >= ? AND chat_date < DATE_ADD(?, INTERVAL 1 DAY) AND ${AGENT_EXPR} = ? ${lobClause}
+     GROUP BY chat_date ORDER BY d ASC`,
+    params,
+  );
+
+  // Same dedup shape as salesByAgentRows in getBellavitaChatDashboard -- see
+  // getBellavitaChatTlTrend's own comment on why dedup must happen BEFORE
+  // filtering to one emp_id, not after (a pre-filtered MAX(amount) silently
+  // picks a stale upload and disagrees with the summary table's own Revenue).
+  let revenueByDate: Map<string, number> | null = null;
+  if (empId && empId.trim()) {
+    const [revRows] = await db.execute<RowDataPacket[]>(
+      `SELECT s.\`Date\` AS d, SUM(s.amount) AS revenue
+       FROM db_masmis.bb_sale s
+       INNER JOIN (
+         SELECT bella_vita_order_id, MAX(id) AS keep_id
+         FROM db_masmis.bb_sale
+         WHERE campaign = 'Chat' AND calling_status = 'Sale Made' AND \`Date\` >= ? AND \`Date\` <= ?
+           AND bella_vita_order_id IS NOT NULL AND bella_vita_order_id != ''
+         GROUP BY bella_vita_order_id
+       ) dk ON dk.keep_id = s.id
+       WHERE s.emp_id = ?
+       GROUP BY s.\`Date\``,
+      [from, to, empId.trim()],
+    );
+    revenueByDate = new Map(revRows.map((r) => [String(r.d), num(r.revenue)]));
+  }
+
+  return rows.map((r) => {
+    const n = num(r.n);
+    const saleChatCount = num(r.sale_chat_count);
+    const d = String(r.d);
+    return {
+      date: d, tickets: n, uniqueCount: num(r.unique_count), saleChatCount,
+      conversionPct: pct(saleChatCount, n), resolvedPct: pct(num(r.resolved), n),
+      revenue: revenueByDate ? (revenueByDate.get(d) ?? 0) : null,
+    };
+  });
 }
 
 /* ------------------------------------------------------------------------ *

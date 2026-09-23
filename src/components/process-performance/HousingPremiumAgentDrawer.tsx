@@ -1,10 +1,10 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { X, Loader2 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatINR } from "./DashboardKit";
 import {
-  type HPAgentDetail, HP_API, fmtDate, fmtMdy, fmtN,
+  type HPAgentDetail, HP_API, fmtDate, fmtMdy, fmtN, weekBucket,
 } from "./housingPremiumShared";
 
 const TOOLTIP_PROPS = {
@@ -37,6 +37,7 @@ export function HousingPremiumAgentDrawer({
   const [data, setData] = useState<HPAgentDetail | null>(null);
   const [error, setError] = useState("");
   const [shown, setShown] = useState(false);
+  const [period, setPeriod] = useState<"day" | "week">("day");
 
   useEffect(() => { const id = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(id); }, []);
   useEffect(() => {
@@ -55,6 +56,21 @@ export function HousingPremiumAgentDrawer({
   }, [agent, from, to]);
 
   const totals = data ? data.daily.reduce((s, d) => ({ sales: s.sales + d.saleCount, revenue: s.revenue + d.revenue, calls: s.calls + d.calls, connected: s.connected + d.connected }), { sales: 0, revenue: 0, calls: 0, connected: 0 }) : null;
+
+  /** Week bucket sums straight off the already-fetched day rows -- no extra fetch. */
+  const weeklyRows = useMemo(() => {
+    const map = new Map<string, { label: string; saleCount: number; revenue: number; calls: number; connected: number }>();
+    for (const d of data?.daily ?? []) {
+      const { key, label } = weekBucket(d.date);
+      const cur = map.get(key) ?? { label, saleCount: 0, revenue: 0, calls: 0, connected: 0 };
+      cur.saleCount += d.saleCount;
+      cur.revenue += d.revenue;
+      cur.calls += d.calls;
+      cur.connected += d.connected;
+      map.set(key, cur);
+    }
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, v]) => ({ key, ...v }));
+  }, [data]);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label="Agent detail">
@@ -102,22 +118,50 @@ export function HousingPremiumAgentDrawer({
               <Section title="Day by day">
                 {data.daily.length === 0 ? <None /> : (
                   <>
-                    <ResponsiveContainer width="100%" height={180}>
-                      <ComposedChart data={[...data.daily].sort((a, b) => a.date.localeCompare(b.date))} margin={{ top: 6, right: 4, left: -14, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                        <XAxis dataKey="date" tickFormatter={(d) => fmtDate(d).slice(0, 5)} tick={{ fontSize: 9 }} />
-                        <YAxis yAxisId="l" tick={{ fontSize: 10 }} />
-                        <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 10 }} />
-                        <Tooltip {...TOOLTIP_PROPS} labelFormatter={(v) => fmtDate(String(v))} />
-                        <Bar yAxisId="l" dataKey="revenue" name="Revenue" fill="#c7d2fe" radius={[3, 3, 0, 0]} />
-                        <Line yAxisId="r" type="monotone" dataKey="saleCount" name="Sales" stroke="#4f46e5" strokeWidth={2} dot={{ r: 2 }} />
-                      </ComposedChart>
-                    </ResponsiveContainer>
+                    <div className="mb-2 inline-flex rounded-lg bg-slate-100 p-1">
+                      <button
+                        type="button" onClick={() => setPeriod("day")}
+                        className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${period === "day" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}
+                      >
+                        Day-wise
+                      </button>
+                      <button
+                        type="button" onClick={() => setPeriod("week")}
+                        className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${period === "week" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}
+                      >
+                        Week-wise
+                      </button>
+                    </div>
+                    {period === "day" ? (
+                      <ResponsiveContainer width="100%" height={180}>
+                        <ComposedChart data={[...data.daily].sort((a, b) => a.date.localeCompare(b.date))} margin={{ top: 6, right: 4, left: -14, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                          <XAxis dataKey="date" tickFormatter={(d) => fmtDate(d).slice(0, 5)} tick={{ fontSize: 9 }} />
+                          <YAxis yAxisId="l" tick={{ fontSize: 10 }} />
+                          <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 10 }} />
+                          <Tooltip {...TOOLTIP_PROPS} labelFormatter={(v) => fmtDate(String(v))} />
+                          <Bar yAxisId="l" dataKey="revenue" name="Revenue" fill="#c7d2fe" radius={[3, 3, 0, 0]} />
+                          <Line yAxisId="r" type="monotone" dataKey="saleCount" name="Sales" stroke="#4f46e5" strokeWidth={2} dot={{ r: 2 }} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <ResponsiveContainer width="100%" height={180}>
+                        <ComposedChart data={weeklyRows} margin={{ top: 6, right: 4, left: -14, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                          <XAxis dataKey="label" tick={{ fontSize: 9 }} />
+                          <YAxis yAxisId="l" tick={{ fontSize: 10 }} />
+                          <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 10 }} />
+                          <Tooltip {...TOOLTIP_PROPS} />
+                          <Bar yAxisId="l" dataKey="revenue" name="Revenue" fill="#c7d2fe" radius={[3, 3, 0, 0]} />
+                          <Line yAxisId="r" type="monotone" dataKey="saleCount" name="Sales" stroke="#4f46e5" strokeWidth={2} dot={{ r: 3 }} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    )}
                     <div className="overflow-x-auto rounded-xl border border-slate-100">
                       <table className="w-full text-left text-xs">
                         <thead>
                           <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400">
-                            <th className="px-3 py-2 font-semibold">Date</th>
+                            <th className="px-3 py-2 font-semibold">{period === "day" ? "Date" : "Week"}</th>
                             <th className="px-3 py-2 text-right font-semibold">Sales</th>
                             <th className="px-3 py-2 text-right font-semibold">Revenue</th>
                             <th className="px-3 py-2 text-right font-semibold">Calls</th>
@@ -125,13 +169,21 @@ export function HousingPremiumAgentDrawer({
                           </tr>
                         </thead>
                         <tbody>
-                          {data.daily.map((d) => (
+                          {period === "day" ? data.daily.map((d) => (
                             <tr key={d.date} className="border-t border-slate-50">
                               <td className="px-3 py-2 font-medium text-slate-700">{fmtDate(d.date)}</td>
                               <td className="px-3 py-2 text-right text-slate-600">{fmtN(d.saleCount)}</td>
                               <td className="px-3 py-2 text-right font-semibold text-slate-800">{formatINR(d.revenue)}</td>
                               <td className="px-3 py-2 text-right text-slate-600">{fmtN(d.calls)}</td>
                               <td className="px-3 py-2 text-right text-slate-600">{fmtN(d.connected)}</td>
+                            </tr>
+                          )) : weeklyRows.map((w) => (
+                            <tr key={w.key} className="border-t border-slate-50">
+                              <td className="px-3 py-2 font-medium text-slate-700">{w.label}</td>
+                              <td className="px-3 py-2 text-right text-slate-600">{fmtN(w.saleCount)}</td>
+                              <td className="px-3 py-2 text-right font-semibold text-slate-800">{formatINR(w.revenue)}</td>
+                              <td className="px-3 py-2 text-right text-slate-600">{fmtN(w.calls)}</td>
+                              <td className="px-3 py-2 text-right text-slate-600">{fmtN(w.connected)}</td>
                             </tr>
                           ))}
                         </tbody>

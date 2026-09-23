@@ -69,10 +69,9 @@ async function runProjectQuery(p: ProjectConfig, filters: InboundFilters): Promi
     sql = `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS date,
       COUNT(DISTINCT CASE WHEN DisconnBy != 'HOLDTIME' THEN AgentId END) AS login_count,
       SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS offered,
-      SUM(CASE WHEN (AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME')
-               OR   (AgentId = 'VDCL'  AND TIME_TO_SEC(QueueDuration) = 0) THEN 1 ELSE 0 END) AS answered,
+      SUM(CASE WHEN AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS answered,
       SUM(CASE WHEN TIME_TO_SEC(QueueDuration) <= 20 AND DisconnBy != 'HOLDTIME'
-               AND (AgentId != 'VDCL' OR (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0)) THEN 1 ELSE 0 END) AS sl_num,
+               AND AgentId != 'VDCL' THEN 1 ELSE 0 END) AS sl_num,
       ROUND(AVG(CASE WHEN DisconnBy != 'HOLDTIME' THEN CallDurationSecond END),0) AS acht,
       COUNT(DISTINCT CASE WHEN DisconnBy != 'HOLDTIME' THEN PhoneNumber END) AS unique_phones
      FROM dialer_db.${p.table}
@@ -130,8 +129,11 @@ function aggregateRows(rows: DailyRow[]) {
   }
   const sl_pct     = totals.answered ? Math.round(totals.sl_num / totals.answered * 10000) / 100 : 0;
   const aht        = totals.acht_count ? Math.round(totals.acht_sum / totals.acht_count) : 0;
-  const abandon_pct = totals.offered ? Math.round((totals.offered - totals.answered) / totals.offered * 10000) / 100 : 0;
   const ans_pct    = totals.offered ? Math.round(totals.answered / totals.offered * 10000) / 100 : 0;
+  // AL % redefined 2026-09-23 at explicit user request: Answered / Offered
+  // (previously Abandoned / Offered) -- identical to ans_pct now, kept as its
+  // own field/name so every existing "AL%" consumer keeps reading abandon_pct.
+  const abandon_pct = ans_pct;
   const avg_wait   = aht; // use AHT as proxy; replace with actual queue time if available
   return {
     total: totals.offered,
@@ -220,7 +222,8 @@ export async function getConsolidatedTrend(filters: InboundFilters) {
     .map((r) => ({
       ...r,
       sl_pct:    r.answered ? Math.round(r.sl_num / r.answered * 100 * 100) / 100 : 0,
-      abandon_pct: r.offered ? Math.round((r.offered - r.answered) / r.offered * 100 * 100) / 100 : 0,
+      // AL % = Answered / Offered (redefined 2026-09-23, see aggregateRows).
+      abandon_pct: r.offered ? Math.round(r.answered / r.offered * 100 * 100) / 100 : 0,
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -292,7 +295,10 @@ export async function getProjectAgentSummary(filters: InboundFilters, projectKey
       agentName: r.agent_name || r.agent_id,
       offered,
       answered,
-      sl_pct: offered ? Math.round((sl_num / offered) * 10000) / 100 : 0,
+      // SL % = answered-within-threshold / Answered. This query already only
+      // has AgentId != 'VDCL' rows (offered === answered here), but divides
+      // by `answered` explicitly to match the formula used everywhere else.
+      sl_pct: answered ? Math.round((sl_num / answered) * 10000) / 100 : 0,
       acht: n(r.acht),
       repeat_pct: offered ? Math.round(((offered - unique_phones) / offered) * 10000) / 100 : 0,
     };
@@ -325,10 +331,9 @@ export async function getProjectHourlyByDate(filters: InboundFilters, projectKey
   if (p.pattern === "A") {
     sql = `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS date, HOUR(HoursSlot) AS hour,
       SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS offered,
-      SUM(CASE WHEN (AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME')
-               OR   (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0) THEN 1 ELSE 0 END) AS answered,
+      SUM(CASE WHEN AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS answered,
       SUM(CASE WHEN TIME_TO_SEC(QueueDuration) <= 20 AND DisconnBy != 'HOLDTIME'
-               AND (AgentId != 'VDCL' OR (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0)) THEN 1 ELSE 0 END) AS sl_num,
+               AND AgentId != 'VDCL' THEN 1 ELSE 0 END) AS sl_num,
       ROUND(AVG(CASE WHEN DisconnBy != 'HOLDTIME' THEN CallDurationSecond END),0) AS acht
      FROM dialer_db.${p.table}
      WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY)
@@ -352,7 +357,7 @@ export async function getProjectHourlyByDate(filters: InboundFilters, projectKey
     hour: n(r.hour),
     offered: n(r.offered),
     answered: n(r.answered),
-    sl_pct: n(r.offered) ? Math.round((n(r.sl_num) / n(r.offered)) * 10000) / 100 : 0,
+    sl_pct: n(r.answered) ? Math.round((n(r.sl_num) / n(r.answered)) * 10000) / 100 : 0,
     acht: n(r.acht),
   }));
 }
@@ -378,10 +383,9 @@ export async function getProjectHourly(filters: InboundFilters, projectKey: stri
   if (p.pattern === "A") {
     sql = `SELECT HOUR(HoursSlot) AS hour,
       SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS offered,
-      SUM(CASE WHEN (AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME')
-               OR   (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0) THEN 1 ELSE 0 END) AS answered,
+      SUM(CASE WHEN AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS answered,
       SUM(CASE WHEN TIME_TO_SEC(QueueDuration) <= 20 AND DisconnBy != 'HOLDTIME'
-               AND (AgentId != 'VDCL' OR (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0)) THEN 1 ELSE 0 END) AS sl_num
+               AND AgentId != 'VDCL' THEN 1 ELSE 0 END) AS sl_num
      FROM dialer_db.${p.table}
      WHERE CallDate >= ? AND CallDate < DATE_ADD(?, INTERVAL 1 DAY)
        AND CampaignName IN (${ph})
@@ -431,10 +435,9 @@ export async function getProjectLobSummary(filters: InboundFilters, projectKey: 
   if (p.pattern === "A") {
     sql = `SELECT CampaignName AS campaign,
       SUM(CASE WHEN DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS offered,
-      SUM(CASE WHEN (AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME')
-               OR   (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0) THEN 1 ELSE 0 END) AS answered,
+      SUM(CASE WHEN AgentId != 'VDCL' AND DisconnBy != 'HOLDTIME' THEN 1 ELSE 0 END) AS answered,
       SUM(CASE WHEN TIME_TO_SEC(QueueDuration) <= 20 AND DisconnBy != 'HOLDTIME'
-               AND (AgentId != 'VDCL' OR (AgentId = 'VDCL' AND TIME_TO_SEC(QueueDuration) = 0)) THEN 1 ELSE 0 END) AS sl_num,
+               AND AgentId != 'VDCL' THEN 1 ELSE 0 END) AS sl_num,
       ROUND(AVG(CASE WHEN DisconnBy != 'HOLDTIME' THEN CallDurationSecond END),0) AS acht,
       COUNT(DISTINCT CASE WHEN DisconnBy != 'HOLDTIME' THEN PhoneNumber END) AS unique_phones
      FROM dialer_db.${p.table}
@@ -464,8 +467,10 @@ export async function getProjectLobSummary(filters: InboundFilters, projectKey: 
       offered,
       answered,
       answeredPct: offered ? Math.round((answered / offered) * 10000) / 100 : 0,
-      abandonPct: offered ? Math.round(((offered - answered) / offered) * 10000) / 100 : 0,
-      slPct: offered ? Math.round((slNum / offered) * 10000) / 100 : 0,
+      // AL % = Answered / Offered (redefined 2026-09-23, see aggregateRows above).
+      abandonPct: offered ? Math.round((answered / offered) * 10000) / 100 : 0,
+      // SL % = answered-within-threshold / Answered (redefined 2026-09-23).
+      slPct: answered ? Math.round((slNum / answered) * 10000) / 100 : 0,
       acht: n(r.acht),
       uniquePhones: n(r.unique_phones),
     };

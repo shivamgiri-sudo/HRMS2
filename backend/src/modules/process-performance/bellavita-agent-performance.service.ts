@@ -79,8 +79,10 @@ const num = (v: string | number | null | undefined): number => {
 };
 const pct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 10000) / 100 : 0);
 
-export async function getBellavitaAgentPerformance(from: string, to: string): Promise<BellavitaAgentPerformanceRow[]> {
+export async function getBellavitaAgentPerformance(from: string, to: string, lobFilter?: string): Promise<BellavitaAgentPerformanceRow[]> {
   const range = [from, to];
+  const lob = lobFilter && lobFilter !== "All" ? lobFilter : undefined;
+  const lobParam = lob ? [lob] : [];
 
   const [aprRows] = await db.execute<AprAggRow[]>(
     `SELECT
@@ -97,6 +99,7 @@ export async function getBellavitaAgentPerformance(from: string, to: string): Pr
      FROM db_masmis.bb_apr
      WHERE report_date >= ? AND report_date < DATE_ADD(?, INTERVAL 1 DAY)
        AND noiid IS NOT NULL AND noiid != ''
+       ${lob ? "AND lob = ?" : ""}
        -- bb_apr is re-uploaded verbatim (Sep 2026: every agent-day exists 3x,
        -- same unique_id), so keep ONE row per unique_id (the first, complete
        -- upload) or attendance/login/break/talk hours are inflated 3x.
@@ -106,7 +109,7 @@ export async function getBellavitaAgentPerformance(from: string, to: string): Pr
          GROUP BY unique_id
        )
      GROUP BY noiid`,
-    [...range, ...range],
+    [...range, ...lobParam, ...range],
   );
 
   const [saleRows] = await db.execute<SaleAggRow[]>(
@@ -121,9 +124,9 @@ export async function getBellavitaAgentPerformance(from: string, to: string): Pr
        SUM(CASE WHEN ds.sale_source_name = 'Website' THEN 1 ELSE 0 END) AS website_count,
        SUM(CASE WHEN ds.sale_source_name = 'Draft Order' THEN 1 ELSE 0 END) AS draft_order_count
      FROM ${dedupedSaleSql()}
-     WHERE ds.emp_id IS NOT NULL AND ds.emp_id != ''
+     WHERE ds.emp_id IS NOT NULL AND ds.emp_id != '' ${lob ? "AND ds.lob = ?" : ""}
      GROUP BY ds.emp_id`,
-    range,
+    [...range, ...lobParam],
   );
 
   const saleByAgent = new Map<string, SaleAggRow>();
@@ -204,4 +207,167 @@ export async function getBellavitaAgentPerformance(from: string, to: string): Pr
 
   rows.sort((a, b) => b.revenue - a.revenue);
   return rows;
+}
+
+export interface BellavitaAgentDetail {
+  empId: string;
+  empName: string;
+  teamLeader: string;
+  lob: string;
+  tenureDays: number | null;
+  overall: {
+    attendanceDays: number; loginHours: number; breakHours: number; talkHours: number; achtSeconds: number;
+    saleCount: number; codCount: number; paidCount: number; codPct: number; paidPct: number;
+    rtoCount: number; rtoPct: number; revenue: number; avgSale: number;
+  };
+  daily: Array<{
+    date: string; saleCount: number; revenue: number; codCount: number; paidCount: number; rtoCount: number;
+    loginHours: number; breakHours: number; talkHours: number; attendanceDays: number;
+  }>;
+}
+
+interface AprDayRow extends RowDataPacket {
+  d: string;
+  attendance_days: string | null;
+  login_seconds: number | null;
+  break_seconds: number | null;
+  talk_seconds: number | null;
+}
+interface SaleDayRow extends RowDataPacket {
+  d: string;
+  sale_count: number;
+  revenue: string | null;
+  cod_count: number;
+  paid_count: number;
+  rto_count: number;
+}
+
+/** One agent's own identity + overall totals + day-by-day breakdown, behind
+ * a row click on the Agent Performance table -- a dedicated fetch (never the
+ * already-loaded list row), per this app's Drill-Down Mandate. Reuses the
+ * exact same bb_apr de-dup (id IN (SELECT MIN(id) ... GROUP BY unique_id))
+ * and bb_sale de-dup (dedupedSaleSql) getBellavitaAgentPerformance uses, so
+ * this agent's totals here never disagree with that table's own row. */
+export async function getBellavitaAgentDetail(empId: string, from: string, to: string): Promise<BellavitaAgentDetail | null> {
+  const range = [from, to];
+
+  const [[identityRow]] = await db.execute<AprAggRow[]>(
+    `SELECT
+       noiid,
+       MAX(emp_name) AS emp_name,
+       MAX(team_leader) AS team_leader,
+       MAX(lob) AS lob,
+       MAX(tenure) AS tenure,
+       SUM(CASE WHEN attendance_1 = 'P' THEN 1 WHEN attendance_1 = 'HD' THEN 0.5 ELSE CAST(attendance_1 AS DECIMAL(6,2)) END) AS attendance_days,
+       SUM(TIME_TO_SEC(actual_login_hrs)) AS login_seconds,
+       SUM(TIME_TO_SEC(total_break)) AS break_seconds,
+       SUM(TIME_TO_SEC(talk_time)) AS talk_seconds,
+       AVG(acht) AS acht_avg
+     FROM db_masmis.bb_apr
+     WHERE report_date >= ? AND report_date < DATE_ADD(?, INTERVAL 1 DAY) AND noiid = ?
+       AND id IN (
+         SELECT MIN(id) FROM db_masmis.bb_apr
+         WHERE report_date >= ? AND report_date < DATE_ADD(?, INTERVAL 1 DAY)
+         GROUP BY unique_id
+       )
+     GROUP BY noiid`,
+    [...range, empId, ...range],
+  );
+
+  const [[saleOverallRow]] = await db.execute<SaleAggRow[]>(
+    `SELECT
+       COUNT(*) AS sale_count,
+       SUM(CAST(ds.amount AS DECIMAL(14,2))) AS revenue,
+       SUM(CASE WHEN ds.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
+       SUM(CASE WHEN ds.payment_status = 'cod' THEN 1 ELSE 0 END) AS cod_count,
+       SUM(CASE WHEN ds.final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count
+     FROM ${dedupedSaleSql()}
+     WHERE ds.emp_id = ?`,
+    [...range, empId],
+  );
+
+  if (!identityRow && !saleOverallRow?.sale_count) return null;
+
+  const [aprDayRows] = await db.execute<AprDayRow[]>(
+    `SELECT
+       report_date AS d,
+       SUM(CASE WHEN attendance_1 = 'P' THEN 1 WHEN attendance_1 = 'HD' THEN 0.5 ELSE CAST(attendance_1 AS DECIMAL(6,2)) END) AS attendance_days,
+       SUM(TIME_TO_SEC(actual_login_hrs)) AS login_seconds,
+       SUM(TIME_TO_SEC(total_break)) AS break_seconds,
+       SUM(TIME_TO_SEC(talk_time)) AS talk_seconds
+     FROM db_masmis.bb_apr
+     WHERE report_date >= ? AND report_date < DATE_ADD(?, INTERVAL 1 DAY) AND noiid = ?
+       AND id IN (
+         SELECT MIN(id) FROM db_masmis.bb_apr
+         WHERE report_date >= ? AND report_date < DATE_ADD(?, INTERVAL 1 DAY)
+         GROUP BY unique_id
+       )
+     GROUP BY report_date`,
+    [...range, empId, ...range],
+  );
+
+  const [saleDayRows] = await db.execute<SaleDayRow[]>(
+    `SELECT
+       ds.\`Date\` AS d,
+       COUNT(*) AS sale_count,
+       SUM(CAST(ds.amount AS DECIMAL(14,2))) AS revenue,
+       SUM(CASE WHEN ds.payment_status = 'cod' THEN 1 ELSE 0 END) AS cod_count,
+       SUM(CASE WHEN ds.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
+       SUM(CASE WHEN ds.final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count
+     FROM ${dedupedSaleSql()}
+     WHERE ds.emp_id = ?
+     GROUP BY ds.\`Date\``,
+    [...range, empId],
+  );
+
+  const aprByDate = new Map(aprDayRows.map((r) => [String(r.d), r]));
+  const saleByDate = new Map(saleDayRows.map((r) => [String(r.d), r]));
+  const dates = new Set<string>([...aprByDate.keys(), ...saleByDate.keys()]);
+  const daily = [...dates].sort().map((date) => {
+    const a = aprByDate.get(date);
+    const s = saleByDate.get(date);
+    return {
+      date,
+      saleCount: num(s?.sale_count),
+      revenue: num(s?.revenue),
+      codCount: num(s?.cod_count),
+      paidCount: num(s?.paid_count),
+      rtoCount: num(s?.rto_count),
+      loginHours: Math.round((num(a?.login_seconds) / 3600) * 100) / 100,
+      breakHours: Math.round((num(a?.break_seconds) / 3600) * 100) / 100,
+      talkHours: Math.round((num(a?.talk_seconds) / 3600) * 100) / 100,
+      attendanceDays: num(a?.attendance_days),
+    };
+  });
+
+  const saleCount = num(saleOverallRow?.sale_count);
+  const revenue = num(saleOverallRow?.revenue);
+  const codCount = num(saleOverallRow?.cod_count);
+  const paidCount = num(saleOverallRow?.paid_count);
+  const rtoCount = num(saleOverallRow?.rto_count);
+
+  return {
+    empId,
+    empName: identityRow?.emp_name || empId,
+    teamLeader: identityRow?.team_leader || "-",
+    lob: identityRow?.lob || "-",
+    tenureDays: identityRow?.tenure ?? null,
+    overall: {
+      attendanceDays: num(identityRow?.attendance_days),
+      loginHours: Math.round((num(identityRow?.login_seconds) / 3600) * 100) / 100,
+      breakHours: Math.round((num(identityRow?.break_seconds) / 3600) * 100) / 100,
+      talkHours: Math.round((num(identityRow?.talk_seconds) / 3600) * 100) / 100,
+      achtSeconds: Math.round(num(identityRow?.acht_avg)),
+      saleCount,
+      codCount,
+      paidCount,
+      codPct: pct(codCount, codCount + paidCount),
+      paidPct: pct(paidCount, codCount + paidCount),
+      rtoCount,
+      rtoPct: pct(rtoCount, saleCount),
+      revenue,
+      avgSale: saleCount > 0 ? Math.round((revenue / saleCount) * 100) / 100 : 0,
+    },
+    daily,
+  };
 }

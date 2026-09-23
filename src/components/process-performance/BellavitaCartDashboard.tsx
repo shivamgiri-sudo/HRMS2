@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { ShoppingCart, Target } from "lucide-react";
-import { SectionCard, DashboardHero, DateRangeToolbar, formatINR, currentMonthRange } from "./DashboardKit";
+import { ShoppingCart, Inbox } from "lucide-react";
+import { DashboardHero, DateRangeToolbar, currentMonthRange, localDateStr } from "./DashboardKit";
+import { BellavitaCartOverview } from "./BellavitaCartOverview";
 import { BellavitaCartSnapshot } from "./BellavitaCartSnapshot";
 import { BellavitaCartAgents } from "./BellavitaCartAgents";
-import { BellavitaCartDailyTarget } from "./BellavitaCartDailyTarget";
 
 const CART_API = "/api/process-performance/bellavita-cart-dashboard";
 
@@ -25,29 +25,55 @@ const CART_API = "/api/process-performance/bellavita-cart-dashboard";
  * connectivity status.
  */
 
-/** Only the target/achievement fields are used here now -- the backend still
- * returns the rest of the Overview headline (cart counts, connect%, etc.),
- * but nothing on this page renders them anymore since the Overview and
- * Agent-wise tabs were removed (Snapshot/Agent Performance cover the same
- * ground with their own live data). */
-interface Headline { target: number | null; achievementPct: number | null }
-interface DashboardData { headline: Headline; from: string; to: string; targetMonth: string; canSetTarget: boolean }
-
-/** "September 2026" from a "2026-09" month key, for the target editor's label. */
-function monthLabel(ym: string): string {
-  const [y, m] = ym.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-IN", { month: "long", year: "numeric", timeZone: "UTC" });
+export interface CartHeadline {
+  totalCarts: number; cartValue: number; aov: number;
+  connectedCount: number; connectedPct: number;
+  uniqueCustomers: number; activeAgents: number;
+  workableCases: number; dndCases: number;
+  uniqueCallCount: number; uniqueCallConnectedCount: number; uniqueCallConnectedPct: number;
+  abandonCartRevenue: number; abandonCartSaleCount: number; abandonCartAov: number;
+  target: number | null; achievementPct: number | null;
+  ncConnectCount: number;
+  sameDayUniqueAttempt: number; sameDayUniqueConnect: number; sameDayUniqueConnectPct: number;
+  codOrderCount: number; paidOrderCount: number; rtoOrderCount: number;
+}
+export interface CartTrendRow {
+  date: string; cartCount: number; cartValue: number;
+  connectedCount: number; uniqueCustomers: number; activeAgents: number;
+  workableCases: number; dndCases: number;
+  uniqueCallCount: number; uniqueCallConnectedCount: number;
+  abandonCartRevenue: number; abandonCartSaleCount: number;
+}
+export interface CartTopProduct {
+  product: string; baseCount: number; cartValue: number;
+  uniqueAttempted: number; uniqueConnected: number; connectedPct: number;
+  saleCount: number | null; revenue: number | null; aov: number | null;
+}
+interface DashboardData {
+  headline: CartHeadline; from: string; to: string; targetMonth: string; canSetTarget: boolean;
+  dateWiseTrend: CartTrendRow[];
+  dispositionBreakdown: Array<{ disposition: string; count: number; pct: number }>;
+  discountBreakdown: Array<{ code: string; count: number }>;
+  topProducts: CartTopProduct[];
+  latestAvailableDate: string | null;
 }
 
-/** The original "Overview" and "Agent-wise" tabs were removed (2026-09-22,
- * explicit request) -- Snapshot and Agent Performance are the sheet-style
- * views that already cover the same ground with their own live data, so the
- * older pair was redundant. The Overview tab's one piece that had no home
- * anywhere else -- the Abandon Cart Revenue target editor -- was NOT
- * removed with it: it now renders always, above both remaining tabs, so
- * setting/editing the target doesn't depend on which tab is open. */
-type TabKey = "snapshot" | "agentperf";
+/** The original "Overview" and "Agent-wise" tabs were removed (2026-09-22)
+ * because Snapshot and Agent Performance covered the same ground with their
+ * own live data. Re-added (2026-09-23, explicit request) as a fresh KPI
+ * dashboard -- not a revert of the removed code -- since Snapshot/Agent
+ * Performance are sheet-style tables and this dashboard had no page at all
+ * showing the headline KPIs the backend already computes (cart counts,
+ * connect%, DND cases, Abandon Cart Revenue, ...) with a quick click-through
+ * to their own date-wise/week-wise trend. The always-visible Monthly target
+ * editor and the Date-wise Target view were both removed 2026-09-23 (explicit
+ * request) -- Target/Achievement% still show as their own KPI card inside
+ * the Overview tab (see BellavitaCartOverview.tsx), just not as a separate
+ * always-visible editor above every tab. The backend's target read/write
+ * endpoints are untouched; only this page's own editor UI was removed. */
+type TabKey = "overview" | "snapshot" | "agentperf";
 const TABS: Array<{ key: TabKey; label: string }> = [
+  { key: "overview", label: "Overview" },
   { key: "snapshot", label: "Snapshot" },
   { key: "agentperf", label: "Agent Performance" },
 ];
@@ -59,14 +85,9 @@ export function BellavitaCartDashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<TabKey>("snapshot");
-  const [targetMonth, setTargetMonth] = useState("");
-  const [targetValue, setTargetValue] = useState("");
-  const [targetBusy, setTargetBusy] = useState(false);
-  const [targetMsg, setTargetMsg] = useState("");
+  const [tab, setTab] = useState<TabKey>("overview");
 
-  // Feeds only the always-visible target editor below, so it loads
-  // regardless of which tab is open -- Snapshot/Agent Performance fetch
+  // Feeds the Overview tab's KPI cards -- Snapshot/Agent Performance fetch
   // their own data independently.
   const load = useCallback(async () => {
     setLoading(true);
@@ -85,26 +106,6 @@ export function BellavitaCartDashboard() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // Keep the target editor's month field in step with the selected date
-  // range's own month, so "Save" without touching the field sets the month
-  // currently on screen.
-  useEffect(() => { if (data) setTargetMonth(data.targetMonth); }, [data?.targetMonth]);
-
-  async function saveTarget() {
-    setTargetBusy(true);
-    setTargetMsg("");
-    try {
-      await hrmsApi.put(`${CART_API}/monthly-target`, { month: targetMonth, target: Number(targetValue) });
-      setTargetValue("");
-      setTargetMsg(`Saved target for ${monthLabel(targetMonth)}.`);
-      await load();
-    } catch (err) {
-      setTargetMsg(err instanceof Error ? err.message : "Could not save the target.");
-    } finally {
-      setTargetBusy(false);
-    }
-  }
-
   return (
     <div className="space-y-5">
       <DashboardHero<TabKey>
@@ -119,48 +120,32 @@ export function BellavitaCartDashboard() {
         resetLabel="This Month" accentFocus="focus:border-fuchsia-400"
       />
 
-      {/* Always visible regardless of tab, per explicit request -- this is the
-       * one place to view/edit the Abandon Cart Revenue target. */}
-      {loading && !data && <p className="text-xs text-slate-400">Loading target…</p>}
+      {loading && !data && <p className="text-xs text-slate-400">Loading…</p>}
       {error && <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
-      {data && (
-        <>
-          <SectionCard
-            icon={Target} title={`Monthly target — ${monthLabel(data.targetMonth)}`} tone="amber"
-            footnote="The target applies to Abandon Cart Revenue for the calendar month shown, same as the date range's own month. It's a business commitment, so it's entered by an admin rather than derived from data."
-          >
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-600">
-              <span>Current target: <b className="text-slate-800">{data.headline.target !== null ? formatINR(data.headline.target) : "not set"}</b></span>
-              {data.headline.target !== null && <span>Achievement: <b className="text-slate-800">{data.headline.achievementPct}%</b></span>}
-            </div>
-            {data.canSetTarget ? (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <input
-                  type="month" value={targetMonth} onChange={(e) => setTargetMonth(e.target.value)} aria-label="Target month"
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm focus:border-amber-400 focus:outline-none"
-                />
-                <input
-                  type="number" min={1} inputMode="numeric" value={targetValue} onChange={(e) => setTargetValue(e.target.value)}
-                  placeholder={data.headline.target !== null ? `Now ${formatINR(data.headline.target)}` : "Target amount (₹)"}
-                  aria-label="Abandon Cart Revenue target for the month"
-                  className="w-48 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm focus:border-amber-400 focus:outline-none"
-                />
-                <button
-                  type="button" onClick={() => void saveTarget()} disabled={targetBusy || !(Number(targetValue) > 0) || !targetMonth}
-                  className="rounded-lg bg-amber-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {targetBusy ? "Saving…" : "Save"}
-                </button>
-                {targetMsg && <span className="text-[11px] text-slate-500">{targetMsg}</span>}
-              </div>
-            ) : (
-              <p className="mt-2 text-[11px] text-slate-400">Ask an admin to set the monthly target.</p>
-            )}
-          </SectionCard>
 
-          <BellavitaCartDailyTarget from={from} to={to} />
-        </>
+      {data && data.headline.totalCarts === 0 && data.latestAvailableDate && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-700">
+          <span className="inline-flex items-center gap-2"><Inbox className="h-4 w-4" />
+            No carts between {from} and {to} — the newest uploaded cart is from{" "}
+            <strong>{data.latestAvailableDate}</strong>, so this window is real, just outside where the data currently ends.
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              const end = new Date(data.latestAvailableDate!);
+              const start = new Date(end);
+              start.setDate(start.getDate() - 6);
+              setFrom(localDateStr(start));
+              setTo(localDateStr(end));
+            }}
+            className="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm transition-colors hover:bg-amber-700"
+          >
+            Show last 7 days of available data
+          </button>
+        </div>
       )}
+
+      {tab === "overview" && data && <BellavitaCartOverview data={data} />}
 
       {tab === "snapshot" && (
         <BellavitaCartSnapshot
