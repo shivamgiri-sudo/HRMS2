@@ -23,9 +23,34 @@ let scheduler: NodeJS.Timeout | undefined;
 let runInFlight = false;
 const INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 
-// Only notify leads created at or after this timestamp — set when the scheduler
-// first starts so we never retroactively notify the existing backlog.
-let notifySince: Date;
+// Never notify leads older than this: the Sep-20 backlog (1,906 leads) was handled through a
+// separate channel. Within the floor, a rolling window (not process-start time) means a backend
+// restart cannot orphan leads that qualified while the process was down.
+const NOTIFY_FLOOR = new Date("2026-09-21T00:00:00+05:30");
+const NOTIFY_LOOKBACK_MS = 48 * 60 * 60 * 1000;
+
+function notifyWindowStart(now = new Date()): Date {
+  return new Date(Math.max(NOTIFY_FLOOR.getTime(), now.getTime() - NOTIFY_LOOKBACK_MS));
+}
+
+// Forms on the Page that have no meta_campaign row are invisible to the linked-form poll, so
+// their leads never reach HRMS unless the webhook happened to deliver them. Optional: unset = skip.
+async function listUnlinkedPageFormIds(linked: Set<string>): Promise<string[]> {
+  const pageIds = (process.env.META_PAGE_IDS ?? process.env.META_PAGE_ID ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const unlinked: string[] = [];
+  for (const pageId of pageIds) {
+    try {
+      const forms = await metaCampaignService.listPageForms(pageId);
+      for (const f of forms) if (!linked.has(f.id)) unlinked.push(f.id);
+    } catch (err: any) {
+      console.error(`[meta-sync] Page ${pageId} form discovery failed:`, err?.message ?? err);
+    }
+  }
+  return unlinked;
+}
 
 async function runMetaLeadSync(): Promise<void> {
   if (!isMetaConfigured()) {
@@ -52,25 +77,33 @@ async function runMetaLeadSync(): Promise<void> {
           AND mc.meta_form_id IS NOT NULL AND mc.meta_form_id <> ''`
     );
 
+    const [allLinked] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT meta_form_id FROM meta_campaign WHERE meta_form_id IS NOT NULL AND meta_form_id <> ''`
+    );
+    const unlinkedIds = await listUnlinkedPageFormIds(
+      new Set((allLinked as any[]).map((r) => String(r.meta_form_id)))
+    );
+    const formsToPull = [
+      ...(activeForms as any[]).map((r) => ({ id: String(r.meta_form_id), name: String(r.campaign_name) })),
+      ...unlinkedIds.map((id) => ({ id, name: "unlinked form" })),
+    ];
+
     let totalImported = 0;
     let formErrors = 0;
-    for (const row of activeForms as any[]) {
+    for (const form of formsToPull) {
       try {
-        const result = await metaCampaignService.backfillFormLeads(String(row.meta_form_id));
+        const result = await metaCampaignService.backfillFormLeads(form.id);
         totalImported += result.imported;
         if (result.imported > 0) {
-          console.log(`[meta-sync] ${result.imported} new lead(s) from "${row.campaign_name}"`);
+          console.log(`[meta-sync] ${result.imported} new lead(s) from "${form.name}" (${form.id})`);
         }
       } catch (err: any) {
         formErrors++;
-        console.error(
-          `[meta-sync] Form ${row.meta_form_id} ("${row.campaign_name}") error:`,
-          err?.message ?? err
-        );
+        console.error(`[meta-sync] Form ${form.id} ("${form.name}") error:`, err?.message ?? err);
       }
     }
     console.log(
-      `[meta-sync] Lead sync complete: ${totalImported} imported across ${(activeForms as any[]).length} active forms, ${formErrors} form errors`
+      `[meta-sync] Lead sync complete: ${totalImported} imported across ${formsToPull.length} forms (${unlinkedIds.length} unlinked), ${formErrors} form errors`
     );
 
     // 2. Sync campaign metrics (impressions, reach, clicks, spend)
@@ -101,7 +134,7 @@ async function notifyNewQualifiedLeads(): Promise<void> {
         AND created_at >= ?
       ORDER BY created_at ASC
       LIMIT 100`,
-    [notifySince]
+    [notifyWindowStart()]
   );
 
   if (!(leads as any[]).length) return;
@@ -131,9 +164,7 @@ function scheduleNext(): void {
 
 export function startMetaLeadSyncScheduler(): void {
   if (scheduler) return;
-  // Leads created before this moment belong to the existing backlog — do not notify them.
-  notifySince = new Date();
-  console.log(`[meta-sync] 30-min Meta lead sync scheduler starting (notifying leads created >= ${notifySince.toISOString()})`);
+  console.log(`[meta-sync] 30-min Meta lead sync scheduler starting (notifying leads created >= ${notifyWindowStart().toISOString()}, rolling 48h)`);
   runMetaLeadSync();
 }
 
