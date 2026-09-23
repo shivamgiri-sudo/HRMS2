@@ -57,14 +57,16 @@ export async function canAccessLead(leadId: string, scope: BranchScope): Promise
 }
 
 /**
- * HR may open a conversation only with a shortlisted (qualified) candidate, or answer a candidate
- * who wrote to us first. Shortlisting against the batch requisition comes before any outbound chat.
+ * HR may message a lead if: they are shortlisted (qualified), or any prior conversation exists
+ * (outbound OR inbound). The prior-message check covers candidates who received an interview
+ * invitation via the ATS shortlist flow — the conversation is already open, HR must be able
+ * to follow up from the inbox without re-running screening.
  */
 export async function canMessageLead(leadId: string): Promise<{ allowed: boolean; reason?: string }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ml.screening_result,
             (SELECT COUNT(*) FROM meta_lead_messages m
-              WHERE m.lead_id = ml.id AND m.direction = 'inbound') AS inbound_count
+              WHERE m.lead_id = ml.id) AS message_count
        FROM meta_lead_raw ml
       WHERE ml.id = ?
       LIMIT 1`,
@@ -72,7 +74,7 @@ export async function canMessageLead(leadId: string): Promise<{ allowed: boolean
   );
   const row = rows[0];
   if (!row) return { allowed: false, reason: 'Lead not found' };
-  if (row.screening_result === 'qualified' || Number(row.inbound_count) > 0) return { allowed: true };
+  if (row.screening_result === 'qualified' || Number(row.message_count) > 0) return { allowed: true };
   return {
     allowed: false,
     reason: 'Candidate is not shortlisted for this requisition yet — run screening first',
