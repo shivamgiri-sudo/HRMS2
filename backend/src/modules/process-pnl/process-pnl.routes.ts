@@ -1368,24 +1368,28 @@ router.get(
      */
     const requestedBranchIds = csv(req.query.branchIds);
     const requestedProcessIds = csv(req.query.processIds);
+    // user.roles (actor()) is req.userRoles ?? [] — the roles requireRole just resolved — and the
+    // resolvers treat undefined and [] alike, so this is the same set as before. Read through
+    // actor() like /pnl/ytd-summary and /pnl/reconciliation so one page load can never be scoped
+    // from two differently-named sources (audit item 26).
     const branchId = await resolveFinanceBranchScope({
       userId: user.id,
       primaryRole: user.role,
-      userRoles: req.userRoles,
+      userRoles: user.roles,
       requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
     });
     const confinedBranch = await resolveFinanceBranchScope({
-      userId: user.id, primaryRole: user.role, userRoles: req.userRoles,
+      userId: user.id, primaryRole: user.role, userRoles: user.roles,
     });
     const period = req.query.period ? String(req.query.period) : "";
     const processId = await resolveFinanceProcessScope({
       userId: user.id,
       primaryRole: user.role,
-      userRoles: req.userRoles,
+      userRoles: user.roles,
       requestedProcessId: req.query.processId ? String(req.query.processId) : undefined,
     });
     const confinedProcess = await resolveFinanceProcessScope({
-      userId: user.id, primaryRole: user.role, userRoles: req.userRoles,
+      userId: user.id, primaryRole: user.role, userRoles: user.roles,
     });
     const data = await getCeoOverview(period, {
       branchId: branchId ?? undefined,
@@ -1906,6 +1910,12 @@ router.post(
 
 // Transposed statement (P&L components as rows, entities as dynamic columns) — read-only
 // composition over the same canonical engine as /pnl/summary. See pnl-statement.service.ts.
+// ACCESS (audit item 26, 2026-09-23): no requireRole on this line, but NOT ungated — the
+// router.use("/pnl", requireRole(...PNL_READ_ROLES)) registered above runs first for every /pnl/*
+// path, and scopedFilters() applies the branch row scope. The gate is implicit, though: moving or
+// narrowing that router.use() would silently open this route. Adding an explicit
+// requireRole(...PNL_READ_ROLES) here would change nothing for any caller today; left for an owner
+// decision rather than added silently.
 router.get("/pnl/statement", h(async (req, res) => {
   const viewBy = (req.query.viewBy ? String(req.query.viewBy) : "process") as StatementViewBy;
   const data = await pnlStatementService.getStatement(await scopedFilters(req), viewBy);
