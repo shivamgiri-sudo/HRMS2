@@ -43,6 +43,8 @@ export interface CartTrendRow {
   workableCases: number; dndCases: number;
   uniqueCallCount: number; uniqueCallConnectedCount: number;
   abandonCartRevenue: number; abandonCartSaleCount: number;
+  ncConnectCount: number; sameDayUniqueAttempt: number; sameDayUniqueConnect: number;
+  codOrderCount: number; paidOrderCount: number; rtoOrderCount: number;
 }
 export interface CartTopProduct {
   product: string; baseCount: number; cartValue: number;

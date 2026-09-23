@@ -9,6 +9,7 @@ export interface Headline {
   avgTalkTimeSec: number; occupancyPct: number;
   avgAttemptsPerLead: number; firstCallConnectedPct: number; avgTalkPerConnectedSec: number;
   callBackPct: number; activeDays: number;
+  distinctLeads: number; connectedLeads: number; advisorAllocatedLeads: number; callBackCalls: number;
 }
 export interface ServiceRow { service: string; calls: number; connected: number; connectedPct: number; uniqueLeads: number }
 export interface WeekRow { weekLabel: string; loginCount: number; overallCalls: number; uniqueLeadset: number; overallConnected: number; overallConnectedPct: number; talkTimeSec: number }
@@ -16,7 +17,7 @@ export interface AgentRow {
   agent: string; loginId: string; totalCalls: number; connectedCalls: number; connectedPct: number;
   uniqueLeads: number; talkTimeSec: number; loginTimeSec: number; netLoginTimeSec: number;
   shrinkagePct: number; occupancyPct: number; daysWorked: number; aprDays: number; avgCallsPerDay: number;
-  avgTalkPerConnectedSec: number; idleSec: number; breakSec: number; firstCallConnectedPct: number;
+  avgTalkPerConnectedSec: number; idleSec: number; wrapupSec: number; breakSec: number; firstCallConnectedPct: number;
 }
 export interface DailyRow { date: string; calls: number; uniqueLeads: number; connected: number; connectedPct: number; uniqueConnected: number; loginCount: number; talkTimeSec: number }
 export interface HourRow { hour: number; calls: number; connected: number; connectedPct: number }

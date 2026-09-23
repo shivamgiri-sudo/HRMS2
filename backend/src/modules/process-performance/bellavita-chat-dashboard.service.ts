@@ -140,6 +140,20 @@ function resolveRange(fromInput: string, toInput: string): { from: string; to: s
 
 const RESOLVED_EXPR = "ticket_status IN ('resolved','closed')";
 
+/** SELECT DISTINCT lob over bb_chat (no index on lob) is a ~7s full scan and
+ * the list barely changes, so it is cached for 30 min. Without this every LOB
+ * switch paid 7s before any figure could render. */
+let lobOptionsCache: { at: number; values: string[] } | null = null;
+async function loadLobOptions(): Promise<string[]> {
+  if (lobOptionsCache && Date.now() - lobOptionsCache.at < 30 * 60_000) return lobOptionsCache.values;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT lob FROM db_masmis.bb_chat WHERE lob IS NOT NULL AND lob != '' ORDER BY lob`,
+  );
+  const values = rows.map((r) => String(r.lob));
+  lobOptionsCache = { at: Date.now(), values };
+  return values;
+}
+
 export async function getBellavitaChatDashboard(
   fromInput: string, toInput: string, lobInput?: string,
 ): Promise<BellavitaChatDashboardData> {
@@ -148,7 +162,7 @@ export async function getBellavitaChatDashboard(
   const lobClause = lob ? "AND lob = ?" : "";
   const range = lob ? [from, to, lob] : [from, to];
 
-  const [[headlineRow]] = await db.execute<RowDataPacket[]>(
+  const headlineP = db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*) AS total,
        SUM(CASE WHEN ${RESOLVED_EXPR} THEN 1 ELSE 0 END) AS resolved,
@@ -164,7 +178,7 @@ export async function getBellavitaChatDashboard(
     range,
   );
 
-  const [trendRows] = await db.execute<RowDataPacket[]>(
+  const trendP = db.execute<RowDataPacket[]>(
     `SELECT chat_date AS d, COUNT(*) AS tickets,
        SUM(CASE WHEN repeat_status = 'Unique' THEN 1 ELSE 0 END) AS unique_count,
        SUM(CASE WHEN ${RESOLVED_EXPR} THEN 1 ELSE 0 END) AS resolved
@@ -174,7 +188,7 @@ export async function getBellavitaChatDashboard(
     range,
   );
 
-  const [dispositionRows] = await db.execute<RowDataPacket[]>(
+  const dispositionP = db.execute<RowDataPacket[]>(
     `SELECT disposition, COUNT(*) AS n
      FROM db_masmis.bb_chat
      WHERE chat_date >= ? AND chat_date < DATE_ADD(?, INTERVAL 1 DAY) ${lobClause} AND disposition IS NOT NULL AND disposition != ''
@@ -182,7 +196,7 @@ export async function getBellavitaChatDashboard(
     range,
   );
 
-  const [tlRows] = await db.execute<RowDataPacket[]>(
+  const tlP = db.execute<RowDataPacket[]>(
     `SELECT tl_name, COUNT(*) AS n,
        SUM(CASE WHEN ${RESOLVED_EXPR} THEN 1 ELSE 0 END) AS resolved,
        SUM(CASE WHEN repeat_status = 'Repeat' THEN 1 ELSE 0 END) AS repeat_count,
@@ -198,7 +212,7 @@ export async function getBellavitaChatDashboard(
 
   /** bb_sale's own date column (`Date`) is a plain "YYYY-MM-DD" string
    * (confirmed live) -- directly comparable to `from`/`to` without parsing. */
-  const [salesByTlRows] = await db.execute<RowDataPacket[]>(
+  const salesByTlP = db.execute<RowDataPacket[]>(
     // One row per Sale Made order (latest upload). The raw table also holds
     // non-sale call outcomes and every order re-uploaded 2-3x, so summing it
     // directly overstated Amount ~6x (1-4 Sep 2026: Shamsher 264,443 vs 44,130).
@@ -215,8 +229,6 @@ export async function getBellavitaChatDashboard(
      GROUP BY s.tl`,
     [from, to],
   );
-  const revenueByTl = new Map<string, number>();
-  for (const r of salesByTlRows) revenueByTl.set(String(r.tl), num(r.revenue));
 
   /** Same dedup shape as salesByTlRows above, keyed by bb_sale.emp_id instead
    * of tl -- the same "MASxxxxx" employee-id scheme used to match bb_apr to
@@ -224,7 +236,7 @@ export async function getBellavitaChatDashboard(
    * (see bellavita-agent-performance.service.ts), so this is a real,
    * ID-matched figure, not a name-based guess. Keys are upper-cased for the
    * same case-insensitive-GROUP-BY reason documented there. */
-  const [salesByAgentRows] = await db.execute<RowDataPacket[]>(
+  const salesByAgentP = db.execute<RowDataPacket[]>(
     `SELECT s.emp_id AS emp_id, SUM(s.amount) AS revenue
      FROM db_masmis.bb_sale s
      INNER JOIN (
@@ -238,10 +250,7 @@ export async function getBellavitaChatDashboard(
      GROUP BY s.emp_id`,
     [from, to],
   );
-  const revenueByAgent = new Map<string, number>();
-  for (const r of salesByAgentRows) revenueByAgent.set(String(r.emp_id).toUpperCase(), num(r.revenue));
-
-  const [agentRows] = await db.execute<RowDataPacket[]>(
+  const agentP = db.execute<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(agent_name, ''), NULLIF(current_agent, ''), 'Unassigned') AS agent, MAX(emp_id) AS emp_id, COUNT(*) AS n,
        SUM(CASE WHEN ${RESOLVED_EXPR} THEN 1 ELSE 0 END) AS resolved,
        SUM(CASE WHEN repeat_status = 'Unique' THEN 1 ELSE 0 END) AS unique_count,
@@ -253,9 +262,18 @@ export async function getBellavitaChatDashboard(
     range,
   );
 
-  const [lobRows] = await db.execute<RowDataPacket[]>(
-    `SELECT DISTINCT lob FROM db_masmis.bb_chat WHERE lob IS NOT NULL AND lob != '' ORDER BY lob`,
-  );
+  const lobP = loadLobOptions();
+
+  // The queries are independent and each scans a slice of bb_chat/bb_sale, so
+  // running them back-to-back made a LOB switch take 40s+ (and hit the request
+  // timeout with a 500). Together they now cost roughly the slowest one.
+  const [
+    [[headlineRow]], [trendRows], [dispositionRows], [tlRows], [salesByTlRows], [salesByAgentRows], [agentRows], lobOptionRows,
+  ] = await Promise.all([headlineP, trendP, dispositionP, tlP, salesByTlP, salesByAgentP, agentP, lobP]);
+  const revenueByTl = new Map<string, number>();
+  for (const r of salesByTlRows) revenueByTl.set(String(r.tl), num(r.revenue));
+  const revenueByAgent = new Map<string, number>();
+  for (const r of salesByAgentRows) revenueByAgent.set(String(r.emp_id).toUpperCase(), num(r.revenue));
 
   const total = num(headlineRow?.total);
 
@@ -329,7 +347,7 @@ export async function getBellavitaChatDashboard(
         revenue: empId ? (revenueByAgent.get(empId.toUpperCase()) ?? 0) : null,
       };
     }),
-    lobOptions: lobRows.map((r) => String(r.lob)),
+    lobOptions: lobOptionRows,
     latestAvailableDate,
     chatDataThrough,
   };

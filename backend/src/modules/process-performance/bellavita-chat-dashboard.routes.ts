@@ -6,7 +6,7 @@ import {
   getBellavitaChatTlTrend, getBellavitaChatAgentTrend,
 } from "./bellavita-chat-dashboard.service.js";
 import {
-  getBellavitaChatOverview, getBellavitaChatPeriodDetail, setPlannedCapacity, setFrtTarget,
+  getBellavitaChatOverview, getBellavitaChatPeriodDetail, setPlannedCapacity, setFrtTarget, getBellavitaChatOverviewAgentTrend,
   parseUserType, CHAT_USER_TYPES, type ChatUserType,
 } from "./bellavita-chat-overview.service.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
@@ -73,6 +73,16 @@ router.get("/bellavita-chat-dashboard/overview", requireRole(...VIEWER_ROLES), h
   );
   const canSetCapacity = await hasAnyRole(req.authUser!.id, ...CAPACITY_ADMIN_ROLES);
   res.json({ success: true, data: { ...data, canSetCapacity } });
+}));
+
+router.get("/bellavita-chat-dashboard/overview/agent-trend", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const agent = String(req.query.agent ?? "").trim();
+  if (!agent) return res.status(400).json({ success: false, error: "agent is required" });
+  const data = await getBellavitaChatOverviewAgentTrend(
+    String(req.query.from ?? ""), String(req.query.to ?? ""), parseUserType(req.query.userType),
+    agent, String(req.query.empId ?? ""),
+  );
+  res.json({ success: true, data });
 }));
 
 router.get("/bellavita-chat-dashboard/overview/detail", requireRole(...VIEWER_ROLES), h(async (req, res) => {

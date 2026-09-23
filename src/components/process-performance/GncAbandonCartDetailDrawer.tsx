@@ -8,13 +8,17 @@ export interface DrawerSeries {
   key: string;
   /** Row field to read; defaults to `key` when the label differs from the underlying field name. */
   dataKey?: string;
-  label: string; fmt: "int" | "currency" | "pct"; color: string;
+  label: string; fmt: "int" | "currency" | "pct" | "hms"; color: string;
 }
 
 const fmtVal = (v: unknown, fmt: DrawerSeries["fmt"]): string => {
   const n = Number(v);
   if (!Number.isFinite(n)) return "—";
   if (fmt === "currency") return formatINR(n);
+  if (fmt === "hms") {
+    const t = Math.round(n);
+    return `${Math.floor(t / 3600)}:${String(Math.floor((t % 3600) / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+  }
   if (fmt === "pct") return `${n}%`;
   return n.toLocaleString("en-IN");
 };

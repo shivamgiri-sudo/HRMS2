@@ -558,7 +558,7 @@ export function BellavitaChatDashboard() {
   return (
     <div className="space-y-5">
       <DashboardHero<TabKey>
-        icon={MessageSquare} eyebrow="Bellavita · Process Performance" title="Chat Performance"
+        icon={MessageSquare} eyebrow="Bellavita · Process Performance" title="Chat Sale Performance"
         tabs={TABS} activeTab={tab} onTabChange={setTab}
         gradient="from-rose-500 via-pink-500 to-rose-600"
       />
@@ -568,7 +568,7 @@ export function BellavitaChatDashboard() {
           <span className="rounded-lg bg-slate-100 px-3 py-1.5 text-[11px] font-semibold text-slate-500">Preparing week &amp; date columns for export…</span>
         ) : needsLegacy ? (
           <DashboardExportMenu
-            reportTitle="Bellavita — Chat Performance"
+            reportTitle="Bellavita — Chat Sale Performance"
             fileBaseName="Bellavita_Chat"
             raw={{ dashboard: "bellavita_chat", from, to, lob: lob || undefined }}
             subtitle={`${from} to ${to}`}

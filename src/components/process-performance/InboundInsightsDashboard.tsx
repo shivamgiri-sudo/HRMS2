@@ -52,6 +52,11 @@ interface HourRow extends Metrics { hour: number; label: string; avgPerDay: numb
 interface QuarterRow extends Metrics { slot: string; sharePct: number }
 interface WeekdayRow extends Metrics { weekday: string; days: number; avgPerDay: number }
 interface HeatCell { date: string; hour: number; offered: number; abandoned: number; answeredInSl: number }
+type HeatMetric = "offered" | "answered" | "abandoned";
+/** Every offered call is either answered or abandoned (the backend counts
+ * `!answered` as abandoned), so answered = offered - abandoned -- no separate
+ * field needed on the heatmap payload. */
+const heatValue = (c: HeatCell, m: HeatMetric): number => (m === "answered" ? c.offered - c.abandoned : c[m]);
 interface AgentRow {
   agentId: string; agentName: string; handled: number; sharePct: number; slWithinPct: number; aht: number;
   avgTalk: number; avgHold: number; avgAcw: number; asa: number; maxDuration: number; shortCalls: number;
@@ -214,7 +219,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
   const [unavailable, setUnavailable] = useState(false);
   const [error, setError] = useState("");
   const [agentSearch, setAgentSearch] = useState("");
-  const [heatMetric, setHeatMetric] = useState<"offered" | "abandoned">("offered");
+  const [heatMetric, setHeatMetric] = useState<HeatMetric>("offered");
   const [agentGrid, setAgentGrid] = useState<"date" | "hour">("date");
   const [drill, setDrill] = useState<DrillSpec | null>(null);
   const [insightsOpen, setInsightsOpen] = useState(false);
@@ -283,7 +288,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
     let max = 0;
     for (const c of data?.heatmap ?? []) {
       cells.set(`${c.date}|${c.hour}`, c);
-      max = Math.max(max, c[heatMetric]);
+      max = Math.max(max, heatValue(c, heatMetric));
     }
     const dates = (data?.daily ?? []).map((d) => d.date);
     const hours = (data?.hourly ?? []).map((h) => h.hour);
@@ -538,19 +543,42 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                   </SectionCard>
                 </div>
                 <SectionCard icon={Gauge} title="Offered vs answered" tone="indigo">
-                  <ResponsiveContainer width="100%" height={250}>
-                    <PieChart>
-                      <Pie
-                        data={[{ name: "Answered", value: h.answered }, { name: "Not answered", value: h.offered - h.answered }]}
-                        dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={48} outerRadius={84} paddingAngle={2}
-                        label={(p: { name?: string; percent?: number }) => `${p.name ?? ""} ${Math.round((p.percent ?? 0) * 100)}%`}
-                      >
-                        <Cell fill="#10b981" stroke="white" strokeWidth={2} />
-                        <Cell fill="#94a3b8" stroke="white" strokeWidth={2} />
-                      </Pie>
-                      <Tooltip contentStyle={TOOLTIP_STYLE} />
-                    </PieChart>
-                  </ResponsiveContainer>
+                  <div className="relative" style={{ height: 190 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={[{ name: "Answered", value: h.answered }, { name: "Not answered", value: h.offered - h.answered }]}
+                          dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="62%" outerRadius="90%" paddingAngle={2}
+                          stroke="none" label={false}
+                        >
+                          <Cell fill="#10b981" />
+                          <Cell fill="#94a3b8" />
+                        </Pie>
+                        <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => fmtNum(Number(v))} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                      <span className="text-lg font-bold leading-tight text-slate-800">{fmtNum(h.offered)}</span>
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Offered</span>
+                    </div>
+                  </div>
+                  <ul className="mt-3 space-y-1.5 text-[11px]">
+                    {[
+                      { name: "Offered", value: h.offered, color: "#6366f1" },
+                      { name: "Answered", value: h.answered, color: "#10b981" },
+                      { name: "Not answered", value: h.offered - h.answered, color: "#94a3b8" },
+                    ].map((r) => (
+                      <li key={r.name} className="flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-2">
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: r.color }} />
+                          <span className="font-medium text-slate-600">{r.name}</span>
+                        </span>
+                        <span className="text-slate-500">
+                          {fmtNum(r.value)} <span className="font-semibold text-slate-700">· {h.offered > 0 ? Math.round((r.value / h.offered) * 1000) / 10 : 0}%</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
                 </SectionCard>
               </div>
 
@@ -569,7 +597,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                     </ComposedChart>
                   </ResponsiveContainer>
                 </SectionCard>
-                <SectionCard icon={CalendarDays} title="Weekday pattern" tone="violet" footnote="Average calls per day of that weekday within the selected range.">
+                <SectionCard icon={CalendarDays} title="Weekday pattern" tone="violet" footnote="Weekday rows show average calls per day of that weekday within the selected range. Date-wise rows below show each day in the range; click any row to open its calls.">
                   <TableShell minWidth={420}>
                     <thead><tr className={THEAD}><Head first>Day</Head><Head>Days</Head><Head>Avg / day</Head><Head>AL %</Head><Head>SL %</Head><Head>AHT</Head></tr></thead>
                     <tbody>
@@ -585,6 +613,30 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                       ))}
                     </tbody>
                   </TableShell>
+
+                  <p className="mb-2 mt-5 text-[11px] font-bold uppercase tracking-wide text-slate-400">Date-wise performance</p>
+                  <div className="max-h-80 overflow-y-auto rounded-xl">
+                    <TableShell minWidth={520}>
+                      <thead><tr className={THEAD}><Head first>Date</Head><Head>Offered</Head><Head>Answered</Head><Head>AL %</Head><Head>SL %</Head><Head>AHT</Head></tr></thead>
+                      <tbody>
+                        {data.daily.map((r, i) => (
+                          <tr key={r.date} className={rowCls(i)} onClick={() => openDrill(`${fmtDate(r.date)} (${r.weekday})`, { date: r.date })}>
+                            <td className="whitespace-nowrap py-2.5 pl-3 pr-3 font-medium text-slate-700">
+                              {formatShortDate(r.date)} <span className="text-[11px] font-normal text-slate-400">{r.weekday}</span>
+                            </td>
+                            <td className={`${td} font-semibold`}>{fmtNum(r.offered)}</td>
+                            <td className={`${td} text-emerald-700`}>{fmtNum(r.answered)}</td>
+                            <td className={`${td} font-semibold ${abTone(r.abandonPct)}`}>{r.abandonPct}%</td>
+                            <td className={`${td} font-semibold ${slTone(r.slPct)}`}>{r.slPct}%</td>
+                            <td className={td}>{fmtSec(r.aht)}</td>
+                          </tr>
+                        ))}
+                        {data.daily.length === 0 && (
+                          <tr><td colSpan={6} className="py-6 text-center text-slate-400">No calls in this range.</td></tr>
+                        )}
+                      </tbody>
+                    </TableShell>
+                  </div>
                 </SectionCard>
               </div>
             </div>
@@ -663,10 +715,11 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
               <SectionCard icon={TrendingUp} title="Date × hour heatmap" tone="rose" footnote="Darker = more calls. Click any cell to open the calls behind it.">
                 <div className="mb-3 flex items-center gap-2">
                   <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Show</span>
-                  <Select value={heatMetric} onValueChange={(v) => setHeatMetric(v as "offered" | "abandoned")}>
+                  <Select value={heatMetric} onValueChange={(v) => setHeatMetric(v as HeatMetric)}>
                     <SelectTrigger className="h-8 w-[170px] bg-white text-xs" aria-label="Heatmap metric"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="offered">Offered calls</SelectItem>
+                      <SelectItem value="answered">Answered calls</SelectItem>
                       <SelectItem value="abandoned">Abandoned calls</SelectItem>
                     </SelectContent>
                   </Select>
@@ -688,14 +741,14 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                             <td className="sticky left-0 z-10 whitespace-nowrap bg-white px-3 py-1.5 text-left font-medium text-slate-600">{formatShortDate(d)}</td>
                             {heat.hours.map((hr) => {
                               const c = heat.cells.get(`${d}|${hr}`);
-                              const v = c ? c[heatMetric] : 0;
+                              const v = c ? heatValue(c, heatMetric) : 0;
                               rowTotal += v;
                               return (
                                 <td
                                   key={hr}
-                                  onClick={v ? () => openDrill(`${fmtDate(d)} · ${String(hr).padStart(2, "0")}:00`, { date: d, hour: hr, ...(heatMetric === "abandoned" ? { outcome: "abandoned" } : {}) }) : undefined}
+                                  onClick={v ? () => openDrill(`${fmtDate(d)} · ${String(hr).padStart(2, "0")}:00`, { date: d, hour: hr, ...(heatMetric !== "offered" ? { outcome: heatMetric } : {}) }) : undefined}
                                   className={`h-8 min-w-[34px] px-1 font-medium ${v ? "cursor-pointer text-slate-800 hover:ring-2 hover:ring-inset hover:ring-blue-400" : "text-slate-300"}`}
-                                  style={{ background: heatBg(v, heat.max, heatMetric === "offered" ? "14, 165, 233" : "244, 63, 94") }}
+                                  style={{ background: heatBg(v, heat.max, heatMetric === "offered" ? "14, 165, 233" : heatMetric === "answered" ? "16, 185, 129" : "244, 63, 94") }}
                                 >
                                   {v || "·"}
                                 </td>

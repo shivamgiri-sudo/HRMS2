@@ -17,7 +17,6 @@ import { HousingPremiumSaleDashboard } from "@/components/process-performance/Ho
 import { LpFeedbackDashboard } from "@/components/process-performance/LpFeedbackDashboard";
 import { LpOnboardingDashboard } from "@/components/process-performance/LpOnboardingDashboard";
 import { SatyaRetailDashboard } from "@/components/process-performance/SatyaRetailDashboard";
-import { SatyaRetailReport } from "@/components/process-performance/SatyaRetailReport";
 import { CloviaDashboard } from "@/components/process-performance/CloviaDashboard";
 import { BirlanuDashboard } from "@/components/process-performance/BirlanuDashboard";
 import { AppreciateWealthDashboard } from "@/components/process-performance/AppreciateWealthDashboard";
@@ -97,7 +96,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
 const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" }>>> = {
   bellavita: [
     { key: "sale_performance", label: "Overall Dashboard", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
-    { key: "chat_performance", label: "Chat Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
+    { key: "chat_performance", label: "Chat Sale Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
     { key: "cart_performance", label: "Abandon Cart", description: "Cart value, connect%, discount codes, agent-wise + Repeat Allocation — live from uploaded cart data", kind: "bellavita_cart" },
     { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%", kind: "inbound" },
   ],
@@ -114,8 +113,7 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
     { key: "call_performance", label: "Onboarding Call Performance", description: "Login/calls/connectivity, lead-source, week-wise & agent-wise — live from uploaded APR/CDR data", kind: "lp_onboarding" },
   ],
   satya_retail: [
-    { key: "calling_order_tracking", label: "Calling & Order Tracking", description: "Full report — daily MTD/weekly tracker, agent-wise, beat & warehouse, call attempts, with row drill-downs and data checks", kind: "satya_retail_report" },
-    { key: "beat_performance", label: "Beat & Call Performance", description: "Allocation/connect%, warehouse-wise & agent-wise — live from uploaded allocation/CDR data", kind: "satya_retail_dashboard" },
+    { key: "satya_dashboard", label: "Satya Retail Dashboard", description: "Morning/Absentee allocation, calls, connect, orders & conversion, outcomes, agent-wise and daily tracker — live from uploaded allocation/CDR data", kind: "satya_retail_dashboard" },
   ],
   gnc: [
     { key: "sale_performance", label: "Overall Dashboard", description: "Gross revenue, prepaid%, allocation, top performers — live from uploaded sale data", kind: "gnc_sale" },
@@ -683,8 +681,6 @@ export default function ProcessPerformanceV2Page() {
               <LpFeedbackDashboard />
             ) : selectedDashboard.kind === "lp_onboarding" ? (
               <LpOnboardingDashboard />
-            ) : selectedDashboard.kind === "satya_retail_report" ? (
-              <SatyaRetailReport />
             ) : selectedDashboard.kind === "satya_retail_dashboard" ? (
               <SatyaRetailDashboard />
             ) : selectedDashboard.kind === "clovia_dashboard" ? (

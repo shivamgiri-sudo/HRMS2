@@ -171,7 +171,7 @@ export interface BellavitaChatOverviewData {
   qrc: QrcData;
   daily: Array<{
     date: string; overall: number; unique: number; repeatChat: number; frtPct: number; inTat: number;
-    repeat24: number; repeat48: number; repeat72: number; repeatMore72: number;
+    withoutAgentFrt: number; repeat24: number; repeat48: number; repeat72: number; repeatMore72: number;
     saleMade: number | null; revenue: number | null; plannedCapacity: number | null;
     rtoCount: number | null; prepaidCount: number | null;
   }>;
@@ -218,11 +218,11 @@ const emptySale = (): SaleAgg => ({ orders: 0, revenue: 0, rows: 0, gross: 0, rt
 
 const typesFor = (t: OverviewUserType): ChatUserType[] => (t === "Overall" ? [...CHAT_USER_TYPES] : [t]);
 /** bb_sale's campaign column only ever holds a single combined 'Chat' value
- * (no Kenaz/Bevzilla split) -- sales are shown on every tab (2026-09-23,
- * explicit "PTP Performance on Chat/Kenaz/Bevzilla" request) using those
- * same shared Chat-campaign totals, with a note on Kenaz/Bevzilla/Overall
- * clarifying they are not that tab's own figures. */
-const salesAvailableFor = (_t: OverviewUserType): boolean => true;
+ * (no Kenaz/Bevzilla split), so sales figures exist for Overall and Chat
+ * only. Kenaz/Bevzilla tabs show no sale-related figures at all (explicit
+ * request 2026-09-23) -- and skip those queries entirely, which also makes
+ * those tabs load faster. */
+const salesAvailableFor = (t: OverviewUserType): boolean => t === "Overall" || t === "Chat";
 
 /* --------------------------------- queries -------------------------------- */
 
@@ -425,7 +425,7 @@ async function loadFraudCount(from: string, to: string, types: ChatUserType[]): 
 /** Top 10 agents by chat volume, from new_bb_chat (not the legacy bb_chat
  * table this Overview otherwise avoids) so agent identity stays consistent
  * with every other figure on this page. */
-async function loadTopAgents(from: string, to: string, types: ChatUserType[]): Promise<TopAgentRow[]> {
+async function loadTopAgents(from: string, to: string, types: ChatUserType[], withSales: boolean): Promise<TopAgentRow[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(current_agent, ''), 'Unassigned') AS agent, MAX(emp_id) AS emp_id,
        COUNT(*) AS overall, SUM(repeat_status = 'Unique') AS uniq, SUM(frt_tat = 'IN TAT') AS in_tat
@@ -434,7 +434,7 @@ async function loadTopAgents(from: string, to: string, types: ChatUserType[]): P
      GROUP BY agent ORDER BY overall DESC LIMIT 10`,
     [from, to, ...types],
   );
-  const salesByAgent = await loadSalesByAgent(from, to);
+  const salesByAgent = withSales ? await loadSalesByAgent(from, to) : new Map<string, { orders: number; revenue: number }>();
   return rows.map((r) => {
     const empId = String(r.emp_id || "");
     const sale = empId ? salesByAgent.get(empId.toUpperCase()) : undefined;
@@ -445,6 +445,62 @@ async function loadTopAgents(from: string, to: string, types: ChatUserType[]): P
       saleCount: sale ? sale.orders : null,
       revenue: sale ? round2(sale.revenue) : null,
       conversionPct: sale ? pct(sale.orders, overall) : null,
+    };
+  });
+}
+
+export interface OverviewAgentTrendRow {
+  date: string; overall: number; unique: number; inTat: number;
+  saleMade: number | null; revenue: number | null;
+}
+
+/** One agent's day-by-day figures for the Overview's Top Agents row click.
+ * Same source and agent identity as loadTopAgents (new_bb_chat grouped by
+ * current_agent, 'Unassigned' when blank), so a row's totals always equal
+ * the sum of its own days. Sales/revenue join bb_sale by emp_id with the same
+ * dedup-by-order pattern as loadSalesByAgent, and only when sales exist for
+ * this tab and the row has a real emp_id (else null, never 0). */
+export async function getBellavitaChatOverviewAgentTrend(
+  fromInput: string, toInput: string, userType: OverviewUserType, agent: string, empId: string,
+): Promise<OverviewAgentTrendRow[]> {
+  const { from, to } = resolveRange(fromInput, toInput);
+  const types = typesFor(userType);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(chat_date, '%Y-%m-%d') AS d, COUNT(*) AS overall,
+       SUM(repeat_status = 'Unique') AS uniq, SUM(frt_tat = 'IN TAT') AS in_tat
+     FROM db_masmis.new_bb_chat
+     WHERE chat_date BETWEEN ? AND ? AND user_type IN (${types.map(() => "?").join(",")})
+       AND COALESCE(NULLIF(current_agent, ''), 'Unassigned') = ?
+     GROUP BY chat_date ORDER BY chat_date`,
+    [from, to, ...types, agent],
+  );
+
+  let salesByDate: Map<string, { n: number; revenue: number }> | null = null;
+  if (salesAvailableFor(userType) && empId.trim()) {
+    const [saleRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(s.\`Date\`, '%Y-%m-%d') AS d, COUNT(*) AS n, SUM(s.amount) AS revenue
+       FROM db_masmis.bb_sale s
+       INNER JOIN (
+         SELECT bella_vita_order_id, MAX(id) AS keep_id
+         FROM db_masmis.bb_sale
+         WHERE ${SALE_WHERE} AND \`Date\` BETWEEN ? AND ?
+           AND bella_vita_order_id IS NOT NULL AND bella_vita_order_id <> ''
+         GROUP BY bella_vita_order_id
+       ) dk ON dk.keep_id = s.id
+       WHERE s.emp_id = ?
+       GROUP BY s.\`Date\``,
+      [from, to, empId.trim()],
+    );
+    salesByDate = new Map(saleRows.map((r) => [String(r.d), { n: num(r.n), revenue: num(r.revenue) }]));
+  }
+
+  return rows.map((r) => {
+    const d = String(r.d);
+    const s = salesByDate?.get(d);
+    return {
+      date: d, overall: num(r.overall), unique: num(r.uniq), inTat: num(r.in_tat),
+      saleMade: salesByDate ? (s?.n ?? 0) : null,
+      revenue: salesByDate ? round2(s?.revenue ?? 0) : null,
     };
   });
 }
@@ -538,7 +594,7 @@ export async function getBellavitaChatOverview(
     loadDayNight(from, to, types),
     loadRoster(from, to),
     loadFraudCount(from, to, types),
-    loadTopAgents(from, to, types),
+    loadTopAgents(from, to, types, salesAvailable),
   ]);
 
   const months = [...new Set(days.map((d) => d.slice(0, 7)))];
@@ -678,6 +734,7 @@ export async function getBellavitaChatOverview(
         date: d,
         overall, unique,
         repeatChat: Math.max(0, overall - unique),
+        withoutAgentFrt: c?.noFrt ?? 0,
         repeat24: c?.r24 ?? 0, repeat48: c?.r48 ?? 0, repeat72: c?.r72 ?? 0, repeatMore72: c?.rmore ?? 0,
         frtPct: pct(c?.inTat ?? 0, overall), inTat: c?.inTat ?? 0,
         saleMade: sales ? orders : null,
@@ -690,9 +747,7 @@ export async function getBellavitaChatOverview(
     salesAvailable,
     salesNote: userType === "Overall"
       ? "Sales come from bb_sale's 'Chat' campaign, which has no Kenaz/Bevzilla split, so for Overall the same Chat-campaign sales are set against the combined chat volume."
-      : userType !== "Chat"
-        ? `bb_sale has no ${userType}-specific split -- Sale Made, Revenue, AOV, RTO and Prepaid below are the same shared 'Chat'-campaign totals shown on the Chat tab, not figures for ${userType} alone.`
-        : null,
+      : null,
     integrity,
     capacity: {
       month: lastMonth,

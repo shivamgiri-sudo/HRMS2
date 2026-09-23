@@ -15,7 +15,6 @@ export function LpFeedbackDashboard() {
       eyebrow="Lawyer Panel · Process Performance"
       title="Feedback Call Performance"
       unavailableLabel="Unable to load the Lawyer Panel Feedback dashboard."
-      tlFootnote="No TL-wise view is shown — neither the uploaded APR nor CDR file for Lawyer Panel Feedback has a team-lead column."
     />
   );
 }

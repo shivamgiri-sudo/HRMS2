@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ComposedChart, Bar, Line, BarChart, PieChart, Pie, Cell, FunnelChart, Funnel, LabelList,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -70,7 +70,7 @@ interface Integrity {
 interface QrcColumn { counts: Record<string, number>; total: number; untagged: number; dataDays: number; coveredDays: number }
 interface QrcData { categories: string[]; values: Record<string, QrcColumn | null>; uncoveredDates: string[]; note: string | null }
 interface DailyRow {
-  date: string; overall: number; unique: number; repeatChat: number; frtPct: number; inTat: number;
+  date: string; overall: number; unique: number; repeatChat: number; frtPct: number; inTat: number; withoutAgentFrt: number;
   repeat24: number; repeat48: number; repeat72: number; repeatMore72: number;
   saleMade: number | null; revenue: number | null; plannedCapacity: number | null;
   rtoCount: number | null; prepaidCount: number | null;
@@ -139,11 +139,11 @@ function DeltaChip({ curr, prev }: { curr?: number | null; prev?: number | null 
 
 /** Thin KpiCard wrapper that also renders a DeltaChip under it. */
 function KpiWithDelta({
-  icon, label, value, sub, tone, curr, prev,
-}: { icon: typeof MessageSquare; label: string; value: string; sub?: string; tone: KpiTone; curr?: number | null; prev?: number | null }) {
+  icon, label, value, sub, tone, curr, prev, onClick,
+}: { icon: typeof MessageSquare; label: string; value: string; sub?: string; tone: KpiTone; curr?: number | null; prev?: number | null; onClick?: () => void }) {
   return (
     <div className="relative">
-      <KpiCard icon={icon} label={label} value={value} sub={sub} tone={tone} />
+      <KpiCard icon={icon} label={label} value={value} sub={sub} tone={tone} onClick={onClick} />
       <div className="pointer-events-none absolute bottom-1.5 right-2.5"><DeltaChip curr={curr} prev={prev} /></div>
     </div>
   );
@@ -165,7 +165,9 @@ function weekBucket(iso: string): { key: string; label: string } {
 type NumericDailyField = { [K in keyof DailyRow]: NonNullable<DailyRow[K]> extends number ? K : never }[keyof DailyRow];
 type Drill =
   | { kind: "sum"; field: NumericDailyField; fmt: "count" | "currency" }
-  | { kind: "ratio"; num: NumericDailyField; den: NumericDailyField };
+  | { kind: "ratio"; num: NumericDailyField; den: NumericDailyField }
+  /** num / den as a plain rupee amount (e.g. AOV = revenue / sale made), not a percentage. */
+  | { kind: "quotient"; num: NumericDailyField; den: NumericDailyField };
 
 function fmtDrillValue(v: number, fmt: "count" | "currency" | "pct"): string {
   if (fmt === "currency") return formatINR(v);
@@ -177,6 +179,7 @@ function drillValueForRows(drill: Drill, rows: DailyRow[]): { value: number; fmt
   if (drill.kind === "sum") return { value: rows.reduce((s, r) => s + val(r, drill.field), 0), fmt: drill.fmt };
   const num = rows.reduce((s, r) => s + val(r, drill.num), 0);
   const den = rows.reduce((s, r) => s + val(r, drill.den), 0);
+  if (drill.kind === "quotient") return { value: den > 0 ? Math.round(num / den) : 0, fmt: "currency" };
   return { value: den > 0 ? round1((num / den) * 100) : 0, fmt: "pct" };
 }
 
@@ -186,6 +189,8 @@ interface ChartDetail {
   /** A larger render of the same chart shown on its card -- the drawer shows
    * this above the Overall KPIs and the week-wise/date-wise tables. */
   renderChart?: () => ReactNode;
+  /** Own day rows for this drawer (e.g. one agent) instead of the page-wide data.daily. */
+  rows?: DailyRow[];
 }
 
 /** Small right-aligned "View Details" trigger -- place as the first thing
@@ -208,8 +213,9 @@ function ViewDetailsButton({ onClick }: { onClick: () => void }) {
  * metric on it broken down week-wise and date-wise from data.daily -- one
  * shared drawer for every chart, driven by the ChartDetail config passed in. */
 function ChartDetailsDrawer({
-  chart, rows, onClose,
+  chart, rows: pageRows, onClose,
 }: { chart: ChartDetail | null; rows: DailyRow[]; onClose: () => void }) {
+  const rows = chart?.rows ?? pageRows;
   const weekly = useMemo(() => {
     if (!chart) return [];
     const byWeek = new Map<string, DailyRow[]>();
@@ -425,7 +431,7 @@ function QrcSection({ data, onOpenDetails }: { data: OverviewData; onOpenDetails
 }
 
 /** Top Agents by Performance -- shared table, both layouts. */
-function TopAgentsTable({ data }: { data: OverviewData }) {
+function TopAgentsTable({ data, onAgentClick }: { data: OverviewData; onAgentClick: (a: TopAgentRow) => void }) {
   return (
     <SectionCard icon={Users} title="Top Agents by Performance" tone="rose" footnote="Sales/Revenue/Conversion% are bb_sale's combined 'Chat'-campaign figures joined by emp_id -- real per agent, same caveat as PTP Performance above.">
       <div className="overflow-x-auto">
@@ -435,21 +441,21 @@ function TopAgentsTable({ data }: { data: OverviewData }) {
             <th className="py-1.5 pr-2 font-semibold">Agent</th>
             <th className="py-1.5 pr-2 text-right font-semibold">Chat Volume</th>
             <th className="py-1.5 pr-2 text-right font-semibold">Unique</th>
-            <th className="py-1.5 pr-2 text-right font-semibold">Sales</th>
-            <th className="py-1.5 pr-2 text-right font-semibold">Revenue</th>
-            <th className="py-1.5 pr-2 text-right font-semibold">Conv%</th>
+            {data.salesAvailable && <th className="py-1.5 pr-2 text-right font-semibold">Sales</th>}
+            {data.salesAvailable && <th className="py-1.5 pr-2 text-right font-semibold">Revenue</th>}
+            {data.salesAvailable && <th className="py-1.5 pr-2 text-right font-semibold">Conv%</th>}
             <th className="py-1.5 pr-0 text-right font-semibold">FRT%</th>
           </tr></thead>
           <tbody>
             {data.topAgents.map((a, i) => (
-              <tr key={`${a.empId}-${a.agent}`} className="border-b border-slate-50 last:border-0">
+              <tr key={`${a.empId}-${a.agent}`} onClick={() => onAgentClick(a)} role="button" tabIndex={0} className="cursor-pointer border-b border-slate-50 transition-colors last:border-0 hover:bg-rose-50/50">
                 <td className="py-1.5 pr-2 text-slate-400">{i + 1}</td>
-                <td className="py-1.5 pr-2 text-slate-700">{a.agent}</td>
+                <td className="py-1.5 pr-2 font-medium text-rose-700 underline-offset-2 hover:underline">{a.agent}</td>
                 <td className="py-1.5 pr-2 text-right text-slate-600">{fmtN(a.overall)}</td>
                 <td className="py-1.5 pr-2 text-right text-slate-600">{fmtN(a.unique)}</td>
-                <td className="py-1.5 pr-2 text-right text-slate-600">{a.saleCount !== null ? fmtN(a.saleCount) : "—"}</td>
-                <td className="py-1.5 pr-2 text-right font-semibold text-amber-700">{a.revenue !== null ? formatINR(a.revenue) : "—"}</td>
-                <td className="py-1.5 pr-2 text-right font-semibold text-emerald-600">{a.conversionPct !== null ? `${a.conversionPct}%` : "—"}</td>
+                {data.salesAvailable && <td className="py-1.5 pr-2 text-right text-slate-600">{a.saleCount !== null ? fmtN(a.saleCount) : "—"}</td>}
+                {data.salesAvailable && <td className="py-1.5 pr-2 text-right font-semibold text-amber-700">{a.revenue !== null ? formatINR(a.revenue) : "—"}</td>}
+                {data.salesAvailable && <td className="py-1.5 pr-2 text-right font-semibold text-emerald-600">{a.conversionPct !== null ? `${a.conversionPct}%` : "—"}</td>}
                 <td className="py-1.5 pr-0 text-right text-slate-600">{a.frtPct}%</td>
               </tr>
             ))}
@@ -474,7 +480,7 @@ function ChatFunnelCard({ data, onOpenDetails }: { data: OverviewData; onOpenDet
   const renderFunnel = () => (
     <ResponsiveContainer width="100%" height={260}>
       <FunnelChart>
-        <Tooltip {...TOOLTIP_PROPS} formatter={(v: number) => v.toLocaleString("en-IN")} />
+        <Tooltip {...TOOLTIP_PROPS} itemStyle={{ color: "#f1f5f9" }} formatter={(v: number) => v.toLocaleString("en-IN")} />
         <Funnel dataKey="value" data={funnelData} isAnimationActive>
           <LabelList position="right" dataKey="name" fill="#334155" stroke="none" fontSize={12} />
           <LabelList position="left" dataKey="pct" formatter={(v: number) => `${v}%`} fill="#334155" stroke="none" fontSize={12} />
@@ -491,6 +497,9 @@ function ChatFunnelCard({ data, onOpenDetails }: { data: OverviewData; onOpenDet
       { key: "overall", label: "Overall Chat Volume", drill: { kind: "sum", field: "overall", fmt: "count" } },
       { key: "unique", label: "Unique Chat Volume", drill: { kind: "sum", field: "unique", fmt: "count" } },
       { key: "saleMade", label: "Sale Made", drill: { kind: "sum", field: "saleMade", fmt: "count" } },
+      { key: "uniquePct", label: "Unique % of Overall", drill: { kind: "ratio", num: "unique", den: "overall" } },
+      { key: "convOverall", label: "Conv % (Overall)", drill: { kind: "ratio", num: "saleMade", den: "overall" } },
+      { key: "convUnique", label: "Conv % (Unique)", drill: { kind: "ratio", num: "saleMade", den: "unique" } },
     ],
   };
   return (
@@ -524,7 +533,7 @@ function RepeatChatDonut({ data, onOpenDetails }: { data: OverviewData; onOpenDe
         <Pie data={slices} dataKey="value" nameKey="name" cx="50%" cy="46%" innerRadius={62} outerRadius={95} paddingAngle={2}>
           {slices.map((entry, i) => <Cell key={entry.name} fill={REPEAT_COLORS[i % REPEAT_COLORS.length]} stroke="white" strokeWidth={2} />)}
         </Pie>
-        <Tooltip {...TOOLTIP_PROPS} formatter={(v: number) => v.toLocaleString("en-IN")} />
+        <Tooltip {...TOOLTIP_PROPS} itemStyle={{ color: "#f1f5f9" }} formatter={(v: number) => v.toLocaleString("en-IN")} />
         <Legend verticalAlign="bottom" wrapperStyle={{ fontSize: 11 }} formatter={(value: string, entry: { payload?: { value?: number } }) => `${value}: ${fmtN(entry.payload?.value ?? 0)} (${total > 0 ? round1(((entry.payload?.value ?? 0) / total) * 100) : 0}%)`} />
       </PieChart>
     </ResponsiveContainer>
@@ -652,13 +661,16 @@ const salesRevenueDetail = (data: OverviewData, title: string): ChartDetail => {
     metrics: [
       { key: "saleMade", label: "Sale Made", drill: { kind: "sum", field: "saleMade", fmt: "count" } },
       { key: "revenue", label: "Revenue", drill: { kind: "sum", field: "revenue", fmt: "currency" } },
+      { key: "aov", label: "AOV", drill: { kind: "quotient", num: "revenue", den: "saleMade" } },
+      { key: "overall", label: "Overall Chat Volume", drill: { kind: "sum", field: "overall", fmt: "count" } },
+      { key: "convOverall", label: "Conversion % (Overall)", drill: { kind: "ratio", num: "saleMade", den: "overall" } },
     ],
   };
 };
 
 const renderFrtLine = (data: OverviewData, height: number) => (
   <ResponsiveContainer width="100%" height={height}>
-    <ComposedChart data={data.daily} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+    <ComposedChart data={data.daily.map((d) => ({ ...d, frtPct: d.overall > 0 ? d.frtPct : null }))} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
       <XAxis dataKey="date" tickFormatter={fmtShortDay} tick={{ fontSize: 10 }} />
       <YAxis tick={{ fontSize: 10 }} unit="%" domain={[0, 100]} />
@@ -687,23 +699,127 @@ const frtDetail = (data: OverviewData): ChartDetail => {
   };
 };
 
+/* ------- per-KPI click-through: overall figures + week-wise + date-wise ------- */
+
+type KpiKey =
+  | "plannedCapacity" | "overallChat" | "unique" | "capacityUtil" | "frt"
+  | "repeat24" | "repeat48" | "repeat72" | "repeatMore72" | "withoutAgentFrt"
+  | "saleMade" | "revenue" | "aov" | "rto" | "prepaid" | "convOverall" | "convUnique";
+
+/** ChartDetail for one KPI card, driven by the same per-day rows the charts use so
+ * the week-wise/date-wise figures always add back up to the card's own value. */
+function kpiDetail(data: OverviewData, key: KpiKey): ChartDetail {
+  const m = data.values.mtd;
+  const cnt = (k: string, label: string, field: NumericDailyField): ChartMetric => ({ key: k, label, drill: { kind: "sum", field, fmt: "count" } });
+  const rat = (k: string, label: string, num: NumericDailyField, den: NumericDailyField): ChartMetric => ({ key: k, label, drill: { kind: "ratio", num, den } });
+  const OVERALL = cnt("overall", "Overall Chat Volume", "overall");
+  const UNIQUE = cnt("unique", "Unique Chat Volume", "unique");
+  const SALE = cnt("saleMade", "Sale Made", "saleMade");
+  const share = (n: number, d: number): string => (d > 0 ? `${round1((n / d) * 100)}%` : "—");
+  const repeatKpi = (title: string, field: "repeat24" | "repeat48" | "repeat72" | "repeatMore72", value: number): ChartDetail => ({
+    title,
+    overall: [{ label: title, value: fmtN(value) }, { label: "Overall Chat Volume", value: fmtN(m.overallChat) }, { label: "% of Overall Chat", value: share(value, m.overallChat) }],
+    metrics: [cnt(field, title, field), OVERALL, rat("share", "% of Overall Chat", field, "overall")],
+  });
+  switch (key) {
+    case "plannedCapacity":
+      return {
+        title: "Planned Capacity",
+        overall: [{ label: "Planned Capacity", value: format(m.plannedCapacity, "count") }, { label: "Actual Chat Volume", value: fmtN(m.overallChat) }, { label: "Capacity Utilization", value: format(m.capacityUtilizationPct, "pct0") }],
+        metrics: [cnt("plannedCapacity", "Planned Capacity", "plannedCapacity"), OVERALL],
+      };
+    case "overallChat":
+      return {
+        title: "Overall Chat Volume",
+        overall: [{ label: "Overall Chat Volume", value: fmtN(m.overallChat) }, { label: "Unique Chat Volume", value: fmtN(m.unique) }, { label: "Repeat Chat", value: fmtN(Math.max(0, m.overallChat - m.unique)) }],
+        metrics: [OVERALL, UNIQUE, cnt("repeatChat", "Repeat Chat", "repeatChat")],
+      };
+    case "unique":
+      return {
+        title: "Unique Chat Volume",
+        overall: [{ label: "Unique Chat Volume", value: fmtN(m.unique) }, { label: "Overall Chat Volume", value: fmtN(m.overallChat) }, { label: "Unique % of Overall", value: share(m.unique, m.overallChat) }],
+        metrics: [UNIQUE, OVERALL, rat("uniquePct", "Unique %", "unique", "overall")],
+      };
+    case "capacityUtil":
+      return {
+        title: "Capacity Utilization",
+        overall: [{ label: "Capacity Utilization", value: format(m.capacityUtilizationPct, "pct0") }, { label: "Planned Capacity", value: format(m.plannedCapacity, "count") }, { label: "Actual Chat Volume", value: fmtN(m.overallChat) }],
+        metrics: [cnt("plannedCapacity", "Planned Capacity", "plannedCapacity"), OVERALL, rat("util", "Utilization %", "overall", "plannedCapacity")],
+      };
+    case "frt":
+      return { ...frtDetail(data), title: "FRT %" };
+    case "repeat24": return repeatKpi("Repeat 24hrs", "repeat24", m.repeat24);
+    case "repeat48": return repeatKpi("Repeat 48hrs", "repeat48", m.repeat48);
+    case "repeat72": return repeatKpi("Repeat 72hrs", "repeat72", m.repeat72);
+    case "repeatMore72": return repeatKpi("Repeat > 72hrs", "repeatMore72", m.repeatMore72);
+    case "withoutAgentFrt":
+      return {
+        title: "With Out Agent FRT",
+        overall: [{ label: "With Out Agent FRT", value: fmtN(m.withoutAgentFrt) }, { label: "Overall Chat Volume", value: fmtN(m.overallChat) }, { label: "% of Overall Chat", value: share(m.withoutAgentFrt, m.overallChat) }],
+        metrics: [cnt("withoutAgentFrt", "With Out Agent FRT", "withoutAgentFrt"), OVERALL, rat("share", "% of Overall Chat", "withoutAgentFrt", "overall")],
+      };
+    case "saleMade":
+      return {
+        title: "Sale Made",
+        overall: [{ label: "Sale Made", value: format(m.saleMade, "count") }, { label: "Revenue", value: format(m.revenue, "inr") }, { label: "Conversion % (Overall)", value: format(m.convOverallPct, "pct1") }],
+        metrics: [SALE, cnt("overall", "Overall Chat Volume", "overall"), rat("conv", "Conversion %", "saleMade", "overall")],
+      };
+    case "revenue":
+    case "aov":
+      return {
+        title: key === "revenue" ? "Revenue" : "AOV",
+        overall: [{ label: "Revenue", value: format(m.revenue, "inr") }, { label: "Sale Made", value: format(m.saleMade, "count") }, { label: "AOV", value: format(m.aov, "inr") }],
+        metrics: [
+          { key: "revenue", label: "Revenue", drill: { kind: "sum", field: "revenue", fmt: "currency" } },
+          SALE,
+          { key: "aov", label: "AOV", drill: { kind: "quotient", num: "revenue", den: "saleMade" } },
+        ],
+      };
+    case "rto":
+      return {
+        title: "RTO",
+        overall: [{ label: "RTO Orders", value: format(m.rtoCount, "count") }, { label: "RTO %", value: m.rtoPct !== null ? `${m.rtoPct}%` : "—" }, { label: "Sale Made", value: format(m.saleMade, "count") }],
+        metrics: [cnt("rtoCount", "RTO Orders", "rtoCount"), SALE, rat("rtoPct", "RTO %", "rtoCount", "saleMade")],
+      };
+    case "prepaid":
+      return {
+        title: "Prepaid",
+        overall: [{ label: "Prepaid Orders", value: format(m.prepaidCount, "count") }, { label: "% of Sales", value: m.rtoPct !== null ? `${round1(100 - m.rtoPct)}%` : "—" }, { label: "Sale Made", value: format(m.saleMade, "count") }],
+        metrics: [cnt("prepaidCount", "Prepaid Orders", "prepaidCount"), SALE, rat("prepaidPct", "% of Sales", "prepaidCount", "saleMade")],
+      };
+    case "convOverall":
+      return {
+        title: "Conversion % On Overall",
+        overall: [{ label: "Conversion % On Overall", value: format(m.convOverallPct, "pct1") }, { label: "Sale Made", value: format(m.saleMade, "count") }, { label: "Overall Chat Volume", value: fmtN(m.overallChat) }],
+        metrics: [SALE, cnt("overall", "Overall Chat Volume", "overall"), rat("conv", "Conversion %", "saleMade", "overall")],
+      };
+    case "convUnique":
+      return {
+        title: "Conversion % On Unique",
+        overall: [{ label: "Conversion % On Unique", value: format(m.convUniquePct, "pct1") }, { label: "Sale Made", value: format(m.saleMade, "count") }, { label: "Unique Chat Volume", value: fmtN(m.unique) }],
+        metrics: [SALE, UNIQUE, rat("conv", "Conversion %", "saleMade", "unique")],
+      };
+  }
+}
+
 /* ============================== Overall layout ============================= */
 
-function OverallDashboard({ data, prevMtd, onOpenDetails }: { data: OverviewData; prevMtd: Values | null; onOpenDetails: (chart: ChartDetail) => void }) {
+function OverallDashboard({ data, prevMtd, onOpenDetails, onAgentClick }: { data: OverviewData; prevMtd: Values | null; onOpenDetails: (chart: ChartDetail) => void; onAgentClick: (a: TopAgentRow) => void }) {
   const mtd = data.values.mtd;
   const dayShare = data.dayNight;
+  const open = (k: KpiKey) => () => onOpenDetails(kpiDetail(data, k));
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
-        <KpiWithDelta icon={CalendarCheck} label="Planned Capacity" value={format(mtd.plannedCapacity, "count")} tone="violet" />
-        <KpiWithDelta icon={MessageSquare} label="Overall Chat Volume" value={fmtN(mtd.overallChat)} tone="rose" curr={mtd.overallChat} prev={prevMtd?.overallChat} />
-        <KpiWithDelta icon={Repeat} label="Unique Chat Volume" value={fmtN(mtd.unique)} sub={`${mtd.overallChat ? round1((mtd.unique / mtd.overallChat) * 100) : 0}% of total`} tone="sky" curr={mtd.unique} prev={prevMtd?.unique} />
-        <KpiWithDelta icon={Clock3} label="Overall Chat FRT %" value={`${Math.round(mtd.frtPct)}%`} sub={data.frtTarget !== null ? `Target: ${data.frtTarget}%` : undefined} tone="emerald" curr={mtd.frtPct} prev={prevMtd?.frtPct} />
+        <KpiWithDelta icon={CalendarCheck} label="Planned Capacity" value={format(mtd.plannedCapacity, "count")} tone="violet" onClick={open("plannedCapacity")} />
+        <KpiWithDelta icon={MessageSquare} label="Overall Chat Volume" value={fmtN(mtd.overallChat)} tone="rose" curr={mtd.overallChat} prev={prevMtd?.overallChat} onClick={open("overallChat")} />
+        <KpiWithDelta icon={Repeat} label="Unique Chat Volume" value={fmtN(mtd.unique)} sub={`${mtd.overallChat ? round1((mtd.unique / mtd.overallChat) * 100) : 0}% of total`} tone="sky" curr={mtd.unique} prev={prevMtd?.unique} onClick={open("unique")} />
+        <KpiWithDelta icon={Clock3} label="Overall Chat FRT %" value={`${Math.round(mtd.frtPct)}%`} sub={data.frtTarget !== null ? `Target: ${data.frtTarget}%` : undefined} tone="emerald" curr={mtd.frtPct} prev={prevMtd?.frtPct} onClick={open("frt")} />
         <KpiWithDelta icon={Clock3} label="Avg Resolution Time" value={format(data.avgResolutionMin, "min")} tone="indigo" />
-        <KpiWithDelta icon={ShoppingBag} label="Sale Made" value={format(mtd.saleMade, "count")} tone="teal" curr={mtd.saleMade} prev={prevMtd?.saleMade} />
-        <KpiWithDelta icon={IndianRupee} label="Revenue" value={format(mtd.revenue, "inr")} tone="amber" curr={mtd.revenue} prev={prevMtd?.revenue} />
-        <KpiWithDelta icon={TrendingUp} label="AOV" value={format(mtd.aov, "inr")} tone="cyan" curr={mtd.aov} prev={prevMtd?.aov} />
+        <KpiWithDelta icon={ShoppingBag} label="Sale Made" value={format(mtd.saleMade, "count")} tone="teal" curr={mtd.saleMade} prev={prevMtd?.saleMade} onClick={open("saleMade")} />
+        <KpiWithDelta icon={IndianRupee} label="Revenue" value={format(mtd.revenue, "inr")} tone="amber" curr={mtd.revenue} prev={prevMtd?.revenue} onClick={open("revenue")} />
+        <KpiWithDelta icon={TrendingUp} label="AOV" value={format(mtd.aov, "inr")} tone="cyan" curr={mtd.aov} prev={prevMtd?.aov} onClick={open("aov")} />
       </div>
 
       {data.salesNote && (
@@ -769,9 +885,9 @@ function OverallDashboard({ data, prevMtd, onOpenDetails }: { data: OverviewData
         <SectionCard icon={ShoppingBag} title="Sales & Revenue Performance" tone="teal">
           <ViewDetailsButton onClick={() => onOpenDetails(salesRevenueDetail(data, "Sales & Revenue Performance"))} />
           <div className="mb-3 grid grid-cols-2 gap-2">
-            <KpiCard icon={ShoppingBag} label="Sale Made" value={format(mtd.saleMade, "count")} tone="teal" />
-            <KpiCard icon={IndianRupee} label="Revenue" value={format(mtd.revenue, "inr")} tone="amber" />
-            <KpiCard icon={TrendingUp} label="AOV" value={format(mtd.aov, "inr")} tone="indigo" />
+            <KpiCard icon={ShoppingBag} label="Sale Made" value={format(mtd.saleMade, "count")} tone="teal" onClick={open("saleMade")} />
+            <KpiCard icon={IndianRupee} label="Revenue" value={format(mtd.revenue, "inr")} tone="amber" onClick={open("revenue")} />
+            <KpiCard icon={TrendingUp} label="AOV" value={format(mtd.aov, "inr")} tone="indigo" onClick={open("aov")} />
             <KpiCard icon={Percent} label="Conversion % (Overall)" value={format(mtd.convOverallPct, "pct1")} tone="cyan" />
           </div>
           <ResponsiveContainer width="100%" height={160}>
@@ -823,7 +939,7 @@ function OverallDashboard({ data, prevMtd, onOpenDetails }: { data: OverviewData
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <ChatFunnelCard data={data} onOpenDetails={onOpenDetails} />
-        <div className="lg:col-span-2"><TopAgentsTable data={data} /></div>
+        <div className="lg:col-span-2"><TopAgentsTable data={data} onAgentClick={onAgentClick} /></div>
       </div>
     </div>
   );
@@ -837,8 +953,12 @@ function pct2(part: number, whole: number | null): number {
 
 /* =============================== LOB layout ================================ */
 
-function LobDashboard({ data, prevMtd, onOpenDetails }: { data: OverviewData; prevMtd: Values | null; onOpenDetails: (chart: ChartDetail) => void }) {
+function LobDashboard({ data, prevMtd, onOpenDetails, onAgentClick }: { data: OverviewData; prevMtd: Values | null; onOpenDetails: (chart: ChartDetail) => void; onAgentClick: (a: TopAgentRow) => void }) {
   const mtd = data.values.mtd;
+  const open = (k: KpiKey) => () => onOpenDetails(kpiDetail(data, k));
+  /** Kenaz/Bevzilla have no sale figures (bb_sale has no such split) -- every
+   * sale-related KPI/chart/insight is hidden for them. */
+  const hasSales = data.salesAvailable;
 
   const conversionTrend = useMemo(
     () => data.daily.map((d) => ({
@@ -859,7 +979,7 @@ function LobDashboard({ data, prevMtd, onOpenDetails }: { data: OverviewData; pr
         <Pie data={orderTypeDonut} dataKey="value" nameKey="name" cx="50%" cy="46%" innerRadius={height * 0.23} outerRadius={height * 0.37} paddingAngle={2}>
           {orderTypeDonut.map((entry, i) => <Cell key={entry.name} fill={ORDER_COLORS[i % ORDER_COLORS.length]} stroke="white" strokeWidth={2} />)}
         </Pie>
-        <Tooltip {...TOOLTIP_PROPS} formatter={(v: number) => v.toLocaleString("en-IN")} />
+        <Tooltip {...TOOLTIP_PROPS} itemStyle={{ color: "#f1f5f9" }} formatter={(v: number) => v.toLocaleString("en-IN")} />
         <Legend verticalAlign="bottom" wrapperStyle={{ fontSize: 11 }} formatter={(value: string, entry: { payload?: { value?: number } }) => `${value}: ${fmtN(entry.payload?.value ?? 0)} (${mtd.saleMade ? round1(((entry.payload?.value ?? 0) / mtd.saleMade) * 100) : 0}%)`} />
       </PieChart>
     </ResponsiveContainer>
@@ -913,7 +1033,7 @@ function LobDashboard({ data, prevMtd, onOpenDetails }: { data: OverviewData; pr
       const d = round1(((mtd.overallChat - prevMtd.overallChat) / prevMtd.overallChat) * 100);
       out.push({ text: `Chat volume ${d >= 0 ? "increased" : "decreased"} by ${Math.abs(d)}% compared to the previous period.`, tone: d >= 0 ? "up" : "down" });
     }
-    if (prevMtd && prevMtd.revenue) {
+    if (hasSales && prevMtd && prevMtd.revenue) {
       const dRev = round1((((mtd.revenue ?? 0) - prevMtd.revenue) / prevMtd.revenue) * 100);
       const dAov = prevMtd.aov ? round1((((mtd.aov ?? 0) - prevMtd.aov) / prevMtd.aov) * 100) : null;
       out.push({ text: `Revenue ${dRev >= 0 ? "grew" : "fell"} by ${Math.abs(dRev)}%${dAov !== null ? ` with AOV ${dAov >= 0 ? "up" : "down"} ${Math.abs(dAov)}%` : ""}.`, tone: dRev >= 0 ? "up" : "down" });
@@ -922,15 +1042,16 @@ function LobDashboard({ data, prevMtd, onOpenDetails }: { data: OverviewData; pr
       out.push({ text: `Unique chat contribution is ${round1((mtd.unique / mtd.overallChat) * 100)}% of total volume.`, tone: "info" });
     }
     out.push({ text: `FRT % is ${Math.round(mtd.frtPct)}%${data.frtTarget !== null ? `, ${mtd.frtPct >= data.frtTarget ? "at or above" : "below"} the ${data.frtTarget}% target.` : "."}`, tone: mtd.frtPct >= 90 ? "up" : "warn" });
-    if (mtd.saleMade) {
+    if (hasSales && mtd.saleMade) {
       out.push({ text: `Prepaid orders are ${mtd.rtoPct !== null ? round1(100 - mtd.rtoPct) : "—"}% of total sales.`, tone: "info" });
       if (mtd.rtoPct !== null && mtd.rtoCount) out.push({ text: `RTO is ${mtd.rtoPct}% (${fmtN(mtd.rtoCount)} orders). Focus on address confirmation.`, tone: "warn" });
     }
     return out;
-  }, [mtd, prevMtd, data.frtTarget]);
+  }, [mtd, prevMtd, data.frtTarget, hasSales]);
 
   return (
     <div className="space-y-4">
+      {hasSales && (
       <SectionCard
         icon={ShoppingBag} title="PTP Performance" tone="rose"
         footnote={`Sale & Revenue Metrics (PTP). ${fmtDate(data.from)} to ${fmtDate(data.to)}. RTO = final_status 'RTO' within the same deduped Sale Made orders as Sale Made/Revenue; Prepaid is the rest.`}
@@ -941,33 +1062,38 @@ function LobDashboard({ data, prevMtd, onOpenDetails }: { data: OverviewData; pr
           </p>
         )}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-          <KpiWithDelta icon={ShoppingBag} label="Sale Count" value={format(mtd.saleMade, "count")} tone="teal" curr={mtd.saleMade} prev={prevMtd?.saleMade} />
-          <KpiWithDelta icon={IndianRupee} label="Revenue" value={format(mtd.revenue, "inr")} tone="amber" curr={mtd.revenue} prev={prevMtd?.revenue} />
-          <KpiWithDelta icon={TrendingUp} label="AOV" value={format(mtd.aov, "inr")} tone="indigo" curr={mtd.aov} prev={prevMtd?.aov} />
-          <KpiCard icon={Undo2} label="RTO" value={format(mtd.rtoCount, "count")} sub={mtd.rtoPct !== null ? `${mtd.rtoPct}%` : undefined} tone="red" />
-          <KpiCard icon={CreditCard} label="Prepaid" value={format(mtd.prepaidCount, "count")} sub={mtd.rtoPct !== null ? `${round1(100 - mtd.rtoPct)}% of sales` : undefined} tone="emerald" />
-          <KpiCard icon={Percent} label="Conversion % On Overall" value={format(mtd.convOverallPct, "pct1")} tone="cyan" />
-          <KpiCard icon={Users} label="Conversion % On Unique" value={format(mtd.convUniquePct, "pct1")} tone="violet" />
+          <KpiWithDelta icon={ShoppingBag} label="Sale Count" value={format(mtd.saleMade, "count")} tone="teal" curr={mtd.saleMade} prev={prevMtd?.saleMade} onClick={open("saleMade")} />
+          <KpiWithDelta icon={IndianRupee} label="Revenue" value={format(mtd.revenue, "inr")} tone="amber" curr={mtd.revenue} prev={prevMtd?.revenue} onClick={open("revenue")} />
+          <KpiWithDelta icon={TrendingUp} label="AOV" value={format(mtd.aov, "inr")} tone="indigo" curr={mtd.aov} prev={prevMtd?.aov} onClick={open("aov")} />
+          <KpiCard icon={Undo2} label="RTO" value={format(mtd.rtoCount, "count")} sub={mtd.rtoPct !== null ? `${mtd.rtoPct}%` : undefined} tone="red" onClick={open("rto")} />
+          <KpiCard icon={CreditCard} label="Prepaid" value={format(mtd.prepaidCount, "count")} sub={mtd.rtoPct !== null ? `${round1(100 - mtd.rtoPct)}% of sales` : undefined} tone="emerald" onClick={open("prepaid")} />
+          <KpiCard icon={Percent} label="Conversion % On Overall" value={format(mtd.convOverallPct, "pct1")} tone="cyan" onClick={open("convOverall")} />
+          <KpiCard icon={Users} label="Conversion % On Unique" value={format(mtd.convUniquePct, "pct1")} tone="violet" onClick={open("convUnique")} />
         </div>
       </SectionCard>
+      )}
 
       <SectionCard icon={MessageSquare} title={`Chat Dashboard BVO — ${data.userType}`} tone="rose" footnote={`Chat Operations & Performance (BVO). ${fmtDate(data.from)} to ${fmtDate(data.to)}.`}>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-          <KpiWithDelta icon={CalendarCheck} label="Planned Capacity" value={format(mtd.plannedCapacity, "count")} tone="violet" />
-          <KpiWithDelta icon={MessageSquare} label="Overall Chat Volume" value={fmtN(mtd.overallChat)} tone="rose" curr={mtd.overallChat} prev={prevMtd?.overallChat} />
-          <KpiWithDelta icon={Repeat} label="Unique Chat Volume" value={fmtN(mtd.unique)} tone="sky" curr={mtd.unique} prev={prevMtd?.unique} />
-          <KpiCard icon={Gauge} label="Capacity Utilization" value={format(mtd.capacityUtilizationPct, "pct0")} tone="indigo" />
-          <KpiWithDelta icon={Clock3} label="FRT %" value={`${Math.round(mtd.frtPct)}%`} sub={data.frtTarget !== null ? `Target: ${data.frtTarget}%` : undefined} tone="emerald" curr={mtd.frtPct} prev={prevMtd?.frtPct} />
-          <KpiCard icon={Repeat} label="Repeat 24hrs" value={fmtN(mtd.repeat24)} tone="cyan" />
-          <KpiCard icon={Repeat} label="Repeat 48hrs" value={fmtN(mtd.repeat48)} tone="cyan" />
-          <KpiCard icon={Repeat} label="Repeat 72hrs" value={fmtN(mtd.repeat72)} tone="cyan" />
-          <KpiCard icon={Repeat} label="Repeat > 72hrs" value={fmtN(mtd.repeatMore72)} tone="cyan" />
-          <KpiCard icon={Users} label="With Out Agent FRT" value={fmtN(mtd.withoutAgentFrt)} tone="red" />
-          <KpiCard icon={ShoppingBag} label="Sale Made" value={format(mtd.saleMade, "count")} tone="teal" />
-          <KpiCard icon={IndianRupee} label="Revenue" value={format(mtd.revenue, "inr")} tone="amber" />
-          <KpiCard icon={TrendingUp} label="AOV" value={format(mtd.aov, "inr")} tone="indigo" />
-          <KpiCard icon={Percent} label="Conv % Overall" value={format(mtd.convOverallPct, "pct1")} tone="cyan" />
-          <KpiCard icon={Users} label="Conv % Unique" value={format(mtd.convUniquePct, "pct1")} tone="violet" />
+          <KpiWithDelta icon={CalendarCheck} label="Planned Capacity" value={format(mtd.plannedCapacity, "count")} tone="violet" onClick={open("plannedCapacity")} />
+          <KpiWithDelta icon={MessageSquare} label="Overall Chat Volume" value={fmtN(mtd.overallChat)} tone="rose" curr={mtd.overallChat} prev={prevMtd?.overallChat} onClick={open("overallChat")} />
+          <KpiWithDelta icon={Repeat} label="Unique Chat Volume" value={fmtN(mtd.unique)} tone="sky" curr={mtd.unique} prev={prevMtd?.unique} onClick={open("unique")} />
+          <KpiCard icon={Gauge} label="Capacity Utilization" value={format(mtd.capacityUtilizationPct, "pct0")} tone="indigo" onClick={open("capacityUtil")} />
+          <KpiWithDelta icon={Clock3} label="FRT %" value={`${Math.round(mtd.frtPct)}%`} sub={data.frtTarget !== null ? `Target: ${data.frtTarget}%` : undefined} tone="emerald" curr={mtd.frtPct} prev={prevMtd?.frtPct} onClick={open("frt")} />
+          <KpiCard icon={Repeat} label="Repeat 24hrs" value={fmtN(mtd.repeat24)} tone="cyan" onClick={open("repeat24")} />
+          <KpiCard icon={Repeat} label="Repeat 48hrs" value={fmtN(mtd.repeat48)} tone="cyan" onClick={open("repeat48")} />
+          <KpiCard icon={Repeat} label="Repeat 72hrs" value={fmtN(mtd.repeat72)} tone="cyan" onClick={open("repeat72")} />
+          <KpiCard icon={Repeat} label="Repeat > 72hrs" value={fmtN(mtd.repeatMore72)} tone="cyan" onClick={open("repeatMore72")} />
+          <KpiCard icon={Users} label="With Out Agent FRT" value={fmtN(mtd.withoutAgentFrt)} tone="red" onClick={open("withoutAgentFrt")} />
+          {hasSales && (
+            <>
+              <KpiCard icon={ShoppingBag} label="Sale Made" value={format(mtd.saleMade, "count")} tone="teal" onClick={open("saleMade")} />
+              <KpiCard icon={IndianRupee} label="Revenue" value={format(mtd.revenue, "inr")} tone="amber" onClick={open("revenue")} />
+              <KpiCard icon={TrendingUp} label="AOV" value={format(mtd.aov, "inr")} tone="indigo" onClick={open("aov")} />
+              <KpiCard icon={Percent} label="Conv % Overall" value={format(mtd.convOverallPct, "pct1")} tone="cyan" onClick={open("convOverall")} />
+              <KpiCard icon={Users} label="Conv % Unique" value={format(mtd.convUniquePct, "pct1")} tone="violet" onClick={open("convUnique")} />
+            </>
+          )}
         </div>
       </SectionCard>
 
@@ -980,25 +1106,27 @@ function LobDashboard({ data, prevMtd, onOpenDetails }: { data: OverviewData; pr
         </SectionCard>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <SectionCard icon={ShoppingBag} title="Sales & Revenue Trend (Chat)" tone="teal">
-          <ViewDetailsButton onClick={() => onOpenDetails(salesRevenueDetail(data, "Sales & Revenue Trend (Chat)"))} />
-          {renderSalesRevenueChart(data, 240)}
-        </SectionCard>
+      {hasSales && (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <SectionCard icon={ShoppingBag} title="Sales & Revenue Trend (Chat)" tone="teal">
+            <ViewDetailsButton onClick={() => onOpenDetails(salesRevenueDetail(data, "Sales & Revenue Trend (Chat)"))} />
+            {renderSalesRevenueChart(data, 240)}
+          </SectionCard>
 
-        <SectionCard icon={CreditCard} title="Order Type Analysis (PTP)" tone="indigo">
-          <ViewDetailsButton onClick={() => onOpenDetails(orderTypeDetail)} />
-          {orderTypeDonut.length === 0 ? (
-            <p className="py-10 text-center text-xs text-slate-400">No deduped Sale Made orders for this period.</p>
-          ) : renderOrderDonut(240)}
-          <p className="mt-1 text-center text-[11px] text-slate-500">{format(mtd.saleMade, "count")} Total Sales</p>
-        </SectionCard>
+          <SectionCard icon={CreditCard} title="Order Type Analysis (PTP)" tone="indigo">
+            <ViewDetailsButton onClick={() => onOpenDetails(orderTypeDetail)} />
+            {orderTypeDonut.length === 0 ? (
+              <p className="py-10 text-center text-xs text-slate-400">No deduped Sale Made orders for this period.</p>
+            ) : renderOrderDonut(240)}
+            <p className="mt-1 text-center text-[11px] text-slate-500">{format(mtd.saleMade, "count")} Total Sales</p>
+          </SectionCard>
 
-        <SectionCard icon={Percent} title="Conversion Performance" tone="cyan">
-          <ViewDetailsButton onClick={() => onOpenDetails(conversionDetail)} />
-          {renderConversionChart(240)}
-        </SectionCard>
-      </div>
+          <SectionCard icon={Percent} title="Conversion Performance" tone="cyan">
+            <ViewDetailsButton onClick={() => onOpenDetails(conversionDetail)} />
+            {renderConversionChart(240)}
+          </SectionCard>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <SectionCard icon={Gauge} title="Capacity vs Actual Chat Volume" tone="violet">
@@ -1006,7 +1134,7 @@ function LobDashboard({ data, prevMtd, onOpenDetails }: { data: OverviewData; pr
           {renderCapacityChart(data, 260)}
         </SectionCard>
 
-        <div className="lg:col-span-2"><TopAgentsTable data={data} /></div>
+        <div className="lg:col-span-2"><TopAgentsTable data={data} onAgentClick={onAgentClick} /></div>
       </div>
 
       <SectionCard icon={Lightbulb} title="Key Insights" tone="amber" footnote="Generated from this range's real figures vs. the immediately preceding period of equal length -- never invented commentary.">
@@ -1048,34 +1176,64 @@ export function BellavitaChatOverview({
   const [frtBusy, setFrtBusy] = useState(false);
   const [frtMsg, setFrtMsg] = useState("");
 
-  const load = useCallback(async () => {
+  /** Per-(range, tab) cache + in-flight de-dupe: switching to a tab already
+   * visited (or prefetched after the first load) renders instantly instead of
+   * re-running the backend's heavy queries. Cleared whenever a target/capacity
+   * is saved, since those change the figures. */
+  const cacheRef = useRef(new Map<string, OverviewData>());
+  const inflightRef = useRef(new Map<string, Promise<OverviewData>>());
+  const currentKeyRef = useRef("");
+  const fetchOverview = useCallback((f: string, t: string, type: UserType): Promise<OverviewData> => {
+    const key = `${f}|${t}|${type}`;
+    const cached = cacheRef.current.get(key);
+    if (cached) return Promise.resolve(cached);
+    const pending = inflightRef.current.get(key);
+    if (pending) return pending;
+    const p = hrmsApi
+      .get<{ success: boolean; data: OverviewData }>(`${apiPath}/overview?from=${f}&to=${t}&userType=${type}`)
+      .then((res) => { cacheRef.current.set(key, res.data); return res.data; })
+      .finally(() => { inflightRef.current.delete(key); });
+    inflightRef.current.set(key, p);
+    return p;
+  }, [apiPath]);
+
+  const load = useCallback(async (force = false) => {
+    if (force) cacheRef.current.clear();
+    const key = `${from}|${to}|${userType}`;
+    currentKeyRef.current = key;
+    const cached = cacheRef.current.get(key);
+    if (cached) { setData(cached); setError(""); setLoading(false); return; }
     setLoading(true);
     setError("");
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: OverviewData }>(
-        `${apiPath}/overview?from=${from}&to=${to}&userType=${userType}`,
-      );
-      setData(res.data);
+      const fresh = await fetchOverview(from, to, userType);
+      if (currentKeyRef.current !== key) return; // a newer tab/range was picked while this loaded
+      setData(fresh);
+      // Warm the other tabs one at a time in the background so switching to them is instant.
+      void (async () => {
+        for (const t of USER_TYPES.map((u) => u.key)) {
+          if (t === userType) continue;
+          try { await fetchOverview(from, to, t); } catch { /* prefetch is best-effort */ }
+        }
+      })();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load the Bellavita Chat overview.");
     } finally {
       setLoading(false);
     }
-  }, [apiPath, from, to, userType]);
+  }, [from, to, userType, fetchOverview]);
   useEffect(() => { void load(); }, [load]);
 
   const loadPrevious = useCallback(async () => {
     setPrevMtd(null);
     const prev = previousPeriod(from, to);
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: OverviewData }>(
-        `${apiPath}/overview?from=${prev.from}&to=${prev.to}&userType=${userType}`,
-      );
-      setPrevMtd(res.data.values.mtd);
+      const res = await fetchOverview(prev.from, prev.to, userType);
+      setPrevMtd(res.values.mtd);
     } catch {
       setPrevMtd(null);
     }
-  }, [apiPath, from, to, userType]);
+  }, [from, to, userType, fetchOverview]);
   useEffect(() => { void loadPrevious(); }, [loadPrevious]);
 
   async function saveCapacity() {
@@ -1086,7 +1244,7 @@ export function BellavitaChatOverview({
       await hrmsApi.put(`${apiPath}/planned-capacity`, { userType: capType, month: data.capacity.month, capacity: Number(capValue) });
       setCapValue("");
       setCapMsg(`Saved planned capacity for ${capType}, ${monthLabel(data.capacity.month)}.`);
-      await load();
+      await load(true);
     } catch (err) {
       setCapMsg(err instanceof Error ? err.message : "Could not save the planned capacity.");
     } finally {
@@ -1102,11 +1260,76 @@ export function BellavitaChatOverview({
       await hrmsApi.put(`${apiPath}/frt-target`, { month: data.capacity.month, target: Number(frtValue) });
       setFrtValue("");
       setFrtMsg(`Saved FRT% target for ${monthLabel(data.capacity.month)}.`);
-      await load();
+      await load(true);
     } catch (err) {
       setFrtMsg(err instanceof Error ? err.message : "Could not save the FRT target.");
     } finally {
       setFrtBusy(false);
+    }
+  }
+
+  /** Top Agents row click: opens the same View Details drawer with that
+   * agent's own week-wise/date-wise figures (fetched fresh from
+   * /overview/agent-trend, never derived from the page-wide daily rows). */
+  async function openAgent(a: TopAgentRow) {
+    if (!data) return;
+    const title = `Agent — ${a.agent}`;
+    setDrawerChart({
+      title, overall: [], metrics: [], rows: [],
+      renderChart: () => <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>,
+    });
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: Array<{ date: string; overall: number; unique: number; inTat: number; saleMade: number | null; revenue: number | null }> }>(
+        `${apiPath}/overview/agent-trend?from=${data.from}&to=${data.to}&userType=${userType}&agent=${encodeURIComponent(a.agent)}&empId=${encodeURIComponent(a.empId)}`,
+      );
+      const rows: DailyRow[] = res.data.map((r) => ({
+        date: r.date, overall: r.overall, unique: r.unique, repeatChat: Math.max(0, r.overall - r.unique),
+        frtPct: r.overall > 0 ? round1((r.inTat / r.overall) * 100) : 0, inTat: r.inTat,
+        withoutAgentFrt: 0, repeat24: 0, repeat48: 0, repeat72: 0, repeatMore72: 0,
+        saleMade: r.saleMade, revenue: r.revenue, plannedCapacity: null, rtoCount: null, prepaidCount: null,
+      }));
+      const withSales = rows.some((r) => r.saleMade !== null);
+      setDrawerChart({
+        title, rows,
+        overall: [
+          { label: "Chat Volume", value: fmtN(a.overall) },
+          { label: "Unique Chats", value: fmtN(a.unique) },
+          { label: "FRT %", value: `${a.frtPct}%` },
+          ...(withSales ? [
+            { label: "Sales", value: format(a.saleCount, "count") },
+            { label: "Revenue", value: format(a.revenue, "inr") },
+            { label: "Conversion %", value: a.conversionPct !== null ? `${a.conversionPct}%` : "—" },
+          ] : []),
+        ],
+        renderChart: () => (
+          <ResponsiveContainer width="100%" height={380}>
+            <ComposedChart data={rows} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+              <XAxis dataKey="date" tickFormatter={fmtShortDay} tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} />
+              <Tooltip {...TOOLTIP_PROPS} labelFormatter={(v) => fmtDate(String(v))} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar dataKey="overall" name="Chat Volume" fill="#e11d48" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="unique" name="Unique Chats" fill="#0284c7" radius={[3, 3, 0, 0]} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        ),
+        metrics: [
+          { key: "overall", label: "Chat Volume", drill: { kind: "sum", field: "overall", fmt: "count" } },
+          { key: "unique", label: "Unique Chats", drill: { kind: "sum", field: "unique", fmt: "count" } },
+          { key: "frtPct", label: "FRT %", drill: { kind: "ratio", num: "inTat", den: "overall" } },
+          ...(withSales ? [
+            { key: "saleMade", label: "Sales", drill: { kind: "sum" as const, field: "saleMade" as const, fmt: "count" as const } },
+            { key: "revenue", label: "Revenue", drill: { kind: "sum" as const, field: "revenue" as const, fmt: "currency" as const } },
+            { key: "conv", label: "Conv %", drill: { kind: "ratio" as const, num: "saleMade" as const, den: "overall" as const } },
+          ] : []),
+        ],
+      });
+    } catch (err) {
+      setDrawerChart({
+        title, rows: [], metrics: [],
+        overall: [{ label: "Could not load", value: err instanceof Error ? err.message : "Unable to load this agent." }],
+      });
     }
   }
 
@@ -1146,9 +1369,31 @@ export function BellavitaChatOverview({
     }];
   }, [data]);
 
-  if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
-  if (!data) return null;
+  // A tab click renders the new tab's own spinner at once, never the previous
+  // tab's figures laid out under the new tab's layout.
+  if (!data || data.userType !== userType) {
+    return (
+      <div className="space-y-5">
+        <div role="tablist" aria-label="User type" className="flex justify-end">
+          <div className="inline-flex flex-wrap rounded-xl bg-slate-100 p-1">
+            {USER_TYPES.map((t) => (
+              <button
+                key={t.key} type="button" role="tab" aria-selected={userType === t.key} title={t.hint}
+                onClick={() => setUserType(t.key)}
+                className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
+                  userType === t.key ? "bg-white text-rose-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {loading || !data ? <Spinner tone="blue" /> : null}
+      </div>
+    );
+  }
 
   const mtd = data.values.mtd;
   const empty = mtd.overallChat === 0;
@@ -1199,8 +1444,8 @@ export function BellavitaChatOverview({
       )}
 
       {userType === "Overall"
-        ? <OverallDashboard data={data} prevMtd={prevMtd} onOpenDetails={setDrawerChart} />
-        : <LobDashboard data={data} prevMtd={prevMtd} onOpenDetails={setDrawerChart} />}
+        ? <OverallDashboard data={data} prevMtd={prevMtd} onOpenDetails={setDrawerChart} onAgentClick={openAgent} />
+        : <LobDashboard data={data} prevMtd={prevMtd} onOpenDetails={setDrawerChart} onAgentClick={openAgent} />}
 
       <QrcSection data={data} onOpenDetails={() => setQrcOpen(true)} />
 
