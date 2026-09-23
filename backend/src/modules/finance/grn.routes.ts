@@ -799,6 +799,7 @@ function grnReportFiltersFrom(req: AuthenticatedRequest, branchScope: Awaited<Re
     status: str(req.query.status),
     approvalStage: str(req.query.approvalStage),
     pendingWith: str(req.query.pendingWith),
+    source: str(req.query.source),
     limit: req.query.limit ? Number(req.query.limit) : undefined,
   };
 }

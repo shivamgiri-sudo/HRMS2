@@ -47,6 +47,8 @@ export type GrnReportFilters = {
   approvalStage?: string;
   /** Rows awaiting a named stage. Derived from status, never stored. */
   pendingWith?: string;
+  /** "hrms" = raised natively in this system; "legacy" = migrated from db_bill (bill_source_id IS NOT NULL). */
+  source?: string;
   limit?: number;
 };
 
@@ -128,6 +130,11 @@ function scopeConditions(filters: GrnReportFilters) {
     conditions.push("g.grn_type = 'imprest'");
   } else if (filters.expenseMode === "non_imprest") {
     conditions.push("g.grn_type <> 'imprest'");
+  }
+  if (filters.source === "legacy") {
+    conditions.push("g.bill_source_id IS NOT NULL");
+  } else if (filters.source === "hrms") {
+    conditions.push("g.bill_source_id IS NULL");
   }
   if (filters.grnNumber) {
     conditions.push("g.grn_number LIKE ?");

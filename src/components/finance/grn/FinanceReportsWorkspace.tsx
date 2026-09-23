@@ -41,6 +41,7 @@ type Filters = {
   status: string;
   approvalStage: string;
   pendingWith: string;
+  source: string;
   entityType: string;
   action: string;
   from: string;
@@ -50,7 +51,7 @@ type Filters = {
 const EMPTY: Filters = {
   branchId: "", financialYear: "", month: "", head: "", subHead: "",
   expenseMode: "", grnNumber: "", status: "", approvalStage: "", pendingWith: "",
-  entityType: "", action: "", from: "", to: "",
+  source: "", entityType: "", action: "", from: "", to: "",
 };
 
 const APPROVAL_STAGE_OPTIONS = [
@@ -288,6 +289,7 @@ export function FinanceReportsWorkspace() {
         add("grnNumber", applied.grnNumber);
         add("status", applied.status);
         add("approvalStage", applied.approvalStage);
+        add("source", applied.source);
       }
       if (report === "audit") {
         add("entityType", applied.entityType);
@@ -485,6 +487,18 @@ export function FinanceReportsWorkspace() {
                     value={draft.grnNumber}
                     onChange={(event) => set("grnNumber")(event.target.value)}
                   />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">GRN Source</Label>
+                  <select
+                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                    value={draft.source}
+                    onChange={(event) => set("source")(event.target.value)}
+                  >
+                    <option value="">All (HRMS + Legacy)</option>
+                    <option value="hrms">HRMS GRN (raised in this system)</option>
+                    <option value="legacy">Legacy GRN (migrated from db_bill)</option>
+                  </select>
                 </div>
               </>
             )}
