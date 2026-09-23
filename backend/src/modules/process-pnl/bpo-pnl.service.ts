@@ -17,7 +17,7 @@ import {
 import { PROCESS_BY_COST_CENTRE, getInvoicedRevenueActuals, getApprovedCostCentreSplits } from "./pnl-actuals.service.js";
 import { isOpenPeriod } from "./pnl-statement.service.js";
 import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.service.js";
-import { processPnlService } from "./process-pnl.service.js";
+import { processPnlService, getClosedBranchIds } from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
 
 type NumericMap = Map<string, number>;
@@ -1412,6 +1412,26 @@ function statusFrom(row: {
   return "profitable" as const;
 }
 
+/**
+ * For a CLOSED period, getBaseProcesses (process-pnl.service.ts) keeps processes of branches that
+ * have since been closed, so their real money for that month is still summed. This drops only the
+ * ones with nothing at all for the month — no revenue, no cost, no GRN — so a branch closed long
+ * ago does not reappear in dropdowns built from these rows. Runs AFTER allocation, so no pool is
+ * ever re-spread because of it. The open period is already filtered in SQL.
+ */
+async function dropDormantClosedBranchRows(rows: BpoPnlRow[], period: string): Promise<BpoPnlRow[]> {
+  if (isOpenPeriod(period)) return rows;
+  const closed = await getClosedBranchIds().catch(() => new Set<string>());
+  if (closed.size === 0) return rows;
+  return rows.filter((row) => {
+    if (!row.branchId || !closed.has(String(row.branchId))) return true;
+    return row.recognizedRevenue !== 0
+      || row.totalOperatingCost !== 0
+      || row.grnVendorActual !== 0
+      || row.pat !== 0;
+  });
+}
+
 async function computeBranchRows(scope: PnlQueryFilters) {
   const baseRows = await processPnlService.listProcesses(scope);
   const processIds = baseRows.map((row) => row.processId);
@@ -1720,7 +1740,7 @@ async function computeBranchRows(scope: PnlQueryFilters) {
 
   return {
     filters: scope,
-    rows,
+    rows: await dropDormantClosedBranchRows(rows, scope.period ?? ""),
     rulesMap,
     deliveryMap,
     componentsMap,

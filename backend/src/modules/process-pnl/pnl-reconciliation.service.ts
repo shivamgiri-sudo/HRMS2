@@ -153,6 +153,7 @@ interface CostCentreRow extends RowDataPacket {
   process_name: string | null;
   company_name: string | null;
   active_status: number | null;
+  branch_active_status: number | null;
   branch_id: string | null;
   branch_name: string | null;
 }
@@ -187,23 +188,41 @@ function addIssue(target: string[], condition: boolean, issue: string) {
   if (condition) target.push(issue);
 }
 
+/**
+ * Is this cost centre open RIGHT NOW? Its own flag AND its branch's — a cost centre can still be
+ * individually flagged active while its branch has since been closed (bm.active_status = 0), and
+ * counting those inflated "Active Cost Centres" (70cb00ac).
+ *
+ * This is a TODAY fact and is used only for the "Active Cost Centres" count, the row's `active`
+ * flag and eligibility for a fresh seat-rate estimate. It must never decide whether a cost
+ * centre's real money for a period is summed — see readCostCentres().
+ */
+function isCurrentlyActive(cc: CostCentreRow): boolean {
+  return Number(cc.active_status ?? 0) === 1 && Number(cc.branch_active_status ?? 1) === 1;
+}
+
+/**
+ * EVERY own-company cost centre in the branch scope, open or closed today.
+ *
+ * Deliberately NOT filtered by active_status in SQL (2026-09-23). This row set is the base the
+ * whole panel's revenue / GRN / payroll / OP totals are summed over, so filtering it by TODAY's
+ * status (as 70cb00ac briefly did with COALESCE(bm.active_status,1) = 1) made closing a branch
+ * retroactively erase its real August revenue, GRN and payroll from the August Live P&L.
+ * getPnlReconciliation() instead keeps a cost centre when it is open today OR has real money in
+ * the requested period (hasPeriodActivity), and counts "Active Cost Centres" with
+ * isCurrentlyActive() only.
+ */
 async function readCostCentres(filters: PnlReconciliationFilters): Promise<CostCentreRow[]> {
   const where = [OWN_COMPANY_SQL];
   const params: unknown[] = [];
-  if (!filters.includeInactive) {
-    // ccm.active_status alone isn't enough: a cost centre can still be individually flagged
-    // active while its branch has since been closed (bm.active_status = 0). Same bug class as
-    // process-pnl.service.ts's getBaseProcesses fix — without this, "Active Cost Centres" counts
-    // cost centres orphaned under a closed branch, inflating the count.
-    where.push("ccm.active_status = 1", "COALESCE(bm.active_status, 1) = 1");
-  }
   if (filters.branchIds?.length) {
     where.push(`ccm.branch_id IN (${marks(filters.branchIds)})`);
     params.push(...filters.branchIds);
   }
   const [rows] = await db.execute<CostCentreRow[]>(
     `SELECT ccm.id, ccm.cost_centre_code, ccm.cost_centre_name, ccm.company_name,
-            ccm.active_status, ccm.branch_id, bm.branch_name, ${ccProcessNameSql()} AS process_name
+            ccm.active_status, bm.active_status AS branch_active_status,
+            ccm.branch_id, bm.branch_name, ${ccProcessNameSql()} AS process_name
        FROM cost_centre_master ccm
        LEFT JOIN branch_master bm ON bm.id = ccm.branch_id
        ${ccProcessJoin()}
@@ -640,7 +659,7 @@ export async function getPnlReconciliation(
     throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
   }
 
-  const [costCentres, revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut, unallocated] = await Promise.all([
+  const [allCostCentres, revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut, unallocated] = await Promise.all([
     readCostCentres(filters),
     readRevenue(period),
     readGrn(period),
@@ -673,14 +692,31 @@ export async function getPnlReconciliation(
     (seatBilling?.costCentres ?? []).map((item) => [item.costCentreId, item]),
   );
 
+  // Real money booked to this cost centre for THIS period — invoice/provision/credit note, consumed
+  // GRN, reserved GRN inside the estimate window, or payroll. Such a cost centre is always summed,
+  // whatever its (or its branch's) status is today: closing a branch must not erase its history.
+  const hasPeriodActivity = (id: string): boolean => {
+    const rev = revenue.get(id);
+    const hasRevenue = !!rev && (n(rev.invoice_amount) !== 0 || n(rev.provision_amount) !== 0 || n(rev.credit_note) !== 0);
+    return hasRevenue
+      || (grn.get(id) ?? 0) !== 0
+      || (estimateApplies && (grnCommitted.get(id) ?? 0) !== 0)
+      || (payroll.get(id)?.cost ?? 0) !== 0;
+  };
+  const costCentres = allCostCentres.filter(
+    (cc) => filters.includeInactive || isCurrentlyActive(cc) || hasPeriodActivity(String(cc.id)),
+  );
+
   const rows: PnlReconciliationRow[] = costCentres.map((cc) => {
+    const currentlyActive = isCurrentlyActive(cc);
     const rev = revenue.get(cc.id);
     const revenueInvoice = n(rev?.invoice_amount);
     const revenueProvision = n(rev?.provision_amount);
     const revenueAccrual = n(rev?.accrual_amount);
     const creditNote = n(rev?.credit_note);
     const seat = seatByCc.get(String(cc.id));
-    const useEstimate = estimateApplies && revenueInvoice === 0 && revenueAccrual === 0 && (seat?.toDate ?? 0) > 0;
+    // A cost centre closed today gets no fresh seat-rate estimate — it keeps only its real money.
+    const useEstimate = estimateApplies && currentlyActive && revenueInvoice === 0 && revenueAccrual === 0 && (seat?.toDate ?? 0) > 0;
     const revenueEstimated = useEstimate ? seat!.toDate : 0;
     const revenueBasis: PnlRevenueBasis = revenueInvoice > 0 ? "INVOICE" : revenueAccrual > 0 ? "ACCRUAL" : useEstimate ? "ESTIMATED" : "NONE";
     const recognisedRevenue = revenueInvoice + revenueAccrual + revenueEstimated - creditNote;
@@ -712,7 +748,7 @@ export async function getPnlReconciliation(
       costCentreName: String(cc.cost_centre_name ?? cc.cost_centre_code ?? "Unnamed cost centre"),
       costCentreProcess: cc.process_name ? String(cc.process_name) : null,
       companyName: cc.company_name ? String(cc.company_name) : null,
-      active: Number(cc.active_status ?? 0) === 1,
+      active: currentlyActive,
       revenueInvoice,
       revenueProvision,
       revenueAccrual,
