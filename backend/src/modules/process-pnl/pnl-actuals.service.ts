@@ -186,6 +186,12 @@ export interface GrnSpendRow {
   /** Only resolved when `withProcess` is asked for (it costs a PROCESS_BY_COST_CENTRE join). */
   processId: string | null;
   amount: number;
+  /** Only populated when `withDetail` is asked for (the drilldown): which leg the row came from,
+   *  the GRN's own number, a human label and the bill date. Null otherwise. */
+  source?: "app_allocation" | "app_grn" | "db_bill_mirror" | null;
+  grnRef?: string | null;
+  label?: string | null;
+  billDate?: string | null;
 }
 
 export interface GrnSpendOptions {
@@ -195,6 +201,12 @@ export interface GrnSpendOptions {
   processIds?: string[];
   /** Resolve process_id per row (the Statement's process view needs it; others do not). */
   withProcess?: boolean;
+  /**
+   * One row per GRN (per leg) instead of per branch/cost centre/process — for the drilldown, so
+   * its rows are the SAME rows the summary tiles sum (audit item 17a). Grouping keys only get
+   * finer; the rows and amounts read are identical, so the totals cannot differ.
+   */
+  withDetail?: boolean;
 }
 
 const inMarks = (list: string[]) => list.map(() => "?").join(",");
@@ -229,6 +241,17 @@ export async function readGrnSpend(
   const processJoin = (alias: string) => (withProcess ? `LEFT JOIN ${PROCESS_BY_COST_CENTRE} ${alias} ON ${alias}.cost_centre_id = ccm.id` : "");
   const processCol = (first: string | null, alias: string) =>
     withProcess ? `COALESCE(${first ? `${first}, ` : ""}${alias}.process_id, ccm.process_id)` : "NULL";
+  // Detail columns are normalised to one collation so the UNION of an app table and a mirror
+  // table can never raise "Illegal mix of collations"; NULL when detail is not asked for, which
+  // leaves the grouping exactly as it was.
+  const withDetail = opts.withDetail === true;
+  const str = (expr: string) => `CONVERT(${expr} USING utf8mb4) COLLATE utf8mb4_unicode_ci`;
+  const detailCols = (source: string, ref: string, label: string, billDate: string) =>
+    withDetail
+      ? `${str(`'${source}'`)} AS source, ${str(ref)} AS grn_ref, ${str(label)} AS label,
+         DATE_FORMAT(${billDate}, '%Y-%m-%d') AS bill_date`
+      : "NULL AS source, NULL AS grn_ref, NULL AS label, NULL AS bill_date";
+  const appLabel = "CONCAT_WS(' — ', NULLIF(TRIM(gr.vendor_name), ''), NULLIF(TRIM(gr.head), ''), NULLIF(TRIM(gr.sub_head), ''))";
 
   const legs: string[] = [];
   const params: unknown[] = [];
@@ -236,7 +259,8 @@ export async function readGrnSpend(
   // Leg 1 — Smart GRN per-cost-centre allocation rows.
   legs.push(
     `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, ccm.id AS cost_centre_id,
-            ${processCol("a.process_id", "pc1")} AS process_id, a.pnl_cost_amount AS amount
+            ${processCol("a.process_id", "pc1")} AS process_id, a.pnl_cost_amount AS amount,
+            ${detailCols("app_allocation", "COALESCE(gr.grn_number, gr.id)", appLabel, "gr.bill_date")}
        FROM grn_cost_allocation a
        JOIN grn_request gr ON gr.id = a.grn_request_id
        LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
@@ -250,7 +274,8 @@ export async function readGrnSpend(
     // never counted twice).
     legs.push(
       `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, ccm.id AS cost_centre_id,
-              ${processCol("gr.process_id", "pc2")} AS process_id, gr.pnl_cost_amount AS amount
+              ${processCol("gr.process_id", "pc2")} AS process_id, gr.pnl_cost_amount AS amount,
+              ${detailCols("app_grn", "COALESCE(gr.grn_number, gr.id)", appLabel, "gr.bill_date")}
          FROM grn_request gr
          LEFT JOIN cost_centre_master ccm ON ccm.id = gr.cost_centre_id
          ${processJoin("pc2")}
@@ -268,7 +293,13 @@ export async function readGrnSpend(
     if (await tableExists("grn_entry_line_snapshot")) {
       legs.push(
         `SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
-                ${processCol(null, "pc3")} AS process_id, l.amount AS amount
+                ${processCol(null, "pc3")} AS process_id, l.amount AS amount,
+                ${detailCols(
+                  "db_bill_mirror",
+                  "COALESCE(ge.grn_no, l.bill_source_id)",
+                  "CONCAT_WS(' — ', NULLIF(TRIM(ge.vendor), ''), NULLIF(TRIM(l.particular), ''))",
+                  "ge.bill_date",
+                )}
            FROM grn_entry_line_snapshot l
            JOIN grn_entry_snapshot ge ON ge.bill_source_id = l.grn_source_id
            LEFT JOIN cost_centre_master ccm
@@ -289,17 +320,26 @@ export async function readGrnSpend(
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT branch_id, cost_centre_id, process_id, SUM(amount) AS amount
+    `SELECT branch_id, cost_centre_id, process_id, source, grn_ref, label, bill_date, SUM(amount) AS amount
        FROM (${legs.join("\n UNION ALL \n")}) t
-      GROUP BY branch_id, cost_centre_id, process_id`,
+      GROUP BY branch_id, cost_centre_id, process_id, source, grn_ref, label, bill_date`,
     params,
   );
+  const text = (v: unknown) => (v === null || v === undefined || v === "" ? null : String(v));
   return rows
     .map((row) => ({
       branchId: row.branch_id ? String(row.branch_id) : null,
       costCentreId: row.cost_centre_id ? String(row.cost_centre_id) : null,
       processId: row.process_id ? String(row.process_id) : null,
       amount: Number(row.amount ?? 0),
+      ...(withDetail
+        ? {
+            source: (text(row.source) as GrnSpendRow["source"]) ?? null,
+            grnRef: text(row.grn_ref),
+            label: text(row.label),
+            billDate: text(row.bill_date),
+          }
+        : {}),
     }))
     .filter((row) => Number.isFinite(row.amount) && row.amount !== 0);
 }

@@ -311,7 +311,7 @@ export function PnlReconciliationPanel({
                         params: { metric: CELL_METRIC.grnActual, period, costCentreId: row.costCentreId },
                         label: costCentreText(row.costCentreCode, row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : null)),
                       })}
-                      title={row.grnEstimated ? `Includes ${money(row.grnEstimated)} reserved (not yet consumed) — click to view the consumed detail` : "View the underlying rows"}
+                      title={row.grnEstimated ? `Includes ${money(row.grnEstimated)} reserved (not yet consumed) — click to view the consumed and reserved GRNs` : "View the underlying rows"}
                     >
                       {money(row.grnActual + (row.grnEstimated ?? 0))}
                       {(row.grnEstimated ?? 0) > 0 && <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-amber-800">Est</span>}

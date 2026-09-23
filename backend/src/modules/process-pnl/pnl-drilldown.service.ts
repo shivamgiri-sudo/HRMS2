@@ -3,6 +3,10 @@ import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { assertNotFuturePeriod } from "./pnl-period-guard.js";
 import { focusBudgetTopUps } from "./budget-top-up-attribution.js";
+import { readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
+import { getSeatBillingEstimate, isEstimateWindow } from "./pnl-seat-billing.service.js";
+import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
+import { getCurrentDateIST } from "../../shared/istDate.js";
 
 /**
  * The row-level detail behind every clickable P&L cell — "what actually makes up this number".
@@ -106,13 +110,35 @@ function costCentreScopeSql(scope: PnlDrilldownScope): { sql: string; param: str
   return { sql: "ccm.branch_id = ?", param: scope.branchId! };
 }
 
-/** The employee-side scope predicate for people cost — peopleByBranch() filters directly on the
- *  employee's own branch_id/process_id/cost_centre_id, no cost-centre-master join needed. */
-function employeeScopeSql(scope: PnlDrilldownScope): { sql: string; param: string } {
-  if (scope.costCentreId) return { sql: "e.cost_centre_id = ?", param: scope.costCentreId };
-  if (scope.processId) return { sql: "e.process_id = ?", param: scope.processId };
-  return { sql: "e.branch_id = ?", param: scope.branchId! };
+/**
+ * The employee-side scope predicate for people cost, on the SAME attribution the summaries use
+ * (audit item 17b): Live P&L's readPayroll() and CEO Overview's peopleByBranch() both place a
+ * person on their EFFECTIVE cost centre (post-override, pnl_employee_cost_centre_override), and on
+ * that cost centre's branch — falling back to the home branch only when there is no cost centre at
+ * all. This used to filter on the raw e.cost_centre_id / e.branch_id, so an overridden employee
+ * appeared under their HR cost centre's drilldown while their pay was counted in another's tile.
+ *
+ * `personId` / `homeCostCentre` / `homeBranch` / `process` are the caller's aliased columns — the
+ * employees table (e.*) for posted payroll, the running snapshot (s.*) for the accrual fallback.
+ */
+async function effectivePeopleScope(
+  scope: PnlDrilldownScope,
+  cols: { personId: string; homeCostCentre: string; homeBranch: string; process: string },
+): Promise<{ join: string; sql: string; param: string }> {
+  const ov = await overrideJoinSql(cols.personId, cols.homeCostCentre);
+  const join = `${ov.join}
+       LEFT JOIN cost_centre_master pcc ON pcc.id = ${ov.effectiveCostCentreExpr}`;
+  if (scope.costCentreId) return { join, sql: `${ov.effectiveCostCentreExpr} = ?`, param: scope.costCentreId };
+  if (scope.processId) return { join, sql: `${cols.process} = ?`, param: scope.processId };
+  return {
+    join,
+    sql: `(CASE WHEN pcc.id IS NULL THEN ${cols.homeBranch} ELSE pcc.branch_id END) = ?`,
+    param: scope.branchId!,
+  };
 }
+
+const EMPLOYEE_COLS = { personId: "e.id", homeCostCentre: "e.cost_centre_id", homeBranch: "e.branch_id", process: "e.process_id" };
+const SNAPSHOT_COLS = { personId: "s.employee_id", homeCostCentre: "s.cost_centre_id", homeBranch: "s.branch_id", process: "s.process_id" };
 
 async function revenueDrilldownRows(period: string, scope: PnlDrilldownScope): Promise<PnlDrilldownResult> {
   const rows: DrilldownRow[] = [];
@@ -157,39 +183,105 @@ async function revenueDrilldownRows(period: string, scope: PnlDrilldownScope): P
         });
       }
     }
-    // Provision-shortfall fallback — same GREATEST(provision - invoice, 0) rule as
-    // revenueByBranch(), only for cost centres in scope that raised NO invoice line this period
-    // (mirroring revenueByBranch()'s own "SOURCE A empty" condition).
+    // Provision accrual — the same GREATEST(provision - invoice, 0) per cost centre that
+    // revenueByBranch() (CEO) and readRevenue() (Live P&L's revenueAccrual) add to the summary.
+    // Audit item 17c: this used to add a provision only for cost centres with NO invoice line at
+    // all, so a PARTIALLY invoiced cost centre (provision above its invoices) showed less in the
+    // drilldown than in the tile, by exactly the un-invoiced remainder.
     if (await tableExists("billing_provision_snapshot")) {
       const [provisionRows] = await db.execute<RowDataPacket[]>(
-        `SELECT ps.cost_centre_code, ccm.cost_centre_name,
-                SUM(CASE WHEN ps.billing_amt > 0 THEN ps.billing_amt ELSE ps.provision_amt END) AS provision_amount
-           FROM billing_provision_snapshot ps
-           LEFT JOIN cost_centre_master ccm
-                  ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
-          WHERE ps.period_code = ? AND ps.revenue_active = 1 AND ${cc.sql} AND ${OWN_COMPANY_SQL}
-            AND ps.cost_centre_code COLLATE utf8mb4_unicode_ci NOT IN (
-                  SELECT p.cost_centre_code COLLATE utf8mb4_unicode_ci
-                    FROM billing_invoice_particular_snapshot p WHERE p.period_code = ?
-                )
-          GROUP BY ps.cost_centre_code, ccm.cost_centre_name
-         HAVING provision_amount > 0`,
-        [period, cc.param, period],
+        `SELECT pa.cost_centre_code, pa.cost_centre_name, pa.provision_amount,
+                COALESCE(ia.invoice_amount, 0) AS invoice_amount
+           FROM (
+             SELECT ps.cost_centre_code COLLATE utf8mb4_unicode_ci AS cost_centre_code,
+                    MAX(ccm.cost_centre_name) AS cost_centre_name,
+                    SUM(CASE WHEN ps.billing_amt > 0 THEN ps.billing_amt ELSE ps.provision_amt END) AS provision_amount
+               FROM billing_provision_snapshot ps
+               LEFT JOIN cost_centre_master ccm
+                      ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
+              WHERE ps.period_code = ? AND ps.revenue_active = 1 AND ${cc.sql} AND ${OWN_COMPANY_SQL}
+              GROUP BY ps.cost_centre_code COLLATE utf8mb4_unicode_ci
+           ) pa
+           LEFT JOIN (
+             SELECT p.cost_centre_code COLLATE utf8mb4_unicode_ci AS cost_centre_code, SUM(p.amount) AS invoice_amount
+               FROM billing_invoice_particular_snapshot p
+               LEFT JOIN cost_centre_master ccm
+                      ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci = p.cost_centre_code COLLATE utf8mb4_unicode_ci
+              WHERE p.period_code = ? AND ${cc.sql} AND ${OWN_COMPANY_SQL}
+              GROUP BY p.cost_centre_code COLLATE utf8mb4_unicode_ci
+           ) ia ON ia.cost_centre_code = pa.cost_centre_code`,
+        [period, cc.param, period, cc.param],
       );
       for (const r of provisionRows) {
+        const invoiced = n(r.invoice_amount);
+        const accrual = Math.max(n(r.provision_amount) - invoiced, 0);
+        if (accrual <= 0) continue;
         hasEstimatedRows = true;
         rows.push({
           id: `prov-${r.cost_centre_code}`,
           label: r.cost_centre_name ? String(r.cost_centre_name) : String(r.cost_centre_code ?? ""),
-          detail: "Provision estimate — invoice not yet raised this period",
-          amount: n(r.provision_amount),
+          detail: invoiced > 0
+            ? `Provision not yet invoiced — provision ${n(r.provision_amount).toLocaleString("en-IN")} less ${invoiced.toLocaleString("en-IN")} invoiced`
+            : "Provision estimate — invoice not yet raised this period",
+          amount: accrual,
           date: null,
         });
       }
     }
   }
+  // Seat-rate estimate (audit item 17d): the Live P&L's "Est" revenue cell for a cost centre with no
+  // invoice and no provision had no rows behind it at all, so the drawer opened empty.
+  const invoicedOrAccrued = rows.some((r) => r.id.startsWith("inv-") || r.id.startsWith("prov-"));
+  if (scope.costCentreId && !invoicedOrAccrued) {
+    const estimate = await seatEstimateRows(period, scope.costCentreId);
+    if (estimate.length) {
+      hasEstimatedRows = true;
+      rows.push(...estimate);
+    }
+  }
   rows.sort((a, b) => b.amount - a.amount);
   return { metric: "revenue", scope: { period, ...scope }, rows, total: rows.reduce((s, r) => s + r.amount, 0), hasEstimatedRows };
+}
+
+/**
+ * The seat-rate estimate behind a Live P&L "Est" revenue cell, one row per seat/fixed line —
+ * the same getSeatBillingEstimate() figure pnl-reconciliation.service.ts adds as revenueEstimated,
+ * under the same conditions: inside the open estimate window, and only for a cost centre (and
+ * branch) that is open today. Rows are scaled to the month-to-date figure (toDate) the tile shows;
+ * the last row absorbs rounding so the drawer total equals the cell exactly. Never invents a line:
+ * no configured or invoiced rate means no rows.
+ */
+async function seatEstimateRows(period: string, costCentreId: string): Promise<DrilldownRow[]> {
+  const asOfDate = getCurrentDateIST();
+  if (!isEstimateWindow(period, asOfDate)) return [];
+  const [status] = await db.execute<RowDataPacket[]>(
+    `SELECT ccm.active_status AS cc_active, bm.active_status AS branch_active
+       FROM cost_centre_master ccm LEFT JOIN branch_master bm ON bm.id = ccm.branch_id
+      WHERE ccm.id = ?`,
+    [costCentreId],
+  );
+  const open = status[0] && Number(status[0].cc_active ?? 0) === 1 && Number(status[0].branch_active ?? 1) === 1;
+  if (!open) return [];
+  const estimate = await getSeatBillingEstimate(period, { costCentreId, asOfDate }).catch(() => null);
+  const cc = estimate?.costCentres.find((c) => c.costCentreId === costCentreId);
+  if (!estimate || !cc || !(cc.toDate > 0) || !(cc.monthlyValue > 0) || cc.lines.length === 0) return [];
+  const ratio = cc.toDate / cc.monthlyValue;
+  const basis = cc.source === "configured"
+    ? "configured under P&L Configuration > Seat billing"
+    : `from the ${cc.sourcePeriod ?? "last"} invoice`;
+  const days = estimate.daysElapsed < estimate.daysInMonth
+    ? `, counted for ${estimate.daysElapsed} of ${estimate.daysInMonth} days`
+    : "";
+  const out: DrilldownRow[] = cc.lines.map((line, i) => ({
+    id: `est-${costCentreId}-${line.id ?? i}`,
+    label: line.lineLabel || "Seat billing line",
+    detail: `Seat-rate ESTIMATE, no invoice or provision yet — ${line.seats > 0 ? `${line.seats} x ${line.rateMonthly.toLocaleString("en-IN")}` : "fixed"} per month, ${basis}${days}`,
+    amount: Math.round(line.monthlyValue * ratio * 100) / 100,
+    date: null,
+  }));
+  const drift = cc.toDate - out.reduce((t, r) => t + r.amount, 0);
+  out[out.length - 1] = { ...out[out.length - 1], amount: Math.round((out[out.length - 1].amount + drift) * 100) / 100 };
+  return out;
 }
 
 /**
@@ -224,7 +316,12 @@ async function peopleSnapshotRows(
   bucket?: PnlPeopleBucket,
 ): Promise<DrilldownRow[]> {
   if (!(await tableExists("pnl_running_salary_snapshot"))) return [];
-  const s = snapshotScopeSql(scope);
+  // A bucketed request answers a Statement Agent/DSC/BMC cell, which scopes on the snapshot's own
+  // attribution — unchanged. The un-bucketed accrual fallback answers a Live P&L / CEO cell, so it
+  // uses the same effective-cost-centre attribution as those summaries (audit item 17b).
+  const s = bucket
+    ? { join: "", ...snapshotScopeSql(scope) }
+    : await effectivePeopleScope(scope, SNAPSHOT_COLS);
   const bucketSql = bucket ? " AND s.pnl_bucket = ?" : "";
   const bucketParams = bucket ? [bucket] : [];
   const rows: DrilldownRow[] = [];
@@ -233,6 +330,7 @@ async function peopleSnapshotRows(
       `SELECT COALESCE(NULLIF(TRIM(s.designation_name), ''), 'Unspecified designation') AS designation_name,
               COUNT(*) AS headcount, SUM(COALESCE(s.earned_salary_till_date,0)) AS amount
          FROM pnl_running_salary_snapshot s
+         ${s.join}
         WHERE s.period_code = ? AND ${s.sql}${bucketSql}
         GROUP BY designation_name
         ORDER BY amount DESC`,
@@ -255,6 +353,7 @@ async function peopleSnapshotRows(
             COALESCE(s.earned_salary_till_date,0) AS amount, e.full_name
        FROM pnl_running_salary_snapshot s
        LEFT JOIN employees e ON e.id = s.employee_id
+       ${s.join}
       WHERE s.period_code = ? AND ${s.sql}${bucketSql}
       ORDER BY amount DESC`,
     [period, s.param, ...bucketParams],
@@ -289,8 +388,8 @@ function basisNote(bucket?: PnlPeopleBucket): string {
  */
 async function peopleDrilldownRowsAggregated(period: string, scope: PnlDrilldownScope): Promise<PnlDrilldownResult> {
   const rows: DrilldownRow[] = [];
-  const emp = employeeScopeSql(scope);
   if (await tableExists("salary_prep_line")) {
+    const emp = await effectivePeopleScope(scope, EMPLOYEE_COLS);
     const [groupRows] = await db.execute<RowDataPacket[]>(
       `SELECT COALESCE(des.designation_name, 'Unspecified designation') AS designation_name,
               COUNT(*) AS headcount,
@@ -299,6 +398,7 @@ async function peopleDrilldownRowsAggregated(period: string, scope: PnlDrilldown
          JOIN salary_prep_run r ON r.id = l.run_id
          JOIN employees e ON e.id = l.employee_id
          LEFT JOIN designation_master des ON des.id = e.designation_id
+         ${emp.join}
         WHERE r.run_month = ? AND ${emp.sql}
         GROUP BY designation_name
         ORDER BY amount DESC`,
@@ -327,14 +427,15 @@ async function peopleDrilldownRowsAggregated(period: string, scope: PnlDrilldown
 
 async function peopleDrilldownRows(period: string, scope: PnlDrilldownScope): Promise<PnlDrilldownResult> {
   const rows: DrilldownRow[] = [];
-  const emp = employeeScopeSql(scope);
   if (await tableExists("salary_prep_line")) {
+    const emp = await effectivePeopleScope(scope, EMPLOYEE_COLS);
     const [lineRows] = await db.execute<RowDataPacket[]>(
       `SELECT l.id, e.employee_code, e.full_name, e.cost_center_code,
               (COALESCE(l.gross_salary,0)+COALESCE(l.pf_employer,0)+COALESCE(l.esic_employer,0)+COALESCE(l.gratuity,0)) AS amount
          FROM salary_prep_line l
          JOIN salary_prep_run r ON r.id = l.run_id
          JOIN employees e ON e.id = l.employee_id
+         ${emp.join}
         WHERE r.run_month = ? AND ${emp.sql}
         ORDER BY amount DESC`,
       [period, emp.param],
@@ -359,31 +460,53 @@ async function peopleDrilldownRows(period: string, scope: PnlDrilldownScope): Pr
   return { metric: "people", scope: { period, ...scope }, rows, total: rows.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: false };
 }
 
+const GRN_SOURCE_LABEL: Record<string, string> = {
+  app_allocation: "Smart GRN allocation",
+  app_grn: "GRN",
+  db_bill_mirror: "db_bill GRN (not captured in-app)",
+};
+
+/**
+ * GRN rows behind an Indirect cell — read through readGrnSpend(), the one GRN reader Live P&L's
+ * grnActual, the Statement's total_idc and CEO Overview's spendByBranch all sum (audit item 17a).
+ * This used to read only the db_bill mirror: no app grn_cost_allocation, no ordinary GRNs, and no
+ * de-dup guard against GRNs the app had already captured — so it neither contained the app's
+ * spend nor excluded the mirror's duplicates of it, and could not tie to the tile.
+ *
+ * Same legs, same company rule, same pnl_cost_amount, same dedup; only one row per GRN. Branch
+ * scope keeps the reader's own branch attribution (cost centre's branch, else the GRN's). Reserved
+ * (approved, not yet consumed) GRN is added inside the open estimate window — the same rule both
+ * Live P&L (grnEstimated) and CEO Overview apply — and flagged as estimated.
+ */
 async function indirectDrilldownRows(period: string, scope: PnlDrilldownScope): Promise<PnlDrilldownResult> {
-  const rows: DrilldownRow[] = [];
-  const cc = costCentreScopeSql(scope);
-  if (await tableExists("grn_entry_line_snapshot")) {
-    const [lineRows] = await db.execute<RowDataPacket[]>(
-      `SELECT l.bill_source_id, l.particular, l.entry_type, l.amount, l.cost_centre_code, ccm.cost_centre_name
-         FROM grn_entry_line_snapshot l
-         JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
-         LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci = l.cost_centre_code COLLATE utf8mb4_unicode_ci
-        WHERE g.period_code = ? AND g.is_rejected = 0 AND ${cc.sql} AND ${OWN_COMPANY_SQL}
-        ORDER BY l.amount DESC`,
-      [period, cc.param],
-    );
-    for (const r of lineRows) {
-      rows.push({
-        id: `grn-${r.bill_source_id}`,
-        label: r.particular ? String(r.particular) : (r.cost_centre_name ? String(r.cost_centre_name) : "GRN line"),
-        detail: [r.entry_type, r.cost_centre_name].filter(Boolean).join(" · ") || null,
-        amount: n(r.amount),
-        date: null,
-      });
-    }
-  }
-  return { metric: "indirect", scope: { period, ...scope }, rows, total: rows.reduce((s, r) => s + r.amount, 0), hasEstimatedRows: false };
+  const readerScope = scope.costCentreId
+    ? { costCentreIds: [scope.costCentreId] }
+    : scope.processId ? { processIds: [scope.processId] } : {};
+  const inBranch = (r: GrnSpendRow) => !scope.branchId || r.branchId === scope.branchId;
+  const toRow = (r: GrnSpendRow, reserved: boolean, i: number): DrilldownRow => ({
+    id: `grn-${reserved ? "reserved" : r.source ?? "grn"}-${r.grnRef ?? i}-${r.costCentreId ?? ""}-${i}`,
+    label: r.label || (r.grnRef ? `GRN ${r.grnRef}` : "GRN"),
+    detail: [
+      r.grnRef ? `GRN ${r.grnRef}` : null,
+      reserved ? "Approved, not yet consumed (committed estimate)" : GRN_SOURCE_LABEL[r.source ?? ""] ?? null,
+    ].filter(Boolean).join(" · ") || null,
+    amount: r.amount,
+    date: r.billDate ?? null,
+  });
+
+  const consumed = (await readGrnSpend(period, "consumed", { ...readerScope, withDetail: true })).filter(inBranch);
+  const reserved = isEstimateWindow(period, getCurrentDateIST())
+    ? (await readGrnSpend(period, "reserved", { ...readerScope, withDetail: true })).filter(inBranch)
+    : [];
+  const rows = [
+    ...consumed.map((r, i) => toRow(r, false, i)),
+    ...reserved.map((r, i) => toRow(r, true, i)),
+  ].sort((a, b) => b.amount - a.amount);
+  return {
+    metric: "indirect", scope: { period, ...scope }, rows,
+    total: rows.reduce((s, r) => s + r.amount, 0),
+    hasEstimatedRows: reserved.length > 0,
+  };
 }
 
 /**
