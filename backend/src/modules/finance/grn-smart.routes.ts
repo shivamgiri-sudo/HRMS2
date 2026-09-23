@@ -535,7 +535,8 @@ smartGrnRouter.post(
         req.params.id,
         user.id,
         user.role,
-        req.body?.remarks ? String(req.body.remarks) : undefined
+        req.body?.remarks ? String(req.body.remarks) : undefined,
+        user.roles // Pass all roles for Head Office bypass detection
       );
       res.json(data);
     } catch (error) {

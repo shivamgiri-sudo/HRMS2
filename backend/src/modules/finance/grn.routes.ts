@@ -1080,7 +1080,8 @@ grnRouter.post(
         req.params.id,
         req.body,
         user.id,
-        user.role
+        user.role,
+        user.roles // Pass all roles for Head Office bypass detection
       );
       res.json(result);
     } catch (error: unknown) {

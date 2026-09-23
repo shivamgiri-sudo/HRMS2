@@ -31,6 +31,10 @@ import { notifyGrnSubmittedEmail, notifyGrnAccountsHeadPendingEmail } from "./gr
 import { postGrnApprovalJournalEntry } from "./grn-journal-posting.service.js";
 import { runInBackground } from "./grn-background.js";
 import { journalService } from "./journal.service.js";
+import {
+  qualifiesForHeadOfficeBypass,
+  shouldSkipFinanceHeadOnAccountsApproval,
+} from "./grn-head-office-bypass.js";
 
 export type GrnType = "vendor" | "imprest";
 export type GrnStatus =
@@ -709,7 +713,8 @@ export const grnService = {
     grnId: string,
     payload: SubmitGrnPayload,
     actorUserId: string,
-    actorRole: string
+    actorRole: string,
+    userRoles?: string[]
   ) {
     const grn = await getGrnOrThrow(grnId);
     // P0-2: a type with no accounting lifecycle cannot be submitted — fail closed.
@@ -731,6 +736,103 @@ export const grnService = {
     // migrated row) is left exactly as it was.
     const grnNumber = grn.grn_number ?? null;
 
+    /*
+     * HEAD OFFICE BYPASS (owner ruling, 2026-09-23):
+     *
+     * When Finance Head raises a GRN at Head Office branch, the 3-stage approval chain
+     * is shortened: Branch Head approval is skipped (Finance Head is senior) and Finance
+     * Head approval is skipped (no self-approval). Only Accounts Head reviews.
+     *
+     * On submit: reserve budget and go directly to branch_head_approved (pending Accounts
+     * Head review) instead of submitted (pending Branch Head review).
+     */
+    const headOfficeBypass = await qualifiesForHeadOfficeBypass(
+      grn.branch_id ? String(grn.branch_id) : null,
+      actorRole,
+      userRoles
+    );
+
+    if (headOfficeBypass) {
+      // Reserve budget immediately (normally done by Branch Head approval)
+      // Must use a connection for the transaction
+      const connection = await db.getConnection();
+      try {
+        await connection.beginTransaction();
+
+        await budgetConsumptionService.reserve(
+          connection,
+          grn.budget_line_id,
+          Number(grn.amount_with_tax || grn.amount),
+          Number(grn.quantity),
+          Number(grn.amount_without_tax) || undefined
+        );
+
+        const [result] = await connection.execute<ResultSetHeader>(
+          `UPDATE grn_request
+              SET status = 'branch_head_approved',
+                  submitted_by = ?,
+                  submitted_at = NOW(),
+                  branch_head_reviewed_by = ?,
+                  branch_head_reviewed_at = NOW(),
+                  branch_head_review_note = 'Auto-approved: Finance Head submission at Head Office',
+                  remarks = COALESCE(?, remarks)
+            WHERE id = ? AND status = 'draft'`,
+          [actorUserId, actorUserId, payload.remarks?.trim() || null, grnId]
+        );
+        if (result.affectedRows !== 1) {
+          throw new Error("GRN status changed before submission; refresh and try again");
+        }
+
+        await recordFinanceApprovalEvent(
+          {
+            entityType: "grn",
+            entityId: grnId,
+            action: "submit",
+            fromStatus: "draft",
+            toStatus: "branch_head_approved",
+            actorUserId,
+            actorRole,
+            remarks: payload.remarks?.trim() || null,
+            details: {
+              grnNumber: String(grnNumber ?? ""),
+              branchId: String(grn.branch_id ?? ""),
+              headOfficeBypass: true,
+              bypassReason: "Finance Head submission at Head Office — Branch Head stage auto-approved",
+            },
+          },
+          connection
+        );
+
+        await connection.commit();
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
+      }
+
+      await writeGrnAudit("SUBMIT_HEAD_OFFICE_BYPASS", grnId, actorUserId, actorRole, {
+        remarks: payload.remarks,
+        grn_number: grnNumber,
+        bypass_reason: "Finance Head submission at Head Office",
+      });
+
+      // Notify Accounts Head instead of Branch Head
+      runInBackground("grn-submit-accounts-head-alert", () =>
+        notifyGrnStage(
+          grnId,
+          String(grnNumber ?? ""),
+          grn.branch_id ? String(grn.branch_id) : null,
+          grn.vendor_name ? String(grn.vendor_name) : null,
+          Number(grn.amount_with_tax ?? grn.amount ?? 0) || null,
+          "accounts_head"
+        )
+      );
+      runInBackground("grn-submit-email", () => notifyGrnAccountsHeadPendingEmail(grnId));
+      return { success: true, newStatus: "branch_head_approved" as const, grnNumber, headOfficeBypass: true };
+    }
+
+    // Normal flow: go to submitted status, pending Branch Head review
     const [result] = await db.execute<ResultSetHeader>(
       `UPDATE grn_request
           SET status = 'submitted',
@@ -810,6 +912,8 @@ export const grnService = {
     let notifyBranchId: string | null = null;
     let notifyVendorName: string | null = null;
     let notifyAmount: number | null = null;
+    // Head Office bypass: when Accounts Head does the final approval, don't notify Finance Head
+    let headOfficeBypassFinalApproval = false;
 
     try {
       await connection.beginTransaction();
@@ -989,8 +1093,122 @@ export const grnService = {
           );
         }
 
+        /*
+         * HEAD OFFICE BYPASS (owner ruling, 2026-09-23):
+         *
+         * When this GRN was submitted by Finance Head at Head Office, the Finance Head
+         * approval stage is skipped. Accounts Head approval becomes the FINAL approval:
+         * consume budget, assign GRN number, post journal entry, go to final status.
+         */
+        const skipFinanceHead = await shouldSkipFinanceHeadOnAccountsApproval(grn);
+
         if (payload.decision === "approved") {
-          newStatus = "accounts_head_approved";
+          if (skipFinanceHead) {
+            // This is the final approval — do everything Finance Head would normally do
+            if (!noBudgetLine) {
+              await budgetConsumptionService.consume(
+                connection,
+                grn.budget_line_id,
+                Number(grn.amount_with_tax || grn.amount),
+                Number(grn.quantity),
+                Number(grn.amount_without_tax) || undefined
+              );
+            }
+            newStatus = grn.grn_type === "vendor"
+              ? "pending_accounts_payment"
+              : "approved";
+
+            // Assign GRN number at final approval
+            grnNumber = await resolveGrnNumberOnSubmit(grn);
+
+            // Post journal entry
+            if (grn.grn_type === "vendor" || grn.grn_type === "imprest") {
+              await postGrnApprovalJournalEntry(
+                connection,
+                { ...(grn as any), grn_number: grnNumber ?? grn.grn_number },
+                actorUserId
+              );
+            }
+
+            const [ahFinalResult] = await connection.execute<ResultSetHeader>(
+              `UPDATE grn_request
+                  SET status = ?,
+                      accounts_payment_status = ?,
+                      accounts_head_reviewed_by = ?,
+                      accounts_head_reviewed_at = NOW(),
+                      accounts_head_review_note = ?,
+                      finance_head_reviewed_by = ?,
+                      finance_head_reviewed_at = NOW(),
+                      finance_head_review_note = 'Auto-approved: Head Office bypass (Finance Head was raiser)',
+                      reviewed_by = ?,
+                      reviewed_at = NOW(),
+                      review_note = ?,
+                      approved_by = ?,
+                      approved_at = NOW(),
+                      rejection_reason = NULL,
+                      grn_number = COALESCE(grn_number, ?)
+                WHERE id = ? AND status = 'branch_head_approved'`,
+              [
+                newStatus,
+                grn.grn_type === "vendor" ? "pending" : "not_required",
+                actorUserId,
+                payload.reviewNote?.trim() || null,
+                actorUserId, // Finance Head auto-approval
+                actorUserId,
+                payload.reviewNote?.trim() || null,
+                actorUserId,
+                grnNumber,
+                grnId,
+              ]
+            );
+            if (ahFinalResult.affectedRows !== 1) {
+              throw Object.assign(
+                new Error("GRN state changed concurrently; refresh and try again"),
+                { code: "STATE_CHANGED", statusCode: 409 }
+              );
+            }
+
+            // Create vendor payment if vendor GRN
+            if (grn.grn_type === "vendor") {
+              paymentId = await vendorPaymentService.createFromGrn(
+                grnId,
+                actorUserId,
+                connection
+              );
+            }
+
+            // Mark that this was the final approval — don't notify Finance Head
+            headOfficeBypassFinalApproval = true;
+          } else {
+            // Normal flow: go to accounts_head_approved, pending Finance Head
+            newStatus = "accounts_head_approved";
+
+            const [ahUpdateResult] = await connection.execute<ResultSetHeader>(
+              `UPDATE grn_request
+                  SET status = ?,
+                      accounts_head_reviewed_by = ?,
+                      accounts_head_reviewed_at = NOW(),
+                      accounts_head_review_note = ?,
+                      reviewed_by = ?,
+                      reviewed_at = NOW(),
+                      review_note = ?
+                WHERE id = ? AND status = 'branch_head_approved'`,
+              [
+                newStatus,
+                actorUserId,
+                payload.reviewNote?.trim() || null,
+                actorUserId,
+                payload.reviewNote?.trim() || null,
+                grnId,
+              ]
+            );
+            if (ahUpdateResult.affectedRows !== 1) {
+              throw Object.assign(
+                new Error("GRN state changed concurrently; refresh and try again"),
+                { code: "STATE_CHANGED", statusCode: 409 }
+              );
+            }
+          }
         } else {
           // Rejecting here undoes exactly what Branch Head's approval reserved — nothing has
           // been consumed yet, so this is the same release() a rejection at the old
@@ -1005,34 +1223,33 @@ export const grnService = {
             );
           }
           newStatus = "rejected";
-        }
 
-        const [ahUpdateResult] = await connection.execute<ResultSetHeader>(
-          `UPDATE grn_request
-              SET status = ?,
-                  accounts_head_reviewed_by = ?,
-                  accounts_head_reviewed_at = NOW(),
-                  accounts_head_review_note = ?,
-                  reviewed_by = ?,
-                  reviewed_at = NOW(),
-                  review_note = ?,
-                  rejection_reason = ?
-            WHERE id = ? AND status = 'branch_head_approved'`,
-          [
-            newStatus,
-            actorUserId,
-            payload.reviewNote?.trim() || null,
-            actorUserId,
-            payload.reviewNote?.trim() || null,
-            payload.decision === "rejected" ? payload.reviewNote?.trim() : null,
-            grnId,
-          ]
-        );
-        if (ahUpdateResult.affectedRows !== 1) {
-          throw Object.assign(
-            new Error("GRN state changed concurrently; refresh and try again"),
-            { code: "STATE_CHANGED", statusCode: 409 }
+          const [ahRejectResult] = await connection.execute<ResultSetHeader>(
+            `UPDATE grn_request
+                SET status = 'rejected',
+                    accounts_head_reviewed_by = ?,
+                    accounts_head_reviewed_at = NOW(),
+                    accounts_head_review_note = ?,
+                    reviewed_by = ?,
+                    reviewed_at = NOW(),
+                    review_note = ?,
+                    rejection_reason = ?
+              WHERE id = ? AND status = 'branch_head_approved'`,
+            [
+              actorUserId,
+              payload.reviewNote?.trim() || null,
+              actorUserId,
+              payload.reviewNote?.trim() || null,
+              payload.reviewNote?.trim() || null,
+              grnId,
+            ]
           );
+          if (ahRejectResult.affectedRows !== 1) {
+            throw Object.assign(
+              new Error("GRN state changed concurrently; refresh and try again"),
+              { code: "STATE_CHANGED", statusCode: 409 }
+            );
+          }
         }
       } else if (effectiveStage === "finance_head") {
         if (grn.status !== "accounts_head_approved") {
@@ -1214,7 +1431,10 @@ export const grnService = {
 
       if (payload.decision === "approved") {
         if (effectiveStage === "branch_head") notifyStage = "accounts_head";
-        else if (effectiveStage === "accounts_head") notifyStage = "finance_head";
+        // Don't notify Finance Head if this was a Head Office bypass final approval
+        else if (effectiveStage === "accounts_head" && !headOfficeBypassFinalApproval) {
+          notifyStage = "finance_head";
+        }
       }
 
       await connection.commit();

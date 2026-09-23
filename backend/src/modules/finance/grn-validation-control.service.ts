@@ -2,11 +2,14 @@ import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
 import { grnSmartService } from "./grn-smart.service.js";
 import { assertGrnTypeSupported } from "./grn-type-support.js";
 import { notifyGrnStage } from "./grn-notify.js";
 import { runInBackground } from "./grn-background.js";
-import { notifyGrnSubmittedEmail } from "./grn.notifications.js";
+import { notifyGrnSubmittedEmail, notifyGrnAccountsHeadPendingEmail } from "./grn.notifications.js";
+import { qualifiesForHeadOfficeBypass } from "./grn-head-office-bypass.js";
+import { budgetConsumptionService } from "../process-pnl/budget-consumption.service.js";
 
 const NON_OVERRIDABLE_VALIDATIONS = new Set(["LOB_ATTRIBUTION"]);
 
@@ -277,12 +280,13 @@ export const grnValidationControlService = {
     grnId: string,
     actorUserId: string,
     actorRole: string,
-    remarks?: string
+    remarks?: string,
+    userRoles?: string[]
   ) {
     // P0-2: Provision GRNs have no accounting lifecycle — fail closed before any validation.
     const [typeRows] = await db.execute<RowDataPacket[]>(
       `SELECT grn_type, grn_number, branch_id, accounting_period, financial_year,
-              vendor_name, amount_with_tax, amount
+              vendor_name, amount_with_tax, amount, budget_line_id, quantity, amount_without_tax
          FROM grn_request WHERE id = ? LIMIT 1`,
       [grnId]
     );
@@ -296,6 +300,35 @@ export const grnValidationControlService = {
           .join("; ")}`
       );
     }
+
+    const grn = typeRows[0] as any;
+    const submittedGrnNumber = grn.grn_number ? String(grn.grn_number) : null;
+    const submittedBranchId = grn.branch_id ? String(grn.branch_id) : null;
+    const submittedVendorName = grn.vendor_name ? String(grn.vendor_name) : null;
+    const submittedAmount = Number(grn.amount_with_tax ?? grn.amount ?? 0) || null;
+
+    /*
+     * HEAD OFFICE BYPASS (owner ruling, 2026-09-23):
+     *
+     * When Finance Head raises a GRN at Head Office branch, the 3-stage approval chain
+     * is shortened: Branch Head approval is skipped (Finance Head is senior) and Finance
+     * Head approval is skipped (no self-approval). Only Accounts Head reviews.
+     *
+     * On submit: reserve allocations (via grnSmartService) and go directly to branch_head_approved
+     * (pending Accounts Head review) instead of submitted (pending Branch Head review).
+     */
+    const headOfficeBypass = await qualifiesForHeadOfficeBypass(
+      submittedBranchId,
+      actorRole,
+      userRoles
+    );
+
+    if (headOfficeBypass) {
+      // Use grnSmartService.submit which handles allocation reservation for bypass
+      const result = await grnSmartService.submit(grnId, actorUserId, actorRole, remarks, userRoles);
+      return { ...result, validation };
+    }
+
     // Owner ruling: a GRN number is assigned at FINAL (Finance Head) approval, not here — see
     // resolveGrnNumberOnSubmit's caller in grn-smart.service.ts's review(). Submission used to
     // allocate one (2026-08-27 fix for the two-submit-paths bug, see grn-number-on-submit.ts's
@@ -315,21 +348,17 @@ export const grnValidationControlService = {
     await audit("GRN_SUBMIT", grnId, actorUserId, actorRole, {
       validation_score: validation.score,
       effective_blocking_count: 0,
-      grn_number: typeRows[0].grn_number ?? null,
+      grn_number: grn.grn_number ?? null,
       remarks,
     });
     // Same fix as grnSmartService.review() — this is the submit path every allocation-aware GRN
     // actually goes through (requireAllocationsForSubmit hard-blocks anything without
     // allocations rather than falling through), so it needed the same wiring grn.service.ts's
     // submit() had but this path never reached. See grn-notify.ts's header.
-    const submittedGrnNumber = typeRows[0].grn_number ? String(typeRows[0].grn_number) : null;
-    const submittedBranchId = typeRows[0].branch_id ? String(typeRows[0].branch_id) : null;
-    const submittedVendorName = typeRows[0].vendor_name ? String(typeRows[0].vendor_name) : null;
-    const submittedAmount = Number(typeRows[0].amount_with_tax ?? typeRows[0].amount ?? 0) || null;
     runInBackground("submit-alert", () =>
       notifyGrnStage(grnId, submittedGrnNumber, submittedBranchId, submittedVendorName, submittedAmount, "branch_head"));
     runInBackground("submit-email", () => notifyGrnSubmittedEmail(grnId));
-    return { success: true, newStatus: "submitted", grnNumber: typeRows[0].grn_number ?? null, validation };
+    return { success: true, newStatus: "submitted", grnNumber: grn.grn_number ?? null, validation };
   },
 
   async review(
