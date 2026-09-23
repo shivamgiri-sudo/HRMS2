@@ -3,6 +3,7 @@ import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
+import { readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
 import { isEstimateWindow } from "./pnl-seat-billing.service.js";
 import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
 import { ccProcessJoin, ccProcessNameSql, costCentreLabel } from "./cost-centre-label.js";
@@ -471,69 +472,20 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
  * app has not captured, via the same NOT EXISTS guard.
  */
 async function spendByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
+  // 2026-09-23: a grouping over pnl-actuals.service.ts's readGrnSpend(), the single GRN reader
+  // shared with the P&L Statement and Live P&L — same legs, same accounting_period, same
+  // OWN_COMPANY_SQL rule, same pnl_cost_amount, same mirror dedup guard. This tab previously had
+  // its own copy that never counted ordinary (non-Smart) GRNs without allocation rows. Scope
+  // (cost centres / processes) is applied inside the reader to every leg alike.
   const out = new Map<string, number>();
-
-  // OWN_COMPANY_SQL on the app side too (2026-09-15). The mirror half below always had it; this
-  // half did not, so GRN allocated to Ispark/IDC cost centres was counted as MAS indirect cost —
-  // Rs 3.94 L on NOIDA-DIALDESK plus Rs 1.33 L on non-MAS NOIDA cost centres in June 2026, the whole
-  // IDC gap between this tab (4.20%) and Live P&L (5.99%). Same scope rule as revenue: MAS only.
-  const appWhere: string[] = ["a.lifecycle_status = 'consumed'", "gr.accounting_period = ?", OWN_COMPANY_SQL];
-  const appParams: unknown[] = [period];
-  if (s.costCentreIds.length) {
-    appWhere.push(`ccm.id IN (${marks(s.costCentreIds)})`);
-    appParams.push(...s.costCentreIds);
-  }
-  if (s.processIds.length) {
-    appWhere.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
-                               WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
-    appParams.push(...s.processIds);
-  }
-  const [appRows] = await db.execute<RowDataPacket[]>(
-    `SELECT ccm.branch_id AS branch_id, SUM(a.pnl_cost_amount) AS amount
-       FROM grn_cost_allocation a
-       JOIN grn_request gr ON gr.id = a.grn_request_id
-       LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
-      WHERE ${appWhere.join(" AND ")}
-      GROUP BY ccm.branch_id`,
-    appParams,
-  );
-  for (const r of appRows) out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));
-
-  if (await tableExists("grn_entry_line_snapshot")) {
-    const where: string[] = ["g.period_code = ?", "g.is_rejected = 0", OWN_COMPANY_SQL];
-    const params: unknown[] = [period];
-    if (s.costCentreIds.length) {
-      where.push(`ccm.id IN (${marks(s.costCentreIds)})`);
-      params.push(...s.costCentreIds);
-    }
-    if (s.processIds.length) {
-      where.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
-                              WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
-      params.push(...s.processIds);
-    }
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT ccm.branch_id AS branch_id, SUM(l.amount) AS amount
-         FROM grn_entry_line_snapshot l
-         JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
-         LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-                 = l.cost_centre_code COLLATE utf8mb4_unicode_ci
-        WHERE ${where.join(" AND ")}
-          AND NOT EXISTS (
-                SELECT 1
-                  FROM grn_request gr2
-                  JOIN grn_cost_allocation a2 ON a2.grn_request_id = gr2.id
-                 WHERE gr2.grn_number = g.grn_no
-                   AND a2.lifecycle_status = 'consumed'
-              )
-        GROUP BY ccm.branch_id`,
-      params,
-    );
+  const add = (rows: GrnSpendRow[]) => {
     for (const r of rows) {
-      const key = r.branch_id ? String(r.branch_id) : "";
-      out.set(key, (out.get(key) ?? 0) + n(r.amount));
+      const key = r.branchId ?? "";
+      out.set(key, (out.get(key) ?? 0) + r.amount);
     }
-  }
+  };
+  const scope = { costCentreIds: s.costCentreIds, processIds: s.processIds };
+  add(await readGrnSpend(period, "consumed", scope));
 
   // Committed-not-yet-consumed GRN ('reserved'), only inside the open estimate window — the same
   // rule and the same real spend pnl-reconciliation.service.ts's readGrnCommitted() reads.
@@ -541,30 +493,7 @@ async function spendByBranch(period: string, s: CeoScope): Promise<Map<string, n
   // point of this addition is parity: without it, this tab under-counted IDC against Live P&L for
   // every open month with approved-but-unconsumed GRN, which was most of them.
   if (isEstimateWindow(period, getCurrentDateIST())) {
-    const commWhere: string[] = ["a.lifecycle_status = 'reserved'", "gr.accounting_period = ?", OWN_COMPANY_SQL];
-    const commParams: unknown[] = [period];
-    if (s.costCentreIds.length) {
-      commWhere.push(`ccm.id IN (${marks(s.costCentreIds)})`);
-      commParams.push(...s.costCentreIds);
-    }
-    if (s.processIds.length) {
-      commWhere.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
-                                  WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
-      commParams.push(...s.processIds);
-    }
-    const [commRows] = await db.execute<RowDataPacket[]>(
-      `SELECT ccm.branch_id AS branch_id, SUM(a.pnl_cost_amount) AS amount
-         FROM grn_cost_allocation a
-         JOIN grn_request gr ON gr.id = a.grn_request_id
-         LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
-        WHERE ${commWhere.join(" AND ")}
-        GROUP BY ccm.branch_id`,
-      commParams,
-    );
-    for (const r of commRows) {
-      const key = r.branch_id ? String(r.branch_id) : "";
-      out.set(key, (out.get(key) ?? 0) + n(r.amount));
-    }
+    add(await readGrnSpend(period, "reserved", scope));
   }
 
   return out;
@@ -1179,34 +1108,11 @@ async function buildFocus(
       // de-duplicated figure against a doubled one would have thrown the 95% "is this really the
       // whole branch's overhead" heuristic off by roughly 2x on any branch with real Smart GRN
       // activity. Same fix, same reason: see spendByBranch()'s own banner.
-      const [appGrn] = await db.execute<RowDataPacket[]>(
-        `SELECT COALESCE(SUM(a.pnl_cost_amount), 0) AS a
-           FROM grn_cost_allocation a
-           JOIN grn_request gr ON gr.id = a.grn_request_id
-           LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
-          WHERE a.lifecycle_status = 'consumed'
-            AND gr.accounting_period = ?
-            AND ccm.branch_id = ?`,
-        [period, branchId],
-      );
-      const [branchGrn] = await db.execute<RowDataPacket[]>(
-        `SELECT COALESCE(SUM(l.amount), 0) AS a
-           FROM grn_entry_line_snapshot l
-           JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
-           LEFT JOIN cost_centre_master ccm
-                  ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-                   = l.cost_centre_code COLLATE utf8mb4_unicode_ci
-          WHERE g.period_code = ? AND g.is_rejected = 0 AND ccm.branch_id = ?
-            AND NOT EXISTS (
-                  SELECT 1
-                    FROM grn_request gr2
-                    JOIN grn_cost_allocation a2 ON a2.grn_request_id = gr2.id
-                   WHERE gr2.grn_number = g.grn_no
-                     AND a2.lifecycle_status = 'consumed'
-                )`,
-        [period, branchId],
-      );
-      const branchTotal = n(appGrn[0]?.a) + n(branchGrn[0]?.a);
+      // 2026-09-23: the branch total now comes from spendByBranch() itself (unscoped), i.e. the
+      // shared readGrnSpend() reader — so the two sides of this ratio are built identically,
+      // including OWN_COMPANY_SQL, which this copy's mirror leg never applied.
+      const branchSpend = await spendByBranch(period, { branchIds: [], processIds: [], costCentreIds: [] });
+      const branchTotal = branchSpend.get(branchId) ?? 0;
       if (branchTotal > 0 && totals.indirectCost / branchTotal >= 0.95) {
         notes.push(
           `The indirect figure is effectively the whole branch's overhead (${lakh(branchTotal)}) `

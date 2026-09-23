@@ -1096,6 +1096,18 @@ async function getIndirectAllocationMap(
   const branchIds = Array.from(branchProcessMap.keys()).filter((id) => id !== "unassigned");
   const poolByBranch = new Map<string, number>();
 
+  /*
+   * INTENTIONALLY NOT pnl-actuals.service.ts's readGrnSpend() (the shared GRN reader the Statement,
+   * CEO Overview and Live P&L use — see its banner, 2026-09-23). This pool answers a different
+   * question: vendor PAYABLES classified 'indirect' (directCostClassExpr) falling DUE in the month
+   * (vendor_payment_tracking.due_amount by due_date), spread over a branch's processes by
+   * headcount — a payables/cash view for this legacy per-process engine, not accrual GRN
+   * consumption by accounting_period. The grn_request fallback below only runs when the payables
+   * table does not exist at all. Do not "reconcile" the two by editing one of them: a payable and
+   * the GRN it settles can sit in different months by design. Known consequence: bpo-pnl's
+   * bmcNonPeople reads this pool (base.indirectCost), so that one line is payables-based, while
+   * every GRN/IDC figure on Statement / CEO / Live comes from readGrnSpend().
+   */
   if (branchIds.length > 0 && await tableExists("vendor_payment_tracking")) {
     const resolvedProcessExpr = effectiveProcessExpr("vpt", costCentreProcessIdSupported);
     const rows = await queryRows<RowDataPacket>(

@@ -148,132 +148,201 @@ export async function getApprovedCostCentreSplits(
 export const OWN_COMPANY_SQL =
   `REPLACE(REPLACE(REPLACE(LOWER(COALESCE(ccm.company_name, '')), '.', ''), ' ', ''), ',', '') LIKE '%mascallnet%'`;
 
+/* ------------------------------------------------------------------------------------------------
+ * THE ONE GRN READER (2026-09-23).
+ *
+ * Until now four P&L surfaces each ran their own copy of "GRN spend for a month" and they had
+ * drifted apart:
+ *   - P&L Statement (getIndirectCostActuals, below): app allocations + ordinary GRNs + mirror, but
+ *     no company filter on the two app legs, so Ispark/IDC cost-centre GRN was counted as MAS IDC.
+ *   - CEO Overview (ceo-overview spendByBranch): app allocations + mirror, company-filtered, but
+ *     never counted ordinary (non-Smart) GRNs that have no allocation rows.
+ *   - Live P&L (pnl-reconciliation readGrn/readGrnCommitted): app allocations + mirror, no company
+ *     filter on the app leg, no ordinary-GRN leg.
+ *   - CEO buildFocus' branch-overhead heuristic: its own copy, mirror leg not company-filtered.
+ * All of them now read readGrnSpend(), so they can only disagree on grouping, never on the rows:
+ *   - period: grn_request.accounting_period (app legs), grn_entry_snapshot.period_code (mirror).
+ *   - company: OWN_COMPANY_SQL on EVERY leg — a GRN counts as MAS indirect cost only when it is
+ *     booked to a MAS Callnet cost centre (the rule the CEO view and every mirror leg already used).
+ *   - amount: pnl_cost_amount on both app legs (net of RECOVERABLE GST only — non-recoverable GST
+ *     is a real expense, see the 2026-08-29 note below); the mirror's net-of-tax l.amount, never
+ *     l.total, for a GRN the app has not captured (the NOT EXISTS dedup guard on grn_number).
+ *   - 'consumed' = allocation rows with lifecycle_status 'consumed' + ordinary GRNs (budget line,
+ *     no allocation rows, not draft/rejected/cancelled) + mirror gap-fill.
+ *     'reserved' = allocation rows with lifecycle_status 'reserved' only (an in-app approval state
+ *     the mirror never holds; ordinary GRNs have no reserved stage). Whether reserved spend is
+ *     shown at all is the caller's rule (the estimate window) — this only reads it.
+ *
+ * Deliberately NOT routed here, and why:
+ *   - process-pnl.service.ts's indirect pool (vendor_payment_tracking by due_date) — a different
+ *     question (vendor payments falling due), see the comment there.
+ *   - pnl-daily-trend.service.ts — a per-DAY chart keyed on bill_date, see the comment there.
+ * ---------------------------------------------------------------------------------------------- */
+export type GrnSpendKind = "consumed" | "reserved";
+
+export interface GrnSpendRow {
+  branchId: string | null;
+  costCentreId: string | null;
+  /** Only resolved when `withProcess` is asked for (it costs a PROCESS_BY_COST_CENTRE join). */
+  processId: string | null;
+  amount: number;
+}
+
+export interface GrnSpendOptions {
+  /** Restrict to these cost centre ids. */
+  costCentreIds?: string[];
+  /** Restrict to cost centres that have staff posted to these processes (CEO Overview scope). */
+  processIds?: string[];
+  /** Resolve process_id per row (the Statement's process view needs it; others do not). */
+  withProcess?: boolean;
+}
+
+const inMarks = (list: string[]) => list.map(() => "?").join(",");
+
+/** Scope predicates on `ccm`, shared by every leg so the legs cannot scope differently. */
+function grnScope(opts: GrnSpendOptions): { sql: string; params: unknown[] } {
+  const parts: string[] = [OWN_COMPANY_SQL];
+  const params: unknown[] = [];
+  if (opts.costCentreIds?.length) {
+    parts.push(`ccm.id IN (${inMarks(opts.costCentreIds)})`);
+    params.push(...opts.costCentreIds);
+  }
+  if (opts.processIds?.length) {
+    parts.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
+                            WHERE e.process_id IN (${inMarks(opts.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
+    params.push(...opts.processIds);
+  }
+  return { sql: parts.join(" AND "), params };
+}
+
+export async function readGrnSpend(
+  periodCode: string,
+  kind: GrnSpendKind,
+  opts: GrnSpendOptions = {},
+): Promise<GrnSpendRow[]> {
+  if (!/^\d{4}-\d{2}$/.test(periodCode)) return [];
+  // Inlined as a literal (not a bind parameter) so the SQL states which lifecycle it reads; the
+  // value is re-checked against the closed set here, so nothing caller-supplied reaches the SQL.
+  const lifecycle = kind === "reserved" ? "reserved" : "consumed";
+  const scope = grnScope(opts);
+  const withProcess = opts.withProcess === true;
+  const processJoin = (alias: string) => (withProcess ? `LEFT JOIN ${PROCESS_BY_COST_CENTRE} ${alias} ON ${alias}.cost_centre_id = ccm.id` : "");
+  const processCol = (first: string | null, alias: string) =>
+    withProcess ? `COALESCE(${first ? `${first}, ` : ""}${alias}.process_id, ccm.process_id)` : "NULL";
+
+  const legs: string[] = [];
+  const params: unknown[] = [];
+
+  // Leg 1 — Smart GRN per-cost-centre allocation rows.
+  legs.push(
+    `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, ccm.id AS cost_centre_id,
+            ${processCol("a.process_id", "pc1")} AS process_id, a.pnl_cost_amount AS amount
+       FROM grn_cost_allocation a
+       JOIN grn_request gr ON gr.id = a.grn_request_id
+       LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
+       ${processJoin("pc1")}
+      WHERE a.lifecycle_status = '${lifecycle}' AND gr.accounting_period = ? AND ${scope.sql}`,
+  );
+  params.push(periodCode, ...scope.params);
+
+  if (kind === "consumed") {
+    // Leg 2 — ordinary GRN: amount on grn_request itself, no allocation rows (so a Smart GRN is
+    // never counted twice).
+    legs.push(
+      `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, ccm.id AS cost_centre_id,
+              ${processCol("gr.process_id", "pc2")} AS process_id, gr.pnl_cost_amount AS amount
+         FROM grn_request gr
+         LEFT JOIN cost_centre_master ccm ON ccm.id = gr.cost_centre_id
+         ${processJoin("pc2")}
+        WHERE gr.budget_line_id IS NOT NULL
+          AND gr.status NOT IN ('draft', 'rejected', 'cancelled')
+          AND gr.accounting_period = ?
+          AND NOT EXISTS (SELECT 1 FROM grn_cost_allocation x WHERE x.grn_request_id = gr.id)
+          AND ${scope.sql}`,
+    );
+    params.push(periodCode, ...scope.params);
+
+    // Leg 3 — db_bill mirror, only for a GRN number the app has not consumed itself. Line level,
+    // because only the line carries the cost centre; branch from the cost centre because the
+    // mirror's branch ids are db_bill's, not branch_master's.
+    if (await tableExists("grn_entry_line_snapshot")) {
+      legs.push(
+        `SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
+                ${processCol(null, "pc3")} AS process_id, l.amount AS amount
+           FROM grn_entry_line_snapshot l
+           JOIN grn_entry_snapshot ge ON ge.bill_source_id = l.grn_source_id
+           LEFT JOIN cost_centre_master ccm
+                  ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                   = l.cost_centre_code COLLATE utf8mb4_unicode_ci
+           ${processJoin("pc3")}
+          WHERE ge.period_code = ? AND ge.is_rejected = 0 AND ${scope.sql}
+            AND NOT EXISTS (
+                  SELECT 1
+                    FROM grn_request gr2
+                    JOIN grn_cost_allocation a2 ON a2.grn_request_id = gr2.id
+                   WHERE gr2.grn_number = ge.grn_no
+                     AND a2.lifecycle_status = 'consumed'
+                )`,
+      );
+      params.push(periodCode, ...scope.params);
+    }
+  }
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT branch_id, cost_centre_id, process_id, SUM(amount) AS amount
+       FROM (${legs.join("\n UNION ALL \n")}) t
+      GROUP BY branch_id, cost_centre_id, process_id`,
+    params,
+  );
+  return rows
+    .map((row) => ({
+      branchId: row.branch_id ? String(row.branch_id) : null,
+      costCentreId: row.cost_centre_id ? String(row.cost_centre_id) : null,
+      processId: row.process_id ? String(row.process_id) : null,
+      amount: Number(row.amount ?? 0),
+    }))
+    .filter((row) => Number.isFinite(row.amount) && row.amount !== 0);
+}
+
 export async function getIndirectCostActuals(periodCode: string): Promise<ActualsByKey> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptyActuals();
-  const [rows] = await db.execute<RowDataPacket[]>(
-    // Two GRN paths write spend, and only counting one of them reported zero cost against a
-    // budget that had genuinely consumed: the Smart GRN writes per-line rows to
-    // grn_cost_allocation, while the ordinary GRN keeps budget_line_id and the amount on
-    // grn_request itself. Both are union'd, and the union is over allocation rows plus the
-    // ordinary GRNs that have NO allocation rows, so a Smart GRN is never counted twice.
-    //
-    // 2026-08-29 FIX: both legs read pnl_cost_amount, not amount_without_tax. They are equal
-    // only when GST is 100% recoverable; on any line with a lower recoverable_tax_pct (e.g. an
-    // exempt/non_gst budget line, which defaults to 0%) amount_without_tax excludes the
-    // non-recoverable tax slice that IS a real P&L expense, understating indirect cost by
-    // exactly that amount. pnl_cost_amount is what calculateBudgetLine() computes for precisely
-    // this reason (baseAmount + taxAmount - recoverableTaxAmount) and is what every other GRN
-    // P&L consumer (vw_process_pnl_grn_allocation, branch-budget.service.ts's own GRN
-    // drill-through) already reads. No live row currently has the two differ — confirmed against
-    // production on 2026-08-29 — so this changes no number today; it stops the two tabs
-    // (P&L Statement here vs the Process Matrix's view) silently disagreeing the day one does.
-    //
-    // PERF FIX (2026-09-02): the process fallback used to be PROCESS_FROM_EMPLOYEES, a
-    // per-row correlated subquery — the exact pattern the comment on PROCESS_BY_COST_CENTRE
-    // documents as taking "over two minutes" for a single period against this same GRN volume.
-    // Confirmed live: this function alone was taking 30-46s+ per call (uncached, called on every
-    // /api/finance/pnl/statement request), the dominant reason that endpoint needed 2-3 retries
-    // and 60-90s+ waits in the browser. Swapped to a LEFT JOIN against the already-existing
-    // PROCESS_BY_COST_CENTRE precomputed lookup — identical derivation (same GROUP BY, same
-    // ORDER BY COUNT(*) DESC tie-break), already used two blocks below in this same file for
-    // exactly this reason. Confirmed live, period 2026-07: identical 12 rows/amounts either way
-    // (e.g. NOIDA-2/MNP branch pool 37,31,190.06, matching the pre-fix figure exactly), query
-    // time 30-46s+ (never observed to finish within several minutes on a second run) -> ~1.7s.
-    `SELECT branch_id, process_id, SUM(amount) AS amount FROM (
-       SELECT COALESCE(ccm.branch_id, g.branch_id) AS branch_id,
-              COALESCE(a.process_id, pc1.process_id, ccm.process_id) AS process_id,
-              a.pnl_cost_amount AS amount
-         FROM grn_cost_allocation a
-         JOIN grn_request g ON g.id = a.grn_request_id
-         LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
-         LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc1 ON pc1.cost_centre_id = ccm.id
-        WHERE a.lifecycle_status = 'consumed'
-          AND g.accounting_period = ?
-
-       UNION ALL
-
-       SELECT COALESCE(ccm.branch_id, g.branch_id) AS branch_id,
-              COALESCE(g.process_id, pc2.process_id, ccm.process_id) AS process_id,
-              g.pnl_cost_amount AS amount
-         FROM grn_request g
-         LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
-         LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc2 ON pc2.cost_centre_id = ccm.id
-        WHERE g.budget_line_id IS NOT NULL
-          AND g.status NOT IN ('draft', 'rejected', 'cancelled')
-          AND g.accounting_period = ?
-          AND NOT EXISTS (SELECT 1 FROM grn_cost_allocation x WHERE x.grn_request_id = g.id)
-     ) t
-      GROUP BY branch_id, process_id`,
-    [periodCode, periodCode]
-  );
-  const actuals = accumulate(rows);
-
-  /*
-   * The mirrored GRN from db_bill — fills in GRNs the app has NOT captured yet.
-   *
-   * RESOLVED 2026-08-29. This comment originally justified the UNION on "the two sources above
-   * are mas_hrms's own GRN tables, and in production they are empty: grn_cost_allocation has 0
-   * consumed rows and grn_request has 1." That stopped being true well before this was caught:
-   * confirmed live, grn_cost_allocation now holds real volume concentrated in exactly the months
-   * (2026-04 through 2026-08) this mirror also covers, and matching by GRN NUMBER (grn_no here,
-   * grn_number on the app side — the same physical voucher's own identifier, not a fuzzy
-   * vendor/amount/date guess) found 1,452 of 1,495 consumed GRNs — 97% — already present in this
-   * mirror. Every one of those was being counted TWICE: once from grn_cost_allocation above, once
-   * again from here, with nothing between the two blocks stopping it. Measured overstatement on
-   * the P&L Statement tab for Apr-Aug 2026: Rs 3,37,46,372.
-   *
-   * The NOT EXISTS below closes it, mirroring the guard the block above already has for its own
-   * second leg (ordinary GRNs the app never wrote an allocation row for). Direction of the fix:
-   * the APP'S OWN consumed allocation wins whenever a GRN number appears in both places — it
-   * carries pnl_cost_amount (proper non-recoverable-GST treatment, cost-centre attribution),
-   * which this mirror's flat l.amount does not. The mirror now only ever contributes a GRN the
-   * app has not captured, which is its original, intended job — filling the gap that was empty in
-   * production when this block was first written, not re-counting what the app has since taken
-   * over.
-   *
-   * Read at LINE level: grn_entry_line_snapshot carries the cost centre, which the header
-   * does not, so this is the only path that can attribute spend below branch.
-   *
-   * Uses l.amount (net-of-tax) — NOT l.total. l.total = l.amount + l.tax (GST). GST on
-   * business purchases is ITC-recoverable and is not a P&L expense; including it overstates
-   * IDC by the GST rate (~18%) on each GRN line. grn_request above uses pnl_cost_amount for the
-   * same reason (fixed 2026-08-29 from amount_without_tax — see that block's own comment for why
-   * the two differ on a partially-recoverable line). See column definitions in migration 1070.
-   *
-   * Guarded by tableExists so an installation without the mirror keeps its previous
-   * behaviour rather than throwing.
-   */
-  if (await tableExists("grn_entry_line_snapshot")) {
-    // Resolved per row in a derived table before aggregating, for the same reason the query
-    // above does it: PROCESS_FROM_EMPLOYEES correlates on ccm.id, and ONLY_FULL_GROUP_BY
-    // rejects a correlated subquery beside a GROUP BY.
-    const [mirrored] = await db.execute<RowDataPacket[]>(
-      // The branch comes from the COST CENTRE, not the GRN row: grn_entry_snapshot carries
-      // branch_source_id (db_bill's integer id) and a branch_name the sync leaves null, and
-      // neither is a mas_hrms branch_master id, which is what every other P&L key is.
-      `SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
-              COALESCE(pc.process_id, ccm.process_id) AS process_id, SUM(l.amount) AS amount
-         FROM grn_entry_line_snapshot l
-         JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
-         LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-                 = l.cost_centre_code COLLATE utf8mb4_unicode_ci
-         LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
-        WHERE g.period_code = ? AND g.is_rejected = 0 AND ${OWN_COMPANY_SQL}
-          AND NOT EXISTS (
-                SELECT 1
-                  FROM grn_request gr
-                  JOIN grn_cost_allocation a ON a.grn_request_id = gr.id
-                 WHERE gr.grn_number = g.grn_no
-                   AND a.lifecycle_status = 'consumed'
-              )
-        GROUP BY ccm.branch_id, ccm.id, COALESCE(pc.process_id, ccm.process_id)`,
-      [periodCode]
-    );
-    accumulate(mirrored, actuals);
-  }
-  return actuals;
+  // 2026-09-23: now a thin grouping over readGrnSpend() — the single GRN reader shared with CEO
+  // Overview and Live P&L (see its banner). The history below is kept because it explains why the
+  // shared reader looks the way it does.
+  const spend = await readGrnSpend(periodCode, "consumed", { withProcess: true });
+  return accumulate(spend.map((row) => ({
+    branch_id: row.branchId,
+    cost_centre_id: row.costCentreId,
+    process_id: row.processId,
+    amount: row.amount,
+  }) as unknown as RowDataPacket));
 }
+
+/*
+ * History of the GRN reader above (it used to be the body of getIndirectCostActuals):
+ *
+ * - Two app GRN paths write spend: the Smart GRN writes per-line rows to grn_cost_allocation,
+ *   the ordinary GRN keeps budget_line_id and the amount on grn_request itself. Counting only one
+ *   reported zero cost against a budget that had genuinely consumed, so both are union'd, and the
+ *   ordinary leg only takes GRNs with NO allocation rows, so a Smart GRN is never counted twice.
+ * - 2026-08-29: both app legs read pnl_cost_amount, not amount_without_tax. They are equal only
+ *   when GST is 100% recoverable; on a line with a lower recoverable_tax_pct (e.g. an exempt /
+ *   non_gst budget line, default 0%) amount_without_tax drops the non-recoverable tax slice that
+ *   IS a real P&L expense. pnl_cost_amount is what calculateBudgetLine() computes for exactly this
+ *   (baseAmount + taxAmount - recoverableTaxAmount) and what vw_process_pnl_grn_allocation and
+ *   branch-budget.service.ts's GRN drill-through read.
+ * - 2026-08-29: the db_bill mirror (grn_entry_line_snapshot) was double-counting — 1,452 of 1,495
+ *   consumed app GRNs (97%) were also in the mirror under the same GRN number, overstating the
+ *   Statement's IDC by Rs 3,37,46,372 for Apr-Aug 2026. The NOT EXISTS guard on
+ *   grn_number = grn_no makes the app's own consumed allocation win; the mirror only fills a GRN
+ *   the app has not captured. Mirror read at LINE level (only the line carries the cost centre),
+ *   branch taken from the cost centre (the mirror's branch ids are db_bill's), and l.amount
+ *   (net of tax) — never l.total, whose GST is ITC-recoverable and not a P&L expense.
+ * - 2026-09-02 PERF: process attribution via the precomputed PROCESS_BY_COST_CENTRE join, not the
+ *   per-row PROCESS_FROM_EMPLOYEES correlated subquery (30-46s+ per call -> ~1.7s, identical rows).
+ * - 2026-09-23: OWN_COMPANY_SQL now applies to the two app legs too (it was mirror-only here), and
+ *   the whole thing moved into readGrnSpend() so CEO Overview and Live P&L read the same rows.
+ */
 
 /** Recognised revenue for a period, from the budget's own monthly drivers. */
 export async function getDriverRevenueActuals(periodCode: string): Promise<ActualsByKey> {

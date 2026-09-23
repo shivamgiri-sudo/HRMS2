@@ -36,6 +36,10 @@ function read(relativePath: string) {
  * is the PRIMARY source (it carries pnl_cost_amount — proper non-recoverable-GST treatment —
  * which the mirror's flat l.amount does not), and the mirror is UNIONed in only for a GRN number
  * the app has not captured, via a NOT EXISTS guard keyed on grn_number = grn_no.
+ *
+ * 2026-09-23: the four copies had drifted apart again (company filter, ordinary-GRN leg), so they
+ * were collapsed into ONE reader, pnl-actuals.service.ts's readGrnSpend(). The guard is now
+ * asserted once on that reader, and each surface is asserted to call it rather than run its own.
  */
 describe("GRN actual spend is not double-counted across the app and the db_bill mirror", () => {
   /** Checked as independent, whitespace-insensitive lines rather than one indented block — the
@@ -50,46 +54,56 @@ describe("GRN actual spend is not double-counted across the app and the db_bill 
     expect(body).toContain("AND a2.lifecycle_status = 'consumed'");
   }
 
-  it("pnl-actuals.service.ts's P&L Statement mirror leg excludes GRNs the app already counted", () => {
+  /** The one shared reader (2026-09-23): every surface below must route through it. */
+  function readerBody() {
     const service = read("src/modules/process-pnl/pnl-actuals.service.ts");
-    expect(service).toContain("a.pnl_cost_amount AS amount");
-    expect(service).toContain("g.pnl_cost_amount AS amount");
-    // This is the one call site using `gr`/`a` (not `gr2`/`a2`) — it has no outer `gr`/`a` alias
-    // already in scope at that nesting level, unlike the other three.
-    expect(service).toContain("WHERE gr.grn_number = g.grn_no");
-    expect(service).toContain("NOT EXISTS (");
-    expect(service).toContain("JOIN grn_cost_allocation a ON a.grn_request_id = gr.id");
+    const fn = service.slice(service.indexOf("export async function readGrnSpend("));
+    return fn.slice(0, fn.indexOf("\n}\n"));
+  }
+
+  it("pnl-actuals.service.ts readGrnSpend is app-side-first, mirror fills gaps only, company-filtered on every leg", () => {
+    const body = readerBody();
+    expect(body).toContain("FROM grn_cost_allocation a");
+    expect(body).toContain("a.pnl_cost_amount AS amount");
+    expect(body).toContain("gr.pnl_cost_amount AS amount");
+    expect(body).toContain("FROM grn_entry_line_snapshot l");
+    expect(body).toContain("l.amount AS amount");
+    expect(body).not.toContain("l.total");
+    expectDedupGuard(body, "ge");
+    // OWN_COMPANY_SQL (via grnScope) on all three legs, not just the mirror.
+    expect(body.split("${scope.sql}").length - 1).toBe(3);
+    expect(body).toContain("gr.accounting_period = ?");
   });
 
-  it("ceo-overview.service.ts's spendByBranch is app-side-first, mirror fills gaps only", () => {
+  it("the P&L Statement (getIndirectCostActuals) reads the shared reader", () => {
+    const service = read("src/modules/process-pnl/pnl-actuals.service.ts");
+    const fn = service.slice(service.indexOf("export async function getIndirectCostActuals("));
+    const body = fn.slice(0, fn.indexOf("\n}\n"));
+    expect(body).toContain("readGrnSpend(periodCode, \"consumed\"");
+    expect(body).not.toContain("FROM grn_cost_allocation");
+  });
+
+  it("ceo-overview.service.ts spendByBranch reads the shared reader (consumed + reserved in window)", () => {
     const service = read("src/modules/process-pnl/ceo-overview.service.ts");
     const fn = service.slice(service.indexOf("async function spendByBranch("));
     const body = fn.slice(0, fn.indexOf("\n}\n"));
-    expect(body).toContain("FROM grn_cost_allocation a");
-    expect(body).toContain("a.lifecycle_status = 'consumed'");
-    expect(body).toContain("FROM grn_entry_line_snapshot l");
-    expectDedupGuard(body, "g");
+    expect(body).toContain("readGrnSpend(period, \"consumed\", scope)");
+    expect(body).toContain("readGrnSpend(period, \"reserved\", scope)");
+    expect(body).not.toContain("FROM grn_cost_allocation");
   });
 
-  it("ceo-overview.service.ts's branch-overhead heuristic uses the SAME de-duplicated total it is compared against", () => {
+  it("ceo-overview.service.ts branch-overhead heuristic uses the SAME total it is compared against", () => {
     const service = read("src/modules/process-pnl/ceo-overview.service.ts");
     const fn = service.slice(service.indexOf("async function buildFocus("));
     const body = fn.slice(0, fn.indexOf("\n}\n"));
-    // Comparing totals.indirectCost (already fixed, via spendByBranch) against a still-doubled
-    // branchTotal would have thrown the 95% "is this really the whole branch's overhead" check off
-    // by roughly 2x on any branch with real Smart GRN activity.
-    expect(body).toContain("FROM grn_cost_allocation a");
-    expectDedupGuard(body, "g");
-    expect(body).toContain("const branchTotal = n(appGrn[0]?.a) + n(branchGrn[0]?.a);");
+    expect(body).toContain("await spendByBranch(period,");
+    expect(body).not.toContain("FROM grn_entry_line_snapshot");
   });
 
-  it("pnl-reconciliation.service.ts's Live P&L readGrn is app-side-first, mirror fills gaps only", () => {
+  it("pnl-reconciliation.service.ts Live P&L readGrn/readGrnCommitted read the shared reader", () => {
     const service = read("src/modules/process-pnl/pnl-reconciliation.service.ts");
-    const fn = service.slice(service.indexOf("async function readGrn("));
-    const body = fn.slice(0, fn.indexOf("\n}\n"));
-    expect(body).toContain("FROM grn_cost_allocation a");
-    expect(body).toContain("a.lifecycle_status = 'consumed'");
-    expect(body).toContain("FROM grn_entry_line_snapshot l");
-    expectDedupGuard(body, "g");
+    expect(service).toContain("readGrnSpend(period, \"consumed\")");
+    expect(service).toContain("readGrnSpend(period, \"reserved\")");
+    expect(service).not.toContain("FROM grn_cost_allocation");
   });
 });

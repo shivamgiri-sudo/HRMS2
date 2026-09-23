@@ -1,7 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
-import { OWN_COMPANY_SQL } from "./pnl-actuals.service.js";
+import { OWN_COMPANY_SQL, readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
 import { getSeatBillingEstimate, isEstimateWindow, type CostCentreSeatBilling } from "./pnl-seat-billing.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { ccProcessJoin, ccProcessNameSql } from "./cost-centre-label.js";
@@ -338,47 +338,23 @@ async function readRevenue(period: string): Promise<Map<string, RevenueRow>> {
  * spend. The app's own grn_cost_allocation (carrying pnl_cost_amount, proper tax treatment) is now
  * the primary source; the mirror UNION only ever contributes a GRN the app has not captured.
  */
-async function readGrn(period: string): Promise<Map<string, number>> {
+/*
+ * 2026-09-23: both readers below are thin groupings over pnl-actuals.service.ts's readGrnSpend(),
+ * the single GRN reader shared with the P&L Statement (getIndirectCostActuals) and CEO Overview
+ * (spendByBranch). Before this, the app leg here had no OWN_COMPANY_SQL filter and no ordinary
+ * (non-Smart) GRN leg, so Live P&L's GRN disagreed with the other two tabs.
+ */
+function sumByCostCentre(rows: GrnSpendRow[]): Map<string, number> {
   const out = new Map<string, number>();
-
-  const [appRows] = await db.execute<MoneyRow[]>(
-    `SELECT a.cost_centre_id AS cost_centre_id, SUM(a.pnl_cost_amount) AS amount
-       FROM grn_cost_allocation a
-       JOIN grn_request gr ON gr.id = a.grn_request_id
-      WHERE a.lifecycle_status = 'consumed'
-        AND gr.accounting_period = ?
-      GROUP BY a.cost_centre_id`,
-    [period],
-  );
-  for (const row of appRows) if (row.cost_centre_id) out.set(String(row.cost_centre_id), n(row.amount));
-
-  if (await tableExists("grn_entry_line_snapshot")) {
-    const [rows] = await db.execute<MoneyRow[]>(
-      `SELECT ccm.id AS cost_centre_id, SUM(l.amount) AS amount
-         FROM grn_entry_line_snapshot l
-         JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
-         LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-                 = l.cost_centre_code COLLATE utf8mb4_unicode_ci
-        WHERE g.period_code = ? AND g.is_rejected = 0 AND ${OWN_COMPANY_SQL}
-          AND NOT EXISTS (
-                SELECT 1
-                  FROM grn_request gr2
-                  JOIN grn_cost_allocation a2 ON a2.grn_request_id = gr2.id
-                 WHERE gr2.grn_number = g.grn_no
-                   AND a2.lifecycle_status = 'consumed'
-              )
-        GROUP BY ccm.id`,
-      [period],
-    );
-    for (const row of rows) {
-      if (!row.cost_centre_id) continue;
-      const key = String(row.cost_centre_id);
-      out.set(key, (out.get(key) ?? 0) + n(row.amount));
-    }
+  for (const row of rows) {
+    if (!row.costCentreId) continue;
+    out.set(row.costCentreId, (out.get(row.costCentreId) ?? 0) + row.amount);
   }
-
   return out;
+}
+
+async function readGrn(period: string): Promise<Map<string, number>> {
+  return sumByCostCentre(await readGrnSpend(period, "consumed"));
 }
 
 /**
@@ -396,18 +372,7 @@ async function readGrn(period: string): Promise<Map<string, number>> {
  * not something the legacy db_bill snapshot (a bill inventory, not an approval queue) ever holds.
  */
 async function readGrnCommitted(period: string): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
-  const [rows] = await db.execute<MoneyRow[]>(
-    `SELECT a.cost_centre_id AS cost_centre_id, SUM(a.pnl_cost_amount) AS amount
-       FROM grn_cost_allocation a
-       JOIN grn_request gr ON gr.id = a.grn_request_id
-      WHERE a.lifecycle_status = 'reserved'
-        AND gr.accounting_period = ?
-      GROUP BY a.cost_centre_id`,
-    [period],
-  );
-  for (const row of rows) if (row.cost_centre_id) out.set(String(row.cost_centre_id), n(row.amount));
-  return out;
+  return sumByCostCentre(await readGrnSpend(period, "reserved"));
 }
 
 /**
