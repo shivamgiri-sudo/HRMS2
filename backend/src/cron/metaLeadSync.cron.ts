@@ -16,6 +16,8 @@
  * No-op when META_MARKETING_ACCESS_TOKEN is not configured.
  */
 
+import type { RowDataPacket } from "mysql2";
+import { db } from "../db/mysql.js";
 import { metaCampaignService } from "../modules/meta-campaign/meta-campaign.service.js";
 import { isMetaConfigured } from "../modules/meta-campaign/meta-api.client.js";
 
@@ -41,10 +43,30 @@ async function runMetaLeadSync(): Promise<void> {
   console.log("[meta-sync] Starting hourly lead sync...");
 
   try {
-    // Pull new leads from all linked forms (deduplicates automatically)
-    const leadResult = await metaCampaignService.backfillAllLinkedForms();
+    // Pull new leads only for active campaigns — draft/paused/archived forms on Meta's API
+    // return (#100) "Tried accessing nonexisting field (leads)" and would abort the whole run.
+    const [activeForms] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT meta_form_id, campaign_name FROM meta_campaign
+        WHERE campaign_status = 'active'
+          AND meta_form_id IS NOT NULL AND meta_form_id <> ''`
+    );
+
+    let totalImported = 0;
+    let formErrors = 0;
+    for (const row of activeForms as any[]) {
+      try {
+        const result = await metaCampaignService.backfillFormLeads(String(row.meta_form_id));
+        totalImported += result.imported;
+        if (result.imported > 0) {
+          console.log(`[meta-sync] ${result.imported} new leads from "${row.campaign_name}"`);
+        }
+      } catch (err: any) {
+        formErrors++;
+        console.error(`[meta-sync] Form ${row.meta_form_id} ("${row.campaign_name}") error:`, err?.message ?? err);
+      }
+    }
     console.log(
-      `[meta-sync] Lead sync complete: ${leadResult.totalImported} new leads imported across ${leadResult.forms.length} forms`
+      `[meta-sync] Lead sync complete: ${totalImported} new leads across ${activeForms.length} active forms, ${formErrors} form errors`
     );
 
     // Sync campaign metrics (impressions, reach, clicks, spend)
