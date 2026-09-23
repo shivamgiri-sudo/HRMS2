@@ -7,6 +7,7 @@ import { readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
 import { isEstimateWindow } from "./pnl-seat-billing.service.js";
 import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
 import { ccProcessJoin, ccProcessNameSql, costCentreLabel } from "./cost-centre-label.js";
+import { focusBudgetTopUps } from "./budget-top-up-attribution.js";
 
 /**
  * The CEO view of the P&L: one figure per branch, and a ranked list of where profit is leaking.
@@ -1154,6 +1155,22 @@ async function buildFocus(
         [period, ...codeList],
       );
       budget = n(bud[0]?.a);
+
+      // Header-level top-ups (reopen_additional_amount), which budgetByBranch() adds for every
+      // branch but this panel used to leave out entirely (audit item 16). A top-up has no cost
+      // centre of its own, so it is attributed here ONLY when every CostCenter line of its budget
+      // is in this focus — then the whole budget, top-up included, belongs to it. A top-up on a
+      // budget shared with other cost centres is NOT pro-rated (same no-guessing rule as the budget
+      // drilldown and budget-cost-centre-utilization.service.ts); it is named in a note instead.
+      const topUps = await focusBudgetTopUps(period, codeList);
+      budget += topUps.attributable;
+      if (topUps.shared !== 0) {
+        notes.push(
+          `${lakh(topUps.shared)} of sanctioned top-ups sit on budgets shared with other cost centres `
+          + `and are not included in the budget above — a header-level top-up names no cost centre, `
+          + `so it is not split by guesswork.`,
+        );
+      }
     }
 
     // Does this cost centre carry its whole branch's overhead? If so the margin is a contribution,

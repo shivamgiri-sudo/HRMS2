@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { assertNotFuturePeriod } from "./pnl-period-guard.js";
+import { focusBudgetTopUps } from "./budget-top-up-attribution.js";
 
 /**
  * The row-level detail behind every clickable P&L cell — "what actually makes up this number".
@@ -416,6 +417,20 @@ function budgetCostCentreScopeSql(scope: PnlDrilldownScope): { sql: string; para
   return null;
 }
 
+/** The cost centre codes a process / cost-centre scope covers — the same resolution the CEO focus
+ *  panel (buildFocus) uses for its budget lines. */
+async function scopeCostCentreCodes(scope: PnlDrilldownScope): Promise<string[]> {
+  const [codes] = await db.execute<RowDataPacket[]>(
+    scope.costCentreId
+      ? `SELECT cost_centre_code AS code FROM cost_centre_master WHERE id = ?`
+      : `SELECT DISTINCT ccm.cost_centre_code AS code
+           FROM employees e JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
+          WHERE e.process_id = ?`,
+    [scope.costCentreId ?? scope.processId],
+  );
+  return codes.map((r) => String(r.code ?? "")).filter(Boolean);
+}
+
 async function budgetDrilldownRows(period: string, scope: PnlDrilldownScope): Promise<PnlDrilldownResult> {
   const rows: DrilldownRow[] = [];
   const cc = budgetCostCentreScopeSql(scope);
@@ -452,11 +467,11 @@ async function budgetDrilldownRows(period: string, scope: PnlDrilldownScope): Pr
     // drilldown that only listed lines would under-total by exactly this amount, caught live by
     // this session's own reconciliation strip (Rs 36,500 mismatch, 2026-08-22) before shipping.
     //
-    // Branch scope only. A top-up is recorded against the budget HEADER with no cost centre of its
-    // own, so there is no honest way to attribute it to one process or cost centre — including it
-    // under those scopes would inflate their total by another scope's money. Omitted rather than
-    // guessed, matching how budget-cost-centre-utilization.service.ts refuses to pro-rate
-    // unattributed spend.
+    // This block is branch scope only. A top-up is recorded against the budget HEADER with no cost
+    // centre of its own, so it is never pro-rated to a process or cost centre — including a shared
+    // budget's top-up under those scopes would inflate their total by another scope's money,
+    // matching how budget-cost-centre-utilization.service.ts refuses to pro-rate unattributed
+    // spend. The one exception (a budget funding ONLY this scope) is handled just below.
     if (!cc && (await tableExists("finance_budget_snapshot"))) {
       const [topUpRows] = await db.execute<RowDataPacket[]>(
         `SELECT b.bill_source_id, b.reopen_additional_amount, b.branch_name
@@ -473,6 +488,23 @@ async function budgetDrilldownRows(period: string, scope: PnlDrilldownScope): Pr
           label: "Sanctioned top-up",
           detail: `Header-level addition${r.branch_name ? ` — ${r.branch_name}` : ""}, not tied to a specific line`,
           amount: n(r.reopen_additional_amount),
+          date: null,
+        });
+      }
+    }
+    // Process / cost-centre scope: the one honest attribution — a top-up whose budget funds ONLY
+    // cost centres in this scope belongs to it whole. Same rule and same figure as the CEO focus
+    // panel's budget (ceo-overview.service.ts focusBudgetTopUps), so the drilldown ties to it.
+    // Top-ups on budgets shared with other cost centres stay out, as before.
+    if (cc) {
+      const codes = await scopeCostCentreCodes(scope);
+      const topUps = await focusBudgetTopUps(period, codes);
+      if (topUps.attributable !== 0) {
+        rows.push({
+          id: "topup-in-scope",
+          label: "Sanctioned top-up",
+          detail: "Header-level additions on budgets that fund only this scope's cost centres",
+          amount: topUps.attributable,
           date: null,
         });
       }
