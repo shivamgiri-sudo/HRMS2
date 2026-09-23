@@ -31,8 +31,12 @@ const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =
 
 exitRouter.get(
   "/command-center",
-  requireRole("admin", "hr", "manager", "finance", "payroll", "ceo"),
-  h(async (_req, res) => res.json({ success: true, data: await getExitCommandCenter() }))
+  requireRole("admin", "hr", "manager", "finance", "payroll", "ceo", "super_admin", "payroll_head", "wfm", "branch_head", "process_manager"),
+  h(async (req, res) => {
+    const actorUserId = req.authUser!.id;
+    const actorRoles: string[] = req.authUser!.roles ?? [];
+    return res.json({ success: true, data: await getExitCommandCenter({ actorUserId, actorRoles }) });
+  })
 );
 
 exitRouter.get(

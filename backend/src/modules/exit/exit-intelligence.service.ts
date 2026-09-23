@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { calculateEmployeeEngagementHealth } from "../engagement/engagement-health.service.js";
 import { scalar } from "../../shared/dbHelpers.js";
+import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 
 function riskLabel(score: number): "low" | "medium" | "high" | "critical" {
   if (score >= 75) return "critical";
@@ -139,12 +140,25 @@ export async function createDefaultClearanceTasks(exitRequestId: string, employe
   return { created: tasks.length, skipped: false };
 }
 
-export async function getExitCommandCenter(filters: { managerEmployeeId?: string } = {}) {
-  const params: unknown[] = [];
-  const scopeWhere = filters.managerEmployeeId
-    ? `WHERE (e.reporting_manager_id = ? OR e.manager_id = ?)`
-    : "";
-  if (filters.managerEmployeeId) params.push(filters.managerEmployeeId, filters.managerEmployeeId);
+const BYPASS_SCOPE_ROLES = new Set(['super_admin', 'payroll_head']);
+
+export async function getExitCommandCenter(scope: { actorUserId: string; actorRoles: string[] }) {
+  const bypass = scope.actorRoles.some(r => BYPASS_SCOPE_ROLES.has(r));
+
+  let scopeWhere = '1=1';
+  let scopeParams: unknown[] = [];
+
+  if (!bypass) {
+    const SCOPED_ROLES = ['admin','hr','finance','payroll','ceo','manager','branch_head',
+                         'process_manager','assistant_manager','tl','wfm','it'];
+    const clause = await buildScopeWhereClause(
+      scope.actorUserId,
+      SCOPED_ROLES,
+      { branchId: 'e.branch_id', processId: 'e.process_id' }
+    );
+    scopeWhere = clause.sql;
+    scopeParams = clause.params;
+  }
 
   const [summary] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -156,8 +170,8 @@ export async function getExitCommandCenter(filters: { managerEmployeeId?: string
      FROM exit_request er
      JOIN employees e ON e.id = er.employee_id
      LEFT JOIN exit_employee_health_snapshot hs ON hs.exit_request_id = er.id
-     ${scopeWhere}`,
-    params,
+     WHERE (${scopeWhere})`,
+    [...scopeParams],
   );
 
   const [requests] = await db.execute<RowDataPacket[]>(
@@ -193,29 +207,28 @@ export async function getExitCommandCenter(filters: { managerEmployeeId?: string
        -- No latest-row wrapper needed here (unlike noc_case above): live-verified 2026-09-15,
        -- zero exit requests carry more than one full_final_calculation row.
        LEFT JOIN full_final_calculation ff ON ff.exit_request_id = er.id
-      ${scopeWhere}
+      WHERE (${scopeWhere})
       ORDER BY
         FIELD(er.status,'submitted','manager_review','hr_review','admin_review','accepted','notice_serving') DESC,
         er.created_at DESC
       LIMIT 200`,
-    params,
+    [...scopeParams],
   );
 
-  const clearanceParams: unknown[] = [];
-  const clearanceScope = filters.managerEmployeeId
-    ? `JOIN exit_request er ON er.id = ect.exit_request_id
-       JOIN employees e ON e.id = er.employee_id
-       WHERE (e.reporting_manager_id = ? OR e.manager_id = ?)`
-    : "";
-  if (filters.managerEmployeeId) clearanceParams.push(filters.managerEmployeeId, filters.managerEmployeeId);
+  const clearanceJoin = bypass
+    ? ""
+    : `JOIN exit_request er ON er.id = ect.exit_request_id
+       JOIN employees e ON e.id = er.employee_id`;
+  const clearanceWhere = bypass ? "" : `WHERE (${scopeWhere})`;
 
   const [clearance] = await db.execute<RowDataPacket[]>(
     `SELECT ect.clearance_area, ect.status, COUNT(*) AS count
        FROM exit_clearance_task ect
-       ${clearanceScope}
+       ${clearanceJoin}
+       ${clearanceWhere}
       GROUP BY ect.clearance_area, ect.status
       ORDER BY ect.clearance_area, ect.status`,
-    clearanceParams,
+    bypass ? [] : [...scopeParams],
   );
 
   // Attrition trend (last 6 months)
@@ -249,11 +262,14 @@ export async function getExitCommandCenter(filters: { managerEmployeeId?: string
            AND e2.date_of_joining <= LAST_DAY(MAX(er.created_at))
        ), 0), 2) AS rate
      FROM exit_request er
+     JOIN employees e ON e.id = er.employee_id
      WHERE er.created_at >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
        AND er.status NOT IN ('draft', 'rejected', 'revoked', 'withdrawn')
+       AND (${scopeWhere})
      GROUP BY DATE_FORMAT(er.created_at, '%Y-%m')
      ORDER BY month ASC
-     LIMIT 6`
+     LIMIT 6`,
+    [...scopeParams],
   );
 
   // Exit reason breakdown
@@ -262,11 +278,14 @@ export async function getExitCommandCenter(filters: { managerEmployeeId?: string
        COALESCE(er.exit_reason_category, 'other') AS reason,
        COUNT(*) AS count
      FROM exit_request er
+     JOIN employees e ON e.id = er.employee_id
      WHERE er.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
        AND er.status NOT IN ('draft', 'rejected', 'revoked', 'withdrawn')
+       AND (${scopeWhere})
      GROUP BY COALESCE(er.exit_reason_category, 'other')
      ORDER BY count DESC
-     LIMIT 12`
+     LIMIT 12`,
+    [...scopeParams],
   );
 
   // Branch breakdown
@@ -283,9 +302,11 @@ export async function getExitCommandCenter(filters: { managerEmployeeId?: string
      LEFT JOIN branch_master b ON b.id = e.branch_id
      WHERE er.created_at >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
        AND er.status NOT IN ('draft', 'rejected', 'revoked', 'withdrawn')
+       AND (${scopeWhere})
      GROUP BY e.branch_id, b.branch_name
      ORDER BY count DESC
-     LIMIT 10`
+     LIMIT 10`,
+    [...scopeParams],
   );
 
   return {
