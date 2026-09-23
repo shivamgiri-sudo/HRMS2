@@ -12,6 +12,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import type { BpoPnlRow, BpoPnlSummary } from "@/hooks/useBpoProcessPnl";
+import { pnlLabel } from "./pnlLabels";
 
 /**
  * The lines a reader can open from this drawer, and what each resolves to.
@@ -22,11 +23,11 @@ import type { BpoPnlRow, BpoPnlSummary } from "@/hooks/useBpoProcessPnl";
  * than making a tile lie about what clicking it would show.
  */
 const DRILL_TARGETS: { label: string; params: Pick<PnlDrilldownParams, "metric" | "peopleBucket"> }[] = [
-  { label: "Recognised revenue", params: { metric: "revenue" } },
+  { label: pnlLabel("RECOGNISED_REVENUE"), params: { metric: "revenue" } },
   { label: "Agent salary", params: { metric: "people", peopleBucket: "agent_salary" } },
   { label: "DSC people", params: { metric: "people", peopleBucket: "dsc_people" } },
   { label: "BMC people", params: { metric: "people", peopleBucket: "bmc_people" } },
-  { label: "Indirect / GRN spend", params: { metric: "indirect" } },
+  { label: pnlLabel("INDIRECT_COST"), params: { metric: "indirect" } },
 ];
 
 function formatCurrency(value: number) {
@@ -78,12 +79,12 @@ export function ProcessPnlRowDrawer({
             <h3 className="text-sm font-semibold text-slate-950">Core KPI snapshot</h3>
             <dl className="mt-3 grid grid-cols-2 gap-3">
               {[
-                ["Recognized revenue", formatCurrency(row.recognizedRevenue)],
+                [pnlLabel("RECOGNISED_REVENUE"), formatCurrency(row.recognizedRevenue)],
                 ["EBITDA", formatCurrency(row.ebitda)],
                 ["EBITDA margin", formatPercent(row.ebitdaMarginPct)],
                 ["Revenue at risk", revenueAtRiskDisplay],
                 ["Budget utilization", formatPercent(row.budgetUtilizationPct)],
-                ["Active HC", row.activeHc.toLocaleString("en-IN")],
+                [pnlLabel("ACTIVE_HEADCOUNT"), row.activeHc.toLocaleString("en-IN")],
               ].map(([label, value]) => (
                 <div key={label} className="border border-slate-200 bg-slate-50 p-3">
                   <dt className="text-xs font-medium text-slate-500">{label}</dt>

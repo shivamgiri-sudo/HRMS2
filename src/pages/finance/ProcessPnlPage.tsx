@@ -28,6 +28,15 @@ import { PnlSeatBillabilityPanel } from "@/components/finance/pnl/PnlSeatBillabi
 import { BpoPnlMatrixTable } from "@/components/finance/pnl/BpoPnlMatrixTable";
 import { ProcessPnlAlertsWorkspace } from "@/components/finance/pnl/ProcessPnlAlertsWorkspace";
 import { ProcessPnlMatrixToolbar } from "@/components/finance/pnl/ProcessPnlMatrixToolbar";
+import {
+  buildLiveBasis,
+  buildProcessBasis,
+  buildStatementBasis,
+  pctOf,
+  type HeaderCostLineKey,
+  type HeaderKpiBasis,
+} from "@/components/finance/pnl/headerKpiBasis";
+import { pnlLabel, pnlTooltip } from "@/components/finance/pnl/pnlLabels";
 import { getIssueCounts, type ProcessPnlDensity, type ProcessPnlIssueFilter, type ProcessPnlMatrixPreset, type ProcessPnlStatusFilter } from "@/components/finance/pnl/processPnlMatrixConfig";
 
 const MATRIX_VIEW_STORAGE_KEY = "process-pnl-matrix:view";
@@ -212,19 +221,28 @@ export default function ProcessPnlPage() {
    * this quietly hides that the process-level configuration was never done, and nobody ever
    * fills those four tables in.
    */
+  const bpoHasMoney = Boolean(summary) && [
+    summary?.kpis.recognizedRevenue, summary?.kpis.agentSalary,
+    summary?.kpis.dsc, summary?.kpis.bmc,
+  ].some((v) => Math.abs(Number(v ?? 0)) > 0.5);
+
+  /*
+   * The header's fallback reads its OWN statement query, pinned to the branch view (audit item 8).
+   * It used to sum whichever view the Statement tab's "View by" dropdown had selected, so toggling
+   * Process ↔ Branch on that tab changed the header figures — the process view counts only
+   * process-attributable revenue, the branch view the whole company. The branch view is the
+   * company-level total, so it is the fixed basis. Same query key as the Statement tab's branch
+   * view (shared cache), and only fetched when the fallback can actually be needed.
+   */
+  const headerStatementQuery = usePnlStatement(filters, "branch", { enabled: Boolean(summary) && !bpoHasMoney });
   const statementTotal = (componentKey: string): number | null => {
-    const rows = statementQuery.data?.rows;
-    const columns = statementQuery.data?.columns;
+    const rows = headerStatementQuery.data?.rows;
+    const columns = headerStatementQuery.data?.columns;
     if (!rows || !columns) return null;
     const row = rows.find((r) => r.componentKey === componentKey);
     if (!row) return null;
     return columns.reduce((total, column) => total + Number(row.values[column.id] ?? 0), 0);
   };
-
-  const bpoHasMoney = Boolean(summary) && [
-    summary?.kpis.recognizedRevenue, summary?.kpis.agentSalary,
-    summary?.kpis.dsc, summary?.kpis.bmc,
-  ].some((v) => Math.abs(Number(v ?? 0)) > 0.5);
 
   const fallbackRevenue = statementTotal("recognized_revenue");
   const useStatementFallback = Boolean(summary) && !bpoHasMoney
@@ -245,99 +263,135 @@ export default function ProcessPnlPage() {
     && Boolean(live) && Math.abs(live?.totals.revenue ?? 0) > 0.5;
   const kpiSource: "process" | "statement" | "live" = useLiveBasis ? "live" : useStatementFallback ? "statement" : "process";
 
-  const pct = (part: number | null, whole: number | null) =>
-    part !== null && whole !== null && whole !== 0 ? (part / whole) * 100 : 0;
-
   /*
-   * Component keys, verified against finance_pnl_component_master rather than assumed. The cost
-   * lines are total_dsc / total_bmc — there is no plain "dsc" or "bmc" component, and reading
-   * those would have yielded 0, showing full revenue against no support cost and a hugely
-   * overstated Operating Profit. Operating Profit uses total_cost, which already includes IDC,
-   * instead of adding the three people lines and quietly dropping it.
+   * ONE ENGINE PER HEADER (audit item 7). Exactly one basis is chosen and EVERY tile in the strip,
+   * the masthead revenue and the Cost-mix panel read from it — never Live revenue beside
+   * Statement/process cost. Statement component keys are verified against
+   * finance_pnl_component_master (see headerKpiBasis.ts). Each basis is additive:
+   * Recognised Revenue − People Cost − Indirect/GRN lines (− engine residual) = Operating Profit.
+   * Under the Live and Statement bases EBITDA / PBT / PAT are omitted: they exist only in the
+   * process engine and would be a second engine's figures (or confident zeros) beside this OP.
    */
-  const agentSalaryV = useStatementFallback ? (statementTotal("agent_salary") ?? 0) : summary?.kpis.agentSalary ?? 0;
-  const dscV = useStatementFallback ? (statementTotal("total_dsc") ?? 0) : summary?.kpis.dsc ?? 0;
-  const bmcV = useStatementFallback ? (statementTotal("total_bmc") ?? 0) : summary?.kpis.bmc ?? 0;
-  const revenueV = useLiveBasis
-    ? (live?.totals.revenue ?? 0)
-    : useStatementFallback ? (fallbackRevenue ?? 0) : summary?.kpis.recognizedRevenue ?? 0;
-  const opV = useStatementFallback
-    ? revenueV - (statementTotal("total_cost") ?? 0)
-    : summary?.kpis.operatingProfit ?? 0;
+  const basis: HeaderKpiBasis | null = !summary
+    ? null
+    : useLiveBasis && live
+      ? buildLiveBasis(live.totals)
+      : useStatementFallback
+        ? buildStatementBasis(statementTotal)
+        : buildProcessBasis(summary.kpis);
+  const revenueV = basis?.revenue ?? 0;
+  const pct = pctOf;
 
-  const liveTotals = live?.totals;
-  const livePeopleCostMissing = (liveTotals?.payrollCost ?? 0) === 0;
-  const liveKpiItems = liveTotals
-    ? [
-        { label: "Recognized revenue", value: liveTotals.revenue, kind: "currency" as const, tone: "good" as const },
-        ...((liveTotals.revenueEstimated ?? 0) > 0 ? [{
-          label: `of which estimated (seat rate · ${liveTotals.estimatedCostCentres} CC)`,
-          value: liveTotals.revenueEstimated,
-          kind: "currency" as const,
-          tone: "warning" as const,
-        }] : []),
-        { label: "Revenue per day", value: liveTotals.perDayRevenue ?? 0, kind: "currency" as const },
-        { label: livePeopleCostMissing ? "People cost (not run yet)" : "People cost", value: liveTotals.payrollCost, kind: "currency" as const, tone: "warning" as const },
-        ...(livePeopleCostMissing ? [] : [{ label: "People cost / revenue", value: pct(liveTotals.payrollCost, liveTotals.revenue), kind: "percent" as const }]),
-        { label: "Vendor (GRN) cost", value: liveTotals.grnActual, kind: "currency" as const, tone: "warning" as const },
+  // Names and tooltips from the shared P&L glossary (audit items 23/24/28).
+  const costLineLabel: Record<HeaderCostLineKey, string> = {
+    people: pnlLabel("PEOPLE_COST"),
+    indirect: pnlLabel("INDIRECT_COST"),
+    grnConsumed: pnlLabel("GRN_CONSUMED"),
+    grnCommitted: pnlLabel("GRN_COMMITTED"),
+    other: "Other cost (engine residual)",
+  };
+  const costLineHint: Record<HeaderCostLineKey, string> = {
+    people: pnlTooltip("PEOPLE_COST"),
+    indirect: pnlTooltip("INDIRECT_COST"),
+    grnConsumed: pnlTooltip("GRN_CONSUMED"),
+    grnCommitted: pnlTooltip("GRN_COMMITTED"),
+    other: "The engine's Operating Profit differs from Recognised Revenue minus the cost lines it publishes by this amount; shown so the tiles still add up.",
+  };
+  // Under the Live basis the header shows the Live P&L's own figure, so it carries that figure's
+  // name — the same "Operating Profit (contribution)" as the Live P&L and CEO Overview tabs.
+  const opTerm = basis?.source === "live" ? "OPERATING_PROFIT_CONTRIBUTION" : "OPERATING_PROFIT";
+
+  const buildKpiItems = (b: HeaderKpiBasis) => {
+    const liveTotals = b.source === "live" ? live?.totals : undefined;
+    const peopleCost = b.costLines.find((line) => line.key === "people")?.value ?? 0;
+    const otherLines = b.costLines.filter((line) => line.key !== "people");
+    const split = b.peopleSplit;
+    // The process engine publishes its own ratios; the Statement basis derives them from its tiles.
+    const splitPct = (value: number, enginePct: number | null | undefined) =>
+      b.source === "process" && enginePct != null ? enginePct : pct(value, b.revenue);
+    return [
+      { label: pnlLabel("RECOGNISED_REVENUE"), value: b.revenue, kind: "currency" as const, tone: "good" as const, hint: pnlTooltip("RECOGNISED_REVENUE") },
+      ...(liveTotals && (liveTotals.revenueEstimated ?? 0) > 0 ? [{
+        label: `of which estimated (seat rate · ${liveTotals.estimatedCostCentres} CC)`,
+        value: liveTotals.revenueEstimated,
+        kind: "currency" as const,
+        tone: "warning" as const,
+      }] : []),
+      ...(liveTotals ? [{ label: "Revenue per day", value: liveTotals.perDayRevenue ?? 0, kind: "currency" as const }] : []),
+      {
+        label: b.peopleCostMissing ? `${pnlLabel("PEOPLE_COST")} (not run yet)` : pnlLabel("PEOPLE_COST"),
+        value: peopleCost,
+        kind: "currency" as const,
+        tone: "warning" as const,
+        hint: costLineHint.people,
+      },
+      ...(b.peopleCostMissing ? [] : [{ label: `${pnlLabel("PEOPLE_COST")} / revenue`, value: pct(peopleCost, b.revenue), kind: "percent" as const }]),
+      ...(split ? [
+        { label: "of which Agent salary", value: split.agentSalary, kind: "currency" as const },
+        { label: "Agent salary / revenue", value: splitPct(split.agentSalary, summary?.kpis.agentSalaryPctRevenue), kind: "percent" as const },
+        { label: "of which Direct Service Cost", value: split.dsc, kind: "currency" as const },
+        { label: "DSC / revenue", value: splitPct(split.dsc, summary?.kpis.dscPctRevenue), kind: "percent" as const },
+        { label: "of which Branch Management Cost", value: split.bmc, kind: "currency" as const },
+        { label: "BMC / revenue", value: splitPct(split.bmc, summary?.kpis.bmcPctRevenue), kind: "percent" as const },
+      ] : []),
+      ...otherLines.map((line) => ({
+        label: costLineLabel[line.key],
+        value: line.value,
+        kind: "currency" as const,
+        tone: "warning" as const,
+        hint: costLineHint[line.key],
+      })),
+      ...(b.source === "process" && summary ? [
         {
-          label: livePeopleCostMissing ? "Operating profit (excl. people cost)" : "Operating profit",
-          value: liveTotals.operatingProfit,
+          label: "EBITDA",
+          value: summary.kpis.ebitda,
           kind: "currency" as const,
-          tone: livePeopleCostMissing ? ("warning" as const) : liveTotals.operatingProfit >= 0 ? ("good" as const) : ("danger" as const),
+          tone: summary.kpis.ebitda >= 0 ? ("good" as const) : ("danger" as const),
         },
-        // marginPct is null when the month has no people cost yet — omitted rather than shown as 0%.
-        ...(liveTotals.marginPct == null ? [] : [{
-          label: "Operating margin",
-          value: liveTotals.marginPct,
+        {
+          label: "EBITDA margin",
+          value: summary.kpis.ebitdaMarginPct ?? 0,
           kind: "percent" as const,
-          tone: liveTotals.marginPct >= 0 ? ("good" as const) : ("danger" as const),
-        }]),
-      ]
-    : [];
-
-  const kpiItems = !summary ? [] : useLiveBasis ? liveKpiItems : [
-        { label: "Recognized revenue", value: revenueV, kind: "currency" as const, tone: "good" as const },
-        { label: "Agent salary", value: agentSalaryV, kind: "currency" as const },
-        { label: "Agent salary / revenue", value: useStatementFallback ? pct(agentSalaryV, revenueV) : summary.kpis.agentSalaryPctRevenue ?? 0, kind: "percent" as const },
-        { label: "Direct Service Cost", value: dscV, kind: "currency" as const, tone: "warning" as const },
-        { label: "DSC / revenue", value: useStatementFallback ? pct(dscV, revenueV) : summary.kpis.dscPctRevenue ?? 0, kind: "percent" as const },
-        { label: "Branch Management Cost", value: bmcV, kind: "currency" as const, tone: "warning" as const },
-        { label: "BMC / revenue", value: useStatementFallback ? pct(bmcV, revenueV) : summary.kpis.bmcPctRevenue ?? 0, kind: "percent" as const },
-        // EBITDA and its margin come from the engine the fallback exists BECAUSE it returns
-        // nothing, so under the fallback they are ~0 while Revenue and Operating Profit beside
-        // them are real. That is the same contradiction the PBT/PAT note below was written to
-        // avoid, one tile to the left: a strip reading "Revenue Rs 3.44 Cr, Operating profit
-        // positive, EBITDA Rs 0, EBITDA margin 0.0%". Omitted under the fallback for the same
-        // reason, rather than printed as a confident zero.
-        ...(useStatementFallback ? [] : [
-          {
-            label: "EBITDA",
-            value: summary.kpis.ebitda,
-            kind: "currency" as const,
-            tone: summary.kpis.ebitda >= 0 ? ("good" as const) : ("danger" as const),
-          },
-          {
-            label: "EBITDA margin",
-            value: summary.kpis.ebitdaMarginPct ?? 0,
-            kind: "percent" as const,
-            tone: (summary.kpis.ebitdaMarginPct ?? 0) >= 0 ? ("good" as const) : ("danger" as const),
-          },
-        ]),
-        {
-          label: "Operating profit",
-          value: opV,
-          kind: "currency" as const,
-          tone: opV >= 0 ? ("good" as const) : ("danger" as const),
+          tone: (summary.kpis.ebitdaMarginPct ?? 0) >= 0 ? ("good" as const) : ("danger" as const),
         },
-        // PBT and PAT need finance cost and tax, which the statement fallback has no source for.
-        // Showing them as Rs 0 beside a real Operating Profit would read as "we made a profit and
-        // then lost all of it", so they are omitted entirely when the fallback is in use.
-        ...(useStatementFallback ? [] : [
-          { label: "PBT", value: summary.kpis.pbt, kind: "currency" as const },
-          { label: "PAT", value: summary.kpis.pat, kind: "currency" as const },
-        ]),
-      ];
+      ] : []),
+      {
+        label: b.peopleCostMissing ? `${pnlLabel(opTerm)} (excl. People Cost)` : pnlLabel(opTerm),
+        value: b.operatingProfit,
+        kind: "currency" as const,
+        tone: b.peopleCostMissing ? ("warning" as const) : b.operatingProfit >= 0 ? ("good" as const) : ("danger" as const),
+        hint: `${pnlLabel("RECOGNISED_REVENUE")} minus ${b.costLines.map((line) => costLineLabel[line.key]).join(", ")}. ${pnlTooltip(opTerm)}`,
+      },
+      // Null when the engine says no margin is meaningful yet — omitted rather than shown as 0%.
+      ...(b.marginPct == null ? [] : [{
+        label: pnlLabel("OPERATING_MARGIN"),
+        value: b.marginPct,
+        kind: "percent" as const,
+        tone: b.marginPct >= 0 ? ("good" as const) : ("danger" as const),
+      }]),
+      ...(b.source === "process" && summary ? [
+        { label: "PBT", value: summary.kpis.pbt, kind: "currency" as const },
+        { label: "PAT", value: summary.kpis.pat, kind: "currency" as const },
+      ] : []),
+    ];
+  };
+
+  const kpiItems = basis ? buildKpiItems(basis) : [];
+
+  /** Cost-mix segments: the same additive cost lines as the strip, so the bar and tiles agree. */
+  const costMixFill: Record<HeaderCostLineKey, string> = {
+    people: "bg-primary",
+    indirect: "bg-amber-500",
+    grnConsumed: "bg-amber-500",
+    grnCommitted: "bg-amber-300",
+    other: "bg-slate-400",
+  };
+  const costMixSegments = (basis?.costLines ?? []).map((line) => ({
+    key: line.key,
+    label: costLineLabel[line.key],
+    value: line.value,
+    fill: costMixFill[line.key],
+  }));
 
   return (
     <DashboardLayout>
@@ -358,7 +412,7 @@ export default function ProcessPnlPage() {
             {summary && (
               <>
                 <div className="border-l-[3px] border-primary pl-2.5">
-                  <p className="text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground">Recognized revenue</p>
+                  <p className="text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground" title={pnlTooltip("RECOGNISED_REVENUE")}>{pnlLabel("RECOGNISED_REVENUE")}</p>
                   <p className="text-lg font-extrabold tabular-nums text-foreground">{formatCurrency(revenueV, true)}</p>
                 </div>
                 {kpiSource === "statement" && (
@@ -524,35 +578,37 @@ export default function ProcessPnlPage() {
                   search={search || undefined}
                 />
 
-                {/* Cost mix — Agent salary / DSC / BMC as a share of recognized revenue, from the
-                    same kpiItems figures already computed above (statement-fallback aware, so it
-                    never shows a mix built from mismatched sources). Real data, zero new backend
-                    calls: this is the same agentSalaryV/dscV/bmcV/revenueV already on the page. */}
-                {summary && revenueV > 0 && (
+                {/* Cost mix — the header basis's own additive cost lines as a share of its own
+                    revenue (audit item 7): one engine, never one engine's profit over another's
+                    revenue. The segments plus Operating Profit sum to 100% of revenue. */}
+                {basis && basis.revenue > 0 && (
                   <div className="border border-border bg-card px-4 py-3">
                     <p className="text-[10px] font-extrabold uppercase tracking-[0.11em] text-muted-foreground">
-                      Cost mix (% of recognized revenue)
+                      Cost mix (% of {pnlLabel("RECOGNISED_REVENUE")} ·{kpiSource === "live" ? "Live P&L" : kpiSource === "statement" ? "P&L Statement" : "process engine"})
                     </p>
                     <div className="mt-2 flex h-6 w-full overflow-hidden rounded-sm border border-border">
-                      {[
-                        { label: "Agent salary", value: agentSalaryV, fill: "bg-primary" },
-                        { label: "DSC", value: dscV, fill: "bg-amber-500" },
-                        { label: "BMC", value: bmcV, fill: "bg-rose-500" },
-                      ].map((seg) => (
+                      {costMixSegments.map((seg) => (
                         <div
-                          key={seg.label}
+                          key={seg.key}
                           className={seg.fill}
-                          style={{ width: `${Math.max(0, Math.min(100, pct(seg.value, revenueV)))}%` }}
-                          title={`${seg.label}: ${pct(seg.value, revenueV).toFixed(1)}% of revenue (${formatCurrency(seg.value, true)})`}
+                          style={{ width: `${Math.max(0, Math.min(100, pct(seg.value, basis.revenue)))}%` }}
+                          title={`${seg.label}: ${pct(seg.value, basis.revenue).toFixed(1)}% of revenue (${formatCurrency(seg.value, true)})`}
                         />
                       ))}
                     </div>
                     <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-                      <span><span className="inline-block h-2 w-2 rounded-full bg-primary" /> Agent salary {pct(agentSalaryV, revenueV).toFixed(1)}%</span>
-                      <span><span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> DSC {pct(dscV, revenueV).toFixed(1)}%</span>
-                      <span><span className="inline-block h-2 w-2 rounded-full bg-rose-500" /> BMC {pct(bmcV, revenueV).toFixed(1)}%</span>
-                      <span>Operating profit {pct(opV, revenueV).toFixed(1)}%</span>
+                      {costMixSegments.map((seg) => (
+                        <span key={seg.key}><span className={`inline-block h-2 w-2 rounded-full ${seg.fill}`} /> {seg.label} {pct(seg.value, basis.revenue).toFixed(1)}%</span>
+                      ))}
+                      <span>{pnlLabel(opTerm)} {pct(basis.operatingProfit, basis.revenue).toFixed(1)}%</span>
                     </div>
+                    {basis.peopleSplit && (
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {pnlLabel("PEOPLE_COST")} split: Agent salary {pct(basis.peopleSplit.agentSalary, basis.revenue).toFixed(1)}%
+                        {" · "}DSC {pct(basis.peopleSplit.dsc, basis.revenue).toFixed(1)}%
+                        {" · "}BMC {pct(basis.peopleSplit.bmc, basis.revenue).toFixed(1)}%
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -593,10 +649,10 @@ export default function ProcessPnlPage() {
                         <div className="space-y-4">
                           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-5">
                             {[
-                              { label: "Revenue", value: ytdQuery.data.totalRevenue, tone: "text-slate-900" },
-                              { label: "People Cost", value: ytdQuery.data.totalPeopleCost, tone: "text-slate-700" },
-                              { label: "Indirect Cost", value: ytdQuery.data.totalIndirectCost, tone: "text-slate-700" },
-                              { label: "Operating Profit", value: ytdQuery.data.totalOperatingProfit, tone: ytdQuery.data.totalOperatingProfit >= 0 ? "text-emerald-700 font-semibold" : "text-rose-700 font-semibold" },
+                              { label: pnlLabel("RECOGNISED_REVENUE"), value: ytdQuery.data.totalRevenue, tone: "text-slate-900" },
+                              { label: pnlLabel("PEOPLE_COST"), value: ytdQuery.data.totalPeopleCost, tone: "text-slate-700" },
+                              { label: pnlLabel("INDIRECT_COST"), value: ytdQuery.data.totalIndirectCost, tone: "text-slate-700" },
+                              { label: pnlLabel("OPERATING_PROFIT"), value: ytdQuery.data.totalOperatingProfit, tone: ytdQuery.data.totalOperatingProfit >= 0 ? "text-emerald-700 font-semibold" : "text-rose-700 font-semibold" },
                               { label: "Budget (allocated)", value: ytdQuery.data.totalBudget, tone: "text-blue-700" },
                             ].map((item) => (
                               <div key={item.label} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
@@ -607,7 +663,7 @@ export default function ProcessPnlPage() {
                           </div>
                           {ytdQuery.data.marginPct != null && (
                             <p className="text-xs text-slate-500">
-                              YTD operating margin: <span className={`font-semibold ${ytdQuery.data.marginPct >= 8 ? "text-emerald-700" : "text-rose-700"}`}>{ytdQuery.data.marginPct.toFixed(1)}%</span>
+                              YTD {pnlLabel("OPERATING_MARGIN")}: <span className={`font-semibold ${ytdQuery.data.marginPct >= 8 ? "text-emerald-700" : "text-rose-700"}`}>{ytdQuery.data.marginPct.toFixed(1)}%</span>
                               {" · "}Budget consumed: <span className="font-semibold text-slate-700">{ytdQuery.data.totalBudget > 0 ? `${((ytdQuery.data.totalIndirectCost / ytdQuery.data.totalBudget) * 100).toFixed(1)}%` : "—"}</span>
                             </p>
                           )}

@@ -15,6 +15,8 @@ type Kpi = {
   value: number | null;
   kind?: "currency" | "number" | "percent";
   tone?: "neutral" | "good" | "warning" | "danger";
+  /** Tooltip saying what the figure is and where it comes from. */
+  hint?: string;
 };
 
 export function PnlExecutiveKpiStrip({ items, compact = false }: { items: Kpi[]; compact?: boolean }) {
@@ -39,7 +41,7 @@ export function PnlExecutiveKpiStrip({ items, compact = false }: { items: Kpi[];
               : "border-border bg-card text-muted-foreground";
 
           return (
-            <div key={item.label} className={`shrink-0 rounded-xl border px-3 py-1.5 ${chipColor}`}>
+            <div key={item.label} title={item.hint} className={`shrink-0 rounded-xl border px-3 py-1.5 ${chipColor}`}>
               <p className="text-[9px] font-semibold uppercase tracking-wider opacity-70 whitespace-nowrap">{item.label}</p>
               <p className="text-sm font-black tracking-tight whitespace-nowrap">{renderedValue}</p>
             </div>
@@ -74,6 +76,7 @@ export function PnlExecutiveKpiStrip({ items, compact = false }: { items: Kpi[];
         return (
           <div
             key={item.label}
+            title={item.hint}
             className={`border-b border-r border-border px-4 py-3 last:border-r-0 ${
               item.tone === "good" ? "border-t-[3px] border-t-primary" : ""
             }`}

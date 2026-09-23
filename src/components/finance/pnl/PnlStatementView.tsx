@@ -5,6 +5,7 @@ import { useRefreshRunningSalarySnapshot } from "@/hooks/usePnlStatement";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { PnlDrilldownDrawer } from "@/components/finance/pnl/PnlDrilldownDrawer";
 import type { PnlDrilldownParams } from "@/hooks/usePnlDrilldown";
+import { pnlLabel, pnlTooltip, type PnlTermKey } from "./pnlLabels";
 
 /**
  * Which statement lines can be opened, and what they resolve to.
@@ -33,6 +34,29 @@ function istToday(): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date());
+}
+
+/**
+ * Statement lines that name a concept the shared glossary owns are shown under the glossary's
+ * label (audit items 23/24/28) rather than the component master's display_name ("Total Indirect
+ * Cost", "Operating Profit %"), so the Statement says what the other tabs say. Display only — the
+ * component keys, values and CSV totals are unchanged.
+ */
+const GLOSSARY_BY_COMPONENT: Record<string, PnlTermKey> = {
+  recognized_revenue: "RECOGNISED_REVENUE",
+  total_idc: "INDIRECT_COST",
+  operating_profit: "OPERATING_PROFIT",
+  operating_profit_pct: "OPERATING_MARGIN",
+};
+
+function rowLabel(row: { componentKey: string; displayName: string }): string {
+  const term = GLOSSARY_BY_COMPONENT[row.componentKey];
+  return term ? pnlLabel(term) : row.displayName;
+}
+
+function rowTooltip(componentKey: string): string | undefined {
+  const term = GLOSSARY_BY_COMPONENT[componentKey];
+  return term ? pnlTooltip(term) : undefined;
 }
 
 const SECTION_LABELS: Record<string, string> = {
@@ -106,7 +130,7 @@ export function PnlStatementView({
         return cell != null ? String(Number(cell).toFixed(2)) : "0";
       });
       const total = values.reduce((s, v) => s + Number(v), 0).toFixed(2);
-      lines.push([`"${row.displayName}"`, ...values, total].join(","));
+      lines.push([`"${rowLabel(row)}"`, ...values, total].join(","));
     }
     const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -148,11 +172,11 @@ export function PnlStatementView({
               className={`text-xs font-medium ${isStale ? "text-amber-700" : "text-slate-500"}`}
               title={isStale ? "Salary earned since this date is not in the statement" : undefined}
             >
-              People cost as of {asOf}{isStale ? " — out of date" : ""}
+              People Cost as of {asOf}{isStale ? " — out of date" : ""}
             </span>
           ) : (
-            <span className="text-xs font-medium text-amber-700" title="Agent, DSC and BMC people cost read zero until a snapshot exists, which overstates Operating Profit">
-              No people-cost snapshot for this period
+            <span className="text-xs font-medium text-amber-700" title="Agent, DSC and BMC People Cost read zero until a snapshot exists, which overstates Operating Profit">
+              No People Cost snapshot for this period
             </span>
           )}
 
@@ -307,9 +331,12 @@ export function PnlStatementView({
                   const isChild = Boolean(row.parentComponentKey);
                   sections.push(
                     <tr key={row.componentKey} className={`border-b border-slate-100 last:border-0 ${row.isSubtotal ? "bg-slate-50/40 font-semibold" : ""}`}>
-                      <td className={`sticky left-0 z-10 bg-white py-2 pr-4 ${isChild ? "pl-10 text-slate-500" : "px-4 text-slate-700"}`}>
+                      <td
+                        className={`sticky left-0 z-10 bg-white py-2 pr-4 ${isChild ? "pl-10 text-slate-500" : "px-4 text-slate-700"}`}
+                        title={rowTooltip(row.componentKey)}
+                      >
                         {isChild && <span className="mr-1.5 text-slate-300">↳</span>}
-                        {row.displayName}
+                        {rowLabel(row)}
                       </td>
                       {statement.columns.map((column) => {
                         const target = drilldownFor(row.componentKey, column.id, column.name);
@@ -324,7 +351,7 @@ export function PnlStatementView({
                                 : ""
                             }`}
                             onClick={canOpen ? () => setDrilldown(target) : undefined}
-                            title={canOpen ? `View the ${row.displayName.toLowerCase()} behind this figure` : undefined}
+                            title={canOpen ? `View the ${rowLabel(row)} behind this figure` : undefined}
                           >
                             {formatValue(value, row.format)}
                           </td>

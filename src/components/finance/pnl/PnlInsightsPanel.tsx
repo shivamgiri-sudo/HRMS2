@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { usePnlInsights, type InsightCell, type InsightContribution, type InsightUnit } from "@/hooks/usePnlInsights";
 import { inrCompact } from "./PnlTrendExplorer";
 import { CostCentreName, costCentreText } from "./costCentreLabel";
+import { pnlLabel } from "./pnlLabels";
 
 /**
  * P&L Insights — four answers the Live P&L table holds but cannot show at a glance.
@@ -27,7 +28,7 @@ const ROOT_VARS = `
 .dark [data-pnl-insights] { --ins-pos:#3987e5; --ins-neg:#e66767; --ins-accrual:#3d5f8a; --ins-muted:#64748b; --ins-warn:#e0a33a; }`;
 
 const CHART_CONFIG = {
-  op: { label: "Operating profit", color: "var(--ins-pos)" },
+  op: { label: pnlLabel("OPERATING_PROFIT_CONTRIBUTION"), color: "var(--ins-pos)" },
   revenuePerHead: { label: "Revenue per head", color: "var(--ins-pos)" },
 } satisfies ChartConfig;
 
@@ -142,11 +143,11 @@ function ContributionTooltip({ active, payload }: { active?: boolean; payload?: 
       {c.kind === "no_payroll" && <p className="mt-1 text-amber-700 dark:text-amber-400">No salary booked here — its staff are paid under another cost centre, so this profit is overstated.</p>}
       {c.kind === "no_revenue" && <p className="mt-1 text-muted-foreground">No revenue this month — an overhead, or a client process not billed or estimated yet.</p>}
       <div className="mt-1.5 grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5 tabular-nums">
-        <span className="text-muted-foreground">Revenue{c.estimated ? " (est.)" : ""}</span><span className="text-right">{inrCompact(c.revenue)}</span>
-        <span className="text-muted-foreground">Salary</span><span className="text-right">{inrCompact(c.payroll)}</span>
-        <span className="text-muted-foreground">IDC</span><span className="text-right">{inrCompact(c.idc)}</span>
-        <span className="font-semibold">Operating profit</span><span className={`text-right font-semibold ${c.op < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}>{inrCompact(c.op)}</span>
-        <span className="text-muted-foreground">OP%</span><span className="text-right">{pctLabel(c.opPct)}</span>
+        <span className="text-muted-foreground">{pnlLabel("RECOGNISED_REVENUE")}{c.estimated ? " (est.)" : ""}</span><span className="text-right">{inrCompact(c.revenue)}</span>
+        <span className="text-muted-foreground">{pnlLabel("PEOPLE_COST")}</span><span className="text-right">{inrCompact(c.payroll)}</span>
+        <span className="text-muted-foreground">{pnlLabel("INDIRECT_COST")}</span><span className="text-right">{inrCompact(c.idc)}</span>
+        <span className="font-semibold">{pnlLabel("OPERATING_PROFIT_CONTRIBUTION")}</span><span className={`text-right font-semibold ${c.op < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}>{inrCompact(c.op)}</span>
+        <span className="text-muted-foreground">{pnlLabel("OPERATING_MARGIN")}</span><span className="text-right">{pctLabel(c.opPct)}</span>
       </div>
     </div>
   );
@@ -185,8 +186,8 @@ function ProfitContribution({ rows, salaryMissing }: { rows: InsightContribution
     <Section
       title="Profit contribution"
       subtitle={salaryMissing
-        ? "Payroll for this month has not run — these bars are revenue less IDC only, not operating profit."
-        : "Operating profit by cost centre. Top earners above, the ones giving profit back below."}
+        ? `Payroll for this month has not run — these bars are ${pnlLabel("RECOGNISED_REVENUE")} less ${pnlLabel("INDIRECT_COST")} only, not ${pnlLabel("OPERATING_PROFIT_CONTRIBUTION")}.`
+        : `${pnlLabel("OPERATING_PROFIT_CONTRIBUTION")} by cost centre. Top earners above, the ones giving profit back below.`}
       action={rows.length > 16 ? (
         <Button size="sm" variant="outline" onClick={() => setShowAll((v) => !v)}>{showAll ? "Top & bottom 8" : `Show all ${rows.length}`}</Button>
       ) : undefined}
@@ -254,12 +255,12 @@ function UnitTooltip({ active, payload }: { active?: boolean; payload?: Array<{ 
       <p className="font-semibold text-foreground">{u.code}</p>
       <p className="text-muted-foreground">{[u.processName, u.branchName].filter(Boolean).join(" · ")}</p>
       <div className="mt-1.5 grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5 tabular-nums">
-        <span className="text-muted-foreground">Staff paid</span><span className="text-right">{u.staff.toLocaleString("en-IN")}</span>
+        <span className="text-muted-foreground">{pnlLabel("PAID_STAFF")}</span><span className="text-right">{u.staff.toLocaleString("en-IN")}</span>
         <span className="text-muted-foreground">Revenue / head</span><span className="text-right">{inrCompact(u.revenuePerHead)}</span>
         <span className="text-muted-foreground">Cost / head</span><span className="text-right">{inrCompact(u.costPerHead)}</span>
         <span className="font-semibold">{gap >= 0 ? "Earns" : "Loses"} / head</span><span className={`text-right font-semibold ${gap < 0 ? "text-rose-600 dark:text-rose-400" : ""}`}>{inrCompact(Math.abs(gap))}</span>
-        <span className="text-muted-foreground">Revenue</span><span className="text-right">{inrCompact(u.revenue)}</span>
-        <span className="text-muted-foreground">OP%</span><span className="text-right">{pctLabel(u.opPct)}</span>
+        <span className="text-muted-foreground">{pnlLabel("RECOGNISED_REVENUE")}</span><span className="text-right">{inrCompact(u.revenue)}</span>
+        <span className="text-muted-foreground">{pnlLabel("OPERATING_MARGIN")}</span><span className="text-right">{pctLabel(u.opPct)}</span>
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight, Info, Loader2 } from "lucide-react";
 import { useFullWaterfall } from "@/hooks/useFullWaterfall";
+import { pnlLabel, pnlTooltip } from "./pnlLabels";
 
 /**
  * Full P&L Waterfall — supplementary detail, never the headline number.
@@ -75,9 +76,9 @@ export function PnlFullWaterfallCard({ period, branchId, branchName, defaultOpen
               This is a more detailed breakdown using the full BPO cost-bucket methodology — the same
               per-process contribution/EBITDA/EBIT/PBT/PAT figures each process's own detail page
               shows, added up across {branchId ? "this branch's" : "every branch's"} active processes.
-              It may differ slightly from the headline Operating Profit figure above, which is
-              reconciled against the official monthly P&amp;L report and is calculated separately.
-              Both are real, correctly-computed numbers on different bases.
+              Its EBIT is after depreciation and amortisation, so it is not the same figure as the
+              headline {pnlLabel("OPERATING_PROFIT_CONTRIBUTION")} above, which is before them and is
+              calculated separately. Both are real, correctly-computed numbers on different bases.
             </span>
           </p>
 
@@ -112,9 +113,11 @@ export function PnlFullWaterfallCard({ period, branchId, branchName, defaultOpen
                 <dt className="text-slate-500">Amortization</dt>
                 <dd className="text-right font-medium">{money(data.amortization, data.hasAmortizationData)}</dd>
 
-                <dt className="text-slate-500">EBIT / Operating profit</dt>
+                {/* Was "EBIT / Operating profit", which read as the same figure as the headline
+                    Operating Profit above it. It is after D&A; the headline is before it. */}
+                <dt className="text-slate-500" title={pnlTooltip("EBIT")}>{pnlLabel("EBIT")}</dt>
                 <dd className={`text-right font-medium tabular-nums ${data.ebit >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{lakh(data.ebit)}</dd>
-                <dt className="text-slate-500">Operating profit margin</dt>
+                <dt className="text-slate-500" title="EBIT as a percentage of Recognised Revenue.">EBIT margin %</dt>
                 <dd className="text-right font-medium">{pctStr(data.operatingProfitPct)}</dd>
 
                 <dt className="text-slate-500">Finance cost</dt>

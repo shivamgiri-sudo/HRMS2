@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePnlLiveReconciliation, type PnlReconciliationRow } from "@/hooks/usePnlLiveReconciliation";
 import { costCentreText } from "./costCentreLabel";
+import { pnlLabel, pnlTooltip } from "./pnlLabels";
 
 function money(value: number | null | undefined, compact = true) {
   return new Intl.NumberFormat("en-IN", {
@@ -106,9 +107,11 @@ export function PnlReconciliationPanel({
     );
   }
 
-  const metricCards = [
-    { label: "Recognised revenue", value: money(data.totals.revenue) },
-    { label: "Invoice revenue", value: money(data.totals.revenueInvoice) },
+  // Labels and tooltips from the shared P&L glossary (audit items 23/24/28), so each concept has the
+  // same name here as on CEO Overview, the header strip and the Statement.
+  const metricCards: Array<{ label: string; value: string; hint?: string; danger?: boolean; estimated?: boolean }> = [
+    { label: pnlLabel("RECOGNISED_REVENUE"), value: money(data.totals.revenue), hint: pnlTooltip("RECOGNISED_REVENUE") },
+    { label: pnlLabel("INVOICED_REVENUE"), value: money(data.totals.revenueInvoice), hint: pnlTooltip("INVOICED_REVENUE") },
     { label: "Accrued top-up", value: money(data.totals.revenueAccrual) },
     {
       // Seat rate x seats for cost centres with no invoice or provision yet — see pnl-seat-billing.service.ts.
@@ -117,25 +120,27 @@ export function PnlReconciliationPanel({
       estimated: (data.totals.revenueEstimated ?? 0) > 0,
     },
     { label: "Revenue per day (seat run-rate)", value: money(data.totals.perDayRevenue ?? 0) },
-    { label: "Payroll cost", value: money(data.totals.payrollCost) },
-    { label: "GRN actual (consumed)", value: money(data.totals.grnActual) },
+    { label: pnlLabel("PEOPLE_COST"), value: money(data.totals.payrollCost), hint: pnlTooltip("PEOPLE_COST") },
+    { label: pnlLabel("GRN_CONSUMED"), value: money(data.totals.grnActual), hint: pnlTooltip("GRN_CONSUMED") },
     {
       // Approved GRN that has not been fully consumed yet — real committed spend, only inside
       // the open month, folded into the cost side so OP is not overstated while the bill finishes.
-      label: "GRN committed (reserved, not yet consumed)",
+      label: pnlLabel("GRN_COMMITTED"),
       value: money(data.totals.grnEstimated ?? 0),
+      hint: pnlTooltip("GRN_COMMITTED"),
       estimated: (data.totals.grnEstimated ?? 0) > 0,
     },
     {
-      // BUG-7: this reconciliation view computes OP as recognisedRevenue - payrollCost - grnActual,
-      // a simplified 3-line check with no DSC/BMC/overhead split or allocation layer. It is a
-      // quick sanity check, not the full waterfall the Statement tab produces — label it as such
-      // so it isn't mistaken for the authoritative Operating Profit figure.
-      label: "Indicative OP (simplified)",
+      // BUG-7: this view computes OP as Recognised Revenue − People Cost − GRN (consumed + committed),
+      // with no DSC/BMC split or allocation layer — not the Statement's waterfall. Formerly
+      // Indicative OP (simplified); now named "Operating Profit (contribution)", the same name and
+      // figure as CEO Overview, and distinct from the Statement's "Operating Profit" (tooltip says how).
+      label: pnlLabel("OPERATING_PROFIT_CONTRIBUTION"),
       value: money(data.totals.operatingProfit),
+      hint: pnlTooltip("OPERATING_PROFIT_CONTRIBUTION"),
       danger: data.totals.operatingProfit < 0,
     },
-    { label: "Margin", value: percent(data.totals.marginPct), danger: (data.totals.marginPct ?? 0) < 0 },
+    { label: pnlLabel("OPERATING_MARGIN"), value: percent(data.totals.marginPct), hint: pnlTooltip("OPERATING_MARGIN"), danger: (data.totals.marginPct ?? 0) < 0 },
     {
       // Depreciation + finance cost + tax, entered by Finance under P&L Configuration >
       // Below-the-line costs — company-wide only, never allocated to a branch or cost centre.
@@ -144,7 +149,7 @@ export function PnlReconciliationPanel({
       estimated: (data.totals.belowTheLineTotal ?? 0) === 0,
     },
     {
-      // Deeper than "Indicative OP" above: also subtracts depreciation, finance cost and tax,
+      // Deeper than "Operating Profit (contribution)" above: also subtracts depreciation, finance cost and tax,
       // matching the owner's own manual P&L (EBITDA -> EBDTA -> PBT/PAT). Company-wide only.
       label: "True Bottom Line (PAT)",
       value: money(data.totals.truePat ?? data.totals.operatingProfit),
@@ -190,7 +195,7 @@ export function PnlReconciliationPanel({
 
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {metricCards.map((item) => (
-          <div key={item.label} className="rounded-md border border-slate-200 bg-white p-3">
+          <div key={item.label} title={item.hint} className="rounded-md border border-slate-200 bg-white p-3">
             <p className="text-[11px] font-medium uppercase text-slate-500">{item.label}</p>
             <p className={`mt-1 text-lg font-semibold tabular-nums ${item.danger ? "text-rose-700" : item.estimated ? "text-amber-700" : "text-slate-900"}`}>{item.value}</p>
           </div>
@@ -226,10 +231,10 @@ export function PnlReconciliationPanel({
               <thead className="sticky top-0 bg-slate-50 text-[11px] uppercase text-slate-500">
                 <tr>
                   <th className="px-3 py-2">Branch</th>
-                  <th className="px-3 py-2 text-right">Revenue</th>
-                  <th className="px-3 py-2 text-right">Payroll</th>
-                  <th className="px-3 py-2 text-right">GRN</th>
-                  <th className="px-3 py-2 text-right" title="Indicative OP (simplified) — Revenue minus payroll minus GRN only; no DSC/BMC/overhead split">OP*</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("RECOGNISED_REVENUE")}>{pnlLabel("RECOGNISED_REVENUE")}</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("PEOPLE_COST")}>{pnlLabel("PEOPLE_COST")}</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("INDIRECT_COST")}>{pnlLabel("INDIRECT_COST")}</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("OPERATING_PROFIT_CONTRIBUTION")}>{pnlLabel("OPERATING_PROFIT_CONTRIBUTION")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -266,12 +271,12 @@ export function PnlReconciliationPanel({
                   <th className="px-3 py-2">Branch</th>
                   <th className="px-3 py-2 text-right">Invoice</th>
                   <th className="px-3 py-2 text-right">Accrual</th>
-                  <th className="px-3 py-2 text-right">Revenue</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("RECOGNISED_REVENUE")}>{pnlLabel("RECOGNISED_REVENUE")}</th>
                   <th className="px-3 py-2 text-right" title="Monthly seat billing divided by days in the month">Per day</th>
-                  <th className="px-3 py-2 text-right">Payroll</th>
-                  <th className="px-3 py-2 text-right">GRN</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("PEOPLE_COST")}>{pnlLabel("PEOPLE_COST")}</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("INDIRECT_COST")}>{pnlLabel("INDIRECT_COST")}</th>
                   <th className="px-3 py-2 text-right">Budget</th>
-                  <th className="px-3 py-2 text-right" title="Indicative OP (simplified) — Revenue minus payroll minus GRN only; no DSC/BMC/overhead split">OP*</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("OPERATING_PROFIT_CONTRIBUTION")}>{pnlLabel("OPERATING_PROFIT_CONTRIBUTION")}</th>
                   <th className="px-3 py-2">Issues</th>
                 </tr>
               </thead>

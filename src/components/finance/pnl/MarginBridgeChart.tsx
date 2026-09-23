@@ -1,4 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { pnlLabel } from "./pnlLabels";
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-IN", {
@@ -21,12 +22,12 @@ export function MarginBridgeChart({
   };
 }) {
   const bridgeItems = [
-    { label: "Recognized revenue", value: record.revenueMtd, tone: "text-emerald-700" },
-    { label: "People cost", value: -record.directPeopleCost, tone: "text-slate-800" },
+    { label: pnlLabel("RECOGNISED_REVENUE"), value: record.revenueMtd, tone: "text-emerald-700" },
+    { label: pnlLabel("PEOPLE_COST"), value: -record.directPeopleCost, tone: "text-slate-800" },
     { label: "Non-people cost", value: -record.directNonPeopleCost, tone: "text-slate-800" },
     { label: "Indirect allocation", value: -record.indirectCost, tone: "text-amber-700" },
     { label: "Revenue at risk", value: -record.revenueAtRisk, tone: "text-rose-700" },
-    { label: "Operating profit", value: record.operatingProfit, tone: record.operatingProfit >= 0 ? "text-sky-700" : "text-rose-700" },
+    { label: pnlLabel("OPERATING_PROFIT"), value: record.operatingProfit, tone: record.operatingProfit >= 0 ? "text-sky-700" : "text-rose-700" },
   ];
 
   return (

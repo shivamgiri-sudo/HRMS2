@@ -4,6 +4,7 @@ import { useCeoOverview, type CeoBranchRow, type CeoFocus, type CeoOpportunity }
 import { FilterMultiSelect } from "./FilterMultiSelect";
 import { PnlFullWaterfallCard } from "./PnlFullWaterfallCard";
 import { costCentreText } from "./costCentreLabel";
+import { pnlLabel, pnlTooltip } from "./pnlLabels";
 
 /**
  * The CEO view of the P&L.
@@ -129,7 +130,12 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange, clientId, s
   const { revenue, peopleCost, indirectCost, operatingProfit, marginPct, staffPaid, revenuePerHead } = data;
   // Seat-rate estimate for cost centres not invoiced yet — the same figure the Live P&L tab adds.
   const estimated = data.revenueEstimated ?? 0;
-  const revenueLabel = estimated > 0.5 ? "Revenue" : "Invoiced revenue";
+  // One name for the figure whatever it holds this month (audit item 24): it was labelled invoiced
+  // revenue even though it is invoices + provision top-up + seat estimate. The tooltip states the mix.
+  const revenueLabel = pnlLabel("RECOGNISED_REVENUE");
+  const revenueTooltip = pnlTooltip("RECOGNISED_REVENUE");
+  const opLabel = pnlLabel("OPERATING_PROFIT_CONTRIBUTION");
+  const opTooltip = pnlTooltip("OPERATING_PROFIT_CONTRIBUTION");
   const branchOptions = (data.options.branches ?? []).map((b) => ({ value: b.id, label: b.name }));
   const hiddenHeads = data.closedBranchesHidden.reduce((total, b) => total + b.staffPaid, 0);
   const width = (part: number) => (revenue > 0 ? Math.max(0, Math.min(100, (part / revenue) * 100)) : 0);
@@ -235,15 +241,18 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange, clientId, s
 
       {/* Headline figures */}
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Operating margin</div>
+        <article
+          className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+          title={`${pnlTooltip("OPERATING_MARGIN")} ${opTooltip}`}
+        >
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{pnlLabel("OPERATING_MARGIN")}</div>
           <div className={`mt-1 text-[26px] font-semibold leading-tight tabular-nums ${marginTone(marginPct, false)}`}>
             {marginPct === null ? "—" : `${marginPct.toFixed(1)}%`}
           </div>
           <div className="mt-1 text-xs text-slate-500">
             {marginPct === null && estimated > 0.5 && peopleCost <= 0
               ? "not yet measurable — payroll for this month has not run"
-              : `${lakh(operatingProfit)} operating profit`}
+              : `${lakh(operatingProfit)} ${opLabel}`}
           </div>
           <div className="mt-2 flex h-7 items-end gap-1" aria-hidden="true">
             {data.trend.map((t) => (
@@ -259,14 +268,16 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange, clientId, s
             {data.trend.map((t) => `${t.period.slice(5)} ${t.marginPct === null ? "—" : t.marginPct.toFixed(0) + "%"}`).join(" · ")}
           </div>
         </article>
-        <Kpi label={revenueLabel} value={lakh(revenue)} detail={estimated > 0.5
+        <Kpi label={revenueLabel} value={lakh(revenue)} title={revenueTooltip} detail={estimated > 0.5
           ? `incl. ${lakh(estimated)} seat-rate estimate · ${data.branches.length} branch${data.branches.length === 1 ? "" : "es"}`
           : `${data.branches.length} branch${data.branches.length === 1 ? "" : "es"}`} />
-        <Kpi label="People cost" value={lakh(peopleCost)}
-          detail={`${revenue > 0 ? ((peopleCost / revenue) * 100).toFixed(1) : "—"}% of revenue · ${staffPaid.toLocaleString("en-IN")} paid`}
-          title="Full month's payroll (gross + employer PF/ESIC/gratuity, from the locked salary run) for every paid employee. The P&L Statement tab's Agent + DSC + BMC salary lines will read lower: that split comes from a separate day-by-day earned-to-date estimate that only covers employees it can compute attendance for, and does not include the leave-reversal step the payroll run applies. Both are real, correctly-computed numbers on different bases — this one is what payroll actually paid." />
+        {/* Tooltip corrected (audit item 28): the Statement no longer reads only the day-by-day
+            snapshot — it uses posted payroll when the month's run exists, the snapshot otherwise. */}
+        <Kpi label={pnlLabel("PEOPLE_COST")} value={lakh(peopleCost)}
+          detail={`${revenue > 0 ? ((peopleCost / revenue) * 100).toFixed(1) : "—"}% of revenue · ${staffPaid.toLocaleString("en-IN")} ${pnlLabel("PAID_STAFF")}`}
+          title="Payroll cost (gross + employer PF/ESIC/gratuity) for every paid employee: the posted payroll run when it exists for the month, otherwise the running (earned-to-date) salary snapshot. The P&L Statement tab applies the same rule — posted payroll where it exists, the running snapshot otherwise — and splits it into Agent + DSC + BMC salary lines." />
 
-        <Kpi label="Indirect cost" value={lakh(indirectCost)}
+        <Kpi label={pnlLabel("INDIRECT_COST")} value={lakh(indirectCost)} title={pnlTooltip("INDIRECT_COST")}
           detail={`${revenue > 0 ? ((indirectCost / revenue) * 100).toFixed(1) : "—"}% of revenue`} />
         <Kpi label="Revenue per head" value={revenuePerHead === null ? "—" : thousand(revenuePerHead)}
           detail="per paid employee, per month" />
@@ -274,8 +285,8 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange, clientId, s
 
       {/* Verdict: the number a CEO reads first, with the waterfall that explains it */}
       <section className="grid gap-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:grid-cols-[minmax(200px,0.9fr)_2fr] dark:border-slate-800 dark:bg-slate-900">
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Operating margin</div>
+        <div title={`${pnlTooltip("OPERATING_MARGIN")} ${opTooltip}`}>
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{pnlLabel("OPERATING_MARGIN")}</div>
           <div className={`mt-1 text-[44px] font-semibold leading-none tabular-nums ${marginTone(marginPct, false)}`}>
             {marginPct === null ? "—" : marginPct.toFixed(1)}
             <span className="text-2xl text-slate-500">%</span>
@@ -287,7 +298,7 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange, clientId, s
           </div>
           <div className="mt-3 flex flex-wrap gap-1.5">
             <span className="rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-semibold text-teal-800 dark:bg-teal-950/40 dark:text-teal-300">
-              {staffPaid.toLocaleString("en-IN")} paid
+              {staffPaid.toLocaleString("en-IN")} {pnlLabel("PAID_STAFF")}
             </span>
             {data.opportunities.filter((o) => o.severity !== "settled").length > 0 && (
               <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
@@ -299,12 +310,12 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange, clientId, s
 
         <div className="flex flex-col gap-2.5">
           {[
-            { name: revenueLabel, value: revenue, w: 100, fill: "bg-teal-700" },
-            { name: "People cost", value: peopleCost, w: width(peopleCost), fill: "bg-teal-700/45" },
-            { name: "Indirect cost", value: indirectCost, w: width(indirectCost), fill: "bg-teal-700/25" },
-            { name: "Operating profit", value: operatingProfit, w: width(operatingProfit), fill: "bg-emerald-700", bold: true },
+            { name: revenueLabel, value: revenue, w: 100, fill: "bg-teal-700", tip: revenueTooltip },
+            { name: pnlLabel("PEOPLE_COST"), value: peopleCost, w: width(peopleCost), fill: "bg-teal-700/45", tip: pnlTooltip("PEOPLE_COST") },
+            { name: pnlLabel("INDIRECT_COST"), value: indirectCost, w: width(indirectCost), fill: "bg-teal-700/25", tip: pnlTooltip("INDIRECT_COST") },
+            { name: opLabel, value: operatingProfit, w: width(operatingProfit), fill: "bg-emerald-700", bold: true, tip: opTooltip },
           ].map((row) => (
-            <div key={row.name} className="grid grid-cols-[132px_1fr_96px] items-center gap-3 text-[13px]">
+            <div key={row.name} title={row.tip} className="grid grid-cols-[minmax(132px,auto)_1fr_96px] items-center gap-3 text-[13px]">
               <span className={row.bold ? "font-semibold text-slate-900 dark:text-slate-100" : "text-slate-600 dark:text-slate-400"}>
                 {row.name}
               </span>
@@ -331,7 +342,7 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange, clientId, s
       <section className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3 dark:border-slate-800">
           <h3 className="text-sm font-semibold">Branch comparison</h3>
-          <span className="text-[12.5px] text-slate-500">ranked by operating profit</span>
+          <span className="text-[12.5px] text-slate-500">ranked by {opLabel}</span>
         </header>
 
         <div className="overflow-x-auto">
@@ -339,14 +350,14 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange, clientId, s
             <thead>
               <tr className="border-b border-slate-100 text-[10.5px] uppercase tracking-wider text-slate-500 dark:border-slate-800">
                 <th className="px-3 py-2 text-left font-semibold">Branch</th>
-                <th className="px-3 py-2 text-right font-semibold">Revenue</th>
-                <th className="px-3 py-2 text-right font-semibold">People</th>
-                <th className="px-3 py-2 text-right font-semibold">Staff</th>
-                <th className="px-3 py-2 text-right font-semibold">Indirect</th>
-                <th className="px-3 py-2 text-right font-semibold">Op. profit</th>
+                <th className="px-3 py-2 text-right font-semibold" title={revenueTooltip}>{revenueLabel}</th>
+                <th className="px-3 py-2 text-right font-semibold" title={pnlTooltip("PEOPLE_COST")}>{pnlLabel("PEOPLE_COST")}</th>
+                <th className="px-3 py-2 text-right font-semibold" title={pnlTooltip("PAID_STAFF")}>{pnlLabel("PAID_STAFF")}</th>
+                <th className="px-3 py-2 text-right font-semibold" title={pnlTooltip("INDIRECT_COST")}>{pnlLabel("INDIRECT_COST")}</th>
+                <th className="px-3 py-2 text-right font-semibold" title={opTooltip}>{opLabel}</th>
                 {compare === "budget" && <th className="px-3 py-2 text-right font-semibold text-blue-700">Budget</th>}
                 {compare === "budget" && <th className="px-3 py-2 text-right font-semibold text-slate-500" title="Budget − Actual; positive = favourable">vs Budget (B−A)</th>}
-                <th className="px-3 py-2 text-right font-semibold">Margin</th>
+                <th className="px-3 py-2 text-right font-semibold" title={pnlTooltip("OPERATING_MARGIN")}>{pnlLabel("OPERATING_MARGIN")}</th>
                 <th className="px-3 py-2 text-right font-semibold">Rev / head</th>
               </tr>
             </thead>
@@ -382,9 +393,9 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange, clientId, s
         {data.unbranched && (Math.abs(data.unbranched.revenue) + Math.abs(data.unbranched.peopleCost) + Math.abs(data.unbranched.indirectCost)) > 0.5 && (
           <p className="border-t border-slate-100 px-5 py-2.5 text-[12.5px] text-slate-500 dark:border-slate-800">
             Included in the totals but in no branch row (no branch on the cost centre or employee):
-            revenue {lakh(data.unbranched.revenue)}, people cost {lakh(data.unbranched.peopleCost)}
-            {data.unbranched.staffPaid > 0 && ` (${data.unbranched.staffPaid.toLocaleString("en-IN")} people)`},
-            indirect {lakh(data.unbranched.indirectCost)}.
+            {revenueLabel} {lakh(data.unbranched.revenue)}, {pnlLabel("PEOPLE_COST")} {lakh(data.unbranched.peopleCost)}
+            {data.unbranched.staffPaid > 0 && ` (${data.unbranched.staffPaid.toLocaleString("en-IN")} ${pnlLabel("PAID_STAFF")})`},
+            {" "}{pnlLabel("INDIRECT_COST")} {lakh(data.unbranched.indirectCost)}.
           </p>
         )}
       </section>
@@ -408,16 +419,18 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange, clientId, s
           </header>
           <div className="p-5">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <FocusCell label="Invoiced revenue" value={lakh(data.focus.revenue)}
+              {/* Was labelled invoiced revenue, but the figure is invoice + provision top-up + seat estimate
+                  (audit item 24) — named and explained as Recognised Revenue like everywhere else. */}
+              <FocusCell label={revenueLabel} value={lakh(data.focus.revenue)} title={revenueTooltip}
                 detail={`${data.focus.invoiceLines} invoice line${data.focus.invoiceLines === 1 ? "" : "s"}`} />
-              <FocusCell label="People cost" value={lakh(data.focus.peopleCost)}
-                detail={`${data.focus.staffPaid.toLocaleString("en-IN")} paid${data.focus.staffZeroPaid > 0 ? ` · ${data.focus.staffZeroPaid} at zero` : ""}`} />
-              <FocusCell label="Indirect cost" value={lakh(data.focus.indirectCost)}
+              <FocusCell label={pnlLabel("PEOPLE_COST")} value={lakh(data.focus.peopleCost)} title={pnlTooltip("PEOPLE_COST")}
+                detail={`${data.focus.staffPaid.toLocaleString("en-IN")} ${pnlLabel("PAID_STAFF")}${data.focus.staffZeroPaid > 0 ? ` · ${data.focus.staffZeroPaid} at zero` : ""}`} />
+              <FocusCell label={pnlLabel("INDIRECT_COST")} value={lakh(data.focus.indirectCost)} title={pnlTooltip("INDIRECT_COST")}
                 detail={data.focus.budget > 0
                   ? `${lakh(Math.abs(data.focus.budget - data.focus.indirectCost))} ${data.focus.budget >= data.focus.indirectCost ? "under" : "over"} budget`
                   : "no budget recorded"} />
-              <FocusCell label="Operating profit" value={lakh(data.focus.operatingProfit)}
-                detail={data.focus.marginPct === null ? "no revenue to measure against" : `${data.focus.marginPct.toFixed(1)}% margin`}
+              <FocusCell label={opLabel} value={lakh(data.focus.operatingProfit)} title={opTooltip}
+                detail={data.focus.marginPct === null ? "no revenue to measure against" : `${data.focus.marginPct.toFixed(1)}% ${pnlLabel("OPERATING_MARGIN")}`}
                 tone={marginTone(data.focus.marginPct, false)} />
             </div>
 
@@ -482,18 +495,19 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange, clientId, s
       )}
 
       <p className="text-[12.5px] text-slate-500">
-        Invoiced revenue and GRN spend from the db_bill mirror{estimated > 0.5 ? ", plus the seat-rate estimate for cost centres not invoiced yet (as on the Live P&L tab)" : ""}; people cost from the payroll run for
-        this month, not a recomputed snapshot. Revenue per head is monthly, per paid employee.
+        {revenueLabel} (invoices, provision top-up{estimated > 0.5 ? ", and the seat-rate estimate for cost centres not invoiced yet, as on the Live P&L tab" : ""}) and {pnlLabel("INDIRECT_COST")} from the db_bill mirror;
+        {" "}{pnlLabel("PEOPLE_COST")} from the posted payroll run for this month, or the running salary snapshot until it is posted.
+        Revenue per head is monthly, per paid employee.
       </p>
     </div>
   );
 }
 
 function FocusCell({
-  label, value, detail, tone,
-}: { label: string; value: string; detail: string; tone?: string }) {
+  label, value, detail, tone, title,
+}: { label: string; value: string; detail: string; tone?: string; title?: string }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 dark:border-slate-800 dark:bg-slate-800/40">
+    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 dark:border-slate-800 dark:bg-slate-800/40" title={title}>
       <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</div>
       <div className={`mt-1 text-[22px] font-semibold leading-tight tabular-nums ${tone ?? ""}`}>{value}</div>
       <div className="mt-0.5 text-[11.5px] text-slate-500">{detail}</div>

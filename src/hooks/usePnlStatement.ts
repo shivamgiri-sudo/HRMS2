@@ -70,7 +70,11 @@ function queryString(filters: BpoPnlFilters, viewBy: PnlStatementViewBy) {
   return `?${params.toString()}`;
 }
 
-export function usePnlStatement(filters: BpoPnlFilters, viewBy: PnlStatementViewBy) {
+export function usePnlStatement(
+  filters: BpoPnlFilters,
+  viewBy: PnlStatementViewBy,
+  options: { enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: ["pnl-statement", filters, viewBy],
     queryFn: async () => {
@@ -80,6 +84,7 @@ export function usePnlStatement(filters: BpoPnlFilters, viewBy: PnlStatementView
       return response.data;
     },
     staleTime: 60_000,
+    enabled: options.enabled ?? true,
   });
 }
 
