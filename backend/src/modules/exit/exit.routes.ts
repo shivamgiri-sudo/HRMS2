@@ -30,6 +30,25 @@ exitRouter.use(requireAuth);
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
 
+export const CLEARANCE_ROLE_MAP: Record<string, string[]> = {
+  manager:    ['manager','assistant_manager','process_manager','branch_head'],
+  hr:         ['hr','admin'],
+  compliance: ['hr','admin'],
+  assets:     ['admin','hr'],
+  it:         ['it','admin'],
+  wfm:        ['wfm','admin'],
+  payroll:    ['payroll','payroll_head','hr'],
+  finance:    ['finance','payroll_head'],
+};
+
+const CLEARANCE_BYPASS = new Set(['super_admin','admin']);
+
+export function canClearTask(area: string, callerRoles: string[]): boolean {
+  if (callerRoles.some(r => CLEARANCE_BYPASS.has(r))) return true;
+  const allowed = CLEARANCE_ROLE_MAP[area] ?? [];
+  return callerRoles.some(r => allowed.includes(r));
+}
+
 exitRouter.get(
   "/command-center",
   requireRole("admin", "hr", "manager", "finance", "payroll", "ceo", "super_admin", "payroll_head", "wfm", "branch_head", "process_manager"),
@@ -254,35 +273,65 @@ exitRouter.patch(
 
     // Same gap as GET /:id/clearance above, on the actual mutating/approval action this
     // time: manager/finance/payroll/wfm could clear or waive any exit's clearance task in
-    // any branch/process (delta-audit 2026-08-14, P1). This does not gate on the task's own
-    // owner_role (e.g. an hr user clearing a wfm-owned task) — whether cross-functional
-    // clearance should be allowed is a business-policy question, out of scope for a row-scope
-    // fix; only the branch/process boundary is enforced here.
+    // any branch/process (delta-audit 2026-08-14, P1). clearance_area is also fetched here
+    // so the role gate below can check it.
     const [taskRows] = await db.execute<RowDataPacket[]>(
-      `SELECT employee_id FROM exit_clearance_task WHERE id = ? AND exit_request_id = ?`,
+      `SELECT employee_id, clearance_area FROM exit_clearance_task WHERE id = ? AND exit_request_id = ?`,
       [req.params.taskId, req.params.id]
     );
-    const employeeId = (taskRows[0] as any)?.employee_id;
+    const task = taskRows[0] as any;
+    const employeeId = task?.employee_id;
     if (!employeeId) return res.status(404).json({ success: false, message: "Clearance task not found" });
     if (!(await canViewEmployee(req.authUser!.id, String(employeeId)))) {
       return res.status(403).json({ success: false, message: "This exit request is outside your assigned scope" });
     }
 
+    // Role gate: only roles mapped to this clearance area may mark it cleared or waived.
+    // super_admin and admin bypass all area restrictions.
+    const newStatus: string | null = status;
+    if (newStatus !== null && ['cleared', 'waived'].includes(newStatus)) {
+      const callerRoles: string[] = req.authUser!.roles ?? [];
+      if (!canClearTask(task.clearance_area, callerRoles)) {
+        return res.status(403).json({
+          success: false,
+          code: 'clearance_role_mismatch',
+          message: `The ${task.clearance_area} clearance area can only be cleared by: ${(CLEARANCE_ROLE_MAP[task.clearance_area] ?? []).join(', ')}.`,
+        });
+      }
+      if (newStatus === 'waived' && !req.body.clearing_reason?.trim()) {
+        return res.status(400).json({ success: false, code: 'reason_required', message: 'clearing_reason is required when waiving a task.' });
+      }
+    }
+
+    // Resolve actor name for audit columns
+    const [actorRows] = await db.execute<RowDataPacket[]>(
+      `SELECT CONCAT_WS(' ', first_name, last_name) AS full_name FROM employees WHERE user_id = ? LIMIT 1`,
+      [req.authUser!.id]
+    );
+    const actorName = (actorRows[0] as any)?.full_name ?? String(req.authUser!.id);
+    const actorRole = (req.authUser!.roles ?? [])[0] ?? 'unknown';
+
     const attachmentUrl = req.body?.attachment_url != null ? String(req.body.attachment_url) : undefined;
     await db.execute(
       `UPDATE exit_clearance_task
-          SET status      = COALESCE(?, status),
-              remarks     = COALESCE(?, remarks),
-              attachment_url = COALESCE(?, attachment_url),
-              cleared_by  = CASE WHEN COALESCE(?, status) IN ('cleared','waived') THEN ? ELSE cleared_by END,
-              cleared_at  = CASE WHEN COALESCE(?, status) IN ('cleared','waived') THEN NOW() ELSE cleared_at END
+          SET status           = COALESCE(?, status),
+              remarks          = COALESCE(?, remarks),
+              attachment_url   = COALESCE(?, attachment_url),
+              cleared_by       = CASE WHEN COALESCE(?, status) IN ('cleared','waived') THEN ? ELSE cleared_by END,
+              cleared_at       = CASE WHEN COALESCE(?, status) IN ('cleared','waived') THEN NOW() ELSE cleared_at END,
+              cleared_by_name  = CASE WHEN COALESCE(?, status) IN ('cleared','waived') THEN ? ELSE cleared_by_name END,
+              cleared_by_role  = CASE WHEN COALESCE(?, status) IN ('cleared','waived') THEN ? ELSE cleared_by_role END,
+              clearing_reason  = CASE WHEN COALESCE(?, status) IN ('cleared','waived') THEN ? ELSE clearing_reason END
         WHERE id = ? AND exit_request_id = ?`,
       [
-        status,                          // COALESCE(?, status)  — null keeps existing
-        req.body?.remarks ?? null,        // COALESCE(?, remarks) — null keeps existing
-        attachmentUrl ?? null,            // COALESCE(?, attachment_url)
-        status, req.authUser!.id,         // cleared_by CASE
-        status,                           // cleared_at CASE
+        status,                              // COALESCE(?, status)      — null keeps existing
+        req.body?.remarks ?? null,            // COALESCE(?, remarks)     — null keeps existing
+        attachmentUrl ?? null,                // COALESCE(?, attachment_url)
+        status, req.authUser!.id,             // cleared_by CASE
+        status,                               // cleared_at CASE
+        status, actorName,                    // cleared_by_name CASE
+        status, actorRole,                    // cleared_by_role CASE
+        status, req.body?.clearing_reason ?? null,  // clearing_reason CASE
         req.params.taskId, req.params.id,
       ]
     );
