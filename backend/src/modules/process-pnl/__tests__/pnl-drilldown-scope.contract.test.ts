@@ -68,61 +68,74 @@ function sqlCalls(): { sql: string; params: unknown[] }[] {
 }
 
 describe("budget drilldown scope", () => {
-  it("scopes by cost centre through cost_centre_master, since the snapshot has no cost-centre column", async () => {
-    await getPnlDrilldown({ metric: "budget", period: PERIOD, costCentreId: COST_CENTRE_ID });
+  /*
+   * 2026-09-23: the drawer reads pnl-budget-source.ts readBudgetEntries(), the same reader as Live
+   * P&L's budget cells and CEO Overview. Fixture: branch-1 has budget ONLY in the db_bill mirror
+   * (two cost-centre lines on budget 11, one on budget 12 shared with another centre, plus top-ups);
+   * branch-2 has an ACTIVE HRMS budget, so its mirror rows must never appear.
+   */
+  const mirrorLines = [
+    { bill_source_id: 1, budget_source_id: 11, expense_type_name: "CC/1", amount: 1000, branch_name: "B ONE", branch_id: BRANCH_ID, cost_centre_id: COST_CENTRE_ID },
+    { bill_source_id: 2, budget_source_id: 11, expense_type_name: "CC/1", amount: 500, branch_name: "B ONE", branch_id: BRANCH_ID, cost_centre_id: COST_CENTRE_ID },
+    { bill_source_id: 3, budget_source_id: 12, expense_type_name: "CC/1", amount: 200, branch_name: "B ONE", branch_id: BRANCH_ID, cost_centre_id: COST_CENTRE_ID },
+    { bill_source_id: 4, budget_source_id: 12, expense_type_name: "CC/OTHER", amount: 300, branch_name: "B ONE", branch_id: BRANCH_ID, cost_centre_id: "cc-other" },
+    { bill_source_id: 5, budget_source_id: 21, expense_type_name: "CC/2", amount: 9999, branch_name: "B TWO", branch_id: "branch-2", cost_centre_id: "cc-2" },
+  ];
+  const mirrorTopUps = [
+    { bill_source_id: 11, reopen_additional_amount: 36500, branch_name: "B ONE", branch_id: BRANCH_ID },
+    { bill_source_id: 12, reopen_additional_amount: 99999, branch_name: "B ONE", branch_id: BRANCH_ID },
+    { bill_source_id: 21, reopen_additional_amount: 5555, branch_name: "B TWO", branch_id: "branch-2" },
+  ];
+  const hrmsLines = [
+    { budget_id: "fbh-2", branch_id: "branch-2", branch_name: "B Two", line_id: "l1", allocation_id: null,
+      head: "Admin", sub_head: "Rent", item_name: "Floor 2", cost_centre_id: "cc-2", cost_centre_code: "CC/2", amount: 4000 },
+    { budget_id: "fbh-2", branch_id: "branch-2", branch_name: "B Two", line_id: "l2", allocation_id: null,
+      head: "Admin", sub_head: null, item_name: "Common area", cost_centre_id: null, cost_centre_code: null, amount: 600 },
+  ];
 
-    const lineQuery = sqlCalls().find((c) => c.sql.includes("finance_budget_line_snapshot"));
-    expect(lineQuery, "the budget line query should have run").toBeDefined();
-    expect(lineQuery!.sql).toContain("expense_type_name");
-    expect(lineQuery!.sql).toContain("cost_centre_master");
-    expect(lineQuery!.params).toEqual([PERIOD, COST_CENTRE_ID]);
-    // Not the old branch predicate.
-    expect(lineQuery!.sql).not.toContain("bm.id = ?");
+  beforeEach(() => {
+    execute.mockImplementation(async (sql: string, params?: unknown[]) => {
+      const q = String(sql);
+      if (q.includes("AS code") && !q.includes("finance_budget")) {
+        return [[{ code: (params ?? [])[0] === "cc-2" ? "CC/2" : "CC/1" }], []];
+      }
+      if (q.includes("FROM finance_budget_header h") && q.includes("JOIN finance_budget_line l")) return [hrmsLines, []];
+      if (q.includes("FROM finance_budget_header h")) return [[{ id: "fbh-2", branch_id: "branch-2", branch_name: "B Two" }], []];
+      if (q.includes("FROM finance_budget_line_snapshot l")) return [mirrorLines, []];
+      if (q.includes("reopen_additional_amount <> 0")) return [mirrorTopUps, []];
+      return [[], []];
+    });
   });
 
-  it("scopes by process through that process's cost centres", async () => {
-    await getPnlDrilldown({ metric: "budget", period: PERIOD, processId: PROCESS_ID });
-
-    const lineQuery = sqlCalls().find((c) => c.sql.includes("finance_budget_line_snapshot"));
-    expect(lineQuery!.sql).toContain("e.process_id = ?");
-    expect(lineQuery!.params).toEqual([PERIOD, PROCESS_ID]);
+  it("branch scope lists every line of that branch plus its header-level top-ups", async () => {
+    const result = await getPnlDrilldown({ metric: "budget", period: PERIOD, branchId: BRANCH_ID });
+    expect(result.total, "a branch-scoped budget drilldown must include sanctioned top-ups or it under-totals")
+      .toBe(1000 + 500 + 200 + 300 + 36500 + 99999);
+    expect(result.rows.some((r) => r.label === "Sanctioned top-up")).toBe(true);
   });
 
-  it("still scopes by branch, and only then includes header-level top-ups", async () => {
-    await getPnlDrilldown({ metric: "budget", period: PERIOD, branchId: BRANCH_ID });
-
-    const calls = sqlCalls();
-    expect(calls.find((c) => c.sql.includes("finance_budget_line_snapshot"))!.sql).toContain("bm.id = ?");
-    expect(
-      calls.some((c) => c.sql.includes("reopen_additional_amount")),
-      "a branch-scoped budget drilldown must include sanctioned top-ups or it under-totals",
-    ).toBe(true);
+  it("a branch with an active HRMS budget shows the HRMS lines only, never its mirror rows", async () => {
+    const result = await getPnlDrilldown({ metric: "budget", period: PERIOD, branchId: "branch-2" });
+    expect(result.rows.map((r) => r.amount).sort((a, b) => a - b)).toEqual([600, 4000]);
+    expect(result.total).toBe(4600);
+    expect(result.rows.every((r) => String(r.detail).includes("HRMS budget"))).toBe(true);
   });
 
-  it("under process / cost-centre scope, includes a top-up only when its budget funds nothing else (never pro-rated)", async () => {
+  it("cost-centre / process scope matches lines on the centre's code, and a top-up only when its budget funds nothing else", async () => {
     // A top-up is recorded against the budget header with no cost centre of its own. Attributing a
-    // SHARED budget's top-up to one process would inflate it by another scope's money, so that is
-    // left out rather than guessed. A budget whose every line is in scope is the scope's whole —
-    // the same rule as the CEO focus panel's budget (audit item 16), so the two tie.
+    // SHARED budget's top-up (budget 12) to one scope would inflate it by another scope's money, so
+    // that is left out rather than guessed. Budget 11's every line is in scope, so its top-up is
+    // the scope's whole — the same rule as the CEO focus panel's budget (audit item 16).
     for (const scope of [{ processId: PROCESS_ID }, { costCentreId: COST_CENTRE_ID }]) {
-      execute.mockReset();
-      execute.mockImplementation(async (sql: string) => {
-        const q = String(sql);
-        if (q.includes("AS code")) return [[{ code: "CC/1" }], []];
-        if (q.includes("in_scope_lines")) {
-          return [[
-            { bill_source_id: "B1", top_up: 36500, in_scope_lines: 2, cost_centre_lines: 2 },
-            { bill_source_id: "B2", top_up: 99999, in_scope_lines: 1, cost_centre_lines: 3 },
-          ], []];
-        }
-        return [[], []];
-      });
       const result = await getPnlDrilldown({ metric: "budget", period: PERIOD, ...scope });
-      expect(result.rows.map((r) => r.amount)).toEqual([36500]);
-      expect(result.total).toBe(36500);
-      // The branch-only header query (every top-up on the branch) never runs under these scopes.
-      expect(sqlCalls().some((c) => c.sql.includes("bm.id = ?") && c.sql.includes("reopen_additional_amount"))).toBe(false);
+      expect(result.rows.map((r) => r.amount).sort((a, b) => a - b)).toEqual([200, 500, 1000, 36500]);
+      expect(result.total).toBe(38200);
     }
+  });
+
+  it("cost-centre scope on an HRMS-budgeted centre reads HRMS lines only", async () => {
+    const result = await getPnlDrilldown({ metric: "budget", period: PERIOD, costCentreId: "cc-2" });
+    expect(result.total).toBe(4000);
   });
 });
 

@@ -6,6 +6,7 @@ import { getSeatBillingEstimate, isEstimateWindow, type CostCentreSeatBilling } 
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { ccProcessJoin, ccProcessNameSql } from "./cost-centre-label.js";
 import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
+import { budgetByBranchId, budgetByCostCentreId, readBudgetEntries } from "./pnl-budget-source.js";
 
 export type PnlReconciliationMode = "FINAL" | "LIVE_MTD" | "BLOCKED";
 export type PnlSourceStatus = "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL" | "ESTIMATED";
@@ -425,39 +426,22 @@ async function readBelowTheLine(period: string): Promise<{ depreciation: number;
   return out;
 }
 
+/**
+ * allocatedBudget (per cost centre) and branchBudget (per branch), both from the shared budget
+ * reader (pnl-budget-source.ts, owner rule 2026-09-23): HRMS finance_budget_header/line (+
+ * allocations) for every branch + month with an ACTIVE HRMS budget, the db_bill mirror only for the
+ * rest. Before this, Live read HRMS alone (so mirror-only months showed no budget at all) while CEO
+ * Overview and the budget drilldown read the mirror alone.
+ *
+ * branchBudget is now the sum of the branch's entries (lines / allocations, plus mirror top-ups)
+ * rather than finance_budget_header.pnl_budget_amount, so it is exactly what the budget drilldown
+ * lists. For an HRMS budget the two agree (budget-topup.service.ts resummarizeHeaderTotals re-sums
+ * the header from its lines); a line split across cost centres counts its allocation rows, which
+ * sum to the line up to the allocation rounding adjustment.
+ */
 async function readBudgets(period: string) {
-  const byCostCentre = new Map<string, number>();
-  const byBranch = new Map<string, number>();
-  if (await tableExists("finance_budget_line")) {
-    const [rows] = await db.execute<MoneyRow[]>(
-      `SELECT cost_centre_id, SUM(amount) AS amount FROM (
-          SELECT l.cost_centre_id AS cost_centre_id, l.pnl_cost_amount AS amount
-            FROM finance_budget_line l
-            JOIN finance_budget_header h ON h.id = l.budget_id
-           WHERE h.period_code = ? AND h.status = 'active' AND l.cost_centre_id IS NOT NULL
-          UNION ALL
-          SELECT a.cost_centre_id, a.pnl_cost_amount
-            FROM finance_budget_line_allocation a
-            JOIN finance_budget_line l ON l.id = a.budget_line_id
-            JOIN finance_budget_header h ON h.id = l.budget_id
-           WHERE h.period_code = ? AND h.status = 'active'
-       ) budgeted
-      GROUP BY cost_centre_id`,
-      [period, period],
-    );
-    for (const row of rows) if (row.cost_centre_id) byCostCentre.set(String(row.cost_centre_id), n(row.amount));
-  }
-  if (await tableExists("finance_budget_header")) {
-    const [rows] = await db.execute<MoneyRow[]>(
-      `SELECT branch_id, SUM(pnl_budget_amount) AS amount
-         FROM finance_budget_header
-        WHERE period_code = ? AND status = 'active'
-        GROUP BY branch_id`,
-      [period],
-    );
-    for (const row of rows) byBranch.set(row.branch_id ? String(row.branch_id) : "", n(row.amount));
-  }
-  return { byCostCentre, byBranch };
+  const entries = await readBudgetEntries(period);
+  return { byCostCentre: budgetByCostCentreId(entries), byBranch: budgetByBranchId(entries) };
 }
 
 /**

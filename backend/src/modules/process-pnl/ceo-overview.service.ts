@@ -7,7 +7,7 @@ import { readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
 import { isEstimateWindow } from "./pnl-seat-billing.service.js";
 import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
 import { ccProcessJoin, ccProcessNameSql, costCentreLabel } from "./cost-centre-label.js";
-import { focusBudgetTopUps } from "./budget-top-up-attribution.js";
+import { budgetByBranchId, entriesForCodes, readBudgetEntries, sumAmount, topUpsForCodes } from "./pnl-budget-source.js";
 
 /**
  * The CEO view of the P&L: one figure per branch, and a ranked list of where profit is leaking.
@@ -23,7 +23,7 @@ import { focusBudgetTopUps } from "./budget-top-up-attribution.js";
  *   revenue  billing_invoice_particular_snapshot   (what clients were invoiced)
  *   people   salary_prep_line                      (what payroll actually paid)
  *   spend    grn_entry_line_snapshot               (what was raised, rejections excluded)
- *   budget   finance_budget_line_snapshot          (what was planned)
+ *   budget   pnl-budget-source.ts                  (what was planned: HRMS budget, db_bill mirror fallback)
  *
  * THE FINDINGS THIS SURFACES ARE REAL, NOT ILLUSTRATIVE
  * ----------------------------------------------------
@@ -557,64 +557,24 @@ async function spendByBranch(period: string, s: CeoScope): Promise<Map<string, n
  * True sanctioned FY2026-27 budget: 126.03 + 42.11 = Rs 168.14 L.
  */
 async function budgetByBranch(period: string): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
-  if (!(await tableExists("finance_budget_line_snapshot"))) return out;
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT branch_id, SUM(amount) AS amount FROM (
-        SELECT bm.id AS branch_id, l.amount AS amount
-          FROM finance_budget_line_snapshot l
-          JOIN finance_budget_snapshot b
-            ON b.bill_source_id = l.budget_source_id AND b.period_code = l.period_code
-          LEFT JOIN (
-                SELECT MIN(id) AS id, UPPER(TRIM(branch_name)) AS nm
-                  FROM branch_master GROUP BY UPPER(TRIM(branch_name))
-              ) bm ON bm.nm COLLATE utf8mb4_unicode_ci
-                    = UPPER(TRIM(b.branch_name)) COLLATE utf8mb4_unicode_ci
-         WHERE l.period_code = ? AND l.expense_type = 'CostCenter'
-           AND b.active_status = 1 AND b.is_rejected = 0
-        UNION ALL
-        -- Header-level top-ups: one row per budget, so they cannot be joined through the lines
-        -- without multiplying by the line count.
-        SELECT bm.id, b.reopen_additional_amount
-          FROM finance_budget_snapshot b
-          LEFT JOIN (
-                SELECT MIN(id) AS id, UPPER(TRIM(branch_name)) AS nm
-                  FROM branch_master GROUP BY UPPER(TRIM(branch_name))
-              ) bm ON bm.nm COLLATE utf8mb4_unicode_ci
-                    = UPPER(TRIM(b.branch_name)) COLLATE utf8mb4_unicode_ci
-         WHERE b.period_code = ? AND b.active_status = 1 AND b.is_rejected = 0
-           AND b.reopen_additional_amount <> 0
-     ) sanctioned
-      GROUP BY branch_id`,
-    [period, period],
-  );
-  for (const r of rows) out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));
-  return out;
+  // 2026-09-23 (owner rule): the shared budget reader — HRMS finance_budget_header/line for any
+  // branch + month with an ACTIVE HRMS budget, the db_bill mirror (with the filters and top-ups
+  // described above) only where HRMS has none. See pnl-budget-source.ts.
+  return budgetByBranchId(await readBudgetEntries(period));
 }
 
 /**
- * Approved budget for a set of cost centre CODES: their 'CostCenter' lines, plus header-level
- * top-ups ONLY where every line of that budget is one of these codes (see focusBudgetTopUps —
- * audit item 16; a shared budget's top-up is never pro-rated, it is returned as `sharedTopUps` so
- * the caller can say so). Used by the focus panel and by the YTD strip under a process /
- * cost-centre scope, so both report the same figure.
+ * Approved budget for a set of cost centre CODES: their lines, plus mirror header-level top-ups
+ * ONLY where every line of that budget is one of these codes (see focusBudgetTopUps — audit item
+ * 16; a shared budget's top-up is never pro-rated, it is returned as `sharedTopUps` so the caller
+ * can say so). Used by the focus panel and by the YTD strip under a process / cost-centre scope,
+ * so both report the same figure. Same shared reader (and HRMS-first rule) as budgetByBranch.
  */
 async function budgetForCodes(period: string, codes: string[]): Promise<{ budget: number; sharedTopUps: number }> {
-  if (codes.length === 0 || !(await tableExists("finance_budget_line_snapshot"))) return { budget: 0, sharedTopUps: 0 };
-  // Approved budgets only — see budgetByBranch. Summing every mirrored row counts 367 rows that
-  // never got past the first approval.
-  const [bud] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(l.amount), 0) AS a
-       FROM finance_budget_line_snapshot l
-       JOIN finance_budget_snapshot b
-         ON b.bill_source_id = l.budget_source_id AND b.period_code = l.period_code
-      WHERE l.period_code = ? AND l.expense_type = 'CostCenter'
-        AND l.expense_type_name IN (${marks(codes)})
-        AND b.active_status = 1 AND b.is_rejected = 0`,
-    [period, ...codes],
-  );
-  const topUps = await focusBudgetTopUps(period, codes);
-  return { budget: n(bud[0]?.a) + topUps.attributable, sharedTopUps: topUps.shared };
+  if (codes.length === 0) return { budget: 0, sharedTopUps: 0 };
+  const entries = await readBudgetEntries(period);
+  const topUps = topUpsForCodes(entries, codes);
+  return { budget: sumAmount(entriesForCodes(entries, codes)) + topUps.attributable, sharedTopUps: topUps.shared };
 }
 
 /**
@@ -1151,9 +1111,8 @@ async function buildFocus(
     const codeMarks = marks(codeList);
 
     // Guard: snapshot tables may not exist for this period
-    const [hasInvoiceSnap, hasBudgetSnap, hasGrnSnap] = await Promise.all([
+    const [hasInvoiceSnap, hasGrnSnap] = await Promise.all([
       tableExists("billing_invoice_particular_snapshot"),
-      tableExists("finance_budget_line_snapshot"),
       tableExists("grn_entry_line_snapshot"),
     ]);
 
@@ -1166,7 +1125,8 @@ async function buildFocus(
       invoiceLines = n(inv[0]?.n);
     }
 
-    if (hasBudgetSnap) {
+    // Not gated on the mirror table any more: the budget may come from HRMS (pnl-budget-source.ts).
+    {
       const scoped = await budgetForCodes(period, codeList);
       budget = scoped.budget;
       if (scoped.sharedTopUps !== 0) {
