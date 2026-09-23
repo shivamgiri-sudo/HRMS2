@@ -915,7 +915,18 @@ function estimateByBranch(period: string, s: CeoScope): Promise<Map<string, numb
   return value;
 }
 
-async function marginTrend(endPeriod: string, s: CeoScope): Promise<CeoTrendPoint[]> {
+/**
+ * `inScope` decides which branch keys of the per-branch maps count toward a trend month. It MUST be
+ * the same rule the headline uses (getCeoOverview's branchKeyInHeadline), because the current month
+ * is overwritten with the headline figures while prior months are summed here — a looser rule here
+ * put company-wide bars beside a branch-scoped current month (audit item 10: revenueByBranch,
+ * peopleByBranch and spendByBranch do not apply s.branchIds themselves).
+ */
+async function marginTrend(
+  endPeriod: string,
+  s: CeoScope,
+  inScope: (branchKey: string) => boolean = () => true,
+): Promise<CeoTrendPoint[]> {
   const [year, month] = endPeriod.split("-").map(Number);
   const periods: string[] = [];
   for (let back = 3; back >= 0; back--) {
@@ -929,14 +940,15 @@ async function marginTrend(endPeriod: string, s: CeoScope): Promise<CeoTrendPoin
    * three queries each, every one waiting on the last for no reason — the months are independent.
    * Issuing them together brings the page back to roughly the cost of a single month.
    */
-  const sum = (m: Map<string, number>) => [...m.values()].reduce((a, b) => a + b, 0);
+  const sum = (m: Map<string, number>) =>
+    [...m.entries()].reduce((a, [key, value]) => (inScope(key) ? a + value : a), 0);
   return Promise.all(
     periods.map(async (period) => {
       const [rev, ppl, spend, est] = await Promise.all([
         revenueByBranch(period, s), peopleByBranch(period, s), spendByBranch(period, s), estimateByBranch(period, s),
       ]);
       const revenue = sum(rev) + sum(est);
-      const people = [...ppl.values()].reduce((a, b) => a + b.cost, 0);
+      const people = [...ppl.entries()].reduce((a, [key, p]) => (inScope(key) ? a + p.cost : a), 0);
       const operatingProfit = revenue - people - sum(spend);
       return {
         period, revenue, operatingProfit,
@@ -1183,10 +1195,24 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
   );
   const nameOfBranch = (id: string) =>
     String(branchRows.find((r) => String(r.id) === id)?.branch_name ?? "Unnamed");
+
+  // A selected branch id stands for every duplicate spelling of that branch in branch_master (the
+  // same expansion the headline's `selected` filter applies below via t.ids.some(...)), so the
+  // trend's prior months count exactly the branch keys the headline counts for the current month.
+  const normBranchName = (r: RowDataPacket) => String(r.branch_name ?? "").trim().toUpperCase();
+  const selectedBranchNames = new Set(
+    branchRows.filter((r) => selectedBranches.has(String(r.id))).map(normBranchName),
+  );
+  const selectedBranchKeys = new Set(
+    branchRows.filter((r) => selectedBranchNames.has(normBranchName(r))).map((r) => String(r.id)),
+  );
+  const branchKeyInHeadline = (key: string): boolean =>
+    selectedBranches.size === 0 || selectedBranchKeys.has(key);
+
   const [revenue, people, spend, budget, trend, options, billing, estimate] = await Promise.all([
     revenueByBranch(period, scope), peopleByBranch(period, scope),
     spendByBranch(period, scope), budgetByBranch(period),
-    marginTrend(period, scope), filterOptions(period, scope),
+    marginTrend(period, scope, branchKeyInHeadline), filterOptions(period, scope),
     billingCompleteness(period, scope, nameOfBranch),
     estimateByBranch(period, scope),
   ]);

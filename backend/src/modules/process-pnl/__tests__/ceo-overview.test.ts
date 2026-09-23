@@ -200,6 +200,33 @@ describe("CEO overview", () => {
     expect(out.opportunities).toHaveLength(0);
   });
 
+  it("scopes EVERY sparkline month to the selected branch, not just the current one (audit item 10)", async () => {
+    // The mock answers every period with the same rows, so a correctly-scoped trend reads the same
+    // NOIDA-only revenue in all four bars. Before the fix the three prior bars summed every branch
+    // (177.4 + 117.45) beside a NOIDA-only current bar.
+    mockDb({
+      branches: [
+        { id: "a", branch_name: "NOIDA", active_status: 1 },
+        { id: "a2", branch_name: "Noida", active_status: 0 },
+        { id: "b", branch_name: "NOIDA-2", active_status: 1 },
+      ],
+      revenue: [
+        { branch_id: "a", amount: L(170) }, { branch_id: "a2", amount: L(7.4) },
+        { branch_id: "b", amount: L(117.45) }, { branch_id: null, amount: L(3) },
+      ],
+      people: [{ branch_id: "a", staff: 496, cost: L(102.22) }, { branch_id: "b", staff: 448, cost: L(76.24) }],
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-06", { branchId: "a" });
+    expect(out.revenue).toBeCloseTo(L(177.4), 0);
+    expect(out.trend).toHaveLength(4);
+    for (const point of out.trend) {
+      expect(point.revenue, `${point.period} must be NOIDA only (both spellings), no other branch, no unbranched`)
+        .toBeCloseTo(L(177.4), 0);
+      expect(point.operatingProfit).toBeCloseTo(L(177.4 - 102.22), 0);
+    }
+  });
+
   it("hides a closed branch whose every money column is zero, without losing its people", async () => {
     /*
      * branch_master holds 45 branches and 5 are active. In July 2026 nine closed ones still
