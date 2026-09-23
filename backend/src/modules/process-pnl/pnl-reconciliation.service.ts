@@ -496,10 +496,33 @@ async function readPayroll(period: string): Promise<Map<string, { cost: number; 
  * ceo-overview.service.ts: every employee here is MAS Callnet, so their wages are MAS cost even
  * without a mapping). Until 2026-09-15 this was only listed as an exception and left out of the
  * totals, which overstated OP: Rs 1.11 L for 7 people in August 2026 (7.09% instead of 6.70%).
- * Final payroll run only — the running-salary snapshot is keyed by cost centre, so it has none.
+ *
+ * WHICH SOURCE — same fallback as readPayroll(): the final payroll run when it has any lines for the
+ * period, otherwise the running-salary snapshot. Audit item 13 (2026-09-23): this used to read the
+ * final run only, on the premise that "the running-salary snapshot is keyed by cost centre, so it has
+ * none" — but pnl-running-salary.service.ts flushRows() writes a row for EVERY employee, including
+ * cost_centre_id = NULL ones (it even deletes-then-inserts them because the NULL defeats the upsert
+ * key). readPayroll()'s snapshot leg skips those NULL-cost-centre rows, so while payroll was unposted
+ * their accrued wages reached neither a row nor this figure, and Live P&L under-counted people cost
+ * for every open month against CEO Overview (whose peopleByBranch snapshot leg keeps them on their
+ * home branch). The population is identical in both legs: effective (post-override) cost centre
+ * IS NULL, attributed to the employee's home branch.
+ *
+ * NOT the same thing as CEO Overview's "no branch" bucket ("" key): that is payroll whose effective
+ * cost centre AND home branch are both missing (or whose cost centre has no branch), i.e. it reaches
+ * no branch at all. "No cost centre" staff with a home branch count against that branch on both
+ * tabs; only this tab lists them separately, as "Payroll without cost centre".
  */
 async function readUnallocatedPayroll(period: string, branchIds: string[] | undefined): Promise<Array<{ branchId: string | null; branchName: string; cost: number; staff: number }>> {
   if (!(await tableExists("salary_prep_line"))) return [];
+  const [posted] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS line_count
+       FROM salary_prep_line l
+       JOIN salary_prep_run r ON r.id = l.run_id
+      WHERE r.run_month = ?`,
+    [period],
+  );
+  if (n(posted[0]?.line_count) === 0) return readUnallocatedRunningPayroll(period, branchIds);
   const branchClause = branchIds?.length ? `AND e.branch_id IN (${marks(branchIds)})` : "";
   // A mapped override takes an employee out of "unallocated" too — that is a real use of this
   // feature (someone with no HR cost centre at all can still be pointed at one for P&L purposes).
@@ -518,6 +541,28 @@ async function readUnallocatedPayroll(period: string, branchIds: string[] | unde
        ${ov.join}
       WHERE r.run_month = ? AND ${ov.effectiveCostCentreExpr} IS NULL ${branchClause}
       GROUP BY e.branch_id`,
+    [period, ...(branchIds ?? [])],
+  );
+  return rows
+    .map((r) => ({ branchId: r.branch_id ? String(r.branch_id) : null, branchName: r.branch_name ? String(r.branch_name) : "Unassigned", cost: n(r.amount), staff: n(r.staff) }))
+    .filter((r) => r.cost !== 0 || r.staff > 0);
+}
+
+/** readUnallocatedPayroll()'s running-salary leg: same population (effective cost centre IS NULL),
+ *  same home-branch attribution, accrued earned-till-date instead of the final run. */
+async function readUnallocatedRunningPayroll(period: string, branchIds: string[] | undefined): Promise<Array<{ branchId: string | null; branchName: string; cost: number; staff: number }>> {
+  if (!(await tableExists("pnl_running_salary_snapshot"))) return [];
+  const branchClause = branchIds?.length ? `AND s.branch_id IN (${marks(branchIds)})` : "";
+  const ov = await overrideJoinSql("s.employee_id", "s.cost_centre_id");
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT s.branch_id AS branch_id, MAX(bm.branch_name) AS branch_name,
+            COUNT(*) AS staff,
+            SUM(s.earned_salary_till_date) AS amount
+       FROM pnl_running_salary_snapshot s
+       LEFT JOIN branch_master bm ON bm.id = s.branch_id
+       ${ov.join}
+      WHERE s.period_code = ? AND ${ov.effectiveCostCentreExpr} IS NULL ${branchClause}
+      GROUP BY s.branch_id`,
     [period, ...(branchIds ?? [])],
   );
   return rows
@@ -779,8 +824,10 @@ export async function getPnlReconciliation(
     branchMap.set(key, current);
   }
 
-  // Staff with no cost centre: their pay joins their branch and the company, never a row.
-  const unallocatedPayroll = payrollPosted ? unallocated : [];
+  // Staff with no cost centre: their pay joins their branch and the company, never a row. Read from
+  // the same source readPayroll() used (final run, else running snapshot), so it is no longer
+  // dropped while payroll is unposted — see readUnallocatedPayroll (audit item 13).
+  const unallocatedPayroll = unallocated;
   for (const u of unallocatedPayroll) {
     const key = u.branchId ?? "unassigned";
     const current = branchMap.get(key) ?? {
