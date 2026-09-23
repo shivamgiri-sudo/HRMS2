@@ -190,7 +190,13 @@ function addIssue(target: string[], condition: boolean, issue: string) {
 async function readCostCentres(filters: PnlReconciliationFilters): Promise<CostCentreRow[]> {
   const where = [OWN_COMPANY_SQL];
   const params: unknown[] = [];
-  if (!filters.includeInactive) where.push("ccm.active_status = 1");
+  if (!filters.includeInactive) {
+    // ccm.active_status alone isn't enough: a cost centre can still be individually flagged
+    // active while its branch has since been closed (bm.active_status = 0). Same bug class as
+    // process-pnl.service.ts's getBaseProcesses fix — without this, "Active Cost Centres" counts
+    // cost centres orphaned under a closed branch, inflating the count.
+    where.push("ccm.active_status = 1", "COALESCE(bm.active_status, 1) = 1");
+  }
   if (filters.branchIds?.length) {
     where.push(`ccm.branch_id IN (${marks(filters.branchIds)})`);
     params.push(...filters.branchIds);

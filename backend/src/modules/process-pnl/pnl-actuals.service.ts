@@ -188,7 +188,7 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
          LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc1 ON pc1.cost_centre_id = ccm.id
         WHERE a.lifecycle_status = 'consumed'
-          AND DATE_FORMAT(g.bill_date, '%Y-%m') = ?
+          AND g.accounting_period = ?
 
        UNION ALL
 
@@ -200,7 +200,7 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc2 ON pc2.cost_centre_id = ccm.id
         WHERE g.budget_line_id IS NOT NULL
           AND g.status NOT IN ('draft', 'rejected', 'cancelled')
-          AND DATE_FORMAT(g.bill_date, '%Y-%m') = ?
+          AND g.accounting_period = ?
           AND NOT EXISTS (SELECT 1 FROM grn_cost_allocation x WHERE x.grn_request_id = g.id)
      ) t
       GROUP BY branch_id, process_id`,
