@@ -42,6 +42,7 @@ import type { VapiCallbackPayload } from './vapi-voicebot.provider.js';
 import {
   isWassengerConfigured,
   parseWassengerWebhook,
+  parseWassengerStatusUpdate,
   sendConfirmationAck,
   sendShortlistMessage,
   sendMediaMessage,
@@ -50,6 +51,7 @@ import {
 import type { WassengerWebhookPayload } from './wassenger.provider.js';
 import {
   saveMessage,
+  updateDeliveryStatus,
   getThread,
   getInbox,
   getTotalUnread,
@@ -353,6 +355,16 @@ metaCampaignRouter.post('/wassenger-webhook', (req: Request, res: Response) => {
   }
 
   const payload = req.body as WassengerWebhookPayload;
+
+  // Delivery-state events (queued -> sent -> delivered -> read / failed) update the outbound row.
+  const statusUpdate = parseWassengerStatusUpdate(payload);
+  if (statusUpdate) {
+    void updateDeliveryStatus(statusUpdate.messageId, statusUpdate.status).catch((e: unknown) =>
+      console.error('[wassenger-webhook] status update failed', e instanceof Error ? e.message : e)
+    );
+    return res.status(200).json({ success: true, action: 'status_updated' });
+  }
+
   const { isIncoming, phone, reply, rawBody } = parseWassengerWebhook(payload);
 
   if (!isIncoming || !phone) {

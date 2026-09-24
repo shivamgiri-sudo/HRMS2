@@ -884,7 +884,8 @@
     "1843_it_provisioning_bgv_result_column.sql",
     "1845_onfido_wfm_manual_inputs.sql",
     "1846_provisioning_hr_bgv_page_access.sql",
-    "1852_pnl_grn_allocation_view_ex_gst.sql"
+    "1852_pnl_grn_allocation_view_ex_gst.sql",
+    "1853_meta_lead_messages_delivery_status.sql"
   ],
   "approvedDeletions": [
     {

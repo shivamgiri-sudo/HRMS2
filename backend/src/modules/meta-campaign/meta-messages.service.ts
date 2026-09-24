@@ -9,8 +9,9 @@
  */
 
 import { randomUUID } from 'crypto';
-import type { RowDataPacket } from 'mysql2';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
+import { fetchMessageDeliveryStatus, isWassengerConfigured, type DeliveryStatus } from './wassenger.provider.js';
 import type { BranchScope } from './meta-access.js';
 
 export interface LeadMessage {
@@ -22,6 +23,7 @@ export interface LeadMessage {
   senderId: string | null;
   senderName: string | null;
   wassengerMessageId: string | null;
+  deliveryStatus: 'queued' | 'sent' | 'delivered' | 'read' | 'failed' | null;
   readAt: string | null;
   createdAt: string;
 }
@@ -52,10 +54,13 @@ export async function saveMessage(params: {
   wassengerMessageId?: string | null;
 }): Promise<string> {
   const id = randomUUID();
+  // Wassenger accepting a message only means it is queued; the webhook / reconcile step advances it.
+  const deliveryStatus = params.direction === 'outbound' && params.wassengerMessageId ? 'queued' : null;
   await db.execute(
     `INSERT INTO meta_lead_messages
-       (id, lead_id, direction, message_text, sender_type, sender_id, sender_name, wassenger_message_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, lead_id, direction, message_text, sender_type, sender_id, sender_name, wassenger_message_id,
+        delivery_status, delivery_updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${deliveryStatus ? 'NOW()' : 'NULL'})`,
     [
       id,
       params.leadId,
@@ -65,15 +70,61 @@ export async function saveMessage(params: {
       params.senderId ?? null,
       params.senderName ?? null,
       params.wassengerMessageId ?? null,
+      deliveryStatus,
     ]
   );
   return id;
 }
 
+const FORWARD_ONLY_SQL = `(delivery_status IS NULL OR delivery_status = 'queued'
+  OR (delivery_status = 'sent' AND ? IN ('delivered', 'read', 'failed'))
+  OR (delivery_status = 'delivered' AND ? = 'read'))`;
+
+/** Advance an outbound message's delivery state. Never moves backwards (queued < sent < delivered < read). */
+export async function updateDeliveryStatus(wassengerMessageId: string, status: DeliveryStatus): Promise<boolean> {
+  const [res] = await db.execute<ResultSetHeader>(
+    `UPDATE meta_lead_messages
+        SET delivery_status = ?, delivery_updated_at = NOW()
+      WHERE wassenger_message_id = ? AND direction = 'outbound' AND delivery_status IS NOT ?
+        AND ${FORWARD_ONLY_SQL}`,
+    [status, wassengerMessageId, status, status, status]
+  );
+  return res.affectedRows > 0;
+}
+
+/**
+ * Catch delivery states a missed webhook never delivered, and fill in messages saved before
+ * delivery tracking existed. Bounded per run so a large backlog cannot stall the sync.
+ */
+export async function reconcileDeliveryStatuses(limit = 100): Promise<{ checked: number; updated: number; stillQueued: number }> {
+  if (!isWassengerConfigured()) return { checked: 0, updated: 0, stillQueued: 0 };
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT wassenger_message_id FROM meta_lead_messages
+      WHERE direction = 'outbound' AND wassenger_message_id IS NOT NULL AND wassenger_message_id <> 'sent'
+        AND (delivery_status IS NULL OR delivery_status IN ('queued', 'sent'))
+        AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+      ORDER BY created_at DESC LIMIT ${Number(limit)}`
+  );
+  let updated = 0;
+  let stillQueued = 0;
+  for (const row of rows) {
+    const id = String(row.wassenger_message_id);
+    try {
+      const status = await fetchMessageDeliveryStatus(id);
+      if (!status) continue;
+      if (status === 'queued') stillQueued += 1;
+      if (await updateDeliveryStatus(id, status)) updated += 1;
+    } catch {
+      // One unreachable message must not stop the rest; it is retried on the next run.
+    }
+  }
+  return { checked: rows.length, updated, stillQueued };
+}
+
 export async function getThread(leadId: string): Promise<LeadMessage[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, lead_id, direction, message_text, sender_type, sender_id, sender_name,
-            wassenger_message_id, read_at, created_at
+            wassenger_message_id, delivery_status, read_at, created_at
        FROM meta_lead_messages
       WHERE lead_id = ?
       ORDER BY created_at ASC`,
@@ -259,6 +310,7 @@ function toMessage(r: RowDataPacket): LeadMessage {
     senderId: (r.sender_id as string | null) ?? null,
     senderName: (r.sender_name as string | null) ?? null,
     wassengerMessageId: (r.wassenger_message_id as string | null) ?? null,
+    deliveryStatus: (r.delivery_status as LeadMessage['deliveryStatus']) ?? null,
     readAt: (r.read_at as string | null) ?? null,
     createdAt: String(r.created_at),
   };
