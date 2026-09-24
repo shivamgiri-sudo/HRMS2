@@ -2,7 +2,8 @@ import type { RowDataPacket } from "mysql2";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { getCachedAllocationSummary, normalizePeriod } from "./canonical-pnl.service.js";
 import {
-  getDriverRevenueActuals, getIndirectCostActuals, getInvoicedRevenueActuals, getSeatRevenueActuals,
+  getCommittedIndirectCostActuals, getDriverRevenueActuals, getIndirectCostActuals, getInvoicedRevenueActuals,
+  getSeatRevenueActuals,
   getCostCentreProcessIds, type ActualsByKey, type SeatRevenueActuals,
 } from "./pnl-actuals.service.js";
 import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
@@ -232,7 +233,9 @@ function enrichColumn(
    */
   trustCanonicalEbit: boolean,
   /** Live P&L's seat-rate estimate for not-yet-billed cost centres; see the revenue block below. */
-  estimate?: ActualsByKey
+  estimate?: ActualsByKey,
+  /** GRN Committed (reserved, ex-GST) — added into Indirect Cost; see indirectCostTotal below. */
+  committedIdc?: ActualsByKey
 ): Record<string, unknown> {
   /*
    * A6 FIX (2026-09-01): idc/seat must never inherit the WHOLE branch's total just because a
@@ -447,7 +450,19 @@ function enrichColumn(
   const dscSalary = hasSnapshot ? snapshot!.dsc_people : n(out.dscSalary ?? out.dscPeople);
   const bmcSalary = hasSnapshot ? snapshot!.bmc_people : n(out.bmcSalary ?? out.bmcPeople);
   out.agentSalary = agentSalary;
-  const indirectCostTotal = pick(idc);
+  /*
+   * Indirect Cost = GRN Consumed + GRN Committed (reserved), both ex-GST — owner rule 2026-09-24:
+   * "Reserved + Consumed should be there in P&L", for EVERY period. Until then the Statement added
+   * consumed only, so its Operating Profit omitted reserved GRN that Live P&L and CEO Overview
+   * subtract. Both parts are published as their own lines (grn_consumed / grn_committed, added in
+   * getStatement under Total Indirect Cost) so the total is auditable. Same pick() — no branch
+   * broadcast into a process column (A6).
+   */
+  const grnConsumed = pick(idc);
+  const grnCommitted = committedIdc ? pick(committedIdc) : 0;
+  const indirectCostTotal = grnConsumed + grnCommitted;
+  out.grnConsumed = grnConsumed;
+  out.grnCommitted = grnCommitted;
 
   const directCostTotal = agentSalary + dscSalary + bmcSalary;
   const totalCost = directCostTotal + indirectCostTotal;
@@ -543,6 +558,49 @@ function enrichColumn(
   return out;
 }
 
+/**
+ * The two parts of Total Indirect Cost, as breakdown lines directly under it (owner rule
+ * 2026-09-24: GRN cost = Consumed + Committed (reserved), both ex-GST, every period).
+ *
+ * Computed rows, added IN CODE rather than via finance_pnl_component_master, so the change needs no
+ * data migration to take effect: they are inserted right after the `total_idc` component, carry it
+ * as parentComponentKey (so they render as "of which" lines and are never read as extra cost — the
+ * same mechanism the revenue breakdown lines use), and resolve through the ordinary
+ * resolveValue(source_field) path from the grnConsumed / grnCommitted fields enrichColumn writes.
+ * If a later migration adds rows with these keys to the master, the master's rows win and nothing
+ * is inserted twice. Labels match src/components/finance/pnl/pnlLabels.ts (GRN_CONSUMED /
+ * GRN_COMMITTED), which the Statement view also applies by component key.
+ */
+export const GRN_BREAKDOWN_COMPONENT_KEYS = { consumed: "grn_consumed", committed: "grn_committed" } as const;
+
+function withGrnBreakdownRows(components: ComponentDefinition[]): ComponentDefinition[] {
+  const idcIndex = components.findIndex((c) => c.component_key === "total_idc");
+  if (idcIndex < 0) return components;
+  const present = new Set(components.map((c) => c.component_key));
+  const idc = components[idcIndex];
+  const breakdown = (key: string, displayName: string, sourceField: string, offset: number) => ({
+    component_key: key,
+    display_name: displayName,
+    section_key: idc.section_key,
+    parent_component_key: "total_idc",
+    display_order: Number(idc.display_order) + offset,
+    component_type: "SOURCE_ACTUAL",
+    source_field: sourceField,
+    format_type: "CURRENCY",
+    sign_convention: "+",
+    is_subtotal: 0,
+  }) as unknown as ComponentDefinition;
+  const extra = [
+    present.has(GRN_BREAKDOWN_COMPONENT_KEYS.consumed)
+      ? null
+      : breakdown(GRN_BREAKDOWN_COMPONENT_KEYS.consumed, "GRN Consumed", "grnConsumed", 0.1),
+    present.has(GRN_BREAKDOWN_COMPONENT_KEYS.committed)
+      ? null
+      : breakdown(GRN_BREAKDOWN_COMPONENT_KEYS.committed, "GRN Committed (reserved)", "grnCommitted", 0.2),
+  ].filter((c): c is ComponentDefinition => c !== null);
+  return [...components.slice(0, idcIndex + 1), ...extra, ...components.slice(idcIndex + 1)];
+}
+
 export interface StatementDependencies {
   getComponents: () => Promise<ComponentDefinition[]>;
   getSummary: (filters: Partial<PnlQueryFilters>) => Promise<{ rows: BpoPnlRow[]; generatedAt: string; calculationEngine?: string }>;
@@ -562,6 +620,9 @@ export interface StatementDependencies {
   }>>;
   /** Live P&L's seat-rate revenue estimate for not-yet-billed cost centres (see enrichColumn). */
   getRevenueEstimate?: (period: string) => Promise<ActualsByKey>;
+  /** GRN Committed (reserved, ex-GST). When a caller injects getIndirectCost but not this, it is
+   *  treated as none (a test double for consumed must not silently hit the live reserved reader). */
+  getCommittedIndirectCost?: (period: string) => Promise<ActualsByKey>;
 }
 
 const emptyEstimate = (): ActualsByKey => ({ byBranch: new Map(), byProcess: new Map(), byCostCentre: new Map() });
@@ -649,6 +710,7 @@ const defaultDependencies: StatementDependencies = {
   getSummary: (filters) => getStatementSummary(filters),
   getProcessSummary: (processId, period) => processLobService.getProcessSummary(processId, period),
   getIndirectCost: (period) => getIndirectCostActuals(period),
+  getCommittedIndirectCost: (period) => getCommittedIndirectCostActuals(period),
   getDriverRevenue: (period) => getDriverRevenueActuals(period),
   getInvoicedRevenue: (period) => getInvoicedRevenueActuals(period),
   getSeatRevenue: (period) => getSeatRevenueActuals(period),
@@ -708,8 +770,11 @@ export async function getStatement(
   // Resolved once for the whole statement: every column in it belongs to the same period, and
   // deciding per column would let two columns of one report use different cost sources.
   const periodOpen = isOpenPeriod(periodCode);
-  const [idc, revenue, invoicedRevenue, seat, people, manualAdjustments] = await Promise.all([
+  const committedReader = deps.getCommittedIndirectCost
+    ?? (deps.getIndirectCost ? async () => emptyEstimate() : getCommittedIndirectCostActuals);
+  const [idc, committedIdc, revenue, invoicedRevenue, seat, people, manualAdjustments] = await Promise.all([
     (deps.getIndirectCost ?? getIndirectCostActuals)(periodCode),
+    committedReader(periodCode),
     (deps.getDriverRevenue ?? getDriverRevenueActuals)(periodCode),
     (deps.getInvoicedRevenue ?? getInvoicedRevenueActuals)(periodCode),
     (deps.getSeatRevenue ?? getSeatRevenueActuals)(periodCode),
@@ -736,7 +801,8 @@ export async function getStatement(
       people,
       periodOpen,
       viewBy === "process",
-      estimate
+      estimate,
+      committedIdc
     );
     // Coverage belongs on the column, not among the money rows: it qualifies how far the whole
     // column can be trusted, and a consumer must be able to see that before reading any figure in it.
@@ -770,7 +836,7 @@ export async function getStatement(
     return { column, data };
   });
 
-  const statementRows: StatementRow[] = components.map((component) => ({
+  const statementRows: StatementRow[] = withGrnBreakdownRows(components).map((component) => ({
     componentKey: component.component_key,
     displayName: component.display_name,
     section: component.section_key,

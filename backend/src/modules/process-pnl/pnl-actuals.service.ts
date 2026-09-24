@@ -364,6 +364,24 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
   }) as unknown as RowDataPacket));
 }
 
+/**
+ * GRN Committed (reserved) for the P&L Statement — approved GRN allocations not yet consumed,
+ * ex-GST, same shared reader and same grouping as getIndirectCostActuals (consumed) above.
+ * Owner rule 2026-09-24: "Reserved + Consumed should be there in P&L" — the Statement shows this as
+ * its own "GRN Committed (reserved)" line under Indirect Cost and adds it into Total Indirect Cost,
+ * for EVERY period. 'draft' allocations are never read (readGrnSpend reads 'reserved' only).
+ */
+export async function getCommittedIndirectCostActuals(periodCode: string): Promise<ActualsByKey> {
+  if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptyActuals();
+  const spend = await readGrnSpend(periodCode, "reserved", { withProcess: true });
+  return accumulate(spend.map((row) => ({
+    branch_id: row.branchId,
+    cost_centre_id: row.costCentreId,
+    process_id: row.processId,
+    amount: row.amount,
+  }) as unknown as RowDataPacket));
+}
+
 /*
  * History of the GRN reader above (it used to be the body of getIndirectCostActuals):
  *
@@ -784,6 +802,7 @@ export async function getRewardPenaltyActuals(periodCode: string): Promise<Actua
 
 export const pnlActualsService = {
   getIndirectCostActuals,
+  getCommittedIndirectCostActuals,
   getDriverRevenueActuals,
   getInvoicedRevenueActuals,
   getSeatRevenueActuals,
