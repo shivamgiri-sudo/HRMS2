@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 
 import { blankToNull } from "../../shared/sql-values.js";
+import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 import { syncCostCentreRelatedTables } from "../../shared/cost-centre-sync.js";
 import { clearBranchLetterheadCache } from "./branchAddress.service.js";
 // ── Whitelisted master tables to prevent SQL injection ────────────────────────
@@ -591,6 +592,9 @@ export const costCentreService = {
     const { q, active_status, page, limit, employeeId, branch_id, client_id, lob_id, process_id } = options;
     const whereClauses: string[] = [];
     const params: (string | number)[] = [];
+
+    // MAS Callnet only: IDC / Pikquick cost centres must not appear anywhere in HRMS.
+    whereClauses.push(ownCompanyCostCentreSql("cc"));
 
     // Status filter - when fetching "active" cost centres, also require status='active'.
     // 83 cost centres have active_status=1 but status='closed', and 85 have status='draft'.

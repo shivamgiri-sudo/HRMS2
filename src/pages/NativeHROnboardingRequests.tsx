@@ -565,7 +565,12 @@ export default function NativeHROnboardingRequests() {
 
   // ── Re-filter cost centres when allCostCentres loads or selected changes
   useEffect(() => {
-    if (!selected || !allCostCentres.length) return;
+    if (!selected) return;
+    // An empty list must clear the picker too, or the previous branch's cost centres linger.
+    if (!allCostCentres.length) {
+      setCostCentres([]);
+      return;
+    }
     // Prefer branch_id UUID directly; fall back to name lookup in allBranches
     const branchId = selected.branch_id
       ?? allBranches.find((b: any) =>

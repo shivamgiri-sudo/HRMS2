@@ -59,7 +59,7 @@ describe("cost centre free-text search", () => {
     // Without the parentheses `active_status = 1 AND a OR b` binds as
     // `(active_status = 1 AND a) OR b` and quietly returns inactive cost centres.
     expect(sql).toMatch(/\(cc\.cost_centre_name LIKE \?[\s\S]*cc\.process_name_bill LIKE \?\)/);
-    expect(sql).toMatch(/cc\.active_status = 1 AND \(/);
+    expect(sql).toMatch(/cc\.active_status = 1 AND [\s\S]*AND \(cc\.cost_centre_name LIKE/);
   });
 
   it("passes the branch filter through alongside the search, in the right order", async () => {

@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { syncCostCentreRelatedTables } from "../../shared/cost-centre-sync.js";
+import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 
 // ============================================================================
 // Types
@@ -161,7 +162,8 @@ export const costCentreManagementService = {
    */
   async list(filters: ListFilters = {}) {
     const { q, status, active_status, client_id, client_name, branch_id, page = 1, limit = 50 } = filters;
-    const where: string[] = [];
+    // MAS Callnet only: IDC / Pikquick cost centres must not appear anywhere in HRMS.
+    const where: string[] = [ownCompanyCostCentreSql("cc")];
     const params: (string | number)[] = [];
 
     /*

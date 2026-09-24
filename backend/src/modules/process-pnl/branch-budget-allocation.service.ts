@@ -8,6 +8,7 @@ import { getCostCentreGradeWeightedCost } from "./grade-engine.service.js";
 
 import { refuse } from "./finance-error.js";
 import { ccProcessJoin, ccProcessNameSql } from "./cost-centre-label.js";
+import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 /**
  * Branch Budget foundation (PR 2): normalized cost-centre allocation for branch-planned budget
  * lines. Reuses the shared allocatePoolAmount() primitive (bpo-pnl.calculation.ts) so branch
@@ -206,6 +207,7 @@ export async function listActiveCostCentres(
             ) AS resolved_process_name
        FROM cost_centre_master ccm
       WHERE ccm.branch_id = ? AND ccm.active_status = 1 AND ccm.status = 'active'
+        AND ${ownCompanyCostCentreSql("ccm")}
         AND (ccm.close_date IS NULL OR ccm.close_date > CURDATE())
         AND (ccm.go_live_date IS NULL OR ccm.go_live_date <= CURDATE())
       ORDER BY ccm.cost_centre_name`,

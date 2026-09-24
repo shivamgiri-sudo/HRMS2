@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
 import { refuse } from "./finance-error.js";
+import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 
 /**
  * Per-employee cost centre override for P&L attribution (migration 1785).
@@ -213,7 +214,7 @@ export interface OverrideCostCentreOption {
  * 50 of ~900 cost centres.
  */
 export async function listOverrideCostCentreOptions(branchId?: string | null): Promise<OverrideCostCentreOption[]> {
-  const where = ["cc.active_status = 1", "COALESCE(bm.active_status, 1) = 1"];
+  const where = ["cc.active_status = 1", "COALESCE(bm.active_status, 1) = 1", ownCompanyCostCentreSql("cc")];
   const params: unknown[] = [];
   if (branchId) {
     where.push("cc.branch_id = ?");
