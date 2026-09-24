@@ -134,8 +134,12 @@ async function cycle(): Promise<void> {
 }
 
 export function startDbBillFinanceSyncWorker(): void {
-  if (process.env.DB_BILL_SYNC_ENABLED === "false") {
-    logger.info({ worker: WORKER_NAME }, "[db-bill-sync] disabled (DB_BILL_SYNC_ENABLED=false)");
+  // OFF unless explicitly switched on (owner directive 2026-09-24: stop the db_bill sync). It used
+  // to be on unless DB_BILL_SYNC_ENABLED=false. Turning it back on is DB_BILL_SYNC_ENABLED=true in
+  // the workers process environment; nothing else needs to change. NOTE: with it off, the invoice,
+  // provision, credit-note, budget and GRN mirrors the P&L reads stop advancing.
+  if (process.env.DB_BILL_SYNC_ENABLED !== "true") {
+    logger.info({ worker: WORKER_NAME }, "[db-bill-sync] disabled (set DB_BILL_SYNC_ENABLED=true to enable)");
     return;
   }
 
