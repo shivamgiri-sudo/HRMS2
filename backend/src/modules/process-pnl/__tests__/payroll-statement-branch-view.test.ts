@@ -70,7 +70,8 @@ CREATE TABLE employees (id TEXT PRIMARY KEY, employee_code TEXT, full_name TEXT,
 CREATE TABLE salary_prep_run (id TEXT PRIMARY KEY, run_month TEXT, status TEXT, created_at TEXT,
   disbursed_at TEXT, auto_closed_at TEXT, finance_approved_at TEXT, updated_at TEXT);
 CREATE TABLE salary_prep_line (id TEXT PRIMARY KEY, run_id TEXT, employee_id TEXT, gross_salary REAL,
-  pf_employer REAL, esic_employer REAL, gratuity REAL);
+  pf_employer REAL, esic_employer REAL, gratuity REAL, other_deductions REAL DEFAULT 0, loan_emi REAL DEFAULT 0,
+  advance_recovery REAL DEFAULT 0, lwp_deduction REAL DEFAULT 0);
 CREATE TABLE pnl_employee_cost_centre_override (id TEXT PRIMARY KEY, employee_id TEXT UNIQUE,
   target_cost_centre_id TEXT, active_status INT);
 CREATE TABLE pnl_running_salary_snapshot (id TEXT PRIMARY KEY, period_code TEXT, employee_id TEXT, employee_code TEXT,
@@ -95,7 +96,7 @@ INSERT INTO employees VALUES
   ('E4','E4','Four','BSS/BO/NOIDA-2/577','B2','P577','cc577','D1','DEP1',1);
 INSERT INTO pnl_employee_cost_centre_override VALUES ('o1','E1','cc576',1), ('o4','E4','cc100',0);
 INSERT INTO salary_prep_run VALUES ('R1','2026-05','FINALIZED','2026-06-02',NULL,NULL,NULL,'2026-06-02');
-INSERT INTO salary_prep_line VALUES
+INSERT INTO salary_prep_line (id, run_id, employee_id, gross_salary, pf_employer, esic_employer, gratuity) VALUES
   ('L1','R1','E1',90000,6000,0,4000), ('L2','R1','E2',50000,0,0,0),
   ('L3','R1','E3',20000,0,0,0), ('L4','R1','E4',30000,0,0,0);
 INSERT INTO pnl_running_salary_snapshot VALUES
