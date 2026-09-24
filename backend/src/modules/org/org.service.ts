@@ -112,7 +112,8 @@ async function listActive(table: string, orderCol = "created_at", options: ListO
   // DialDesk (IDC entity) branches and processes never surface in HRMS (owner rule 2026-09-24).
   if (table === "branch_master") whereClauses.push(ownCompanyBranchSql(""));
   if (table === "process_master") {
-    whereClauses.push("REPLACE(LOWER(COALESCE(process_name, '')), ' ', '') NOT LIKE '%dialdesk%'");
+    whereClauses.push("REPLACE(REPLACE(LOWER(COALESCE(process_name, '')), ' ', ''), '-', '') NOT LIKE '%dialdesk%'");
+    whereClauses.push("REPLACE(REPLACE(LOWER(COALESCE(process_name, '')), ' ', ''), '-', '') NOT LIKE '%ispark%'");
     whereClauses.push(`(branch_id IS NULL OR branch_id IN (SELECT id FROM branch_master WHERE ${ownCompanyBranchSql("")}))`);
   }
 

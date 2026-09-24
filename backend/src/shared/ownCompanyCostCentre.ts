@@ -12,22 +12,37 @@ export function ownCompanyCostCentreSql(alias: string): string {
 }
 
 /**
- * DialDesk (branch NOIDA-DIALDESK, company "Ispark Dataconnect Pvt Ltd") is an IDC entity, not MAS
- * Callnet (owner rule, 2026-09-24). A branch is hidden when its company is recorded and is not
- * MAS Callnet; legacy branches with no company recorded stay visible.
+ * DialDesk and I-Spark are IDC entities, not MAS Callnet India Pvt Ltd (owner rule, 2026-09-24).
+ * DialDesk is branch NOIDA-DIALDESK (company "Ispark Dataconnect Pvt Ltd"); I-Spark is
+ * NOIDA-ISPARK / NOIDA ISPARK-2. A branch is hidden when its company is recorded and is not MAS
+ * Callnet, or its own name says DialDesk / I-Spark; legacy branches with no company stay visible.
  *
  * `alias` is the alias of branch_master in the calling query (empty when unaliased).
  */
 export function ownCompanyBranchSql(alias: string): string {
-  const col = alias ? `${alias}.company_name` : "company_name";
-  return `(NULLIF(TRIM(COALESCE(${col}, '')), '') IS NULL OR REPLACE(REPLACE(REPLACE(LOWER(${col}), '.', ''), ' ', ''), ',', '') LIKE '%mascallnet%')`;
+  const p = alias ? `${alias}.` : "";
+  return `((NULLIF(TRIM(COALESCE(${p}company_name, '')), '') IS NULL OR REPLACE(REPLACE(REPLACE(LOWER(${p}company_name), '.', ''), ' ', ''), ',', '') LIKE '%mascallnet%')`
+    + ` AND REPLACE(REPLACE(LOWER(COALESCE(${p}branch_name, '')), ' ', ''), '-', '') NOT LIKE '%dialdesk%'`
+    + ` AND REPLACE(REPLACE(LOWER(COALESCE(${p}branch_name, '')), ' ', ''), '-', '') NOT LIKE '%ispark%')`;
 }
 
 /**
- * A process belongs to DialDesk when its branch is a non-MAS company branch, or its own name says
- * so (several DialDesk processes carry no branch at all). `processAlias` is process_master,
- * `branchAlias` is the LEFT JOINed branch_master.
+ * A process belongs to DialDesk / I-Spark when its branch is one of those, or its own name says so
+ * (several carry no branch at all). `processAlias` is process_master, `branchAlias` is the LEFT
+ * JOINed branch_master.
  */
 export function notDialDeskProcessSql(processAlias: string, branchAlias: string): string {
-  return `(${ownCompanyBranchSql(branchAlias)} AND REPLACE(LOWER(COALESCE(${processAlias}.process_name, '')), ' ', '') NOT LIKE '%dialdesk%')`;
+  const name = `REPLACE(REPLACE(LOWER(COALESCE(${processAlias}.process_name, '')), ' ', ''), '-', '')`;
+  return `(${ownCompanyBranchSql(branchAlias)} AND ${name} NOT LIKE '%dialdesk%' AND ${name} NOT LIKE '%ispark%')`;
+}
+
+/**
+ * A GRN belongs to DialDesk / I-Spark / IDC when its branch is one of those, or its cost centre
+ * belongs to another company. The hidden branch / cost-centre ids are uncorrelated subqueries, which
+ * MySQL evaluates once instead of once per GRN row (85k rows), and the IS NULL arms keep GRNs that
+ * have no branch or cost centre visible. `grnAlias` is grn_request.
+ */
+export function ownCompanyGrnSql(grnAlias: string): string {
+  return `((${grnAlias}.branch_id IS NULL OR ${grnAlias}.branch_id NOT IN (SELECT hb.id FROM branch_master hb WHERE NOT ${ownCompanyBranchSql("hb")}))`
+    + ` AND (${grnAlias}.cost_centre_id IS NULL OR ${grnAlias}.cost_centre_id NOT IN (SELECT hc.id FROM cost_centre_master hc WHERE NULLIF(TRIM(COALESCE(hc.company_name, '')), '') IS NOT NULL AND NOT (${ownCompanyCostCentreSql("hc")}))))`;
 }

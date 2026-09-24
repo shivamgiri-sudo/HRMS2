@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
+import { ownCompanyGrnSql } from "../../shared/ownCompanyCostCentre.js";
 import { resolvePendingWith } from "./finance-workflow-role.js";
 
 /**
@@ -72,7 +73,7 @@ export const APPROVAL_STAGE_STATUSES: Record<string, readonly string[]> = {
 };
 
 function scopeConditions(filters: GrnReportFilters) {
-  const conditions: string[] = [];
+  const conditions: string[] = [ownCompanyGrnSql("g")];
   const params: unknown[] = [];
 
   const scope = financeBranchFilter(filters.branchScope, "g.branch_id");

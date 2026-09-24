@@ -107,6 +107,7 @@ describe("grnService.getGrnSummary — branch scope", () => {
 
   it("emits no branch predicate for global scope", async () => {
     await grnService.getGrnSummary({ branchScope: { mode: "all" } });
-    expect(callWith("GROUP BY g.status").sql).not.toContain("g.branch_id");
+    // The own-company filter (DialDesk/IDC) reads g.branch_id in a subquery; what must be absent is a branch SCOPE predicate.
+    expect(callWith("GROUP BY g.status").sql).not.toMatch(/g\.branch_id\s*(IN|=)(?!\s*\(SELECT)/);
   });
 });

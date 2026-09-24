@@ -20,3 +20,14 @@ describe("DialDesk exclusion predicates", () => {
     expect(sql).toContain("bm.company_name");
   });
 });
+
+describe("I-Spark and GRN exclusion", () => {
+  it("hides I-Spark branches by name as well as company", async () => {
+    const { ownCompanyBranchSql: branchSql, ownCompanyGrnSql } = await import("../ownCompanyCostCentre.js");
+    expect(branchSql("b")).toContain("NOT LIKE '%ispark%'");
+    const grn = ownCompanyGrnSql("g");
+    expect(grn).toContain("g.branch_id NOT IN");
+    expect(grn).toContain("g.cost_centre_id NOT IN");
+    expect(grn).toContain("IS NULL");
+  });
+});
