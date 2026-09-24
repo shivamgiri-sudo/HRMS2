@@ -50,6 +50,57 @@ export const RESERVE = { band: 180 };
 /** Ordinary bottom margin for body pages: enough for the footer, nothing more. */
 const BODY_BOTTOM = 70;
 
+/** A rectangle in pdfkit page space: top-left origin, y grows downward. */
+export type TopLeftRect = { x: number; y: number; w: number; h: number };
+
+/**
+ * The provider's employee-signature rectangle, exactly as measured from a real
+ * signed contract. This is in native PDF space: [x1, y1, x2, y2] with the origin
+ * at the page's BOTTOM-left, so y 100-160 is a strip near the foot of the page.
+ * Do not change these numbers — they describe what the provider does, not what
+ * we choose.
+ */
+export const PROVIDER_STAMP_RECT_PDF: readonly [number, number, number, number] = [425, 100, 545, 160];
+
+/** Convert a native PDF rect ([x1,y1,x2,y2], bottom-left origin) to pdfkit space. */
+export function pdfRectToTopLeft(
+  rect: readonly [number, number, number, number],
+  pageHeight: number,
+): TopLeftRect {
+  const [x1, y1, x2, y2] = rect;
+  return { x: x1, y: pageHeight - y2, w: x2 - x1, h: y2 - y1 };
+}
+
+/** The dashed-look outline labelled "Aadhaar eSign area" (pdfkit space). */
+export const ESIGN_BOX: TopLeftRect = { x: 420, y: 94, w: 130, h: 78 };
+
+/**
+ * Verification QR: directly UNDER the eSign box, left-aligned with it, so it can
+ * neither cover the box's label nor be stamped over. The caption sits beneath it.
+ * All of it stays in the upper-middle of the signature page, far above the
+ * RESERVE.band foot strip the provider stamps into.
+ */
+const QR_SIZE = 76;
+const QR_GAP_BELOW_BOX = 12;
+const QR_CAPTION = "Scan to verify this letter";
+const QR_CAPTION_GAP = 3;
+const QR_CAPTION_HEIGHT = 9;
+export const QR_RECT: TopLeftRect = {
+  x: ESIGN_BOX.x,
+  y: ESIGN_BOX.y + ESIGN_BOX.h + QR_GAP_BELOW_BOX,
+  w: QR_SIZE,
+  h: QR_SIZE,
+};
+/** QR plus its caption line. */
+export const QR_BLOCK_RECT: TopLeftRect = {
+  ...QR_RECT,
+  h: QR_SIZE + QR_CAPTION_GAP + QR_CAPTION_HEIGHT,
+};
+
+/** Left column of the signature page: the company signer text is drawn inside it. */
+const COMPANY_TEXT_X = PAGE.margin;
+export const COMPANY_TEXT_MAX_WIDTH = 340;
+
 export type AppointmentLetterInput = {
   employeeName: string;
   employeeCode: string;
@@ -186,11 +237,13 @@ function salaryTable(doc: Doc, s: AppointmentLetterSalary) {
  * final page ever needs.
  *
  * The lower portion is left deliberately empty — the provider stamps the
- * employee's Aadhaar signature at Rect [425,100,545,160] on this page.
+ * employee's Aadhaar signature at PROVIDER_STAMP_RECT_PDF ([425,100,545,160],
+ * bottom-left origin, i.e. the foot strip) on this page. The verification QR is
+ * kept out of both that strip and the drawn ESIGN_BOX (see QR_RECT).
  */
 function signaturePage(doc: Doc, input: AppointmentLetterInput) {
   doc.addPage();
-  const left = PAGE.margin;
+  const left = COMPANY_TEXT_X;
   let y = doc.y;
 
   doc.font("Helvetica-Bold").fontSize(11).fillColor(INK).text("SIGNATURES", left, y);
@@ -212,26 +265,27 @@ function signaturePage(doc: Doc, input: AppointmentLetterInput) {
     doc.text(line, left, y, { width: 330 });
     y += 12;
   }
-  doc.fontSize(7).fillColor(MUTED).text(`Verify: ${input.verificationUrl}`, left, y, { width: 340 });
+  doc.fontSize(7).fillColor(MUTED).text(`Verify: ${input.verificationUrl}`, left, y, { width: COMPANY_TEXT_MAX_WIDTH });
   // Capture bottom of company block before drawing the eSign box (which resets doc.y to box coords).
   const companyBlockBottom = doc.y + 6;
 
-  // Aadhaar eSign box — fixed position matching the provider's stamp rect [425,100,545,160].
-  const boxTop = 94;
-  const boxHeight = 78;
-  doc.rect(420, boxTop, 130, boxHeight).lineWidth(0.8).strokeColor("#CBD5E1").stroke();
+  // Aadhaar eSign box. Position comes from ESIGN_BOX; the QR is drawn clear of it.
+  const boxTop = ESIGN_BOX.y;
+  doc.rect(ESIGN_BOX.x, ESIGN_BOX.y, ESIGN_BOX.w, ESIGN_BOX.h).lineWidth(0.8).strokeColor("#CBD5E1").stroke();
   doc.fontSize(6.5).fillColor(MUTED)
-    .text("Aadhaar eSign area", 426, boxTop + boxHeight - 14, { width: 120 });
+    .text("Aadhaar eSign area", ESIGN_BOX.x + 6, ESIGN_BOX.y + ESIGN_BOX.h - 14, { width: ESIGN_BOX.w - 10 });
 
   if (input.qrPngDataUrl) {
     try {
       const b64 = input.qrPngDataUrl.replace(/^data:image\/png;base64,/, "");
-      doc.image(Buffer.from(b64, "base64"), doc.page.width - PAGE.margin - 78, boxTop - 6, { width: 78, height: 78 });
+      doc.image(Buffer.from(b64, "base64"), QR_RECT.x, QR_RECT.y, { width: QR_RECT.w, height: QR_RECT.h });
+      doc.font("Helvetica").fontSize(6.5).fillColor(MUTED)
+        .text(QR_CAPTION, QR_RECT.x, QR_RECT.y + QR_RECT.h + QR_CAPTION_GAP, { width: ESIGN_BOX.w, lineBreak: false });
     } catch { /* a missing QR must never stop issuance */ }
   }
 
   // Employee acceptance block — below whichever ends lower: company block or eSign box.
-  const acceptY = Math.max(companyBlockBottom, boxTop + boxHeight + 14);
+  const acceptY = Math.max(companyBlockBottom, boxTop + ESIGN_BOX.h + 14);
   doc.font("Helvetica-Bold").fontSize(9.5).fillColor(INK)
     .text("Accepted by the employee", left, acceptY, { width: 320 });
   doc.font("Helvetica").fontSize(8).fillColor(MUTED)
