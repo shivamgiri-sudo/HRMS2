@@ -10,7 +10,7 @@ import multer from "multer";
 import { randomUUID } from "crypto";
 import { recalculateOpenPayrollForEmployee } from "./payroll-targeted-recalculation.service.js";
 import { payslipService } from "./payslip.service.js";
-import { resolvePii } from "../../shared/piiCiphertext.js";
+import { computeForm16Data } from "./form16-data.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 
 export const payrollMoreRouter = Router();
@@ -38,71 +38,30 @@ payrollMoreRouter.get("/form16-data/:runId/:employeeId", h(async (req: Authentic
     if (!scoped) return res.status(403).json({ success: false, message: "Forbidden" });
   }
 
-  const [runRows] = await db.execute<RowDataPacket[]>("SELECT run_month FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]);
-  const run = runRows[0] as { run_month: string } | undefined;
-  if (!run) return res.status(404).json({ success: false, message: "Run not found" });
-
-  const [lineRows] = await db.execute<RowDataPacket[]>(
-    `SELECT gross_salary, tds_amount, tds FROM salary_prep_line WHERE run_id = ? AND employee_id = ? LIMIT 1`,
-    [runId, employeeId],
-  );
-  const line = lineRows[0] as { gross_salary: number; tds_amount: number; tds: number } | undefined;
-  if (!line) return res.status(404).json({ success: false, message: "Payroll line not found for employee" });
-
-  const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT CONCAT_WS(' ', e.first_name, e.last_name) AS name,
-            e.pan_number AS pan, e.pan_number_encrypted,
-            dm.designation_name AS designation,
-            e.date_of_joining
-       FROM employees e
-       LEFT JOIN designation_master dm ON dm.id = e.designation_id
-      WHERE e.id = ? LIMIT 1`,
-    [employeeId],
-  );
-  const emp = empRows[0] as { name: string; pan: string | null; pan_number_encrypted: string | null; designation: string | null; date_of_joining: string | null } | undefined;
-  if (emp) {
-    emp.pan = resolvePii(emp.pan_number_encrypted, emp.pan).value;
+  // This route is shadowed in production (payrollRouter mounts its correct
+  // /form16-data ahead of payrollMoreRouter in app.ts), but it previously
+  // carried a second, WRONG computation — a single month's gross × 12, a
+  // hardcoded ₹75,000 standard deduction, no professional tax, no statutory
+  // block and no Part A. If the mount order ever changed, that stale copy
+  // would silently start issuing incorrect certificates. It now delegates to
+  // the same shared service as the canonical route, so both are identical.
+  const result = await computeForm16Data(runId, employeeId);
+  if (!result.ok) {
+    if (result.kind === "run_not_found") {
+      return res.status(404).json({ success: false, message: "Run not found" });
+    }
+    if (result.kind === "line_not_found") {
+      return res.status(404).json({ success: false, message: "Payroll line not found for employee" });
+    }
+    return res.status(409).json({
+      success: false,
+      message:
+        "Cannot issue the certificate: tds_standard_deduction has no active configuration " +
+        `effective for FY ${result.financialYearLabel}. Seed and activate it, then retry.`,
+      data: { missing_config_keys: result.missingKeys },
+    });
   }
-
-  const [yr, mo] = run.run_month.split("-").map(Number);
-  const fyStart = mo >= 4 ? yr : yr - 1;
-  const financialYear = `${fyStart}-${fyStart + 1}`;
-  const legacyFinancialYear = `${fyStart}-${String(fyStart + 1).slice(2)}`;
-
-  const [declRows] = await db.execute<RowDataPacket[]>(
-    `SELECT declared_hra, declared_80c, declared_80d, regime
-       FROM tax_declaration
-      WHERE employee_id = ? AND financial_year IN (?, ?)
-      ORDER BY financial_year = ? DESC
-      LIMIT 1`,
-    [employeeId, financialYear, legacyFinancialYear, financialYear],
-  );
-  const decl = declRows[0] as { declared_hra: number; declared_80c: number; declared_80d: number; regime: string } | undefined;
-
-  const grossSalary = Number(line.gross_salary);
-  const standardDeduction = 75000;
-  const tdsDeducted = Number(line.tds_amount) || Number(line.tds) || 0;
-  const totalDeductions = standardDeduction + (decl ? Number(decl.declared_hra) + Number(decl.declared_80c) + Number(decl.declared_80d) : 0);
-  const netTaxableIncome = Math.max(0, grossSalary * 12 - totalDeductions);
-
-  return res.json({
-    success: true,
-    data: {
-      financial_year: financialYear,
-      period: run.run_month,
-      employee: {
-        name: emp?.name ?? "",
-        pan: emp?.pan ?? null,
-        designation: emp?.designation ?? null,
-        period: `Apr ${fyStart} – Mar ${fyStart + 1}`,
-      },
-      gross_salary: grossSalary,
-      standard_deduction: standardDeduction,
-      tds_deducted: tdsDeducted,
-      net_taxable_income: netTaxableIncome,
-      declaration: decl ? { hra: Number(decl.declared_hra), "80c": Number(decl.declared_80c), "80d": Number(decl.declared_80d), regime: decl.regime } : null,
-    },
-  });
+  return res.json({ success: true, data: result.data });
 }));
 
 payrollMoreRouter.post("/pt-slabs", requireRole("admin", "finance"), h(async (req: AuthenticatedRequest, res: Response) => {
