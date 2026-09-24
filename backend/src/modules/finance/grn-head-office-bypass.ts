@@ -103,23 +103,11 @@ export async function shouldSkipFinanceHeadOnAccountsApproval(
   const submitterId = grn.submitted_by || grn.created_by;
   if (!submitterId) return false;
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT role FROM users WHERE id = ? LIMIT 1`,
-    [submitterId]
-  );
-  const submitterRole = String((rows[0] as any)?.role ?? "").toLowerCase();
-
-  // Also check user_role_mapping for additional roles
   const [roleRows] = await db.execute<RowDataPacket[]>(
-    `SELECT r.role_key FROM user_role_mapping urm
-     JOIN roles r ON r.id = urm.role_id
-     WHERE urm.user_id = ?`,
+    `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
     [submitterId]
   );
-  const allRoles = [
-    submitterRole,
-    ...roleRows.map((row) => String((row as any).role_key ?? "").toLowerCase()),
-  ];
+  const allRoles = roleRows.map((row) => String((row as any).role_key ?? "").toLowerCase());
 
   return allRoles.includes("finance_head");
 }

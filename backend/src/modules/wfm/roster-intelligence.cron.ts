@@ -176,7 +176,7 @@ async function runUnplannedAbsenceAlerts(): Promise<void> {
 
     try {
       const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT DISTINCT JSON_UNQUOTE(JSON_EXTRACT(payload, '$.managerId')) AS manager_id
+        `SELECT DISTINCT JSON_UNQUOTE(JSON_EXTRACT(metadata_json, '$.managerId')) AS manager_id
          FROM audit_log
          WHERE action_type = 'ROSTER_UNPLANNED_ALERT_SENT'
            AND DATE(created_at) = ?`,
