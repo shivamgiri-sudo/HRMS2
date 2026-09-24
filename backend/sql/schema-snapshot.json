@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1201,
-  "columnCount": 17863,
+  "columnCount": 17872,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -1421,7 +1421,8 @@
       "joining_document_completed_at",
       "employee_code",
       "converted_at",
-      "reminder_sent_at"
+      "reminder_sent_at",
+      "updated_at"
     ],
     "ats_onboarding_request": [
       "id",
@@ -2565,7 +2566,8 @@
       "verified_at",
       "status",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "pre_auth_challenge_id"
     ],
     "auth_user": [
       "id",
@@ -6229,7 +6231,9 @@
       "planning_rule",
       "active",
       "created_by",
-      "created_at"
+      "created_at",
+      "data_source",
+      "source_reference"
     ],
     "dpdp_config": [
       "config_key",
@@ -14655,7 +14659,12 @@
       "portal_user_id",
       "token_hash",
       "expires_at",
-      "created_at"
+      "created_at",
+      "token",
+      "user_id",
+      "user_type",
+      "session_family_id",
+      "absolute_expires_at"
     ],
     "portal_user_permissions": [
       "id",
