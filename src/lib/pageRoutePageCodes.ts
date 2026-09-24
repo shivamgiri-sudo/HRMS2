@@ -300,6 +300,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   // navConfig.tsx exactly or nav visibility and page access disagree.
   "/wfm/team-attendance": "TEAM_ATTENDANCE",
   "/wfm/planning-rules": "WFM_PLANNING_RULES",
+  "/wfm/process-lob-mapping": "WFM_PROCESS_LOB_MAP",
   "/wfm/roster": "WFM_ROSTER",
   "/wfm/roster-builder": "WFM_ROSTER_BUILDER",
   "/wfm/roster-rules": "WFM_ROSTER",

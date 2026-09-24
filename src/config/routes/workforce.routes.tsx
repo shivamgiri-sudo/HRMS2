@@ -29,6 +29,7 @@ const NativeWFMExtensions          = lazy(() => import("@/pages/NativeWFMExtensi
 const NativeWFMManagerApproval     = lazy(() => import("@/pages/NativeWFMManagerApproval"));
 const NativeWFMAutoRoster          = lazy(() => import("@/pages/NativeWFMAutoRoster"));
 const NativeWFMPlanningRules       = lazy(() => import("@/pages/NativeWFMPlanningRules"));
+const ProcessLobMapping            = lazy(() => import("@/pages/ProcessLobMapping"));
 const NativeSlotRequirementBuilder = lazy(() => import("@/pages/NativeSlotRequirementBuilder"));
 const NativeWeekOffDayRuleConfig   = lazy(() => import("@/pages/NativeWeekOffDayRuleConfig"));
 const NativeWFMRestPolicyConfig    = lazy(() => import("@/pages/NativeWFMRestPolicyConfig"));
@@ -221,7 +222,8 @@ export const workforceRouteElements = (
       <Route path="/wfm/roster-rules"      element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterRulesPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/extensions"    element={<ProtectedRoute><Gate pageCode="WFM_EXTENSIONS"><NativeWFMExtensions /></Gate></ProtectedRoute>} />
       <Route path="/wfm-manager-approvals" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMManagerApproval /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/planning-rules"  element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm','branch_head']}><Gate pageCode="WFM_PLANNING_RULES"><NativeWFMPlanningRules /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/process-lob-mapping" element={<ProtectedRoute roles={['super_admin','admin','hr','wfm','wfm_spoc','branch_wfm','ho_wfm']}><Gate pageCode="WFM_PROCESS_LOB_MAP"><ProcessLobMapping /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/planning-rules" element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm','branch_head']}><Gate pageCode="WFM_PLANNING_RULES"><NativeWFMPlanningRules /></Gate></ProtectedRoute>} />
       <Route path="/wfm/slot-requirements" element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm','branch_head']}><Gate pageCode="WFM_SLOT_REQUIREMENTS"><NativeSlotRequirementBuilder /></Gate></ProtectedRoute>} />
       {/* Superseded by RosterBuilderPage — redirect */}
       <Route path="/wfm/auto-roster"   element={<Navigate to="/wfm/roster-builder" replace />} />

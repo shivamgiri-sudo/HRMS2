@@ -212,6 +212,7 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "RTA_BOARD",
     "WORKFORCE_COMMAND_CENTER",
     "PROVISIONING_WFM_ALIGNMENT",
+    "WFM_PROCESS_LOB_MAP",
   ],
   payroll: [
     "PAYROLL_HR_DASHBOARD",
@@ -755,6 +756,7 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "SALARY_CERTIFICATE",
   ],
   branch_wfm: [
+    "WFM_PROCESS_LOB_MAP",
     "ATTENDANCE_LOOKUP",
     "PAYROLL_ATTENDANCE_CONTROL_TOWER",
     "PAYROLL_BRANCH_READINESS",

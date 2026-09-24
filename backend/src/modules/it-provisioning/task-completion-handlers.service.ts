@@ -15,6 +15,7 @@ import { randomUUID } from 'crypto';
 import { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
+import { isLobMappedToProcess } from '../wfm/process-lob-map.service.js';
 import { activateIfJoiningDateReached } from '../employees/employee-activation.service.js';
 import { emailService } from '../communication/email.service.js';
 import { inboxService } from '../inbox/inbox.service.js';
@@ -509,6 +510,7 @@ export async function completeAdminProvisioningTask(
 
 export interface WfmCompletionInput {
   process_id: string;
+  lob_id?: string;   // optional; must be an active process_lob_map row for process_id
   shift_id?: string;
   roster_effective_date: string;
   week_off_day?: string;  // 'Sunday' | 'Monday' etc — matches existing ENUM
@@ -550,6 +552,22 @@ export async function completeWfmAlignmentTask(
       processId: input.process_id ? String(input.process_id) : null,
       changedBy: null, reason: "Process assigned during IT provisioning",
     });
+
+    // 1b. Optional LOB chosen at alignment. Must be an ACTIVE mapping of the chosen process
+    // (process_lob_map); completion is never blocked when NO lob_id is sent (e.g. the process
+    // has no mapped LOB yet) - only a lob_id that is sent but invalid is rejected.
+    if (input.lob_id) {
+      if (!(await isLobMappedToProcess(conn, input.process_id, input.lob_id))) {
+        throw Object.assign(
+          new Error('lob_id is not mapped to the selected process. Add it in Process LOB Mapping first.'),
+          { statusCode: 400 }
+        );
+      }
+      await conn.execute(
+        `UPDATE employees SET lob_id = ?, updated_at = NOW() WHERE id = ?`,
+        [input.lob_id, task.employee_id]
+      );
+    }
 
     // 2. Create/update employee_roster_preference (existing table)
     const [existingPref] = await conn.execute<RowDataPacket[]>(
@@ -624,6 +642,7 @@ export async function completeWfmAlignmentTask(
       change_summary: {
         task_id: taskId,
         process_id: input.process_id,
+        lob_id: input.lob_id ?? null,
         shift_id: input.shift_id ?? null,
         roster_effective_date: input.roster_effective_date,
         attendance_effective_date: input.attendance_effective_date,
@@ -674,6 +693,7 @@ export async function dispatchTaskCompletion(
     case 'WFM_PROCESS_ALIGNMENT':
       await completeWfmAlignmentTask(taskId, {
         process_id: String(body.process_id ?? ''),
+        lob_id: body.lob_id ? String(body.lob_id) : undefined,
         shift_id: body.shift_id ? String(body.shift_id) : undefined,
         roster_effective_date: String(body.roster_effective_date ?? ''),
         week_off_day: body.week_off_day ? String(body.week_off_day) : undefined,
