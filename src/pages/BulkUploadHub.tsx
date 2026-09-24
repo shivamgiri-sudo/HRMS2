@@ -119,6 +119,7 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   ASSET_MASTER: "import_asset_upload_batch",
   BRANCH_MASTER: "import_branch_upload_batch",
   LOB_MASTER: "import_lob_upload_batch",
+  EMPLOYEE_LOB_MAPPING: "import_employee_lob_batch",
   DESIGNATION_MASTER: "import_designation_upload_batch",
   OFFICIAL_EMAIL_UPDATE: "import_official_email_update_batch",
   REPORTING_MANAGER_UPDATE: "import_reporting_manager_update_batch",
@@ -928,6 +929,18 @@ function getUploadTypeAllowedValues(uploadTypeCode: string): string[] {
         "",
         "status:  available | assigned | maintenance | retired | lost",
         "Date format: DD-MM-YYYY  (e.g. 16-05-2026)",
+      ];
+    case "EMPLOYEE_LOB_MAPPING":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "employee_code: an ACTIVE employee inside your branch/process scope (e.g. MAS00001)",
+        "lob_code: an ACTIVE LOB code from LOB Master (e.g. ONF_KYC)",
+        "",
+        "The LOB must already be mapped to the employee's process. If a row is rejected with",
+        "\"LOB X is not mapped to process Y\", add it first under WFM > Process LOB Mapping.",
+        "Both cells are required on every row; this upload cannot clear a LOB.",
+        "Only the first row for an employee_code is processed; repeats are rejected.",
       ];
     case "SHIFT_ROTATION_TYPE_UPDATE":
       return [

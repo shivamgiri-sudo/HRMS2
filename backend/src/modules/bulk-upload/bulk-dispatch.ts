@@ -33,6 +33,23 @@ export async function assertDepartmentStructureUploader(rpc_name: string, userId
   }
 }
 
+/**
+ * Employee LOB Mapping writes employees.lob_id, so it is limited to the same WFM roles that may
+ * use the Process LOB Mapping screen (super_admin passes hasAnyRole). Row scope is enforced in
+ * the importer itself.
+ */
+export async function assertEmployeeLobUploader(rpc_name: string, userId: string): Promise<void> {
+  if (rpc_name !== "import_employee_lob_batch") return;
+  const { hasAnyRole } = await import("../../shared/scopeAccess.js");
+  const { WFM_LOB_ROLES } = await import("../wfm/process-lob-map.service.js");
+  if (!(await hasAnyRole(userId, ...WFM_LOB_ROLES))) {
+    throw Object.assign(
+      new Error("Only WFM, HR, Admin or a Super Admin can upload employee LOB mappings."),
+      { statusCode: 403 },
+    );
+  }
+}
+
 export async function dispatchImport(
   rpc_name: string,
   id: string,
@@ -40,6 +57,7 @@ export async function dispatchImport(
 ): Promise<Record<string, unknown>> {
   await assertGatedUploader(rpc_name, userId);
   await assertDepartmentStructureUploader(rpc_name, userId);
+  await assertEmployeeLobUploader(rpc_name, userId);
 
   if (rpc_name === "import_attendance_regularization_batch") {
     const { importRegularizationBatch } = await import("./attendance-regularization-bulk.service.js");
@@ -140,6 +158,12 @@ export async function dispatchImport(
   if (rpc_name === "import_lob_upload_batch") {
     const { importLobMasterBatch } = await import("./lob-master-bulk.service.js");
     const data = await importLobMasterBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_employee_lob_batch") {
+    const { importEmployeeLobBatch } = await import("./employee-lob-bulk.service.js");
+    const data = await importEmployeeLobBatch(id, userId);
     return { success: true, data };
   }
 

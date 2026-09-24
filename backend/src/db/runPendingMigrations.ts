@@ -1136,6 +1136,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1851_roster_offday_policy_page_access.sql", // Registered 2026-09-24. page_catalog + role_page_access for WFM_ROSTER_OFFDAY_POLICY (wfm/wfm_spoc/branch_wfm/ho_wfm/admin/hr/super_admin). Additive, idempotent.
   "1852_pnl_grn_allocation_view_ex_gst.sql", // Registered 2026-09-24. Owner rule: Process P&L GRN must be ex-GST. CREATE OR REPLACE of vw_process_pnl_grn_allocation with the exact sql/418 body plus one new column, ex_gst_amount (amount_without_tax, guarded for legacy 0-default rows), appended last. Existing columns unchanged. Additive, idempotent.
   "1853_meta_lead_messages_delivery_status.sql", // Registered 2026-09-24. Adds nullable delivery_status VARCHAR(20) and delivery_updated_at DATETIME to meta_lead_messages so the WhatsApp inbox shows real Wassenger delivery state (queued/sent/delivered/read/failed) instead of assuming accepted-into-queue means delivered. Additive, idempotent (information_schema guards).
+  "1854_employee_lob_mapping_upload_template.sql", // Registered 2026-09-24 (renumbered from 1853 to resolve numbering collision). Seeds the EMPLOYEE_LOB_MAPPING upload_template_master row (employee_code, lob_code) for the Bulk Upload Hub. Insert-if-absent, additive, replay-safe.
   ];
 
 export type MigrationHealth = {
