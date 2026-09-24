@@ -41,7 +41,10 @@ import {
   evaluateAppointmentLetterEligibility, listAppointmentLetterQueue,
 } from "./appointmentLetterEligibility.service.js";
 import { issueAppointmentLetter, revokeAppointmentLetter } from "./appointmentLetterIssue.service.js";
-import { resendAppointmentAcceptLink, checkAppointmentEsignStatus } from "./appointmentLetterResend.service.js";
+import {
+  resendAppointmentAcceptLink, checkAppointmentEsignStatus, getAppointmentResendOptions,
+} from "./appointmentLetterResend.service.js";
+import { parseResendRequest, maskEmailAddress } from "./appointmentLetterResendRecipients.js";
 import { renderAppointmentLetterPdf } from "./appointmentLetterPdf.service.js";
 import { resolveEmployeeLetterhead, assertPrintableLetterhead } from "../org/branchAddress.service.js";
 import { resolveAppointmentLetterSalary } from "./appointmentLetterData.service.js";
@@ -296,13 +299,39 @@ async function issuedLetterInScope(req: AuthenticatedRequest, issueId: string): 
  * Re-email the employee's Review & Accept link. Mirrors the joining kit's
  * "resend": a fresh token is minted (only hashes are stored), the provider is
  * never touched.
+ *
+ * With no body this goes to the addresses on the employee record, as always.
+ * With `{ recipients, reason }` it goes ONLY to those addresses (see
+ * appointmentLetterResend.service.ts). Same roles and the same branch scope
+ * either way — the scope check runs before the body is even read.
  */
 router.post("/appointment-letters/:issueId/resend-link", requireRole(...ISSUE_ROLES), h(async (req, res) => {
   if (!(await issuedLetterInScope(req, req.params.issueId))) {
     return res.status(403).json({ success: false, message: OUT_OF_SCOPE });
   }
-  const out = await resendAppointmentAcceptLink({ issueId: req.params.issueId, actorUserId: req.authUser!.id });
-  return res.status(out.resent ? 200 : 409).json({ success: out.resent, message: out.message, data: out });
+  const custom = parseResendRequest(req.body); // throws a 400 with a readable message
+  const out = await resendAppointmentAcceptLink({ issueId: req.params.issueId, actorUserId: req.authUser!.id, custom });
+  if (!out.resent) {
+    return res.status(out.status ?? 409).json({ success: false, message: out.message, data: { resent: false, message: out.message } });
+  }
+  const emailedTo = (out.emailedTo ?? []).map(maskEmailAddress);
+  const message = `Accept link ${custom ? "sent" : "re-sent"} to ${emailedTo.join(", ")}.`;
+  return res.json({
+    success: true,
+    message,
+    data: { letterNumber: out.letterNumber, emailedTo, sentAt: out.sentAt },
+  });
+}));
+
+/**
+ * What the Resend dialog shows: the employee's registered addresses (masked) and
+ * the resend history. Same roles as the resend itself, and the same branch scope.
+ */
+router.get("/appointment-letters/:issueId/resend-options", requireRole(...ISSUE_ROLES), h(async (req, res) => {
+  if (!(await issuedLetterInScope(req, req.params.issueId))) {
+    return res.status(403).json({ success: false, message: OUT_OF_SCOPE });
+  }
+  return res.json({ success: true, data: await getAppointmentResendOptions(req.params.issueId) });
 }));
 
 /** Pull the employee's signature state from the provider now (HR does not have to wait for the scheduled check). */

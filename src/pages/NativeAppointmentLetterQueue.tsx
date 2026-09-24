@@ -15,6 +15,7 @@ import {
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
+import { ResendLetterDialog, type ResendOptions } from "@/components/letters/ResendLetterDialog";
 
 type Blocker = { code: string; reason: string; severity: "critical" | "warning" };
 type QueueRow = {
@@ -83,6 +84,11 @@ export default function NativeAppointmentLetterQueue() {
   // this reason, and a cancelled/misunderstood native prompt looks identical
   // to a user who simply moved on — no error, no record, nothing to debug.
   const [overrideReasonInput, setOverrideReasonInput] = useState("");
+  // Resend dialog target, and the resend history shown in the issued-letter drawer.
+  const [resendTarget, setResendTarget] = useState<IssuedRow | null>(null);
+  const [resendHistory, setResendHistory] = useState<ResendOptions["history"] | null>(null);
+  const [resendHistoryError, setResendHistoryError] = useState<string | null>(null);
+  const [resendHistoryKey, setResendHistoryKey] = useState(0);
 
   const closeDrawer = useCallback(() => {
     setDrawer(null);
@@ -126,6 +132,21 @@ export default function NativeAppointmentLetterQueue() {
     })();
     return () => { cancelled = true; };
   }, [drawer]);
+
+  // Resend history for an issued letter (drill-down audit section).
+  const viewedIssueId = drawer?.mode === "view" ? drawer.row.id : null;
+  useEffect(() => {
+    setResendHistory(null);
+    setResendHistoryError(null);
+    if (!viewedIssueId) return;
+    let cancelled = false;
+    hrmsApi.get<{ data: ResendOptions }>(`/api/letters/appointment-letters/${viewedIssueId}/resend-options`)
+      .then((res) => { if (!cancelled) setResendHistory(res.data.history); })
+      .catch((err: unknown) => {
+        if (!cancelled) setResendHistoryError(err instanceof Error ? err.message : "Unable to load the resend history.");
+      });
+    return () => { cancelled = true; };
+  }, [viewedIssueId, resendHistoryKey]);
 
   // Debounced, because the search runs on the server: the queue is capped at 200
   // employees ordered by joining date, so filtering the loaded page would never
@@ -257,18 +278,10 @@ export default function NativeAppointmentLetterQueue() {
     }
   };
 
-  /** Mirrors the joining kit's "resend": a fresh accept link is emailed; the provider is not touched. */
-  const resendLink = async (row: IssuedRow) => {
-    if (!window.confirm(`Email ${row.employee_name ?? "the employee"} a fresh Review & Accept link for ${row.letter_number}?\n\nThe link in their earlier email will stop working.`)) return;
-    setBusy(row.id);
-    try {
-      const res = await hrmsApi.post<{ message?: string }>(`/api/letters/appointment-letters/${row.id}/resend-link`, {});
-      setNotice(res.message ?? `Accept link re-sent for ${row.letter_number}.`);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Unable to resend the accept link.");
-    } finally {
-      setBusy(null);
-    }
+  /** Opens the Resend dialog: the on-file address(es) in one click, or a different address with a reason. */
+  const resendLink = (row: IssuedRow) => {
+    setError(null);
+    setResendTarget(row);
   };
 
   /** Ask the provider now whether the employee has signed. */
@@ -709,6 +722,36 @@ export default function NativeAppointmentLetterQueue() {
             </div>
           )}
 
+          {/* Resend history — issued letters only */}
+          {drawer.mode === "view" && (
+            <div className="shrink-0 max-h-40 overflow-y-auto border-b border-slate-100 bg-white px-6 py-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Resend history</p>
+              {resendHistoryError ? (
+                <p className="mt-1 text-xs text-red-600">{resendHistoryError}</p>
+              ) : resendHistory === null ? (
+                <p className="mt-1 text-xs text-slate-400">Loading…</p>
+              ) : resendHistory.length === 0 ? (
+                <p className="mt-1 text-xs text-slate-400">None</p>
+              ) : (
+                <ul className="mt-1 space-y-1.5">
+                  {resendHistory.map((h) => (
+                    <li key={h.id} className="text-xs text-slate-600">
+                      <span className="font-semibold text-slate-700">
+                        {h.actedAt ? new Date(h.actedAt).toLocaleString("en-IN", {
+                          day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
+                        }).replace(",", "") : "—"}
+                      </span>
+                      {" · "}{h.outcome === "sent" ? "Sent to" : "Failed for"} {h.recipients.join(", ") || "—"}
+                      {h.custom ? " (different address)" : ""}
+                      {h.actor ? ` · by ${h.actor}` : ""}
+                      {h.reason ? <span className="block text-slate-500">Reason: {h.reason}</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           {/* PDF viewer */}
           <div className="flex-1 overflow-hidden bg-slate-200 min-h-0">
             {drawerPdfLoading ? (
@@ -844,6 +887,18 @@ export default function NativeAppointmentLetterQueue() {
       </div>
     )}
 
+    <ResendLetterDialog
+      issueId={resendTarget?.id ?? null}
+      letterNumber={resendTarget?.letter_number ?? ""}
+      employeeName={resendTarget?.employee_name ?? null}
+      onClose={() => setResendTarget(null)}
+      onSent={(message) => {
+        setResendTarget(null);
+        setNotice(message);
+        setResendHistoryKey((k) => k + 1);
+        void load();
+      }}
+    />
     </DashboardLayout>
   );
 }
