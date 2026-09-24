@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Search } from "lucide-react";
 import { DashboardExportMenu, type ExportSlide } from "./DashboardKit";
+import { BellavitaAgentDetailDrawer } from "./BellavitaAgentDetailDrawer";
 
 interface AgentRow {
   empId: string;
@@ -48,18 +49,20 @@ function Spinner() {
  * deliberately left out (no real source exists in this app: DOJ, Bucket,
  * per-agent Target/Achiv%, TQ/MQ/BQ, Compliance%, Man Day, Start Date).
  */
-export function BellavitaAgentPerformance({ from, to }: { from: string; to: string }) {
+export function BellavitaAgentPerformance({ from, to, lob }: { from: string; to: string; lob?: string }) {
   const [rows, setRows] = useState<AgentRow[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [nameSearch, setNameSearch] = useState("");
+  const [drawerEmpId, setDrawerEmpId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
+      const lobParam = lob && lob !== "All" ? `&lob=${encodeURIComponent(lob)}` : "";
       const res = await hrmsApi.get<{ success: boolean; data: AgentRow[] }>(
-        `/api/process-performance/bellavita-agent-performance?from=${from}&to=${to}`,
+        `/api/process-performance/bellavita-agent-performance?from=${from}&to=${to}${lobParam}`,
       );
       setRows(res.data);
     } catch (err) {
@@ -67,7 +70,7 @@ export function BellavitaAgentPerformance({ from, to }: { from: string; to: stri
     } finally {
       setLoading(false);
     }
-  }, [from, to]);
+  }, [from, to, lob]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -100,7 +103,12 @@ export function BellavitaAgentPerformance({ from, to }: { from: string; to: stri
   return (
     <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-slate-700">Agent Performance ({filteredRows.length} of {rows.length} agents)</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-sm font-semibold text-slate-700">Agent Performance ({filteredRows.length} of {rows.length} agents)</p>
+          {lob && lob !== "All" && (
+            <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-700">LOB: {lob}</span>
+          )}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <DashboardExportMenu
             reportTitle="Bellavita — Agent Performance"
@@ -126,7 +134,7 @@ export function BellavitaAgentPerformance({ from, to }: { from: string; to: stri
         <table className="w-full border-collapse text-center text-xs">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-slate-500">
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Agent</th>
+              <th className="sticky left-0 z-10 min-w-[140px] border border-slate-200 bg-slate-50 px-3 py-2 font-semibold shadow-[2px_0_6px_-2px_rgba(0,0,0,0.15)]">Agent</th>
               <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">TL</th>
               <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">LOB</th>
               <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Tenure</th>
@@ -148,9 +156,9 @@ export function BellavitaAgentPerformance({ from, to }: { from: string; to: stri
           </thead>
           <tbody>
             {filteredRows.map((r) => (
-              <tr key={r.empId}>
-                <td className="border border-slate-200 px-3 py-2">
-                  <div className="font-medium text-slate-700">{r.empName}</div>
+              <tr key={r.empId} onClick={() => setDrawerEmpId(r.empId)} role="button" tabIndex={0} className="cursor-pointer transition-colors hover:bg-rose-50/50">
+                <td className="sticky left-0 z-10 border border-slate-200 bg-white px-3 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.1)]">
+                  <div className="font-medium text-rose-700 underline-offset-2 hover:underline">{r.empName}</div>
                   <div className="text-[11px] text-slate-400">{r.empId}</div>
                 </td>
                 <td className="border border-slate-200 px-3 py-2 text-slate-500">{r.teamLeader}</td>
@@ -178,6 +186,9 @@ export function BellavitaAgentPerformance({ from, to }: { from: string; to: stri
           </tbody>
         </table>
       </div>
+      {drawerEmpId && (
+        <BellavitaAgentDetailDrawer empId={drawerEmpId} from={from} to={to} onClose={() => setDrawerEmpId(null)} />
+      )}
     </div>
   );
 }

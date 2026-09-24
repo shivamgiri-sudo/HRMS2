@@ -5,6 +5,7 @@ import { ProjectDetailView } from "@/pages/NativeInboundDashboard";
 import { BellavitaSaleDashboard } from "@/components/process-performance/BellavitaSaleDashboard";
 import { GncSaleDashboard } from "@/components/process-performance/GncSaleDashboard";
 import { GncChatDashboard } from "@/components/process-performance/GncChatDashboard";
+import { GncAbandonCartDashboard } from "@/components/process-performance/GncAbandonCartDashboard";
 import { InboundInsightsDashboard, type InboundInsightProject } from "@/components/process-performance/InboundInsightsDashboard";
 import { NeemansCartDashboard } from "@/components/process-performance/NeemansCartDashboard";
 import { NeemansPerformanceDashboard } from "@/components/process-performance/NeemansPerformanceDashboard";
@@ -16,7 +17,6 @@ import { HousingPremiumSaleDashboard } from "@/components/process-performance/Ho
 import { LpFeedbackDashboard } from "@/components/process-performance/LpFeedbackDashboard";
 import { LpOnboardingDashboard } from "@/components/process-performance/LpOnboardingDashboard";
 import { SatyaRetailDashboard } from "@/components/process-performance/SatyaRetailDashboard";
-import { SatyaRetailReport } from "@/components/process-performance/SatyaRetailReport";
 import { CloviaDashboard } from "@/components/process-performance/CloviaDashboard";
 import { BirlanuDashboard } from "@/components/process-performance/BirlanuDashboard";
 import { AppreciateWealthDashboard } from "@/components/process-performance/AppreciateWealthDashboard";
@@ -93,10 +93,10 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
  * separate mapping. "stub" entries are the pre-existing "nothing built
  * yet" placeholders (Neemans' Sale/Allocation cards) -- unchanged.
  */
-const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" }>>> = {
+const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" }>>> = {
   bellavita: [
-    { key: "sale_performance", label: "Sale Performance", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
-    { key: "chat_performance", label: "Chat Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
+    { key: "sale_performance", label: "Overall Dashboard", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
+    { key: "chat_performance", label: "Chat Sale Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
     { key: "cart_performance", label: "Abandon Cart", description: "Cart value, connect%, discount codes, agent-wise + Repeat Allocation — live from uploaded cart data", kind: "bellavita_cart" },
     { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%", kind: "inbound" },
   ],
@@ -113,11 +113,11 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
     { key: "call_performance", label: "Onboarding Call Performance", description: "Login/calls/connectivity, lead-source, week-wise & agent-wise — live from uploaded APR/CDR data", kind: "lp_onboarding" },
   ],
   satya_retail: [
-    { key: "calling_order_tracking", label: "Calling & Order Tracking", description: "Full report — daily MTD/weekly tracker, agent-wise, beat & warehouse, call attempts, with row drill-downs and data checks", kind: "satya_retail_report" },
-    { key: "beat_performance", label: "Beat & Call Performance", description: "Allocation/connect%, warehouse-wise & agent-wise — live from uploaded allocation/CDR data", kind: "satya_retail_dashboard" },
+    { key: "satya_dashboard", label: "Satya Retail Dashboard", description: "Morning/Absentee allocation, calls, connect, orders & conversion, outcomes, agent-wise and daily tracker — live from uploaded allocation/CDR data", kind: "satya_retail_dashboard" },
   ],
   gnc: [
-    { key: "sale_performance", label: "Sale Performance", description: "Turn over, prepaid%, allocation, top performers — live from uploaded sale data", kind: "gnc_sale" },
+    { key: "sale_performance", label: "Overall Dashboard", description: "Gross revenue, prepaid%, allocation, top performers — live from uploaded sale data", kind: "gnc_sale" },
+    { key: "abandon_cart", label: "Abandon Cart Dashboard", description: "Cart-recovery funnel, conversion, weekly comparison & top products — live from uploaded allocation/sale data", kind: "gnc_abandon_cart" },
     { key: "chat_performance", label: "Chat Performance", description: "Tickets, unique/repeat, FRT/resolution TAT, QRC & agent-wise, with Sale (Chat) linkage — live from uploaded chat data", kind: "gnc_chat" },
     { key: "inbound", label: "Inbound", description: "Live call performance — Overview, agent-wise & date-wise breakdowns", kind: "inbound" },
   ],
@@ -352,21 +352,29 @@ function Breadcrumb({ parts, onBack }: { parts: string[]; onBack: () => void }) 
   );
 }
 
-const todayStr = () => new Date().toISOString().slice(0, 10);
-const sevenDaysAgoStr = () => {
+/** Local YYYY-MM-DD, deliberately NOT via toISOString(): that converts
+ * through UTC and rolls the date back a day for a viewer ahead of UTC
+ * (e.g. IST, UTC+5:30) -- same fix already applied throughout the other
+ * Process Performance V2 dashboards. */
+const todayStr = () => {
   const d = new Date();
-  d.setDate(d.getDate() - 6);
-  return d.toISOString().slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const firstOfMonthStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 };
 
 /**
  * Date-range wrapper around NativeInboundDashboard's ProjectDetailView —
  * that component takes from/to as props rather than owning its own range,
- * so this tab supplies the same default (last 7 days) and controls its
- * own date pickers, reusing the live summary/trend/hourly view as-is.
+ * so this tab supplies the default and controls its own date pickers,
+ * reusing the live summary/trend/hourly view as-is. Defaults to the current
+ * month (1st .. today), never a rolling window, so every Inbound dashboard
+ * opens on "this month" consistently.
  */
 function InboundDashboardTab({ projectKey }: { projectKey: string }) {
-  const [from, setFrom] = useState(sevenDaysAgoStr());
+  const [from, setFrom] = useState(firstOfMonthStr());
   const [to, setTo] = useState(todayStr());
 
   return (
@@ -387,21 +395,16 @@ function InboundDashboardTab({ projectKey }: { projectKey: string }) {
         />
         <button
           type="button"
-          onClick={() => { setFrom(sevenDaysAgoStr()); setTo(todayStr()); }}
+          onClick={() => { setFrom(firstOfMonthStr()); setTo(todayStr()); }}
           className="flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-200"
         >
-          <RotateCcw className="h-3.5 w-3.5" /> Reset
+          <RotateCcw className="h-3.5 w-3.5" /> This Month
         </button>
       </div>
       <ProjectDetailView projectKey={projectKey} from={from} to={to} />
     </div>
   );
 }
-
-const firstOfMonthStr = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
-};
 
 /**
  * "MIS" tab — one combined, client-ready Excel per process: every dashboard
@@ -514,7 +517,7 @@ export default function ProcessPerformanceV2Page() {
   const [company, setCompany] = useState<CompanyKey | null>(null);
   const [section, setSection] = useState<SectionKey | null>(null);
   const [selectedUploader, setSelectedUploader] = useState<{ code: string; label: string } | null>(null);
-  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" } | null>(null);
+  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" } | null>(null);
   const [stats, setStats] = useState({ totalFilesUploaded: 0, activeUsers: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
 
@@ -531,30 +534,19 @@ export default function ProcessPerformanceV2Page() {
   }, []);
 
   const companyLabel = COMPANIES.find((c) => c.key === company)?.label ?? "";
-  const sectionLabel = SECTIONS.find((s) => s.key === section)?.label ?? "";
+  // Companies with exactly one dashboard tile (Housing Owner, Housing Premium, Clovia, ...)
+  // skip the pointless one-tile grid: "Dashboards" opens the dashboard directly.
+  const dashboardsForCompany = company ? DASHBOARDS_BY_COMPANY[company] : undefined;
+  const singleDashboard = dashboardsForCompany && dashboardsForCompany.length === 1 ? dashboardsForCompany[0] : null;
 
   const reset = () => { setCompany(null); setSection(null); setSelectedUploader(null); setSelectedDashboard(null); };
   const backToCompany = () => { setSection(null); setSelectedUploader(null); setSelectedDashboard(null); };
   const backToUploaderGrid = () => setSelectedUploader(null);
-  const backToDashboardGrid = () => setSelectedDashboard(null);
+  const backToDashboardGrid = () => (singleDashboard ? backToCompany() : setSelectedDashboard(null));
 
   return (
     <DashboardLayout>
       <div className="p-4 sm:p-6 space-y-4">
-        {company && (
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
-              <Activity className="h-4.5 w-4.5" />
-            </span>
-            <div>
-              <h1 className="text-lg font-bold text-slate-900">Process Performance V2</h1>
-              <p className="text-xs text-slate-500">
-                {section ? `${companyLabel} / ${sectionLabel}` : companyLabel}
-              </p>
-            </div>
-          </div>
-        )}
-
         {/* Level 1: company picker */}
         {!company && (
           <div className="space-y-6">
@@ -610,7 +602,12 @@ export default function ProcessPerformanceV2Page() {
                   label={s.label}
                   description={s.description}
                   tone={s.key === "dashboards" ? "indigo" : s.key === "uploader" ? "emerald" : "amber"}
-                  onClick={() => setSection(s.key)}
+                  onClick={() => {
+                    setSection(s.key);
+                    if (s.key === "dashboards" && singleDashboard) {
+                      setSelectedDashboard({ key: singleDashboard.key, label: singleDashboard.label, kind: singleDashboard.kind });
+                    }
+                  }}
                 />
               ))}
             </BoxGrid>
@@ -662,6 +659,8 @@ export default function ProcessPerformanceV2Page() {
               <BellavitaSaleDashboard />
             ) : selectedDashboard.kind === "gnc_sale" ? (
               <GncSaleDashboard />
+            ) : selectedDashboard.kind === "gnc_abandon_cart" ? (
+              <GncAbandonCartDashboard />
             ) : selectedDashboard.kind === "gnc_chat" ? (
               <GncChatDashboard />
             ) : selectedDashboard.kind === "neemans_cart" ? (
@@ -682,8 +681,6 @@ export default function ProcessPerformanceV2Page() {
               <LpFeedbackDashboard />
             ) : selectedDashboard.kind === "lp_onboarding" ? (
               <LpOnboardingDashboard />
-            ) : selectedDashboard.kind === "satya_retail_report" ? (
-              <SatyaRetailReport />
             ) : selectedDashboard.kind === "satya_retail_dashboard" ? (
               <SatyaRetailDashboard />
             ) : selectedDashboard.kind === "clovia_dashboard" ? (

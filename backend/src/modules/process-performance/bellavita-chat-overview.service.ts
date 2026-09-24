@@ -112,6 +112,13 @@ export interface OverviewValues {
   duplicateOrderRows: number | null;
   /** Revenue those duplicate rows would have added if summed. */
   duplicateRevenue: number | null;
+  /** PTP (Sale & Revenue Metrics) order-type split: final_status = 'RTO' vs
+   * the rest of Sale Made orders ("Prepaid" -- i.e. not returned), same
+   * deduped order set as saleMade/revenue. rtoCount + prepaidCount always
+   * equals saleMade. */
+  rtoCount: number | null;
+  prepaidCount: number | null;
+  rtoPct: number | null;
 }
 
 /** The six QRC categories, in the order the reference "BVO Chat QRC" sheet lists them. */
@@ -149,13 +156,25 @@ export interface OrderIntegrity {
   blankOrderIdRows: number;
 }
 
+export interface DayNightSplit { overall: number; unique: number; frtPct: number }
+export interface RosterSummary { roster: number; present: number; ul: number; ulPct: number }
+export interface TopAgentRow {
+  agent: string; empId: string; overall: number; unique: number;
+  saleCount: number | null; revenue: number | null; conversionPct: number | null; frtPct: number;
+}
+
 export interface BellavitaChatOverviewData {
   from: string; to: string;
   userType: OverviewUserType;
   columns: OverviewColumn[];
   values: Record<string, OverviewValues>;
   qrc: QrcData;
-  daily: Array<{ date: string; overall: number; unique: number; saleMade: number | null }>;
+  daily: Array<{
+    date: string; overall: number; unique: number; repeatChat: number; frtPct: number; inTat: number;
+    withoutAgentFrt: number; repeat24: number; repeat48: number; repeat72: number; repeatMore72: number;
+    saleMade: number | null; revenue: number | null; plannedCapacity: number | null;
+    rtoCount: number | null; prepaidCount: number | null;
+  }>;
   salesAvailable: boolean;
   salesNote: string | null;
   integrity: OrderIntegrity | null;
@@ -163,14 +182,46 @@ export interface BellavitaChatOverviewData {
   capacity: { month: string; byType: Record<ChatUserType, number | null> };
   latestChatDate: string | null;
   dailyColumnsOmitted: boolean;
+  /** All for the selected range as a whole (not per week/day column), since
+   * the reference dashboard shows each as a single summary, not a matrix. */
+  avgResolutionMin: number | null;
+  /** Real day_shift_night_shift split (new_bb_chat) -- Sale/Revenue/AOV/
+   * Conversion% are NOT split here: bb_sale carries no timestamp or shift
+   * column to attribute an order to day vs night, so only chat-side figures
+   * (which ARE real per row) are shown. */
+  dayNight: { day: DayNightSplit; night: DayNightSplit } | null;
+  /** Roster/Present/UL from db_masmis.bb_apr WHERE lob = 'BVO Chat' -- bb_apr
+   * has no Kenaz/Bevzilla split either, so (like sales) this is the same
+   * shared Chat-roster figure on every tab, not per-LOB. UL ("unplanned
+   * leave") is derived as roster minus present -- bb_apr has no real
+   * planned/unplanned leave flag, so this is "scheduled but never marked
+   * present in range", not a genuine UL code from source data. */
+  roster: RosterSummary | null;
+  /** COUNT of new_bb_chat rows with a real fraud flag set, for the selected
+   * range -- real column, currently NULL on every uploaded row (confirmed
+   * live 2026-09-23), so this is 0 until an upload actually carries fraud
+   * flags, never invented. */
+  fraudCount: number;
+  /** Top 10 agents by chat volume for the selected range, from new_bb_chat
+   * (not the legacy bb_chat table), joined to bb_sale by emp_id for
+   * saleCount/revenue/conversionPct where a real emp_id exists. */
+  topAgents: TopAgentRow[];
+  /** Admin-settable FRT% target (dashboard_metric_target, like Planned
+   * Capacity) -- null until someone sets it, never a hardcoded assumption. */
+  frtTarget: number | null;
 }
 
 interface Agg { overall: number; unique: number; r24: number; r48: number; r72: number; rmore: number; inTat: number; noFrt: number }
 const emptyAgg = (): Agg => ({ overall: 0, unique: 0, r24: 0, r48: 0, r72: 0, rmore: 0, inTat: 0, noFrt: 0 });
-interface SaleAgg { orders: number; revenue: number; rows: number; gross: number }
-const emptySale = (): SaleAgg => ({ orders: 0, revenue: 0, rows: 0, gross: 0 });
+interface SaleAgg { orders: number; revenue: number; rows: number; gross: number; rtoOrders: number }
+const emptySale = (): SaleAgg => ({ orders: 0, revenue: 0, rows: 0, gross: 0, rtoOrders: 0 });
 
 const typesFor = (t: OverviewUserType): ChatUserType[] => (t === "Overall" ? [...CHAT_USER_TYPES] : [t]);
+/** bb_sale's campaign column only ever holds a single combined 'Chat' value
+ * (no Kenaz/Bevzilla split), so sales figures exist for Overall and Chat
+ * only. Kenaz/Bevzilla tabs show no sale-related figures at all (explicit
+ * request 2026-09-23) -- and skip those queries entirely, which also makes
+ * those tabs load faster. */
 const salesAvailableFor = (t: OverviewUserType): boolean => t === "Overall" || t === "Chat";
 
 /* --------------------------------- queries -------------------------------- */
@@ -250,9 +301,11 @@ const SALE_WHERE = "campaign = 'Chat' AND calling_status = 'Sale Made'";
 
 async function loadSalesDaily(from: string, to: string): Promise<{ daily: Map<string, SaleAgg>; blankRows: number }> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT DATE_FORMAT(d, '%Y-%m-%d') AS d, COUNT(*) AS orders, SUM(a) AS revenue, SUM(n) AS row_cnt, SUM(gross) AS gross
+    `SELECT DATE_FORMAT(d, '%Y-%m-%d') AS d, COUNT(*) AS orders, SUM(a) AS revenue, SUM(n) AS row_cnt, SUM(gross) AS gross,
+       SUM(is_rto) AS rto_orders
      FROM (
-       SELECT MIN(\`Date\`) AS d, MAX(amount) AS a, COUNT(*) AS n, SUM(amount) AS gross
+       SELECT MIN(\`Date\`) AS d, MAX(amount) AS a, COUNT(*) AS n, SUM(amount) AS gross,
+         MAX(final_status = 'RTO') AS is_rto
        FROM db_masmis.bb_sale
        WHERE ${SALE_WHERE} AND \`Date\` BETWEEN ? AND ?
          AND bella_vita_order_id IS NOT NULL AND bella_vita_order_id <> ''
@@ -263,7 +316,7 @@ async function loadSalesDaily(from: string, to: string): Promise<{ daily: Map<st
   );
   const daily = new Map<string, SaleAgg>();
   for (const r of rows) {
-    daily.set(String(r.d), { orders: num(r.orders), revenue: num(r.revenue), rows: num(r.row_cnt), gross: num(r.gross) });
+    daily.set(String(r.d), { orders: num(r.orders), revenue: num(r.revenue), rows: num(r.row_cnt), gross: num(r.gross), rtoOrders: num(r.rto_orders) });
   }
   const [[blank]] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS n FROM db_masmis.bb_sale
@@ -271,6 +324,232 @@ async function loadSalesDaily(from: string, to: string): Promise<{ daily: Map<st
     [from, to],
   );
   return { daily, blankRows: num(blank?.n) };
+}
+
+/** Real bb_sale.emp_id has no LOB split either (same as loadSalesDaily) --
+ * for the Top Agents revenue join, keyed case-insensitively (same reason
+ * documented in bellavita-agent-performance.service.ts: MySQL's GROUP BY
+ * hands back an arbitrary-case emp_id). */
+async function loadSalesByAgent(from: string, to: string): Promise<Map<string, { orders: number; revenue: number }>> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT s.emp_id AS emp_id, COUNT(*) AS orders, SUM(s.amount) AS revenue
+     FROM db_masmis.bb_sale s
+     INNER JOIN (
+       SELECT bella_vita_order_id, MAX(id) AS keep_id
+       FROM db_masmis.bb_sale
+       WHERE ${SALE_WHERE} AND \`Date\` BETWEEN ? AND ?
+         AND bella_vita_order_id IS NOT NULL AND bella_vita_order_id <> ''
+       GROUP BY bella_vita_order_id
+     ) dk ON dk.keep_id = s.id
+     WHERE s.emp_id IS NOT NULL AND s.emp_id <> ''
+     GROUP BY s.emp_id`,
+    [from, to],
+  );
+  const out = new Map<string, { orders: number; revenue: number }>();
+  for (const r of rows) out.set(String(r.emp_id).toUpperCase(), { orders: num(r.orders), revenue: num(r.revenue) });
+  return out;
+}
+
+async function loadAvgResolution(from: string, to: string, types: ChatUserType[]): Promise<number | null> {
+  const [[row]] = await db.execute<RowDataPacket[]>(
+    `SELECT AVG(CAST(resolution_time_in_min AS DECIMAL(10,2))) AS avg_min
+     FROM db_masmis.new_bb_chat
+     WHERE chat_date BETWEEN ? AND ? AND user_type IN (${types.map(() => "?").join(",")})
+       AND resolution_time_in_min IS NOT NULL AND resolution_time_in_min <> ''`,
+    [from, to, ...types],
+  );
+  return row?.avg_min !== null && row?.avg_min !== undefined ? round2(Number(row.avg_min)) : null;
+}
+
+/** day_shift_night_shift is a real, clean column (confirmed live 2026-09-23:
+ * only 'Day Shift'/'Night Shift', no other values) -- unlike same_day_connect
+ * elsewhere in this codebase, this one is trustworthy as-is. Sale-side
+ * figures (Sale Made/Revenue/AOV/Conversion%) are NOT split here: bb_sale
+ * carries no timestamp/shift column to attribute an order to a shift. */
+async function loadDayNight(from: string, to: string, types: ChatUserType[]): Promise<{ day: DayNightSplit; night: DayNightSplit } | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT day_shift_night_shift AS shift, COUNT(*) AS overall,
+       SUM(repeat_status = 'Unique') AS uniq, SUM(frt_tat = 'IN TAT') AS in_tat
+     FROM db_masmis.new_bb_chat
+     WHERE chat_date BETWEEN ? AND ? AND user_type IN (${types.map(() => "?").join(",")})
+       AND day_shift_night_shift IN ('Day Shift', 'Night Shift')
+     GROUP BY day_shift_night_shift`,
+    [from, to, ...types],
+  );
+  if (rows.length === 0) return null;
+  const empty = (): DayNightSplit => ({ overall: 0, unique: 0, frtPct: 0 });
+  const split = { day: empty(), night: empty() };
+  for (const r of rows) {
+    const overall = num(r.overall);
+    const target = String(r.shift) === "Day Shift" ? split.day : split.night;
+    target.overall = overall; target.unique = num(r.uniq); target.frtPct = pct(num(r.in_tat), overall);
+  }
+  return split;
+}
+
+/** bb_apr has no Kenaz/Bevzilla split (lob = 'BVO Chat' covers all of Chat
+ * roster together, confirmed live) -- same shared-figure convention as
+ * sales above. UL = roster minus present is a DERIVED absence count, not a
+ * real "unplanned leave" flag from source data (bb_apr's own attendance_1
+ * only has present/half-day values, no leave-type code) -- documented on
+ * the RosterSummary type itself, not silently presented as a real UL flag. */
+async function loadRoster(from: string, to: string): Promise<RosterSummary | null> {
+  const [[row]] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(DISTINCT noiid) AS roster,
+       COUNT(DISTINCT CASE WHEN attendance_1 IN ('P', '1', '1.00', '0.5', '0.50', 'HD') THEN noiid END) AS present
+     FROM db_masmis.bb_apr
+     WHERE report_date BETWEEN ? AND ? AND lob = 'BVO Chat'`,
+    [from, to],
+  );
+  const roster = num(row?.roster);
+  if (roster === 0) return null;
+  const present = num(row?.present);
+  const ul = Math.max(0, roster - present);
+  return { roster, present, ul, ulPct: pct(ul, roster) };
+}
+
+/** `fraud` is a real column on new_bb_chat but every uploaded row has it
+ * NULL (confirmed live 2026-09-23) -- this returns the real count (0 today),
+ * never a fabricated figure, and will reflect real flags the moment an
+ * upload actually carries them. */
+async function loadFraudCount(from: string, to: string, types: ChatUserType[]): Promise<number> {
+  const [[row]] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS n FROM db_masmis.new_bb_chat
+     WHERE chat_date BETWEEN ? AND ? AND user_type IN (${types.map(() => "?").join(",")})
+       AND fraud IS NOT NULL AND fraud NOT IN ('', '0', 'No', 'FALSE', 'false')`,
+    [from, to, ...types],
+  );
+  return num(row?.n);
+}
+
+/** Top 10 agents by chat volume, from new_bb_chat (not the legacy bb_chat
+ * table this Overview otherwise avoids) so agent identity stays consistent
+ * with every other figure on this page. */
+async function loadTopAgents(from: string, to: string, types: ChatUserType[], withSales: boolean): Promise<TopAgentRow[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(current_agent, ''), 'Unassigned') AS agent, MAX(emp_id) AS emp_id,
+       COUNT(*) AS overall, SUM(repeat_status = 'Unique') AS uniq, SUM(frt_tat = 'IN TAT') AS in_tat
+     FROM db_masmis.new_bb_chat
+     WHERE chat_date BETWEEN ? AND ? AND user_type IN (${types.map(() => "?").join(",")})
+     GROUP BY agent ORDER BY overall DESC LIMIT 10`,
+    [from, to, ...types],
+  );
+  const salesByAgent = withSales ? await loadSalesByAgent(from, to) : new Map<string, { orders: number; revenue: number }>();
+  return rows.map((r) => {
+    const empId = String(r.emp_id || "");
+    const sale = empId ? salesByAgent.get(empId.toUpperCase()) : undefined;
+    const overall = num(r.overall);
+    return {
+      agent: String(r.agent), empId,
+      overall, unique: num(r.uniq), frtPct: pct(num(r.in_tat), overall),
+      saleCount: sale ? sale.orders : null,
+      revenue: sale ? round2(sale.revenue) : null,
+      conversionPct: sale ? pct(sale.orders, overall) : null,
+    };
+  });
+}
+
+export interface OverviewAgentTrendRow {
+  date: string; overall: number; unique: number; inTat: number;
+  saleMade: number | null; revenue: number | null;
+}
+
+/** One agent's day-by-day figures for the Overview's Top Agents row click.
+ * Same source and agent identity as loadTopAgents (new_bb_chat grouped by
+ * current_agent, 'Unassigned' when blank), so a row's totals always equal
+ * the sum of its own days. Sales/revenue join bb_sale by emp_id with the same
+ * dedup-by-order pattern as loadSalesByAgent, and only when sales exist for
+ * this tab and the row has a real emp_id (else null, never 0). */
+export async function getBellavitaChatOverviewAgentTrend(
+  fromInput: string, toInput: string, userType: OverviewUserType, agent: string, empId: string,
+): Promise<OverviewAgentTrendRow[]> {
+  const { from, to } = resolveRange(fromInput, toInput);
+  const types = typesFor(userType);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DATE_FORMAT(chat_date, '%Y-%m-%d') AS d, COUNT(*) AS overall,
+       SUM(repeat_status = 'Unique') AS uniq, SUM(frt_tat = 'IN TAT') AS in_tat
+     FROM db_masmis.new_bb_chat
+     WHERE chat_date BETWEEN ? AND ? AND user_type IN (${types.map(() => "?").join(",")})
+       AND COALESCE(NULLIF(current_agent, ''), 'Unassigned') = ?
+     GROUP BY chat_date ORDER BY chat_date`,
+    [from, to, ...types, agent],
+  );
+
+  let salesByDate: Map<string, { n: number; revenue: number }> | null = null;
+  if (salesAvailableFor(userType) && empId.trim()) {
+    const [saleRows] = await db.execute<RowDataPacket[]>(
+      `SELECT DATE_FORMAT(s.\`Date\`, '%Y-%m-%d') AS d, COUNT(*) AS n, SUM(s.amount) AS revenue
+       FROM db_masmis.bb_sale s
+       INNER JOIN (
+         SELECT bella_vita_order_id, MAX(id) AS keep_id
+         FROM db_masmis.bb_sale
+         WHERE ${SALE_WHERE} AND \`Date\` BETWEEN ? AND ?
+           AND bella_vita_order_id IS NOT NULL AND bella_vita_order_id <> ''
+         GROUP BY bella_vita_order_id
+       ) dk ON dk.keep_id = s.id
+       WHERE s.emp_id = ?
+       GROUP BY s.\`Date\``,
+      [from, to, empId.trim()],
+    );
+    salesByDate = new Map(saleRows.map((r) => [String(r.d), { n: num(r.n), revenue: num(r.revenue) }]));
+  }
+
+  return rows.map((r) => {
+    const d = String(r.d);
+    const s = salesByDate?.get(d);
+    return {
+      date: d, overall: num(r.overall), unique: num(r.uniq), inTat: num(r.in_tat),
+      saleMade: salesByDate ? (s?.n ?? 0) : null,
+      revenue: salesByDate ? round2(s?.revenue ?? 0) : null,
+    };
+  });
+}
+
+const FRT_TARGET_METRIC = "BB_CHAT_FRT_TARGET";
+
+/** Admin-settable FRT% target for the month, same storage/lookup pattern as
+ * Planned Capacity below -- null (never a hardcoded 95%) until someone sets it. */
+async function loadFrtTarget(month: string): Promise<number | null> {
+  const first = `${month}-01`;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT target_value, DATE_FORMAT(effective_from, '%Y-%m-%d') AS ef, DATE_FORMAT(effective_to, '%Y-%m-%d') AS et
+       FROM dashboard_metric_target
+      WHERE dashboard_code = ? AND metric_code = ? AND target_period = 'monthly'
+        AND branch_id IS NULL AND process_id IS NULL
+      ORDER BY effective_from DESC`,
+    [DASHBOARD_CODE, FRT_TARGET_METRIC],
+  );
+  const hit = rows.find((r) => String(r.ef) <= first && (!r.et || String(r.et) >= first));
+  return hit ? num(hit.target_value) : null;
+}
+
+export async function setFrtTarget(month: string, value: number, actorId: string): Promise<{ oldValue: number | null; newValue: number }> {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error("month must be YYYY-MM");
+  if (!Number.isFinite(value) || value <= 0 || value > 100) throw new Error("FRT target must be a percentage between 0 and 100");
+  const first = `${month}-01`;
+  const last = `${month}-${p2(daysInMonth(month))}`;
+
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT id, target_value FROM dashboard_metric_target
+      WHERE dashboard_code = ? AND metric_code = ? AND target_period = 'monthly'
+        AND branch_id IS NULL AND process_id IS NULL AND effective_from = ? LIMIT 1`,
+    [DASHBOARD_CODE, FRT_TARGET_METRIC, first],
+  );
+  if (existing.length) {
+    await db.execute<ResultSetHeader>(
+      `UPDATE dashboard_metric_target SET target_value = ?, effective_to = ?, updated_at = NOW() WHERE id = ?`,
+      [value, last, existing[0].id],
+    );
+    return { oldValue: num(existing[0].target_value), newValue: value };
+  }
+  await db.execute<ResultSetHeader>(
+    `INSERT INTO dashboard_metric_target
+       (id, metric_code, dashboard_code, branch_id, process_id, target_value, target_period,
+        effective_from, effective_to, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, NULL, NULL, ?, 'monthly', ?, ?, ?, NOW(), NOW())`,
+    [randomUUID(), FRT_TARGET_METRIC, DASHBOARD_CODE, value, first, last, actorId],
+  );
+  return { oldValue: null, newValue: value };
 }
 
 /** Monthly capacity per user type for the given months -- the row in force on the 1st. */
@@ -307,14 +586,20 @@ export async function getBellavitaChatOverview(
   const salesAvailable = salesAvailableFor(userType);
   const days = eachDay(from, to);
 
-  const [chatDaily, sales, qrcDaily] = await Promise.all([
+  const [chatDaily, sales, qrcDaily, avgResolutionMin, dayNight, roster, fraudCount, topAgents] = await Promise.all([
     loadChatDaily(from, to, types),
     salesAvailable ? loadSalesDaily(from, to) : Promise.resolve(null),
     loadQrcDaily(from, to, types),
+    loadAvgResolution(from, to, types),
+    loadDayNight(from, to, types),
+    loadRoster(from, to),
+    loadFraudCount(from, to, types),
+    loadTopAgents(from, to, types, salesAvailable),
   ]);
 
   const months = [...new Set(days.map((d) => d.slice(0, 7)))];
   const capacity = await loadCapacity(months);
+  const frtTarget = await loadFrtTarget(months[months.length - 1]);
   const capFor = (ym: string): number | null => {
     const e = capacity.get(ym) ?? {};
     const vals = types.map((t) => e[t]);
@@ -352,7 +637,7 @@ export async function getBellavitaChatOverview(
         a.rmore += c.rmore; a.inTat += c.inTat; a.noFrt += c.noFrt;
       }
       const sd = sales?.daily.get(d);
-      if (sd) { s.orders += sd.orders; s.revenue += sd.revenue; s.rows += sd.rows; s.gross += sd.gross; }
+      if (sd) { s.orders += sd.orders; s.revenue += sd.revenue; s.rows += sd.rows; s.gross += sd.gross; s.rtoOrders += sd.rtoOrders; }
     }
 
     // Capacity: a month's figure covers the whole month (so a full MTD column
@@ -384,6 +669,9 @@ export async function getBellavitaChatOverview(
       convUniquePct: salesAvailable ? pct(s.orders, a.unique) : null,
       duplicateOrderRows: salesAvailable ? Math.max(0, s.rows - s.orders) : null,
       duplicateRevenue: salesAvailable ? round2(Math.max(0, s.gross - s.revenue)) : null,
+      rtoCount: salesAvailable ? s.rtoOrders : null,
+      prepaidCount: salesAvailable ? Math.max(0, s.orders - s.rtoOrders) : null,
+      rtoPct: salesAvailable ? pct(s.rtoOrders, s.orders) : null,
     };
   }
 
@@ -435,18 +723,31 @@ export async function getBellavitaChatOverview(
 
   return {
     from, to, userType, columns, values, qrc,
-    daily: days.map((d) => ({
-      date: d,
-      overall: chatDaily.get(d)?.overall ?? 0,
-      unique: chatDaily.get(d)?.unique ?? 0,
-      saleMade: sales ? (sales.daily.get(d)?.orders ?? 0) : null,
-    })),
+    daily: days.map((d) => {
+      const dayCap = capFor(d.slice(0, 7));
+      const c = chatDaily.get(d);
+      const overall = c?.overall ?? 0;
+      const unique = c?.unique ?? 0;
+      const sd = sales?.daily.get(d);
+      const orders = sd?.orders ?? 0;
+      return {
+        date: d,
+        overall, unique,
+        repeatChat: Math.max(0, overall - unique),
+        withoutAgentFrt: c?.noFrt ?? 0,
+        repeat24: c?.r24 ?? 0, repeat48: c?.r48 ?? 0, repeat72: c?.r72 ?? 0, repeatMore72: c?.rmore ?? 0,
+        frtPct: pct(c?.inTat ?? 0, overall), inTat: c?.inTat ?? 0,
+        saleMade: sales ? orders : null,
+        revenue: sales ? round2(sd?.revenue ?? 0) : null,
+        rtoCount: sales ? (sd?.rtoOrders ?? 0) : null,
+        prepaidCount: sales ? Math.max(0, orders - (sd?.rtoOrders ?? 0)) : null,
+        plannedCapacity: dayCap !== null ? Math.round(dayCap / daysInMonth(d.slice(0, 7))) : null,
+      };
+    }),
     salesAvailable,
-    salesNote: salesAvailable
-      ? userType === "Overall"
-        ? "Sales come from bb_sale's 'Chat' campaign, which has no Kenaz/Bevzilla split, so for Overall the same Chat-campaign sales are set against the combined chat volume."
-        : null
-      : "Sales, revenue, AOV and conversion aren't available for this user type: the sales table (bb_sale) has no Kenaz/Bevzilla split, only a single 'Chat' campaign.",
+    salesNote: userType === "Overall"
+      ? "Sales come from bb_sale's 'Chat' campaign, which has no Kenaz/Bevzilla split, so for Overall the same Chat-campaign sales are set against the combined chat volume."
+      : null,
     integrity,
     capacity: {
       month: lastMonth,
@@ -454,6 +755,7 @@ export async function getBellavitaChatOverview(
     },
     latestChatDate: latest?.d ? String(latest.d) : null,
     dailyColumnsOmitted,
+    avgResolutionMin, dayNight, roster, fraudCount, topAgents, frtTarget,
   };
 }
 

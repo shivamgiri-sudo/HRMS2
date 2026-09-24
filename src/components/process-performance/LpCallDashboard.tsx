@@ -1,68 +1,90 @@
-import { useMemo, useState, useEffect, useCallback, type ComponentType, type ReactNode } from "react";
+import { useMemo, useState, useEffect, useCallback, type ReactNode } from "react";
 import {
-  BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ComposedChart, Line, PieChart, Pie, Legend,
+  BarChart, Bar, Cell, LabelList, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  ComposedChart, Line, PieChart, Pie,
 } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
-  PhoneCall, Users, Gauge, Timer, ListChecks, Search, ListFilter, Scale, Activity,
-  Sparkles, Clock, Repeat, Trophy, CalendarDays, Hourglass, Coffee, PhoneOff, MousePointerClick, Inbox,
+  PhoneCall, Users, Gauge, Timer, Filter, Eye, Trophy, ListChecks, Activity, Layers, MousePointerClick,
+  UserCheck, PhoneForwarded, Repeat, Target, Database,
 } from "lucide-react";
 import {
   Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
-  currentMonthRange, type ExportSlide, type KpiTone,
+  currentMonthRange, localDateStr, formatShortDate, type ExportSlide,
 } from "./DashboardKit";
 import { LpCallDrawer, type DrawerTarget } from "./LpCallDrawer";
+import { GncDetailDrawer, type DrawerSeries } from "./GncAbandonCartDetailDrawer";
 import {
-  type DashboardData, type DetailKind, PALETTE, SERVICE_COLORS, STATUS_COLORS, TOOLTIP_PROPS,
-  fmtDate, fmtN, fmtShortDay, heatStyle, hourLabel, secToHms, secToShort,
+  type DashboardData, type DetailKind, fmtDate, fmtN, hourLabel, secToHms,
 } from "./lpCallShared";
 
 /**
- * Shared call-performance dashboard for LP Feedback and LP Onboarding --
- * their uploaded tables are column-for-column identical, same as the
- * backend's lp-call-dashboard.shared.ts this calls through
- * LpFeedbackDashboard.tsx / LpOnboardingDashboard.tsx. See that file's header
- * for the KPI-to-column mapping (notably Unique Leadset = rows with
- * unique_flag = '1', a per-lead-per-day counter). Every row in every table
- * opens a drill-down drawer backed by GET <apiPath>/detail.
+ * Lawyer Panel call-performance dashboard, shared by LP Onboarding and LP
+ * Feedback (their APR/CDR tables are column-for-column identical -- see the
+ * backend's lp-call-dashboard.shared.ts for the KPI-to-column mapping,
+ * notably Unique Leadset = CDR rows with unique_flag = '1').
+ *
+ * Built from the reference layouts the user supplied, but ONLY with what
+ * this app's LP data can back. Total Data Received is the distinct lead_id
+ * count in the call file (the true lead-allocation figure would come from
+ * mas_hrms.lp_leads_raw). Deliberately not shown, no data behind them: CR
+ * Reports, Token Count/Revenue/AOV, LS Count/Amount/AOV, Agreement Closed,
+ * Eligible & Non-Eligible Leads, and (on the Agent-wise tab) Language /
+ * Target / Achievement % -- checked live 2026-09-24, the tables meant to
+ * hold them (mas_hrms.lp_leads_raw, lp_cr_report_raw) are empty and the
+ * uploaded CDR/APR carry no amount, target, report or language column.
+ *
+ * Every KPI card and chart's "View details" opens a Trend + Week-wise +
+ * Date-wise drawer built from the daily rows already in memory; agent and
+ * campaign rows open the per-record drawer (GET <apiPath>/detail).
  */
 
-type TabKey = "overview" | "timing" | "outcomes" | "agents" | "productivity";
+type TabKey = "overview" | "agents" | "campaigns";
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "overview", label: "Overview" },
-  { key: "timing", label: "Timing" },
-  { key: "outcomes", label: "Outcomes" },
-  { key: "agents", label: "Agents" },
-  { key: "productivity", label: "Productivity" },
+  { key: "agents", label: "Agent-wise" },
+  { key: "campaigns", label: "Campaign-wise" },
 ];
 
-function ClickRow({ onOpen, label, children, tone = "hover:bg-blue-50/50" }: {
-  onOpen: () => void; label: string; children: ReactNode; tone?: string;
-}) {
+type Preset = "MTD" | "WTD" | "YTD";
+function presetRange(p: Preset): { from: string; to: string } {
+  const now = new Date();
+  const to = localDateStr(now);
+  if (p === "MTD") return currentMonthRange();
+  if (p === "YTD") return { from: localDateStr(new Date(now.getFullYear(), 0, 1)), to };
+  const mon = new Date(now);
+  mon.setDate(mon.getDate() - ((now.getDay() + 6) % 7));
+  return { from: localDateStr(mon), to };
+}
+
+const TT = { fontSize: 11, borderRadius: 10, border: "1px solid #e2e8f0" } as const;
+const FUNNEL_COLORS = ["#2563eb", "#6366f1", "#14b8a6", "#f59e0b"];
+const CAMPAIGN_COLORS = ["#2563eb", "#0ea5e9", "#6366f1", "#8b5cf6", "#14b8a6", "#f59e0b"];
+
+function ViewDetailsBtn({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button" onClick={onClick}
+      className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-slate-50 px-2 py-1 text-[10px] font-semibold text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+    >
+      <Eye className="h-3 w-3" /> View details
+    </button>
+  );
+}
+
+function ClickRow({ onOpen, label, children }: { onOpen: () => void; label: string; children: ReactNode }) {
   return (
     <tr
       role="button" tabIndex={0} aria-label={label} onClick={onOpen}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
-      className={`cursor-pointer border-b border-slate-50 transition-colors last:border-0 focus:bg-blue-50/60 focus:outline-none ${tone}`}
+      className="cursor-pointer border-b border-slate-50 transition-colors last:border-0 hover:bg-blue-50/50 focus:bg-blue-50/60 focus:outline-none"
     >
       {children}
     </tr>
   );
 }
 
-function MiniBar({ pct, color }: { pct: number; color: string }) {
-  return (
-    <div className="ml-auto flex w-28 items-center justify-end gap-2">
-      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-100">
-        <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, pct))}%`, backgroundColor: color }} />
-      </div>
-      <span className="w-11 text-right font-semibold text-slate-800">{pct}%</span>
-    </div>
-  );
-}
-
-function HintChip({ text = "Click any row for detail" }: { text?: string }) {
+function HintChip({ text }: { text: string }) {
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-500">
       <MousePointerClick className="h-3 w-3" /> {text}
@@ -70,107 +92,38 @@ function HintChip({ text = "Click any row for detail" }: { text?: string }) {
   );
 }
 
-interface Insight { icon: ComponentType<{ className?: string }>; tone: KpiTone; title: string; body: string }
-
-/** Every sentence below is computed from the fetched data -- nothing here is
- * a fixed claim, and each rule has a volume guard so a tiny sample can't
- * crown a "best" hour, service or agent. */
-function buildInsights(d: DashboardData): Insight[] {
-  const out: Insight[] = [];
-  const total = d.headline.overallCalls;
-  if (total === 0) return out;
-
-  const hours = d.byHour.filter((h) => h.calls >= total * 0.03);
-  if (hours.length >= 2) {
-    const best = hours.reduce((a, b) => (b.connectedPct > a.connectedPct ? b : a));
-    const worst = hours.reduce((a, b) => (b.connectedPct < a.connectedPct ? b : a));
-    out.push({
-      icon: Clock, tone: "emerald", title: "Best time to call",
-      body: `${hourLabel(best.hour)} connects ${best.connectedPct}% of calls (overall ${d.headline.overallConnectedPct}%). ${hourLabel(worst.hour)} is the weakest at ${worst.connectedPct}%.`,
-    });
-  }
-
-  const first = d.byAttempt[0];
-  const heavy = d.byAttempt.length ? d.byAttempt.reduce((a, b) => (b.calls > a.calls ? b : a)) : null;
-  if (first && heavy && heavy.attempt !== first.attempt && heavy.calls >= total * 0.15 && heavy.connectedPct < first.connectedPct) {
-    out.push({
-      icon: Repeat, tone: "rose", title: "Where dialling is wasted",
-      body: `Attempt ${first.attempt} connects ${first.connectedPct}%, but attempt ${heavy.attempt} carries ${Math.round((heavy.calls / total) * 100)}% of all calls and connects only ${heavy.connectedPct}%.`,
-    });
-  }
-
-  const services = d.byService.filter((s) => s.calls >= total * 0.02);
-  if (services.length >= 2) {
-    const best = services.reduce((a, b) => (b.connectedPct > a.connectedPct ? b : a));
-    out.push({
-      icon: ListChecks, tone: "blue", title: "Strongest lead source",
-      body: `${best.service} connects ${best.connectedPct}% across ${fmtN(best.calls)} calls, ahead of the ${d.headline.overallConnectedPct}% average.`,
-    });
-  }
-
-  if (d.daily.length >= 3) {
-    const peak = d.daily.reduce((a, b) => (b.calls > a.calls ? b : a));
-    const bestDay = d.daily.reduce((a, b) => (b.connectedPct > a.connectedPct ? b : a));
-    out.push({
-      icon: CalendarDays, tone: "indigo", title: "Peak and best days",
-      body: `Busiest day was ${fmtDate(peak.date)} with ${fmtN(peak.calls)} calls. Best connect rate was ${fmtDate(bestDay.date)} at ${bestDay.connectedPct}%.`,
-    });
-  }
-
-  const avgCalls = d.agents.length ? total / d.agents.length : 0;
-  const eligible = d.agents.filter((a) => a.totalCalls >= avgCalls * 0.5);
-  if (eligible.length >= 2) {
-    const top = eligible.reduce((a, b) => (b.connectedPct > a.connectedPct ? b : a));
-    out.push({
-      icon: Trophy, tone: "amber", title: "Top connector",
-      body: `${top.agent} leads with ${top.connectedPct}% connected on ${fmtN(top.totalCalls)} calls.`,
-    });
-  }
-
-  if (d.timeUse.loginSec > 0) {
-    const idleShare = Math.round((d.timeUse.idleSec / d.timeUse.loginSec) * 100);
-    out.push({
-      icon: Hourglass, tone: "violet", title: "Idle time",
-      body: `Agents were idle ${idleShare}% of logged-in time (${secToShort(d.timeUse.idleSec)} in total) — talk time was ${Math.round((d.timeUse.talkSec / d.timeUse.loginSec) * 100)}%.`,
-    });
-  }
-  return out;
+function Th({ children, left }: { children: ReactNode; left?: boolean }) {
+  return <th className={`px-2 py-1.5 font-bold text-white ${left ? "text-left" : ""}`}>{children}</th>;
 }
 
-function InsightCard({ i }: { i: Insight }) {
-  const Icon = i.icon;
-  const badge: Record<KpiTone, string> = {
-    sky: "bg-sky-100 text-sky-600", emerald: "bg-emerald-100 text-emerald-600", teal: "bg-teal-100 text-teal-600",
-    amber: "bg-amber-100 text-amber-600", violet: "bg-violet-100 text-violet-600", indigo: "bg-indigo-100 text-indigo-600",
-    rose: "bg-rose-100 text-rose-600", cyan: "bg-cyan-100 text-cyan-600", red: "bg-red-100 text-red-600", blue: "bg-blue-100 text-blue-600",
-  };
+function CallFunnel({ stages }: { stages: Array<{ stage: string; count: number }> }) {
+  const max = Math.max(...stages.map((s) => s.count), 1);
   return (
-    <div className="flex gap-3 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
-      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${badge[i.tone]}`}>
-        <Icon className="h-4 w-4" />
-      </span>
-      <div className="min-w-0">
-        <p className="text-xs font-bold text-slate-700">{i.title}</p>
-        <p className="mt-0.5 text-[12px] leading-relaxed text-slate-500">{i.body}</p>
-      </div>
+    <div className="space-y-1">
+      {stages.map((s, i) => (
+        <div key={s.stage} className="flex items-center gap-2">
+          <div
+            className="flex h-8 items-center justify-center rounded-md text-xs font-bold text-white shadow-sm"
+            style={{ width: `${Math.max(12, (s.count / max) * 100)}%`, backgroundColor: FUNNEL_COLORS[i % FUNNEL_COLORS.length] }}
+          >
+            {fmtN(s.count)}
+          </div>
+          <div className="text-[10px] font-semibold leading-tight text-slate-600">{s.stage}</div>
+        </div>
+      ))}
     </div>
   );
 }
 
-function DonutCenter({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-      <span className="text-xl font-bold tracking-tight text-slate-800">{value}</span>
-      <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{label}</span>
-    </div>
-  );
-}
+const pct1 = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0);
 
 export function LpCallDashboard({
-  apiPath, eyebrow, title, unavailableLabel, tlFootnote,
+  apiPath, eyebrow, title, unavailableLabel,
 }: {
-  apiPath: string; eyebrow: string; title: string; unavailableLabel: string; tlFootnote: string;
+  apiPath: string; eyebrow: string; title: string; unavailableLabel: string;
 }) {
+  const isOnboarding = apiPath.includes("onboarding");
+  const heroGradient = isOnboarding ? "from-indigo-700 via-blue-700 to-indigo-800" : "from-blue-700 via-sky-700 to-blue-800";
   const defaultRange = currentMonthRange();
   const [from, setFrom] = useState(defaultRange.from);
   const [to, setTo] = useState(defaultRange.to);
@@ -179,15 +132,14 @@ export function LpCallDashboard({
   const [error, setError] = useState("");
   const [tab, setTab] = useState<TabKey>("overview");
   const [agentSearch, setAgentSearch] = useState("");
-  const [drawer, setDrawer] = useState<DrawerTarget | null>(null);
+  const [record, setRecord] = useState<DrawerTarget | null>(null);
+  const [metric, setMetric] = useState<{ title: string; series: DrawerSeries[] } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: DashboardData }>(
-        `${apiPath}?from=${from}&to=${to}`,
-      );
+      const res = await hrmsApi.get<{ success: boolean; data: DashboardData }>(`${apiPath}?from=${from}&to=${to}`);
       setData(res.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : unavailableLabel);
@@ -195,654 +147,542 @@ export function LpCallDashboard({
       setLoading(false);
     }
   }, [apiPath, from, to, unavailableLabel]);
-
   useEffect(() => { void load(); }, [load]);
 
-  const open = useCallback((kind: DetailKind, key: string) => setDrawer({ kind, key }), []);
+  const openRecord = useCallback((kind: DetailKind, key: string) => setRecord({ kind, key }), []);
+  const openMetric = (t: string, series: DrawerSeries[]) => setMetric({ title: t, series });
+
+  /** Per-day derived fields, computed once so KPI drawers, charts and tables agree. */
+  const dailyEnriched = useMemo(() => (data?.daily ?? []).map((d) => ({
+    ...d,
+    present: d.loginCount,
+    attempt: d.uniqueLeads > 0 ? Math.round((d.calls / d.uniqueLeads) * 100) / 100 : 0,
+    uniqueConnectedPct: pct1(d.uniqueConnected, d.uniqueLeads),
+    callsPerAgent: d.loginCount > 0 ? Math.round(d.calls / d.loginCount) : 0,
+    avgTalkPerAgent: d.loginCount > 0 ? Math.round(d.talkTimeSec / d.loginCount) : 0,
+  })), [data]);
+
+  /** Mon-Sun weeks; ratios are recomputed from the week's own sums, never averaged from daily ratios. */
+  const weeklyEnriched = useMemo(() => {
+    const weeks = new Map<string, { calls: number; uniqueLeads: number; connected: number; uniqueConnected: number; present: number; talkTimeSec: number }>();
+    for (const d of dailyEnriched) {
+      const dt = new Date(`${d.date}T00:00:00`);
+      const mon = new Date(dt);
+      mon.setDate(mon.getDate() - ((dt.getDay() + 6) % 7));
+      const key = localDateStr(mon);
+      const w = weeks.get(key) ?? { calls: 0, uniqueLeads: 0, connected: 0, uniqueConnected: 0, present: 0, talkTimeSec: 0 };
+      w.calls += d.calls; w.uniqueLeads += d.uniqueLeads; w.connected += d.connected;
+      w.uniqueConnected += d.uniqueConnected; w.present += d.present; w.talkTimeSec += d.talkTimeSec;
+      weeks.set(key, w);
+    }
+    return [...weeks.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([, w], i) => ({
+      ...w, label: `Week ${i + 1}`,
+      connectedPct: pct1(w.connected, w.calls),
+      uniqueConnectedPct: pct1(w.uniqueConnected, w.uniqueLeads),
+      attempt: w.uniqueLeads > 0 ? Math.round((w.calls / w.uniqueLeads) * 100) / 100 : 0,
+      callsPerAgent: w.present > 0 ? Math.round(w.calls / w.present) : 0,
+      avgTalkPerAgent: w.present > 0 ? Math.round(w.talkTimeSec / w.present) : 0,
+    }));
+  }, [dailyEnriched]);
 
   const filteredAgents = useMemo(() => {
     const rows = data?.agents ?? [];
     const q = agentSearch.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((a) => a.agent.toLowerCase().includes(q) || a.loginId.toLowerCase().includes(q));
+    return q ? rows.filter((a) => a.agent.toLowerCase().includes(q) || a.loginId.toLowerCase().includes(q)) : rows;
   }, [data, agentSearch]);
 
-  const insights = useMemo(() => (data ? buildInsights(data) : []), [data]);
-
-  const topAgents = useMemo(() => {
-    if (!data || data.agents.length === 0) return [];
-    const avg = data.agents.reduce((s, a) => s + a.totalCalls, 0) / data.agents.length;
-    return data.agents
-      .filter((a) => a.totalCalls >= avg * 0.5)
-      .sort((a, b) => b.connectedPct - a.connectedPct)
-      .slice(0, 3);
+  const topByCalls = useMemo(() => [...(data?.agents ?? [])].sort((a, b) => b.totalCalls - a.totalCalls).slice(0, 3), [data]);
+  const topByConnect = useMemo(() => {
+    const ag = data?.agents ?? [];
+    if (!ag.length) return [];
+    const avg = ag.reduce((s, a) => s + a.totalCalls, 0) / ag.length;
+    return ag.filter((a) => a.totalCalls >= avg * 0.5).sort((a, b) => b.connectedPct - a.connectedPct).slice(0, 3);
   }, [data]);
 
-  /** Export slides — one per tab, built from the same data already rendered
-   * on screen, not re-fetched. Report/file names derive from this instance's
-   * own `title` prop so each consumer's export reflects which one it is. */
   const exportSlides = useMemo<ExportSlide[]>(() => {
     if (!data) return [];
     const h = data.headline;
-    const overview: ExportSlide = {
-      title: "Overview",
-      kpis: [
-        { label: "Login Count", value: String(h.loginCount) },
-        { label: "Overall Calls", value: fmtN(h.overallCalls) },
-        { label: "Unique Leadset", value: fmtN(h.uniqueLeadset) },
-        { label: "Unique Connectivity %", value: `${h.uniqueConnectivityPct}%` },
-        { label: "Overall Connected %", value: `${h.overallConnectedPct}%` },
-        { label: "Shrinkage %", value: `${h.shrinkagePct}%` },
-        { label: "Occupancy %", value: `${h.occupancyPct}%` },
-        { label: "Avg Talk Time (per agent per day)", value: secToHms(h.avgTalkTimeSec) },
-        { label: "Unique Connected", value: fmtN(h.uniqueConnectedCalls) },
-        { label: "Overall Connected", value: fmtN(h.overallConnected) },
-      ],
-      tables: [
-        {
-          title: "Daily Performance",
-          columns: ["Date", "Calls", "Unique Leads", "Connected", "Connected %", "Logins"],
-          rows: data.daily.map((r) => [fmtDate(r.date), r.calls, r.uniqueLeads, r.connected, `${r.connectedPct}%`, r.loginCount]),
-        },
-        {
-          title: "Lead-Source Detail",
-          columns: ["Service", "Calls", "Connected", "Connected %", "Unique Leads"],
+    const present = data.timeUse.agentDays;
+    return [
+      {
+        title: "Overview",
+        kpis: [
+          { label: "Total Present Count (agent-days)", value: fmtN(present) },
+          { label: "Total Calls", value: fmtN(h.overallCalls) },
+          { label: "Connected Calls", value: fmtN(h.overallConnected) },
+          { label: "Connect %", value: `${h.overallConnectedPct}%` },
+          { label: "Unique Dialed", value: fmtN(h.uniqueLeadset) },
+          { label: "Unique Connect", value: fmtN(h.uniqueConnectedCalls) },
+          { label: "Unique Connect %", value: `${h.uniqueConnectivityPct}%` },
+          { label: "Attempt (calls per unique lead)", value: String(h.avgAttemptsPerLead) },
+          { label: "Per Agent Calls (per agent-day)", value: present > 0 ? fmtN(Math.round(h.overallCalls / present)) : "0" },
+          { label: "Avg Talk Time (per agent-day)", value: secToHms(h.avgTalkTimeSec) },
+        ],
+        tables: [
+          { title: "Daily", columns: ["Date", "Present", "Calls", "Connected", "Connect %", "Unique Dialed", "Unique Connect"], rows: dailyEnriched.map((d) => [fmtDate(d.date), d.present, d.calls, d.connected, `${d.connectedPct}%`, d.uniqueLeads, d.uniqueConnected]) },
+          { title: "Week-wise", columns: ["Week", "Present", "Calls", "Connected", "Connect %", "Unique Dialed", "Unique Connect"], rows: weeklyEnriched.map((w) => [w.label, w.present, w.calls, w.connected, `${w.connectedPct}%`, w.uniqueLeads, w.uniqueConnected]) },
+          { title: "Dispositions", columns: ["Disposition", "Calls", "Share"], rows: data.byDisposition.map((s) => [s.disposition, s.calls, `${s.pct}%`]) },
+        ],
+      },
+      {
+        title: "Agent-wise",
+        tables: [{
+          title: "Agent-wise Performance",
+          columns: ["Agent", "Login ID", "Leads", "Calls", "Connect", "Con %", "Login", "Net Login", "Talk", "Wrap", "Idle", "Break", "Occ %", "Shrink %"],
+          rows: data.agents.map((a) => [a.agent, a.loginId, a.uniqueLeads, a.totalCalls, a.connectedCalls, `${a.connectedPct}%`,
+            secToHms(a.loginTimeSec), secToHms(a.netLoginTimeSec), secToHms(a.talkTimeSec), secToHms(a.wrapupSec), secToHms(a.idleSec), secToHms(a.breakSec),
+            a.loginTimeSec ? `${a.occupancyPct}%` : "—", a.loginTimeSec ? `${a.shrinkagePct}%` : "—"]),
+        }],
+      },
+      {
+        title: "Campaign-wise",
+        tables: [{
+          title: "Campaign-wise (lead source)",
+          columns: ["Campaign", "Calls", "Connected", "Con %", "Unique Leads"],
           rows: data.byService.map((s) => [s.service, s.calls, s.connected, `${s.connectedPct}%`, s.uniqueLeads]),
-        },
-        {
-          title: "Week-wise Performance",
-          columns: ["Week", "Login Count", "Overall Calls", "Unique Leadset", "Overall Connected", "Connected %", "Talk Time"],
-          rows: data.byWeek.map((w) => [
-            w.weekLabel, w.loginCount, w.overallCalls, w.uniqueLeadset, w.overallConnected,
-            `${w.overallConnectedPct}%`, secToHms(w.talkTimeSec),
-          ]),
-        },
-      ],
-    };
-    const timing: ExportSlide = {
-      title: "Timing",
-      tables: [{
-        title: "Hour-wise Performance",
-        columns: ["Hour", "Calls", "Connected", "Connected %"],
-        rows: data.byHour.map((r) => [`${hourLabel(r.hour)}`, r.calls, r.connected, `${r.connectedPct}%`]),
-      }],
-    };
-    const outcomes: ExportSlide = {
-      title: "Outcomes",
-      tables: [
-        { title: "Call Status", columns: ["Status", "Calls", "Share"], rows: data.byStatus.map((s) => [s.status, s.calls, `${s.pct}%`]) },
-        { title: "Dispositions", columns: ["Disposition", "Calls", "Share"], rows: data.byDisposition.map((s) => [s.disposition, s.calls, `${s.pct}%`]) },
-        { title: "Attempt Analysis", columns: ["Attempt", "Calls", "Connected", "Connected %"], rows: data.byAttempt.map((a) => [a.attempt, a.calls, a.connected, `${a.connectedPct}%`]) },
-      ],
-    };
-    const agentsSlide: ExportSlide = {
-      title: "Agents",
-      tables: [{
-        title: "Agent-wise Performance",
-        columns: ["Agent", "Login ID", "Calls", "Connected", "Connected %", "Unique Leads", "Talk Time", "Login Time", "Shrinkage %", "Occupancy %"],
-        rows: data.agents.map((a) => [
-          a.agent, a.loginId, a.totalCalls, a.connectedCalls, `${a.connectedPct}%`, a.uniqueLeads,
-          a.talkTimeSec ? secToHms(a.talkTimeSec) : "—", a.loginTimeSec ? secToHms(a.loginTimeSec) : "—",
-          a.loginTimeSec ? `${a.shrinkagePct}%` : "—", a.loginTimeSec ? `${a.occupancyPct}%` : "—",
-        ]),
-      }],
-    };
-    const productivity: ExportSlide = {
-      title: "Productivity",
-      tables: [{
-        title: "Time Utilisation (average per agent per day)",
-        columns: ["Bucket", "Avg time"],
-        rows: (() => {
-          const t = data.timeUse;
-          const avg = (s: number) => secToHms(t.agentDays > 0 ? Math.round(s / t.agentDays) : 0);
-          return [
-            ["Login", avg(t.loginSec)], ["Talk", avg(t.talkSec)],
-            ["Wrap-up", avg(t.wrapupSec)], ["Idle", avg(t.idleSec)],
-            ["Break", avg(t.breakSec)], ["Tea", avg(t.breaks.tea)],
-            ["Lunch", avg(t.breaks.lunch)], ["Meeting", avg(t.breaks.meeting)],
-            ["Bio break", avg(t.breaks.bio)], ["Unsolicited", avg(t.breaks.unsolicited)],
-          ];
-        })(),
-      }],
-    };
-    return [overview, timing, outcomes, agentsSlide, productivity];
-  }, [data]);
-
-  const exportFileBaseName = title.replace(/[^a-zA-Z0-9]+/g, "_");
-  // Shared by both LP reports; the wrappers differ only by apiPath.
-  const exportDashboardKey = apiPath.includes("lp-onboarding") ? "lp_onboarding" : "lp_feedback";
-  const exportReportTitle = `${eyebrow.split(" · ")[0]} — ${title}`;
-  const activeSlideTitle = TABS.find((t) => t.key === tab)?.label ?? "Overview";
+        }],
+      },
+    ];
+  }, [data, dailyEnriched, weeklyEnriched]);
 
   if (loading && !data) return <Spinner tone="blue" />;
-  if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
+  if (error && !data) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!data) return null;
 
-  const { headline } = data;
-  const hasData = headline.overallCalls > 0 || headline.loginCount > 0;
-  const maxHourPct = Math.max(0, ...data.byHour.map((h) => h.connectedPct));
-  const bestHour = data.byHour.filter((h) => h.calls >= headline.overallCalls * 0.03).reduce<number | null>(
-    (best, h) => (best === null || h.connectedPct > (data.byHour.find((x) => x.hour === best)?.connectedPct ?? -1) ? h.hour : best), null,
-  );
+  const h = data.headline;
+  const present = data.timeUse.agentDays;
+  const perAgentCalls = present > 0 ? Math.round(h.overallCalls / present) : 0;
   const tu = data.timeUse;
-  /** Every timing figure on the Productivity tab is an average of one agent's
-   * day (sum / agent-day rows), so it's comparable with a shift length. */
-  const perDay = (sec: number): number => (tu.agentDays > 0 ? Math.round(sec / tu.agentDays) : 0);
-  const timeSlices = [
-    { name: "Talk", value: tu.talkSec, color: PALETTE.blue },
-    { name: "Wrap-up", value: tu.wrapupSec, color: PALETTE.violet },
-    { name: "Idle", value: tu.idleSec, color: PALETTE.amber },
-    { name: "Break", value: tu.breakSec, color: PALETTE.rose },
-    { name: "Unaccounted", value: tu.otherSec, color: "#cbd5e1" },
-  ].filter((s) => s.value > 0);
-  const breakRows = [
-    { label: "Tea", sec: perDay(tu.breaks.tea), color: PALETTE.amber },
-    { label: "Lunch", sec: perDay(tu.breaks.lunch), color: PALETTE.rose },
-    { label: "Bio break", sec: perDay(tu.breaks.bio), color: PALETTE.violet },
-    { label: "Meeting", sec: perDay(tu.breaks.meeting), color: PALETTE.sky },
-    { label: "Unsolicited", sec: perDay(tu.breaks.unsolicited), color: PALETTE.slate },
-  ];
-  const maxBreak = Math.max(1, ...breakRows.map((b) => b.sec));
-  const totalStatus = data.byStatus.reduce((s, r) => s + r.calls, 0);
-  const hangupTotal = data.hangup.reduce((s, r) => s + r.calls, 0);
+  const avgOf = (s: number) => (tu.agentDays > 0 ? Math.round(s / tu.agentDays) : 0);
+
+  const S = {
+    present: { key: "present", label: "Present", fmt: "int", color: "#2563eb" } as DrawerSeries,
+    calls: { key: "calls", label: "Total Calls", fmt: "int", color: "#2563eb" } as DrawerSeries,
+    connected: { key: "connected", label: "Connected Calls", fmt: "int", color: "#10b981" } as DrawerSeries,
+    connectedPct: { key: "connectedPct", label: "Connect %", fmt: "pct", color: "#f59e0b" } as DrawerSeries,
+    uniqueLeads: { key: "uniqueLeads", label: "Unique Dialed", fmt: "int", color: "#6366f1" } as DrawerSeries,
+    uniqueConnected: { key: "uniqueConnected", label: "Unique Connect", fmt: "int", color: "#14b8a6" } as DrawerSeries,
+    uniqueConnectedPct: { key: "uniqueConnectedPct", label: "Unique Connect %", fmt: "pct", color: "#f59e0b" } as DrawerSeries,
+    attempt: { key: "attempt", label: "Attempt", fmt: "int", color: "#8b5cf6" } as DrawerSeries,
+    callsPerAgent: { key: "callsPerAgent", label: "Calls per Agent-day", fmt: "int", color: "#0ea5e9" } as DrawerSeries,
+    avgTalk: { key: "avgTalkPerAgent", label: "Avg Talk / Agent-day", fmt: "hms", color: "#ec4899" } as DrawerSeries,
+  };
+
+  const kpi = (icon: typeof PhoneCall, label: string, value: string, tone: Parameters<typeof KpiCard>[0]["tone"], s: DrawerSeries, sub?: string) => (
+    <KpiCard icon={icon} label={label} value={value} sub={sub} tone={tone} onClick={() => openMetric(label, [s])} />
+  );
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3">
       <DashboardHero<TabKey>
-        icon={Scale} eyebrow={eyebrow} title={title}
-        tabs={TABS} activeTab={tab} onTabChange={setTab}
-        gradient="from-blue-700 via-indigo-700 to-blue-800"
+        icon={Users} eyebrow={eyebrow} title={title}
+        tabs={TABS} activeTab={tab} onTabChange={setTab} gradient={heroGradient}
       />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <DashboardExportMenu
-          reportTitle={exportReportTitle}
-          fileBaseName={exportFileBaseName}
-          raw={{ dashboard: exportDashboardKey, from, to }}
-          subtitle={`${fmtDate(from)} to ${fmtDate(to)}`}
-          slides={exportSlides}
-          activeSlideTitle={activeSlideTitle}
+          reportTitle={title} fileBaseName={title.replace(/[^A-Za-z]+/g, "_")}
+          raw={{ dashboard: isOnboarding ? "lp_onboarding" : "lp_feedback", from, to }}
+          subtitle={`${from} to ${to}`} slides={exportSlides}
+          activeSlideTitle={tab === "agents" ? "Agent-wise" : tab === "campaigns" ? "Campaign-wise" : "Overview"}
         />
-        <DateRangeToolbar
-          from={from} to={to} onFrom={setFrom} onTo={setTo}
-          onReset={() => { const r = currentMonthRange(); setFrom(r.from); setTo(r.to); }}
-          accentFocus="focus:border-blue-400"
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex overflow-hidden rounded-lg border border-slate-200 bg-white text-[11px] font-bold">
+            {(["MTD", "WTD", "YTD"] as Preset[]).map((p) => {
+              const r = presetRange(p);
+              const active = r.from === from && r.to === to;
+              return (
+                <button
+                  key={p} type="button" onClick={() => { setFrom(r.from); setTo(r.to); }}
+                  className={`px-3 py-1.5 transition-colors ${active ? "bg-blue-700 text-white" : "text-slate-500 hover:bg-slate-50"}`}
+                >{p}</button>
+              );
+            })}
+          </div>
+          <DateRangeToolbar
+            from={from} to={to} onFrom={setFrom} onTo={setTo}
+            onReset={() => { const r = currentMonthRange(); setFrom(r.from); setTo(r.to); }}
+            resetLabel="This Month"
+          />
+        </div>
       </div>
 
-      {!hasData && (
-        <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-white py-16 text-center">
-          <Inbox className="h-8 w-8 text-slate-300" />
-          <p className="text-sm font-semibold text-slate-600">No call or productivity data in this date range</p>
-          <p className="max-w-sm text-xs text-slate-400">Pick a wider range, or upload the CDR and APR files from the Uploader.</p>
-        </div>
-      )}
-
-      {hasData && tab === "overview" && (
+      {tab === "overview" && (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            <KpiCard icon={Users} label="Login Count" value={String(headline.loginCount)} tone="sky" />
-            <KpiCard icon={PhoneCall} label="Overall Calls" value={fmtN(headline.overallCalls)} tone="blue" />
-            <KpiCard icon={ListChecks} label="Unique Leadset" value={fmtN(headline.uniqueLeadset)} sub="first call per lead per day" tone="indigo" />
-            <KpiCard icon={PhoneCall} label="Overall Connected" value={fmtN(headline.overallConnected)} tone="emerald" />
-            <KpiCard icon={ListChecks} label="Unique Connected" value={fmtN(headline.uniqueConnectedCalls)} tone="teal" />
-            <KpiCard icon={Activity} label="Overall Connected %" value={`${headline.overallConnectedPct}%`} tone="emerald" />
-            <KpiCard icon={Gauge} label="Unique Connectivity %" value={`${headline.uniqueConnectivityPct}%`} sub="leads reached / unique leadset" tone="teal" />
-            <KpiCard icon={Scale} label="Shrinkage %" value={`${headline.shrinkagePct}%`} tone="rose" />
-            <KpiCard icon={Gauge} label="Occupancy %" value={`${headline.occupancyPct}%`} tone="violet" />
-            <KpiCard icon={Timer} label="Avg Talk Time" value={secToHms(headline.avgTalkTimeSec)} sub="per agent per day" tone="cyan" />
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+            {kpi(UserCheck, "Total Present Count", fmtN(present), "blue", S.present, "agent-days")}
+            <KpiCard icon={Database} label="Total Data Received" value={fmtN(h.distinctLeads)} sub="distinct lead IDs in call file" tone="emerald" />
+            {kpi(PhoneCall, "Total Calls", fmtN(h.overallCalls), "indigo", S.calls)}
+            {kpi(PhoneForwarded, "Connected Calls", fmtN(h.overallConnected), "teal", S.connected)}
+            {kpi(Gauge, "Connect %", `${h.overallConnectedPct}%`, "amber", S.connectedPct)}
+            {kpi(Users, "Unique Dialed", fmtN(h.uniqueLeadset), "violet", S.uniqueLeads, "lead-days")}
+            {kpi(Target, "Unique Connect", fmtN(h.uniqueConnectedCalls), "teal", S.uniqueConnected)}
+            {kpi(Gauge, "Unique Connect %", `${h.uniqueConnectivityPct}%`, "amber", S.uniqueConnectedPct)}
+            {kpi(Repeat, "Attempt", String(h.avgAttemptsPerLead), "sky", S.attempt, "calls per unique lead")}
+            {kpi(Activity, "Per Agent Calls", fmtN(perAgentCalls), "cyan", S.callsPerAgent, "per agent-day")}
           </div>
 
-          {insights.length > 0 && (
-            <SectionCard icon={Sparkles} title="What the data says" tone="amber" footnote="Generated from the numbers on this page for the selected date range; each needs a minimum call volume before it is shown.">
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {insights.map((i) => <InsightCard key={i.title} i={i} />)}
-              </div>
+          <div className="grid gap-3 lg:grid-cols-3">
+            <SectionCard
+              icon={Filter} title="Call Funnel" tone="blue"
+              footnote={`Distinct leads throughout, so each stage nests in the last.${isOnboarding ? " \"Allocated to Advisor\" = leads with an \"Allocate to advisor ...\" disposition." : " Feedback has no advisor-allocation disposition, so it stops at Connected."}`}
+            >
+              <CallFunnel stages={[
+                { stage: "Total Data Received", count: h.distinctLeads },
+                { stage: "Leads Connected", count: h.connectedLeads },
+                ...(isOnboarding ? [{ stage: "Allocated to Advisor", count: h.advisorAllocatedLeads }] : []),
+              ]} />
             </SectionCard>
-          )}
 
-          <SectionCard icon={CalendarDays} title="Daily trend — calls, unique leads and connect rate" tone="blue" footnote="Click a bar to open that day.">
-            <ResponsiveContainer width="100%" height={280}>
-              <ComposedChart data={data.daily} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="date" tickFormatter={fmtShortDay} tick={{ fontSize: 10 }} />
-                <YAxis yAxisId="l" tick={{ fontSize: 10 }} />
-                <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 10 }} unit="%" />
-                <Tooltip {...TOOLTIP_PROPS} labelFormatter={(v) => fmtDate(String(v))} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar yAxisId="l" dataKey="calls" name="Calls" fill="#bfdbfe" radius={[4, 4, 0, 0]} cursor="pointer"
-                  onClick={(e: { date?: string }) => { if (e?.date) open("day", e.date); }} />
-                <Line yAxisId="l" type="monotone" dataKey="uniqueLeads" name="Unique leads" stroke={PALETTE.indigo} strokeWidth={2.5} dot={{ r: 3 }} />
-                <Line yAxisId="r" type="monotone" dataKey="connectedPct" name="Connected %" stroke={PALETTE.emerald} strokeWidth={2.5} dot={{ r: 3 }} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </SectionCard>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <SectionCard icon={ListChecks} title="Calls by Lead-Source (Service)" tone="blue" footnote="Click a bar to open that lead source.">
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={data.byService} margin={{ top: 4, right: 12, left: -16, bottom: 0 }}>
+            <SectionCard
+              icon={Activity} title="Call Performance Trend" tone="indigo"
+              action={<ViewDetailsBtn onClick={() => openMetric("Call Performance Trend", [S.calls, S.connected, S.connectedPct])} />}
+            >
+              <ResponsiveContainer width="100%" height={170}>
+                <ComposedChart data={dailyEnriched} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="service" tick={{ fontSize: 9 }} />
-                  <YAxis tick={{ fontSize: 10 }} />
-                  <Tooltip {...TOOLTIP_PROPS} />
-                  <Bar dataKey="calls" name="Calls" radius={[4, 4, 0, 0]} cursor="pointer"
-                    onClick={(e: { service?: string }) => { if (e?.service) open("service", e.service); }}>
-                    {data.byService.map((entry, i) => (
-                      <Cell key={entry.service} fill={SERVICE_COLORS[i % SERVICE_COLORS.length]} />
-                    ))}
+                  <XAxis dataKey="date" tickFormatter={formatShortDate} tick={{ fontSize: 9 }} />
+                  <YAxis yAxisId="l" tick={{ fontSize: 9 }} />
+                  <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 9 }} unit="%" />
+                  <Tooltip labelFormatter={(v: unknown) => formatShortDate(String(v))} contentStyle={TT} />
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Line yAxisId="l" type="monotone" dataKey="calls" name="Total Calls" stroke="#2563eb" strokeWidth={2} dot={false} />
+                  <Line yAxisId="l" type="monotone" dataKey="connected" name="Connected Calls" stroke="#10b981" strokeWidth={2} dot={false} />
+                  <Line yAxisId="r" type="monotone" dataKey="connectedPct" name="Connect %" stroke="#f59e0b" strokeWidth={2} dot={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </SectionCard>
+
+            <SectionCard
+              icon={Target} title="Onboarding & Conversion" tone="teal"
+              footnote="Present Count is agent-days; the rest are lead / lead-day counts, so read the bars as a snapshot, not a ladder."
+              action={<ViewDetailsBtn onClick={() => openMetric("Onboarding & Conversion", [S.present, S.uniqueLeads, S.uniqueConnected])} />}
+            >
+              <ResponsiveContainer width="100%" height={170}>
+                <BarChart
+                  data={[
+                    { name: "Present", value: present },
+                    { name: "Data Received", value: h.distinctLeads },
+                    { name: "Unique Dialed", value: h.uniqueLeadset },
+                    { name: "Unique Connect", value: h.uniqueConnectedCalls },
+                    ...(isOnboarding ? [{ name: "To Advisor", value: h.advisorAllocatedLeads }] : []),
+                  ]}
+                  margin={{ top: 16, right: 8, left: -16, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="name" tick={{ fontSize: 8 }} interval={0} />
+                  <YAxis tick={{ fontSize: 9 }} />
+                  <Tooltip contentStyle={TT} />
+                  <Bar dataKey="value" name="Count" radius={[4, 4, 0, 0]}>
+                    {[0, 1, 2, 3, 4].map((i) => <Cell key={i} fill={["#2563eb", "#10b981", "#f59e0b", "#8b5cf6", "#ef4444"][i]} />)}
+                    <LabelList dataKey="value" position="top" formatter={(v: number) => fmtN(v)} style={{ fontSize: 9, fontWeight: 700, fill: "#475569" }} />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </SectionCard>
+          </div>
 
-            <SectionCard icon={ListChecks} title="Lead-Source Detail" tone="indigo">
-              <div className="mb-2"><HintChip /></div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+          <div className="grid gap-3 lg:grid-cols-3">
+            <SectionCard icon={ListChecks} title="Follow-ups & Dispositions" tone="amber" footnote={`Call back: ${fmtN(h.callBackCalls)} calls (${h.callBackPct}%). Whole-range only -- no daily split.`}>
+              <div className="max-h-52 overflow-y-auto rounded-xl border border-slate-100">
+                <table className="w-full text-xs">
                   <thead>
-                    <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                      <th className="py-2 pr-3 font-semibold">Service</th>
-                      <th className="py-2 pr-3 text-right font-semibold">Calls</th>
-                      <th className="py-2 pr-3 text-right font-semibold">Connected</th>
-                      <th className="py-2 pr-3 text-right font-semibold">Connected %</th>
-                      <th className="py-2 pr-0 text-right font-semibold">Unique Leads</th>
+                    <tr className="sticky top-0 z-10 bg-amber-700 text-[10px] uppercase tracking-wide text-white">
+                      <Th left>Disposition</Th><Th>Calls</Th><Th>Share</Th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.byService.map((s) => (
-                      <ClickRow key={s.service} onOpen={() => open("service", s.service)} label={`Open ${s.service}`}>
-                        <td className="py-2.5 pr-3 font-medium text-slate-700">{s.service}</td>
-                        <td className="py-2.5 pr-3 text-right text-slate-600">{fmtN(s.calls)}</td>
-                        <td className="py-2.5 pr-3 text-right text-slate-600">{fmtN(s.connected)}</td>
-                        <td className="py-2.5 pr-3 text-right font-semibold text-slate-800">{s.connectedPct}%</td>
-                        <td className="py-2.5 pr-0 text-right text-slate-600">{fmtN(s.uniqueLeads)}</td>
-                      </ClickRow>
+                    {data.byDisposition.slice(0, 8).map((d, i) => (
+                      <tr key={d.disposition} className={`border-b border-slate-50 last:border-0 ${i % 2 ? "bg-amber-50/30" : "bg-white"}`}>
+                        <td className="max-w-[170px] truncate px-2 py-1.5 font-medium text-slate-700" title={d.disposition}>{d.disposition}</td>
+                        <td className="px-2 py-1.5 text-center text-slate-600">{fmtN(d.calls)}</td>
+                        <td className="px-2 py-1.5 text-center font-semibold text-amber-700">{d.pct}%</td>
+                      </tr>
                     ))}
-                    {data.byService.length === 0 && (
-                      <tr><td colSpan={5} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
-                    )}
+                    {data.byDisposition.length === 0 && <tr><td colSpan={3} className="py-6 text-center text-slate-400">No data for this period.</td></tr>}
                   </tbody>
                 </table>
               </div>
             </SectionCard>
-          </div>
 
-          <SectionCard icon={Timer} title="Week-wise Performance" tone="blue">
-            <div className="mb-2"><HintChip /></div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                    <th className="py-2 pr-3 font-semibold">Week</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Login Count</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Overall Calls</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Unique Leadset</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Overall Connected</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Connected %</th>
-                    <th className="py-2 pr-0 text-right font-semibold">Talk Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.byWeek.map((w) => (
-                    <ClickRow key={w.weekLabel} onOpen={() => open("week", w.weekLabel)} label={`Open ${w.weekLabel}`}>
-                      <td className="py-2.5 pr-3 font-medium text-slate-700">{w.weekLabel}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{w.loginCount}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{fmtN(w.overallCalls)}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{fmtN(w.uniqueLeadset)}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{fmtN(w.overallConnected)}</td>
-                      <td className="py-2.5 pr-3 text-right font-semibold text-slate-800">{w.overallConnectedPct}%</td>
-                      <td className="py-2.5 pr-0 text-right text-slate-600">{secToHms(w.talkTimeSec)}</td>
-                    </ClickRow>
+            <SectionCard icon={Trophy} title="Top Performers" tone="violet" footnote="Connect % ranks agents with at least half the average call volume.">
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">By Calls</p>
+                  {topByCalls.map((a, i) => (
+                    <button key={a.agent} type="button" onClick={() => openRecord("agent", a.agent)} className="mb-1 flex w-full items-center justify-between rounded-lg bg-slate-50 px-2 py-1.5 text-left hover:bg-violet-50">
+                      <span className="truncate font-medium text-slate-700">{i + 1}. {a.agent}</span>
+                      <span className="ml-2 font-bold text-slate-800">{fmtN(a.totalCalls)}</span>
+                    </button>
                   ))}
-                  {data.byWeek.length === 0 && (
-                    <tr><td colSpan={7} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </SectionCard>
-        </>
-      )}
-
-      {hasData && tab === "timing" && (
-        <>
-          <SectionCard icon={Clock} title="Best time to call — connect rate by hour" tone="emerald"
-            footnote="Darker = higher connect rate. Time of day is read from each call's start time.">
-            {data.byHour.length === 0 ? (
-              <p className="py-6 text-center text-xs text-slate-400">No call start times in this range.</p>
-            ) : (
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-6 lg:grid-cols-11">
-                {data.byHour.map((h) => (
-                  <div
-                    key={h.hour} style={heatStyle(h.connectedPct, maxHourPct)}
-                    className={`rounded-xl border p-2.5 text-center transition-transform hover:-translate-y-0.5 ${bestHour === h.hour ? "border-emerald-500 ring-2 ring-emerald-200" : "border-emerald-100"}`}
-                    title={`${fmtN(h.calls)} calls, ${fmtN(h.connected)} connected`}
-                  >
-                    <p className="text-[11px] font-semibold text-slate-700">{hourLabel(h.hour)}</p>
-                    <p className="text-base font-bold text-emerald-900">{h.connectedPct}%</p>
-                    <p className="text-[10px] text-slate-600">{fmtN(h.calls)} calls</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </SectionCard>
-
-          <SectionCard icon={Clock} title="Call volume vs connect rate by hour" tone="blue">
-            <ResponsiveContainer width="100%" height={280}>
-              <ComposedChart data={data.byHour} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="hour" tickFormatter={(h) => hourLabel(Number(h))} tick={{ fontSize: 10 }} />
-                <YAxis yAxisId="l" tick={{ fontSize: 10 }} />
-                <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 10 }} unit="%" />
-                <Tooltip {...TOOLTIP_PROPS} labelFormatter={(h) => `${hourLabel(Number(h))} hr`} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Bar yAxisId="l" dataKey="calls" name="Calls" fill="#c7d2fe" radius={[4, 4, 0, 0]} />
-                <Bar yAxisId="l" dataKey="connected" name="Connected" fill={PALETTE.emerald} radius={[4, 4, 0, 0]} />
-                <Line yAxisId="r" type="monotone" dataKey="connectedPct" name="Connected %" stroke={PALETTE.rose} strokeWidth={2.5} dot={{ r: 3 }} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </SectionCard>
-
-          <SectionCard icon={CalendarDays} title="Day-wise Performance" tone="indigo">
-            <div className="mb-2"><HintChip /></div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                    <th className="py-2 pr-3 font-semibold">Date</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Calls</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Unique Leads</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Connected</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Connected %</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Logins</th>
-                    <th className="py-2 pr-0 text-right font-semibold">Talk Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.daily.map((r) => (
-                    <ClickRow key={r.date} onOpen={() => open("day", r.date)} label={`Open ${fmtDate(r.date)}`} tone="hover:bg-indigo-50/50">
-                      <td className="py-2.5 pr-3 font-medium text-slate-700">{fmtDate(r.date)}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{fmtN(r.calls)}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{fmtN(r.uniqueLeads)}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{fmtN(r.connected)}</td>
-                      <td className="py-2.5 pr-3"><MiniBar pct={r.connectedPct} color={PALETTE.emerald} /></td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{r.loginCount}</td>
-                      <td className="py-2.5 pr-0 text-right text-slate-600">{r.talkTimeSec ? secToHms(r.talkTimeSec) : "—"}</td>
-                    </ClickRow>
+                  {topByCalls.length === 0 && <p className="text-slate-400">None</p>}
+                </div>
+                <div>
+                  <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">By Connect %</p>
+                  {topByConnect.map((a, i) => (
+                    <button key={a.agent} type="button" onClick={() => openRecord("agent", a.agent)} className="mb-1 flex w-full items-center justify-between rounded-lg bg-slate-50 px-2 py-1.5 text-left hover:bg-violet-50">
+                      <span className="truncate font-medium text-slate-700">{i + 1}. {a.agent}</span>
+                      <span className="ml-2 font-bold text-emerald-600">{a.connectedPct}%</span>
+                    </button>
                   ))}
-                  {data.daily.length === 0 && (
-                    <tr><td colSpan={7} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </SectionCard>
-        </>
-      )}
-
-      {hasData && tab === "outcomes" && (
-        <>
-          <div className="grid gap-4 lg:grid-cols-2">
-            <SectionCard icon={PhoneCall} title="Call status" tone="emerald">
-              <div className="relative">
-                <ResponsiveContainer width="100%" height={250}>
-                  <PieChart>
-                    <Pie data={data.byStatus} dataKey="calls" nameKey="status" innerRadius={68} outerRadius={98} paddingAngle={2} stroke="none">
-                      {data.byStatus.map((s) => <Cell key={s.status} fill={STATUS_COLORS[s.status] ?? PALETTE.slate} />)}
-                    </Pie>
-                    <Tooltip {...TOOLTIP_PROPS} formatter={(v: number, n: string) => [`${fmtN(v)} (${totalStatus ? Math.round((v / totalStatus) * 1000) / 10 : 0}%)`, n]} />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <DonutCenter value={fmtN(totalStatus)} label="calls" />
+                  {topByConnect.length === 0 && <p className="text-slate-400">None</p>}
+                </div>
               </div>
             </SectionCard>
 
-            <SectionCard icon={Repeat} title="Connect rate by attempt number" tone="rose"
-              footnote="Bars are call volume, the line is how often that attempt connected — a heavy bar with a low line is where dialling effort is being spent for little return.">
-              <ResponsiveContainer width="100%" height={250}>
-                <ComposedChart data={data.byAttempt} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+            <SectionCard icon={Timer} title="Login & Productivity (Team Avg)" tone="sky" footnote="Per agent per day, from the APR file. Whole-range only.">
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  ["Net Login", secToHms(avgOf(tu.netLoginSec))], ["Talk Time", secToHms(avgOf(tu.talkSec))], ["Wrap Time", secToHms(avgOf(tu.wrapupSec))],
+                  ["Idle Time", secToHms(avgOf(tu.idleSec))], ["Occupancy", `${h.occupancyPct}%`], ["Shrinkage", `${h.shrinkagePct}%`],
+                ].map(([l, v]) => (
+                  <div key={l} className="rounded-xl border border-slate-100 bg-slate-50/60 px-2 py-2 text-center">
+                    <p className="text-[10px] font-medium text-slate-500">{l}</p>
+                    <p className="text-sm font-bold text-slate-800">{v}</p>
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+          </div>
+
+          <SectionCard
+            icon={Layers} title="Week-wise Performance" tone="blue"
+            action={<ViewDetailsBtn onClick={() => openMetric("Week-wise Performance", [S.present, S.calls, S.connected, S.connectedPct, S.uniqueLeads, S.uniqueConnected])} />}
+          >
+            <div className="overflow-x-auto rounded-xl border border-slate-100">
+              <table className="w-full text-center text-xs">
+                <thead>
+                  <tr className="bg-blue-800 text-[10px] uppercase tracking-wide text-white">
+                    <Th left>Week</Th><Th>Present</Th><Th>Total Calls</Th><Th>Connected</Th><Th>Connect %</Th><Th>Unique Dialed</Th><Th>Unique Connect</Th><Th>Unique Connect %</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {weeklyEnriched.map((w, i) => (
+                    <tr key={w.label} className={`border-b border-slate-50 last:border-0 ${i % 2 ? "bg-blue-50/30" : "bg-white"}`}>
+                      <td className="px-2 py-1.5 text-left font-medium text-slate-700">{w.label}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{w.present}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{fmtN(w.calls)}</td>
+                      <td className="px-2 py-1.5 text-emerald-600">{fmtN(w.connected)}</td>
+                      <td className="px-2 py-1.5 font-semibold text-amber-600">{w.connectedPct}%</td>
+                      <td className="px-2 py-1.5 text-slate-600">{fmtN(w.uniqueLeads)}</td>
+                      <td className="px-2 py-1.5 text-teal-600">{fmtN(w.uniqueConnected)}</td>
+                      <td className="px-2 py-1.5 font-semibold text-amber-600">{w.uniqueConnectedPct}%</td>
+                    </tr>
+                  ))}
+                  {weeklyEnriched.length === 0 && <tr><td colSpan={8} className="py-6 text-center text-slate-400">No data for this period.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
+
+          <SectionCard icon={Layers} title="Hourly Call Pattern" tone="teal" footnote="Hour of day has no week/date split, so this chart has no drill-down.">
+            <ResponsiveContainer width="100%" height={170}>
+              <ComposedChart data={data.byHour.map((r) => ({ ...r, label: hourLabel(r.hour) }))} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="label" tick={{ fontSize: 9 }} />
+                <YAxis yAxisId="l" tick={{ fontSize: 9 }} />
+                <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 9 }} unit="%" />
+                <Tooltip contentStyle={TT} />
+                <Legend wrapperStyle={{ fontSize: 10 }} />
+                <Bar yAxisId="l" dataKey="calls" name="Calls" fill="#93c5fd" radius={[3, 3, 0, 0]} />
+                <Line yAxisId="r" type="monotone" dataKey="connectedPct" name="Connect %" stroke="#f59e0b" strokeWidth={2} dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </SectionCard>
+        </>
+      )}
+
+      {tab === "agents" && (
+        <>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            <KpiCard icon={Users} label="Agents" value={String(data.agents.length)} tone="blue" />
+            <KpiCard icon={PhoneCall} label="Total Calls" value={fmtN(h.overallCalls)} tone="indigo" />
+            <KpiCard icon={PhoneForwarded} label="Connected Calls" value={fmtN(h.overallConnected)} tone="emerald" />
+            <KpiCard icon={Gauge} label="Connect %" value={`${h.overallConnectedPct}%`} tone="amber" />
+            <KpiCard icon={Activity} label="Occupancy %" value={`${h.occupancyPct}%`} tone="cyan" />
+            <KpiCard icon={Timer} label="Shrinkage %" value={`${h.shrinkagePct}%`} tone="rose" />
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-2">
+            <SectionCard icon={PhoneCall} title="Calls & Connected by Agent" tone="indigo" footnote="Click a bar's agent in the table below for their day-by-day detail.">
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={data.agents.slice(0, 12)} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="attempt" tick={{ fontSize: 10 }} label={{ value: "Attempt", position: "insideBottom", offset: -2, fontSize: 10, fill: "#94a3b8" }} />
-                  <YAxis yAxisId="l" tick={{ fontSize: 10 }} />
-                  <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 10 }} unit="%" />
-                  <Tooltip {...TOOLTIP_PROPS} labelFormatter={(a) => `Attempt ${a}`} />
-                  <Bar yAxisId="l" dataKey="calls" name="Calls" fill="#bae6fd" radius={[4, 4, 0, 0]} />
-                  <Line yAxisId="r" type="monotone" dataKey="connectedPct" name="Connected %" stroke={PALETTE.rose} strokeWidth={2.5} dot={{ r: 3 }} />
-                </ComposedChart>
+                  <XAxis dataKey="agent" tick={{ fontSize: 9 }} interval={0} />
+                  <YAxis tick={{ fontSize: 9 }} />
+                  <Tooltip contentStyle={TT} />
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Bar dataKey="totalCalls" name="Total Calls" fill="#2563eb" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="connectedCalls" name="Connected" fill="#10b981" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </SectionCard>
+            <SectionCard icon={Gauge} title="Connect % by Agent" tone="amber">
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={data.agents.slice(0, 12)} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="agent" tick={{ fontSize: 9 }} interval={0} />
+                  <YAxis tick={{ fontSize: 9 }} unit="%" />
+                  <Tooltip formatter={(v: number) => `${v}%`} contentStyle={TT} />
+                  <Bar dataKey="connectedPct" name="Connect %" radius={[3, 3, 0, 0]}>
+                    {data.agents.slice(0, 12).map((a, i) => <Cell key={a.agent} fill={CAMPAIGN_COLORS[i % CAMPAIGN_COLORS.length]} />)}
+                  </Bar>
+                </BarChart>
               </ResponsiveContainer>
             </SectionCard>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-2">
-            <SectionCard icon={ListChecks} title="Top dispositions" tone="indigo">
-              {data.byDisposition.length === 0 ? <p className="py-6 text-center text-xs text-slate-400">No data for this period.</p> : (
-                <ul className="space-y-2.5">
-                  {data.byDisposition.map((d) => (
-                    <li key={d.disposition}>
-                      <div className="mb-1 flex items-baseline justify-between gap-3 text-xs">
-                        <span className="truncate text-slate-600" title={d.disposition}>{d.disposition}</span>
-                        <span className="shrink-0 font-semibold text-slate-700">{fmtN(d.calls)} <span className="font-normal text-slate-400">({d.pct}%)</span></span>
-                      </div>
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                        <div className="h-full rounded-full bg-indigo-500" style={{ width: `${Math.min(100, d.pct)}%` }} />
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </SectionCard>
-
-            <div className="space-y-4">
-              <SectionCard icon={Timer} title="How long connected calls last" tone="cyan" footnote="Talk duration of connected calls only.">
-                <ResponsiveContainer width="100%" height={190}>
-                  <BarChart data={data.talkBuckets} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                    <YAxis tick={{ fontSize: 10 }} />
-                    <Tooltip {...TOOLTIP_PROPS} />
-                    <Bar dataKey="calls" name="Connected calls" fill={PALETTE.cyan} radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </SectionCard>
-
-              <SectionCard icon={PhoneOff} title="Who ends the call" tone="slate">
-                {hangupTotal === 0 ? <p className="py-3 text-center text-xs text-slate-400">No data for this period.</p> : (
-                  <div className="space-y-2">
-                    <div className="flex h-3 w-full overflow-hidden rounded-full bg-slate-100">
-                      {data.hangup.map((r, i) => (
-                        <div key={r.label} title={`${r.label}: ${fmtN(r.calls)}`}
-                          style={{ width: `${(r.calls / hangupTotal) * 100}%`, backgroundColor: [PALETTE.indigo, PALETTE.amber, PALETTE.slate][i % 3] }} />
-                      ))}
-                    </div>
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
-                      {data.hangup.map((r, i) => (
-                        <span key={r.label} className="inline-flex items-center gap-1.5">
-                          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: [PALETTE.indigo, PALETTE.amber, PALETTE.slate][i % 3] }} />
-                          {r.label} <b className="text-slate-700">{fmtN(r.calls)}</b> ({Math.round((r.calls / hangupTotal) * 1000) / 10}%)
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </SectionCard>
-            </div>
-          </div>
-        </>
-      )}
-
-      {hasData && tab === "agents" && (
-        <div className="space-y-4">
-          {topAgents.length > 0 && (
-            <div className="grid gap-3 md:grid-cols-3">
-              {topAgents.map((a, i) => (
-                <button
-                  key={a.agent} type="button" onClick={() => open("agent", a.agent)}
-                  className="group relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
-                >
-                  <div className={`absolute inset-x-0 top-0 h-1 ${["bg-amber-400", "bg-slate-300", "bg-orange-300"][i]}`} />
-                  <div className="flex items-center gap-3">
-                    <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold ${["bg-amber-100 text-amber-700", "bg-slate-100 text-slate-600", "bg-orange-100 text-orange-700"][i]}`}>
-                      #{i + 1}
-                    </span>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-bold text-slate-800">{a.agent}</p>
-                      <p className="text-[11px] text-slate-400">{fmtN(a.totalCalls)} calls · {fmtN(a.uniqueLeads)} unique leads</p>
-                    </div>
-                    <div className="ml-auto text-right">
-                      <p className="text-xl font-bold text-emerald-600">{a.connectedPct}%</p>
-                      <p className="text-[10px] text-slate-400">connected</p>
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="relative w-full max-w-sm">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+          <SectionCard icon={Users} title="Agent-wise Performance" tone="blue" action={<HintChip text="Click any agent for detail" />}>
+            <div className="mb-2">
               <input
-                type="text" value={agentSearch} onChange={(e) => setAgentSearch(e.target.value)}
-                placeholder="Search agent or login ID..."
-                className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-xs text-slate-700 shadow-sm transition-colors focus:border-blue-400 focus:outline-none"
+                type="text" value={agentSearch} onChange={(e) => setAgentSearch(e.target.value)} placeholder="Search agent..."
+                className="w-full max-w-xs rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 focus:border-blue-400 focus:outline-none"
               />
             </div>
-            <div className="flex items-center gap-2">
-              <HintChip />
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-500">
-                <ListFilter className="h-3 w-3" />
-                {filteredAgents.length} of {data.agents.length} agents
-              </span>
-            </div>
-          </div>
-
-          <SectionCard icon={Users} title="Agent-wise Performance" tone="indigo" footnote={tlFootnote}>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+            <div className="max-h-96 overflow-auto rounded-xl border border-slate-100">
+              <table className="w-full text-center text-[11px]">
                 <thead>
-                  <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                    <th className="py-2 pr-3 font-semibold">Agent</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Days</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Calls</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Connected</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Connected %</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Unique Leads</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Talk Time</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Login Time</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Shrinkage %</th>
-                    <th className="py-2 pr-0 text-right font-semibold">Occupancy %</th>
+                  <tr className="sticky top-0 z-10 bg-blue-800 text-[10px] uppercase tracking-wide text-white">
+                    <Th left>Agent</Th><Th>Leads</Th><Th>Calls</Th><Th>Connect</Th><Th>Con %</Th><Th>Login Time</Th><Th>Net Login</Th>
+                    <Th>Talk Time</Th><Th>Wrap Time</Th><Th>Idle Time</Th><Th>Total Break</Th><Th>Occ %</Th><Th>Shrink %</Th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredAgents.map((a) => (
-                    <ClickRow key={a.agent} onOpen={() => open("agent", a.agent)} label={`Open ${a.agent}`} tone="hover:bg-indigo-50/50">
-                      <td className="py-2.5 pr-3">
-                        <div className="font-medium text-slate-700">{a.agent}</div>
-                        <div className="text-[11px] text-slate-400">{a.loginId}</div>
-                      </td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{a.daysWorked}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{fmtN(a.totalCalls)}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{fmtN(a.connectedCalls)}</td>
-                      <td className="py-2.5 pr-3"><MiniBar pct={a.connectedPct} color={PALETTE.emerald} /></td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{fmtN(a.uniqueLeads)}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{a.talkTimeSec ? secToHms(a.talkTimeSec) : "—"}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{a.loginTimeSec ? secToHms(a.loginTimeSec) : "—"}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{a.loginTimeSec ? `${a.shrinkagePct}%` : "—"}</td>
-                      <td className="py-2.5 pr-0 text-right text-slate-600">{a.loginTimeSec ? `${a.occupancyPct}%` : "—"}</td>
+                    <ClickRow key={a.agent} label={`Open ${a.agent}`} onOpen={() => openRecord("agent", a.agent)}>
+                      <td className="px-2 py-1.5 text-left font-medium text-slate-700">{a.agent}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{fmtN(a.uniqueLeads)}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{fmtN(a.totalCalls)}</td>
+                      <td className="px-2 py-1.5 text-emerald-600">{fmtN(a.connectedCalls)}</td>
+                      <td className="px-2 py-1.5 font-semibold text-amber-600">{a.connectedPct}%</td>
+                      <td className="px-2 py-1.5 text-slate-600">{secToHms(a.loginTimeSec)}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{secToHms(a.netLoginTimeSec)}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{secToHms(a.talkTimeSec)}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{secToHms(a.wrapupSec)}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{secToHms(a.idleSec)}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{secToHms(a.breakSec)}</td>
+                      <td className="px-2 py-1.5 font-semibold text-indigo-600">{a.loginTimeSec ? `${a.occupancyPct}%` : "—"}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{a.loginTimeSec ? `${a.shrinkagePct}%` : "—"}</td>
                     </ClickRow>
                   ))}
-                  {filteredAgents.length === 0 && (
-                    <tr><td colSpan={10} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
-                  )}
+                  {filteredAgents.length === 0 && <tr><td colSpan={13} className="py-6 text-center text-slate-400">No agents for this period.</td></tr>}
                 </tbody>
+                {filteredAgents.length > 0 && (
+                  <tfoot>
+                    <tr className="sticky bottom-0 bg-slate-800 text-white">
+                      <td className="px-2 py-1.5 text-left font-bold text-white">Total</td>
+                      <td className="px-2 py-1.5 font-bold text-white">{fmtN(filteredAgents.reduce((s, a) => s + a.uniqueLeads, 0))}</td>
+                      <td className="px-2 py-1.5 font-bold text-white">{fmtN(filteredAgents.reduce((s, a) => s + a.totalCalls, 0))}</td>
+                      <td className="px-2 py-1.5 font-bold text-white">{fmtN(filteredAgents.reduce((s, a) => s + a.connectedCalls, 0))}</td>
+                      <td className="px-2 py-1.5 font-bold text-white">{pct1(filteredAgents.reduce((s, a) => s + a.connectedCalls, 0), filteredAgents.reduce((s, a) => s + a.totalCalls, 0))}%</td>
+                      {(["loginTimeSec", "netLoginTimeSec", "talkTimeSec", "wrapupSec", "idleSec", "breakSec"] as const).map((k) => (
+                        <td key={k} className="px-2 py-1.5 font-bold text-white">{secToHms(filteredAgents.reduce((s, a) => s + a[k], 0))}</td>
+                      ))}
+                      <td className="px-2 py-1.5 font-bold text-white">{h.occupancyPct}%</td>
+                      <td className="px-2 py-1.5 font-bold text-white">{h.shrinkagePct}%</td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
+            <p className="mt-2 text-[10px] text-slate-400">Leads = unique lead-days each agent dialed. No Language / Token / LS / Target columns: none of them exists in the uploaded APR or CDR.</p>
           </SectionCard>
-        </div>
+
+          <div className="grid gap-3 lg:grid-cols-2">
+            <SectionCard icon={Trophy} title="Top Performers (By Calls)" tone="violet">
+              {topByCalls.map((a, i) => (
+                <button key={a.agent} type="button" onClick={() => openRecord("agent", a.agent)} className="mb-1 flex w-full items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-left text-xs hover:bg-violet-50">
+                  <span className="font-medium text-slate-700">{i + 1}. {a.agent}</span><span className="font-bold text-slate-800">{fmtN(a.totalCalls)}</span>
+                </button>
+              ))}
+              {topByCalls.length === 0 && <p className="text-xs text-slate-400">None</p>}
+            </SectionCard>
+            <SectionCard icon={Trophy} title="Top Performers (By Connect %)" tone="emerald">
+              {topByConnect.map((a, i) => (
+                <button key={a.agent} type="button" onClick={() => openRecord("agent", a.agent)} className="mb-1 flex w-full items-center justify-between rounded-lg bg-slate-50 px-3 py-2 text-left text-xs hover:bg-emerald-50">
+                  <span className="font-medium text-slate-700">{i + 1}. {a.agent}</span><span className="font-bold text-emerald-600">{a.connectedPct}%</span>
+                </button>
+              ))}
+              {topByConnect.length === 0 && <p className="text-xs text-slate-400">None</p>}
+            </SectionCard>
+          </div>
+        </>
       )}
 
-      {hasData && tab === "productivity" && (
+      {tab === "campaigns" && (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <KpiCard icon={Timer} label="Avg Login Time" value={secToHms(perDay(tu.loginSec))} sub="per agent per day" tone="sky" />
-            <KpiCard icon={PhoneCall} label="Avg Talk Time" value={secToHms(perDay(tu.talkSec))} sub={tu.loginSec ? `${Math.round((tu.talkSec / tu.loginSec) * 100)}% of login · per agent per day` : undefined} tone="blue" />
-            <KpiCard icon={Hourglass} label="Avg Idle Time" value={secToHms(perDay(tu.idleSec))} sub={tu.loginSec ? `${Math.round((tu.idleSec / tu.loginSec) * 100)}% of login · per agent per day` : undefined} tone="amber" />
-            <KpiCard icon={Coffee} label="Avg Break Time" value={secToHms(perDay(tu.breakSec))} sub={tu.agentDays ? `${(tu.breakCount / tu.agentDays).toFixed(1)} breaks · per agent per day` : undefined} tone="rose" />
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <KpiCard icon={Layers} label="Campaigns" value={String(data.byService.length)} tone="blue" />
+            <KpiCard icon={PhoneCall} label="Total Calls" value={fmtN(h.overallCalls)} tone="indigo" />
+            <KpiCard icon={PhoneForwarded} label="Connected Calls" value={fmtN(h.overallConnected)} tone="emerald" />
+            <KpiCard icon={Gauge} label="Connect %" value={`${h.overallConnectedPct}%`} tone="amber" />
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-2">
-            <SectionCard icon={Timer} title="Where an average login day goes" tone="blue"
-              footnote="Average of one agent's day, built from the APR file's own talk, wrap-up, idle and break figures; anything the file doesn't account for is shown as Unaccounted.">
-              <div className="relative">
-                <ResponsiveContainer width="100%" height={260}>
-                  <PieChart>
-                    <Pie data={timeSlices} dataKey="value" nameKey="name" innerRadius={72} outerRadius={104} paddingAngle={2} stroke="none">
-                      {timeSlices.map((s) => <Cell key={s.name} fill={s.color} />)}
-                    </Pie>
-                    <Tooltip {...TOOLTIP_PROPS} formatter={(v: number, n: string) => [`${secToHms(perDay(v))} (${tu.loginSec ? Math.round((v / tu.loginSec) * 1000) / 10 : 0}%)`, n]} />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
-                  </PieChart>
-                </ResponsiveContainer>
-                <DonutCenter value={secToHms(perDay(tu.loginSec))} label="avg login / day" />
-              </div>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <SectionCard icon={PhoneCall} title="Calls & Connected by Campaign" tone="indigo">
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={data.byService} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="service" tick={{ fontSize: 9 }} interval={0} />
+                  <YAxis tick={{ fontSize: 9 }} />
+                  <Tooltip contentStyle={TT} />
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Bar dataKey="calls" name="Calls" fill="#2563eb" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="connected" name="Connected" fill="#10b981" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             </SectionCard>
-
-            <SectionCard icon={Coffee} title="Break breakdown (avg per agent per day)" tone="rose">
-              <ul className="space-y-3">
-                {breakRows.map((b) => (
-                  <li key={b.label} className="grid grid-cols-[84px_1fr_64px] items-center gap-3 text-xs">
-                    <span className="text-slate-500">{b.label}</span>
-                    <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                      <div className="h-full rounded-full" style={{ width: `${(b.sec / maxBreak) * 100}%`, backgroundColor: b.color }} />
-                    </div>
-                    <span className="text-right font-medium text-slate-700">{secToHms(b.sec)}</span>
-                  </li>
-                ))}
-              </ul>
+            <SectionCard icon={Layers} title="Share of Calls" tone="teal">
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie
+                    data={data.byService.map((s) => ({ name: `${s.service} — ${pct1(s.calls, h.overallCalls)}%`, value: s.calls }))}
+                    dataKey="value" nameKey="name" cx="50%" cy="46%" innerRadius={40} outerRadius={70} paddingAngle={2}
+                  >
+                    {data.byService.map((s, i) => <Cell key={s.service} fill={CAMPAIGN_COLORS[i % CAMPAIGN_COLORS.length]} stroke="white" strokeWidth={2} />)}
+                  </Pie>
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Tooltip contentStyle={TT} />
+                </PieChart>
+              </ResponsiveContainer>
             </SectionCard>
           </div>
 
-          <SectionCard icon={Users} title="Agent utilisation (avg per day)" tone="indigo">
-            <div className="mb-2"><HintChip /></div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+          <SectionCard icon={Layers} title="Campaign-wise Performance (lead source)" tone="blue" action={<HintChip text="Click any campaign for detail" />}>
+            <div className="overflow-x-auto rounded-xl border border-slate-100">
+              <table className="w-full text-center text-xs">
                 <thead>
-                  <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                    <th className="py-2 pr-3 font-semibold">Agent</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Login</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Talk</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Idle</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Break</th>
-                    <th className="py-2 pr-3 text-right font-semibold">Shrinkage</th>
-                    <th className="py-2 pr-0 text-right font-semibold">Occupancy</th>
+                  <tr className="bg-blue-800 text-[10px] uppercase tracking-wide text-white">
+                    <Th left>Campaign</Th><Th>Calls</Th><Th>Share</Th><Th>Connected</Th><Th>Con %</Th><Th>Unique Leads</Th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.agents.filter((a) => a.loginTimeSec > 0).map((a) => (
-                    <ClickRow key={a.agent} onOpen={() => open("agent", a.agent)} label={`Open ${a.agent}`} tone="hover:bg-indigo-50/50">
-                      <td className="py-2.5 pr-3 font-medium text-slate-700">{a.agent}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{secToHms(Math.round(a.loginTimeSec / Math.max(1, a.aprDays)))}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{secToHms(Math.round(a.talkTimeSec / Math.max(1, a.aprDays)))}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{secToHms(Math.round(a.idleSec / Math.max(1, a.aprDays)))}</td>
-                      <td className="py-2.5 pr-3 text-right text-slate-600">{secToHms(Math.round(a.breakSec / Math.max(1, a.aprDays)))}</td>
-                      <td className="py-2.5 pr-3"><MiniBar pct={a.shrinkagePct} color={PALETTE.rose} /></td>
-                      <td className="py-2.5 pr-0"><MiniBar pct={a.occupancyPct} color={PALETTE.violet} /></td>
+                  {data.byService.map((s) => (
+                    <ClickRow key={s.service} label={`Open ${s.service}`} onOpen={() => openRecord("service", s.service)}>
+                      <td className="px-2 py-1.5 text-left font-medium text-slate-700">{s.service}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{fmtN(s.calls)}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{pct1(s.calls, h.overallCalls)}%</td>
+                      <td className="px-2 py-1.5 text-emerald-600">{fmtN(s.connected)}</td>
+                      <td className="px-2 py-1.5 font-semibold text-amber-600">{s.connectedPct}%</td>
+                      <td className="px-2 py-1.5 text-slate-600">{fmtN(s.uniqueLeads)}</td>
                     </ClickRow>
                   ))}
-                  {data.agents.every((a) => a.loginTimeSec === 0) && (
-                    <tr><td colSpan={7} className="py-6 text-center text-slate-400">No productivity (APR) rows in this period.</td></tr>
-                  )}
+                  {data.byService.length === 0 && <tr><td colSpan={6} className="py-6 text-center text-slate-400">No campaigns for this period.</td></tr>}
                 </tbody>
               </table>
             </div>
+            <p className="mt-2 text-[10px] text-slate-400">Campaign = the CDR's service (lead-source) code.</p>
           </SectionCard>
         </>
       )}
 
-      {drawer && (
-        <LpCallDrawer apiPath={apiPath} target={drawer} from={from} to={to} onClose={() => setDrawer(null)} />
+      {record && <LpCallDrawer apiPath={apiPath} target={record} from={from} to={to} onClose={() => setRecord(null)} />}
+      {metric && (
+        <GncDetailDrawer
+          title={metric.title} eyebrow={`${eyebrow} · Week-wise & Date-wise`} gradient={heroGradient}
+          series={metric.series} dailyRows={dailyEnriched} weeklyRows={weeklyEnriched}
+          onClose={() => setMetric(null)}
+        />
       )}
     </div>
   );

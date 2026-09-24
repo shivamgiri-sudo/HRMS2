@@ -85,6 +85,10 @@ export interface BellavitaSaleDashboardData {
     saleCount: number;
     prepaidPct: number;
     rtoPct: number;
+    /** The last date rtoPct's window actually reaches (from through today - 7
+     * days, capped at `to` if the selected range ends sooner) -- so the UI can
+     * show the reader exactly which dates the figure covers. */
+    rtoPctThrough: string;
     aov: number;
     activeAgents: number;
     /** Turnover/saleCount with RTO orders excluded -- the reference
@@ -260,7 +264,21 @@ export function dedupedSaleSql(): string {
   ) ds`;
 }
 
-export async function getBellavitaSaleDashboard(fromInput: string, toInput: string): Promise<BellavitaSaleDashboardData> {
+export async function getBellavitaSaleDashboard(
+  fromInput: string, toInput: string,
+  /** Real value of bb_sale.lob (or unset/"All" for every LOB). Narrows every
+   * query below -- headline, trend, state/top-performer breakdowns -- to that
+   * one LOB. Not applied to activeAgentsRow: bb_apr (the roster/attendance
+   * source for that count) carries no LOB column to filter by. */
+  lobFilter?: string,
+  /** Real value of bb_sale.emp_id -- for the Top Performers row drill-down
+   * drawer (date-wise/week-wise performance for one agent). Only narrows
+   * headline/RTO/dateWiseTrend, the three fields that drawer reads; the
+   * LOB/state/performer breakdowns below are deliberately left scoped to
+   * `lobFilter` only, since a single-agent view of "top performers" etc.
+   * would just be a trivial one-row table nothing renders. */
+  empIdFilter?: string,
+): Promise<BellavitaSaleDashboardData> {
   const fallback = currentMonthRange();
   const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
   const to = DATE_RE.test(toInput) ? toInput : fallback.to;
@@ -268,6 +286,12 @@ export async function getBellavitaSaleDashboard(fromInput: string, toInput: stri
   // than cutting off at midnight of that day.
   const range = [from, to];
   const deduped = dedupedSaleSql();
+  const lob = lobFilter && lobFilter !== "All" ? lobFilter : undefined;
+  const lobParam = lob ? [lob] : [];
+  const empId = empIdFilter && empIdFilter.trim() ? empIdFilter.trim() : undefined;
+  const empParam = empId ? [empId] : [];
+  const headlineConds = [lob ? "lob = ?" : null, empId ? "emp_id = ?" : null].filter(Boolean).join(" AND ");
+  const headlineParams = [...range, ...lobParam, ...empParam];
 
   const [[headlineRow]] = await db.execute<HeadlineRow[]>(
     `SELECT
@@ -278,8 +302,9 @@ export async function getBellavitaSaleDashboard(fromInput: string, toInput: stri
        SUM(CASE WHEN final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count,
        SUM(CASE WHEN final_status != 'RTO' THEN CAST(amount AS DECIMAL(14,2)) ELSE 0 END) AS net_turnover,
        SUM(CASE WHEN final_status != 'RTO' THEN 1 ELSE 0 END) AS net_sale_count
-     FROM ${deduped}`,
-    range,
+     FROM ${deduped}
+     ${headlineConds ? `WHERE ${headlineConds}` : ""}`,
+    headlineParams,
   );
 
   const [[activeAgentsRow]] = await db.execute<ActiveAgentsRow[]>(
@@ -289,6 +314,31 @@ export async function getBellavitaSaleDashboard(fromInput: string, toInput: stri
     range,
   );
 
+  // RTO status takes time to settle after a sale -- an order from the last
+  // few days almost always still shows final_status != 'RTO' simply because
+  // the return window hasn't closed yet, not because it won't RTO. Counting
+  // those in the headline RTO% would understate the real rate, so that one
+  // figure only looks at orders through 7 days ago (never the still-settling
+  // last week), even when the selected range itself extends closer to today.
+  // Every other headline figure keeps using the full selected range as-is.
+  const rtoCutoffDate = new Date();
+  rtoCutoffDate.setDate(rtoCutoffDate.getDate() - 7);
+  const rtoCutoff = localDateStr(rtoCutoffDate);
+  const rtoTo = to < rtoCutoff ? to : rtoCutoff;
+  let rtoSaleCount = 0;
+  let rtoOnlyCount = 0;
+  if (rtoTo >= from) {
+    const [[rtoRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS sale_count, SUM(CASE WHEN final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count
+       FROM ${deduped}
+       ${headlineConds ? `WHERE ${headlineConds}` : ""}`,
+      [from, rtoTo, ...lobParam, ...empParam],
+    );
+    rtoSaleCount = num(rtoRow?.sale_count);
+    rtoOnlyCount = num(rtoRow?.rto_count);
+  }
+
+  const trendConds = [lob ? "ds.lob = ?" : null, empId ? "ds.emp_id = ?" : null].filter(Boolean).join(" AND ");
   const [trendRows] = await db.execute<TrendRow[]>(
     `SELECT DATE(ds.\`Date\`) AS d,
        COUNT(*) AS sale_count,
@@ -297,9 +347,10 @@ export async function getBellavitaSaleDashboard(fromInput: string, toInput: stri
        SUM(CASE WHEN ds.payment_status = 'cod' THEN 1 ELSE 0 END) AS cod_count,
        SUM(CASE WHEN ds.final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count
      FROM ${deduped}
+     ${trendConds ? `WHERE ${trendConds}` : ""}
      GROUP BY DATE(ds.\`Date\`)
      ORDER BY d ASC`,
-    range,
+    [...range, ...lobParam, ...empParam],
   );
 
   const [lobRows] = await db.execute<LobRow[]>(
@@ -311,21 +362,21 @@ export async function getBellavitaSaleDashboard(fromInput: string, toInput: stri
        SUM(CASE WHEN ds.final_status != 'RTO' THEN 1 ELSE 0 END) AS net_sale_count,
        SUM(CASE WHEN ds.final_status != 'RTO' THEN CAST(ds.amount AS DECIMAL(14,2)) ELSE 0 END) AS net_turnover
      FROM ${deduped}
-     WHERE ds.lob IS NOT NULL AND ds.lob != ''
+     WHERE ds.lob IS NOT NULL AND ds.lob != '' ${lob ? "AND ds.lob = ?" : ""}
      GROUP BY ds.lob
      ORDER BY turnover DESC`,
-    range,
+    [...range, ...lobParam],
   );
 
   const [stateRows] = await db.execute<StateRow[]>(
     `SELECT ds.state AS state, COUNT(*) AS sale_count, SUM(CAST(ds.amount AS DECIMAL(14,2))) AS turnover,
        SUM(CASE WHEN ds.final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count
      FROM ${deduped}
-     WHERE ds.state IS NOT NULL AND ds.state != ''
+     WHERE ds.state IS NOT NULL AND ds.state != '' ${lob ? "AND ds.lob = ?" : ""}
      GROUP BY ds.state
      ORDER BY turnover DESC
      LIMIT 10`,
-    range,
+    [...range, ...lobParam],
   );
 
   const [performerRows] = await db.execute<PerformerRow[]>(
@@ -335,30 +386,29 @@ export async function getBellavitaSaleDashboard(fromInput: string, toInput: stri
        SUM(CASE WHEN ds.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
        MAX(ds.lob) AS lob
      FROM ${deduped}
-     WHERE ds.emp_id IS NOT NULL AND ds.emp_id != ''
+     WHERE ds.emp_id IS NOT NULL AND ds.emp_id != '' ${lob ? "AND ds.lob = ?" : ""}
      GROUP BY ds.emp_id
      ORDER BY turnover DESC
      LIMIT 5`,
-    range,
+    [...range, ...lobParam],
   );
 
   const [topRtoStateRows] = await db.execute<StateRow[]>(
     `SELECT ds.state AS state, COUNT(*) AS sale_count,
        SUM(CASE WHEN ds.final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count
      FROM ${deduped}
-     WHERE ds.state IS NOT NULL AND ds.state != ''
+     WHERE ds.state IS NOT NULL AND ds.state != '' ${lob ? "AND ds.lob = ?" : ""}
      GROUP BY ds.state
      HAVING COUNT(*) >= 5
      ORDER BY (SUM(CASE WHEN ds.final_status = 'RTO' THEN 1 ELSE 0 END) / COUNT(*)) DESC
      LIMIT 5`,
-    range,
+    [...range, ...lobParam],
   );
 
   const turnover = num(headlineRow?.turnover);
   const saleCount = num(headlineRow?.sale_count);
   const paidCount = num(headlineRow?.paid_count);
   const codCount = num(headlineRow?.cod_count);
-  const rtoCount = num(headlineRow?.rto_count);
 
   // Admin-set monthly targets take priority over the hardcoded LOB_TARGETS
   // fallback below, for every LOB actually present this period plus every
@@ -455,7 +505,8 @@ export async function getBellavitaSaleDashboard(fromInput: string, toInput: stri
       turnover,
       saleCount,
       prepaidPct: pct(paidCount, paidCount + codCount),
-      rtoPct: pct(rtoCount, saleCount),
+      rtoPct: pct(rtoOnlyCount, rtoSaleCount),
+      rtoPctThrough: rtoTo,
       aov: saleCount > 0 ? Math.round((turnover / saleCount) * 100) / 100 : 0,
       activeAgents: num(activeAgentsRow?.active_agents),
       netTurnover: num(headlineRow?.net_turnover),

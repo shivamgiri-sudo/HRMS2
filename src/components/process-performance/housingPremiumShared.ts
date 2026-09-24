@@ -106,6 +106,20 @@ export const fmtShortDay = (iso: string): string => {
   const m = iso.match(/^\d{4}-(\d{2})-(\d{2})/);
   return m ? `${Number(m[2])} ${MON[Number(m[1]) - 1]}` : iso;
 };
+
+/** Same "day-of-month 1-7 -> W-1, 8-14 -> W-2, ..." convention this app's
+ * other week-wise tables/exports already use (see satyaReportModel.weekOf
+ * and HousingOwnerDashboard's own copy). Keyed by month too, so a range
+ * spanning more than one month never merges two different months' "W-1". */
+export function weekBucket(iso: string): { key: string; label: string } {
+  const day = Number(iso.slice(8, 10));
+  const monthKey = iso.slice(0, 7);
+  const weekNum = Math.ceil(day / 7);
+  const startDay = (weekNum - 1) * 7 + 1;
+  const daysInMonth = new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)), 0).getDate();
+  const endDay = Math.min(startDay + 6, daysInMonth);
+  return { key: `${monthKey}-W${weekNum}`, label: `W-${weekNum} (${startDay}-${endDay} ${MON[Number(iso.slice(5, 7)) - 1]})` };
+}
 export const hourLabel = (h: number): string => `${String(h).padStart(2, "0")}:00`;
 
 /** "M/D/YY" (pre_agent_details.doj / Pre_cdr.report_date) -> DD/MM/YYYY for display. */

@@ -27,12 +27,16 @@ const CART_TARGET_METRIC = "BB_CART_REVENUE_TARGET";
  *   holds discount/promo codes ("APP100", "CART10", "COMBO DISCOUNT
  *   APPLIED", etc.) on the rows where it's populated, and '-'/blank
  *   otherwise. Shown as a "Discount Code" breakdown, not a status field.
- * - `same_day_connect` mixes several unrelated tagging schemes across
- *   upload batches (Connect/Not Connect, but also 'cpc', 'GPay_April',
- *   'KwikEngage_Automation', a corrupted 18-digit numeric string, etc.) --
- *   too inconsistent to build a trustworthy rate from, so the primary
- *   "Connected %" KPI uses `disposition` (Connect/Not Connect) instead,
- *   which is clean.
+ * - `same_day_connect` carries several unrelated tagging schemes mixed into
+ *   one column across upload batches -- 'Connect'/'Not Connect' (the real
+ *   same-day-of-call outcome), but also marketing-source values ('cpc',
+ *   'GPay_April', 'KwikEngage_Automation') and a corrupted 18-digit numeric
+ *   string on other rows. The primary "Connected %" KPI still uses
+ *   `disposition` (Connect/Not Connect), which is clean and column-pure; but
+ *   the "Same Day Unique Attempt/Connect" figures ARE this column's own
+ *   'Connect'/'Not Connect' values specifically -- confirmed 2026-09-23
+ *   against the reference sheet's own numbers (21,819 attempt / 9,421
+ *   connect, matched exactly). Every other value in the column is ignored.
  */
 
 export interface BellavitaCartHeadline {
@@ -66,15 +70,54 @@ export interface BellavitaCartHeadline {
    * Chat dashboard's Revenue (campaign = 'Chat'). */
   abandonCartRevenue: number;
   abandonCartSaleCount: number;
+  /** abandonCartRevenue / abandonCartSaleCount -- average REALIZED order
+   * value, distinct from `aov` above (average pre-recovery CART value). */
+  abandonCartAov: number;
   /** Monthly target for abandonCartRevenue, admin-set (null = never set for this month). */
   target: number | null;
   achievementPct: number | null;
+  /** disposition = 'Not Connect', a real value distinct from workableCases
+   * (which is Connect + Not Connect combined). */
+  ncConnectCount: number;
+  /** Distinct (call_date, phone) pairs where bb_cart.same_day_connect is
+   * 'Not Connect' or 'Connect' (attempt) / 'Connect' (connect) -- see the
+   * header comment on why only those two values of that column are trusted. */
+  sameDayUniqueAttempt: number;
+  sameDayUniqueConnect: number;
+  sameDayUniqueConnectPct: number;
+  /** Deduped Abandon-Cart Sale-Made orders (same set as abandonCartSaleCount),
+   * classified by bb_sale.payment_status/final_status. */
+  codOrderCount: number;
+  paidOrderCount: number;
+  rtoOrderCount: number;
+}
+
+export interface BellavitaCartTopProduct {
+  product: string;
+  baseCount: number; cartValue: number;
+  uniqueAttempted: number; uniqueConnected: number; connectedPct: number;
+  /** null when this product's bb_cart variant_title had no exact-matching
+   * bb_sale.line_item_name in range -- "not matched", not "zero sales". */
+  saleCount: number | null; revenue: number | null; aov: number | null;
 }
 
 export interface BellavitaAllocationHeadline {
   totalAllocation: number;
   totalValue: number;
   uniqueCustomers: number;
+}
+
+export interface BellavitaCartTrendRow {
+  date: string;
+  cartCount: number; cartValue: number;
+  connectedCount: number; uniqueCustomers: number; activeAgents: number;
+  workableCases: number; dndCases: number; ncConnectCount: number;
+  uniqueCallCount: number; uniqueCallConnectedCount: number;
+  sameDayUniqueAttempt: number; sameDayUniqueConnect: number;
+  /** SUM(bb_sale.amount)/COUNT(*) for this one day, same dedup as the
+   * headline's abandonCartRevenue/abandonCartSaleCount. */
+  abandonCartRevenue: number; abandonCartSaleCount: number;
+  codOrderCount: number; paidOrderCount: number; rtoOrderCount: number;
 }
 
 export interface BellavitaCartDashboardData {
@@ -85,11 +128,30 @@ export interface BellavitaCartDashboardData {
    * to -- always the month of `to`, so an admin editing the target knows
    * which month they're setting even when the selected range spans several. */
   targetMonth: string;
-  dateWiseTrend: Array<{ date: string; cartCount: number; cartValue: number }>;
+  /** Every headline KPI, broken down by day -- the single dataset every KPI
+   * card's date-wise/week-wise drill-down drawer reads from (week-wise is
+   * summed client-side from these rows), so a click on any card can never
+   * disagree with another. uniqueCustomers/activeAgents are real per-day
+   * DISTINCT counts but -- being distinct counts -- do not sum to the
+   * headline's own range-wide totals (the same customer/agent appearing on
+   * multiple days is correctly counted once per day, not once overall);
+   * shown as-is rather than a misleading forced reconciliation. */
+  dateWiseTrend: BellavitaCartTrendRow[];
   dispositionBreakdown: Array<{ disposition: string; count: number; pct: number }>;
   discountBreakdown: Array<{ code: string; count: number }>;
   agents: Array<{ agent: string; cartCount: number; cartValue: number; connectedPct: number }>;
   allocation: { headline: BellavitaAllocationHeadline; hasData: boolean };
+  /** Top 10 products by base cart count -- see BellavitaCartTopProduct's own
+   * doc comment for why this is "Products" only, not "Campaigns" (bb_cart has
+   * no campaign/lob column). */
+  topProducts: BellavitaCartTopProduct[];
+  /** Only populated when headline.totalCarts is 0 -- MAX(call_date) across
+   * all of bb_cart, same "genuinely no data" vs "outside the uploaded
+   * window" distinction the Chat dashboard's own latestAvailableDate makes
+   * (confirmed live: bb_cart's newest upload is 2026-09-13, so a "this
+   * month" default reaching into late September shows nothing despite
+   * 21,868 real rows existing). */
+  latestAvailableDate: string | null;
 }
 
 const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -128,10 +190,25 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
        COUNT(DISTINCT CASE WHEN agent NOT IN ('', '-', 'VDAD') THEN agent END) AS active_agents, -- VDAD = auto-dialer, not an agent
        SUM(CASE WHEN disposition IN ('Connect', 'Not Connect') THEN 1 ELSE 0 END) AS workable_cases,
        SUM(CASE WHEN disposition = 'Pending to call' THEN 1 ELSE 0 END) AS dnd_cases,
+       SUM(CASE WHEN disposition = 'Not Connect' THEN 1 ELSE 0 END) AS nc_connect,
        COUNT(DISTINCT CASE WHEN phone_number IS NOT NULL AND phone_number != ''
          THEN CONCAT(call_date, '|', phone_number) END) AS unique_call_count,
        COUNT(DISTINCT CASE WHEN disposition = 'Connect' AND phone_number IS NOT NULL AND phone_number != ''
-         THEN CONCAT(call_date, '|', phone_number) END) AS unique_call_connected
+         THEN CONCAT(call_date, '|', phone_number) END) AS unique_call_connected,
+       -- "Same day" = same_day_connect IN ('Connect','Not Connect') -- confirmed
+       -- correct 2026-09-23 against the reference sheet's own figures (21,819
+       -- attempt / 9,421 connect, matched exactly). This column also carries
+       -- several unrelated tagging schemes on other rows (marketing-source
+       -- values like 'cpc'/'GPay_April', corrupted numeric strings, etc. --
+       -- see this file's header comment), so only its two real Connect/Not
+       -- Connect values are trusted here; a prior version of this query
+       -- avoided the column entirely and compared call_date to created_at
+       -- instead, which was wrong -- agents here never call the same
+       -- calendar day a cart is abandoned, so that always returned 0.
+       COUNT(DISTINCT CASE WHEN same_day_connect IN ('Connect', 'Not Connect') AND phone_number IS NOT NULL AND phone_number != ''
+         THEN CONCAT(call_date, '|', phone_number) END) AS same_day_attempt,
+       COUNT(DISTINCT CASE WHEN same_day_connect = 'Connect' AND phone_number IS NOT NULL AND phone_number != ''
+         THEN CONCAT(call_date, '|', phone_number) END) AS same_day_connect_real
      FROM db_masmis.bb_cart
      WHERE ${CART_DATE_EXPR} >= ? AND ${CART_DATE_EXPR} < DATE_ADD(?, INTERVAL 1 DAY)`,
     range,
@@ -144,7 +221,10 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
     // One row per Sale Made order (latest upload). The raw campaign='Abandon Cart'
     // rows also hold non-sale call outcomes and orders re-uploaded 2-3x:
     // 1-13 Sep 2026 gave 2,714 sales / 1,958,841 vs the true 832 / 599,148.
-    `SELECT COUNT(*) AS n, SUM(s.amount) AS revenue
+    `SELECT COUNT(*) AS n, SUM(s.amount) AS revenue,
+       SUM(CASE WHEN s.payment_status = 'cod' THEN 1 ELSE 0 END) AS cod_orders,
+       SUM(CASE WHEN s.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_orders,
+       SUM(CASE WHEN s.final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_orders
      FROM db_masmis.bb_sale s
      INNER JOIN (
        SELECT bella_vita_order_id, MAX(id) AS keep_id
@@ -156,12 +236,88 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
     [from, to],
   );
 
+  // Top Products -- bb_cart's own `variant_title` (a real, clean product-name
+  // column; bb_cart has no `campaign`/`lob` column at all, so a "Top
+  // Campaigns" cut isn't possible from this table -- see this file's header
+  // comment). Revenue/AOV are joined from bb_sale's `line_item_name` by exact
+  // trimmed match, best-effort: the two columns come from different systems
+  // (cart export vs order export) and don't always agree on punctuation/
+  // encoding, so an unmatched product shows null revenue, never a fabricated 0.
+  const [topProductRows] = await db.execute<RowDataPacket[]>(
+    `SELECT variant_title AS product, COUNT(*) AS base_count, SUM(amount) AS cart_value,
+       COUNT(DISTINCT CASE WHEN disposition = 'Connect' AND phone_number IS NOT NULL AND phone_number != '' THEN phone_number END) AS unique_connected,
+       COUNT(DISTINCT CASE WHEN phone_number IS NOT NULL AND phone_number != '' THEN phone_number END) AS unique_attempted
+     FROM db_masmis.bb_cart
+     WHERE ${CART_DATE_EXPR} >= ? AND ${CART_DATE_EXPR} < DATE_ADD(?, INTERVAL 1 DAY)
+       AND variant_title IS NOT NULL AND variant_title != ''
+     GROUP BY variant_title ORDER BY base_count DESC LIMIT 10`,
+    range,
+  );
+  const topProductNames = topProductRows.map((r) => String(r.product).trim());
+  let productSaleRows: RowDataPacket[] = [];
+  if (topProductNames.length > 0) {
+    [productSaleRows] = await db.execute<RowDataPacket[]>(
+      `SELECT s.line_item_name AS product, COUNT(*) AS n, SUM(s.amount) AS revenue
+       FROM db_masmis.bb_sale s
+       INNER JOIN (
+         SELECT bella_vita_order_id, MAX(id) AS keep_id
+         FROM db_masmis.bb_sale
+         WHERE campaign = 'Abandon Cart' AND calling_status = 'Sale Made' AND \`Date\` >= ? AND \`Date\` <= ?
+           AND bella_vita_order_id IS NOT NULL AND bella_vita_order_id != ''
+         GROUP BY bella_vita_order_id
+       ) dk ON dk.keep_id = s.id
+       WHERE TRIM(s.line_item_name) IN (${topProductNames.map(() => "?").join(",")})
+       GROUP BY s.line_item_name`,
+      [from, to, ...topProductNames],
+    );
+  }
+  const productSaleByName = new Map<string, { n: number; revenue: number }>(
+    productSaleRows.map((r) => [String(r.product).trim(), { n: num(r.n), revenue: num(r.revenue) }]),
+  );
+
   const [trendRows] = await db.execute<RowDataPacket[]>(
-    `SELECT ${CART_DATE_EXPR} AS d, COUNT(*) AS cart_count, SUM(amount) AS cart_value
+    `SELECT ${CART_DATE_EXPR} AS d, COUNT(*) AS cart_count, SUM(amount) AS cart_value,
+       SUM(CASE WHEN disposition = 'Connect' THEN 1 ELSE 0 END) AS connected,
+       COUNT(DISTINCT NULLIF(phone_number, '')) AS unique_customers,
+       COUNT(DISTINCT CASE WHEN agent NOT IN ('', '-', 'VDAD') THEN agent END) AS active_agents,
+       SUM(CASE WHEN disposition IN ('Connect', 'Not Connect') THEN 1 ELSE 0 END) AS workable_cases,
+       SUM(CASE WHEN disposition = 'Pending to call' THEN 1 ELSE 0 END) AS dnd_cases,
+       SUM(CASE WHEN disposition = 'Not Connect' THEN 1 ELSE 0 END) AS nc_connect,
+       COUNT(DISTINCT CASE WHEN phone_number IS NOT NULL AND phone_number != '' THEN phone_number END) AS unique_call_count,
+       COUNT(DISTINCT CASE WHEN disposition = 'Connect' AND phone_number IS NOT NULL AND phone_number != '' THEN phone_number END) AS unique_call_connected,
+       -- Same trusted-values-only convention as the headline query above.
+       COUNT(DISTINCT CASE WHEN same_day_connect IN ('Connect', 'Not Connect') AND phone_number IS NOT NULL AND phone_number != '' THEN phone_number END) AS same_day_attempt,
+       COUNT(DISTINCT CASE WHEN same_day_connect = 'Connect' AND phone_number IS NOT NULL AND phone_number != '' THEN phone_number END) AS same_day_connect_real
      FROM db_masmis.bb_cart
      WHERE ${CART_DATE_EXPR} >= ? AND ${CART_DATE_EXPR} < DATE_ADD(?, INTERVAL 1 DAY)
      GROUP BY ${CART_DATE_EXPR} ORDER BY d ASC`,
     range,
+  );
+
+  // Same dedup shape as abandonSaleRow above (MAX(id) per order across the
+  // whole selected range, THEN grouped) -- see the Chat dashboard's own
+  // getBellavitaChatTlTrend comment for why dedup must happen before any
+  // per-day grouping, not after, or a stale re-upload gets double-counted.
+  const [revenueTrendRows] = await db.execute<RowDataPacket[]>(
+    `SELECT s.\`Date\` AS d, COUNT(*) AS n, SUM(s.amount) AS revenue,
+       SUM(CASE WHEN s.payment_status = 'cod' THEN 1 ELSE 0 END) AS cod_orders,
+       SUM(CASE WHEN s.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_orders,
+       SUM(CASE WHEN s.final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_orders
+     FROM db_masmis.bb_sale s
+     INNER JOIN (
+       SELECT bella_vita_order_id, MAX(id) AS keep_id
+       FROM db_masmis.bb_sale
+       WHERE campaign = 'Abandon Cart' AND calling_status = 'Sale Made' AND \`Date\` >= ? AND \`Date\` <= ?
+         AND bella_vita_order_id IS NOT NULL AND bella_vita_order_id != ''
+       GROUP BY bella_vita_order_id
+     ) dk ON dk.keep_id = s.id
+     GROUP BY s.\`Date\``,
+    [from, to],
+  );
+  const revenueByDate = new Map<string, { n: number; revenue: number; cod: number; paid: number; rto: number }>(
+    revenueTrendRows.map((r) => [String(r.d), {
+      n: num(r.n), revenue: num(r.revenue), cod: num(r.cod_orders), paid: num(r.paid_orders), rto: num(r.rto_orders),
+    }]),
   );
 
   const [dispositionRows] = await db.execute<RowDataPacket[]>(
@@ -197,11 +353,21 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
   );
 
   const totalCarts = num(headlineRow?.total);
+  let latestAvailableDate: string | null = null;
+  if (totalCarts === 0) {
+    const [[latestRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(${CART_DATE_EXPR}) AS latest FROM db_masmis.bb_cart WHERE call_date IS NOT NULL AND call_date != ''`,
+    );
+    latestAvailableDate = latestRow?.latest ? String(latestRow.latest) : null;
+  }
   const connectedCount = num(headlineRow?.connected);
   const allocTotal = num(allocRow?.total);
   const uniqueCallCount = num(headlineRow?.unique_call_count);
   const uniqueCallConnectedCount = num(headlineRow?.unique_call_connected);
   const abandonCartRevenue = num(abandonSaleRow?.revenue);
+  const abandonCartSaleCount = num(abandonSaleRow?.n);
+  const sameDayUniqueAttempt = num(headlineRow?.same_day_attempt);
+  const sameDayUniqueConnect = num(headlineRow?.same_day_connect_real);
 
   // The target editor's default month is `to`'s month; the actual headline
   // figure sums every day in [from, to], preferring a real uploaded daily
@@ -227,13 +393,33 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
       uniqueCallConnectedCount,
       uniqueCallConnectedPct: pct(uniqueCallConnectedCount, uniqueCallCount),
       abandonCartRevenue,
-      abandonCartSaleCount: num(abandonSaleRow?.n),
+      abandonCartSaleCount,
+      abandonCartAov: abandonCartSaleCount > 0 ? Math.round((abandonCartRevenue / abandonCartSaleCount) * 100) / 100 : 0,
       target,
       achievementPct: target ? pct(abandonCartRevenue, target) : null,
+      ncConnectCount: num(headlineRow?.nc_connect),
+      sameDayUniqueAttempt,
+      sameDayUniqueConnect,
+      sameDayUniqueConnectPct: pct(sameDayUniqueConnect, sameDayUniqueAttempt),
+      codOrderCount: num(abandonSaleRow?.cod_orders),
+      paidOrderCount: num(abandonSaleRow?.paid_orders),
+      rtoOrderCount: num(abandonSaleRow?.rto_orders),
     },
     from, to,
     targetMonth,
-    dateWiseTrend: trendRows.map((r) => ({ date: String(r.d), cartCount: num(r.cart_count), cartValue: num(r.cart_value) })),
+    dateWiseTrend: trendRows.map((r) => {
+      const d = String(r.d);
+      const rev = revenueByDate.get(d);
+      return {
+        date: d, cartCount: num(r.cart_count), cartValue: num(r.cart_value),
+        connectedCount: num(r.connected), uniqueCustomers: num(r.unique_customers), activeAgents: num(r.active_agents),
+        workableCases: num(r.workable_cases), dndCases: num(r.dnd_cases), ncConnectCount: num(r.nc_connect),
+        uniqueCallCount: num(r.unique_call_count), uniqueCallConnectedCount: num(r.unique_call_connected),
+        sameDayUniqueAttempt: num(r.same_day_attempt), sameDayUniqueConnect: num(r.same_day_connect_real),
+        abandonCartRevenue: rev?.revenue ?? 0, abandonCartSaleCount: rev?.n ?? 0,
+        codOrderCount: rev?.cod ?? 0, paidOrderCount: rev?.paid ?? 0, rtoOrderCount: rev?.rto ?? 0,
+      };
+    }),
     dispositionBreakdown: dispositionRows.map((r) => ({ disposition: String(r.disposition), count: num(r.n), pct: pct(num(r.n), totalCarts) })),
     discountBreakdown: discountRows.map((r) => ({ code: String(r.code), count: num(r.n) })),
     agents: agentRows.map((r) => ({
@@ -247,6 +433,21 @@ export async function getBellavitaCartDashboard(fromInput: string, toInput: stri
       },
       hasData: allocTotal > 0,
     },
+    topProducts: topProductRows.map((r) => {
+      const product = String(r.product).trim();
+      const sale = productSaleByName.get(product) ?? null;
+      const baseCount = num(r.base_count);
+      const uniqueAttempted = num(r.unique_attempted);
+      const uniqueConnected = num(r.unique_connected);
+      return {
+        product, baseCount, cartValue: num(r.cart_value),
+        uniqueAttempted, uniqueConnected, connectedPct: pct(uniqueConnected, baseCount),
+        saleCount: sale ? sale.n : null,
+        revenue: sale ? sale.revenue : null,
+        aov: sale && sale.n > 0 ? Math.round((sale.revenue / sale.n) * 100) / 100 : null,
+      };
+    }),
+    latestAvailableDate,
   };
 }
 

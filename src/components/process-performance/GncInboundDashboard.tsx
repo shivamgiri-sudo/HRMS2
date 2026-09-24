@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import {
   Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
-  last7DaysRange, formatShortDate,
+  currentMonthRange, formatShortDate,
   type ExportSlide,
 } from "./DashboardKit";
 
@@ -54,7 +54,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
 ];
 
 export function GncInboundDashboard() {
-  const defaultRange = last7DaysRange();
+  const defaultRange = currentMonthRange();
   const [from, setFrom] = useState(defaultRange.from);
   const [to, setTo] = useState(defaultRange.to);
   const [tab, setTab] = useState<TabKey>("overview");
@@ -104,7 +104,8 @@ export function GncInboundDashboard() {
       offered, answered,
       abandoned: offered - answered,
       ansPct: pct(answered, offered),
-      abandonPct: pct(offered - answered, offered),
+      // AL % = Answered / Offered (redefined 2026-09-23) -- identical to ansPct.
+      abandonPct: pct(answered, offered),
       slPct: pct(n(r.sl_num), answered),
     };
   }).sort((a, b) => a.date.localeCompare(b.date)), [trend]);
@@ -118,7 +119,7 @@ export function GncInboundDashboard() {
         { label: "Total Calls", value: summary.total.toLocaleString("en-IN") },
         { label: "Answered", value: summary.answered.toLocaleString("en-IN") },
         { label: "Answer Rate", value: `${summary.ans_pct}%` },
-        { label: "Abandon Rate (AL %)", value: `${summary.abandon_pct}%` },
+        { label: "AL %", value: `${summary.abandon_pct}%` },
         { label: "Service Level (SL %)", value: `${summary.sl_pct}%` },
         { label: "Avg Handle Time", value: secondsToMin(summary.avg_handle) },
         { label: "Active Agents", value: String(summary.login_count) },
@@ -175,8 +176,8 @@ export function GncInboundDashboard() {
         />
         <DateRangeToolbar
           from={from} to={to} onFrom={setFrom} onTo={setTo}
-          onReset={() => { const r = last7DaysRange(); setFrom(r.from); setTo(r.to); }}
-          resetLabel="Last 7 Days" accentFocus="focus:border-blue-400"
+          onReset={() => { const r = currentMonthRange(); setFrom(r.from); setTo(r.to); }}
+          resetLabel="This Month" accentFocus="focus:border-blue-400"
         />
       </div>
 
@@ -192,7 +193,7 @@ export function GncInboundDashboard() {
         <KpiCard icon={PhoneCall} label="Total Calls" value={summary.total.toLocaleString("en-IN")} tone="blue" />
         <KpiCard icon={PhoneIncoming} label="Answered" value={summary.answered.toLocaleString("en-IN")} tone="emerald" />
         <KpiCard icon={Gauge} label="Answer Rate" value={`${summary.ans_pct}%`} tone="teal" />
-        <KpiCard icon={PhoneOff} label="Abandon Rate" value={`${summary.abandon_pct}%`} tone="rose" />
+        <KpiCard icon={PhoneOff} label="AL %" value={`${summary.abandon_pct}%`} sub="Answered / Offered" tone="emerald" />
         <KpiCard icon={Radio} label="Service Level" value={`${summary.sl_pct}%`} tone="indigo" />
         <KpiCard icon={Timer} label="Avg Handle Time" value={secondsToMin(summary.avg_handle)} tone="violet" />
         <KpiCard icon={Users} label="Active Agents" value={String(summary.login_count)} sub="logged in, range" tone="sky" />
@@ -341,7 +342,7 @@ export function GncInboundDashboard() {
                   <th className="border-l border-slate-100 bg-emerald-50/60 py-2.5 pr-3 text-right font-bold text-emerald-700">Call Answered</th>
                   <th className="py-2.5 pr-3 text-right font-semibold">Answer %</th>
                   <th className="py-2.5 pr-3 text-right font-semibold">Abandoned</th>
-                  <th className="border-l border-slate-100 bg-rose-50/60 py-2.5 pr-3 text-right font-bold text-rose-700">AL %</th>
+                  <th className="border-l border-slate-100 bg-emerald-50/60 py-2.5 pr-3 text-right font-bold text-emerald-700">AL %</th>
                   <th className="border-l border-slate-100 bg-indigo-50/60 py-2.5 pr-3 text-right font-bold text-indigo-700">SL %</th>
                   <th className="py-2.5 pr-3 text-right font-semibold">Avg Handle</th>
                 </tr>
@@ -355,7 +356,7 @@ export function GncInboundDashboard() {
                     <td className="border-l border-slate-50 bg-emerald-50/20 py-2.5 pr-3 text-right font-bold text-emerald-700">{r.answered}</td>
                     <td className="py-2.5 pr-3 text-right text-slate-600">{r.ansPct}%</td>
                     <td className="py-2.5 pr-3 text-right text-slate-600">{r.abandoned}</td>
-                    <td className="border-l border-slate-50 bg-rose-50/20 py-2.5 pr-3 text-right font-bold text-rose-600">{r.abandonPct}%</td>
+                    <td className="border-l border-slate-50 bg-emerald-50/20 py-2.5 pr-3 text-right font-bold text-emerald-600">{r.abandonPct}%</td>
                     <td className={`border-l border-slate-50 bg-indigo-50/20 py-2.5 pr-3 text-right font-bold ${r.slPct >= 70 ? "text-emerald-600" : r.slPct >= 40 ? "text-amber-600" : "text-red-600"}`}>{r.slPct}%</td>
                     <td className="py-2.5 pr-3 text-right text-slate-600">{r.acht ? secondsToMin(n(r.acht)) : "—"}</td>
                   </tr>

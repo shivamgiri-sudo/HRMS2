@@ -65,6 +65,17 @@ export interface LpCallHeadline {
   avgTalkPerConnectedSec: number;
   callBackPct: number;
   activeDays: number;
+  /** Distinct lead_id values present in the call file for the range -- the
+   * closest real "data received" count (the lead-allocation table meant to
+   * hold the true figure, mas_hrms.lp_leads_raw, is empty). */
+  distinctLeads: number;
+  /** Distinct leads with at least one connected call. */
+  connectedLeads: number;
+  /** Distinct leads with at least one call dispositioned "Allocate to advisor ..."
+   * (LP Onboarding's qualified-and-handed-over outcome; 0 for Feedback, which has no such disposition). */
+  advisorAllocatedLeads: number;
+  /** Calls the customer asked to be called back on: status "Call Back" or a call-back disposition. */
+  callBackCalls: number;
 }
 
 export interface LpCallServiceRow {
@@ -103,6 +114,7 @@ export interface LpCallAgentRow {
   avgCallsPerDay: number;
   avgTalkPerConnectedSec: number;
   idleSec: number;
+  wrapupSec: number;
   breakSec: number;
   firstCallConnectedPct: number;
 }
@@ -590,6 +602,10 @@ export async function getLpCallDashboard(processKey: LpProcessKey, fromInput: st
     avgTalkPerConnectedSec: k.avgTalkPerConnectedSec,
     callBackPct: k.callBackPct,
     activeDays: new Set(calls.map((c) => c.reportDate)).size,
+    distinctLeads: new Set(calls.map((c) => c.leadId)).size,
+    connectedLeads: new Set(calls.filter((c) => c.connected).map((c) => c.leadId)).size,
+    advisorAllocatedLeads: new Set(calls.filter((c) => /^allocate to advisor/i.test(c.disposition)).map((c) => c.leadId)).size,
+    callBackCalls: calls.filter((c) => c.status === "Call Back" || /call ?back/i.test(c.disposition)).length,
   };
 
   const byService: LpCallServiceRow[] = [...groupCalls(calls, (c) => c.service).entries()]
@@ -649,6 +665,7 @@ export async function getLpCallDashboard(processKey: LpProcessKey, fromInput: st
       avgCallsPerDay: days ? Math.round(kk.calls / days) : 0,
       avgTalkPerConnectedSec: kk.avgTalkPerConnectedSec,
       idleSec: aprRows.reduce((s, r) => s + r.idleSec, 0),
+      wrapupSec: aprRows.reduce((s, r) => s + r.wrapupSec, 0),
       breakSec: aprRows.reduce((s, r) => s + r.totalBreakDurationSec, 0),
       firstCallConnectedPct: kk.firstCallConnectedPct,
     };

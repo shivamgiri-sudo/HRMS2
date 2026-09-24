@@ -12,6 +12,8 @@ import {
   formatINR, currentMonthRange,
 } from "./DashboardKit";
 import { HousingPremiumAgentDrawer } from "./HousingPremiumAgentDrawer";
+import { useSortableRows } from "./useSortableRows";
+import { SortTh } from "./SortTh";
 import {
   type HPOverviewData, type HPDayWiseData, type HPAgentWiseData, type HPSlotWiseData,
   type HPTqMqBqAgentsData, type HPTqMqBqTlData, type HPTeamDetailsData, type HPValidation, type HPStage,
@@ -171,6 +173,36 @@ function OverviewTab({ from, to }: { from: string; to: string }) {
     return data.byTl.find((t) => t.tlName === scope)?.values ?? data.overall;
   }, [data, scope]);
 
+  /** Agent count behind whatever's currently in scope -- all TLs summed for
+   * "Overall", or just the selected TL's own roster count -- so RPA divides
+   * by the right denominator either way. */
+  const scopedAgentCount = useMemo(() => {
+    if (!data) return 0;
+    if (scope === "__overall__") return data.byTl.reduce((s, t) => s + t.agentCount, 0);
+    return data.byTl.find((t) => t.tlName === scope)?.agentCount ?? 0;
+  }, [data, scope]);
+
+  const tlRevenueRows = useMemo(() => (data?.byTl ?? []).map((t) => ({
+    tlName: t.tlName,
+    agentCount: t.agentCount,
+    revenue: t.values.mtd.revenue,
+    aov: t.values.mtd.aov,
+    rpa: t.agentCount > 0 ? t.values.mtd.revenue / t.agentCount : 0,
+  })), [data]);
+  const tlRevenueSort = useSortableRows<{ tlName: string; agentCount: number; revenue: number; aov: number; rpa: number }>(
+    tlRevenueRows,
+    (t, key) => {
+      switch (key) {
+        case "tlName": return t.tlName;
+        case "agentCount": return t.agentCount;
+        case "revenue": return t.revenue;
+        case "aov": return t.aov;
+        case "rpa": return t.rpa;
+        default: return null;
+      }
+    },
+  );
+
   if (loading && !data) return <Spinner tone="blue" />;
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   if (!data || !values) return null;
@@ -206,12 +238,13 @@ function OverviewTab({ from, to }: { from: string; to: string }) {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
         <KpiCard icon={PhoneCall} label="Total Calls" value={fmtN(mtd.totalCalls)} tone="blue" />
         <KpiCard icon={Gauge} label="Connected %" value={fmtPct(mtd.connectedPct)} tone="emerald" />
         <KpiCard icon={ShoppingCart} label="Sale Count" value={fmtN(mtd.saleCount)} tone="teal" />
         <KpiCard icon={IndianRupee} label="Revenue" value={formatINR(mtd.revenue)} tone="amber" />
         <KpiCard icon={IndianRupee} label="AOV" value={formatINR(mtd.aov)} tone="indigo" />
+        <KpiCard icon={Users} label="RPA" value={formatINR(scopedAgentCount > 0 ? mtd.revenue / scopedAgentCount : 0)} sub="revenue / agent count" tone="rose" />
         <KpiCard icon={Gauge} label="Ach%" value={fmtPct(mtd.achievedPct)} sub={`of ${formatINR(mtd.target)} target`} tone="violet" />
         <KpiCard icon={Users} label="Present Count" value={fmtN(mtd.presentCount)} tone="sky" />
       </div>
@@ -275,6 +308,36 @@ function OverviewTab({ from, to }: { from: string; to: string }) {
           </div>
         </SectionCard>
       </div>
+
+      <SectionCard icon={Users} title="TL-wise Revenue, AOV & RPA (MTD)" tone="indigo">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
+                <SortTh label="TL" sortKey="tlName" activeKey={tlRevenueSort.sortKey} dir={tlRevenueSort.sortDir} onSort={tlRevenueSort.toggleSort} className="py-2 pr-3 font-semibold" />
+                <SortTh label="Agents" sortKey="agentCount" activeKey={tlRevenueSort.sortKey} dir={tlRevenueSort.sortDir} onSort={tlRevenueSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
+                <SortTh label="Revenue" sortKey="revenue" activeKey={tlRevenueSort.sortKey} dir={tlRevenueSort.sortDir} onSort={tlRevenueSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
+                <SortTh label="AOV" sortKey="aov" activeKey={tlRevenueSort.sortKey} dir={tlRevenueSort.sortDir} onSort={tlRevenueSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
+                <SortTh label="RPA" sortKey="rpa" activeKey={tlRevenueSort.sortKey} dir={tlRevenueSort.sortDir} onSort={tlRevenueSort.toggleSort} className="py-2 pr-0 text-right font-semibold" />
+              </tr>
+            </thead>
+            <tbody>
+              {tlRevenueSort.sorted.map((t) => (
+                <tr key={t.tlName} className="border-b border-slate-50 last:border-0 hover:bg-indigo-50/40">
+                  <td className="py-2.5 pr-3 font-medium text-slate-700">{t.tlName}</td>
+                  <td className="py-2.5 pr-3 text-right text-slate-600">{t.agentCount}</td>
+                  <td className="py-2.5 pr-3 text-right font-semibold text-slate-800">{formatINR(t.revenue)}</td>
+                  <td className="py-2.5 pr-3 text-right text-slate-600">{formatINR(t.aov)}</td>
+                  <td className="py-2.5 pr-0 text-right text-slate-600">{formatINR(t.rpa)}</td>
+                </tr>
+              ))}
+              {data.byTl.length === 0 && (
+                <tr><td colSpan={5} className="py-6 text-center text-slate-400">No data.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
     </div>
   );
 }

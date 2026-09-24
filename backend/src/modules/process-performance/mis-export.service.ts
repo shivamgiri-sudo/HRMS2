@@ -120,9 +120,9 @@ async function bellavitaSaleSlides(from: string, to: string): Promise<ExportSlid
   const d = await getBellavitaSaleDashboard(from, to);
   return [
     {
-      title: "Sale Performance",
+      title: "Overall Dashboard",
       kpis: [
-        { label: "Turn Over", value: fmtInr(d.headline.turnover) },
+        { label: "Revenue", value: fmtInr(d.headline.turnover) },
         { label: "Net Sale Amount", value: fmtInr(d.headline.netTurnover) },
         { label: "Sale Count", value: fmtNum(d.headline.saleCount) },
         { label: "Prepaid %", value: fmtPct(d.headline.prepaidPct) },
@@ -402,8 +402,8 @@ async function inboundSlides(projectKey: string): Promise<(from: string, to: str
         { label: "Offered", value: fmtNum(d.headline.offered) },
         { label: "Answered", value: fmtNum(d.headline.answered) },
         { label: "Answered %", value: fmtPct(d.headline.answeredPct) },
-        { label: "Abandoned %", value: fmtPct(d.headline.abandonPct) },
-        { label: `Service Level (${d.headline.slThresholdSec}s)`, value: fmtPct(d.headline.slPct) },
+        { label: "AL %", value: fmtPct(d.headline.abandonPct) },
+        { label: `Service Level (${d.headline.slThresholdSec}s, of answered)`, value: fmtPct(d.headline.slPct) },
         { label: "AHT", value: `${d.headline.aht}s` },
         { label: "Unique Callers", value: fmtNum(d.headline.uniqueCallers) },
         { label: "Agents Active", value: fmtNum(d.headline.agentsActive) },
@@ -425,7 +425,7 @@ async function inboundSlides(projectKey: string): Promise<(from: string, to: str
 async function buildRegistry(): Promise<Record<string, MisBundleEntry[]>> {
   const registry: Record<string, MisBundleEntry[]> = {
     bellavita: [
-      { dashboardKey: "bellavita_sale", title: "Sale Performance", build: bellavitaSaleSlides },
+      { dashboardKey: "bellavita_sale", title: "Overall Dashboard", build: bellavitaSaleSlides },
       { dashboardKey: "bellavita_chat_overview", title: "Chat Performance", build: bellavitaChatSlides },
       { dashboardKey: "bellavita_cart", title: "Abandon Cart", build: bellavitaCartSlides },
     ],

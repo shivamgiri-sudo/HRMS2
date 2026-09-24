@@ -12,21 +12,20 @@ import { buildPeriodColumns } from "../process-performance/clovia-lob.shared.js"
  * and every view (overview, hour-wise, date-wise, agent-wise, LOB-wise, wait,
  * callers) is derived from that same row set, so no two tabs can disagree.
  *
- * Definitions (identical to inbound.service.ts):
- *   Pattern B (offered = every row):
- *     answered  = AgentId != 'VDCL'   (VDCL = call never reached an agent)
- *     SL%       = answered with wait <= 30s, as a share of OFFERED calls
- *   Pattern A (rows with DisconnBy = 'HOLDTIME' are excluded first):
- *     answered  = AgentId != 'VDCL'  OR  (AgentId = 'VDCL' AND wait = 0)
- *                 -- the wait-0 VDCL rows are after-hours / IVR-closed calls
- *                 (Bellavita: 878 of 896); the client report counts them as
- *                 answered, so this does too, but they are surfaced separately
- *                 as "after-hours" and excluded from every agent / AHT figure.
- *     SL%       = answered with wait <= 20s, as a share of OFFERED calls
- *   Both:
- *     abandoned = offered - answered
- *     wait      = TIME_TO_SEC(QueueDuration)
- *     AHT       = mean CallDurationSecond of agent-handled calls (AgentId != 'VDCL')
+ * Definitions (identical to inbound.service.ts; unified across every project
+ * 2026-09-23 at explicit user request -- previously pattern A counted certain
+ * VDCL rows as "answered (after-hours)" and SL%/AL% were computed differently;
+ * both are now the same formula for every process, threshold aside):
+ *   answered  = AgentId != 'VDCL'   (VDCL = call never reached an agent; no
+ *               after-hours carve-out any more -- a call an agent never took
+ *               is abandoned, full stop, for every project)
+ *   abandoned = offered - answered
+ *   AL%       = Answered / Offered
+ *   SL%       = (calls answered with wait <= threshold) / Answered
+ *               -- threshold is 20s for pattern A (GNC, Bellavita), 30s for
+ *               pattern B (DU Bangladesh, Exicom, Viega, Dalmia, Neemans)
+ *   wait      = TIME_TO_SEC(QueueDuration)
+ *   AHT       = mean CallDurationSecond of agent-handled calls (AgentId != 'VDCL')
  *   hour      = HOUR(HoursSlot)  (CallDate carries no time of day)
  *
  * Not computed because the dialer table holds no source for them: occupancy /
@@ -97,9 +96,11 @@ interface CallRow {
   talk: number;
   acw: number;
   transferred: boolean;
-  /** Counted as answered under the project's definition (includes after-hours on pattern A). */
+  /** Reached an agent (AgentId != 'VDCL') -- identical to `handled`, kept as
+   * its own field since most of this file reads "answered" by name. */
   answered: boolean;
-  /** Actually reached an agent (AgentId != 'VDCL'). */
+  /** Same as `answered` (AgentId != 'VDCL'); kept for the AHT/talk-time code
+   * below, which predates the two fields being merged. */
   handled: boolean;
   /** Answered within the project's service-level threshold. */
   inSl: boolean;
@@ -185,8 +186,9 @@ async function loadCalls(projectKey: string, f: InsightFilters): Promise<{ rows:
     const agentId = String(r.AgentId ?? "");
     const handled = agentId !== "VDCL";
     const waitSec = n(r.wait);
-    // Pattern A also counts wait-0 VDCL rows (after-hours) as answered, like the client report.
-    const answered = handled || (p.pattern === "A" && waitSec === 0);
+    // No after-hours carve-out any more -- a call an agent never took is
+    // abandoned, for every project (removed 2026-09-23 per explicit request).
+    const answered = handled;
     const transferId = String(r.CallTransferId ?? "").trim();
     return {
       id: n(r.id),
@@ -266,15 +268,21 @@ function metrics(a: Acc) {
     answered: a.answered,
     abandoned: a.abandoned,
     answeredPct: pct(a.answered, a.offered),
-    abandonPct: pct(a.abandoned, a.offered),
-    slPct: pct(a.slNum, a.offered),
-    slOfAnsweredPct: pct(a.slNum, a.answered),
+    // AL% redefined 2026-09-23 at explicit user request: Answered / Offered
+    // (previously Abandoned / Offered) -- same field/label everywhere it's
+    // already shown as "AL%", just a different formula now. Identical to
+    // answeredPct above; kept as its own field so every existing "AL%"
+    // consumer keeps reading the same key.
+    abandonPct: pct(a.answered, a.offered),
+    // SL% redefined 2026-09-23: (answered within threshold) / Answered
+    // (previously / Offered) -- this is what slOfAnsweredPct used to compute;
+    // that field is now gone since slPct IS that number.
+    slPct: pct(a.slNum, a.answered),
     aht: avg(a.durSum, a.handled),
     avgTalk: avg(a.talkSum, a.handled),
     avgHold: avg(a.holdSum, a.handled),
     avgAcw: avg(a.acwSum, a.handled),
     asa: avg(a.waitAnsweredSum, a.handled),
-    afterHours: a.answered - a.handled,
     avgAbandonWait: avg(a.waitAbandonSum, a.abandoned),
     maxWait: a.maxWait,
     transfers: a.transfers,
@@ -635,20 +643,20 @@ export async function getInboundInsights(projectKey: string, f: InsightFilters) 
   const insights: { tone: "info" | "good" | "warn" | "bad"; text: string }[] = [];
   if (total.offered) {
     if (peak) insights.push({ tone: "info", text: `Peak hour is ${peak.label} with ${peak.offered} calls (${peak.sharePct}% of volume).` });
-    const worstAband = hourly.filter((h) => h.offered >= 5).sort((a, b) => b.abandonPct - a.abandonPct)[0];
+    // abandonPct is now AL% (Answered/Offered, high = good), so the WORST hour/day
+    // for abandonment is the one with the LOWEST abandonPct -- sort ascending and
+    // report the true abandon share (100 - AL%) in the text.
+    const worstAband = hourly.filter((h) => h.offered >= 5).sort((a, b) => a.abandonPct - b.abandonPct)[0];
     if (worstAband && worstAband.abandoned > 0) {
-      insights.push({ tone: "warn", text: `Highest abandon rate is at ${worstAband.label}: ${worstAband.abandonPct}% (${worstAband.abandoned} of ${worstAband.offered} calls).` });
+      insights.push({ tone: "warn", text: `Highest abandon rate is at ${worstAband.label}: ${round2(100 - worstAband.abandonPct)}% (${worstAband.abandoned} of ${worstAband.offered} calls).` });
     }
     const worstSl = hourly.filter((h) => h.offered >= 5).sort((a, b) => a.slPct - b.slPct)[0];
     if (worstSl && worstSl.slPct < 100) {
       insights.push({ tone: worstSl.slPct < 80 ? "bad" : "warn", text: `Lowest service level is at ${worstSl.label}: ${worstSl.slPct}% answered within ${slSec}s.` });
     }
-    const worstDay = daily.filter((d) => d.offered >= 5).sort((a, b) => b.abandonPct - a.abandonPct)[0];
+    const worstDay = daily.filter((d) => d.offered >= 5).sort((a, b) => a.abandonPct - b.abandonPct)[0];
     if (worstDay && worstDay.abandoned > 0) {
-      insights.push({ tone: "warn", text: `Worst abandon day is ${worstDay.date} (${worstDay.weekday}): ${worstDay.abandonPct}% abandoned.` });
-    }
-    if (m.afterHours > 0) {
-      insights.push({ tone: "info", text: `${fmtN(m.afterHours)} calls (${pct(m.afterHours, m.offered)}% of offered) arrived after hours / with the line closed. The client report counts them as answered; they are excluded from agent, AHT and ASA figures.` });
+      insights.push({ tone: "warn", text: `Worst abandon day is ${worstDay.date} (${worstDay.weekday}): ${round2(100 - worstDay.abandonPct)}% abandoned.` });
     }
     if (agents.length > 1 && agents[0].sharePct >= 35) {
       insights.push({ tone: "info", text: `${agents[0].agentName} handled ${agents[0].sharePct}% of answered calls — workload is concentrated on one agent.` });
@@ -665,7 +673,8 @@ export async function getInboundInsights(projectKey: string, f: InsightFilters) 
     if (total.abandoned && headline.shortAbandonPct >= 50) {
       insights.push({ tone: "info", text: `${headline.shortAbandonPct}% of abandoned calls dropped within ${slSec}s of queueing.` });
     }
-    if (m.slPct >= 90 && m.abandonPct <= 5) insights.push({ tone: "good", text: `Service is healthy: SL ${m.slPct}% and abandon ${m.abandonPct}%.` });
+    // abandonPct is AL% (Answered/Offered) now, so "healthy" means both figures high.
+    if (m.slPct >= 90 && m.abandonPct >= 90) insights.push({ tone: "good", text: `Service is healthy: SL ${m.slPct}% and AL ${m.abandonPct}%.` });
   }
 
   return {
@@ -675,7 +684,8 @@ export async function getInboundInsights(projectKey: string, f: InsightFilters) 
       offered: "Every inbound call routed to the queue",
       answered: "Calls handled by an agent",
       abandoned: "Calls that never reached an agent (agent = VDCL)",
-      sl: `Answered within ${slSec}s of queueing, as % of offered`,
+      al: "AL % = Answered / Offered",
+      sl: `SL % = answered within ${slSec}s of queueing, as % of ANSWERED calls`,
       aht: "Average call duration of answered calls",
       asa: "Average queue wait of answered calls",
       unavailable: "Occupancy, staffing plan and callback outcomes are not in the dialer data",
@@ -750,7 +760,7 @@ export async function getInboundCalls(projectKey: string, f: DrillFilters) {
       caller: maskPhone(r.phone),
       callerKey: r.phone ? callerKey(r.phone) : null,
       callsInPeriod: r.phone ? perCaller.get(r.phone) ?? 1 : 1,
-      outcome: r.handled ? "Answered" : r.answered ? "After-hours" : "Abandoned",
+      outcome: r.answered ? "Answered" : "Abandoned",
       disposition: r.disposition,
       disconnBy: r.disconnBy,
       waitSec: r.wait,
@@ -790,21 +800,20 @@ export async function getInboundPeriods(projectKey: string, f: InsightFilters) {
     const m = metrics(a);
     return {
       offered: m.offered, answered: m.answered, abandoned: m.abandoned, answeredPct: m.answeredPct, abandonPct: m.abandonPct,
-      slPct: m.slPct, slOfAnsweredPct: m.slOfAnsweredPct, aht: m.aht, avgTalk: m.avgTalk, avgHold: m.avgHold, avgAcw: m.avgAcw, asa: m.asa,
-      avgAbandonWait: m.avgAbandonWait, maxWait: m.maxWait, transfers: m.transfers, afterHours: m.afterHours,
+      slPct: m.slPct, aht: m.aht, avgTalk: m.avgTalk, avgHold: m.avgHold, avgAcw: m.avgAcw, asa: m.asa,
+      avgAbandonWait: m.avgAbandonWait, maxWait: m.maxWait, transfers: m.transfers,
       uniqueCallers: callerSet.size, agents: agentSet.size, callsPerAgent: agentSet.size ? round1(a.handled / agentSet.size) : 0,
     } as Record<string, number>;
   };
   const defs: Array<{ key: string; label: string; fmt: "int" | "pct" | "sec" | "dec1" }> = [
     { key: "offered", label: "Offered Calls", fmt: "int" }, { key: "answered", label: "Answered", fmt: "int" }, { key: "abandoned", label: "Abandoned", fmt: "int" },
-    { key: "answeredPct", label: "Answer %", fmt: "pct" }, { key: "abandonPct", label: "Abandon % (AL)", fmt: "pct" },
-    { key: "slPct", label: `Service Level (${slSec}s, of offered)`, fmt: "pct" }, { key: "slOfAnsweredPct", label: `Service Level (${slSec}s, of answered)`, fmt: "pct" },
+    { key: "answeredPct", label: "Answer %", fmt: "pct" }, { key: "abandonPct", label: "AL %", fmt: "pct" },
+    { key: "slPct", label: `Service Level (${slSec}s, of answered)`, fmt: "pct" },
     { key: "aht", label: "AHT (s)", fmt: "sec" }, { key: "avgTalk", label: "Avg Talk (s)", fmt: "sec" }, { key: "avgHold", label: "Avg Hold (s)", fmt: "sec" },
     { key: "avgAcw", label: "Avg After-call Work (s)", fmt: "sec" }, { key: "asa", label: "Avg Speed of Answer (s)", fmt: "sec" },
     { key: "avgAbandonWait", label: "Avg Abandon Wait (s)", fmt: "sec" }, { key: "maxWait", label: "Longest Wait (s)", fmt: "sec" },
     { key: "uniqueCallers", label: "Unique Callers", fmt: "int" }, { key: "agents", label: "Active Agents", fmt: "int" },
     { key: "callsPerAgent", label: "Calls Handled / Agent", fmt: "dec1" }, { key: "transfers", label: "Transferred Calls", fmt: "int" },
-    { key: "afterHours", label: "After-hours calls (counted as answered)", fmt: "int" },
   ];
   const whole = compute(of(f.startDate, f.endDate));
   const perCol = new Map(columns.map((c) => [c.key, compute(of(c.from, c.to))]));

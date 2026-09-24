@@ -2,7 +2,7 @@ import { Router, type NextFunction, type Response } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getBellavitaSaleDashboard, currentMonthRange, setBellavitaSaleMonthlyTarget, getBellavitaSaleDateLobMatrix } from "./bellavita-sale-dashboard.service.js";
-import { getBellavitaAgentPerformance } from "./bellavita-agent-performance.service.js";
+import { getBellavitaAgentPerformance, getBellavitaAgentDetail } from "./bellavita-agent-performance.service.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
 import { TARGET_ADMIN_ROLES } from "./dashboard-monthly-target.shared.js";
@@ -31,7 +31,9 @@ router.get("/bellavita-sale-dashboard", requireRole(...VIEWER_ROLES), h(async (r
   // unbounded range.
   const from = String(req.query.from ?? "");
   const to = String(req.query.to ?? "");
-  const data = await getBellavitaSaleDashboard(from, to);
+  const lob = req.query.lob ? String(req.query.lob).slice(0, 60) : undefined;
+  const empId = req.query.empId ? String(req.query.empId).slice(0, 60) : undefined;
+  const data = await getBellavitaSaleDashboard(from, to, lob, empId);
   const canSetTarget = await hasAnyRole(req.authUser!.id, ...TARGET_ADMIN_ROLES);
   res.json({ success: true, data: { ...data, canSetTarget } });
 }));
@@ -73,8 +75,22 @@ router.get("/bellavita-agent-performance", requireRole(...VIEWER_ROLES), h(async
   const toInput = String(req.query.to ?? "");
   const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
   const to = DATE_RE.test(toInput) ? toInput : fallback.to;
-  const data = await getBellavitaAgentPerformance(from, to);
+  const lob = req.query.lob ? String(req.query.lob).slice(0, 60) : undefined;
+  const data = await getBellavitaAgentPerformance(from, to, lob);
   res.json({ success: true, data, from, to });
+}));
+
+router.get("/bellavita-agent-performance/agent-detail", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const empId = String(req.query.empId ?? "").trim();
+  if (!empId) return res.status(400).json({ success: false, error: "empId is required" });
+  const fallback = currentMonthRange();
+  const fromInput = String(req.query.from ?? "");
+  const toInput = String(req.query.to ?? "");
+  const from = DATE_RE.test(fromInput) ? fromInput : fallback.from;
+  const to = DATE_RE.test(toInput) ? toInput : fallback.to;
+  const data = await getBellavitaAgentDetail(empId, from, to);
+  if (!data) return res.status(404).json({ success: false, error: "No records for this agent in the chosen date range" });
+  res.json({ success: true, data });
 }));
 
 export { router as bellavitaSaleDashboardRouter };
