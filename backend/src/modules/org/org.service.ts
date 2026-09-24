@@ -4,7 +4,7 @@ import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 
 import { blankToNull } from "../../shared/sql-values.js";
-import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
+import { ownCompanyBranchSql, ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 import { syncCostCentreRelatedTables } from "../../shared/cost-centre-sync.js";
 import { clearBranchLetterheadCache } from "./branchAddress.service.js";
 // ── Whitelisted master tables to prevent SQL injection ────────────────────────
@@ -108,6 +108,13 @@ async function listActive(table: string, orderCol = "created_at", options: ListO
 
   const whereClauses: string[] = [];
   const params: any[] = [];
+
+  // DialDesk (IDC entity) branches and processes never surface in HRMS (owner rule 2026-09-24).
+  if (table === "branch_master") whereClauses.push(ownCompanyBranchSql(""));
+  if (table === "process_master") {
+    whereClauses.push("REPLACE(LOWER(COALESCE(process_name, '')), ' ', '') NOT LIKE '%dialdesk%'");
+    whereClauses.push(`(branch_id IS NULL OR branch_id IN (SELECT id FROM branch_master WHERE ${ownCompanyBranchSql("")}))`);
+  }
 
   // Active status filter
   if (options.active_status === "0" || options.active_status === 0) {

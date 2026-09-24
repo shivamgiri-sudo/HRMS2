@@ -84,7 +84,7 @@ vi.mock("../../../shared/istDate.js", async (importOriginal) => ({
 }));
 
 const SCHEMA = `
-CREATE TABLE branch_master (id TEXT PRIMARY KEY, branch_name TEXT, active_status INT);
+CREATE TABLE branch_master (id TEXT PRIMARY KEY, branch_name TEXT, active_status INT, company_name TEXT);
 CREATE TABLE process_master (id TEXT PRIMARY KEY, process_name TEXT, active_status INT, branch_id TEXT);
 CREATE TABLE cost_centre_master (id TEXT PRIMARY KEY, cost_centre_code TEXT, cost_centre_name TEXT, company_name TEXT,
   branch_id TEXT, process_id TEXT, active_status INT, process_name_bill TEXT, billing_client_name TEXT);
@@ -98,16 +98,20 @@ CREATE TABLE salary_prep_line (id TEXT PRIMARY KEY, run_id TEXT, employee_id TEX
 CREATE TABLE pnl_employee_cost_centre_override (id TEXT PRIMARY KEY, employee_id TEXT UNIQUE,
   target_cost_centre_id TEXT, active_status INT);
 
-INSERT INTO branch_master VALUES ('B1','NOIDA',1);
-INSERT INTO process_master VALUES ('P1','Onfido',1,'B1');
+INSERT INTO branch_master VALUES ('B1','NOIDA',1,'MAS Call Net India Pvt Ltd'), ('B2','NOIDA-DIALDESK',1,'Ispark Dataconnect Pvt Ltd');
+INSERT INTO process_master VALUES ('P1','Onfido',1,'B1'), ('P2','Some DialDesk Client',1,'B2');
 INSERT INTO cost_centre_master VALUES ('cc1','BSS/BO/NOIDA/576','Onfido','Mas Callnet India Pvt Ltd','B1','P1',1,NULL,NULL);
+INSERT INTO cost_centre_master VALUES ('cc2','BSS/DD/NOIDA/1','DialDesk client','IDC','B2','P2',1,NULL,NULL);
 INSERT INTO employees (id, employee_code, full_name, branch_id, process_id, cost_centre_id, active_status) VALUES
   ('E1','E1','One','B1','P1','cc1',1), ('E2','E2','Two','B1','P1','cc1',1),
   ('E3','MAS47814','Three','B1','P1','cc1',1);
+INSERT INTO employees (id, employee_code, full_name, branch_id, process_id, cost_centre_id, active_status) VALUES
+  ('E4','DD1','DialDesk Agent','B2','P2','cc2',1);
 INSERT INTO salary_prep_run VALUES ('R1','2026-05','FINALIZED','2026-06-02'), ('R2','2026-05','draft','2026-06-03');
 INSERT INTO salary_prep_line (id, run_id, employee_id, gross_salary, pf_employer, esic_employer, gratuity) VALUES
   ('L1','R1','E1',90000,6000,1000,3000),
   ('L2','R2','E2',40000,0,2000,NULL);
+INSERT INTO salary_prep_line (id, run_id, employee_id, gross_salary) VALUES ('L4','R1','E4',77777);
 INSERT INTO salary_prep_line VALUES
   ('L3','R1','E3',96626,1800,0,4648,0,20000,0,0,1800,200,500);
 `;

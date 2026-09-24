@@ -4,6 +4,7 @@ import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { getInvoicedRevenueActuals, OWN_COMPANY_SQL, getApprovedCostCentreSplits } from "./pnl-actuals.service.js";
 import { resolveRevenueAtRisk } from "./canonical-pnl.service.js";
+import { notDialDeskProcessSql } from "../../shared/ownCompanyCostCentre.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
 import { peopleCostExprsForColumns } from "./pnl-people-cost.js";
@@ -331,7 +332,8 @@ async function getBaseProcesses(filters: PnlQueryFilters): Promise<ProcessBaseRo
   // closed-branch filter applies only to the open (current/future) month; a past month keeps the
   // closed branch's processes, and computeBranchRows then drops only those with no money at all
   // (dropDormantClosedBranchRows) so a long-closed branch still does not reappear in dropdowns.
-  const conds = ["COALESCE(p.active_status, 1) = 1"];
+  // DialDesk is an IDC entity, not MAS Callnet (owner rule 2026-09-24): never a P&L column.
+  const conds = ["COALESCE(p.active_status, 1) = 1", notDialDeskProcessSql("p", "bm")];
   if (isCurrentOrFuturePeriod(filters.period)) conds.push("COALESCE(bm.active_status, 1) = 1");
   const params: unknown[] = [];
 
