@@ -21,6 +21,7 @@ import {
   createLob,
   deriveLobCode,
   isLobMappedToProcess,
+  listEmployeesWithoutLob,
   processScopeSql,
   resolveCallerScope,
   setEmployeeLob,
@@ -51,17 +52,53 @@ describe("processScopeSql", () => {
   it("ORG_ALL is unrestricted", () => {
     expect(processScopeSql({ ...base, level: "ORG_ALL", branchIds: [], processIds: [] } as any)).toEqual({ sql: "1=1", params: [] });
   });
-  it("BRANCH_ALL filters on pm.branch_id", () => {
-    expect(processScopeSql({ ...base, level: "BRANCH_ALL", branchIds: ["b1", "b2"], processIds: [] } as any))
-      .toEqual({ sql: "pm.branch_id IN (?,?)", params: ["b1", "b2"] });
+  it("BRANCH_ALL: own-branch process OR NULL-branch process with an active own-branch employee", () => {
+    const r = processScopeSql({ ...base, level: "BRANCH_ALL", branchIds: ["b1", "b2"], processIds: [] } as any);
+    expect(r.sql).toBe(
+      "(pm.branch_id IN (?,?) OR (pm.branch_id IS NULL AND EXISTS (SELECT 1 FROM employees sc_e " +
+      "WHERE sc_e.process_id = pm.id AND sc_e.branch_id IN (?,?) AND sc_e.active_status = 1)))",
+    );
+    expect(r.params).toEqual(["b1", "b2", "b1", "b2"]);
+    expect(r.mappingBranchId).toBeNull();
+  });
+  it("BRANCH_ALL never matches a non-NULL process of another branch and uses no COLLATE", () => {
+    const r = processScopeSql({ ...base, level: "BRANCH_ALL", branchIds: ["b1"], processIds: [] } as any);
+    expect(r.sql).not.toContain("COLLATE");
+    // the EXISTS arm is guarded by pm.branch_id IS NULL, so a foreign-branch process only ever hits the IN arm
+    expect(r.sql).toContain("pm.branch_id IS NULL AND EXISTS");
+    expect(r.mappingBranchId).toBe("b1");
+  });
+  it("BRANCH_ALL employee-context predicate compares the employee's own branch for NULL-branch processes", () => {
+    const r = processScopeSql({ ...base, level: "BRANCH_ALL", branchIds: ["b1"], processIds: [] } as any);
+    expect(r.employee).toEqual({
+      sql: "(pm.branch_id IN (?) OR (pm.branch_id IS NULL AND e.branch_id IN (?)))",
+      params: ["b1", "b1"],
+    });
   });
   it("PROCESS_ALL filters on pm.id", () => {
     expect(processScopeSql({ ...base, level: "PROCESS_ALL", branchIds: ["b1"], processIds: ["p1"] } as any))
       .toEqual({ sql: "pm.id IN (?)", params: ["p1"] });
   });
-  it("CUSTOM_SCOPE ORs branch and process", () => {
-    expect(processScopeSql({ ...base, level: "CUSTOM_SCOPE", branchIds: ["b1"], processIds: ["p1"] } as any))
-      .toEqual({ sql: "(pm.branch_id IN (?) OR pm.id IN (?))", params: ["b1", "p1"] });
+  it("CUSTOM_SCOPE mixed: widened branch part OR process ids, params in SQL order", () => {
+    const r = processScopeSql({ ...base, level: "CUSTOM_SCOPE", branchIds: ["b1"], processIds: ["p1", "p2"] } as any);
+    expect(r.sql).toBe(
+      "((pm.branch_id IN (?) OR (pm.branch_id IS NULL AND EXISTS (SELECT 1 FROM employees sc_e " +
+      "WHERE sc_e.process_id = pm.id AND sc_e.branch_id IN (?) AND sc_e.active_status = 1))) OR pm.id IN (?,?))",
+    );
+    expect(r.params).toEqual(["b1", "b1", "p1", "p2"]);
+    expect(r.employee!.params).toEqual(["b1", "b1", "p1", "p2"]);
+    expect(r.mappingBranchId).toBeUndefined();
+  });
+  it("CUSTOM_SCOPE with only processes or only branches keeps the parenthesised shape", () => {
+    expect(processScopeSql({ ...base, level: "CUSTOM_SCOPE", branchIds: [], processIds: ["p1"] } as any))
+      .toEqual({ sql: "(pm.id IN (?))", params: ["p1"] });
+    const b = processScopeSql({ ...base, level: "CUSTOM_SCOPE", branchIds: ["b1"], processIds: [] } as any);
+    expect(b.sql.startsWith("(pm.branch_id IN (?) OR (pm.branch_id IS NULL")).toBe(true);
+    expect(b.params).toEqual(["b1", "b1"]);
+  });
+  it("honours a custom alias", () => {
+    expect(processScopeSql({ ...base, level: "BRANCH_ALL", branchIds: ["b1"], processIds: [] } as any, "p").sql)
+      .toContain("p.branch_id IS NULL AND EXISTS (SELECT 1 FROM employees sc_e WHERE sc_e.process_id = p.id");
   });
   it("fails closed for empty and self-only scopes", () => {
     expect(processScopeSql({ ...base, level: "BRANCH_ALL", branchIds: [], processIds: [] } as any).sql).toBe("1=0");
@@ -79,7 +116,20 @@ describe("resolveCallerScope", () => {
   it("treats a branch-only wfm assignment as branch scope instead of refusing", async () => {
     scopeMock.mockRejectedValue(new DashboardScopeConfigurationError("no process"));
     queue([{ branch_id: "b1" }]);
-    expect(await resolveCallerScope(actor)).toEqual({ sql: "pm.branch_id IN (?)", params: ["b1"] });
+    const scope = await resolveCallerScope(actor);
+    expect(scope.sql).toContain("pm.branch_id IN (?) OR (pm.branch_id IS NULL AND EXISTS");
+    expect(scope.params).toEqual(["b1", "b1"]);
+  });
+});
+
+describe("employee-context scope", () => {
+  it("Employees-without-LOB uses the employee-branch predicate, not the process EXISTS", async () => {
+    scopeMock.mockResolvedValue({ level: "BRANCH_ALL", branchIds: ["b9"], processIds: [], employeeIds: [], userId: "u-1", role: "wfm" });
+    queue([], [{ c: 0 }]);
+    await listEmployeesWithoutLob(actor, {});
+    expect(sqlOf(0)).toContain("pm.branch_id IS NULL AND e.branch_id IN (?)");
+    expect(sqlOf(0)).not.toContain("sc_e");
+    expect(execute.mock.calls[0][1]).toEqual(["b9", "b9"]);
   });
 });
 
@@ -102,7 +152,36 @@ describe("addMapping", () => {
     queue([]);
     await expect(addMapping(actor, { process_id: "p1", lob_id: "l1" })).rejects.toBeInstanceOf(LobServiceError);
     expect(sqlOf(0)).toContain("pm.branch_id IN (?)");
-    expect(execute.mock.calls[0][1]).toEqual(["p1", "b9"]);
+    expect(execute.mock.calls[0][1]).toEqual(["p1", "b9", "b9"]);
+  });
+
+  it("stores the single scoped branch on a mapping of a NULL-branch process", async () => {
+    scopeMock.mockResolvedValue({ level: "BRANCH_ALL", branchIds: ["b9"], processIds: [], employeeIds: [], userId: "u-1", role: "wfm" });
+    queue([{ id: "p1", process_name: "DIALDESK", branch_id: null }], [{ id: "l1", lob_code: "L", lob_name: "L" }], [], []);
+    await addMapping(actor, { process_id: "p1", lob_id: "l1" });
+    const insert = execute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO process_lob_map"))!;
+    expect(insert[1][3]).toBe("b9");
+  });
+
+  it("leaves branch_id NULL for a NULL-branch process when the caller has several branches or is org-wide", async () => {
+    for (const scope of [
+      { level: "BRANCH_ALL", branchIds: ["b8", "b9"], processIds: [], employeeIds: [], userId: "u-1", role: "wfm" },
+      ORG,
+    ]) {
+      scopeMock.mockResolvedValue(scope);
+      queue([{ id: "p1", process_name: "DIALDESK", branch_id: null }], [{ id: "l1", lob_code: "L", lob_name: "L" }], [], []);
+      await addMapping(actor, { process_id: "p1", lob_id: "l1" });
+      const insert = execute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO process_lob_map"))!;
+      expect(insert[1][3]).toBeNull();
+    }
+  });
+
+  it("keeps the process's own branch_id when it has one", async () => {
+    scopeMock.mockResolvedValue({ level: "BRANCH_ALL", branchIds: ["b9"], processIds: [], employeeIds: [], userId: "u-1", role: "wfm" });
+    queue([{ id: "p1", process_name: "P", branch_id: "b9" }], [{ id: "l1", lob_code: "L", lob_name: "L" }], [], []);
+    await addMapping(actor, { process_id: "p1", lob_id: "l1" });
+    const insert = execute.mock.calls.find((c) => String(c[0]).includes("INSERT INTO process_lob_map"))!;
+    expect(insert[1][3]).toBe("b9");
   });
 
   it("rejects an inactive / unknown LOB with 400", async () => {

@@ -33,12 +33,42 @@ export class LobServiceError extends Error {
 export type SqlExecutor = { execute: (sql: string, params?: any[]) => Promise<any> };
 
 export type Actor = { id: string; role?: string; roles?: string[]; isDemo?: boolean };
-export type ScopeSql = { sql: string; params: string[] };
+export type ScopeSql = {
+  /** Predicate over process_master (alias `pm`). Use for process-level reads/writes. */
+  sql: string;
+  params: string[];
+  /**
+   * Same scope for queries that also join employees (alias `e`): a NULL-branch process is in scope
+   * only for the employees of the caller's own branches. Absent when it would equal `sql`.
+   */
+  employee?: { sql: string; params: string[] };
+  /** Branch to denormalise onto a new mapping of a NULL-branch process (single-branch callers only). */
+  mappingBranchId?: string | null;
+};
 
 const rows = (result: any): any[] => (Array.isArray(result) ? (result[0] as any[]) : []);
 const placeholders = (n: number) => Array(n).fill("?").join(",");
 
 // ── scope ────────────────────────────────────────────────────────────────────
+
+/**
+ * process_master.branch_id is NULL for many shared processes (DIALDESK, HR Operations, ...). A
+ * branch-scoped caller reaches such a process only when one of their branches has an ACTIVE
+ * employee in it. Correlated EXISTS on employees(process_id, branch_id, active_status): same-typed
+ * id columns, no COLLATE casts, served by idx_employees_directory_org (branch_id, process_id, ...).
+ * A process with a non-NULL branch_id of another branch stays out of scope.
+ */
+function branchPart(alias: string, branchIds: string[]): ScopeSql {
+  const ph = placeholders(branchIds.length);
+  const sql = `(${alias}.branch_id IN (${ph}) OR (${alias}.branch_id IS NULL AND EXISTS ` +
+    `(SELECT 1 FROM employees sc_e WHERE sc_e.process_id = ${alias}.id AND sc_e.branch_id IN (${ph}) AND sc_e.active_status = 1)))`;
+  const employeeSql = `(${alias}.branch_id IN (${ph}) OR (${alias}.branch_id IS NULL AND e.branch_id IN (${ph})))`;
+  return {
+    sql,
+    params: [...branchIds, ...branchIds],
+    employee: { sql: employeeSql, params: [...branchIds, ...branchIds] },
+  };
+}
 
 /** SQL predicate over process_master (alias `pm`) for a resolved scope. Fail-closed. */
 export function processScopeSql(scope: DashboardScope, alias = "pm"): ScopeSql {
@@ -48,24 +78,35 @@ export function processScopeSql(scope: DashboardScope, alias = "pm"): ScopeSql {
       return { sql: "1=1", params: [] };
     case "BRANCH_ALL":
       return scope.branchIds.length
-        ? { sql: inList("branch_id", scope.branchIds), params: [...scope.branchIds] }
+        ? { ...branchPart(alias, scope.branchIds), mappingBranchId: scope.branchIds.length === 1 ? scope.branchIds[0] : null }
         : { sql: "1=0", params: [] };
     case "PROCESS_ALL":
       return scope.processIds.length
         ? { sql: inList("id", scope.processIds), params: [...scope.processIds] }
         : { sql: "1=0", params: [] };
     case "CUSTOM_SCOPE": {
-      const parts: string[] = [];
-      const params: string[] = [];
-      if (scope.branchIds.length) { parts.push(inList("branch_id", scope.branchIds)); params.push(...scope.branchIds); }
-      if (scope.processIds.length) { parts.push(inList("id", scope.processIds)); params.push(...scope.processIds); }
-      return parts.length ? { sql: `(${parts.join(" OR ")})`, params } : { sql: "1=0", params: [] };
+      const hasBranches = scope.branchIds.length > 0;
+      const hasProcesses = scope.processIds.length > 0;
+      if (!hasBranches && !hasProcesses) return { sql: "1=0", params: [] };
+      if (!hasBranches) return { sql: `(${inList("id", scope.processIds)})`, params: [...scope.processIds] };
+      const branch = branchPart(alias, scope.branchIds);
+      if (!hasProcesses) return { ...branch, mappingBranchId: scope.branchIds.length === 1 ? scope.branchIds[0] : null };
+      const procSql = inList("id", scope.processIds);
+      return {
+        sql: `(${branch.sql} OR ${procSql})`,
+        params: [...branch.params, ...scope.processIds],
+        employee: { sql: `(${branch.employee!.sql} OR ${procSql})`, params: [...branch.employee!.params, ...scope.processIds] },
+      };
     }
     default:
       return { sql: "1=0", params: [] };
   }
 }
 
+/** Scope to use when the query also joins employees as `e`. */
+export function employeeScopeOf(scope: ScopeSql): { sql: string; params: string[] } {
+  return scope.employee ?? { sql: scope.sql, params: scope.params };
+}
 export async function resolveCallerScope(actor: Actor): Promise<ScopeSql> {
   try {
     const scope = await resolveWfmScope(actor);
@@ -194,6 +235,7 @@ async function loadMappedLobs(exec: SqlExecutor, processIds: string[], activeOnl
 export async function addMapping(actor: Actor, input: { process_id: string; lob_id: string }) {
   const scope = await resolveCallerScope(actor);
   const proc = await loadProcessInScope(db, scope, input.process_id);
+  const mappingBranchId = proc.branch_id ?? scope.mappingBranchId ?? null;
   const lob = await loadActiveLob(db, input.lob_id);
   const existing = rows(await db.execute(
     `SELECT id, active_status FROM process_lob_map WHERE process_id = ? AND lob_id = ? LIMIT 1`,
@@ -204,7 +246,7 @@ export async function addMapping(actor: Actor, input: { process_id: string; lob_
     if (Number(row.active_status) === 1) throw new LobServiceError(409, "This LOB is already mapped to the process.", "DUPLICATE_MAPPING");
     await db.execute(
       `UPDATE process_lob_map SET active_status = 1, branch_id = ?, updated_by = ? WHERE id = ?`,
-      [proc.branch_id, actor.id, row.id],
+      [mappingBranchId, actor.id, row.id],
     );
     await audit(actor, "process_lob_map.reactivate", "process_lob_map", row.id, { process_id: proc.id, lob_id: lob.id, lob_code: lob.lob_code });
     return { id: row.id as string, reactivated: true };
@@ -214,7 +256,7 @@ export async function addMapping(actor: Actor, input: { process_id: string; lob_
     await db.execute(
       `INSERT INTO process_lob_map (id, process_id, lob_id, branch_id, active_status, created_by, updated_by)
        VALUES (?, ?, ?, ?, 1, ?, ?)`,
-      [id, proc.id, lob.id, proc.branch_id, actor.id, actor.id],
+      [id, proc.id, lob.id, mappingBranchId, actor.id, actor.id],
     );
   } catch (err: any) {
     if (err?.code === "ER_DUP_ENTRY") throw new LobServiceError(409, "This LOB is already mapped to the process.", "DUPLICATE_MAPPING");
@@ -307,7 +349,8 @@ export async function listActiveLobs() {
 
 // ── employee LOB ─────────────────────────────────────────────────────────────
 
-async function loadEmployeeInScope(exec: SqlExecutor, scope: ScopeSql, employeeId: string) {
+async function loadEmployeeInScope(exec: SqlExecutor, scopeIn: ScopeSql, employeeId: string) {
+  const scope = employeeScopeOf(scopeIn);
   const r = rows(await exec.execute(
     `SELECT e.id, e.employee_code, e.full_name, e.process_id, e.lob_id
        FROM employees e JOIN process_master pm ON pm.id = e.process_id
@@ -376,7 +419,7 @@ export async function applySingleMappedLob(exec: SqlExecutor, employeeId: string
 // ── backfill: employees without LOB ──────────────────────────────────────────
 
 export async function listEmployeesWithoutLob(actor: Actor, f: { process_id?: string; branch_id?: string; search?: string; page?: number; limit?: number }) {
-  const scope = await resolveCallerScope(actor);
+  const scope = employeeScopeOf(await resolveCallerScope(actor));
   const { limit, offset } = clampPage(f.page, f.limit);
   const where = ["e.lob_id IS NULL", "e.active_status = 1", scope.sql];
   const params: any[] = [...scope.params];
@@ -397,7 +440,7 @@ export async function listEmployeesWithoutLob(actor: Actor, f: { process_id?: st
 }
 
 export async function summarizeEmployeesWithoutLob(actor: Actor, f: { branch_id?: string }) {
-  const scope = await resolveCallerScope(actor);
+  const scope = employeeScopeOf(await resolveCallerScope(actor));
   const where = ["e.lob_id IS NULL", "e.active_status = 1", scope.sql];
   const params: any[] = [...scope.params];
   if (f.branch_id) { where.push("pm.branch_id = ?"); params.push(f.branch_id); }

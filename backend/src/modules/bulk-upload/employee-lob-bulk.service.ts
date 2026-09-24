@@ -120,7 +120,8 @@ async function loadScope(userId: string): Promise<{ scope: ScopeSql; scopeError:
   }
 }
 
-async function loadEmployees(codes: string[], scope: ScopeSql): Promise<Map<string, EmployeeInfo>> {
+async function loadEmployees(codes: string[], scopeIn: ScopeSql): Promise<Map<string, EmployeeInfo>> {
+  const scope = scopeIn.employee ?? scopeIn; // employee-aware predicate when the scope provides one
   const byCode = new Map<string, EmployeeInfo>();
   // Both the trimmed original and the upper-case variant are sent so a case-sensitive column
   // collation still matches; the result is keyed case-insensitively in JS.

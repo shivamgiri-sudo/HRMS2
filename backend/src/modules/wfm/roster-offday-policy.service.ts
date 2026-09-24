@@ -303,7 +303,8 @@ export async function setPolicyActive(actor: Actor, id: string, active: boolean)
  */
 export async function resolvePolicyForEmployee(actor: Actor, employeeId: string, date: string) {
   if (!isValidYmd(date)) throw new LobServiceError(400, "date must be a valid YYYY-MM-DD.", "INVALID_DATE");
-  const scope = await resolveCallerScope(actor);
+  const callerScope = await resolveCallerScope(actor);
+  const scope = callerScope.employee ?? callerScope; // employee-aware predicate when the scope provides one
   const found = rows(await db.execute(
     `SELECT e.id, e.employee_code, e.process_id, e.lob_id, e.branch_id
        FROM employees e JOIN process_master pm ON pm.id = e.process_id
