@@ -20,6 +20,7 @@ import { isEstimateWindow } from "./pnl-seat-billing.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
+import { peopleCostSqlForColumns } from "./pnl-people-cost.js";
 import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.service.js";
 import { processPnlService, getClosedBranchIds } from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
@@ -668,14 +669,9 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
   const departmentExists = await tableExists("department_master");
   const departmentColumns = departmentExists ? await listColumns("department_master") : new Set<string>();
 
-  const grossExpr = salaryColumns.has("gross_salary") ? "COALESCE(spl.gross_salary, 0)" : "0";
-  const pfExpr = salaryColumns.has("pf_employer") ? "COALESCE(spl.pf_employer, 0)" : "0";
-  const esicExpr = salaryColumns.has("esic_employer") ? "COALESCE(spl.esic_employer, 0)" : "0";
-  const gratuityExpr = salaryColumns.has("gratuity")
-    ? "COALESCE(spl.gratuity, 0)"
-    : salaryColumns.has("basic")
-    ? "COALESCE(spl.basic, 0) * 0.0481"
-    : "0";
+  // People Cost per line (owner rule 2026-09-24, pnl-people-cost.ts): CTC paid less other/loan/
+  // advance/LWP deductions; a missing column contributes 0 as before.
+  const peopleCostExpr = peopleCostSqlForColumns("spl", salaryColumns);
   /*
    * Process resolved via two sources in order:
    *   1. employees.process_id — set directly on the employee (most agents and DSC staff)
@@ -756,7 +752,7 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
         MAX(${designationNameExpr}) AS designation_name,
         MAX(${departmentIdExpr}) AS department_id,
         MAX(${departmentNameExpr}) AS department_name,
-        SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS loaded_cost
+        SUM(${peopleCostExpr}) AS loaded_cost
        FROM salary_prep_line spl
        JOIN employees e ON e.id = spl.employee_id
        ${ccJoin}

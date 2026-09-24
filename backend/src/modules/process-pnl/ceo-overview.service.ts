@@ -9,6 +9,7 @@ import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { ccProcessJoin, ccProcessNameSql, costCentreLabel } from "./cost-centre-label.js";
 import { budgetByBranchId, entriesForCodes, readBudgetEntries as readBudgetEntriesUncached, sumAmount, topUpsForCodes } from "./pnl-budget-source.js";
 import { cachedPnlRead } from "./pnl-read-cache.js";
+import { peopleCostSql } from "./pnl-people-cost.js";
 
 /*
  * PER-REQUEST DEDUP (2026-09-24). One overview asks for the same month's revenue / people / spend /
@@ -429,8 +430,7 @@ async function readIdcContamination(period: string): Promise<{ count: number; am
   if (!(await tableExists("salary_prep_line"))) return null;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt,
-            SUM(COALESCE(l.gross_salary, 0) + COALESCE(l.pf_employer, 0)
-              + COALESCE(l.esic_employer, 0) + COALESCE(l.gratuity, 0)) AS amt
+            SUM(${peopleCostSql("l")}) AS amt
        FROM salary_prep_line l
        JOIN salary_prep_run r ON r.id = l.run_id
        JOIN employees e ON e.id = l.employee_id
@@ -477,10 +477,7 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ${ov.effectiveBranchExpr} AS branch_id,
             COUNT(*) AS staff,
-            SUM(COALESCE(l.gross_salary, 0)
-              + COALESCE(l.pf_employer, 0)
-              + COALESCE(l.esic_employer, 0)
-              + COALESCE(l.gratuity, 0)) AS cost
+            SUM(${peopleCostSql("l")}) AS cost
        FROM salary_prep_line l
        JOIN salary_prep_run r ON r.id = l.run_id
        JOIN employees e ON e.id = l.employee_id
@@ -500,6 +497,8 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
   // and, without this, disagreed with Live P&L on people cost for every open month: Live P&L
   // correctly showed Rs 58.07 L accrued for Sep-26 company-wide while this tab showed Rs 0 and
   // margin NA. COUNT(*) not DISTINCT, matching that fallback: one row per employee per period.
+  // It stays CTC (earned till date): the snapshot has no deduction columns, so the People Cost
+  // rule in pnl-people-cost.ts cannot be applied to it.
   const ovSnapshot = await payrollAttributionSql({
     employeeIdExpr: "s.employee_id", homeCostCentreExpr: "s.cost_centre_id",
     homeBranchExpr: "s.branch_id", homeProcessExpr: "s.process_id", ccAlias: "pcc",

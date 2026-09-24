@@ -6,6 +6,7 @@ import { getInvoicedRevenueActuals, OWN_COMPANY_SQL, getApprovedCostCentreSplits
 import { resolveRevenueAtRisk } from "./canonical-pnl.service.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
+import { peopleCostExprsForColumns } from "./pnl-people-cost.js";
 import type {
   PnlQueryFilters,
   PnlSummaryResponse,
@@ -753,12 +754,14 @@ async function getPayrollMap(processIds: string[], period: string, end: string):
   }
 
   const salaryColumns = await listColumns("salary_prep_line");
-  const grossExpr = salaryColumns.has("gross_salary") ? "COALESCE(spl.gross_salary, 0)" : "0";
-  const pfExpr = salaryColumns.has("pf_employer") ? "COALESCE(spl.pf_employer, 0)" : "0";
-  const esicExpr = salaryColumns.has("esic_employer") ? "COALESCE(spl.esic_employer, 0)" : "0";
-  const gratuityExpr = salaryColumns.has("gratuity")
-    ? "COALESCE(spl.gratuity, 0)"
-    : (salaryColumns.has("basic") ? "COALESCE(spl.basic, 0) * 0.0481" : "0");
+  // People Cost rule (pnl-people-cost.ts): loaded_total / PayrollMeta.total is CTC paid less other,
+  // loan, advance and LWP deductions. The gross/PF/ESIC/gratuity breakdown stays the CTC components,
+  // so those four no longer add up to `total` when a line carries such deductions.
+  const cost = peopleCostExprsForColumns("spl", salaryColumns);
+  const grossExpr = cost.gross;
+  const pfExpr = cost.pfEmployer;
+  const esicExpr = cost.esicEmployer;
+  const gratuityExpr = cost.gratuity;
 
   /*
    * EVERY run in the month, not the most recent one.
@@ -815,7 +818,7 @@ async function getPayrollMap(processIds: string[], period: string, end: string):
             SUM(${pfExpr}) AS pf_employer_total,
             SUM(${esicExpr}) AS esic_employer_total,
             SUM(${gratuityExpr}) AS gratuity_total,
-            SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS loaded_total
+            SUM(${cost.peopleCost}) AS loaded_total
           FROM salary_prep_line spl
           JOIN employees e ON e.id = spl.employee_id
           ${attr.join}
@@ -1551,12 +1554,8 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
   const hasGrnRequest = await tableExists("grn_request");
   const vendorPaymentColumns = await listColumns("vendor_payment_tracking").catch(() => new Set<string>());
 
-  const grossExpr = salaryColumns.has("gross_salary") ? "COALESCE(spl.gross_salary, 0)" : "0";
-  const pfExpr = salaryColumns.has("pf_employer") ? "COALESCE(spl.pf_employer, 0)" : "0";
-  const esicExpr = salaryColumns.has("esic_employer") ? "COALESCE(spl.esic_employer, 0)" : "0";
-  const gratuityExpr = salaryColumns.has("gratuity")
-    ? "COALESCE(spl.gratuity, 0)"
-    : (salaryColumns.has("basic") ? "COALESCE(spl.basic, 0) * 0.0481" : "0");
+  // People Cost rule (pnl-people-cost.ts): CTC paid less other/loan/advance/LWP deductions.
+  const peopleCostExpr = peopleCostExprsForColumns("spl", salaryColumns).peopleCost;
 
   const series: TrendPoint[] = [];
   const monthSeries = buildMonthSeries(months);
@@ -1604,7 +1603,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
     }
 
     const payrollRows = await queryRows<RowDataPacket>(
-      `SELECT ms.month_key, SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS total
+      `SELECT ms.month_key, SUM(${peopleCostExpr}) AS total
          FROM (${seriesSql}) ms
          LEFT JOIN salary_prep_run spr ON spr.run_month = ms.month_key
          LEFT JOIN salary_prep_line spl ON spl.run_id = spr.id
@@ -1693,7 +1692,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
     }
 
     const payrollRows = await queryRows<RowDataPacket>(
-      `SELECT SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS total
+      `SELECT SUM(${peopleCostExpr}) AS total
          FROM salary_prep_line spl
          JOIN salary_prep_run spr ON spr.id = spl.run_id
          JOIN employees e ON e.id = spl.employee_id
@@ -2087,12 +2086,13 @@ export const processPnlService = {
     const hasRuns = await tableExists("salary_prep_run") && await tableExists("salary_prep_line");
     const columns = hasRuns ? await listColumns("salary_prep_line") : new Set<string>();
     const basicExpr = columns.has("basic") ? "COALESCE(spl.basic, 0)" : "0";
-    const grossExpr = columns.has("gross_salary") ? "COALESCE(spl.gross_salary, 0)" : "0";
-    const pfExpr = columns.has("pf_employer") ? "COALESCE(spl.pf_employer, 0)" : "0";
-    const esicExpr = columns.has("esic_employer") ? "COALESCE(spl.esic_employer, 0)" : "0";
-    const gratuityExpr = columns.has("gratuity")
-      ? "COALESCE(spl.gratuity, 0)"
-      : (columns.has("basic") ? "COALESCE(spl.basic, 0) * 0.0481" : "0");
+    // loaded_cost follows the People Cost rule (pnl-people-cost.ts) so these rows add up to the
+    // summary; other_deduction / leave_deduction are listed so the gap to CTC is explainable.
+    const cost = peopleCostExprsForColumns("spl", columns);
+    const grossExpr = cost.gross;
+    const pfExpr = cost.pfEmployer;
+    const esicExpr = cost.esicEmployer;
+    const gratuityExpr = cost.gratuity;
     const incentiveExpr = columns.has("incentive_total") ? "COALESCE(spl.incentive_total, 0)" : "0";
     const overtimeExpr = columns.has("overtime_pay") ? "COALESCE(spl.overtime_pay, 0)" : "0";
 
@@ -2126,7 +2126,9 @@ export const processPnlService = {
             ${gratuityExpr} AS gratuity,
             ${incentiveExpr} AS incentive,
             ${overtimeExpr} AS overtime,
-            (${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS loaded_cost
+            ${cost.otherDeduction} AS other_deduction,
+            ${cost.leaveDeduction} AS leave_deduction,
+            ${cost.peopleCost} AS loaded_cost
           FROM salary_prep_line spl
           JOIN employees e ON e.id = spl.employee_id
           LEFT JOIN designation_master d ON d.id = e.designation_id

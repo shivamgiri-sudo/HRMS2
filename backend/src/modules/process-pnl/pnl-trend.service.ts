@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getDbBillHistory, getDbBillHistoryByProcess } from "./pnl-trend-history.service.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
+import { peopleCostSql } from "./pnl-people-cost.js";
 
 /**
  * Revenue / cost / margin trend, and headcount-vs-revenue trend, per process across the months
@@ -22,7 +23,8 @@ import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
  *            (joined on cost_centre_code, COLLATE-matched — see hrms2-collate-casts-kill-indexes)
  *   cost:    salary_prep_run -> salary_prep_line -> employees -> process_master
  *            (EVERY run of the month, drafts included — the same runs the Live P&L / CEO tiles sum;
- *            cost = CTC: gross_salary + pf_employer + esic_employer + gratuity, the owner's rule)
+ *            cost = People Cost: CTC paid less other/loan/advance/LWP deductions, the owner's rule
+ *            in pnl-people-cost.ts)
  * These are two independent grains (billing period_code vs payroll run_month) that happen to use
  * the same "YYYY-MM" string, exactly as the rest of process-pnl does; they are not reconciled here,
  * only placed on the same monthly axis, same as every other trend chart on this page.
@@ -179,8 +181,9 @@ export async function getPnlTrend(
     homeProcessExpr: "e.process_id",
     ccAlias: "ccm",
   });
-  // People cost (owner rule 2026-09-24: "people cost is the CTC amount paid for that month"):
-  // gross_salary + pf_employer + esic_employer + gratuity per salary_prep_line — exactly what the
+  // People cost (owner rule 2026-09-24, pnl-people-cost.ts): CTC paid (gross_salary + pf_employer +
+  // esic_employer + gratuity) less other/loan-EMI/advance and LWP deductions per salary_prep_line —
+  // the shared peopleCostSql() that the
   // Live P&L tile (pnl-reconciliation readPayroll), CEO Overview (peopleByBranch) and the Statement
   // (bpo-pnl getPayrollPeople) sum. It used to be gross_salary alone, so the trend sat ~8% under the
   // tile for the same month. Runs: every salary_prep_run of the month, drafts included, again as the
@@ -189,10 +192,7 @@ export async function getPnlTrend(
   const [costRows] = await db.query<RowDataPacket[]>(
     `SELECT pm.id AS processId, pm.process_name AS processName,
             sr.run_month AS period,
-            SUM(COALESCE(spl.gross_salary, 0)
-              + COALESCE(spl.pf_employer, 0)
-              + COALESCE(spl.esic_employer, 0)
-              + COALESCE(spl.gratuity, 0)) AS cost,
+            SUM(${peopleCostSql("spl")}) AS cost,
             COUNT(DISTINCT spl.employee_id) AS headcount
        FROM salary_prep_run sr
        JOIN salary_prep_line spl ON spl.run_id = sr.id

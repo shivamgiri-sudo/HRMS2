@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
+import { peopleCostSql } from "./pnl-people-cost.js";
 
 /**
  * Whether a cost centre is actually working, on one definition, in one place.
@@ -90,13 +91,13 @@ export async function getCostCentreActivity(endPeriod: string): Promise<CostCent
   // Salary is the signal that needs no mirror — payroll is native to mas_hrms.
   // 2026-09-23 (owner rule): grouped by the EFFECTIVE cost centre, so an employee mapped to a payroll
   // cost centre (pnl_employee_cost_centre_override) is counted there and not in their HR one.
-  // Salary = CTC (owner rule 2026-09-24): gross + employer PF + employer ESIC + gratuity, the same sum
-  // as the Live P&L tile. Gratuity was missing, and a NULL gross dropped the whole line from the sum.
+  // Salary = People Cost (owner rule 2026-09-24, pnl-people-cost.ts): CTC paid (gross + employer PF +
+  // employer ESIC + gratuity) less other/loan/advance/LWP deductions, the same sum as the Live P&L tile. Gratuity was missing, and a NULL gross dropped the whole line from the sum.
   const ov = await overrideJoinSql("e.id", "e.cost_centre_id");
   const [salary] = await db.execute<RowDataPacket[]>(
     `SELECT ${ov.effectiveCostCentreExpr} AS id,
             COUNT(DISTINCT l.employee_id) AS people_paid,
-            SUM(COALESCE(l.gross_salary, 0) + COALESCE(l.pf_employer, 0) + COALESCE(l.esic_employer, 0) + COALESCE(l.gratuity, 0)) AS salary_cost
+            SUM(${peopleCostSql("l")}) AS salary_cost
        FROM salary_prep_line l
        JOIN salary_prep_run run ON run.id = l.run_id
        JOIN employees e ON e.id = l.employee_id

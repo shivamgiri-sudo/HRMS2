@@ -4,6 +4,7 @@ import { tableExists } from "../../shared/dbHelpers.js";
 import { getSeatRevenueForecast } from "./pnl-seat-revenue-forecast.service.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { grnRequestExGstSql } from "./pnl-ex-gst.js";
+import { peopleCostSql } from "./pnl-people-cost.js";
 
 /**
  * Revenue, cost and operating margin day by day through a month.
@@ -144,8 +145,7 @@ async function monthlyPeopleCost(period: string, branchId?: string): Promise<num
         })
       : null;
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT SUM(COALESCE(l.gross_salary,0)+COALESCE(l.pf_employer,0)
-                 +COALESCE(l.esic_employer,0)+COALESCE(l.gratuity,0)) AS amount
+      `SELECT SUM(${peopleCostSql("l")}) AS amount
          FROM salary_prep_line l
          JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ?
          JOIN employees e ON e.id = l.employee_id

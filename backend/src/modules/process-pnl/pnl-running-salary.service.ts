@@ -408,6 +408,11 @@ export async function getRunningPeopleCost(periodCode: string): Promise<PeopleCo
   // (branch_id / process_id / cost_centre_id as HR has them); the mapping is applied on read, so
   // turning a mapping off needs no snapshot refresh. The override join is unique per employee, so
   // each snapshot row still lands in exactly one branch and one process.
+  //
+  // KNOWN LIMIT (owner People Cost rule 2026-09-24, pnl-people-cost.ts): this accrual stays CTC.
+  // pnl_running_salary_snapshot has no other_deductions / loan_emi / advance_recovery / lwp_deduction
+  // columns, so "CTC paid less other and leave deductions" cannot be applied until payroll is run
+  // and the month is read from salary_prep_line instead.
   const attribution = await payrollAttributionSql({
     employeeIdExpr: "s.employee_id",
     homeCostCentreExpr: "s.cost_centre_id",

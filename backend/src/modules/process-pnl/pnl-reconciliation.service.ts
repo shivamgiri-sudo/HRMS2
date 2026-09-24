@@ -8,6 +8,7 @@ import { ccProcessJoin, ccProcessNameSql } from "./cost-centre-label.js";
 import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
 import { budgetByBranchId, budgetByCostCentreId, readBudgetEntries } from "./pnl-budget-source.js";
 import { cachedPnlRead } from "./pnl-read-cache.js";
+import { peopleCostSql } from "./pnl-people-cost.js";
 
 export type PnlReconciliationMode = "FINAL" | "LIVE_MTD" | "BLOCKED";
 export type PnlSourceStatus = "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL" | "ESTIMATED";
@@ -460,10 +461,7 @@ async function readPayroll(period: string): Promise<Map<string, { cost: number; 
   const [rows] = await db.execute<MoneyRow[]>(
     `SELECT ${ov.effectiveCostCentreExpr} AS cost_centre_id,
             COUNT(*) AS staff,
-            SUM(COALESCE(l.gross_salary, 0)
-              + COALESCE(l.pf_employer, 0)
-              + COALESCE(l.esic_employer, 0)
-              + COALESCE(l.gratuity, 0)) AS amount
+            SUM(${peopleCostSql("l")}) AS amount
        FROM salary_prep_line l
        JOIN salary_prep_run r ON r.id = l.run_id
        JOIN employees e ON e.id = l.employee_id
@@ -475,6 +473,8 @@ async function readPayroll(period: string): Promise<Map<string, { cost: number; 
   for (const row of rows) if (row.cost_centre_id) out.set(String(row.cost_centre_id), { cost: n(row.amount), staff: n(row.staff) });
   if (out.size > 0 || !(await tableExists("pnl_running_salary_snapshot"))) return out;
 
+  // Running-salary fallback stays CTC (earned till date): the snapshot has no other/loan/advance/
+  // LWP deduction columns, so the People Cost rule (pnl-people-cost.ts) cannot be applied here.
   const ovSnapshot = await overrideJoinSql("s.employee_id", "s.cost_centre_id");
   const [runningRows] = await db.execute<MoneyRow[]>(
     `SELECT ${ovSnapshot.effectiveCostCentreExpr} AS cost_centre_id,
@@ -543,10 +543,7 @@ async function readUnallocatedPayroll(
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.branch_id AS branch_id, MAX(bm.branch_name) AS branch_name,
             COUNT(*) AS staff,
-            SUM(COALESCE(l.gross_salary, 0)
-              + COALESCE(l.pf_employer, 0)
-              + COALESCE(l.esic_employer, 0)
-              + COALESCE(l.gratuity, 0)) AS amount
+            SUM(${peopleCostSql("l")}) AS amount
        FROM salary_prep_line l
        JOIN salary_prep_run r ON r.id = l.run_id
        JOIN employees e ON e.id = l.employee_id
@@ -654,10 +651,7 @@ async function exceptions(period: string): Promise<PnlReconciliationException[]>
     const ov = await overrideJoinSql("e.id", "e.cost_centre_id");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS count,
-              SUM(COALESCE(l.gross_salary, 0)
-                + COALESCE(l.pf_employer, 0)
-                + COALESCE(l.esic_employer, 0)
-                + COALESCE(l.gratuity, 0)) AS amount
+              SUM(${peopleCostSql("l")}) AS amount
          FROM salary_prep_line l
          JOIN salary_prep_run r ON r.id = l.run_id
          JOIN employees e ON e.id = l.employee_id

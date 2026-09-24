@@ -7,6 +7,7 @@ import { readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
 import { getSeatBillingEstimate, isEstimateWindow } from "./pnl-seat-billing.service.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
+import { peopleCostSql } from "./pnl-people-cost.js";
 
 /**
  * The row-level detail behind every clickable P&L cell — "what actually makes up this number".
@@ -386,7 +387,7 @@ async function peopleDrilldownRowsAggregated(period: string, scope: PnlDrilldown
     const [groupRows] = await db.execute<RowDataPacket[]>(
       `SELECT COALESCE(des.designation_name, 'Unspecified designation') AS designation_name,
               COUNT(*) AS headcount,
-              SUM(COALESCE(l.gross_salary,0)+COALESCE(l.pf_employer,0)+COALESCE(l.esic_employer,0)+COALESCE(l.gratuity,0)) AS amount
+              SUM(${peopleCostSql("l")}) AS amount
          FROM salary_prep_line l
          JOIN salary_prep_run r ON r.id = l.run_id
          JOIN employees e ON e.id = l.employee_id
@@ -424,7 +425,7 @@ async function peopleDrilldownRows(period: string, scope: PnlDrilldownScope): Pr
     const emp = await effectivePeopleScope(scope, EMPLOYEE_COLS);
     const [lineRows] = await db.execute<RowDataPacket[]>(
       `SELECT l.id, e.employee_code, e.full_name, e.cost_center_code,
-              (COALESCE(l.gross_salary,0)+COALESCE(l.pf_employer,0)+COALESCE(l.esic_employer,0)+COALESCE(l.gratuity,0)) AS amount
+              ${peopleCostSql("l")} AS amount
          FROM salary_prep_line l
          JOIN salary_prep_run r ON r.id = l.run_id
          JOIN employees e ON e.id = l.employee_id

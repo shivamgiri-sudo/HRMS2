@@ -13,6 +13,7 @@ import {
 import { bpoPnlAllocationOverlayService } from "./bpo-pnl-allocation-overlay.service.js";
 import type { BpoPnlRow } from "./bpo-pnl.service.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
+import { peopleCostSqlForColumns } from "./pnl-people-cost.js";
 
 type LobStatus = "draft" | "approved" | "inactive";
 type PlanStatus = "draft" | "approved" | "locked";
@@ -560,18 +561,12 @@ async function loadPayrollCosts(processId: string, period: string, direct: Map<s
   const runIds = runs.map((row) => String(row.id));
 
   const salaryColumns = await listColumns("salary_prep_line");
-  const gross = salaryColumns.has("gross_salary") ? "COALESCE(spl.gross_salary,0)" : "0";
-  const pf = salaryColumns.has("pf_employer") ? "COALESCE(spl.pf_employer,0)" : "0";
-  const esic = salaryColumns.has("esic_employer") ? "COALESCE(spl.esic_employer,0)" : "0";
-  const gratuity = salaryColumns.has("gratuity")
-    ? "COALESCE(spl.gratuity,0)"
-    : salaryColumns.has("basic")
-      ? "COALESCE(spl.basic,0) * 0.0481"
-      : "0";
+  // People Cost rule (pnl-people-cost.ts): CTC paid less other/loan/advance/LWP deductions.
+  const peopleCost = peopleCostSqlForColumns("spl", salaryColumns);
   const { start, end } = monthRange(period);
   const rows = await queryRows<LobPayrollRow>(
     `SELECT a.process_lob_id, a.cost_bucket,
-            SUM((${gross} + ${pf} + ${esic} + ${gratuity}) * a.allocation_pct / 100) loaded_cost,
+            SUM(${peopleCost} * a.allocation_pct / 100) loaded_cost,
             COUNT(DISTINCT a.employee_id) employee_count,
             SUM(a.allocation_pct) allocation_pct_total
        FROM salary_prep_line spl
