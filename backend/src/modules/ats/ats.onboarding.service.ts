@@ -819,6 +819,14 @@ async function deriveSalaryValidationFromOffer(candidateId: string, actorUserId:
     [candidateId],
   );
 
+  // Clamp date_of_salary to date_of_joining if somehow it arrived earlier — this
+  // should never happen after the saveOffer() guard, but a raw DB row or a future
+  // caller that bypasses that path must not propagate a bad value downstream.
+  const dojStr  = String(o.date_of_joining ?? '').slice(0, 10);
+  const dosRaw  = blankToNull(o.date_of_salary);
+  const dosStr  = dosRaw ? String(dosRaw).slice(0, 10) : null;
+  const safeDos = dosStr && dojStr && dosStr < dojStr ? null : dosRaw; // null → COALESCE falls back to joining_date
+
   if (existing[0]) {
     await db.execute(
       `UPDATE ats_payroll_hr_validation
@@ -833,13 +841,14 @@ async function deriveSalaryValidationFromOffer(candidateId: string, actorUserId:
       // salary_start_date = COALESCE(?, joining_date): "" is not the NULL
       // sentinel, so a blank salary-start date threw ER_TRUNCATED_WRONG_VALUE
       // instead of falling back to the joining date.
-      [empType, o.gross, o.date_of_joining, blankToNull(o.date_of_salary),
+      [empType, o.gross, o.date_of_joining, safeDos,
        o.department_id ?? null, o.designation_id ?? null, o.cost_centre ?? null,
        o.reporting_manager_id ?? null, o.branch_id ?? null,
        o.basic ?? null, o.hra ?? null, o.conveyance ?? null, o.special_allowance ?? null,
        payrollHrId, String(existing[0].id)],
     );
   } else {
+    const ssdForInsert = safeDos ?? o.date_of_joining; // always >= date_of_joining
     await db.execute(
       `INSERT INTO ats_payroll_hr_validation
          (id, candidate_id, branch_id, payroll_hr_id, employment_type,
@@ -851,7 +860,7 @@ async function deriveSalaryValidationFromOffer(candidateId: string, actorUserId:
        o.department_id ?? null, o.designation_id ?? null, o.cost_centre ?? null,
        o.reporting_manager_id ?? null,
        o.gross, o.basic ?? null, o.hra ?? null, o.conveyance ?? null, o.special_allowance ?? null,
-       o.date_of_joining, o.date_of_salary ?? o.date_of_joining],
+       o.date_of_joining, ssdForInsert],
     );
   }
 

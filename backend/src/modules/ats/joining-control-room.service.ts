@@ -484,6 +484,14 @@ export async function savePayrollControlRoomDetails(candidateId: string, input: 
     throw Object.assign(new Error("salary_effective_date_reason is required when salary start date differs from offer"), { statusCode: 400 });
   }
 
+  // W11/W12: salary_start_date must never precede joining_date
+  if (salaryStartDate && joiningDate && salaryStartDate < joiningDate) {
+    throw Object.assign(
+      new Error(`Salary start date (${salaryStartDate}) cannot be before date of joining (${joiningDate}).`),
+      { statusCode: 400, code: 'SALARY_START_BEFORE_JOINING' },
+    );
+  }
+
   // Check if ats_payroll_hr_validation row exists; if not, seed minimal record from offer
   const [existingRows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM ats_payroll_hr_validation WHERE candidate_id = ? LIMIT 1`,

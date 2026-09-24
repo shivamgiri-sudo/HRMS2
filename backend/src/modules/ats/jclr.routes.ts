@@ -27,14 +27,34 @@ router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payro
   const { candidateId } = req.params;
   const f = req.body as Record<string, unknown>;
 
-  // Prevent salary_start_date < joining_date — same guard as payroll-hr.routes.ts /validate.
-  const joiningDate = f.joining_date as string | undefined;
-  const salaryStartDate = f.salary_start_date as string | undefined;
-  if (joiningDate && salaryStartDate && salaryStartDate < joiningDate) {
-    return res.status(400).json({
-      success: false,
-      message: `Salary start date (${salaryStartDate}) cannot be before joining date (${joiningDate}).`,
-    });
+  // Prevent salary_start_date < joining_date.
+  // W13 fix: when only salary_start_date is submitted without joining_date, fetch
+  // the effective DOJ from DB so the guard fires on partial-update calls too.
+  const salaryStartDate = (f.salary_start_date as string | undefined) || undefined;
+  if (salaryStartDate) {
+    let effectiveDoj = (f.joining_date as string | undefined) || undefined;
+    if (!effectiveDoj) {
+      const [jclrRows] = await db.execute<RowDataPacket[]>(
+        `SELECT joining_date FROM jclr_entries WHERE candidate_id = ? LIMIT 1`,
+        [candidateId],
+      );
+      const raw = jclrRows[0]?.joining_date;
+      effectiveDoj = raw ? String(raw).slice(0, 10) : undefined;
+    }
+    if (!effectiveDoj) {
+      const [offerRows] = await db.execute<RowDataPacket[]>(
+        `SELECT date_of_joining FROM ats_employment_offer WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
+        [candidateId],
+      );
+      const raw = offerRows[0]?.date_of_joining;
+      effectiveDoj = raw ? String(raw).slice(0, 10) : undefined;
+    }
+    if (effectiveDoj && salaryStartDate < effectiveDoj) {
+      return res.status(400).json({
+        success: false,
+        message: `Salary start date (${salaryStartDate}) cannot be before joining date (${effectiveDoj}).`,
+      });
+    }
   }
 
   await db.execute(
