@@ -375,6 +375,13 @@ async function pruneOrphans(hrms, table, keptSourceIds, scopeSql, scopeParams = 
 
 // ── Sync 1: cost_centre_master enrichment ─────────────────────────────────────
 
+/*
+ * active_status and close_date are deliberately NOT copied from db_bill (owner rule, 2026-09-24).
+ * HRMS is the master for whether a cost centre is active: this job used to overwrite them from
+ * db_bill.cost_master on every run, which silently reverted 130 of 132 cost centres the owner had
+ * just deactivated (rows re-flagged active at 18:03 IST the same day). New cost centres are created
+ * by import-new-cost-centres-from-dbbill.cjs, which sets their initial state.
+ */
 async function syncCostCentres(hrms, bill) {
   log('Sync 1: enriching cost_centre_master from db_bill.cost_master ...');
 
@@ -418,10 +425,8 @@ async function syncCostCentres(hrms, bill) {
         vendor_gst_no      = ?,
         vendor_gst_state   = ?,
         go_live_date       = ?,
-        close_date         = ?,
         bill_source_branch = ?,
         bill_snapshot_at   = NOW(),
-        active_status      = ?,
         branch_id          = COALESCE(branch_id, ?)
        WHERE cost_centre_code = ?`,
       [
@@ -447,9 +452,7 @@ async function syncCostCentres(hrms, bill) {
         trim(row.VendorGSTNo),
         trim(row.VendorGSTState),
         safeDate(row.goLiveDate),
-        row.close ? safeDate(row.close) : null,
         trim(row.branch),
-        row.active === 1 ? 1 : 0,
         branchId,
         cc,
       ]
