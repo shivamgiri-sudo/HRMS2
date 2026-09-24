@@ -21,7 +21,8 @@ import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
  *   revenue: process_master -> cost_centre_master -> billing_invoice_particular_snapshot
  *            (joined on cost_centre_code, COLLATE-matched — see hrms2-collate-casts-kill-indexes)
  *   cost:    salary_prep_run -> salary_prep_line -> employees -> process_master
- *            (sr.status <> 'draft' only — draft runs are not committed payroll)
+ *            (EVERY run of the month, drafts included — the same runs the Live P&L / CEO tiles sum;
+ *            cost = CTC: gross_salary + pf_employer + esic_employer + gratuity, the owner's rule)
  * These are two independent grains (billing period_code vs payroll run_month) that happen to use
  * the same "YYYY-MM" string, exactly as the rest of process-pnl does; they are not reconciled here,
  * only placed on the same monthly axis, same as every other trend chart on this page.
@@ -178,17 +179,27 @@ export async function getPnlTrend(
     homeProcessExpr: "e.process_id",
     ccAlias: "ccm",
   });
+  // People cost (owner rule 2026-09-24: "people cost is the CTC amount paid for that month"):
+  // gross_salary + pf_employer + esic_employer + gratuity per salary_prep_line — exactly what the
+  // Live P&L tile (pnl-reconciliation readPayroll), CEO Overview (peopleByBranch) and the Statement
+  // (bpo-pnl getPayrollPeople) sum. It used to be gross_salary alone, so the trend sat ~8% under the
+  // tile for the same month. Runs: every salary_prep_run of the month, drafts included, again as the
+  // tiles do — the trend used to drop draft runs, so a month still in draft showed a lower (or zero)
+  // cost here than on the tile.
   const [costRows] = await db.query<RowDataPacket[]>(
     `SELECT pm.id AS processId, pm.process_name AS processName,
             sr.run_month AS period,
-            SUM(spl.gross_salary) AS cost,
+            SUM(COALESCE(spl.gross_salary, 0)
+              + COALESCE(spl.pf_employer, 0)
+              + COALESCE(spl.esic_employer, 0)
+              + COALESCE(spl.gratuity, 0)) AS cost,
             COUNT(DISTINCT spl.employee_id) AS headcount
        FROM salary_prep_run sr
        JOIN salary_prep_line spl ON spl.run_id = sr.id
        JOIN employees e ON e.id = spl.employee_id
        ${costAttr.join}
        JOIN process_master pm ON pm.id = ${costAttr.effectiveProcessExpr}
-      WHERE sr.status <> 'draft' AND sr.run_month IN (?) ${branchClause ? `AND ${costAttr.effectiveBranchExpr} = ?` : ""} ${processClause}
+      WHERE sr.run_month IN (?) ${branchClause ? `AND ${costAttr.effectiveBranchExpr} = ?` : ""} ${processClause}
       GROUP BY pm.id, pm.process_name, sr.run_month`,
     costParams
   );
