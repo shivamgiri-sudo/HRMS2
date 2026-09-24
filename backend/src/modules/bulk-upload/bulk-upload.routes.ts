@@ -11,6 +11,10 @@ import { loadRowsWithLiveStatus, reconcileStuckRows } from "./bulk-approval.serv
 import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
 import { dispatchImport, assertGatedUploader, assertDepartmentStructureUploader, assertEmployeeLobUploader } from "./bulk-dispatch.js";
 import { ONFIDO_REPORT_CONFIGS } from "./onfido-report-configs.js";
+import {
+  HUB_ROLES, denyLobOnly, filterTemplatesForCaller, lobOnlyBatchFilter,
+  restrictLobOnlyBatchAccess, restrictLobOnlyBatchCreate,
+} from "./bulk-role-restriction.js";
 
 /**
  * A batch left in 'importing' for longer than this is assumed to be from an API that
@@ -49,12 +53,12 @@ function withConfigTemplate(row: RowDataPacket): RowDataPacket {
   } as RowDataPacket;
 }
 
-router.get("/templates", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
+router.get("/templates", requireRole(...HUB_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM upload_template_master WHERE active_status = 1 ORDER BY upload_type_code ASC"
     );
-    res.json({ success: true, data: rows.map(withConfigTemplate) });
+    res.json({ success: true, data: filterTemplatesForCaller(req, rows).map(withConfigTemplate) });
   } catch (err: unknown) {
     // Table may not exist yet â€” return empty array gracefully
     if (typeof err === "object" && err !== null) {
@@ -94,7 +98,7 @@ const PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES = [
   "SATYA_ALLOCATION_MASMIS", "SATYA_CDR_MASMIS",
 ];
 
-router.get("/process-performance-v2-stats", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/process-performance-v2-stats", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), denyLobOnly, h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const scope = await buildScopeWhereClause(
     userId,
@@ -157,7 +161,7 @@ router.get("/process-performance-v2-stats", requireRole("admin", "hr", "super_ad
  * WHO RAISED IT. auth_user carries no name (email only), so the display name comes from the
  * employee record joined on user_id â€” populated for all 65 rows â€” falling back to the login email.
  */
-router.get("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/batches", requireRole(...HUB_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const scope = await buildScopeWhereClause(
     userId,
@@ -168,6 +172,10 @@ router.get("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_ana
 
   const where: string[] = [`(ub.uploaded_by = ? OR (${scope.sql}))`];
   const params: unknown[] = [userId, ...scope.params];
+
+  // LOB-only callers (bulk-role-restriction.ts) see only their own Employee LOB Mapping batches.
+  const lobOnly = lobOnlyBatchFilter(req, "ub");
+  if (lobOnly.sql) { where.push(lobOnly.sql.replace(/^ AND /, "")); params.push(...lobOnly.params); }
 
   // Filters. Each is optional and additive; an absent filter never narrows the result.
   const uploadType = String(req.query.uploadType ?? "").trim();
@@ -220,7 +228,7 @@ router.get("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_ana
  * Scoped identically to the list above, so the options can never hint at the existence of another
  * branch's uploads.
  */
-router.get("/batches/filter-options", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/batches/filter-options", requireRole(...HUB_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const scope = await buildScopeWhereClause(
     userId,
@@ -228,8 +236,9 @@ router.get("/batches/filter-options", requireRole("admin", "hr", "super_admin", 
     { branchId: "COALESCE(ub.branch_id, uploader_emp.branch_id)" },
     { allowAdminBypass: true },
   );
-  const visible = `(ub.uploaded_by = ? OR (${scope.sql}))`;
-  const params = [userId, ...scope.params];
+  const lobOnly = lobOnlyBatchFilter(req, "ub");
+  const visible = `(ub.uploaded_by = ? OR (${scope.sql}))${lobOnly.sql}`;
+  const params = [userId, ...scope.params, ...lobOnly.params];
 
   const [types] = await db.execute<RowDataPacket[]>(
     `SELECT ub.upload_type_code AS value, COUNT(*) AS n
@@ -262,7 +271,7 @@ router.get("/batches/filter-options", requireRole("admin", "hr", "super_admin", 
  * this, was the only thing shown â€” see loadRowsWithLiveStatus's own comment for why
  * that alone was not trustworthy.
  */
-router.get("/batches/:id/rows", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/batches/:id/rows", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), h(async (req: AuthenticatedRequest, res: Response) => {
   const rows = await loadRowsWithLiveStatus(req.params.id);
   res.json({ success: true, data: rows });
 }));
@@ -275,12 +284,12 @@ router.get("/batches/:id/rows", requireRole("admin", "hr", "super_admin", "wfm",
  * SQL access. It only ever force-resolves rows that are already stuck; it never
  * touches a row that has a real outcome.
  */
-router.post("/batches/:id/reconcile", requireRole("admin", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/batches/:id/reconcile", requireRole("admin", "super_admin"), denyLobOnly, h(async (req: AuthenticatedRequest, res: Response) => {
   const result = await reconcileStuckRows(req.params.id);
   res.json({ success: true, data: result });
 }));
 
-router.post("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/batches", requireRole(...HUB_ROLES), restrictLobOnlyBatchCreate, h(async (req: AuthenticatedRequest, res: Response) => {
   const body = req.body as {
     upload_batch_no?: string; upload_type_code: string; original_file_name?: string;
     file_path?: string; file_size_bytes?: number; total_rows: number; valid_rows: number;
@@ -315,7 +324,7 @@ router.post("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_an
   res.status(201).json({ success: true, data: rows[0] ?? null });
 }));
 
-router.post("/batches/:id/rows", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/batches/:id/rows", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), h(async (req: AuthenticatedRequest, res: Response) => {
   const rows = req.body as Array<{
     row_no: number;
     raw_data?: Record<string, unknown> | unknown[] | string | null;
@@ -579,7 +588,7 @@ const KNOWN_IMPORT_RPCS = new Set([
 ]);
 
 // POST /batches/:id/import â€” dispatch import by rpc_name
-router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/batches/:id/import", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess({ requireImportRpc: true }), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const { rpc_name } = req.body as { rpc_name?: string };
 
@@ -728,21 +737,22 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
  * approval_status is NULL (import still claiming) to cover the edge case where the
  * claim was recorded but the job map was lost in a restart.
  */
-router.get("/batches/active", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/batches/active", requireRole(...HUB_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const lobOnly = lobOnlyBatchFilter(req, "upload_batch");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, upload_batch_no, upload_type_code, batch_status, approval_status,
             total_rows, valid_rows, imported_rows, error_rows, updated_at
        FROM upload_batch
       WHERE uploaded_by = ?
-        AND batch_status = 'importing'
+        AND batch_status = 'importing'${lobOnly.sql}
       ORDER BY updated_at DESC
       LIMIT 5`,
-    [req.authUser!.id],
+    [req.authUser!.id, ...lobOnly.params],
   );
   res.json({ success: true, data: rows });
 }));
 
-router.get("/batches/:id/import-status", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/batches/:id/import-status", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const [batchRows] = await db.execute<RowDataPacket[]>(
     "SELECT id, batch_status, approval_status, imported_rows, error_rows, total_rows, error_summary FROM upload_batch WHERE id = ? LIMIT 1",
@@ -775,7 +785,7 @@ router.get("/batches/:id/import-status", requireRole("admin", "hr", "super_admin
 
 
 // DELETE /batches/:id — remove a batch log entry (does not undo already-imported rows)
-router.delete("/batches/:id", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.delete("/batches/:id", requireRole(...HUB_ROLES), restrictLobOnlyBatchAccess(), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const [rows] = await db.query<RowDataPacket[]>(
     "SELECT id, batch_status FROM upload_batch WHERE id = ? LIMIT 1",

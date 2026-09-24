@@ -29,6 +29,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { isLobOnlyHubUser } from "@/lib/bulkUploadAccess";
 
 type UploadTemplate = {
   id: string;
@@ -1355,8 +1356,13 @@ export default function BulkUploadHub() {
     ["super_admin", "hr_admin", "payroll", "payroll_head", "finance"].includes(r)
   );
   const canUploadTds = roleKeys.some((r) => ["payroll_head", "super_admin"].includes(r));
+  // branch_wfm / ho_wfm / wfm_spoc use this page for Employee LOB Mapping only. The API filters
+  // /templates to that one type and refuses everything else; this just keeps the page from
+  // offering tabs and buttons that would only ever 403 for them.
+  const lobOnlyUser = isLobOnlyHubUser(roleKeys);
 
   const effectiveTab: HubTab =
+    activeTab === "apr" && lobOnlyUser ? "master" :
     activeTab === "productivity" && !canUploadProductivity ? "master" :
     activeTab === "deduction-types" && !canManageDeductionTypes ? "master" :
     activeTab === "tds-upload" && !canUploadTds ? "master" :
@@ -1997,16 +2003,18 @@ export default function BulkUploadHub() {
               >
                 Master Data Upload
               </button>
-              <button
-                onClick={() => setActiveTab("apr")}
-                className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-                  effectiveTab === "apr"
-                    ? "bg-white text-slate-950 shadow-sm"
-                    : "text-slate-500 hover:text-slate-700"
-                }`}
-              >
-                APR / Dialler Attendance
-              </button>
+              {!lobOnlyUser && (
+                <button
+                  onClick={() => setActiveTab("apr")}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                    effectiveTab === "apr"
+                      ? "bg-white text-slate-950 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  APR / Dialler Attendance
+                </button>
+              )}
               {canUploadProductivity && (
                 <button
                   type="button"
@@ -2550,7 +2558,7 @@ export default function BulkUploadHub() {
                                   total, or the batch is sitting in the legacy 'approved'
                                   state — both mean this batch has rows that never
                                   reached a final outcome. See reconcileBatch above. */}
-                              {(batch.batch_status === "approved" ||
+                              {!lobOnlyUser && (batch.batch_status === "approved" ||
                                 batch.imported_rows + batch.error_rows < batch.total_rows) && (
                                 <button
                                   onClick={() => reconcileBatch(batch)}

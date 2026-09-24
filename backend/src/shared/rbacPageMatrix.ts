@@ -759,6 +759,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   branch_wfm: [
     "WFM_PROCESS_LOB_MAP",
     "WFM_ROSTER_OFFDAY_POLICY",
+    // Bulk Upload Hub, Employee LOB Mapping upload type only (backend/sql/1854 + bulk-role-restriction.ts).
+    "BULK_UPLOAD",
     "ATTENDANCE_LOOKUP",
     "PAYROLL_ATTENDANCE_CONTROL_TOWER",
     "PAYROLL_BRANCH_READINESS",

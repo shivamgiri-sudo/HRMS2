@@ -27,7 +27,7 @@ describe("Employee LOB Mapping uploader registry", () => {
     expect(ROUTES).toContain('"import_employee_lob_batch"');
     expect(DISPATCH).toContain('rpc_name === "import_employee_lob_batch"');
     expect(HUB).toContain('EMPLOYEE_LOB_MAPPING: "import_employee_lob_batch"');
-    expect(MANIFEST).toContain('"1853_employee_lob_mapping_upload_template.sql"');
+    expect(MANIFEST).toContain('"1854_employee_lob_mapping_upload_template.sql"');
   });
 
   it("the route runs the role gate before queueing the import", () => {
@@ -35,7 +35,7 @@ describe("Employee LOB Mapping uploader registry", () => {
   });
 
   it("the template migration registers the two required columns only", () => {
-    const sql = read("../../../../sql/1853_employee_lob_mapping_upload_template.sql");
+    const sql = read("../../../../sql/1854_employee_lob_mapping_upload_template.sql");
     expect(sql).toContain("'EMPLOYEE_LOB_MAPPING'");
     expect(sql).toContain("JSON_ARRAY('employee_code', 'lob_code')");
     expect(sql).not.toMatch(/^\s*(DELETE|DROP|TRUNCATE|UPDATE)\b/im);
