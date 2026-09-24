@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { readLobFilter, lobAnd } from "../../shared/lobFilter.js";
+import { withLobNames } from "../../shared/lobNames.js";
 import { z } from "zod";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -758,10 +760,14 @@ wfmRouter.get("/manager/weekoff-review", requireAuth, requireRole("admin", "hr",
     params.push(emp.id, req.authUser!.id);
   }
 
+  const lob = readLobFilter(req, res);
+  if (!lob) return;
+  const lobSql = lobAnd(lob, "e");
+  params.push(...lobSql.params);
   const [rows] = await dbConn.execute(
     `SELECT wra.*,
             CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
-            e.employee_code, dm.designation_name AS designation,
+            e.employee_code, e.lob_id AS employee_lob_id, dm.designation_name AS designation,
             pm.process_name, bm.branch_name,
             wst.shift_name, wst.start_time, wst.end_time,
             wrc.week_start_date, wrc.week_end_date
@@ -774,11 +780,11 @@ wfmRouter.get("/manager/weekoff-review", requireAuth, requireRole("admin", "hr",
        LEFT JOIN weekly_roster_cycle wrc ON wrc.id = wra.cycle_id
       WHERE wra.final_roster_status = 'pending_manager_action'
         AND wra.employee_ack_status = 'rejected'
-        ${scopeWhere}
+        ${scopeWhere}${lobSql.sql}
       ORDER BY wra.roster_date ASC`,
     params
   );
-  return res.json({ success: true, data: rows });
+  return res.json({ success: true, data: await withLobNames(rows as any[], "employee_lob_id") });
 }));
 
 /**

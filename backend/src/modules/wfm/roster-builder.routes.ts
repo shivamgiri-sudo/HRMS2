@@ -3,6 +3,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getRosterGrid, getShiftTemplateTimes } from "./roster-builder.service.js";
 import { rosterService } from "./roster.service.js";
+import { readLobFilter } from "../../shared/lobFilter.js";
 
 const WFM_ROLES = ["wfm", "admin", "super_admin"];
 
@@ -23,7 +24,9 @@ rosterBuilderRouter.get(
     }
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
     const employeeSearch = req.query.employeeSearch ? String(req.query.employeeSearch) : undefined;
-    const rows = await getRosterGrid({ cycleId, branchId, employeeSearch });
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const rows = await getRosterGrid({ cycleId, branchId, employeeSearch, lob });
     res.json({ rows });
   })
 );

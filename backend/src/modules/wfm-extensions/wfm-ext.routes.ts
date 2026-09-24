@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { readLobFilter } from "../../shared/lobFilter.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
@@ -103,13 +104,15 @@ router.get("/roster/swaps", h(async (req: AuthenticatedRequest, res: Response) =
   // — a team_leader-only caller fell through to the self-only branch below and could see
   // their own swap requests but never their team's, despite already being able to
   // approve/reject one via the review route once they somehow had its id.
+  const lob = readLobFilter(req, res);
+  if (!lob) return;
   if (await hasRole(userId, "admin", "hr", "wfm", "manager", "assistant_manager", "tl", "team_leader", "branch_head", "process_manager")) {
     const scope = await employeeScope(userId);
-    return res.json({ success: true, data: await rosterSwapService.list({ ...(req.query as any), ...scope }) });
+    return res.json({ success: true, data: await rosterSwapService.list({ ...(req.query as any), ...scope, lob }) });
   }
   const emp = await getEmployeeForUser(userId);
   if (!emp) return res.status(403).json({ success: false, message: "Forbidden" });
-  return res.json({ success: true, data: await rosterSwapService.list({ employee_id: emp.id, status: req.query.status as string | undefined }) });
+  return res.json({ success: true, data: await rosterSwapService.list({ employee_id: emp.id, status: req.query.status as string | undefined, lob }) });
 }));
 
 router.post("/roster/swaps", h(async (req: AuthenticatedRequest, res: Response) => {

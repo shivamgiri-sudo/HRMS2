@@ -100,6 +100,7 @@ interface ImportRow {
   row_number: number;
   employee_id_raw: string;
   employee_name_raw: string;
+  lob_name?: string | null;
   roster_date: string;
   raw_value: string;
   normalized_type: string;
@@ -497,14 +498,14 @@ function RosterUploadWorkspace({ tabBar }: { tabBar: ReactNode }) {
   const { employees, sortedDates } = useMemo(() => {
     const empMap = new Map<
       string,
-      { name: string; dates: Map<string, ImportRow> }
+      { name: string; lobName: string | null; dates: Map<string, ImportRow> }
     >();
     const dateSet = new Set<string>();
 
     for (const row of allRows) {
       const key = row.employee_id_raw || `__row_${row.row_number}`;
       if (!empMap.has(key)) {
-        empMap.set(key, { name: row.employee_name_raw || key, dates: new Map() });
+        empMap.set(key, { name: row.employee_name_raw || key, lobName: row.lob_name ?? null, dates: new Map() });
       }
       empMap.get(key)!.dates.set(row.roster_date, row);
       dateSet.add(row.roster_date);
@@ -514,6 +515,7 @@ function RosterUploadWorkspace({ tabBar }: { tabBar: ReactNode }) {
     const employees = Array.from(empMap.entries()).map(([id, v]) => ({
       id,
       name: v.name,
+      lobName: v.lobName,
       dates: v.dates,
     }));
 
@@ -1077,6 +1079,7 @@ function RosterUploadWorkspace({ tabBar }: { tabBar: ReactNode }) {
                             {emp.name}
                           </p>
                           <p className="text-slate-400 font-mono text-[10px]">{emp.id}</p>
+                          <p className="text-[10px] text-slate-500">LOB: {emp.lobName ?? <span className="text-slate-400">Unassigned</span>}</p>
                           {nightCnt > 0 && (
                             <span className="inline-flex items-center gap-0.5 text-amber-700 text-[10px]">
                               <Moon className="h-2.5 w-2.5" /> {nightCnt}d night

@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { LobSelect } from "@/components/wfm/LobSelect";
 import { RefreshCw, Users, TrendingUp, Building2, Briefcase, ChevronRight, Eye, EyeOff, Activity, History, ShieldCheck, Trophy } from "lucide-react";
 import { Link } from "react-router-dom";
 
@@ -116,17 +117,6 @@ export default function RosterViewPage() {
   const { data: processData } = useQuery({
     queryKey: ["roster-view", "processes"],
     queryFn: () => hrmsApi.get<{ data: Array<{ id: string; process_name: string }> }>("/api/processes?limit=300"),
-  });
-
-  // LOBs of the selected process (Process LOB Mapping). Optional: a role that cannot read the
-  // mapping simply gets no LOB filter, the grid is unaffected.
-  const { data: lobData } = useQuery({
-    queryKey: ["roster-view", "lob-options", processId],
-    enabled: processId !== ALL,
-    retry: false,
-    queryFn: () => hrmsApi.get<{ data: { options: Array<{ lob_id: string; lob_name: string }> } }>(
-      `/api/wfm/process-lobs/processes/${encodeURIComponent(processId)}/lob-options`,
-    ),
   });
 
   const { data, isFetching, isError, error } = useQuery({
@@ -318,20 +308,15 @@ export default function RosterViewPage() {
               </SelectContent>
             </Select>
           </div>
-          {processId !== ALL && (lobData?.data?.options?.length ?? 0) > 0 && (
-            <div className="min-w-[170px]">
-              <label className="mb-1 block text-xs font-semibold text-slate-500">LOB</label>
-              <Select value={lobId} onValueChange={setLobId}>
-                <SelectTrigger><SelectValue placeholder="All LOBs" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>All LOBs</SelectItem>
-                  {lobData!.data.options.map((l) => (
-                    <SelectItem key={l.lob_id} value={l.lob_id}>{l.lob_name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          <div className="min-w-[170px]">
+            <label className="mb-1 block text-xs font-semibold text-slate-500">LOB</label>
+            <LobSelect
+              processId={processId === ALL ? "" : processId}
+              value={lobId === ALL ? "" : lobId}
+              onChange={(v) => setLobId(v || ALL)}
+              includeUnassigned
+            />
+          </div>
           <div className="min-w-[190px] flex-1">
             <label className="mb-1 block text-xs font-semibold text-slate-500">EMPLOYEE</label>
             <Input

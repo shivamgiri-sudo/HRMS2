@@ -64,6 +64,8 @@ interface AutoRosterAssignment {
   acknowledgement_status: string | null; // from wfm_roster_assignment_control
   branch_name: string | null;
   process_name: string | null;
+  emp_lob_id?: string | null;
+  emp_lob_name?: string | null;
 }
 
 interface ProcessListResponse { data: { id: string; name: string }[] }
@@ -76,6 +78,7 @@ type EmployeeRow = {
   employee_name: string;
   branch_name: string | null;
   process_name: string | null;
+  lob_name: string | null;
   days: Record<string, AutoRosterAssignment>;
 };
 
@@ -255,6 +258,7 @@ export default function RosterWorkspace() {
           employee_name: a.employee_name,
           branch_name: a.branch_name,
           process_name: a.process_name,
+          lob_name: a.emp_lob_name ?? null,
           days: {},
         });
       }
@@ -494,6 +498,9 @@ export default function RosterWorkspace() {
                   <th className="border border-slate-200 px-2 py-2 text-left font-semibold text-slate-500 min-w-[100px]">
                     Process
                   </th>
+                  <th className="border border-slate-200 px-2 py-2 text-left font-semibold text-slate-500 min-w-[90px]">
+                    LOB
+                  </th>
                   {weekDates.map((d, i) => (
                     <th key={d} className="border border-slate-200 px-2 py-2 text-center font-semibold text-slate-600 min-w-[70px]">
                       <div>{DAY_LABELS[i]}</div>
@@ -515,6 +522,9 @@ export default function RosterWorkspace() {
                     </td>
                     <td className="border border-slate-100 px-2 py-1.5 text-slate-500">
                       {emp.process_name ?? <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="border border-slate-100 px-2 py-1.5 text-slate-500">
+                      {emp.lob_name ?? <span className="text-slate-400">Unassigned</span>}
                     </td>
                     {weekDates.map((d) => (
                       <ShiftCell key={d} assignment={emp.days[d]} />

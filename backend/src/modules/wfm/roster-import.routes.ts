@@ -338,13 +338,15 @@ rosterImportRouter.get('/view/table', requireRole(...WFM_VIEW_ROLES), async (req
       res.status(400).json({ error: 'fromDate and toDate are required (YYYY-MM-DD)' });
       return;
     }
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     const result = await getRosterView({
       fromDate: q.fromDate,
       toDate: q.toDate,
       branchId: q.branchId || undefined,
       processId: q.processId || undefined,
       costCentreId: q.costCentreId || undefined,
-      lobId: q.lobId || undefined,
+      lob,
       search: q.search || undefined,
       limit: q.limit ? parseInt(q.limit, 10) : undefined,
       offset: q.offset ? parseInt(q.offset, 10) : undefined,

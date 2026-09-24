@@ -28,7 +28,7 @@ export interface RosterViewFilters {
   processId?: string;
   costCentreId?: string;
   /** Optional: only employees whose LOB (employees.lob_id) is this one. */
-  lobId?: string;
+  lob?: LobFilter;
   /** Free text over employee code and name. */
   search?: string;
   limit?: number;
@@ -140,7 +140,8 @@ export async function getRosterView(
   if (filters.branchId) { where.push('e.branch_id = ?'); params.push(filters.branchId); }
   if (filters.processId) { where.push('e.process_id = ?'); params.push(filters.processId); }
   if (filters.costCentreId) { where.push('e.cost_centre_id = ?'); params.push(filters.costCentreId); }
-  if (filters.lobId) { where.push('e.lob_id = ?'); params.push(filters.lobId); }
+  const lobCond = filters.lob ? lobCondition(filters.lob, 'e') : null;
+  if (lobCond) { where.push(lobCond.sql); params.push(...lobCond.params); }
   if (filters.search) {
     where.push('(e.employee_code LIKE ? OR e.full_name LIKE ?)');
     params.push(`%${filters.search}%`, `%${filters.search}%`);

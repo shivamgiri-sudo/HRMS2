@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { LobSelect } from "@/components/wfm/LobSelect";
 import { formatISTDate } from "@/lib/utils";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -20,6 +21,8 @@ interface DisputedAssignment {
   dispute_reason: string | null;
   dispute_resolved_at: string | null;
   dispute_resolution: string | null;
+  lob_id?: string | null;
+  lob_name?: string | null;
   employee_code: string;
   first_name: string;
   last_name: string;
@@ -120,13 +123,14 @@ function ResolveModal({
 export default function NativeRosterManagerQueue() {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
+  const [lobId, setLobId] = useState("");
   const [resolveTarget, setResolveTarget] = useState<DisputedAssignment | null>(null);
   const [notice, setNotice] = useState<{ type: "success" | "error"; msg: string } | null>(null);
 
   const queueQ = useQuery({
-    queryKey: ["roster-dispute-queue"],
+    queryKey: ["roster-dispute-queue", lobId],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ data: DisputedAssignment[] }>("/api/roster-gov/manager-review-queue");
+      const res = await hrmsApi.get<{ data: DisputedAssignment[] }>(`/api/roster-gov/manager-review-queue${lobId ? `?lobId=${encodeURIComponent(lobId)}` : ""}`);
       return res.data ?? [];
     },
   });
@@ -211,6 +215,7 @@ export default function NativeRosterManagerQueue() {
               className="w-full rounded-xl border border-slate-200 py-2 pl-9 pr-4 text-sm focus:border-blue-500 focus:outline-none"
             />
           </div>
+          <LobSelect processId="" value={lobId} onChange={setLobId} includeUnassigned className="w-[190px]" />
           <button
             onClick={() => void qc.invalidateQueries({ queryKey: ["roster-dispute-queue"] })}
             className="rounded-xl border p-2.5 text-slate-500 hover:bg-slate-100"
@@ -240,6 +245,7 @@ export default function NativeRosterManagerQueue() {
               <thead>
                 <tr className="border-b bg-slate-50 text-left text-xs font-black uppercase tracking-wider text-slate-500">
                   <th className="px-4 py-3">Employee</th>
+                  <th className="px-4 py-3">LOB</th>
                   <th className="px-4 py-3">Date</th>
                   <th className="px-4 py-3">Shift</th>
                   <th className="px-4 py-3">Week</th>
@@ -254,6 +260,7 @@ export default function NativeRosterManagerQueue() {
                       <p className="font-bold text-slate-900">{d.first_name} {d.last_name}</p>
                       <p className="text-xs text-slate-500">{d.employee_code}</p>
                     </td>
+                    <td className="px-4 py-3 text-slate-600">{d.lob_name ?? <span className="text-slate-400">Unassigned</span>}</td>
                     <td className="px-4 py-3 text-slate-700 whitespace-nowrap">{fmtDate(d.roster_date)}</td>
                     <td className="px-4 py-3">
                       {d.shift_name ? (
@@ -298,7 +305,7 @@ export default function NativeRosterManagerQueue() {
         )}
 
         {/* Week-Off Rejection Review — from wfm_roster_assignment lifecycle */}
-        <WeekOffReviewSection />
+        <WeekOffReviewSection lobId={lobId} />
       </div>
     </DashboardLayout>
   );
@@ -306,9 +313,9 @@ export default function NativeRosterManagerQueue() {
 
 // ── Week-Off Review (new lifecycle) ──────────────────────────────────────────
 
-interface WoReviewItem { id: string; employee_name: string; employee_code: string; roster_date: string; is_week_off: number; final_roster_status: string; employee_rejection_reason: string | null; system_decision_reason: string | null; shift_name: string | null; start_time: string | null; end_time: string | null; week_start_date: string | null; }
+interface WoReviewItem { id: string; employee_name: string; employee_code: string; roster_date: string; is_week_off: number; final_roster_status: string; employee_rejection_reason: string | null; system_decision_reason: string | null; shift_name: string | null; start_time: string | null; end_time: string | null; week_start_date: string | null; lob_name?: string | null; }
 
-function WeekOffReviewSection() {
+function WeekOffReviewSection({ lobId }: { lobId: string }) {
   const qc = useQueryClient();
   const [actionTarget, setActionTarget] = useState<WoReviewItem | null>(null);
   const [actionType, setActionType] = useState<string>("");
@@ -316,8 +323,8 @@ function WeekOffReviewSection() {
   const [notice2, setNotice2] = useState<{ type: "success" | "error"; msg: string } | null>(null);
 
   const woQ = useQuery({
-    queryKey: ["wfm-weekoff-review"],
-    queryFn: async () => (await hrmsApi.get<{ success: boolean; data: WoReviewItem[] }>("/api/wfm/manager/weekoff-review")).data ?? [],
+    queryKey: ["wfm-weekoff-review", lobId],
+    queryFn: async () => (await hrmsApi.get<{ success: boolean; data: WoReviewItem[] }>(`/api/wfm/manager/weekoff-review${lobId ? `?lobId=${encodeURIComponent(lobId)}` : ""}`)).data ?? [],
   });
 
   const actionMut = useMutation({
@@ -393,12 +400,13 @@ function WeekOffReviewSection() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs font-black uppercase text-slate-500">
-                <tr><th className="px-4 py-3">Employee</th><th className="px-4 py-3">Date</th><th className="px-4 py-3">Shift</th><th className="px-4 py-3">Rejection Reason</th><th className="px-4 py-3">System Reason</th><th className="px-4 py-3">Actions</th></tr>
+                <tr><th className="px-4 py-3">Employee</th><th className="px-4 py-3">LOB</th><th className="px-4 py-3">Date</th><th className="px-4 py-3">Shift</th><th className="px-4 py-3">Rejection Reason</th><th className="px-4 py-3">System Reason</th><th className="px-4 py-3">Actions</th></tr>
               </thead>
               <tbody className="divide-y">
                 {items.map((item) => (
                   <tr key={item.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3"><p className="font-bold">{item.employee_name}</p><p className="text-xs text-slate-500">{item.employee_code}</p></td>
+                    <td className="px-4 py-3 text-slate-600">{item.lob_name ?? <span className="text-slate-400">Unassigned</span>}</td>
                     <td className="px-4 py-3 whitespace-nowrap">{item.roster_date}</td>
                     <td className="px-4 py-3">{item.shift_name ? `${item.shift_name} (${item.start_time?.slice(0, 5)}–${item.end_time?.slice(0, 5)})` : item.is_week_off ? "Week Off" : "—"}</td>
                     <td className="px-4 py-3 max-w-[200px]"><p className="text-xs text-rose-700 bg-rose-50 rounded-lg px-2 py-1 line-clamp-2">{item.employee_rejection_reason ?? "—"}</p></td>

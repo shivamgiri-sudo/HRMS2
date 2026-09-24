@@ -1101,7 +1101,7 @@ export const autoRosterSyncedService = {
 
   async getAssignments(planId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT a.*, ac.change_lock_status, ac.acknowledgement_required, ac.acknowledgement_status, e.employee_code,
+      `SELECT a.*, ac.change_lock_status, ac.acknowledgement_required, ac.acknowledgement_status, e.employee_code, e.lob_id AS emp_lob_id,
               COALESCE(e.full_name, TRIM(CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')))) AS employee_name
        FROM wfm_roster_assignment a
        LEFT JOIN wfm_roster_assignment_control ac ON ac.assignment_id = a.id
@@ -1110,7 +1110,20 @@ export const autoRosterSyncedService = {
        ORDER BY a.roster_date, a.shift_start_time, e.employee_code`,
       [planId]
     );
-    return rows as AnyRow[];
+    // LOB names by parameterised lookup (never JOIN lob_master: mixed collations).
+    const lobIds = [...new Set((rows as AnyRow[]).map((r) => r.emp_lob_id).filter(Boolean).map(String))];
+    const lobNames = new Map<string, string>();
+    if (lobIds.length) {
+      const [lobRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, lob_name FROM lob_master WHERE id IN (${lobIds.map(() => "?").join(", ")})`,
+        lobIds
+      );
+      for (const l of lobRows ?? []) lobNames.set(String(l.id), String(l.lob_name));
+    }
+    return (rows as AnyRow[]).map((r) => ({
+      ...r,
+      emp_lob_name: r.emp_lob_id ? (lobNames.get(String(r.emp_lob_id)) ?? null) : null,
+    })) as AnyRow[];
   },
 
   async submitForApproval(planId: string, actorId: string) {

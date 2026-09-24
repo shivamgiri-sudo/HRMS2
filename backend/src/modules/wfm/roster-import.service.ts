@@ -4,6 +4,7 @@
  * No roster assignments are committed here.
  */
 
+import { loadLobNames } from '../../shared/lobNames.js';
 import * as XLSX from 'xlsx';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
@@ -1115,7 +1116,31 @@ export async function getImportRows(
     [batchId, ...stateParams]
   );
 
-  return { rows: rows as any[], total };
+  return { rows: await attachEmployeeLobNames(rows as any[]), total };
+}
+
+/**
+ * Adds `lob_name` (null = unassigned/unknown code) to each import row. Employees are matched by
+ * employee_code in JS, and the LOB name comes from a separate parameterised lookup, so no
+ * cross-table collation comparison is introduced.
+ */
+async function attachEmployeeLobNames(rows: any[]): Promise<any[]> {
+  const codes = [...new Set(rows.map((r) => String(r.employee_id_raw ?? '').trim()).filter(Boolean))];
+  if (!codes.length) return rows.map((r) => ({ ...r, lob_name: null }));
+  const codeToLobId = new Map<string, string>();
+  for (let i = 0; i < codes.length; i += 500) {
+    const chunk = codes.slice(i, i + 500);
+    const [emps] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_code, lob_id FROM employees WHERE employee_code IN (${chunk.map(() => '?').join(',')}) AND lob_id IS NOT NULL`,
+      chunk
+    );
+    for (const e of emps ?? []) codeToLobId.set(String(e.employee_code), String(e.lob_id));
+  }
+  const names = await loadLobNames(codeToLobId.values());
+  return rows.map((r) => {
+    const lobId = codeToLobId.get(String(r.employee_id_raw ?? '').trim());
+    return { ...r, lob_name: lobId ? (names.get(lobId) ?? null) : null };
+  });
 }
 
 // ── updateImportRow ────────────────────────────────────────────────────────────

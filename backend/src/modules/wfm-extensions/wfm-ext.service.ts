@@ -1,4 +1,6 @@
 import { randomUUID } from "crypto";
+import { lobCondition, type LobFilter } from "../../shared/lobFilter.js";
+import { withLobNames } from "../../shared/lobNames.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -27,7 +29,7 @@ function exitTypeFromPayload(data: any): string {
 }
 
 export const rosterSwapService = {
-  async list(filters: { status?: string; employee_id?: string } & ScopeFilter) {
+  async list(filters: { status?: string; employee_id?: string; lob?: LobFilter } & ScopeFilter) {
     const conds = ["1=1"];
     const params: unknown[] = [];
     if (filters.status) { conds.push("s.status = ?"); params.push(filters.status); }
@@ -38,8 +40,12 @@ export const rosterSwapService = {
       conds.push(`((${requesterScope}) OR (${targetScope}))`);
       params.push(...(filters.params ?? []), ...(filters.params ?? []));
     }
+    // LOB filter applies to the requester (e1).
+    const lobCond = filters.lob ? lobCondition(filters.lob, "e1") : null;
+    if (lobCond) { conds.push(lobCond.sql); params.push(...lobCond.params); }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT s.id,
+              e1.lob_id AS requester_lob_id,
               s.requester_emp_id AS requester_employee_id,
               s.swap_with_emp_id AS target_employee_id,
               DATE_FORMAT(s.swap_date, '%Y-%m-%d') AS swap_date,
@@ -58,7 +64,7 @@ export const rosterSwapService = {
         LIMIT 200`,
       params,
     );
-    return rows;
+    return withLobNames(rows, "requester_lob_id", "requester_lob_name");
   },
 
   async create(data: { requester_emp_id: string; swap_with_emp_id: string; swap_date: string; reason?: string }) {
