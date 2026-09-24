@@ -51,7 +51,7 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
   const rangeError = !from || !to ? "Choose both dates." : to < from ? "The end date must not be before the start date."
     : spanDays(from, to) > me.maxRangeDays ? `A range can span at most ${me.maxRangeDays} days.` : null;
 
-  const grid = useTeamRosterGrid({ from, to, search: debounced.trim(), offset, limit: pageSize, lobId }, !rangeError);
+  const grid = useTeamRosterGrid({ from, to, search: debounced.trim(), offset, limit: pageSize, lobId: lobId || undefined }, !rangeError);
   const templates = useTeamRosterTemplates(true);
   const draft = useTeamRosterDraft(true);
   const save = useSaveDraftLines();

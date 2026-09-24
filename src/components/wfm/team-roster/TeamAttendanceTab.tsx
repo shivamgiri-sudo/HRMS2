@@ -43,7 +43,7 @@ export default function TeamAttendanceTab({ me }: Props) {
   const [lobId, setLobId] = useState("");
   const [open, setOpen] = useState<{ employeeId: string } | null>(null);
   const debounced = useDebounce(search, 300);
-  const q = useTeamAttendance({ month, search: debounced.trim(), offset, limit: pageSize, lobId }, true);
+  const q = useTeamAttendance({ month, search: debounced.trim(), offset, limit: pageSize, lobId: lobId || undefined }, true);
   const data = q.data;
 
   return (
