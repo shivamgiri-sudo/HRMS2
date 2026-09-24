@@ -155,7 +155,7 @@ async function revenueDrilldownRows(period: string, scope: PnlDrilldownScope): P
               p.amount, p.source_created_at
          FROM billing_invoice_particular_snapshot p
          LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci = p.cost_centre_code COLLATE utf8mb4_unicode_ci
+                ON ccm.cost_centre_code = p.cost_centre_code COLLATE utf8mb4_unicode_ci
         WHERE p.period_code = ? AND ${cc.sql} AND ${OWN_COMPANY_SQL}
         ORDER BY p.amount DESC`,
       [period, cc.param],
@@ -174,7 +174,7 @@ async function revenueDrilldownRows(period: string, scope: PnlDrilldownScope): P
         `SELECT cn.bill_source_id, cn.credit_no, cn.cost_centre_code, ccm.cost_centre_name, cn.total_amt, cn.credit_date, cn.description
            FROM billing_credit_note_snapshot cn
            LEFT JOIN cost_centre_master ccm
-                  ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
+                  ON ccm.cost_centre_code = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
           WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${cc.sql} AND ${OWN_COMPANY_SQL}`,
         [period, cc.param],
       );
@@ -203,7 +203,7 @@ async function revenueDrilldownRows(period: string, scope: PnlDrilldownScope): P
                     SUM(CASE WHEN ps.billing_amt > 0 THEN ps.billing_amt ELSE ps.provision_amt END) AS provision_amount
                FROM billing_provision_snapshot ps
                LEFT JOIN cost_centre_master ccm
-                      ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
+                      ON ccm.cost_centre_code = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
               WHERE ps.period_code = ? AND ps.revenue_active = 1 AND ${cc.sql} AND ${OWN_COMPANY_SQL}
               GROUP BY ps.cost_centre_code COLLATE utf8mb4_unicode_ci
            ) pa
@@ -211,7 +211,7 @@ async function revenueDrilldownRows(period: string, scope: PnlDrilldownScope): P
              SELECT p.cost_centre_code COLLATE utf8mb4_unicode_ci AS cost_centre_code, SUM(p.amount) AS invoice_amount
                FROM billing_invoice_particular_snapshot p
                LEFT JOIN cost_centre_master ccm
-                      ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci = p.cost_centre_code COLLATE utf8mb4_unicode_ci
+                      ON ccm.cost_centre_code = p.cost_centre_code COLLATE utf8mb4_unicode_ci
               WHERE p.period_code = ? AND ${cc.sql} AND ${OWN_COMPANY_SQL}
               GROUP BY p.cost_centre_code COLLATE utf8mb4_unicode_ci
            ) ia ON ia.cost_centre_code = pa.cost_centre_code`,

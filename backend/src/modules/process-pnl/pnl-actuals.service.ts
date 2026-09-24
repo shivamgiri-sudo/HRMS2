@@ -54,7 +54,9 @@ function accumulate(rows: RowDataPacket[], into: ActualsByKey = emptyActuals()):
 
 /** Process a cost centre serves, from the employees posted to it. Same derivation as
  *  /api/org/cost-centres and listActiveCostCentres(), so every surface agrees. */
-const PROCESS_FROM_EMPLOYEES = `
+// Kept (exported) as the reference definition of the rule; no P&L reader uses the per-row form any
+// more — getDriverRevenueActuals moved to PROCESS_BY_COST_CENTRE on 2026-09-24.
+export const PROCESS_FROM_EMPLOYEES = `
   (SELECT e.process_id
      FROM employees e
     WHERE e.cost_centre_id = ccm.id AND e.active_status = 1 AND e.process_id IS NOT NULL
@@ -306,7 +308,7 @@ export async function readGrnSpend(
            FROM grn_entry_line_snapshot l
            JOIN grn_entry_snapshot ge ON ge.bill_source_id = l.grn_source_id
            LEFT JOIN cost_centre_master ccm
-                  ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                  ON ccm.cost_centre_code
                    = l.cost_centre_code COLLATE utf8mb4_unicode_ci
            ${processJoin("pc3")}
           WHERE ge.period_code = ? AND ge.is_rejected = 0 AND ${scope.sql}
@@ -417,12 +419,16 @@ export async function getCostCentreProcessIds(costCentreIds: string[]): Promise<
 export async function getDriverRevenueActuals(periodCode: string): Promise<ActualsByKey> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptyActuals();
   const [rows] = await db.execute<RowDataPacket[]>(
+    // Process via the precomputed PROCESS_BY_COST_CENTRE join (once per cost centre) rather than
+    // the per-row correlated PROCESS_FROM_EMPLOYEES subquery — the same modal-process rule, the
+    // same rows (see PROCESS_BY_COST_CENTRE's own note), without re-scanning employees per driver.
     `SELECT branch_id, process_id, SUM(amount) AS amount FROM (
        SELECT d.branch_id AS branch_id,
-              ${PROCESS_FROM_EMPLOYEES} AS process_id,
+              pc.process_id AS process_id,
               d.planned_headcount * d.revenue_rate_per_head AS amount
          FROM finance_cost_centre_monthly_driver d
          JOIN cost_centre_master ccm ON ccm.id = d.cost_centre_id
+         LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
         WHERE d.period_code = ?
      ) t
       GROUP BY branch_id, process_id`,
@@ -488,7 +494,7 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
               COALESCE(pc.process_id, ccm.process_id) AS process_id, SUM(p.amount) AS invoice_amount
          FROM billing_invoice_particular_snapshot p
          LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                ON ccm.cost_centre_code
                  = p.cost_centre_code COLLATE utf8mb4_unicode_ci
          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
         WHERE p.period_code = ? AND ${OWN_COMPANY_SQL}
@@ -501,7 +507,7 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
               SUM(CASE WHEN ps.billing_amt > 0 THEN ps.billing_amt ELSE ps.provision_amt END) AS provision_amount
          FROM billing_provision_snapshot ps
          LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                ON ccm.cost_centre_code
                  = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
         WHERE ps.period_code = ? AND ps.revenue_active = 1 AND ${OWN_COMPANY_SQL}
@@ -538,7 +544,7 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
         SELECT ccm.branch_id, ccm.id, COALESCE(pc.process_id, ccm.process_id), -cn.total_amt
           FROM billing_credit_note_snapshot cn
           LEFT JOIN cost_centre_master ccm
-                 ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                 ON ccm.cost_centre_code
                   = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
           LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
          WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}
@@ -549,7 +555,7 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
                COALESCE(pc.process_id, ccm.process_id) AS process_id, p.amount AS amount
           FROM billing_invoice_particular_snapshot p
           LEFT JOIN cost_centre_master ccm
-                 ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                 ON ccm.cost_centre_code
                   = p.cost_centre_code COLLATE utf8mb4_unicode_ci
           LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
          WHERE p.period_code = ? AND ${OWN_COMPANY_SQL}
@@ -557,7 +563,7 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
         SELECT ccm.branch_id, ccm.id, COALESCE(pc.process_id, ccm.process_id), -cn.total_amt
           FROM billing_credit_note_snapshot cn
           LEFT JOIN cost_centre_master ccm
-                 ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                 ON ccm.cost_centre_code
                   = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
           LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
          WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}

@@ -72,7 +72,7 @@ export async function getReceivablesAgeing(filters: { branchId?: string; process
             DATEDIFF(CURDATE(), bis.invoice_date) AS daysSinceInvoice
        FROM billing_invoice_snapshot bis
        LEFT JOIN cost_centre_master ccm
-              ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci = bis.cost_centre_code COLLATE utf8mb4_unicode_ci
+              ON ccm.cost_centre_code = bis.cost_centre_code COLLATE utf8mb4_unicode_ci
        LEFT JOIN process_master pm ON pm.id = ccm.process_id
       WHERE bis.payment_status = '0' AND bis.invoice_date IS NOT NULL ${branchClause} ${processClause}`,
     params

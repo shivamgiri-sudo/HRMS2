@@ -263,7 +263,7 @@ async function readRevenue(period: string): Promise<Map<string, RevenueRow>> {
               SUM(p.amount) AS invoice_amount
          FROM billing_invoice_particular_snapshot p
          LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                ON ccm.cost_centre_code
                  = p.cost_centre_code COLLATE utf8mb4_unicode_ci
         WHERE p.period_code = ? AND ${OWN_COMPANY_SQL}
         GROUP BY p.cost_centre_code COLLATE utf8mb4_unicode_ci, ccm.id
@@ -274,7 +274,7 @@ async function readRevenue(period: string): Promise<Map<string, RevenueRow>> {
               SUM(CASE WHEN ps.billing_amt > 0 THEN ps.billing_amt ELSE ps.provision_amt END) AS provision_amount
          FROM billing_provision_snapshot ps
          LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                ON ccm.cost_centre_code
                  = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
         WHERE ps.period_code = ? AND ps.revenue_active = 1 AND ${OWN_COMPANY_SQL}
         GROUP BY ps.cost_centre_code COLLATE utf8mb4_unicode_ci, ccm.id
@@ -303,7 +303,7 @@ async function readRevenue(period: string): Promise<Map<string, RevenueRow>> {
                 0, 0, 0, cn.total_amt
            FROM billing_credit_note_snapshot cn
            LEFT JOIN cost_centre_master ccm
-                  ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                  ON ccm.cost_centre_code
                    = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
           WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}` : ""}
        ) revenue
@@ -320,7 +320,7 @@ async function readRevenue(period: string): Promise<Map<string, RevenueRow>> {
                 0 AS credit_note
            FROM billing_invoice_particular_snapshot p
            LEFT JOIN cost_centre_master ccm
-                  ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                  ON ccm.cost_centre_code
                    = p.cost_centre_code COLLATE utf8mb4_unicode_ci
           WHERE p.period_code = ? AND ${OWN_COMPANY_SQL}
          ${hasCreditNote ? `
@@ -328,7 +328,7 @@ async function readRevenue(period: string): Promise<Map<string, RevenueRow>> {
          SELECT ccm.id, cn.cost_centre_code COLLATE utf8mb4_unicode_ci, 0, cn.total_amt
            FROM billing_credit_note_snapshot cn
            LEFT JOIN cost_centre_master ccm
-                  ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                  ON ccm.cost_centre_code
                    = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
           WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}` : ""}
        ) revenue

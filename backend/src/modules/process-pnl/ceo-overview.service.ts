@@ -329,7 +329,7 @@ async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string,
               ccm.branch_id AS branch_id, SUM(p.amount) AS invoice_amount
          FROM billing_invoice_particular_snapshot p
          LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                ON ccm.cost_centre_code
                  = p.cost_centre_code COLLATE utf8mb4_unicode_ci
         WHERE ${invWhere.join(" AND ")}
         GROUP BY p.cost_centre_code COLLATE utf8mb4_unicode_ci, ccm.branch_id
@@ -340,7 +340,7 @@ async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string,
               SUM(CASE WHEN ps.billing_amt > 0 THEN ps.billing_amt ELSE ps.provision_amt END) AS provision_amount
          FROM billing_provision_snapshot ps
          LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                ON ccm.cost_centre_code
                  = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
         WHERE ${provWhere.join(" AND ")}
         GROUP BY ps.cost_centre_code COLLATE utf8mb4_unicode_ci, ccm.branch_id
@@ -359,7 +359,7 @@ async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string,
        SELECT ccm.branch_id AS branch_id, -cn.total_amt AS amount
          FROM billing_credit_note_snapshot cn
          LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                ON ccm.cost_centre_code
                  = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
         WHERE ${creditWhere.join(" AND ")}` : ""}
      ) combined
@@ -368,7 +368,7 @@ async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string,
        SELECT ccm.branch_id AS branch_id, p.amount AS amount
          FROM billing_invoice_particular_snapshot p
          LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                ON ccm.cost_centre_code
                  = p.cost_centre_code COLLATE utf8mb4_unicode_ci
         WHERE ${invWhere.join(" AND ")}
        ${hasCreditNote ? `
@@ -376,7 +376,7 @@ async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string,
        SELECT ccm.branch_id AS branch_id, -cn.total_amt AS amount
          FROM billing_credit_note_snapshot cn
          LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                ON ccm.cost_centre_code
                  = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
         WHERE ${creditWhere.join(" AND ")}` : ""}
      ) combined
@@ -714,7 +714,7 @@ async function billingCompleteness(
             COUNT(*) AS line_count, SUM(p.amount) AS amount
        FROM billing_invoice_particular_snapshot p
        LEFT JOIN cost_centre_master ccm
-              ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+              ON ccm.cost_centre_code
                = p.cost_centre_code COLLATE utf8mb4_unicode_ci
       WHERE ${where.join(" AND ")}
       GROUP BY p.period_code, ccm.branch_id`,
@@ -1074,7 +1074,7 @@ async function filterOptions(period: string, scope: CeoScope) {
         `SELECT DISTINCT ccm.id AS id, ccm.cost_centre_code AS code, ${ccProcessNameSql()} AS process_name
            FROM billing_invoice_particular_snapshot p
            JOIN cost_centre_master ccm
-             ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+             ON ccm.cost_centre_code
               = p.cost_centre_code COLLATE utf8mb4_unicode_ci
            ${ccProcessJoin()}
           WHERE p.period_code = ?
