@@ -513,16 +513,22 @@ async function issueIdOfTransaction(transactionId: string): Promise<string | nul
   return id ? String(id) : null;
 }
 
+/** Subject CN of the company's own signing certificate (see dscConfig.service generateSelfSignedP12). */
+const COMPANY_SIGNER_COMMON_NAME = "Mas Callnet India Pvt. Ltd.";
+
 /**
  * Alert-only fraud signal, same as the joining kit: compare the CA-verified
  * signer named in the eSign certificate with the person the letter was issued
  * to. Never blocks or reverses a signature.
  */
-async function recordSignerIdentity(tx: SyncRow, issueId: string | null, signedBytes: Buffer): Promise<void> {
+export async function recordSignerIdentity(tx: SyncRow, issueId: string | null, signedBytes: Buffer): Promise<void> {
   try {
-    const { extractEsignCertificateIdentity } = await import("../../shared/esignCertificateIdentity.js");
+    const { extractLatestEsignCertificateIdentity } = await import("../../shared/esignCertificateIdentity.js");
     const { classifyNameMatch } = await import("../ats/indian-name-match.js");
-    const identity = extractEsignCertificateIdentity(signedBytes);
+    // The letter is company-signed BEFORE the employee signs, so the returned PDF
+    // carries two signatures. The employee's is the last one; the company's own
+    // certificate must never be read as the signer (it would always mismatch).
+    const identity = extractLatestEsignCertificateIdentity(signedBytes, { excludeCommonNames: [COMPANY_SIGNER_COMMON_NAME] });
     const ownerName = String(tx.employee_name ?? "");
     const match = identity?.commonName ? classifyNameMatch(ownerName, identity.commonName) : null;
     const matchTier = match?.tier ?? "unverifiable";
