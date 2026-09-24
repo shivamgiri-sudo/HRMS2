@@ -5,6 +5,7 @@ import { getCurrentDateIST } from "../../shared/istDate.js";
 import { getInvoicedRevenueActuals, OWN_COMPANY_SQL, getApprovedCostCentreSplits } from "./pnl-actuals.service.js";
 import { resolveRevenueAtRisk } from "./canonical-pnl.service.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
+import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
 import type {
   PnlQueryFilters,
   PnlSummaryResponse,
@@ -1010,6 +1011,22 @@ function actualVendorStatusExpr(alias: string, columns: Set<string>) {
   return `LOWER(COALESCE(${statusColumns.join(", ")}, '')) IN ('approved','finance_approved','posted','paid')`;
 }
 
+/*
+ * OWNER RULE 2026-09-24: on the Process P&L, "Revenue and GRN — all components — must be NON-GST
+ * amounts". Every vendor-payable and GRN amount this engine reads is therefore the taxable value:
+ *   - vendor_payment_tracking: amount_without_tax (was due_amount, the GST-INCLUSIVE payable, so
+ *     these figures fall by the FULL GST on each payable);
+ *   - grn_request: amount_without_tax (was amount, also GST-inclusive).
+ * Both go through pnl-ex-gst.ts, which guards legacy rows whose ex-GST column is still the 0
+ * default. A database without vendor_payment_tracking.amount_without_tax (pre-sql/411) keeps the
+ * old due_amount read rather than failing the whole P&L.
+ */
+function vendorPayableAmountExpr(columns: Set<string>): string {
+  return columns.has("amount_without_tax") ? vendorPayableExGstSql("vpt") : "COALESCE(vpt.due_amount, 0)";
+}
+
+const GRN_EX_GST_AMOUNT = grnRequestExGstSql("g");
+
 function actualGrnStatusExpr(alias: string) {
   return `LOWER(COALESCE(${alias}.status, '')) IN ('approved','posted','paid')`;
 }
@@ -1025,7 +1042,7 @@ async function getVendorDirectCostMap(processIds: string[], start: string, end: 
     const rows = await queryRows<RowDataPacket>(
       `SELECT
           ${resolvedProcessExpr} AS process_id,
-          SUM(COALESCE(vpt.due_amount, 0)) AS approved_amount,
+          SUM(${vendorPayableAmountExpr(vendorPaymentColumns)}) AS approved_amount,
           COUNT(vpt.id) AS item_count,
           MAX(COALESCE(vpt.payment_date, vpt.due_date, vpt.updated_at, vpt.created_at)) AS freshness
         FROM vendor_payment_tracking vpt
@@ -1052,7 +1069,7 @@ async function getVendorDirectCostMap(processIds: string[], start: string, end: 
     const rows = await queryRows<RowDataPacket>(
       `SELECT
           ${resolvedProcessExpr} AS process_id,
-          SUM(COALESCE(g.amount, 0)) AS approved_amount,
+          SUM(${GRN_EX_GST_AMOUNT}) AS approved_amount,
           COUNT(g.id) AS item_count,
           MAX(COALESCE(g.reviewed_at, g.due_date, g.bill_date, g.updated_at, g.created_at)) AS freshness
         FROM grn_request g
@@ -1110,7 +1127,7 @@ async function getIndirectAllocationMap(
    * INTENTIONALLY NOT pnl-actuals.service.ts's readGrnSpend() (the shared GRN reader the Statement,
    * CEO Overview and Live P&L use — see its banner, 2026-09-23). This pool answers a different
    * question: vendor PAYABLES classified 'indirect' (directCostClassExpr) falling DUE in the month
-   * (vendor_payment_tracking.due_amount by due_date), spread over a branch's processes by
+   * (vendor_payment_tracking by due_date, ex-GST since 2026-09-24), spread over a branch's processes by
    * headcount — a payables/cash view for this legacy per-process engine, not accrual GRN
    * consumption by accounting_period. The grn_request fallback below only runs when the payables
    * table does not exist at all. Do not "reconcile" the two by editing one of them: a payable and
@@ -1121,7 +1138,7 @@ async function getIndirectAllocationMap(
   if (branchIds.length > 0 && await tableExists("vendor_payment_tracking")) {
     const resolvedProcessExpr = effectiveProcessExpr("vpt", costCentreProcessIdSupported);
     const rows = await queryRows<RowDataPacket>(
-      `SELECT vpt.branch_id, SUM(COALESCE(vpt.due_amount, 0)) AS pool_amount
+      `SELECT vpt.branch_id, SUM(${vendorPayableAmountExpr(vendorPaymentColumns)}) AS pool_amount
         FROM vendor_payment_tracking vpt
          LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
         WHERE vpt.branch_id IN (${placeholders(branchIds)})
@@ -1137,7 +1154,7 @@ async function getIndirectAllocationMap(
   } else if (branchIds.length > 0 && await tableExists("grn_request")) {
     const resolvedProcessExpr = effectiveProcessExpr("g", costCentreProcessIdSupported);
     const rows = await queryRows<RowDataPacket>(
-      `SELECT g.branch_id, SUM(COALESCE(g.amount, 0)) AS pool_amount
+      `SELECT g.branch_id, SUM(${GRN_EX_GST_AMOUNT}) AS pool_amount
         FROM grn_request g
          LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
         WHERE g.branch_id IN (${placeholders(branchIds)})
@@ -1621,7 +1638,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
 
     const indirectRows = hasVendorPayments
       ? await queryRows<RowDataPacket>(
-          `SELECT ms.month_key, SUM(COALESCE(vpt.due_amount, 0)) AS total
+          `SELECT ms.month_key, SUM(${vendorPayableAmountExpr(vendorPaymentColumns)}) AS total
              FROM (${seriesSql}) ms
              LEFT JOIN vendor_payment_tracking vpt
                ON COALESCE(vpt.due_date, vpt.created_at) BETWEEN ms.start_date AND ms.end_date
@@ -1633,7 +1650,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
         ).catch(() => [])
       : hasGrnRequest
       ? await queryRows<RowDataPacket>(
-          `SELECT ms.month_key, SUM(COALESCE(g.amount, 0)) AS total
+          `SELECT ms.month_key, SUM(${GRN_EX_GST_AMOUNT}) AS total
              FROM (${seriesSql}) ms
              LEFT JOIN grn_request g
                ON g.accounting_period = ms.month_key
@@ -1698,7 +1715,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
     if (hasVendorPayments) {
       const resolvedProcessExpr = effectiveProcessExpr("vpt", costCentreProcessIdSupported);
       const indirectRows = await queryRows<RowDataPacket>(
-        `SELECT SUM(COALESCE(vpt.due_amount, 0)) AS total
+        `SELECT SUM(${vendorPayableAmountExpr(vendorPaymentColumns)}) AS total
            FROM vendor_payment_tracking vpt
            LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
           WHERE ${directCostClassExpr("vpt", resolvedProcessExpr)} = 'indirect'
@@ -1710,7 +1727,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
     } else if (hasGrnRequest) {
       const resolvedProcessExpr = effectiveProcessExpr("g", costCentreProcessIdSupported);
       const indirectRows = await queryRows<RowDataPacket>(
-        `SELECT SUM(COALESCE(g.amount, 0)) AS total
+        `SELECT SUM(${GRN_EX_GST_AMOUNT}) AS total
            FROM grn_request g
            LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
           WHERE ${directCostClassExpr("g", resolvedProcessExpr)} = 'indirect'
@@ -2209,7 +2226,7 @@ export const processPnlService = {
             CASE WHEN grn.grn_type = 'imprest' THEN 'imprest_grn' ELSE 'vendor_grn' END AS source_type,
             COALESCE(vpt.grn_number, CONCAT('GRN-', vpt.id)) AS reference,
             COALESCE(vpt.due_date, grn.bill_date, vpt.created_at) AS entry_date,
-            vpt.due_amount AS amount,
+            ${vendorPayableAmountExpr(vendorPaymentColumns)} AS amount,
             NULL AS description,
             vpt.vendor_name,
            vpt.payment_status AS status,
@@ -2238,7 +2255,7 @@ export const processPnlService = {
             CASE WHEN g.grn_type = 'imprest' THEN 'imprest_grn' ELSE 'vendor_grn' END AS source_type,
             COALESCE(g.grn_number, CONCAT('GRN-', g.id)) AS reference,
             COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) AS entry_date,
-            g.amount,
+            ${GRN_EX_GST_AMOUNT} AS amount,
             g.remarks AS description,
             g.vendor_name,
             g.status,
@@ -2307,7 +2324,7 @@ export const processPnlService = {
           `SELECT
               vpt.head,
               vpt.sub_head,
-              SUM(COALESCE(vpt.due_amount, 0)) AS branch_pool_amount
+              SUM(${vendorPayableAmountExpr(vendorPaymentColumns)}) AS branch_pool_amount
             FROM vendor_payment_tracking vpt
             LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
            WHERE vpt.branch_id = ?
@@ -2323,7 +2340,7 @@ export const processPnlService = {
           `SELECT
               g.head,
               g.sub_head,
-              SUM(COALESCE(g.amount, 0)) AS branch_pool_amount
+              SUM(${GRN_EX_GST_AMOUNT}) AS branch_pool_amount
             FROM grn_request g
             LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
            WHERE g.branch_id = ?
@@ -2489,7 +2506,7 @@ export const processPnlService = {
         `SELECT
             COALESCE(vpt.grn_number, CONCAT('GRN-', vpt.id)) AS reference,
             COALESCE(vpt.due_date, grn.bill_date, vpt.created_at) AS entry_date,
-            vpt.due_amount AS amount,
+            ${vendorPayableAmountExpr(vendorPaymentColumns)} AS amount,
             vpt.payment_status AS status,
             NULLIF(TRIM(COALESCE(grn.description, '')), '') AS note
            FROM vendor_payment_tracking vpt
@@ -2520,7 +2537,7 @@ export const processPnlService = {
         `SELECT
             COALESCE(g.grn_number, CONCAT('GRN-', g.id)) AS reference,
             COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) AS entry_date,
-            g.amount,
+            ${GRN_EX_GST_AMOUNT} AS amount,
             g.status,
             -- The Note column was empty on five of the ledger's six entry types because only
             -- adjustments supplied one. A GRN carries the raiser's own description of what was

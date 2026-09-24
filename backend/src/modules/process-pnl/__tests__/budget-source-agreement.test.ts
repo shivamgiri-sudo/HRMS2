@@ -58,8 +58,9 @@ CREATE TABLE cost_centre_master (id TEXT PRIMARY KEY, cost_centre_code TEXT, cos
 CREATE TABLE employees (id TEXT PRIMARY KEY, process_id TEXT, cost_centre_id TEXT, branch_id TEXT);
 CREATE TABLE finance_budget_header (id TEXT PRIMARY KEY, branch_id TEXT, period_code TEXT, status TEXT, pnl_budget_amount REAL);
 CREATE TABLE finance_budget_line (id TEXT PRIMARY KEY, budget_id TEXT, cost_centre_id TEXT, head TEXT, sub_head TEXT,
-  item_name TEXT, pnl_cost_amount REAL);
-CREATE TABLE finance_budget_line_allocation (id TEXT PRIMARY KEY, budget_line_id TEXT, cost_centre_id TEXT, pnl_cost_amount REAL);
+  item_name TEXT, pnl_cost_amount REAL, base_amount REAL, gross_amount REAL, tax_amount REAL);
+CREATE TABLE finance_budget_line_allocation (id TEXT PRIMARY KEY, budget_line_id TEXT, cost_centre_id TEXT, pnl_cost_amount REAL,
+  base_amount REAL, gross_amount REAL, tax_amount REAL);
 CREATE TABLE finance_budget_snapshot (bill_source_id INT, branch_name TEXT, period_code TEXT, active_status INT,
   is_rejected INT, reopen_additional_amount REAL);
 CREATE TABLE finance_budget_line_snapshot (bill_source_id INT, budget_source_id INT, period_code TEXT, expense_type TEXT,
@@ -74,10 +75,13 @@ INSERT INTO cost_centre_master VALUES
 INSERT INTO employees VALUES ('E1','P100','cc100','B1'), ('E2','P577','cc577','B2');
 INSERT INTO finance_budget_header VALUES
   ('H1','B1','2026-08','active',50000), ('H0','B1','2026-08','closed',99999), ('H2','B2','2026-08','draft',12345);
+-- Tax-free lines (base = pnl_cost = gross), so the fixture's totals are the same on the ex-GST basis
+-- the budget source reads since the 2026-09-24 owner rule. budget-ex-gst-basis.test.ts covers GST.
 INSERT INTO finance_budget_line VALUES
-  ('L1','H1','cc100','Admin','Rent','Floor',40000), ('L2','H1',NULL,'Utilities',NULL,'Power',10000),
-  ('L0','H0','cc100','Admin','Rent','Old',99999), ('L9','H2','cc577','Admin','Rent','Draft',12345);
-INSERT INTO finance_budget_line_allocation VALUES ('A1','L2','cc100',6000), ('A2','L2','cc576',4000);
+  ('L1','H1','cc100','Admin','Rent','Floor',40000,40000,40000,0), ('L2','H1',NULL,'Utilities',NULL,'Power',10000,10000,10000,0),
+  ('L0','H0','cc100','Admin','Rent','Old',99999,99999,99999,0), ('L9','H2','cc577','Admin','Rent','Draft',12345,12345,12345,0);
+INSERT INTO finance_budget_line_allocation VALUES
+  ('A1','L2','cc100',6000,6000,6000,0), ('A2','L2','cc576',4000,4000,4000,0);
 INSERT INTO finance_budget_snapshot VALUES (10,'Noida','2026-08',1,0,8888), (20,'NOIDA-2','2026-08',1,0,3000);
 INSERT INTO finance_budget_line_snapshot VALUES
   (1,10,'2026-08','CostCenter','BSS/IB/NOIDA/100',77777), (2,20,'2026-08','CostCenter','BSS/BO/NOIDA-2/577',25000),

@@ -351,7 +351,7 @@ async function readRevenue(period: string): Promise<Map<string, RevenueRow>> {
  * this read ONLY the db_bill mirror, which was the whole GRN story when it was written and has
  * not been since — matching by GRN NUMBER found 97% of the app's own consumed allocations already
  * present in the mirror under the same number, so this tab was double-counting the same real
- * spend. The app's own grn_cost_allocation (carrying pnl_cost_amount, proper tax treatment) is now
+ * spend. The app's own grn_cost_allocation (read ex-GST at amount_without_tax since 2026-09-24) is now
  * the primary source; the mirror UNION only ever contributes a GRN the app has not captured.
  */
 /*

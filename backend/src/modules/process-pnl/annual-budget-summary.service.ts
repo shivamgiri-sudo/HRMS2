@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
+import { grnRequestExGstSql } from "./pnl-ex-gst.js";
 
 /**
  * Annual Budget Summary — budget vs. actual, per branch (or all branches), for every month
@@ -110,6 +111,10 @@ async function budgetByBranchForPeriod(period: string): Promise<Map<string, numb
  *  own inclusion rule (grn-report.service.ts): accounting_period is Finance Month (never
  *  bill_date, see [[hrms2-grn-reports-finance-month]]), rejected/cancelled excluded.
  *
+ * EX-GST (owner rule 2026-09-24: P&L GRN must be non-GST): reads amount_without_tax, not the
+ * GST-inclusive amount_with_tax it used to. The budget side here is the db_bill mirror's
+ * l.amount, whose GST basis cannot be derived from the mirror (see pnl-budget-source.ts).
+ *
  * Resolved through the SAME name-collapsed branch id budgetByBranchForPeriod() uses — found
  * live 2026-08-21: branch_master carries both "HEAD OFFICE" and "Head Office" as separate
  * rows, and without this, GRN actuals land on one id while budget (already deduped) lands on
@@ -118,7 +123,7 @@ async function budgetByBranchForPeriod(period: string): Promise<Map<string, numb
 async function actualByBranchForPeriod(period: string): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT bm.id AS branch_id, SUM(g.amount_with_tax) AS amount
+    `SELECT bm.id AS branch_id, SUM(${grnRequestExGstSql("g")}) AS amount
        FROM grn_request g
        LEFT JOIN branch_master gb ON gb.id = g.branch_id
        LEFT JOIN (

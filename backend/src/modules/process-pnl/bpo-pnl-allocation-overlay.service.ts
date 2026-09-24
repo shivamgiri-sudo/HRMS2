@@ -1,10 +1,11 @@
 import type { RowDataPacket } from "mysql2";
-import { tableExists } from "../../shared/dbHelpers.js";
+import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
 import { bpoPnlService, safeRows, type BpoPnlRow } from "./bpo-pnl.service.js";
 import { allocatePoolAmount, type AllocationShare, type ManualAllocationWarning } from "./bpo-pnl.calculation.js";
 import { getAdjustedTotal } from "./pnl-manual-adjustment.service.js";
 import { costComponentDataFlags } from "./pnl-cost-component-flags.js";
+import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
 
 type BpoPnlSummary = Awaited<ReturnType<typeof bpoPnlService.getSummary>>;
 
@@ -34,7 +35,8 @@ interface AllocationViewRow extends RowDataPacket {
   branch_id: string | null;
   period_code: string;
   pnl_bucket: SupportedPnlBucket | string;
-  pnl_cost_amount: number;
+  /** Ex-GST allocation cost (owner rule 2026-09-24) — see newAllocationRows. */
+  amount: number;
   allocation_count: number;
   freshness: string | null;
 }
@@ -196,21 +198,49 @@ async function allocationPolicies(period: string) {
   );
 }
 
+/*
+ * OWNER RULE 2026-09-24: P&L GRN is ex-GST. vw_process_pnl_grn_allocation gained ex_gst_amount in
+ * sql/1852 (its pnl_cost_amount carries non-recoverable GST). Until that migration has run on a
+ * database the column is absent, and this falls back to pnl_cost_amount rather than failing the
+ * whole /pnl/bpo summary. Cached per process: the migration is applied at deploy, before restart.
+ */
+let viewExGstColumn: Promise<boolean> | null = null;
+function allocationViewHasExGst(): Promise<boolean> {
+  if (!viewExGstColumn) {
+    viewExGstColumn = queryRows<RowDataPacket>(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'vw_process_pnl_grn_allocation'
+          AND column_name = 'ex_gst_amount'
+        LIMIT 1`,
+    )
+      .then((rows) => rows.length > 0)
+      .catch((error) => {
+        viewExGstColumn = null;
+        throw error;
+      });
+  }
+  return viewExGstColumn;
+}
+
 async function newAllocationRows(period: string) {
   // period_code is COALESCE(grn_cost_allocation.recognition_period, CONVERT(DATE_FORMAT(...)
   // USING utf8mb4)) inside the view — MySQL resolves that to an indeterminate collation, so a
   // bare equality throws ER_CANT_AGGREGATE_2COLLATIONS on every call (confirmed live, 2026-08-22).
   // Fixed at the query layer (no view/DDL change) — same COLLATE-on-comparison idiom used
   // throughout ceo-overview.service.ts for the same class of bug.
+  const amountColumn = (await allocationViewHasExGst()) ? "ex_gst_amount" : "pnl_cost_amount";
   return safeRows<AllocationViewRow>(
     `SELECT process_id, branch_id, period_code, pnl_bucket,
-            pnl_cost_amount, allocation_count, freshness
+            ${amountColumn} AS amount, allocation_count, freshness
        FROM vw_process_pnl_grn_allocation
       WHERE period_code COLLATE utf8mb4_unicode_ci = ?`,
     [period]
   );
 }
 
+// Both legs EX-GST (owner rule 2026-09-24). Were COALESCE(vpt.pnl_cost_amount, vpt.due_amount)
+// and COALESCE(g.pnl_cost_amount, g.amount) — due_amount is the GST-inclusive payable.
 async function legacyAllocatedGrnRows(period: string) {
   const vendorRows = await safeRows<LegacyAttributionRow>(
     `SELECT
@@ -219,7 +249,7 @@ async function legacyAllocatedGrnRows(period: string) {
         COALESCE(vpt.cost_class,
           CASE WHEN COALESCE(vpt.process_id, ccm.process_id) IS NOT NULL THEN 'direct' ELSE 'indirect' END
         ) AS cost_class,
-        SUM(COALESCE(vpt.pnl_cost_amount, vpt.due_amount, 0)) AS amount
+        SUM(${vendorPayableExGstSql("vpt")}) AS amount
        FROM vendor_payment_tracking vpt
        JOIN grn_request g ON g.id = vpt.grn_request_id
        JOIN (
@@ -248,7 +278,7 @@ async function legacyAllocatedGrnRows(period: string) {
         COALESCE(g.cost_class,
           CASE WHEN COALESCE(g.process_id, ccm.process_id) IS NOT NULL THEN 'direct' ELSE 'indirect' END
         ) AS cost_class,
-        SUM(COALESCE(g.pnl_cost_amount, g.amount, 0)) AS amount
+        SUM(${grnRequestExGstSql("g")}) AS amount
        FROM grn_request g
        JOIN (
          SELECT grn_request_id
@@ -288,7 +318,7 @@ async function buildAllocationMaps(rows: BpoPnlRow[], period: string) {
   const warnings: ManualAllocationWarning[] = [];
 
   for (const allocation of allocations) {
-    const amount = n(allocation.pnl_cost_amount);
+    const amount = n(allocation.amount);
     latestFreshness = [latestFreshness, allocation.freshness]
       .filter((value): value is string => Boolean(value))
       .sort()

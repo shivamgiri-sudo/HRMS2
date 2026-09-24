@@ -37,7 +37,8 @@ beforeEach(() => {
 
     // spendByBranch's app-side query: grn_cost_allocation joined to grn_request. Answer as a real
     // table would, keyed on whichever date column the query text actually filters on.
-    if (q.includes("FROM grn_cost_allocation") && q.includes("pnl_cost_amount")) {
+    // Keyed on amount_without_tax: the shared reader is ex-GST since the 2026-09-24 owner rule.
+    if (q.includes("FROM grn_cost_allocation") && q.includes("amount_without_tax")) {
       const period = params[0];
       const matches = q.includes("gr.accounting_period = ?")
         ? period === GRN_ACCOUNTING_PERIOD

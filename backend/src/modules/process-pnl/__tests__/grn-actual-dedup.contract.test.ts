@@ -64,8 +64,11 @@ describe("GRN actual spend is not double-counted across the app and the db_bill 
   it("pnl-actuals.service.ts readGrnSpend is app-side-first, mirror fills gaps only, company-filtered on every leg", () => {
     const body = readerBody();
     expect(body).toContain("FROM grn_cost_allocation a");
-    expect(body).toContain("a.pnl_cost_amount AS amount");
-    expect(body).toContain("gr.pnl_cost_amount AS amount");
+    // Owner rule 2026-09-24: P&L GRN is EX-GST. Both app legs read amount_without_tax through
+    // pnl-ex-gst.ts, never pnl_cost_amount (which carried the non-recoverable GST slice).
+    expect(body).toContain('${grnAllocationExGstSql("a")} AS amount');
+    expect(body).toContain('${grnRequestExGstSql("gr")} AS amount');
+    expect(body).not.toContain("pnl_cost_amount");
     expect(body).toContain("FROM grn_entry_line_snapshot l");
     expect(body).toContain("l.amount AS amount");
     expect(body).not.toContain("l.total");

@@ -499,14 +499,14 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
  * the CEO's own headline spend figure.
  *
  * Same resolution as that fix, for the same reason: the app's own consumed allocation is the
- * PRIMARY source — it carries pnl_cost_amount (proper non-recoverable-GST treatment) which the
+ * PRIMARY source — it carries a recorded tax split (read ex-GST since 2026-09-24) which the
  * mirror's flat l.amount does not — and the mirror UNION only ever contributes a GRN number the
  * app has not captured, via the same NOT EXISTS guard.
  */
 async function spendByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
   // 2026-09-23: a grouping over pnl-actuals.service.ts's readGrnSpend(), the single GRN reader
   // shared with the P&L Statement and Live P&L — same legs, same accounting_period, same
-  // OWN_COMPANY_SQL rule, same pnl_cost_amount, same mirror dedup guard. This tab previously had
+  // OWN_COMPANY_SQL rule, same ex-GST amount (amount_without_tax, 2026-09-24), same mirror dedup guard. This tab previously had
   // its own copy that never counted ordinary (non-Smart) GRNs without allocation rows. Scope
   // (cost centres / processes) is applied inside the reader to every leg alike.
   const out = new Map<string, number>();

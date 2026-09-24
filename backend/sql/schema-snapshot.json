@@ -19078,7 +19078,8 @@
       "gross_amount",
       "allocation_count",
       "grn_count",
-      "freshness"
+      "freshness",
+      "ex_gst_amount"
     ],
     "vw_vendor_payment_lob_allocation": [
       "vendor_payment_id",

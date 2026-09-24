@@ -466,7 +466,7 @@ const GRN_SOURCE_LABEL: Record<string, string> = {
  * de-dup guard against GRNs the app had already captured — so it neither contained the app's
  * spend nor excluded the mirror's duplicates of it, and could not tie to the tile.
  *
- * Same legs, same company rule, same pnl_cost_amount, same dedup; only one row per GRN. Branch
+ * Same legs, same company rule, same ex-GST amount (2026-09-24), same dedup; only one row per GRN. Branch
  * scope keeps the reader's own branch attribution (cost centre's branch, else the GRN's). Reserved
  * (approved, not yet consumed) GRN is added inside the open estimate window — the same rule both
  * Live P&L (grnEstimated) and CEO Overview apply — and flagged as estimated.
