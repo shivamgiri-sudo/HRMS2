@@ -4,7 +4,7 @@ import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 
 import { blankToNull } from "../../shared/sql-values.js";
-import { ownCompanyBranchSql, ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
+import { notDialDeskProcessSql, ownCompanyBranchSql, ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 import { syncCostCentreRelatedTables } from "../../shared/cost-centre-sync.js";
 import { clearBranchLetterheadCache } from "./branchAddress.service.js";
 // ── Whitelisted master tables to prevent SQL injection ────────────────────────
@@ -1088,6 +1088,9 @@ export const processService = {
     } else {
       whereClauses.push("pm.active_status = 1"); // Default
     }
+
+    // DialDesk is an IDC entity, never a MAS Callnet process (owner rule 2026-09-24).
+    whereClauses.push(notDialDeskProcessSql("pm", "bm"));
 
     // Search filter
     if (q && q.trim()) {
