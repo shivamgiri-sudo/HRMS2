@@ -1,3 +1,5 @@
+import { escape, type RowDataPacket } from "mysql2";
+
 /**
  * HRMS shows MAS Callnet cost centres only (owner rule, 2026-09-24). cost_centre_master also holds
  * IDC and Pikquick cost centres synced from db_bill; they must not surface in any HRMS picker or
@@ -38,13 +40,46 @@ export function notDialDeskProcessSql(processAlias: string, branchAlias: string)
   return `(${ownCompanyBranchSql(branchAlias)} AND ${id} NOT LIKE '%dialdesk%' AND ${id} NOT LIKE '%ispark%' AND ${id} NOT LIKE '%dataconnect%')`;
 }
 
+const HIDDEN_GRN_SCOPE_TTL_MS = 5 * 60 * 1000;
+let hiddenGrnScope: { at: number; branchIds: string[]; costCentreIds: string[] } | null = null;
+
+/**
+ * Loads the ids of the branches and cost centres that are not MAS Callnet's, so ownCompanyGrnSql
+ * can emit two short literal id lists. The equivalent NOT IN (subquery) took 4s on the 85k-row GRN
+ * table and made the GRN list take 25s. Callers await this before building the query; without it
+ * ownCompanyGrnSql still returns a correct (slower) subquery form.
+ */
+export async function refreshHiddenGrnScope(): Promise<void> {
+  if (process.env.VITEST === "true" || process.env.NODE_ENV === "test") return;
+  if (hiddenGrnScope && Date.now() - hiddenGrnScope.at < HIDDEN_GRN_SCOPE_TTL_MS) return;
+  const { db } = await import("../db/mysql.js");
+  const [branches] = await db.query<RowDataPacket[]>(`SELECT hb.id FROM branch_master hb WHERE NOT ${ownCompanyBranchSql("hb")}`);
+  const [costCentres] = await db.query<RowDataPacket[]>(
+    `SELECT hc.id FROM cost_centre_master hc WHERE NULLIF(TRIM(COALESCE(hc.company_name, '')), '') IS NOT NULL AND NOT (${ownCompanyCostCentreSql("hc")})`,
+  );
+  hiddenGrnScope = {
+    at: Date.now(),
+    branchIds: branches.map((r) => String(r.id)),
+    costCentreIds: costCentres.map((r) => String(r.id)),
+  };
+}
+
+function idList(ids: string[]): string {
+  return ids.length ? ids.map((id) => escape(id)).join(", ") : "NULL";
+}
+
 /**
  * A GRN belongs to DialDesk / I-Spark / IDC when its branch is one of those, or its cost centre
- * belongs to another company. The hidden branch / cost-centre ids are uncorrelated subqueries, which
- * MySQL evaluates once instead of once per GRN row (85k rows), and the IS NULL arms keep GRNs that
- * have no branch or cost centre visible. `grnAlias` is grn_request.
+ * belongs to another company. The IS NULL arms keep GRNs that have no branch or cost centre
+ * visible. `grnAlias` is grn_request.
  */
 export function ownCompanyGrnSql(grnAlias: string): string {
-  return `((${grnAlias}.branch_id IS NULL OR ${grnAlias}.branch_id NOT IN (SELECT hb.id FROM branch_master hb WHERE NOT ${ownCompanyBranchSql("hb")}))`
-    + ` AND (${grnAlias}.cost_centre_id IS NULL OR ${grnAlias}.cost_centre_id NOT IN (SELECT hc.id FROM cost_centre_master hc WHERE NULLIF(TRIM(COALESCE(hc.company_name, '')), '') IS NOT NULL AND NOT (${ownCompanyCostCentreSql("hc")}))))`;
+  const b = hiddenGrnScope
+    ? idList(hiddenGrnScope.branchIds)
+    : `SELECT hb.id FROM branch_master hb WHERE NOT ${ownCompanyBranchSql("hb")}`;
+  const c = hiddenGrnScope
+    ? idList(hiddenGrnScope.costCentreIds)
+    : `SELECT hc.id FROM cost_centre_master hc WHERE NULLIF(TRIM(COALESCE(hc.company_name, '')), '') IS NOT NULL AND NOT (${ownCompanyCostCentreSql("hc")})`;
+  return `((${grnAlias}.branch_id IS NULL OR ${grnAlias}.branch_id NOT IN (${b}))`
+    + ` AND (${grnAlias}.cost_centre_id IS NULL OR ${grnAlias}.cost_centre_id NOT IN (${c})))`;
 }

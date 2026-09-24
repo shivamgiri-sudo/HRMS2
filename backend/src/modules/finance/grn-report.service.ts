@@ -1,7 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
-import { ownCompanyGrnSql } from "../../shared/ownCompanyCostCentre.js";
+import { ownCompanyGrnSql, refreshHiddenGrnScope } from "../../shared/ownCompanyCostCentre.js";
 import { resolvePendingWith } from "./finance-workflow-role.js";
 
 /**
@@ -175,6 +175,7 @@ export const grnReportService = {
    * could not carry because it was exported from a system with no approval chain.
    */
   async register(filters: GrnReportFilters) {
+    await refreshHiddenGrnScope();
     const { conditions, params } = scopeConditions(filters);
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     // LIMIT is interpolated, not bound: mysql2 3.22.3 rejects LIMIT placeholders in execute(),
@@ -546,6 +547,7 @@ export const grnReportService = {
    * option can never reach the dropdown.
    */
   async filterOptions(filters: GrnReportFilters) {
+    await refreshHiddenGrnScope();
     const { conditions, params } = scopeConditions({ ...filters, head: undefined, subHead: undefined });
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 

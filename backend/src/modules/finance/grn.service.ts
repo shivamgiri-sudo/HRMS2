@@ -31,7 +31,7 @@ import { notifyGrnSubmittedEmail, notifyGrnAccountsHeadPendingEmail } from "./gr
 import { postGrnApprovalJournalEntry } from "./grn-journal-posting.service.js";
 import { runInBackground } from "./grn-background.js";
 import { journalService } from "./journal.service.js";
-import { ownCompanyGrnSql } from "../../shared/ownCompanyCostCentre.js";
+import { ownCompanyGrnSql, refreshHiddenGrnScope } from "../../shared/ownCompanyCostCentre.js";
 import {
   qualifiesForHeadOfficeBypass,
   shouldSkipFinanceHeadOnAccountsApproval,
@@ -1821,6 +1821,7 @@ export const grnService = {
               NULL AS context_pending_pnl_cost_amount`;
 
     // DialDesk / I-Spark / IDC GRNs are not MAS Callnet's (owner rule 2026-09-24).
+    await refreshHiddenGrnScope();
     const conditions: string[] = [ownCompanyGrnSql("g")];
     const params: unknown[] = [];
     // IDC/... GRNs are the db_bill legacy petty-cash import (CompId 2), bulk-inserted under a
@@ -2549,6 +2550,7 @@ export const grnService = {
     // Same IDC exclusion as listGrns() — the legacy db_bill petty-cash import must not inflate
     // the approval-backlog counters that Vendor Payment Dispatch surfaces.
     // IS NULL guard: grn_number is NULL until Finance Head approval; NULL NOT LIKE is NULL (false).
+    await refreshHiddenGrnScope();
     const conditions: string[] = ["(g.grn_number IS NULL OR g.grn_number NOT LIKE 'IDC/%')", ownCompanyGrnSql("g")];
     const params: unknown[] = [];
     if (filters.branchScope) {
