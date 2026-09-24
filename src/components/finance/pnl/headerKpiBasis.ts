@@ -11,6 +11,13 @@
  *
  *     revenue − Σ costLines = operatingProfit
  *
+ * GRN cost on every basis = GRN Consumed + GRN Committed (reserved), both ex-GST, shown as two lines
+ * (owner rule 2026-09-24: "Reserved + Consumed should be there in P&L"), so on every basis
+ *
+ *     Revenue − People Cost − GRN Consumed − GRN Committed = Operating Profit.
+ *
+ * An older backend that publishes no split falls back to one "indirect" line.
+ *
  * If an engine's own Operating Profit does not equal revenue minus the cost lines it publishes, the
  * difference is shown as its own "Other cost (engine residual)" line rather than silently absorbed,
  * so the arithmetic on screen is always auditable.
@@ -96,10 +103,20 @@ export function buildStatementBasis(total: (componentKey: string) => number | nu
   const totalCost = total("total_cost");
   const people = totalCost !== null ? totalCost - indirect : agentSalary + dsc + bmc;
   const operatingProfit = revenue - (totalCost ?? people + indirect);
-  const lines: HeaderCostLine[] = [
-    { key: "people", value: people },
-    { key: "indirect", value: indirect },
-  ];
+  // Total Indirect Cost = GRN Consumed + GRN Committed (reserved) — the Statement publishes both as
+  // breakdown rows under total_idc. Consumed is taken as the remainder so the two always sum to it.
+  const committed = total("grn_committed");
+  const hasSplit = committed !== null || total("grn_consumed") !== null;
+  const lines: HeaderCostLine[] = hasSplit
+    ? [
+        { key: "people", value: people },
+        { key: "grnConsumed", value: indirect - (committed ?? 0) },
+        { key: "grnCommitted", value: committed ?? 0 },
+      ]
+    : [
+        { key: "people", value: people },
+        { key: "indirect", value: indirect },
+      ];
   return {
     source: "statement",
     revenue,
@@ -115,10 +132,20 @@ export function buildStatementBasis(total: (componentKey: string) => number | nu
 export function buildProcessBasis(kpis: BpoPnlSummary["kpis"]): HeaderKpiBasis {
   const revenue = kpis.recognizedRevenue ?? 0;
   const operatingProfit = kpis.operatingProfit ?? 0;
-  const lines: HeaderCostLine[] = [
-    { key: "people", value: kpis.totalPeopleCost ?? 0 },
-    { key: "indirect", value: kpis.grnVendorActual ?? 0 },
-  ];
+  // grnVendorActual already includes GRN Committed (reserved) — the allocation overlay folds it in
+  // and publishes that part as grnCommitted — so the consumed line is the remainder.
+  const grnTotal = kpis.grnVendorActual ?? 0;
+  const committed = kpis.grnCommitted;
+  const lines: HeaderCostLine[] = committed !== undefined && committed !== null
+    ? [
+        { key: "people", value: kpis.totalPeopleCost ?? 0 },
+        { key: "grnConsumed", value: grnTotal - committed },
+        { key: "grnCommitted", value: committed },
+      ]
+    : [
+        { key: "people", value: kpis.totalPeopleCost ?? 0 },
+        { key: "indirect", value: grnTotal },
+      ];
   return {
     source: "process",
     revenue,

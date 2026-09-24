@@ -5,7 +5,7 @@ import { bpoPnlService, safeRows, type BpoPnlRow } from "./bpo-pnl.service.js";
 import { allocatePoolAmount, type AllocationShare, type ManualAllocationWarning } from "./bpo-pnl.calculation.js";
 import { getAdjustedTotal } from "./pnl-manual-adjustment.service.js";
 import { costComponentDataFlags } from "./pnl-cost-component-flags.js";
-import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
+import { grnAllocationExGstSql, grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
 
 type BpoPnlSummary = Awaited<ReturnType<typeof bpoPnlService.getSummary>>;
 
@@ -239,6 +239,103 @@ async function newAllocationRows(period: string) {
   );
 }
 
+/*
+ * GRN Committed (reserved) — OWNER RULE 2026-09-24: "Reserved + Consumed should be there in P&L",
+ * on every surface for every month. vw_process_pnl_grn_allocation reads lifecycle_status =
+ * 'consumed' only, so this engine (and the Full P&L Waterfall summed from it) used to omit
+ * approved-but-unconsumed GRN that Live P&L, CEO Overview and the Statement subtract.
+ *
+ * Same shape, period rule and bucket rule as the view, so a reservation that later becomes
+ * consumed stays in the same month and bucket here — only lifecycle_status differs. Read directly
+ * (no view/DDL change, no migration needed). LEFT JOIN on the budget line so a reserved allocation
+ * without one is still counted (it then buckets by cost_class). Ex-GST via grnAllocationExGstSql,
+ * the same guard the shared reader uses. 'draft' is never read: it is not approved.
+ */
+async function reservedAllocationRows(period: string) {
+  return safeRows<AllocationViewRow>(
+    `SELECT process_id, branch_id, period_code, pnl_bucket, SUM(amount) AS amount,
+            COUNT(*) AS allocation_count, MAX(freshness) AS freshness
+       FROM (
+         SELECT a.process_id AS process_id, a.branch_id AS branch_id,
+                COALESCE(a.recognition_period,
+                  DATE_FORMAT(COALESCE(g.service_period_end, g.bill_date, g.reviewed_at, g.created_at), '%Y-%m')
+                ) AS period_code,
+                COALESCE(a.pnl_bucket, sh.pnl_bucket,
+                  CASE WHEN a.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END
+                ) AS pnl_bucket,
+                ${grnAllocationExGstSql("a")} AS amount,
+                COALESCE(a.reserved_at, a.updated_at, a.created_at) AS freshness
+           FROM grn_cost_allocation a
+           JOIN grn_request g ON g.id = a.grn_request_id
+           LEFT JOIN finance_budget_line l ON l.id = a.budget_line_id
+           LEFT JOIN finance_expense_head_master h
+             ON (LOWER(h.head_code) = LOWER(l.head) OR LOWER(h.head_name) = LOWER(l.head))
+            AND h.active_status = 1
+           LEFT JOIN finance_expense_sub_head_master sh
+             ON sh.head_id = h.id
+            AND (LOWER(sh.sub_head_code) = LOWER(COALESCE(l.sub_head, ''))
+                 OR LOWER(sh.sub_head_name) = LOWER(COALESCE(l.sub_head, '')))
+            AND sh.active_status = 1
+          WHERE a.lifecycle_status = 'reserved'
+            AND LOWER(COALESCE(g.status, '')) NOT IN ('rejected', 'cancelled', 'reversed')
+       ) r
+      WHERE period_code COLLATE utf8mb4_unicode_ci = ?
+      GROUP BY process_id, branch_id, period_code, pnl_bucket`,
+    [period]
+  );
+}
+
+/** Buckets rows onto processes: a process-attributed row goes straight to its process, a
+ *  branch-only row is split across the branch's processes by the same allocateBranchPool rule the
+ *  consumed allocations use in buildAllocationMaps. */
+function bucketRowsByProcess(
+  rows: BpoPnlRow[],
+  source: AllocationViewRow[],
+  policies: AllocationPolicyRow[],
+  warnings: ManualAllocationWarning[],
+): Map<string, BucketAmounts> {
+  const byProcess = new Map<string, BucketAmounts>();
+  const pools = new Map<string, number>();
+  for (const item of source) {
+    const amount = n(item.amount);
+    if (item.process_id) {
+      const current = byProcess.get(String(item.process_id)) ?? emptyBuckets();
+      addBucket(current, String(item.pnl_bucket), amount);
+      byProcess.set(String(item.process_id), current);
+    } else if (item.branch_id) {
+      const key = `${item.branch_id}|${item.pnl_bucket}`;
+      pools.set(key, (pools.get(key) ?? 0) + amount);
+    }
+  }
+  for (const [key, amount] of pools.entries()) {
+    const separator = key.indexOf("|");
+    const branchId = key.slice(0, separator);
+    const bucket = key.slice(separator + 1);
+    const poolType = bucket === "bmc_non_people" ? "bmc_non_people" : "shared_service";
+    for (const [processId, allocated] of allocateBranchPool(rows, branchId, poolType, amount, policies, warnings)) {
+      const current = byProcess.get(processId) ?? emptyBuckets();
+      addBucket(current, bucket, allocated);
+      byProcess.set(processId, current);
+    }
+  }
+  return byProcess;
+}
+
+/** The P&L-reaching part of a bucket set (everything but capex/excluded) — the same sum
+ *  adjustedRow adds to grnVendorActual as includedNewGrn. */
+const pnlBucketTotal = (b: BucketAmounts): number =>
+  b.dscNonPeople + b.bmcNonPeople + b.depreciation + b.amortization + b.financeCost + b.tax;
+
+const mergeBuckets = (a: BucketAmounts, b: BucketAmounts): BucketAmounts => ({
+  dscNonPeople: a.dscNonPeople + b.dscNonPeople,
+  bmcNonPeople: a.bmcNonPeople + b.bmcNonPeople,
+  depreciation: a.depreciation + b.depreciation,
+  amortization: a.amortization + b.amortization,
+  financeCost: a.financeCost + b.financeCost,
+  tax: a.tax + b.tax,
+  excluded: a.excluded + b.excluded,
+});
+
 // Both legs EX-GST (owner rule 2026-09-24). Were COALESCE(vpt.pnl_cost_amount, vpt.due_amount)
 // and COALESCE(g.pnl_cost_amount, g.amount) — due_amount is the GST-inclusive payable.
 async function legacyAllocatedGrnRows(period: string) {
@@ -305,10 +402,11 @@ async function legacyAllocatedGrnRows(period: string) {
 }
 
 async function buildAllocationMaps(rows: BpoPnlRow[], period: string) {
-  const [allocations, legacyRows, policies] = await Promise.all([
+  const [allocations, legacyRows, policies, reservedRows] = await Promise.all([
     newAllocationRows(period),
     legacyAllocatedGrnRows(period),
     allocationPolicies(period),
+    reservedAllocationRows(period),
   ]);
   const bucketsByProcess = new Map<string, BucketAmounts>();
   const legacyByProcess = new Map<string, LegacyAmounts>();
@@ -392,14 +490,28 @@ async function buildAllocationMaps(rows: BpoPnlRow[], period: string) {
     }
   }
 
-  return { bucketsByProcess, legacyByProcess, latestFreshness, allocationCount: allocations.length, warnings };
+  // GRN Committed (reserved): bucketed exactly like the consumed allocations above, then folded
+  // into the same per-process buckets (so EBITDA / EBIT / Operating Profit subtract it) while its
+  // own per-process total is kept to publish as grnCommitted.
+  const committedByProcess = new Map<string, number>();
+  for (const [processId, reserved] of bucketRowsByProcess(rows, reservedRows, policies, warnings)) {
+    bucketsByProcess.set(processId, mergeBuckets(bucketsByProcess.get(processId) ?? emptyBuckets(), reserved));
+    committedByProcess.set(processId, pnlBucketTotal(reserved));
+  }
+
+  return {
+    bucketsByProcess, legacyByProcess, latestFreshness, committedByProcess,
+    allocationCount: allocations.length + reservedRows.length, warnings,
+  };
 }
 
 function adjustedRow(
   row: BpoPnlRow,
   buckets: BucketAmounts,
   legacy: LegacyAmounts,
-  freshness: string | null
+  freshness: string | null,
+  /** GRN Committed (reserved) already included in `buckets`; published so it can be shown apart. */
+  grnCommitted = 0
 ): BpoPnlRow {
   const dscNonPeople = row.dscNonPeople - legacy.direct + buckets.dscNonPeople;
   const bmcNonPeople = row.bmcNonPeople - legacy.bmc + buckets.bmcNonPeople;
@@ -438,6 +550,7 @@ function adjustedRow(
     bmc,
     bmcPctRevenue: pct(bmc, row.recognizedRevenue),
     grnVendorActual,
+    grnCommitted,
     contribution,
     contributionMarginPct: pct(contribution, row.recognizedRevenue),
     ebitda,
@@ -492,6 +605,7 @@ function applySummaryTotals(summary: BpoPnlSummary, rows: BpoPnlRow[]): BpoPnlSu
       bmc: sum(rows, "bmc"),
       bmcPctRevenue: pct(sum(rows, "bmc"), revenue),
       grnVendorActual: sum(rows, "grnVendorActual"),
+      grnCommitted: sum(rows, "grnCommitted"),
       totalPeopleCost: sum(rows, "totalPeopleCost"),
       peopleCostPctRevenue: pct(sum(rows, "totalPeopleCost"), revenue),
       contribution: sum(rows, "contribution"),
@@ -585,7 +699,8 @@ export const bpoPnlAllocationOverlayService = {
       row,
       maps.bucketsByProcess.get(row.processId) ?? emptyBuckets(),
       maps.legacyByProcess.get(row.processId) ?? emptyLegacy(),
-      maps.latestFreshness
+      maps.latestFreshness,
+      maps.committedByProcess.get(row.processId) ?? 0
     ));
     return scoped(applySummaryTotals(withWarnings, rows));
   },

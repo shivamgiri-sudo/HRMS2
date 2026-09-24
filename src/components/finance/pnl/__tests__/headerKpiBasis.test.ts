@@ -56,6 +56,43 @@ describe("header KPI basis (audit item 7)", () => {
     expect(b.peopleSplit).toEqual({ agentSalary: 400_000, dsc: 120_000, bmc: 80_000 });
   });
 
+  // Owner rule 2026-09-24: Revenue − People − GRN Consumed − GRN Committed = Operating Profit on
+  // EVERY basis. Fixture: consumed 100, reserved 40.
+  it("Statement basis splits Indirect Cost into GRN Consumed + GRN Committed and still adds up", () => {
+    const values: Record<string, number> = {
+      recognized_revenue: 1000, agent_salary: 500, total_idc: 140, grn_consumed: 100, grn_committed: 40,
+      total_cost: 640,
+    };
+    const b = buildStatementBasis((key) => (key in values ? values[key] : null));
+    expect(b.costLines).toEqual([
+      { key: "people", value: 500 },
+      { key: "grnConsumed", value: 100 },
+      { key: "grnCommitted", value: 40 },
+    ]);
+    expect(b.operatingProfit).toBe(360);
+    expect(addsUp(b)).toBe(0);
+  });
+
+  it("process basis splits grnVendorActual into GRN Consumed + GRN Committed and still adds up", () => {
+    const kpis = {
+      recognizedRevenue: 1000, totalPeopleCost: 500, grnVendorActual: 140, grnCommitted: 40, operatingProfit: 360,
+      agentSalary: 500, dsc: 0, bmc: 0,
+    } as unknown as BpoPnlSummary["kpis"];
+    const b = buildProcessBasis(kpis);
+    expect(b.costLines).toEqual([
+      { key: "people", value: 500 },
+      { key: "grnConsumed", value: 100 },
+      { key: "grnCommitted", value: 40 },
+    ]);
+    expect(addsUp(b)).toBe(0);
+  });
+
+  it("Live basis: consumed 100 + committed 40 for a closed month add up to OP", () => {
+    const b = buildLiveBasis(liveTotals({ revenue: 1000, payrollCost: 500, grnActual: 100, grnEstimated: 40, operatingProfit: 360 }));
+    expect(b.costLines.map((l) => [l.key, l.value])).toEqual([["people", 500], ["grnConsumed", 100], ["grnCommitted", 40]]);
+    expect(addsUp(b)).toBe(0);
+  });
+
   it("process basis surfaces an engine residual instead of hiding it", () => {
     const kpis = {
       recognizedRevenue: 1_000_000, totalPeopleCost: 600_000, grnVendorActual: 100_000, operatingProfit: 200_000,

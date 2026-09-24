@@ -71,6 +71,8 @@ export interface BpoPnlRow {
   bmc: number;
   bmcPctRevenue: number | null;
   grnVendorActual: number;
+  /** GRN Committed (reserved, ex-GST) — the part of grnVendorActual not yet consumed (2026-09-24). */
+  grnCommitted?: number;
   totalPeopleCost: number;
   peopleCostPctRevenue: number | null;
   contribution: number;
@@ -122,6 +124,8 @@ export interface BpoPnlSummary {
     bmc: number;
     bmcPctRevenue: number | null;
     grnVendorActual: number;
+    /** GRN Committed (reserved, ex-GST), included in grnVendorActual; absent on an older backend. */
+    grnCommitted?: number;
     totalPeopleCost: number;
     peopleCostPctRevenue: number | null;
     contribution: number;

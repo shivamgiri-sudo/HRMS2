@@ -249,6 +249,13 @@ export interface BpoPnlRow {
   bmc: number;
   bmcPctRevenue: number | null;
   grnVendorActual: number;
+  /**
+   * GRN Committed (reserved) — the part of grnVendorActual that is approved GRN allocation not yet
+   * consumed, ex-GST. Owner rule 2026-09-24 ("Reserved + Consumed should be there in P&L"). Set by
+   * bpo-pnl-allocation-overlay.service.ts (which adds it into the non-people buckets, so EBITDA /
+   * EBIT / Operating Profit already subtract it); absent / 0 on a row the overlay never touched.
+   */
+  grnCommitted?: number;
   totalPeopleCost: number;
   peopleCostPctRevenue: number | null;
   contribution: number;
@@ -2112,6 +2119,7 @@ export const bpoPnlService = {
         bmc: sum(rows, "bmc"),
         bmcPctRevenue: ratio(rows, "bmc", "recognizedRevenue"),
         grnVendorActual: sum(rows, "grnVendorActual"),
+        grnCommitted: sum(rows, "grnCommitted"),
         totalPeopleCost: sum(rows, "totalPeopleCost"),
         peopleCostPctRevenue: ratio(rows, "totalPeopleCost", "recognizedRevenue"),
         contribution: sum(rows, "contribution"),

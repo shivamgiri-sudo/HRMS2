@@ -27,6 +27,12 @@ import { cachedPnlRead } from "./pnl-read-cache.js";
  * (same source, same fields, same math) and land on exactly this number — that reconciliation is
  * this feature's whole point, and is exercised in bpo-pnl-full-waterfall.test.ts.
  *
+ * GRN Committed (reserved) — owner rule 2026-09-24, "Reserved + Consumed should be there in P&L":
+ * the overlay now folds approved-but-unconsumed GRN allocations (ex-GST, same period/bucket rule as
+ * the consumed view) into each row's non-people buckets, so every EBITDA / EBIT / PBT / PAT summed
+ * here already subtracts it, for every month. Nothing extra is added in this module — adding it
+ * again here would count it twice. Each row also carries it apart as `grnCommitted`.
+ *
  * Both the per-process row and this aggregate READ THROUGH bpoPnlAllocationOverlayService's own
  * correctly-split branch-pool allocation (fixed 2026-09-01, commit 8172b98a) via the same 60s
  * cache (getCachedAllocationSummary, canonical-pnl.service.ts) /pnl/bpo/summary already shares —
