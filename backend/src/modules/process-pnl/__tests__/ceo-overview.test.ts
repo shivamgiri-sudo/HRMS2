@@ -817,6 +817,19 @@ describe("committed GRN (reserved, not yet consumed) — parity with Live P&L", 
     expect(out.indirectCost).toBeCloseTo(L(15), 0);
     expect(out.operatingProfit).toBeCloseTo(L(35), 0); // 80 - 30 - 15
   });
+
+  it("owner rule fixture: consumed 100 + reserved 40 = indirect 140 for a closed month older than the window", async () => {
+    withReservedGrn({
+      branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
+      revenue: [{ branch_id: "n", amount: 1000 }],
+      people: [{ branch_id: "n", staff: 1, cost: 500 }],
+      spend: [{ branch_id: "n", amount: 100 }], // consumed
+    }, [{ branch_id: "n", amount: 40 }]); // reserved
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-02");
+    expect(out.indirectCost).toBeCloseTo(140, 5);
+    expect(out.operatingProfit).toBeCloseTo(1000 - 500 - 140, 5);
+  });
 });
 
 describe("accrued running-salary fallback — parity with Live P&L's readPayroll()", () => {

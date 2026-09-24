@@ -349,6 +349,23 @@ describe("P&L reconciliation — committed GRN estimate (reserved, not yet consu
     expect(out.totals.revenueEstimated).toBe(0);
   });
 
+  it("owner rule fixture: consumed 100 + reserved 40 = indirect 140 for a closed month older than the window", async () => {
+    withOverrides((q) => {
+      if (q.includes("lifecycle_status = 'reserved'")) return [{ cost_centre_id: "cc-noida-1", amount: 40 }];
+      if (q.includes("lifecycle_status = 'consumed'")) return [{ cost_centre_id: "cc-noida-1", amount: 100 }];
+      return undefined;
+    });
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-03", { branchIds: ["branch-noida"], asOfDate: "2026-09-24" });
+    const row = out.rows.find((r) => r.costCentreId === "cc-noida-1")!;
+    expect(row.grnActual + row.grnEstimated).toBe(140);
+    expect(out.totals.grnActual + out.totals.grnEstimated).toBe(140);
+    expect(row.operatingProfit).toBe(row.recognisedRevenue - row.payrollCost - 140);
+    // Draft is never read: the reserved reader asks for 'reserved' only.
+    const reservedSql = execute.mock.calls.map((c) => String(c[0])).find((q) => q.includes("lifecycle_status = 'reserved'"))!;
+    expect(reservedSql).not.toContain("'draft'");
+  });
+
   it("reserved GRN alone (no consumed anywhere) satisfies the IDC-exists check and margin is not NA'd", async () => {
     withOverrides((q) => {
       if (q.includes("lifecycle_status = 'reserved'")) return [{ cost_centre_id: "cc-noida-1", amount: L(8) }];
