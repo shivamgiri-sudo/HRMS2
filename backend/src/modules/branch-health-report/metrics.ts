@@ -67,7 +67,7 @@ export function classifySignals(raw: BranchHealthRawData): {
   if (raw.shrinkage.shrinkagePct >= T.shrinkage.criticalPct) {
     criticalPoints.push({
       label: "Critical shrinkage today",
-      detail: `${raw.shrinkage.shrinkagePct}% of scheduled headcount absent (${raw.shrinkage.absent}/${raw.shrinkage.scheduled})`,
+      detail: `${raw.shrinkage.shrinkagePct}% absent (${raw.shrinkage.absent}/${raw.shrinkage.scheduled} scheduled)`,
       severity: "critical",
     });
   } else if (raw.shrinkage.shrinkagePct >= T.shrinkage.warnPct) {
@@ -79,7 +79,7 @@ export function classifySignals(raw: BranchHealthRawData): {
   } else if (raw.shrinkage.scheduled > 0 && raw.shrinkage.shrinkagePct < 5) {
     positiveAchievements.push({
       label: "Excellent attendance",
-      detail: `Only ${raw.shrinkage.shrinkagePct}% shrinkage today`,
+      detail: `Only ${raw.shrinkage.shrinkagePct}% shrinkage — ${raw.shrinkage.present} present out of ${raw.shrinkage.scheduled} scheduled`,
     });
   }
 

@@ -29,27 +29,29 @@ export interface BudgetSummary {
 }
 
 export async function fetchBudgetSummary(branchId: string, today: string): Promise<BudgetSummary> {
-  const ym = today.slice(0, 7); // YYYY-MM
+  const ym = today.slice(0, 7); // YYYY-MM — period_code is in this format
+  // Most recent approved/active budget for this branch's current financial year period
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT h.period_code,
-            COALESCE(SUM(l.gross_amount), 0)    AS total_budget,
-            COALESCE(SUM(l.consumed_amount), 0) AS consumed,
-            COALESCE(SUM(l.reserved_amount), 0) AS reserved
+            h.gross_budget_amount                               AS total_budget,
+            COALESCE(SUM(l.consumed_amount), 0)                AS consumed,
+            COALESCE(SUM(l.reserved_amount), 0)                AS reserved
        FROM finance_budget_header h
-       JOIN finance_budget_line l ON l.budget_id = h.id
+       LEFT JOIN finance_budget_line l ON l.budget_id = h.id
       WHERE h.branch_id = ?
-        AND h.period_code LIKE CONCAT(LEFT(?, 4), '%')
-        AND h.status IN ('finance_head_approved', 'branch_head_approved', 'submitted', 'approved')
-      GROUP BY h.period_code
-      ORDER BY h.period_code DESC
+        AND h.period_code = ?
+        AND h.status NOT IN ('draft')
+      GROUP BY h.id
+      ORDER BY FIELD(h.status,'finance_head_approved','branch_head_approved','submitted','revision_required') DESC,
+               h.created_at DESC
       LIMIT 1`,
     [branchId, ym],
   );
   const r = rows[0] as any;
   if (!r) return { periodCode: null, totalBudget: 0, consumed: 0, reserved: 0, available: 0, utilizationPct: 0 };
-  const total = Number(r.total_budget);
-  const consumed = Number(r.consumed);
-  const reserved = Number(r.reserved);
+  const total = Number(r.total_budget ?? 0);
+  const consumed = Number(r.consumed ?? 0);
+  const reserved = Number(r.reserved ?? 0);
   return {
     periodCode: r.period_code ?? null,
     totalBudget: total,
@@ -82,10 +84,10 @@ export async function fetchGrnStats(branchId: string, today: string): Promise<Gr
   const monthStart = today.slice(0, 7) + "-01";
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
-       COUNT(*)                                                         AS raised,
+       COUNT(*)                                                           AS raised,
        SUM(status IN (${GRN_APPROVED_STATUSES.map(() => "?").join(",")})) AS approved,
-       SUM(status IN (${GRN_PENDING_STATUSES.map(() => "?").join(",")})) AS pending,
-       COALESCE(SUM(amount_with_tax), 0)                              AS total_amount
+       SUM(status IN (${GRN_PENDING_STATUSES.map(() => "?").join(",")}))  AS pending,
+       COALESCE(SUM(amount_with_tax), 0)                                  AS total_amount
      FROM grn_request
     WHERE branch_id = ?
       AND DATE(created_at) >= ?`,
@@ -106,21 +108,23 @@ export interface GrnRow {
   grnNumber: string | null;
   vendorName: string | null;
   head: string | null;
+  subHead: string | null;
   amount: number;
   status: string;
   raisedOn: string;
+  pendingWith: string | null;
 }
 
 export async function fetchRecentGrns(branchId: string): Promise<GrnRow[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT g.grn_number,
-            COALESCE(v.vendor_name, g.vendor_name) AS vendor_name,
-            g.head                                AS head,
-            COALESCE(g.amount_with_tax, 0)        AS amount,
+            g.vendor_name,
+            g.head,
+            g.sub_head,
+            COALESCE(g.amount_with_tax, 0)           AS amount,
             g.status,
-            DATE_FORMAT(g.created_at, '%d/%m/%Y')       AS raised_on
+            DATE_FORMAT(g.created_at, '%d/%m/%Y')    AS raised_on
        FROM grn_request g
-       LEFT JOIN vendor_master v ON v.id = g.vendor_id
       WHERE g.branch_id = ?
       ORDER BY g.created_at DESC
       LIMIT 15`,
@@ -130,9 +134,11 @@ export async function fetchRecentGrns(branchId: string): Promise<GrnRow[]> {
     grnNumber: r.grn_number ?? null,
     vendorName: r.vendor_name ?? null,
     head: r.head ?? null,
+    subHead: r.sub_head ?? null,
     amount: Number(r.amount ?? 0),
     status: String(r.status ?? ""),
     raisedOn: r.raised_on ?? "",
+    pendingWith: null,
   }));
 }
 
@@ -150,40 +156,61 @@ export interface AtsStats {
 }
 
 export async function fetchAtsStats(branchName: string, today: string): Promise<AtsStats> {
-  const [rows] = await db.execute<RowDataPacket[]>(
+  // Walk-ins: candidates registered today (queue tokens arriving today)
+  const [tokenRows] = await db.execute<RowDataPacket[]>(
     `SELECT
-       COUNT(DISTINCT c.id)                                               AS walkins,
-       COUNT(DISTINCT qt.id)                                              AS tokens,
-       SUM(qt.queue_status NOT IN ('waiting','calling') OR qt.queue_status IS NULL) AS closed,
-       SUM(LOWER(COALESCE(s.final_decision, c.final_decision, c.status)) IN ('selected','offered','joined')) AS selected,
-       SUM(LOWER(COALESCE(s.final_decision, c.final_decision, c.status)) IN ('rejected','rejected_by_hr','not_suitable')) AS rejected,
-       SUM(LOWER(COALESCE(s.final_decision, c.final_decision, c.status)) IN ('no_show','absent','no show')) AS no_show,
-       SUM(qt.arrival_time IS NOT NULL AND
-           TIMESTAMPDIFF(MINUTE, qt.arrival_time, COALESCE(qt.called_at, NOW())) > 30) AS sla_breaches,
-       COUNT(qt.id)                                                        AS sla_total
-     FROM ats_candidate c
-     LEFT JOIN ats_queue_token qt ON qt.candidate_id = c.id
-          AND DATE(qt.arrival_time) = ?
+       COUNT(*)                                                                                    AS tokens,
+       SUM(qt.queue_status NOT IN ('waiting','calling') OR qt.queue_status IS NULL)              AS closed,
+       SUM(LOWER(COALESCE(s.final_decision, c.final_decision, c.status,''))
+           IN ('selected','offered','joined','offer_extended','offer_accepted'))                  AS selected,
+       SUM(LOWER(COALESCE(s.final_decision, c.final_decision, c.status,''))
+           IN ('rejected','rejected_by_hr','not_suitable','not_selected'))                        AS rejected,
+       SUM(LOWER(COALESCE(s.final_decision, c.final_decision, c.status,''))
+           IN ('no_show','absent','no show','no-show'))                                            AS no_show,
+       SUM(qt.called_at IS NOT NULL AND
+           TIMESTAMPDIFF(MINUTE, qt.arrival_time, qt.called_at) > 30)                             AS sla_breaches,
+       SUM(qt.called_at IS NOT NULL)                                                              AS sla_total
+     FROM ats_queue_token qt
+     JOIN ats_candidate c ON c.id = qt.candidate_id
      LEFT JOIN ats_interview_submission s ON s.candidate_id = c.id
-    WHERE DATE(c.created_date) = ?
+       AND s.submitted_at >= DATE_SUB(qt.arrival_time, INTERVAL 1 MINUTE)
+       AND NOT EXISTS (SELECT 1 FROM ats_queue_token nx
+                        WHERE nx.candidate_id = qt.candidate_id
+                          AND nx.arrival_time > qt.arrival_time AND nx.arrival_time <= s.submitted_at)
+    WHERE DATE(qt.arrival_time) = ?
       AND (
         LOWER(COALESCE(qt.branch_name,'')) = LOWER(?)
         OR LOWER(COALESCE(c.branch_display_name,'')) = LOWER(?)
         OR LOWER(COALESCE(c.applied_for_branch,'')) = LOWER(?)
       )
       AND c.record_type = 'candidate'`,
-    [today, today, branchName, branchName, branchName],
+    [today, branchName, branchName, branchName],
   );
-  const r = rows[0] as any;
+
+  // Walkins also include token-only registrations (no queue row)
+  const [walkinRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(DISTINCT c.id) AS walkins
+       FROM ats_candidate c
+      WHERE DATE(c.created_date) = ?
+        AND (
+          LOWER(COALESCE(c.branch_display_name,'')) = LOWER(?)
+          OR LOWER(COALESCE(c.applied_for_branch,'')) = LOWER(?)
+        )
+        AND c.record_type = 'candidate'`,
+    [today, branchName, branchName],
+  );
+
+  const t = tokenRows[0] as any;
+  const w = walkinRows[0] as any;
   return {
-    walkins: Number(r?.walkins ?? 0),
-    tokens: Number(r?.tokens ?? 0),
-    tokensClosed: Number(r?.closed ?? 0),
-    selected: Number(r?.selected ?? 0),
-    rejected: Number(r?.rejected ?? 0),
-    noShow: Number(r?.no_show ?? 0),
-    slaBreaches: Number(r?.sla_breaches ?? 0),
-    slaTotal: Number(r?.sla_total ?? 0),
+    walkins: Math.max(Number(w?.walkins ?? 0), Number(t?.tokens ?? 0)),
+    tokens: Number(t?.tokens ?? 0),
+    tokensClosed: Number(t?.closed ?? 0),
+    selected: Number(t?.selected ?? 0),
+    rejected: Number(t?.rejected ?? 0),
+    noShow: Number(t?.no_show ?? 0),
+    slaBreaches: Number(t?.sla_breaches ?? 0),
+    slaTotal: Number(t?.sla_total ?? 0),
   };
 }
 
@@ -222,7 +249,9 @@ export async function fetchLateStats(branchId: string, today: string): Promise<L
 
 export interface ShrinkageStats {
   scheduled: number;
+  present: number;
   absent: number;
+  onLeave: number;
   shrinkagePct: number;
 }
 
@@ -230,7 +259,10 @@ export async function fetchShrinkage(branchId: string, today: string): Promise<S
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*)                                                             AS scheduled,
-       SUM(adr.attendance_status IN ('absent','unreconciled'))              AS absent
+       SUM(adr.attendance_status IN ('present','half_day'))                AS present,
+       SUM(adr.attendance_status IN ('absent','unreconciled'))             AS absent,
+       SUM(adr.attendance_status IN ('approved_leave','half_day_leave',
+                                     'leave','wfh'))                       AS on_leave
      FROM attendance_daily_record adr
      JOIN employees e ON e.id = adr.employee_id
     WHERE adr.record_date = ?
@@ -243,7 +275,9 @@ export async function fetchShrinkage(branchId: string, today: string): Promise<S
   const absent = Number(r?.absent ?? 0);
   return {
     scheduled,
+    present: Number(r?.present ?? 0),
     absent,
+    onLeave: Number(r?.on_leave ?? 0),
     shrinkagePct: scheduled > 0 ? Math.round((absent / scheduled) * 100) : 0,
   };
 }
@@ -255,6 +289,7 @@ export interface HeadcountMovement {
   leftToday: number;
   joinedNames: string[];
   leftNames: string[];
+  totalActive: number;
 }
 
 export async function fetchHeadcountMovement(branchId: string, today: string): Promise<HeadcountMovement> {
@@ -274,6 +309,11 @@ export async function fetchHeadcountMovement(branchId: string, today: string): P
     [branchId, today],
   );
 
+  const [countRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM employees WHERE branch_id = ? AND active_status = 1`,
+    [branchId],
+  );
+
   const joinedNames = (joinRows as any[]).map((r) => String(r.name).trim());
   const leftNames = (exitRows as any[]).map((r) => String(r.name).trim());
   return {
@@ -281,6 +321,7 @@ export async function fetchHeadcountMovement(branchId: string, today: string): P
     leftToday: leftNames.length,
     joinedNames,
     leftNames,
+    totalActive: Number((countRows[0] as any)?.cnt ?? 0),
   };
 }
 
@@ -294,7 +335,7 @@ export interface ProcessPerformance {
 }
 
 export async function fetchProcessPerformance(branchId: string, today: string): Promise<ProcessPerformance[]> {
-  // Guard: skip entirely if kpi tables are not yet created (avoids noisy pool-level ER_NO_SUCH_TABLE logs)
+  // Guard: skip entirely if kpi_entry is not yet created (avoids noisy ER_NO_SUCH_TABLE pool logs)
   const [tableCheck] = await db.execute<RowDataPacket[]>(
     `SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kpi_entry' LIMIT 1`,
   );
@@ -392,8 +433,8 @@ export async function fetchAllBranchHealthData(branchName: string, today: string
       recentGrns: [],
       ats: { walkins: 0, tokens: 0, tokensClosed: 0, selected: 0, rejected: 0, noShow: 0, slaBreaches: 0, slaTotal: 0 },
       lateStats: { totalLate: 0, processWise: [] },
-      shrinkage: { scheduled: 0, absent: 0, shrinkagePct: 0 },
-      headcount: { joinedToday: 0, leftToday: 0, joinedNames: [], leftNames: [] },
+      shrinkage: { scheduled: 0, present: 0, absent: 0, onLeave: 0, shrinkagePct: 0 },
+      headcount: { joinedToday: 0, leftToday: 0, joinedNames: [], leftNames: [], totalActive: 0 },
       processPerformance: [],
       pendingActions: [],
     };
