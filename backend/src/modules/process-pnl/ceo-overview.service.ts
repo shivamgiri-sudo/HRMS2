@@ -7,7 +7,37 @@ import { readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
 import { isEstimateWindow } from "./pnl-seat-billing.service.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { ccProcessJoin, ccProcessNameSql, costCentreLabel } from "./cost-centre-label.js";
-import { budgetByBranchId, entriesForCodes, readBudgetEntries, sumAmount, topUpsForCodes } from "./pnl-budget-source.js";
+import { budgetByBranchId, entriesForCodes, readBudgetEntries as readBudgetEntriesUncached, sumAmount, topUpsForCodes } from "./pnl-budget-source.js";
+import { cachedPnlRead } from "./pnl-read-cache.js";
+
+/*
+ * PER-REQUEST DEDUP (2026-09-24). One overview asks for the same month's revenue / people / spend /
+ * budget several times over: the headline, marginTrend's current month, grnExistsCompanyWide and
+ * buildFocus's company-wide spend, and — for the YTD strip — every month again inside each
+ * neighbouring month's trend. The readers below are memoised per (period, scope, IST date) for 60s
+ * with single-flight (pnl-read-cache.ts), so each distinct read runs once. The date is in the key
+ * because the reserved-GRN / seat-estimate window is measured from today. Values are shared:
+ * callers only read them.
+ */
+function readBudgetEntries(period: string) {
+  return cachedPnlRead("ceo:budget-entries", { period }, () => readBudgetEntriesUncached(period));
+}
+const scopeKey = (period: string, s: CeoScope) => ({
+  period,
+  branchIds: s.branchIds,
+  processIds: s.processIds,
+  costCentreIds: s.costCentreIds,
+  asOf: getCurrentDateIST(),
+});
+function memoRevenueByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
+  return cachedPnlRead("ceo:revenue-by-branch", scopeKey(period, s), () => revenueByBranch(period, s));
+}
+function memoPeopleByBranch(period: string, s: CeoScope): Promise<Map<string, { cost: number; staff: number }>> {
+  return cachedPnlRead("ceo:people-by-branch", scopeKey(period, s), () => peopleByBranch(period, s));
+}
+function memoSpendByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
+  return cachedPnlRead("ceo:spend-by-branch", scopeKey(period, s), () => spendByBranch(period, s));
+}
 
 /**
  * The CEO view of the P&L: one figure per branch, and a ranked list of where profit is leaking.
@@ -382,7 +412,21 @@ let lastIdcContamination: { count: number; amount: number } | null = null;
  */
 async function idcContaminationCheck(period: string): Promise<void> {
   lastIdcContamination = null;
-  if (!(await tableExists("salary_prep_line"))) return;
+  lastIdcContamination = await idcContaminationFor(period);
+}
+
+/**
+ * The IDC-contamination finding for ONE period. getCeoOverview reads this for its own month rather
+ * than the module-level lastIdcContamination, which is overwritten by whichever peopleByBranch call
+ * finishes last — marginTrend reads three earlier months concurrently, so the global could carry a
+ * neighbouring month's finding.
+ */
+function idcContaminationFor(period: string): Promise<{ count: number; amount: number } | null> {
+  return cachedPnlRead("ceo:idc-contamination", { period }, () => readIdcContamination(period));
+}
+
+async function readIdcContamination(period: string): Promise<{ count: number; amount: number } | null> {
+  if (!(await tableExists("salary_prep_line"))) return null;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt,
             SUM(COALESCE(l.gross_salary, 0) + COALESCE(l.pf_employer, 0)
@@ -394,7 +438,7 @@ async function idcContaminationCheck(period: string): Promise<void> {
     [period],
   );
   const count = n(rows[0]?.cnt);
-  if (count > 0) lastIdcContamination = { count, amount: n(rows[0]?.amt) };
+  return count > 0 ? { count, amount: n(rows[0]?.amt) } : null;
 }
 
 async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, { cost: number; staff: number }>> {
@@ -517,16 +561,19 @@ async function spendByBranch(period: string, s: CeoScope): Promise<Map<string, n
     }
   };
   const scope = { costCentreIds: s.costCentreIds, processIds: s.processIds };
-  add(await readGrnSpend(period, "consumed", scope));
 
   // Committed-not-yet-consumed GRN ('reserved'), only inside the open estimate window — the same
   // rule and the same real spend pnl-reconciliation.service.ts's readGrnCommitted() reads.
   // Folded straight into indirectCost (no separate label yet, unlike revenueEstimated) because the
   // point of this addition is parity: without it, this tab under-counted IDC against Live P&L for
   // every open month with approved-but-unconsumed GRN, which was most of them.
-  if (isEstimateWindow(period, getCurrentDateIST())) {
-    add(await readGrnSpend(period, "reserved", scope));
-  }
+  // The two legs are independent reads, so they run together; summed in the same order as before.
+  const [consumed, reserved] = await Promise.all([
+    readGrnSpend(period, "consumed", scope),
+    isEstimateWindow(period, getCurrentDateIST()) ? readGrnSpend(period, "reserved", scope) : Promise.resolve(null),
+  ]);
+  add(consumed);
+  if (reserved) add(reserved);
 
   return out;
 }
@@ -906,7 +953,7 @@ function payrollPending(peopleCost: number, estimated: number): boolean {
  */
 async function grnExistsCompanyWide(period: string, s: CeoScope, spend: Map<string, number>): Promise<boolean> {
   if (!s.processIds.length && !s.costCentreIds.length) return spend.size > 0;
-  const all = await spendByBranch(period, { branchIds: [], processIds: [], costCentreIds: [] });
+  const all = await memoSpendByBranch(period, { branchIds: [], processIds: [], costCentreIds: [] });
   return all.size > 0;
 }
 
@@ -966,7 +1013,7 @@ async function marginTrend(
   return Promise.all(
     periods.map(async (period) => {
       const [rev, ppl, spend, est] = await Promise.all([
-        revenueByBranch(period, s), peopleByBranch(period, s), spendByBranch(period, s), estimateByBranch(period, s),
+        memoRevenueByBranch(period, s), memoPeopleByBranch(period, s), memoSpendByBranch(period, s), estimateByBranch(period, s),
       ]);
       const revenue = sum(rev) + sum(est);
       const people = [...ppl.entries()].reduce((a, [key, p]) => (inScope(key) ? a + p.cost : a), 0);
@@ -1197,7 +1244,29 @@ async function buildFocus(
   };
 }
 
-export async function getCeoOverview(period: string, filters: CeoFilters = {}): Promise<CeoOverview> {
+/**
+ * CEO Overview for a period and scope. Cached for 60s with single-flight (pnl-read-cache.ts). The key
+ * is the MERGED scope (branch / process / cost-centre lists, after the route folded in the caller's
+ * branch entitlement and client/search process ids) plus the IST date, so two scopes can never share
+ * a result and repeat views of the same scope share one computation.
+ */
+export function getCeoOverview(period: string, filters: CeoFilters = {}): Promise<CeoOverview> {
+  const scope = scopeOf(filters);
+  return cachedPnlRead("ceo-overview", scopeKey(period, scope), () => buildCeoOverview(period, filters));
+}
+
+/**
+ * `headlineOnly` skips the parts no headline figure depends on — the trend, filter options, billing
+ * completeness, focus panel and opportunities — for callers that read only revenue / people cost /
+ * indirect cost / operating profit (getYtdSummary). Every figure it does return is computed by the
+ * identical code path.
+ */
+async function buildCeoOverview(
+  period: string,
+  filters: CeoFilters = {},
+  opts: { headlineOnly?: boolean } = {},
+): Promise<CeoOverview> {
+  const headlineOnly = opts.headlineOnly === true;
   const scope = scopeOf(filters);
   const selectedBranches = new Set(scope.branchIds);
   const empty: CeoOverview = {
@@ -1210,9 +1279,21 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
   };
   if (!/^\d{4}-\d{2}$/.test(period)) return empty;
 
-  const [branchRows] = await db.execute<RowDataPacket[]>(
+  /*
+   * branch_master is read in parallel with the money reads rather than before them: only the trend
+   * and billing-completeness need it, so they chain off it while revenue / people / spend / budget /
+   * estimate / IDC run at once.
+   */
+  const branchRowsPromise = db.execute<RowDataPacket[]>(
     `SELECT id, branch_name, active_status FROM branch_master`,
-  );
+  ).then(([rows]) => rows);
+  const [revenue, people, spend, budget, estimate, idcContamination, branchRows] = await Promise.all([
+    memoRevenueByBranch(period, scope), memoPeopleByBranch(period, scope),
+    memoSpendByBranch(period, scope), budgetByBranch(period),
+    estimateByBranch(period, scope),
+    idcContaminationFor(period),
+    branchRowsPromise,
+  ]);
   const nameOfBranch = (id: string) =>
     String(branchRows.find((r) => String(r.id) === id)?.branch_name ?? "Unnamed");
 
@@ -1229,13 +1310,15 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
   const branchKeyInHeadline = (key: string): boolean =>
     selectedBranches.size === 0 || selectedBranchKeys.has(key);
 
-  const [revenue, people, spend, budget, trend, options, billing, estimate] = await Promise.all([
-    revenueByBranch(period, scope), peopleByBranch(period, scope),
-    spendByBranch(period, scope), budgetByBranch(period),
-    marginTrend(period, scope, branchKeyInHeadline), filterOptions(period, scope),
-    billingCompleteness(period, scope, nameOfBranch),
-    estimateByBranch(period, scope),
-  ]);
+  // Started now, awaited below: they overlap with the row building and the IDC / focus reads.
+  const trendPromise = headlineOnly ? Promise.resolve<CeoTrendPoint[]>([]) : marginTrend(period, scope, branchKeyInHeadline);
+  const optionsPromise = headlineOnly
+    ? Promise.resolve({ processes: [], costCentres: [] } as Awaited<ReturnType<typeof filterOptions>>)
+    : filterOptions(period, scope);
+  const billingPromise = headlineOnly ? Promise.resolve(empty.billing) : billingCompleteness(period, scope, nameOfBranch);
+  const grnExistsPromise = grnExistsCompanyWide(period, scope, spend);
+  // Never left unhandled while the synchronous row building runs; each is awaited below.
+  for (const pending of [trendPromise, optionsPromise, billingPromise, grnExistsPromise]) pending.catch(() => undefined);
 
   /*
    * branch_master holds duplicates — three rows spell Head Office three ways — and each carries
@@ -1401,13 +1484,24 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
   // Live P&L's idcMissing rule (audit item 11): no GRN mapped anywhere in the company this month,
   // with people cost present, means the overhead data is absent — every margin on the tab is NA,
   // exactly as Live P&L blanks its totals, branch and row margins under the same condition.
-  const idcMissing = totals.peopleCost > 0 && !(await grnExistsCompanyWide(period, scope, spend));
+  const focusPromise = headlineOnly
+    ? Promise.resolve(null)
+    : buildFocus(period, scope, {
+        revenue: totals.revenue,
+        peopleCost: totals.peopleCost,
+        indirectCost: totals.indirectCost,
+        staffPaid: totals.staffPaid,
+      });
+  focusPromise.catch(() => undefined);
+  const idcMissing = totals.peopleCost > 0 && !(await grnExistsPromise);
   if (idcMissing) {
     for (const t of traded) t.row.marginPct = null;
   }
   const headlineMargin = totals.revenue > 0 && !payrollPending(totals.peopleCost, revenueEstimated) && !idcMissing
     ? (operatingProfit / totals.revenue) * 100
     : null;
+
+  const [trend, options, billing, focus] = await Promise.all([trendPromise, optionsPromise, billingPromise, focusPromise]);
 
   return {
     period,
@@ -1422,7 +1516,7 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
     billing,
     // A narrowed view compares nothing against nothing, and a branch-scoped user must not be shown
     // findings computed across branches they cannot see.
-    opportunities: scope.branchIds.length || scope.processIds.length || scope.costCentreIds.length
+    opportunities: headlineOnly || scope.branchIds.length || scope.processIds.length || scope.costCentreIds.length
       ? []
       : findOpportunities(allRows, unbranched),
     /*
@@ -1431,12 +1525,7 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
      * beside a headline of 17.8%: the same figure, on the same card, twice. The current month is
      * replaced with the headline so the two can never disagree.
      */
-    focus: await buildFocus(period, scope, {
-      revenue: totals.revenue,
-      peopleCost: totals.peopleCost,
-      indirectCost: totals.indirectCost,
-      staffPaid: totals.staffPaid,
-    }).then((f) => (f && idcMissing ? { ...f, marginPct: null } : f)),
+    focus: focus && idcMissing ? { ...focus, marginPct: null } : focus,
     idcMissing,
     trend: trend.map((point) =>
       point.period === period
@@ -1453,12 +1542,12 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
         .filter((b) => b.id)
         .sort((a, b) => a.name.localeCompare(b.name)),
     },
-    exceptions: lastIdcContamination
+    exceptions: idcContamination
       ? [{
           code: "PAYROLL_IDC_CODE_IN_MAS_HRMS",
           label: "IDC-coded payroll present in MAS Callnet's own P&L",
-          count: lastIdcContamination.count,
-          amount: lastIdcContamination.amount,
+          count: idcContamination.count,
+          amount: idcContamination.amount,
         }]
       : [],
   };
@@ -1519,7 +1608,17 @@ async function scopedBudget(period: string, s: CeoScope): Promise<number> {
   return [...byBranch.entries()].reduce((t, [key, v]) => (keys.has(key) ? t + v : t), 0);
 }
 
-export async function getYtdSummary(upToMonth: string, filters: CeoFilters = {}): Promise<CeoYtdSummary> {
+/**
+ * Financial-year-to-date totals for a scope. Cached for 60s with single-flight, keyed like
+ * getCeoOverview (merged scope + IST date) plus the up-to month. Each month is the headline-only
+ * build of the same overview (identical revenue / people / indirect / OP), so the trend, filter
+ * options and billing probe no month's total uses are not computed twelve times over.
+ */
+export function getYtdSummary(upToMonth: string, filters: CeoFilters = {}): Promise<CeoYtdSummary> {
+  return cachedPnlRead("ceo-ytd-summary", { ...scopeKey(upToMonth, scopeOf(filters)), upTo: upToMonth }, () => buildYtdSummary(upToMonth, filters));
+}
+
+async function buildYtdSummary(upToMonth: string, filters: CeoFilters = {}): Promise<CeoYtdSummary> {
   // Indian financial year: April (month 4) to March (month 3)
   const [y, m] = upToMonth.split("-").map(Number);
   const fyStartYear = m >= 4 ? y : y - 1;
@@ -1544,7 +1643,7 @@ export async function getYtdSummary(upToMonth: string, filters: CeoFilters = {})
       // branch's budget whatever the filter, so a branch-scoped YTD strip compared that branch's
       // indirect spend against the whole company's budget.
       const [overview, budget] = await Promise.all([
-        getCeoOverview(period, filters),
+        buildCeoOverview(period, filters, { headlineOnly: true }),
         scopedBudget(period, scope),
       ]);
       monthly.push({ period, revenue: overview.revenue, peopleCost: overview.peopleCost, indirectCost: overview.indirectCost, operatingProfit: overview.operatingProfit, budget });
