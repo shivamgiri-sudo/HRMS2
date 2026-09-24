@@ -10,21 +10,27 @@ import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useBranches } from "@/hooks/useOrgMasters";
 import { useHasRole } from "@/hooks/useUserRole";
+import { hrmsApi } from "@/lib/hrmsApi";
 import {
   useCostCentreOverrideMutations,
   useCostCentreOverrides,
   useOverrideCostCentreOptions,
   useOverrideEmployeeSearch,
+  type OverrideEmployeeOption,
 } from "@/hooks/useCostCentreOverride";
 
 const WRITE_ROLES = ["super_admin", "admin", "finance", "finance_head", "accounts_head", "payroll_head"] as const;
 const SEARCH_DEBOUNCE_MS = 300;
+
+type PickState = "verified" | "checking" | "notfound" | "unverified";
 
 interface PickedEmployee {
   code: string;
   name: string | null;
   branchName: string | null;
   costCentreCode: string | null;
+  /** verified = found in the employee table; checking = lookup in flight; notfound = no ACTIVE employee has this code; unverified = lookup itself failed. */
+  state: PickState;
 }
 
 function parseCodes(text: string): string[] {
@@ -107,7 +113,7 @@ export function CostCentreOverridePanel() {
     if (!found) return;
     setPicked((current) => current.some((p) => p.code === code) ? current : [
       ...current,
-      { code, name: found.name, branchName: found.branchName, costCentreCode: found.costCentreCode },
+      { code, name: found.name, branchName: found.branchName, costCentreCode: found.costCentreCode, state: "verified" },
     ]);
     setEmployeeSearch("");
   }
@@ -115,8 +121,26 @@ export function CostCentreOverridePanel() {
   function addPastedCodes() {
     const codes = parseCodes(pasteText).filter((code) => !pickedCodes.has(code));
     if (!codes.length) return;
-    setPicked((current) => [...current, ...codes.map((code) => ({ code, name: null, branchName: null, costCentreCode: null }))]);
+    setPicked((current) => [...current, ...codes.map((code): PickedEmployee => ({ code, name: null, branchName: null, costCentreCode: null, state: "checking" }))]);
     setPasteText("");
+    codes.forEach((code) => { void resolvePastedCode(code); });
+  }
+
+  /** Look a pasted code up in the employee table so its name shows, or it is flagged not found, before anyone can save. */
+  async function resolvePastedCode(code: string) {
+    let next: Partial<PickedEmployee> = { state: "unverified" };
+    try {
+      const response = await hrmsApi.get<{ success: boolean; data: OverrideEmployeeOption[] }>(
+        `/api/finance/pnl/cost-centre-overrides/employees?q=${encodeURIComponent(code)}&limit=5`,
+      );
+      const hit = (response.data ?? []).find((emp) => emp.employeeCode.toLowerCase() === code.toLowerCase());
+      next = hit
+        ? { name: hit.name, branchName: hit.branchName, costCentreCode: hit.costCentreCode, state: "verified" }
+        : { state: "notfound" };
+    } catch {
+      next = { state: "unverified" };
+    }
+    setPicked((current) => current.map((p) => (p.code === code ? { ...p, ...next } : p)));
   }
 
   async function save() {
@@ -202,7 +226,10 @@ export function CostCentreOverridePanel() {
                 {picked.map((emp) => (
                   <Badge key={emp.code} variant="outline" className="gap-1 border-slate-300 py-1 text-xs">
                     <span className="font-mono">{emp.code}</span>
-                    {emp.name ? <span>{emp.name}</span> : <span className="text-amber-700">unverified</span>}
+                    {emp.state === "verified" && emp.name ? <span>{emp.name}</span> : null}
+                    {emp.state === "checking" ? <span className="text-slate-400">checking…</span> : null}
+                    {emp.state === "notfound" ? <span className="text-red-700" title="No active employee has this code">not found</span> : null}
+                    {emp.state === "unverified" ? <span className="text-amber-700" title="Could not check this code">unverified</span> : null}
                     {emp.costCentreCode ? <span className="text-slate-400">({emp.costCentreCode})</span> : null}
                     {canWrite && (
                       <button
@@ -262,7 +289,7 @@ export function CostCentreOverridePanel() {
             </div>
             <Button
               size="sm"
-              disabled={!canWrite || !picked.length || !targetCostCentreId || bulkSet.isPending}
+              disabled={!canWrite || !picked.length || !targetCostCentreId || bulkSet.isPending || picked.some((p) => p.state === "notfound" || p.state === "checking")}
               onClick={save}
             >
               {bulkSet.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
