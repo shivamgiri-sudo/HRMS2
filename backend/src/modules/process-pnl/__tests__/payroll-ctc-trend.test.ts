@@ -85,7 +85,7 @@ vi.mock("../../../shared/istDate.js", async (importOriginal) => ({
 
 const SCHEMA = `
 CREATE TABLE branch_master (id TEXT PRIMARY KEY, branch_name TEXT, active_status INT, company_name TEXT);
-CREATE TABLE process_master (id TEXT PRIMARY KEY, process_name TEXT, active_status INT, branch_id TEXT);
+CREATE TABLE process_master (id TEXT PRIMARY KEY, process_name TEXT, active_status INT, branch_id TEXT, process_code TEXT, client_name TEXT);
 CREATE TABLE cost_centre_master (id TEXT PRIMARY KEY, cost_centre_code TEXT, cost_centre_name TEXT, company_name TEXT,
   branch_id TEXT, process_id TEXT, active_status INT, process_name_bill TEXT, billing_client_name TEXT);
 CREATE TABLE employees (id TEXT PRIMARY KEY, employee_code TEXT, full_name TEXT, branch_id TEXT,
@@ -99,7 +99,7 @@ CREATE TABLE pnl_employee_cost_centre_override (id TEXT PRIMARY KEY, employee_id
   target_cost_centre_id TEXT, active_status INT);
 
 INSERT INTO branch_master VALUES ('B1','NOIDA',1,'MAS Call Net India Pvt Ltd'), ('B2','NOIDA-DIALDESK',1,'Ispark Dataconnect Pvt Ltd');
-INSERT INTO process_master VALUES ('P1','Onfido',1,'B1'), ('P2','Some DialDesk Client',1,'B2');
+INSERT INTO process_master VALUES ('P1','Onfido',1,'B1',NULL,NULL), ('P2','Some DialDesk Client',1,'B2',NULL,NULL);
 INSERT INTO cost_centre_master VALUES ('cc1','BSS/BO/NOIDA/576','Onfido','Mas Callnet India Pvt Ltd','B1','P1',1,NULL,NULL);
 INSERT INTO cost_centre_master VALUES ('cc2','BSS/DD/NOIDA/1','DialDesk client','IDC','B2','P2',1,NULL,NULL);
 INSERT INTO employees (id, employee_code, full_name, branch_id, process_id, cost_centre_id, active_status) VALUES

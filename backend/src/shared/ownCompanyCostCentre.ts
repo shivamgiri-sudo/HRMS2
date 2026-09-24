@@ -32,8 +32,10 @@ export function ownCompanyBranchSql(alias: string): string {
  * JOINed branch_master.
  */
 export function notDialDeskProcessSql(processAlias: string, branchAlias: string): string {
-  const name = `REPLACE(REPLACE(LOWER(COALESCE(${processAlias}.process_name, '')), ' ', ''), '-', '')`;
-  return `(${ownCompanyBranchSql(branchAlias)} AND ${name} NOT LIKE '%dialdesk%' AND ${name} NOT LIKE '%ispark%')`;
+  // Name, code and client together: a few DialDesk / I-Spark processes sit on a MAS branch and are
+  // recognisable only by their code (BSS_BLD_NOI_ISPARK_563) or client ("Ispark dataconnect Pvt Ltd").
+  const id = `REPLACE(REPLACE(LOWER(CONCAT_WS(' ', ${processAlias}.process_name, ${processAlias}.process_code, ${processAlias}.client_name)), ' ', ''), '-', '')`;
+  return `(${ownCompanyBranchSql(branchAlias)} AND ${id} NOT LIKE '%dialdesk%' AND ${id} NOT LIKE '%ispark%' AND ${id} NOT LIKE '%dataconnect%')`;
 }
 
 /**
