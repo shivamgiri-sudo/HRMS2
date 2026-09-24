@@ -26,6 +26,7 @@ import {
 import { authorizeDocumentAccess } from "./documentVaultAuth.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { db } from "../../db/mysql.js";
+import { HUB_ROLES, restrictLobOnlyFileCategory } from "../bulk-upload/bulk-role-restriction.js";
 import { verifyPhotoAccessToken } from "./photo-access-token.js";
 
 // SECURITY: Document authorization is ALWAYS enforced.
@@ -308,7 +309,8 @@ router.get(
 router.post(
   "/upload",
   requireAuth,
-  requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"),
+  requireRole(...HUB_ROLES),
+  restrictLobOnlyFileCategory,
   (req: any, res: any, next: any) => {
     upload.single("file")(req, res, (err) => {
       if (err instanceof multer.MulterError) {

@@ -144,7 +144,7 @@ export const platformRouteElements = (
       <Route path="/notification-preferences" element={<Navigate to="/communication/preferences" replace />} />
       <Route path="/modules"         element={<ProtectedRoute><ModuleLauncher /></ProtectedRoute>} />
       <Route path="/changelog"       element={<ProtectedRoute><Changelog /></ProtectedRoute>} />
-      <Route path="/bulk-upload"     element={<ProtectedRoute roles={['admin','hr','super_admin','wfm','payroll','payroll_hr','branch_admin','payroll_head']}><Gate pageCode="BULK_UPLOAD"><BulkUploadHub /></Gate></ProtectedRoute>} />
+      <Route path="/bulk-upload"     element={<ProtectedRoute roles={['admin','hr','super_admin','wfm','payroll','payroll_hr','branch_admin','payroll_head','branch_wfm','ho_wfm','wfm_spoc']}><Gate pageCode="BULK_UPLOAD"><BulkUploadHub /></Gate></ProtectedRoute>} />
       {/* Onfido's dashboard lives inside Process Operations; the old URL lands there. */}
       <Route path="/onfido-process/dashboard" element={<Navigate to="/process-operations?process=onfido&view=live" replace />} />
       {/* Gated on BULK_UPLOAD_APPROVALS, not BULK_UPLOAD.
