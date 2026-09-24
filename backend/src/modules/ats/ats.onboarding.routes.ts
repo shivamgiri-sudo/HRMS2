@@ -235,8 +235,8 @@ router.get(
          c.mobile       AS candidate_mobile,
          b.branch_name,
          r.branch_id,
-         dm.name        AS department_name,
-         desm.name      AS designation_name,
+         dm.dept_name        AS department_name,
+         desm.designation_name AS designation_name,
          cc.cost_centre_name,
          TRIM(CONCAT(COALESCE(rm.first_name,''), ' ', COALESCE(rm.last_name,''))) AS reporting_manager_name,
          TRIM(CONCAT(COALESCE(cbe.first_name,''), ' ', COALESCE(cbe.last_name,''))) AS created_by_name
