@@ -1128,6 +1128,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1842_employee_master_report_window_function_indexes.sql", // Registered 2026-09-22, owner approved after the Employee Master report ran for 8+ minutes live, saturating the shared MySQL server for every other query. Adds composite (employee_id, <window order cols>) indexes to employee_nominee, employee_education and employee_salary_assignment so the report's ROW_NUMBER() OVER (PARTITION BY employee_id ...) latest-row joins can use an index-ordered scan instead of sorting each whole table. Additive, ONLINE DDL, idempotent.
   "1843_it_provisioning_bgv_result_column.sql", // Registered 2026-09-22. Adds nullable bgv_result ENUM('red','green') to it_provisioning_request for the new HR_BGV_INITIATION join task. Additive, idempotent, no effect on any existing task_code. Renumbered from 1842 to 1843 at merge time to avoid colliding with 1842_employee_master_report_window_function_indexes.sql, registered separately the same day.
   "1845_onfido_wfm_manual_inputs.sql", // Registered 2026-09-23. Onfido dashboard WFM inputs with no uploaded source: onfido_manpower_plan (effective-dated approved HC per queue) and onfido_utilization_daily_input (daily forecast/adhoc/cross-training/QC inputs). Two new tables, additive, idempotent (CREATE TABLE IF NOT EXISTS).
+  "1846_provisioning_hr_bgv_page_access.sql", // Registered 2026-09-24. Seeds page_catalog + role_page_access (hr, branch_hr, admin, super_admin) for PROVISIONING_HR_BGV, which shipped without them. Additive idempotent upserts.
   ];
 
 export type MigrationHealth = {
