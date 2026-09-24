@@ -65,6 +65,7 @@ import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
 import { startAtsDailyReportScheduler } from "./modules/ats/ats-daily-report.cron.js";
 import { startBranchActivityReportScheduler } from "./modules/ats/branch-activity-report/scheduler.js";
+import { startBranchHealthReportScheduler } from "./modules/branch-health-report/scheduler.js";
 import { startEmployeeLifecycleWorker } from "./workers/employee-lifecycle.worker.js";
 import { startTatEscalationWorker } from "./workers/tat-escalation.worker.js";
 import { startQualityGapDetectorWorker } from "./workers/quality-gap-detector.worker.js";
@@ -314,6 +315,8 @@ function startServer() {
         }
         // No-op unless ATS_BRANCH_ACTIVITY_REPORT_ENABLED=true (dry-run unless ..._DRY_RUN=false).
         startBranchActivityReportScheduler();
+        // No-op unless BRANCH_HEALTH_REPORT_ENABLED=true (dry-run unless ..._DRY_RUN=false).
+        startBranchHealthReportScheduler();
         // Activates employees whose joining date has arrived, and retries failed
         // provisioning. Previously only registered in workers/all-workers.ts,
         // which has no npm script and no importer — so anyone approved before
