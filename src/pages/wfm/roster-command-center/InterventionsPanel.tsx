@@ -29,6 +29,7 @@ import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
 import { KpiTile, toKpiTone } from "@/components/wfm/console/KpiTile";
 import { PanelHeader } from "@/components/wfm/console/PanelHeader";
 import { scopeParams } from "./filterState";
+import { countByTier } from "./interventionCounts";
 import {
   AlertTriangle,
   ArrowRight,
@@ -471,11 +472,7 @@ export default function InterventionsPanel() {
    * reflect the filtered list, so narrowing by owner narrows the tiles with it.
    */
   const summary: InterventionSummary = (() => {
-    const byTier = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
-    for (const row of interventionsData?.interventions ?? []) {
-      const tier = String(row.riskTier ?? "").toUpperCase();
-      if (tier in byTier) byTier[tier as keyof typeof byTier] += 1;
-    }
+    const byTier = countByTier(interventionsData?.interventions ?? []);
     return { ...summaryBase, byTier };
   })();
 
