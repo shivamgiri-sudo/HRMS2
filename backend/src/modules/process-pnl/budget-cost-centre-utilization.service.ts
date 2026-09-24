@@ -1,5 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { budgetExGstSql, grnAllocationExGstSql } from "./pnl-ex-gst.js";
 
 /**
  * Per-cost-centre budget vs actual for one branch budget, with a head / sub-head breakdown.
@@ -19,8 +20,16 @@ import { db } from "../../db/mysql.js";
  * NOIDA-2 September 1 of 7.
  *
  * BUDGETED is therefore read from two disjoint sources and unioned:
- *   - direct lines    (cost_centre_id IS NOT NULL) -> the line's own gross_amount
- *   - allocated lines (cost_centre_id IS NULL)     -> finance_budget_line_allocation.gross_amount
+ *   - direct lines    (cost_centre_id IS NOT NULL) -> the line's own base_amount (ex-GST)
+ *   - allocated lines (cost_centre_id IS NULL)     -> finance_budget_line_allocation.base_amount
+ *
+ * EX-GST, owner rule 2026-09-24 ("Revenue and GRN — all components — must be NON-GST amounts"):
+ * budgeted (was gross_amount) and measured reserved/consumed (was pnl_cost_amount) are both the
+ * taxable value now, so the two stay on one basis. The simple-GRN fallback below still reads the
+ * line's own reserved_amount/consumed_amount counters, which the enforcement path
+ * (budget-consumption.service.ts) writes at pnl_cost_amount's basis — deliberately unchanged here
+ * (enforcement is an owner decision), so on a line with non-recoverable GST those fallback rows
+ * can sit slightly above the ex-GST basis.
  * The IS NULL / IS NOT NULL split makes double-counting structurally impossible rather than
  * merely unlikely; verified against production, 0 direct lines also carry allocation rows.
  *
@@ -140,11 +149,11 @@ export const budgetCostCentreUtilizationService = {
       `SELECT cost_centre_id, head, sub_head, line_id, SUM(budgeted) AS budgeted
          FROM (
            SELECT l.cost_centre_id AS cost_centre_id, l.head AS head, l.sub_head AS sub_head,
-                  l.id AS line_id, l.gross_amount AS budgeted
+                  l.id AS line_id, ${budgetExGstSql("l")} AS budgeted
              FROM finance_budget_line l
             WHERE l.budget_id = ? AND l.cost_centre_id IS NOT NULL
            UNION ALL
-           SELECT a.cost_centre_id, l.head, l.sub_head, l.id, a.gross_amount
+           SELECT a.cost_centre_id, l.head, l.sub_head, l.id, ${budgetExGstSql("a")}
              FROM finance_budget_line l
              JOIN finance_budget_line_allocation a ON a.budget_line_id = l.id
             WHERE l.budget_id = ? AND l.cost_centre_id IS NULL
@@ -156,6 +165,7 @@ export const budgetCostCentreUtilizationService = {
     // Measured spend. Joined back to the line so a GRN is attributed to the head/sub-head it was
     // budgeted under, and grouped on the GRN's OWN cost centre — which may differ from the line's.
     //
+    // 2026-09-24: now EX-GST (amount_without_tax), see the banner. History of the previous choice:
     // pnl_cost_amount, NOT amount_with_tax: budgetConsumptionService.reserve()/consume() charge
     // the budget line at pnl_cost_amount's basis (net/taxable value on an ITC-eligible line, gross
     // otherwise — see consumptionBasis() in budget-consumption.service.ts), because GST recovered
@@ -190,8 +200,8 @@ export const budgetCostCentreUtilizationService = {
     //     run that script any time to confirm current state or catch a recurrence.
     const [spendRows] = await db.query<RowDataPacket[]>(
       `SELECT g.cost_centre_id AS cost_centre_id, l.head AS head, l.sub_head AS sub_head,
-              SUM(CASE WHEN g.lifecycle_status = 'reserved' THEN g.pnl_cost_amount ELSE 0 END) AS reserved,
-              SUM(CASE WHEN g.lifecycle_status = 'consumed' THEN g.pnl_cost_amount ELSE 0 END) AS consumed
+              SUM(CASE WHEN g.lifecycle_status = 'reserved' THEN ${grnAllocationExGstSql("g")} ELSE 0 END) AS reserved,
+              SUM(CASE WHEN g.lifecycle_status = 'consumed' THEN ${grnAllocationExGstSql("g")} ELSE 0 END) AS consumed
          FROM grn_cost_allocation g
          JOIN finance_budget_line l ON l.id = g.budget_line_id
         WHERE l.budget_id = ? AND g.lifecycle_status IN ('reserved', 'consumed')
@@ -224,8 +234,8 @@ export const budgetCostCentreUtilizationService = {
     const [fundedElsewhereRows] = await db.query<RowDataPacket[]>(
       `SELECT g.cost_centre_id AS cost_centre_id,
               COALESCE(g.funding_cost_centre_id, l.cost_centre_id) AS funding_cost_centre_id,
-              SUM(CASE WHEN g.lifecycle_status = 'reserved' THEN g.pnl_cost_amount ELSE 0 END) AS reserved,
-              SUM(CASE WHEN g.lifecycle_status = 'consumed' THEN g.pnl_cost_amount ELSE 0 END) AS consumed
+              SUM(CASE WHEN g.lifecycle_status = 'reserved' THEN ${grnAllocationExGstSql("g")} ELSE 0 END) AS reserved,
+              SUM(CASE WHEN g.lifecycle_status = 'consumed' THEN ${grnAllocationExGstSql("g")} ELSE 0 END) AS consumed
          FROM grn_cost_allocation g
          JOIN finance_budget_line l ON l.id = g.budget_line_id
         WHERE l.budget_id = ?
@@ -279,7 +289,7 @@ export const budgetCostCentreUtilizationService = {
     // How much branch-level budget is completely invisible in this per-CC view because no
     // finance_budget_line_allocation rows were written for it.
     const [unallocatedRows] = await db.query<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt, COALESCE(SUM(l.gross_amount), 0) AS total_budget
+      `SELECT COUNT(*) AS cnt, COALESCE(SUM(${budgetExGstSql("l")}), 0) AS total_budget
          FROM finance_budget_line l
         WHERE l.budget_id = ?
           AND l.cost_centre_id IS NULL

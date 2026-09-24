@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1192,
-  "columnCount": 17788,
+  "columnCount": 17789,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -19051,7 +19051,8 @@
       "gross_amount",
       "allocation_count",
       "grn_count",
-      "freshness"
+      "freshness",
+      "ex_gst_amount"
     ],
     "vw_vendor_payment_lob_allocation": [
       "vendor_payment_id",

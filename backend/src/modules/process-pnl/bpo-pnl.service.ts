@@ -19,6 +19,7 @@ import { isOpenPeriod, getLiveRevenueEstimate } from "./pnl-statement.service.js
 import { isEstimateWindow } from "./pnl-seat-billing.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
+import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
 import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.service.js";
 import { processPnlService, getClosedBranchIds } from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
@@ -1259,9 +1260,13 @@ async function getGrnVendorActuals(
 
   if (await tableExists("vendor_payment_tracking")) {
     const columns = await listColumns("vendor_payment_tracking");
-    const amountExpr = columns.has("pnl_cost_amount")
-      ? "COALESCE(vpt.pnl_cost_amount, vpt.due_amount, 0)"
-      : "COALESCE(vpt.due_amount, 0)";
+    // EX-GST (owner rule 2026-09-24: P&L GRN must be non-GST). Was
+    // COALESCE(vpt.pnl_cost_amount, vpt.due_amount) — due_amount is the GST-inclusive payable.
+    const amountExpr = columns.has("amount_without_tax")
+      ? vendorPayableExGstSql("vpt")
+      : columns.has("pnl_cost_amount")
+        ? "COALESCE(vpt.pnl_cost_amount, vpt.due_amount, 0)"
+        : "COALESCE(vpt.due_amount, 0)";
     const recognitionExpr = columns.has("recognition_period")
       ? "COALESCE(vpt.recognition_period, DATE_FORMAT(COALESCE(vpt.due_date, vpt.payment_date, vpt.created_at), '%Y-%m'))"
       : "DATE_FORMAT(COALESCE(vpt.due_date, vpt.payment_date, vpt.created_at), '%Y-%m')";
@@ -1313,9 +1318,12 @@ async function getGrnVendorActuals(
 
   if (await tableExists("grn_request")) {
     const columns = await listColumns("grn_request");
-    const amountExpr = columns.has("pnl_cost_amount")
-      ? "COALESCE(g.pnl_cost_amount, g.amount, 0)"
-      : "COALESCE(g.amount, 0)";
+    // EX-GST (owner rule 2026-09-24). Was COALESCE(g.pnl_cost_amount, g.amount).
+    const amountExpr = columns.has("amount_without_tax")
+      ? grnRequestExGstSql("g")
+      : columns.has("pnl_cost_amount")
+        ? "COALESCE(g.pnl_cost_amount, g.amount, 0)"
+        : "COALESCE(g.amount, 0)";
     const recognitionExpr = columns.has("recognition_period")
       ? "COALESCE(g.recognition_period, DATE_FORMAT(COALESCE(g.bill_date, g.reviewed_at, g.created_at), '%Y-%m'))"
       : "DATE_FORMAT(COALESCE(g.bill_date, g.reviewed_at, g.created_at), '%Y-%m')";

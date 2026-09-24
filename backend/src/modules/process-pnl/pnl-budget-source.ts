@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
+import { budgetExGstSql } from "./pnl-ex-gst.js";
 
 /**
  * THE ONE BUDGET READER for every P&L surface (owner rule, 2026-09-23).
@@ -33,13 +34,19 @@ import { tableExists } from "../../shared/dbHelpers.js";
  * (UPPER(TRIM(branch_name))) so an HRMS header on any spelling suppresses the mirror for all of
  * them; mirror money is keyed to MIN(id) of that name, exactly as before.
  *
- * Amount basis per source (unchanged from what each surface already showed):
- *   - HRMS: pnl_cost_amount (non-recoverable-tax treatment — the same basis GRN actuals use). A line
+ * Amount basis per source:
+ *   - HRMS: EX-GST base_amount (owner rule 2026-09-24: "Revenue and GRN — all components — must be
+ *     NON-GST amounts"; GRN actuals moved to amount_without_tax in the same change, so budget and
+ *     GRN stay on one basis). Until 2026-09-24 this read pnl_cost_amount, which carried the
+ *     non-recoverable GST slice. A branch-level line's allocation rows are read at THEIR own
+ *     base_amount. pnl-ex-gst.ts's budgetExGstSql guards a legacy row with no base recorded. A line
  *     planned at branch level (cost_centre_id IS NULL) that has allocation rows is expanded into
  *     those rows; one without allocations stays a branch-level entry with no cost centre. Approved
  *     HRMS top-ups (finance_budget_topup_request) are applied INTO the lines by budget-topup.service,
  *     so there is no separate top-up entry on this side.
- *   - Mirror: finance_budget_line_snapshot.amount on 'CostCenter' lines of approved headers
+ *   - Mirror: finance_budget_line_snapshot.amount on 'CostCenter' lines of approved headers — read
+ *     AS IS. GST BASIS UNVERIFIED: db_bill's budget line carries a single amount with no tax split,
+ *     so whether it is ex-GST cannot be derived from the mirror; it is not adjusted here.
  *     (active_status = 1 AND is_rejected = 0; 'Particular' rows repeat the same money), plus one
  *     header-level 'top_up' entry per budget carrying reopen_additional_amount, which names no cost
  *     centre (see budget-top-up-attribution.ts for how a scope may claim one).
@@ -101,7 +108,9 @@ async function readHrmsEntries(period: string): Promise<{ entries: BudgetEntry[]
             l.head, l.sub_head, l.item_name,
             ${hasAllocation ? "COALESCE(a.cost_centre_id, l.cost_centre_id)" : "l.cost_centre_id"} AS cost_centre_id,
             ccm.cost_centre_code,
-            ${hasAllocation ? "COALESCE(a.pnl_cost_amount, l.pnl_cost_amount)" : "l.pnl_cost_amount"} AS amount
+            ${hasAllocation
+              ? `CASE WHEN a.id IS NOT NULL THEN ${budgetExGstSql("a")} ELSE ${budgetExGstSql("l")} END`
+              : budgetExGstSql("l")} AS amount
        FROM finance_budget_header h
        JOIN finance_budget_line l ON l.budget_id = h.id
        ${hasAllocation ? "LEFT JOIN finance_budget_line_allocation a ON a.budget_line_id = l.id AND l.cost_centre_id IS NULL" : ""}

@@ -3,6 +3,7 @@ import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { getSeatRevenueForecast } from "./pnl-seat-revenue-forecast.service.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
+import { grnRequestExGstSql } from "./pnl-ex-gst.js";
 
 /**
  * Revenue, cost and operating margin day by day through a month.
@@ -195,15 +196,16 @@ export async function getDailyTrend(
   // GRN spend by bill date.
   // INTENTIONALLY diverges from pnl-actuals.service.ts's readGrnSpend() (the shared month-level GRN
   // reader behind Statement / CEO / Live, 2026-09-23): this chart needs a DAY, which only bill_date
-  // carries (accounting_period is a month), and it reads grn_request headers only. Its
-  // COALESCE(pnl_cost_amount, amount_with_tax) fallback can include full GST on a legacy row with
-  // no pnl_cost_amount, so a month's daily bars need not sum exactly to the Statement's IDC.
+  // carries (accounting_period is a month), and it reads grn_request headers only, so a month's
+  // daily bars need not sum exactly to the Statement's IDC. Amount is EX-GST (owner rule
+  // 2026-09-24: P&L GRN must be non-GST) — amount_without_tax via pnl-ex-gst.ts, the same basis
+  // readGrnSpend() uses; it replaced COALESCE(pnl_cost_amount, amount_with_tax).
   const grnByDay = new Map<string, number>();
   if (await tableExists("grn_request")) {
     const branchSql = options.branchId ? "AND g.branch_id = ?" : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT DATE_FORMAT(g.bill_date, '%Y-%m-%d') AS d,
-              SUM(COALESCE(g.pnl_cost_amount, g.amount_with_tax)) AS amount
+              SUM(${grnRequestExGstSql("g")}) AS amount
          FROM grn_request g
         WHERE g.status NOT IN ('draft','rejected','cancelled')
           AND g.bill_date >= ? AND g.bill_date < ?

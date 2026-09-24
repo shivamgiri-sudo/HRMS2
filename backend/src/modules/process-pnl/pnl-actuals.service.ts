@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
+import { grnAllocationExGstSql, grnRequestExGstSql } from "./pnl-ex-gst.js";
 
 /**
  * The two P&L lines that already exist as data but were never read by the statement.
@@ -164,9 +165,11 @@ export const OWN_COMPANY_SQL =
  *   - period: grn_request.accounting_period (app legs), grn_entry_snapshot.period_code (mirror).
  *   - company: OWN_COMPANY_SQL on EVERY leg — a GRN counts as MAS indirect cost only when it is
  *     booked to a MAS Callnet cost centre (the rule the CEO view and every mirror leg already used).
- *   - amount: pnl_cost_amount on both app legs (net of RECOVERABLE GST only — non-recoverable GST
- *     is a real expense, see the 2026-08-29 note below); the mirror's net-of-tax l.amount, never
- *     l.total, for a GRN the app has not captured (the NOT EXISTS dedup guard on grn_number).
+ *   - amount: EX-GST on every leg (owner rule 2026-09-24: "Revenue and GRN — all components —
+ *     must be NON-GST amounts"). App legs read amount_without_tax (via pnl-ex-gst.ts, which guards
+ *     legacy rows whose ex-GST column is still the 0 default); the mirror's net-of-tax l.amount,
+ *     never l.total, for a GRN the app has not captured (the NOT EXISTS dedup guard on grn_number).
+ *     This replaced pnl_cost_amount, which carried non-recoverable GST — see the history below.
  *   - 'consumed' = allocation rows with lifecycle_status 'consumed' + ordinary GRNs (budget line,
  *     no allocation rows, not draft/rejected/cancelled) + mirror gap-fill.
  *     'reserved' = allocation rows with lifecycle_status 'reserved' only (an in-app approval state
@@ -259,7 +262,7 @@ export async function readGrnSpend(
   // Leg 1 — Smart GRN per-cost-centre allocation rows.
   legs.push(
     `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, ccm.id AS cost_centre_id,
-            ${processCol("a.process_id", "pc1")} AS process_id, a.pnl_cost_amount AS amount,
+            ${processCol("a.process_id", "pc1")} AS process_id, ${grnAllocationExGstSql("a")} AS amount,
             ${detailCols("app_allocation", "COALESCE(gr.grn_number, gr.id)", appLabel, "gr.bill_date")}
        FROM grn_cost_allocation a
        JOIN grn_request gr ON gr.id = a.grn_request_id
@@ -274,7 +277,7 @@ export async function readGrnSpend(
     // never counted twice).
     legs.push(
       `SELECT COALESCE(ccm.branch_id, gr.branch_id) AS branch_id, ccm.id AS cost_centre_id,
-              ${processCol("gr.process_id", "pc2")} AS process_id, gr.pnl_cost_amount AS amount,
+              ${processCol("gr.process_id", "pc2")} AS process_id, ${grnRequestExGstSql("gr")} AS amount,
               ${detailCols("app_grn", "COALESCE(gr.grn_number, gr.id)", appLabel, "gr.bill_date")}
          FROM grn_request gr
          LEFT JOIN cost_centre_master ccm ON ccm.id = gr.cost_centre_id
@@ -371,6 +374,12 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
  *   IS a real P&L expense. pnl_cost_amount is what calculateBudgetLine() computes for exactly this
  *   (baseAmount + taxAmount - recoverableTaxAmount) and what vw_process_pnl_grn_allocation and
  *   branch-budget.service.ts's GRN drill-through read.
+ * - 2026-09-24: OVERRIDDEN BY THE OWNER. "Revenue and GRN — all components — must be NON-GST
+ *   amounts." P&L GRN is now ex-GST: both app legs read amount_without_tax (pnl-ex-gst.ts), so the
+ *   non-recoverable tax slice no longer counts as P&L cost. The budget side the P&L compares GRN
+ *   against (pnl-budget-source.ts) moved to base_amount in the same change, so budget vs GRN stays
+ *   on one basis. pnl_cost_amount is still what the GRN gate / budget consumption enforce against;
+ *   that enforcement path was left unchanged (owner decision pending).
  * - 2026-08-29: the db_bill mirror (grn_entry_line_snapshot) was double-counting — 1,452 of 1,495
  *   consumed app GRNs (97%) were also in the mirror under the same GRN number, overstating the
  *   Statement's IDC by Rs 3,37,46,372 for Apr-Aug 2026. The NOT EXISTS guard on
