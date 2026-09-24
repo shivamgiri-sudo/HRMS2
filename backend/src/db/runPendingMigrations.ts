@@ -1146,6 +1146,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1861_roster_team_line_shift_times.sql", // Registered 2026-09-24. Adds nullable new_shift_start_time TIME, new_shift_end_time TIME and new_shift_id CHAR(36) (collation copied from wfm_shift_master.id) to roster_team_submission_line so a Team Roster line stores its shift as times (live rosters carry raw times, not templates). information_schema-guarded ADD COLUMNs on a new empty table; additive, idempotent.
   "1862_process_master_auto_deactivation.sql", // Registered 2026-09-24, owner ruling (process goes inactive when all its cost centres close, automatically). New table process_master_auto_deactivation (process_id PK, collation copied from process_master.id) logging each automatic deactivation so only those are auto-reactivated. CREATE TABLE IF NOT EXISTS; additive, idempotent.
   "1863_grn_request_created_at_index.sql", // Registered 2026-09-24. Adds idx_grn_created_at on grn_request(created_at) so the GRN list ORDER BY created_at DESC LIMIT 30 stops filesorting ~83k wide rows. Guarded information_schema check, additive, idempotent.
+  "1864_grn_request_covering_indexes.sql", // Registered 2026-09-24. Two covering indexes on grn_request (status cover for the GRN summary/count, bill_date+amount_without_tax for the daily P&L trend). Guarded information_schema checks, additive, idempotent.
   ];
 
 export type MigrationHealth = {
