@@ -114,7 +114,20 @@ async function runMetaLeadSync(): Promise<void> {
       );
     }
 
-    // 3. Notify newly qualified leads (only those created after scheduler start)
+    // 3. Heal leads the webhook/backfill left half-synced (Graph-fetch stubs, qualified leads with
+    //    no ATS candidate) so they are complete before outreach.
+    try {
+      const healed = await metaCampaignService.healUnsyncedLeads();
+      if (healed.candidatesCreated || healed.stubsRetried) {
+        console.log(
+          `[meta-sync] Heal: ${healed.candidatesCreated} candidate(s) created, ${healed.stubsHealed}/${healed.stubsRetried} stub(s) recovered`
+        );
+      }
+    } catch (err: any) {
+      console.error("[meta-sync] Heal step failed:", err?.message ?? err);
+    }
+
+    // 4. Notify newly qualified leads within the rolling window.
     //    backfillFormLeads sets skipOutreach=true, so we do outreach here.
     await notifyNewQualifiedLeads();
   } catch (err: any) {

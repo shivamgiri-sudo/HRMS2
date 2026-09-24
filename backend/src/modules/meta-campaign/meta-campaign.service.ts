@@ -106,6 +106,19 @@ function jsonArray(value: unknown): string[] {
   return [];
 }
 
+/** True for the placeholder row ingestLead stores when the Graph lead fetch failed. */
+export function isGraphFetchStub(row: Record<string, unknown>): boolean {
+  let payload = row.raw_payload;
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload);
+    } catch {
+      return false;
+    }
+  }
+  return (payload as { error?: unknown } | null)?.error === 'graph_fetch_failed';
+}
+
 function toLead(row: RowDataPacket | MetaLeadRow): MetaLead {
   const r = row as MetaLeadRow;
   return {
@@ -519,7 +532,10 @@ export const metaCampaignService = {
       'SELECT * FROM meta_lead_raw WHERE meta_lead_id = ? LIMIT 1',
       [leadgenId]
     );
-    if (dupe[0]) return toLead(dupe[0]);
+    // A placeholder left by a failed Graph fetch is NOT a duplicate: it holds no name or phone, and
+    // treating it as one would strand the lead forever. It is completed in place below.
+    const stubToHeal = dupe[0] && isGraphFetchStub(dupe[0]) ? dupe[0] : null;
+    if (dupe[0] && !stubToHeal) return toLead(dupe[0]);
 
     // Route the form back to a campaign/requisition. An unlinked form is stored anyway — losing
     // the lead because an operator has not filled in the Form ID yet would be the worse failure.
@@ -542,7 +558,9 @@ export const metaCampaignService = {
     try {
       detail = args.prefetchedDetail ?? (await fetchLeadDetail(leadgenId));
     } catch (err) {
-      // Store a stub so the lead is not lost, and so a token fix can be followed by a re-parse.
+      // Already holding a stub for this lead: nothing new to store, retry on the next attempt.
+      if (stubToHeal) throw err;
+      // Store a stub so the lead is not lost; the next ingest attempt completes it in place.
       const stubId = randomUUID();
       await db.execute(
         `INSERT IGNORE INTO meta_lead_raw
@@ -614,31 +632,40 @@ export const metaCampaignService = {
         // recruiter to action manually.
         null;
 
-    const id = randomUUID();
-    await db.execute(
-      `INSERT INTO meta_lead_raw
-         (id, meta_form_id, meta_lead_id, campaign_id, requisition_id, raw_payload,
-          parsed_name, parsed_phone, parsed_email, parsed_age, parsed_location,
-          parsed_education, parsed_experience_yr, screening_result, disqualification_reason)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        formId,
-        leadgenId,
-        campaign?.id ?? null,
-        campaign?.requisition_id || null,
-        JSON.stringify(detail),
-        parsed.name,
-        parsed.phone,
-        parsed.email,
-        parsed.age,
-        parsed.location,
-        parsed.education,
-        parsed.experienceYears,
-        screening === null ? 'pending' : screening.qualified ? 'qualified' : 'disqualified',
-        screening?.reason ?? null,
-      ]
-    );
+    const id = stubToHeal ? String(stubToHeal.id) : randomUUID();
+    const leadValues = [
+      campaign?.id ?? null,
+      campaign?.requisition_id || null,
+      JSON.stringify(detail),
+      parsed.name,
+      parsed.phone,
+      parsed.email,
+      parsed.age,
+      parsed.location,
+      parsed.education,
+      parsed.experienceYears,
+      screening === null ? 'pending' : screening.qualified ? 'qualified' : 'disqualified',
+      screening?.reason ?? null,
+    ];
+    if (stubToHeal) {
+      await db.execute(
+        `UPDATE meta_lead_raw
+            SET campaign_id = ?, requisition_id = ?, raw_payload = ?,
+                parsed_name = ?, parsed_phone = ?, parsed_email = ?, parsed_age = ?, parsed_location = ?,
+                parsed_education = ?, parsed_experience_yr = ?, screening_result = ?, disqualification_reason = ?
+          WHERE id = ?`,
+        [...leadValues, id]
+      );
+    } else {
+      await db.execute(
+        `INSERT INTO meta_lead_raw
+           (id, meta_form_id, meta_lead_id, campaign_id, requisition_id, raw_payload,
+            parsed_name, parsed_phone, parsed_email, parsed_age, parsed_location,
+            parsed_education, parsed_experience_yr, screening_result, disqualification_reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, formId, leadgenId, ...leadValues]
+      );
+    }
 
     if (campaign?.id) {
       await db.execute('UPDATE meta_campaign SET leads_count = leads_count + 1 WHERE id = ?', [campaign.id]);
@@ -696,10 +723,10 @@ export const metaCampaignService = {
           // Cheap pre-check so the "duplicates" counter is meaningful; ingestLead would also
           // dedup, but it would report the lead as imported.
           const [dupe] = await db.execute<RowDataPacket[]>(
-            'SELECT id FROM meta_lead_raw WHERE meta_lead_id = ? LIMIT 1',
+            'SELECT id, raw_payload FROM meta_lead_raw WHERE meta_lead_id = ? LIMIT 1',
             [normaliseMetaId(leadgenId) ?? leadgenId]
           );
-          if (dupe[0]) {
+          if (dupe[0] && !isGraphFetchStub(dupe[0])) {
             duplicates += 1;
             continue;
           }
@@ -990,6 +1017,46 @@ export const metaCampaignService = {
 
     await db.execute('UPDATE meta_lead_raw SET ats_candidate_id = ? WHERE id = ?', [candidateId, leadId]);
     return candidateId;
+  },
+
+  /**
+   * Retry candidate creation for qualified leads that never got one (a swallowed INSERT failure
+   * at ingest time leaves the lead qualified with ats_candidate_id NULL and nothing retries it),
+   * and re-fetch leads stranded as Graph-fetch stubs. Candidate creation sends no messages.
+   */
+  async healUnsyncedLeads(sinceDays = 7, limit = 200): Promise<{ candidatesCreated: number; stubsRetried: number; stubsHealed: number }> {
+    const [orphans] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM meta_lead_raw
+        WHERE screening_result = 'qualified' AND ats_candidate_id IS NULL
+          AND parsed_phone IS NOT NULL AND parsed_name IS NOT NULL
+          AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+        ORDER BY created_at ASC LIMIT ${Number(limit)}`,
+      [sinceDays]
+    );
+    let candidatesCreated = 0;
+    for (const row of orphans) {
+      const id = await this.createCandidateFromLead(String(row.id)).catch(() => null);
+      if (id) candidatesCreated += 1;
+    }
+
+    const [stubs] = await db.execute<RowDataPacket[]>(
+      `SELECT meta_form_id, meta_lead_id FROM meta_lead_raw
+        WHERE parsed_name IS NULL AND parsed_phone IS NULL
+          AND JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.error')) = 'graph_fetch_failed'
+          AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+        ORDER BY created_at ASC LIMIT ${Number(limit)}`,
+      [sinceDays]
+    );
+    let stubsHealed = 0;
+    for (const s of stubs) {
+      const healed = await this.ingestLead({
+        formId: String(s.meta_form_id),
+        leadgenId: String(s.meta_lead_id),
+        skipOutreach: true,
+      }).catch(() => null);
+      if (healed && healed.parsedName) stubsHealed += 1;
+    }
+    return { candidatesCreated, stubsRetried: stubs.length, stubsHealed };
   },
 
   // ─────────────────────── funnel read model ───────────────────────
