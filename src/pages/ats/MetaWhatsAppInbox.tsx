@@ -6,7 +6,7 @@
  * All API calls unchanged; only the presentation layer is redesigned.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, CheckCheck, ChevronLeft, Paperclip, RefreshCcw, Search, Send, X } from "lucide-react";
+import { AlertCircle, Check, CheckCheck, ChevronLeft, Clock, Paperclip, RefreshCcw, Search, Send, X } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 
@@ -36,6 +36,7 @@ type Message = {
   senderType: "system" | "hr" | "candidate";
   senderId: string | null;
   senderName: string | null;
+  deliveryStatus?: "queued" | "sent" | "delivered" | "read" | "failed" | null;
   readAt: string | null;
   createdAt: string;
 };
@@ -126,7 +127,7 @@ function ConversationItem({ conv, selected, onClick }: {
           <div className="flex items-center justify-between gap-1 mt-0.5">
             <div className="flex items-center gap-1 min-w-0">
               {conv.lastDirection === "outbound" && (
-                <CheckCheck className="w-3.5 h-3.5 flex-shrink-0 text-[#53bdeb]" />
+                <Check className="w-3.5 h-3.5 flex-shrink-0 text-[#667781]" />
               )}
               <span className="text-[13px] text-[#667781] truncate">
                 {conv.lastMessageText
@@ -151,6 +152,24 @@ function ConversationItem({ conv, selected, onClick }: {
       </div>
     </button>
   );
+}
+
+/** Real delivery state; a clock means Wassenger has queued the message but not sent it yet. */
+function DeliveryTick({ status }: { status: Message["deliveryStatus"] }) {
+  switch (status) {
+    case "queued":
+      return <span title="Queued - not sent yet"><Clock className="w-3.5 h-3.5 text-amber-600" /></span>;
+    case "sent":
+      return <span title="Sent"><Check className="w-3.5 h-3.5 text-[#667781]" /></span>;
+    case "delivered":
+      return <span title="Delivered"><CheckCheck className="w-3.5 h-3.5 text-[#667781]" /></span>;
+    case "read":
+      return <span title="Read"><CheckCheck className="w-3.5 h-3.5 text-[#53bdeb]" /></span>;
+    case "failed":
+      return <span title="Failed to send"><AlertCircle className="w-3.5 h-3.5 text-red-600" /></span>;
+    default:
+      return <span title="Delivery status unknown"><Clock className="w-3.5 h-3.5 text-[#667781]" /></span>;
+  }
 }
 
 function ChatBubble({ msg }: { msg: Message }) {
@@ -193,11 +212,7 @@ function ChatBubble({ msg }: { msg: Message }) {
         {/* Time + ticks */}
         <div className="absolute bottom-1.5 right-2 flex items-center gap-1">
           <span className="text-[10px] text-[#667781] leading-none">{fmtBubbleTime(msg.createdAt)}</span>
-          {isOut && (
-            msg.readAt
-              ? <CheckCheck className="w-3.5 h-3.5 text-[#53bdeb]" />
-              : <CheckCheck className="w-3.5 h-3.5 text-[#667781]" />
-          )}
+          {isOut && <DeliveryTick status={msg.deliveryStatus ?? null} />}
         </div>
       </div>
     </div>

@@ -18,6 +18,7 @@ import { db } from "../db/mysql.js";
 import { metaCampaignService } from "../modules/meta-campaign/meta-campaign.service.js";
 import { isMetaConfigured } from "../modules/meta-campaign/meta-api.client.js";
 import { notifyQualifiedLead } from "../modules/meta-campaign/lead-outreach.service.js";
+import { reconcileDeliveryStatuses } from "../modules/meta-campaign/meta-messages.service.js";
 
 let scheduler: NodeJS.Timeout | undefined;
 let runInFlight = false;
@@ -125,6 +126,19 @@ async function runMetaLeadSync(): Promise<void> {
       }
     } catch (err: any) {
       console.error("[meta-sync] Heal step failed:", err?.message ?? err);
+    }
+
+    // 3b. Reconcile WhatsApp delivery states. A message Wassenger merely queued is not delivered;
+    //     a growing "still queued" count means Wassenger's device/queue is stuck.
+    try {
+      const wa = await reconcileDeliveryStatuses();
+      if (wa.checked) {
+        const msg = `[meta-sync] WhatsApp delivery: ${wa.checked} checked, ${wa.updated} updated, ${wa.stillQueued} still queued`;
+        if (wa.stillQueued > 0) console.warn(`${msg} — Wassenger queue may be stuck`);
+        else console.log(msg);
+      }
+    } catch (err: any) {
+      console.error("[meta-sync] Delivery reconcile failed:", err?.message ?? err);
     }
 
     // 4. Notify newly qualified leads within the rolling window.

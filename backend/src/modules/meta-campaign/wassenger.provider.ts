@@ -306,3 +306,57 @@ export async function sendConfirmationAck(
       console.warn('[wassenger] ack send failed:', e instanceof Error ? e.message : e)
     );
 }
+
+// ─────────────────────────── delivery status ───────────────────────────
+
+export type DeliveryStatus = 'queued' | 'sent' | 'delivered' | 'read' | 'failed';
+
+/**
+ * Collapse Wassenger's two status fields into one of five values. `deliveryStatus` is the finer
+ * one (sent/delivered/read) and wins when present; `status` alone ("queued", "processed",
+ * "failed") is the fallback. Unknown values return null so a new Wassenger state never
+ * overwrites a known one with garbage.
+ */
+export function normaliseDeliveryStatus(status?: string | null, deliveryStatus?: string | null): DeliveryStatus | null {
+  const pick = (v?: string | null): DeliveryStatus | null => {
+    switch ((v ?? '').toLowerCase()) {
+      case 'queued':
+      case 'waiting':
+      case 'pending':
+        return 'queued';
+      case 'sent':
+      case 'processed':
+        return 'sent';
+      case 'delivered':
+        return 'delivered';
+      case 'read':
+        return 'read';
+      case 'failed':
+      case 'error':
+        return 'failed';
+      default:
+        return null;
+    }
+  };
+  return pick(deliveryStatus) ?? pick(status);
+}
+
+/** Extract {messageId,status} from a message:update / message:out:new webhook body, else null. */
+export function parseWassengerStatusUpdate(
+  payload: WassengerWebhookPayload
+): { messageId: string; status: DeliveryStatus } | null {
+  if (payload.event !== 'message:update' && payload.event !== 'message:out:new') return null;
+  const data = payload.data as { id?: string; status?: string; deliveryStatus?: string } | undefined;
+  if (!data?.id) return null;
+  const status = normaliseDeliveryStatus(data.status, data.deliveryStatus);
+  return status ? { messageId: String(data.id), status } : null;
+}
+
+/** Ask Wassenger for one message's current delivery state (used to reconcile missed webhooks). */
+export async function fetchMessageDeliveryStatus(messageId: string): Promise<DeliveryStatus | null> {
+  const { data } = await axios.get(`${WASSENGER_BASE}/messages/${encodeURIComponent(messageId)}`, {
+    headers: headers(),
+    timeout: 15000,
+  });
+  return normaliseDeliveryStatus(data?.status, data?.deliveryStatus);
+}
