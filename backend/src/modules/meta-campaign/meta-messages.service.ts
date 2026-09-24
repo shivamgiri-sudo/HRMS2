@@ -85,7 +85,7 @@ export async function updateDeliveryStatus(wassengerMessageId: string, status: D
   const [res] = await db.execute<ResultSetHeader>(
     `UPDATE meta_lead_messages
         SET delivery_status = ?, delivery_updated_at = NOW()
-      WHERE wassenger_message_id = ? AND direction = 'outbound' AND delivery_status IS NOT ?
+      WHERE wassenger_message_id = ? AND direction = 'outbound' AND NOT (delivery_status <=> ?)
         AND ${FORWARD_ONLY_SQL}`,
     [status, wassengerMessageId, status, status, status]
   );
