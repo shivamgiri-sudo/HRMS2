@@ -127,10 +127,10 @@ function safeDate(v) {
   if (!v) return null;
   if (v instanceof Date) {
     const s = v.toISOString().slice(0, 10);
-    return s === '0000-00-00' ? null : s;
+    return s.startsWith('0000-') ? null : s;
   }
   const s = String(v).trim().slice(0, 10);
-  return (s === '0000-00-00' || s === '') ? null : s;
+  return (!s || s.startsWith('0000-')) ? null : s;
 }
 
 function trim(v) {
@@ -170,7 +170,9 @@ function paymentCompleteness(billAmount, tds, deduction, netAmount) {
 function safeDateTime(v) {
   if (!v) return null;
   const s = v instanceof Date ? v.toISOString().slice(0, 19).replace('T', ' ') : String(v).trim();
-  return (!s || s.startsWith('0000-00-00')) ? null : s.slice(0, 19);
+  // Reject any date whose year is 0000 (0000-00-00, 0000-00-01, etc.) — MySQL stores these
+  // as sentinels for "no date" in older rows and they are not valid datetimes.
+  return (!s || s.startsWith('0000-')) ? null : s.slice(0, 19);
 }
 
 const MONTH_NUM = {
