@@ -159,6 +159,105 @@ router.get(
   }),
 );
 
+// ── Offer audit: all submitted/draft offers with every field, for management review ──
+router.get(
+  '/offer-audit',
+  requireAuth,
+  requireRole('hr', 'hr_admin', 'hr_head', 'ho_hr', 'admin', 'super_admin', 'payroll_hr', 'branch_hr', 'payroll_head'),
+  h(async (req: AuthenticatedRequest, res) => {
+    const scopeFilter = await buildScopeWhereClause(
+      req.authUser!.id,
+      ['branch_hr', 'payroll_head', 'payroll_hr'],
+      { branchId: 'r.branch_id' },
+      { allowAdminBypass: true },
+    );
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (scopeFilter.sql && scopeFilter.sql !== '1=1') { conditions.push(scopeFilter.sql); params.push(...(scopeFilter.params ?? [])); }
+
+    const { branch_id, status, from_date, to_date, search } = req.query;
+    if (branch_id)  { conditions.push('r.branch_id = ?');                               params.push(branch_id); }
+    if (status)     { conditions.push('o.status = ?');                                  params.push(status); }
+    if (from_date)  { conditions.push('DATE(o.created_at) >= ?');                       params.push(from_date); }
+    if (to_date)    { conditions.push('DATE(o.created_at) <= ?');                       params.push(to_date); }
+    if (search)     { conditions.push('(c.full_name LIKE ? OR c.candidate_code LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         o.id AS offer_id,
+         o.status,
+         o.emp_type,
+         o.date_of_joining,
+         o.date_of_salary,
+         o.profile,
+         o.cost_centre,
+         o.role_type,
+         o.kpi,
+         o.work_status,
+         o.emp_location_type,
+         o.home_branch,
+         o.salary_band,
+         o.offered_ctc,
+         o.basic,
+         o.hra,
+         o.conveyance,
+         o.da,
+         o.special_allowance,
+         o.other_allowance,
+         o.bonus,
+         o.gross,
+         o.pf_employee,
+         o.pf_employer,
+         o.esic_employee,
+         o.esic_employer,
+         o.professional_tax,
+         o.gratuity,
+         o.admin_charges,
+         o.net_in_hand,
+         o.pli,
+         o.pay_mode,
+         o.salary_payment_mode,
+         o.pf_eligible,
+         o.esi_eligible,
+         o.pf_opt_out,
+         o.esic_opt_out,
+         o.is_proposed_exception,
+         o.proposed_exception_reason,
+         o.submitted_at,
+         o.created_at AS offer_created_at,
+         c.full_name    AS candidate_name,
+         c.candidate_code,
+         c.email        AS candidate_email,
+         c.mobile       AS candidate_mobile,
+         b.branch_name,
+         r.branch_id,
+         dm.name        AS department_name,
+         desm.name      AS designation_name,
+         cc.cost_centre_name,
+         TRIM(CONCAT(COALESCE(rm.first_name,''), ' ', COALESCE(rm.last_name,''))) AS reporting_manager_name,
+         TRIM(CONCAT(COALESCE(cbe.first_name,''), ' ', COALESCE(cbe.last_name,''))) AS created_by_name
+       FROM ats_employment_offer o
+       JOIN ats_onboarding_request r   ON r.id = o.onboarding_request_id
+       JOIN ats_candidate c             ON c.id = o.candidate_id
+       LEFT JOIN branch_master b        ON b.id = r.branch_id
+       LEFT JOIN department_master dm   ON dm.id = o.department_id
+       LEFT JOIN designation_master desm ON desm.id = o.designation_id
+       LEFT JOIN cost_centre_master cc  ON (cc.id = o.cost_centre OR cc.cost_centre_code = o.cost_centre)
+       LEFT JOIN employees rm           ON rm.id = o.reporting_manager_id
+       LEFT JOIN employees cbe          ON cbe.user_id = o.created_by
+       ${where}
+       ORDER BY o.created_at DESC
+       LIMIT 1000`,
+      params,
+    );
+    res.json({ ok: true, data: rows });
+  }),
+);
+
 router.post(
   '/calculate-salary',
   requireAuth,

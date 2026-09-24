@@ -22,9 +22,11 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  ClipboardList,
   Download,
   Eye,
   FileCheck,
+  Filter,
   Loader2,
   Maximize2,
   MoreVertical,
@@ -41,6 +43,61 @@ import {
 } from 'lucide-react';
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
+
+interface OfferAuditRow {
+  offer_id: string;
+  status: 'draft' | 'submitted' | 'bh_approved' | 'bh_rejected' | string;
+  candidate_name: string;
+  candidate_code: string;
+  candidate_email?: string;
+  candidate_mobile?: string;
+  branch_name?: string;
+  branch_id?: string;
+  emp_type?: string;
+  date_of_joining?: string;
+  date_of_salary?: string;
+  profile?: string;
+  cost_centre?: string;
+  cost_centre_name?: string;
+  department_name?: string;
+  designation_name?: string;
+  reporting_manager_name?: string;
+  role_type?: string;
+  kpi?: string;
+  work_status?: string;
+  emp_location_type?: string;
+  home_branch?: string;
+  salary_band?: string;
+  offered_ctc?: number;
+  basic?: number;
+  hra?: number;
+  conveyance?: number;
+  da?: number;
+  special_allowance?: number;
+  other_allowance?: number;
+  bonus?: number;
+  gross?: number;
+  pf_employee?: number;
+  pf_employer?: number;
+  esic_employee?: number;
+  esic_employer?: number;
+  professional_tax?: number;
+  gratuity?: number;
+  admin_charges?: number;
+  net_in_hand?: number;
+  pli?: number;
+  pay_mode?: string;
+  salary_payment_mode?: string;
+  pf_eligible?: number;
+  esi_eligible?: number;
+  pf_opt_out?: number;
+  esic_opt_out?: number;
+  is_proposed_exception?: number;
+  proposed_exception_reason?: string;
+  submitted_at?: string;
+  offer_created_at?: string;
+  created_by_name?: string;
+}
 
 interface OnboardingRequest {
   id: string;
@@ -402,7 +459,7 @@ export default function NativeHROnboardingRequests() {
   const canMarkNotJoining = roleKeys.some(k => ['admin', 'super_admin', 'hr'].includes(k));
 
   // ── Main view tab
-  const [mainTab, setMainTab] = useState<'onboarding' | 'bgv_review'>('onboarding');
+  const [mainTab, setMainTab] = useState<'onboarding' | 'bgv_review' | 'offer_audit'>('onboarding');
 
   // ── BGV Review queue state
   const [bgvQueue, setBgvQueue] = useState<BgvQueueItem[]>([]);
@@ -413,6 +470,17 @@ export default function NativeHROnboardingRequests() {
   const [bgvReviewError, setBgvReviewError] = useState<string | null>(null);
   const [bgvDetailCandidate, setBgvDetailCandidate] = useState<string | null>(null);
   const [bgvDetail, setBgvDetail] = useState<BgvDetailData | null>(null);
+
+  // ── Offer Audit state
+  const [auditRows, setAuditRows] = useState<OfferAuditRow[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditBranch, setAuditBranch] = useState('');
+  const [auditStatus, setAuditStatus] = useState('');
+  const [auditFrom, setAuditFrom] = useState('');
+  const [auditTo, setAuditTo] = useState('');
+  const [auditSelected, setAuditSelected] = useState<OfferAuditRow | null>(null);
 
   // ── List state
   const [rows, setRows] = useState<OnboardingRequest[]>([]);
@@ -691,6 +759,30 @@ export default function NativeHROnboardingRequests() {
   useEffect(() => {
     if (mainTab === 'bgv_review') void loadBgvQueue();
   }, [mainTab, loadBgvQueue]);
+
+  const loadOfferAudit = useCallback(async () => {
+    setAuditLoading(true);
+    setAuditError(null);
+    try {
+      const params = new URLSearchParams();
+      if (auditSearch)  params.set('search',    auditSearch);
+      if (auditBranch)  params.set('branch_id', auditBranch);
+      if (auditStatus)  params.set('status',    auditStatus);
+      if (auditFrom)    params.set('from_date', auditFrom);
+      if (auditTo)      params.set('to_date',   auditTo);
+      const qs = params.toString();
+      const r = await hrmsApi.get<any>(`/api/ats/onboarding/offer-audit${qs ? `?${qs}` : ''}`);
+      setAuditRows(Array.isArray(r) ? r : (r?.data ?? []));
+    } catch (e: any) {
+      setAuditError(e?.message || 'Unable to load offer audit data.');
+    } finally {
+      setAuditLoading(false);
+    }
+  }, [auditSearch, auditBranch, auditStatus, auditFrom, auditTo]);
+
+  useEffect(() => {
+    if (mainTab === 'offer_audit') void loadOfferAudit();
+  }, [mainTab, loadOfferAudit]);
 
   // ── Load full BGV detail for a candidate
   const loadBgvDetail = useCallback(async (candidateId: string) => {
@@ -1348,6 +1440,13 @@ export default function NativeHROnboardingRequests() {
                   </span>
                 )}
               </button>
+              <button
+                type="button"
+                onClick={() => setMainTab('offer_audit')}
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors ${mainTab === 'offer_audit' ? 'border-violet-600 text-violet-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+              >
+                <ClipboardList className="h-4 w-4" /> Offer Submissions
+              </button>
             </div>
 
             {mainTab === 'onboarding' && (
@@ -1426,6 +1525,43 @@ export default function NativeHROnboardingRequests() {
                 </button>
               )}
             </div>
+            )}
+
+            {/* ── OFFER AUDIT FILTERS ─────────────────────────────────── */}
+            {mainTab === 'offer_audit' && (
+              <div className="flex flex-wrap gap-2 items-center">
+                <div className="relative w-full sm:w-64">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input value={auditSearch} onChange={(e) => setAuditSearch(e.target.value)} placeholder="Search candidate…" className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" />
+                </div>
+                <select className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" value={auditStatus} onChange={(e) => setAuditStatus(e.target.value)}>
+                  <option value="">All Statuses</option>
+                  <option value="draft">Draft</option>
+                  <option value="submitted">Submitted</option>
+                  <option value="bh_approved">BH Approved</option>
+                  <option value="bh_rejected">BH Rejected</option>
+                </select>
+                <select className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" value={auditBranch} onChange={(e) => setAuditBranch(e.target.value)}>
+                  <option value="">All Branches</option>
+                  {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+                </select>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-slate-500 shrink-0">From</span>
+                  <input type="date" value={auditFrom} onChange={(e) => setAuditFrom(e.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none" />
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-slate-500 shrink-0">To</span>
+                  <input type="date" value={auditTo} onChange={(e) => setAuditTo(e.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none" />
+                </div>
+                <Button variant="outline" size="sm" onClick={() => void loadOfferAudit()} className="h-9 gap-1.5">
+                  <Filter className="h-3.5 w-3.5" /> Apply
+                </Button>
+                {(auditSearch || auditBranch || auditStatus || auditFrom || auditTo) && (
+                  <button type="button" className="text-xs text-slate-400 hover:text-slate-600 underline" onClick={() => { setAuditSearch(''); setAuditBranch(''); setAuditStatus(''); setAuditFrom(''); setAuditTo(''); }}>
+                    Clear
+                  </button>
+                )}
+              </div>
             )}
 
             {/* ── BGV REVIEW TAB ──────────────────────────────────────── */}
@@ -1752,6 +1888,258 @@ export default function NativeHROnboardingRequests() {
                             Cancel
                           </Button>
                         </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── OFFER AUDIT TAB ──────────────────────────────────────── */}
+            {mainTab === 'offer_audit' && (
+              <div className="space-y-4">
+                {auditError && (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{auditError}</div>
+                )}
+                {auditLoading ? (
+                  <div className="flex items-center gap-2 py-12 justify-center text-slate-500"><Loader2 className="h-5 w-5 animate-spin" /> Loading offer submissions…</div>
+                ) : auditRows.length === 0 ? (
+                  <div className="rounded-xl border border-slate-100 bg-slate-50 py-16 text-center text-slate-400 text-sm">No offer submissions found.</div>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                    <table className="min-w-full divide-y divide-slate-100 text-sm">
+                      <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                        <tr>
+                          <th className="px-4 py-3 text-left font-bold">Candidate</th>
+                          <th className="px-4 py-3 text-left font-bold">Branch</th>
+                          <th className="px-4 py-3 text-left font-bold">Emp Type</th>
+                          <th className="px-4 py-3 text-left font-bold">DOJ</th>
+                          <th className="px-4 py-3 text-left font-bold">Salary Start</th>
+                          <th className="px-4 py-3 text-left font-bold">Band</th>
+                          <th className="px-4 py-3 text-right font-bold">CTC/mo</th>
+                          <th className="px-4 py-3 text-right font-bold">Gross/mo</th>
+                          <th className="px-4 py-3 text-right font-bold">Net/mo</th>
+                          <th className="px-4 py-3 text-left font-bold">Cost Centre</th>
+                          <th className="px-4 py-3 text-left font-bold">PF</th>
+                          <th className="px-4 py-3 text-left font-bold">ESI</th>
+                          <th className="px-4 py-3 text-left font-bold">Status</th>
+                          <th className="px-4 py-3 text-left font-bold">Created By</th>
+                          <th className="px-4 py-3 text-left font-bold">Submitted</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {auditRows.map((row) => {
+                          const fmtDate = (v?: string) => v ? v.slice(0, 10) : '—';
+                          const doJStr = (row.date_of_joining ?? '').slice(0, 10);
+                          const dosStr = (row.date_of_salary ?? '').slice(0, 10);
+                          const dateGap = dosStr && doJStr && dosStr < doJStr;
+                          const statusColor: Record<string, string> = {
+                            bh_approved: 'bg-emerald-100 text-emerald-700',
+                            bh_rejected: 'bg-red-100 text-red-700',
+                            submitted:   'bg-blue-100 text-blue-700',
+                            draft:       'bg-amber-100 text-amber-700',
+                          };
+                          return (
+                            <tr
+                              key={row.offer_id}
+                              className="cursor-pointer hover:bg-violet-50 transition-colors"
+                              onClick={() => setAuditSelected(row)}
+                            >
+                              <td className="px-4 py-3">
+                                <div className="font-semibold text-slate-800">{row.candidate_name}</div>
+                                <div className="text-xs text-slate-400">{row.candidate_code}</div>
+                              </td>
+                              <td className="px-4 py-3 text-slate-600">{row.branch_name ?? '—'}</td>
+                              <td className="px-4 py-3">
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${row.emp_type === 'OnRoll' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>{row.emp_type ?? '—'}</span>
+                              </td>
+                              <td className="px-4 py-3 text-slate-600">{fmtDate(row.date_of_joining)}</td>
+                              <td className="px-4 py-3">
+                                <span className={dateGap ? 'text-red-600 font-semibold' : 'text-slate-600'}>{fmtDate(row.date_of_salary)}</span>
+                                {dateGap && <span className="ml-1 text-[10px] text-red-500">⚠ before DOJ</span>}
+                              </td>
+                              <td className="px-4 py-3 text-slate-600">{row.salary_band ?? '—'}</td>
+                              <td className="px-4 py-3 text-right font-mono text-slate-700">
+                                {row.offered_ctc != null ? `₹${Number(row.offered_ctc).toLocaleString('en-IN')}` : '—'}
+                              </td>
+                              <td className="px-4 py-3 text-right font-mono text-slate-700">
+                                {row.gross != null ? `₹${Number(row.gross).toLocaleString('en-IN')}` : '—'}
+                              </td>
+                              <td className="px-4 py-3 text-right font-mono text-slate-700">
+                                {row.net_in_hand != null ? `₹${Number(row.net_in_hand).toLocaleString('en-IN')}` : '—'}
+                              </td>
+                              <td className="px-4 py-3 text-slate-600 max-w-[160px] truncate">{row.cost_centre_name ?? row.cost_centre ?? '—'}</td>
+                              <td className="px-4 py-3">
+                                <span className={`text-xs font-medium ${row.pf_eligible ? 'text-emerald-600' : 'text-slate-400'}`}>{row.pf_eligible ? 'Yes' : 'No'}</span>
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className={`text-xs font-medium ${row.esi_eligible ? 'text-emerald-600' : 'text-slate-400'}`}>{row.esi_eligible ? 'Yes' : 'No'}</span>
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${statusColor[row.status] ?? 'bg-slate-100 text-slate-700'}`}>{row.status.replace('_', ' ')}</span>
+                                {row.is_proposed_exception ? <span className="ml-1 rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-bold text-red-600">EXCEPTION</span> : null}
+                              </td>
+                              <td className="px-4 py-3 text-slate-500 text-xs">{row.created_by_name ?? '—'}</td>
+                              <td className="px-4 py-3 text-slate-500 text-xs">{row.submitted_at ? row.submitted_at.slice(0, 10) : '—'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* ── Offer Audit Drill-down Drawer ── */}
+                {auditSelected && (
+                  <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setAuditSelected(null)}>
+                    <div className="absolute inset-0 bg-black/30" />
+                    <div
+                      className="relative z-10 flex h-full w-full max-w-2xl flex-col overflow-y-auto bg-white shadow-2xl"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {/* Header */}
+                      <div className="flex items-start justify-between border-b border-slate-100 px-6 py-4 bg-gradient-to-r from-violet-600 to-purple-600 text-white">
+                        <div>
+                          <p className="text-xs font-bold uppercase tracking-widest text-violet-200">Offer Detail</p>
+                          <h2 className="mt-0.5 text-lg font-bold">{auditSelected.candidate_name}</h2>
+                          <p className="text-xs text-violet-200">{auditSelected.candidate_code} · {auditSelected.branch_name ?? '—'}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`rounded-full px-3 py-1 text-xs font-bold ${auditSelected.status === 'submitted' ? 'bg-emerald-400/20 text-white' : 'bg-amber-400/20 text-white'}`}>
+                            {auditSelected.status.toUpperCase()}
+                          </span>
+                          <button type="button" onClick={() => setAuditSelected(null)} className="rounded-lg p-1.5 hover:bg-white/20 transition-colors"><X className="h-5 w-5" /></button>
+                        </div>
+                      </div>
+
+                      <div className="flex-1 space-y-5 px-6 py-5">
+
+                        {/* Candidate */}
+                        <section>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Candidate</p>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                            <div><span className="text-xs text-slate-400">Name</span><p className="font-medium text-slate-800">{auditSelected.candidate_name}</p></div>
+                            <div><span className="text-xs text-slate-400">Code</span><p className="font-medium text-slate-800">{auditSelected.candidate_code}</p></div>
+                            <div><span className="text-xs text-slate-400">Email</span><p className="text-slate-700">{auditSelected.candidate_email ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Mobile</span><p className="text-slate-700">{auditSelected.candidate_mobile ?? '—'}</p></div>
+                          </div>
+                        </section>
+
+                        {/* Employment */}
+                        <section>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Employment Details</p>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                            <div><span className="text-xs text-slate-400">Branch</span><p className="font-medium text-slate-800">{auditSelected.branch_name ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Emp Type</span><p className="font-medium text-slate-800">{auditSelected.emp_type ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Department</span><p className="text-slate-700">{auditSelected.department_name ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Designation</span><p className="text-slate-700">{auditSelected.designation_name ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Cost Centre</span><p className="text-slate-700">{auditSelected.cost_centre_name ?? auditSelected.cost_centre ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Reporting Manager</span><p className="text-slate-700">{auditSelected.reporting_manager_name ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Role Type</span><p className="text-slate-700">{auditSelected.role_type ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">KPI</span><p className="text-slate-700">{auditSelected.kpi ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Work Status</span><p className="text-slate-700">{auditSelected.work_status ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Location Type</span><p className="text-slate-700">{auditSelected.emp_location_type ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Home Branch</span><p className="text-slate-700">{auditSelected.home_branch ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Profile/Band</span><p className="text-slate-700">{auditSelected.profile ?? '—'} / {auditSelected.salary_band ?? '—'}</p></div>
+                          </div>
+                        </section>
+
+                        {/* Dates */}
+                        <section>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Dates</p>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                            <div>
+                              <span className="text-xs text-slate-400">Date of Joining</span>
+                              <p className="font-medium text-slate-800">{(auditSelected.date_of_joining ?? '').slice(0, 10) || '—'}</p>
+                            </div>
+                            <div>
+                              <span className="text-xs text-slate-400">Salary Start Date</span>
+                              {(() => {
+                                const d1 = (auditSelected.date_of_joining ?? '').slice(0, 10);
+                                const d2 = (auditSelected.date_of_salary ?? '').slice(0, 10);
+                                const gap = d1 && d2 && d2 < d1;
+                                return <p className={`font-medium ${gap ? 'text-red-600' : 'text-slate-800'}`}>{d2 || '—'}{gap && <span className="ml-1 text-xs text-red-500">⚠ before DOJ</span>}</p>;
+                              })()}
+                            </div>
+                            <div><span className="text-xs text-slate-400">Submitted At</span><p className="text-slate-700">{auditSelected.submitted_at ? auditSelected.submitted_at.slice(0, 16).replace('T', ' ') : '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Created At</span><p className="text-slate-700">{auditSelected.offer_created_at ? auditSelected.offer_created_at.slice(0, 16).replace('T', ' ') : '—'}</p></div>
+                          </div>
+                        </section>
+
+                        {/* Salary Breakdown */}
+                        <section>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Salary Breakdown (Monthly)</p>
+                          <div className="grid grid-cols-3 gap-x-4 gap-y-2 text-sm">
+                            {([
+                              ['CTC',               auditSelected.offered_ctc],
+                              ['Basic',             auditSelected.basic],
+                              ['HRA',               auditSelected.hra],
+                              ['Conveyance',        auditSelected.conveyance],
+                              ['DA',                auditSelected.da],
+                              ['Special Allow.',    auditSelected.special_allowance],
+                              ['Other Allow.',      auditSelected.other_allowance],
+                              ['Bonus',             auditSelected.bonus],
+                              ['PLI',               auditSelected.pli],
+                              ['Gross',             auditSelected.gross],
+                              ['Net In Hand',       auditSelected.net_in_hand],
+                            ] as [string, number | undefined][]).map(([label, val]) => (
+                              <div key={label}>
+                                <span className="text-xs text-slate-400">{label}</span>
+                                <p className="font-mono font-medium text-slate-800">{val != null ? `₹${Number(val).toLocaleString('en-IN')}` : '—'}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+
+                        {/* Deductions */}
+                        <section>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Deductions (Monthly)</p>
+                          <div className="grid grid-cols-3 gap-x-4 gap-y-2 text-sm">
+                            {([
+                              ['PF Employee',   auditSelected.pf_employee],
+                              ['PF Employer',   auditSelected.pf_employer],
+                              ['ESI Employee',  auditSelected.esic_employee],
+                              ['ESI Employer',  auditSelected.esic_employer],
+                              ['Prof. Tax',     auditSelected.professional_tax],
+                              ['Gratuity',      auditSelected.gratuity],
+                              ['Admin Charges', auditSelected.admin_charges],
+                            ] as [string, number | undefined][]).map(([label, val]) => (
+                              <div key={label}>
+                                <span className="text-xs text-slate-400">{label}</span>
+                                <p className="font-mono font-medium text-slate-800">{val != null ? `₹${Number(val).toLocaleString('en-IN')}` : '—'}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+
+                        {/* Payment */}
+                        <section>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Payment Settings</p>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                            <div><span className="text-xs text-slate-400">Pay Mode</span><p className="text-slate-700">{auditSelected.pay_mode ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Salary Payment Mode</span><p className="text-slate-700">{auditSelected.salary_payment_mode ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">PF Eligible</span><p className={`font-medium ${auditSelected.pf_eligible ? 'text-emerald-600' : 'text-slate-500'}`}>{auditSelected.pf_eligible ? 'Yes' : 'No'}</p></div>
+                            <div><span className="text-xs text-slate-400">PF Opt-Out</span><p className={`font-medium ${auditSelected.pf_opt_out ? 'text-red-600' : 'text-slate-500'}`}>{auditSelected.pf_opt_out ? 'Yes' : 'No'}</p></div>
+                            <div><span className="text-xs text-slate-400">ESI Eligible</span><p className={`font-medium ${auditSelected.esi_eligible ? 'text-emerald-600' : 'text-slate-500'}`}>{auditSelected.esi_eligible ? 'Yes' : 'No'}</p></div>
+                            <div><span className="text-xs text-slate-400">ESI Opt-Out</span><p className={`font-medium ${auditSelected.esic_opt_out ? 'text-red-600' : 'text-slate-500'}`}>{auditSelected.esic_opt_out ? 'Yes' : 'No'}</p></div>
+                          </div>
+                        </section>
+
+                        {/* Exception */}
+                        <section>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Exception / Audit</p>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                            <div><span className="text-xs text-slate-400">Proposed Exception</span><p className={`font-medium ${auditSelected.is_proposed_exception ? 'text-red-600' : 'text-slate-500'}`}>{auditSelected.is_proposed_exception ? 'Yes' : 'No'}</p></div>
+                            <div><span className="text-xs text-slate-400">Created By</span><p className="text-slate-700">{auditSelected.created_by_name ?? '—'}</p></div>
+                            {auditSelected.is_proposed_exception ? (
+                              <div className="col-span-2">
+                                <span className="text-xs text-slate-400">Exception Reason</span>
+                                <p className="mt-1 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 border border-red-100">{auditSelected.proposed_exception_reason ?? '—'}</p>
+                              </div>
+                            ) : <div className="col-span-2"><span className="text-xs text-slate-400">Exception Reason</span><p className="text-slate-400">None</p></div>}
+                          </div>
+                        </section>
+
                       </div>
                     </div>
                   </div>

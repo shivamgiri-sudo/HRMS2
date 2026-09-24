@@ -1017,6 +1017,17 @@ export async function saveOffer(
     }
   }
 
+  // date_of_salary must not precede date_of_joining — same data-integrity rule as
+  // employee.service.ts. Caught here for every save path (draft + submit).
+  const _doj = String(offerData.date_of_joining ?? '').slice(0, 10);
+  const _dos = String(offerData.date_of_salary ?? '').slice(0, 10);
+  if (_doj && _dos && _dos < _doj) {
+    throw Object.assign(
+      new Error(`Salary start date (${_dos}) cannot be before date of joining (${_doj}).`),
+      { statusCode: 400, code: 'SALARY_START_BEFORE_JOINING' }
+    );
+  }
+
   const status = submit ? 'submitted' : 'draft';
   const submittedAt = submit ? new Date() : null;
 
