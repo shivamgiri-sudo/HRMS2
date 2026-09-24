@@ -39,7 +39,7 @@ async function hasProcessLobColumns(exec: Executor): Promise<boolean> {
  * mixing them in one expression raises ER_CANT_AGGREGATE_2COLLATIONS. Assigning a column from a
  * column, or from a bound parameter, is collation-safe.
  */
-async function stampRows(whereSql: string, params: unknown[], fallbackProcessId: string | null, exec: Executor): Promise<void> {
+export async function stampRows(whereSql: string, params: unknown[], fallbackProcessId: string | null, exec: Executor): Promise<void> {
   try {
     if (!(await hasProcessLobColumns(exec))) return;
     await exec.execute(

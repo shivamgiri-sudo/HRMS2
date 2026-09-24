@@ -12,8 +12,9 @@ import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
 import {
-  DashboardScopeConfigurationError, resolveDashboardScopeForRequest, type DashboardScope,
+  DashboardScopeConfigurationError, type DashboardScope,
 } from "../../shared/dashboardScope.js";
+import { resolveWfmScope } from "./wfm-scope-fallback.js";
 import { resolveWeekOffScopeDefault } from "../roster/weekoff-policy.service.js";
 import {
   LobServiceError, isLobMappedToProcess, loadActiveLob, loadProcessInScope, resolveCallerScope,
@@ -82,7 +83,7 @@ export function normalizePolicyShape(input: PolicyUpdate): NormalizedShape {
 
 async function resolveScopeObject(actor: Actor): Promise<DashboardScope> {
   try {
-    return await resolveDashboardScopeForRequest({ id: actor.id, role: actor.role, isDemo: actor.isDemo }, actor.role ?? "");
+    return await resolveWfmScope(actor);
   } catch (err) {
     if (err instanceof DashboardScopeConfigurationError) {
       throw new LobServiceError(403, "Your account has no branch/process scope configured for WFM.", "SCOPE_NOT_CONFIGURED");
