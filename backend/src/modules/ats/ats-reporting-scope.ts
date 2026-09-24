@@ -112,15 +112,17 @@ export function isOtherEntityCandidateCode(code: unknown): boolean {
  *      ats_candidate.status via submitInterviewUpdate(), but a submission row can exist from a
  *      prior attempt while a later data fix or retry left status behind. Any submission row for
  *      the candidate is proof the recruiter's form has been filled in.
- *   2. `ats_queue_token.queue_status IN ('completed','no_show')` — the walk-in queue's own
- *      "Mark No-Show" button (queue.enhanced.service.ts markNoShow(), called from
- *      NativeWalkinQueueEnhanced.tsx) and the generic queue status update close the token WITHOUT
- *      updating ats_candidate at all. Live census 2026-09-22: 10 of the then-145 candidates in
- *      the superadmin pending queue already had a completed/no_show token.
+ *   2. `ats_queue_token.queue_status = 'no_show'` — the walk-in queue's own "Mark No-Show"
+ *      button (queue.enhanced.service.ts markNoShow(), called from NativeWalkinQueueEnhanced.tsx)
+ *      closes the token WITHOUT updating ats_candidate at all.
  *
- * Owner ruling 2026-09-22: once either signal exists, the candidate must not count as pending,
- * whatever `status`/`current_stage` still says. This is a read-side fix — it does not change what
- * either write path stores, only what "still pending" counts as reading it back.
+ * A 'completed' token is deliberately NOT a resolution signal. The walk-in desk marks the token
+ * Completed once the candidate has been seen at the desk — before the recruiter fills the
+ * interview form (walkin-sla.cron.ts treats exactly that state as "feedback pending"). Excluding
+ * it (as the 2026-09-22 version did) emptied recruiters' queues: live 2026-09-24, MEHAR and
+ * KHUSHI MISHRA saw no candidates, and 32 un-actioned candidates across 7 recruiters were hidden
+ * in one week. Owner ruling 2026-09-24: only a submission row or a no-show token ends pendency.
+ * This is a read-side rule — it does not change what either write path stores.
  *
  * `candidateAlias` must be the ats_candidate alias in the calling query (pass the literal table
  * name, e.g. "ats_candidate", if the query has no alias).
@@ -131,6 +133,6 @@ export function excludeResolvedInterviewCandidatesSql(candidateAlias: string): s
     )
     AND NOT EXISTS (
       SELECT 1 FROM ats_queue_token aqt
-       WHERE aqt.candidate_id = ${candidateAlias}.id AND aqt.queue_status IN ('completed', 'no_show')
+       WHERE aqt.candidate_id = ${candidateAlias}.id AND aqt.queue_status = 'no_show'
     )`;
 }

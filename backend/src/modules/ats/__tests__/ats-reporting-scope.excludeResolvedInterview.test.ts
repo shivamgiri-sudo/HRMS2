@@ -10,15 +10,20 @@ describe("excludeResolvedInterviewCandidatesSql", () => {
     );
   });
 
-  it("excludes a candidate whose queue token is already completed or no-show", () => {
+  it("excludes a candidate whose queue token is no-show", () => {
     expect(sql).toMatch(
-      /NOT EXISTS\s*\(\s*SELECT 1 FROM ats_queue_token aqt\s*WHERE aqt\.candidate_id = ats_candidate\.id AND aqt\.queue_status IN \('completed', 'no_show'\)\s*\)/,
+      /NOT EXISTS\s*\(\s*SELECT 1 FROM ats_queue_token aqt\s*WHERE aqt\.candidate_id = ats_candidate\.id AND aqt\.queue_status = 'no_show'\s*\)/,
     );
   });
 
+  it("does not exclude on a completed queue token — the desk closes it before the recruiter's form is filled", () => {
+    // Live 2026-09-24: recruiters MEHAR and KHUSHI MISHRA saw an empty queue because every
+    // Waiting candidate's token had been marked 'completed' at the walk-in desk, with no
+    // interview submission yet. Only a submission row proves the recruiter actioned it.
+    expect(sql).not.toMatch(/'completed'/);
+  });
+
   it("does not exclude on a still-open queue token (waiting/called/in_interview)", () => {
-    // The predicate names only the two terminal statuses — asserting the exact list guards
-    // against someone widening it to swallow candidates still genuinely mid-interview.
     expect(sql).not.toMatch(/'waiting'|'called'|'in_interview'/);
   });
 
