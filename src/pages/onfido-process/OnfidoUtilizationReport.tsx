@@ -53,26 +53,24 @@ interface DateRangeLocal { from: string; to: string }
 
 const dec = (v: number | null) => (v === null ? DASH : fmtNum(v, 1));
 
-function Cells({ i, d, aht, poaAht, gd, mcn, sla, aps }: { i: Inputs; d: Derived; aht: number | null; poaAht: number | null; gd: number | null; mcn: number | null; sla: number | null; aps: number | null }) {
+function Cells({ i, aht, poaAht, gd, mcn, sla, aps }: { i: Inputs; aht: number | null; poaAht: number | null; gd: number | null; mcn: number | null; sla: number | null; aps: number | null }) {
   return (
     <>
-      <td className="oc-right">{dec(i.forecastTask)}</td><td className="oc-right">{dec(i.forecastTaskPoa)}</td><td className="oc-right">{dec(d.utilizationForecast)}</td>
+      <td className="oc-right">{dec(i.forecastTask)}</td><td className="oc-right">{dec(i.forecastTaskPoa)}</td>
       <td className="oc-right">{fmtInt(i.actualTask)}</td><td className="oc-right">{fmtInt(i.manualFarCases)}</td><td className="oc-right">{fmtInt(i.poaLive)}</td>
       <td className="oc-right">{dec(i.adhocTime)}</td><td className="oc-right">{fmtInt(i.analystQc)}</td><td className="oc-right">{fmtInt(i.facialChecks)}</td>
       <td className="oc-right">{fmtInt(i.crossTrainingTaskPoa)}</td><td className="oc-right">{fmtInt(i.poaLiveAuditsPq)}</td>
       <td className="oc-right">{dec(aht)}</td><td className="oc-right">{dec(poaAht)}</td>
       <td className="oc-right">{fmtRatioPct(gd)}</td><td className="oc-right">{fmtRatioPct(mcn)}</td><td className="oc-right">{fmtRatioPct(sla)}</td><td className="oc-right">{fmtRatioPct(aps)}</td>
-      <td className="oc-right">{dec(d.utilizationWithAdhoc)}</td><td className="oc-right">{dec(d.utilizationWithoutAdhoc)}</td>
-      <td className="oc-right">{fmtPct(d.utilizationWithAdhocPct)}</td><td className="oc-right">{fmtPct(d.utilizationWithoutAdhocPct)}</td>
-      <td className="oc-right">{fmtPct(d.poaAnsweringPct)}</td><td className="oc-right">{fmtInt(i.escalatedTask)}</td><td className="oc-right">{fmtPct(d.escalatedPct, 2)}</td>
+      <td className="oc-right">{fmtInt(i.escalatedTask)}</td>
     </>
   );
 }
 
 const HEADERS = [
-  "Forecasted Task", "Forecasted Task POA", "Utilization Forecast", "Actual Task", "Manual FAR Case", "POA Live", "Adhoc Time", "Analyst QC",
+  "Forecasted Task", "Forecasted Task POA", "Actual Task", "Manual FAR Case", "POA Live", "Adhoc Time", "Analyst QC",
   "Facial checks", "Cross training task POA", "POA Live Audits / POA PQ Audits", "AHT", "POA AHT", "GD%", "MCN%", "SLA", "APS",
-  "Utilization with Adhoc", "Utilization without Adhoc", "Utilization with Adhoc %", "Utilization without Adhoc %", "POA Answering", "Escalated Task", "Escalated %",
+  "Escalated Task",
 ];
 
 export default function OnfidoUtilizationReport() {
@@ -116,12 +114,12 @@ export default function OnfidoUtilizationReport() {
               {data.days.map((d) => (
                 <tr key={d.date} className="oc-row-click" onClick={() => setSelected(d.date)}>
                   <td>{fmtDate(d.date)}</td><td>{d.month}</td><td>{fmtDate(d.wc)}</td>
-                  <Cells i={d.inputs} d={d.derived} aht={d.aht} poaAht={d.poaAht} gd={d.gdRatio} mcn={d.mcnRatio} sla={d.slaRatio} aps={d.apsRatio} />
+                  <Cells i={d.inputs} aht={d.aht} poaAht={d.poaAht} gd={d.gdRatio} mcn={d.mcnRatio} sla={d.slaRatio} aps={d.apsRatio} />
                 </tr>
               ))}
               <tr style={{ fontWeight: 700 }}>
                 <td>MTD</td><td>{data.days[0]?.month ?? DASH}</td><td>MTD</td>
-                <Cells i={data.mtd.inputs} d={data.mtd.derived} aht={data.mtd.aht} poaAht={data.mtd.poaAht} gd={data.mtd.gdRatio} mcn={data.mtd.mcnRatio} sla={data.mtd.slaRatio} aps={data.mtd.apsRatio} />
+                <Cells i={data.mtd.inputs} aht={data.mtd.aht} poaAht={data.mtd.poaAht} gd={data.mtd.gdRatio} mcn={data.mtd.mcnRatio} sla={data.mtd.slaRatio} aps={data.mtd.apsRatio} />
               </tr>
             </tbody>
           </table>

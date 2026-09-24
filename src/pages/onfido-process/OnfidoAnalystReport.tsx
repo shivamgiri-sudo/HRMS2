@@ -44,10 +44,27 @@ export default function OnfidoAnalystReport({ initialRange }: { initialRange: Da
   const [range, setRange] = useState<DateRange>(initialRange);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<AnalystRow | null>(null);
+  const [tlFilter, setTlFilter] = useState("");
+  const [amFilter, setAmFilter] = useState("");
+
+  const filterOptionsQuery = useQuery({
+    queryKey: ["onfido-process", "filter-options"],
+    queryFn: () => hrmsApi.get<{ data: { tlNames: string[]; amNames: string[]; tlAmMapping?: Record<string, string[]> } }>("/api/onfido-process/filter-options"),
+    staleTime: 5 * 60 * 1000,
+  });
+  const filterOptions = filterOptionsQuery.data?.data ?? { tlNames: [], amNames: [] };
+  const filteredTlNames = amFilter && filterOptions.tlAmMapping
+    ? (filterOptions.tlAmMapping[amFilter] ?? [])
+    : filterOptions.tlNames;
 
   const report = useQuery({
-    queryKey: ["onfido-process", "analyst-report", range],
-    queryFn: () => hrmsApi.get<{ data: { from: string; to: string; rows: AnalystRow[] } }>(`/api/onfido-process/analyst-report?from=${range.from}&to=${range.to}`),
+    queryKey: ["onfido-process", "analyst-report", range, tlFilter, amFilter],
+    queryFn: () => {
+      let url = `/api/onfido-process/analyst-report?from=${range.from}&to=${range.to}`;
+      if (tlFilter) url += `&tlName=${encodeURIComponent(tlFilter)}`;
+      if (amFilter) url += `&amName=${encodeURIComponent(amFilter)}`;
+      return hrmsApi.get<{ data: { from: string; to: string; rows: AnalystRow[] } }>(url);
+    },
     enabled: range.from !== "" && range.to !== "" && range.from <= range.to,
   });
   const rows = useMemo(() => {
@@ -72,6 +89,30 @@ export default function OnfidoAnalystReport({ initialRange }: { initialRange: Da
         <div className="oc-field">
           <label htmlFor="ar-till">Till</label>
           <input id="ar-till" type="date" className="oc-input" value={range.to} onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))} />
+        </div>
+        <div className="oc-field">
+          <label htmlFor="ar-am">AM</label>
+          <select
+            id="ar-am"
+            className="oc-select"
+            value={amFilter}
+            onChange={(e) => { setAmFilter(e.target.value); setTlFilter(""); }}
+          >
+            <option value="">All AMs</option>
+            {filterOptions.amNames.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+        <div className="oc-field">
+          <label htmlFor="ar-tl">TL</label>
+          <select
+            id="ar-tl"
+            className="oc-select"
+            value={tlFilter}
+            onChange={(e) => setTlFilter(e.target.value)}
+          >
+            <option value="">All TLs</option>
+            {filteredTlNames.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
         </div>
         <div className="oc-field">
           <label htmlFor="ar-search">Analyst</label>
