@@ -10,6 +10,7 @@ import {
   campaignService, costCentreService, gradeBandService,
   locationService, policyService, processService,
 } from "./org.service.js";
+import { resolveFinanceBranchScopeSet } from "../finance/finance-access-scope.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -27,6 +28,34 @@ router.use(requireAuth);
  * Reads the same authUser the rest of the app uses; returns undefined when it is absent so the
  * service simply skips the audit row rather than inventing an actor.
  */
+/**
+ * Who may see cost centres of EVERY branch in Org Masters (owner rule, 2026-09-24): super_admin,
+ * finance_head and payroll_head only. Everyone else - HR, admin, branch heads, recruiters - is held
+ * to the branch(es) they are assigned to.
+ */
+const ALL_BRANCH_COST_CENTRE_ROLES = new Set(["super_admin", "finance_head", "payroll_head"]);
+
+/**
+ * The branch ids a caller may see cost centres for. undefined = every branch. An empty array means
+ * "no branch" and the service turns it into an empty result - never into "no filter".
+ */
+async function costCentreBranchEntitlement(req: Request): Promise<string[] | undefined> {
+  const auth = (req as any).authUser;
+  if (!auth?.id) return [];
+  const roles = [auth.role, ...(Array.isArray(auth.roles) ? auth.roles : []), ...((req as any).userRoles ?? [])]
+    .filter((r): r is string => typeof r === "string")
+    .map((r) => r.toLowerCase());
+  if (roles.some((r) => ALL_BRANCH_COST_CENTRE_ROLES.has(r))) return undefined;
+  try {
+    // Deliberately no roles passed: the finance resolver would otherwise widen admin / hr_admin / ceo
+    // to every branch, which is not what Org Masters is allowed to do.
+    const scope = await resolveFinanceBranchScopeSet({ userId: String(auth.id), userRoles: [] });
+    return scope.mode === "all" ? [] : scope.branchIds;
+  } catch {
+    return [];
+  }
+}
+
 function orgActor(req: Request): { id: string; role: string } | undefined {
   const auth = (req as any).authUser;
   if (!auth?.id) return undefined;
@@ -261,6 +290,7 @@ router.get("/cost-centres/migration-status", h(async (_req: Request, res: Respon
 router.get("/cost-centres", h(async (req: Request, res: Response) => {
   const { q, active_status, page, limit, branch_id, client_id, lob_id, process_id } = req.query;
   const options = {
+    branchIds: await costCentreBranchEntitlement(req),
     q: q as string | undefined,
     active_status: active_status as string | undefined,
     page: page ? parseInt(page as string, 10) : undefined,
@@ -312,6 +342,12 @@ router.get("/cost-centres/billing-summary", h(async (_req: Request, res: Respons
 router.get("/cost-centres/:id", h(async (req: Request, res: Response) => {
   const item = await costCentreService.getById(req.params.id);
   if (!item) return res.status(404).json({ error: "Not found" });
+  // Same branch entitlement as the list: another branch's cost centre answers as not found.
+  const entitled = await costCentreBranchEntitlement(req);
+  const itemBranch = (item as { branch_id?: string | null }).branch_id ?? null;
+  if (entitled && (!itemBranch || !entitled.includes(String(itemBranch)))) {
+    return res.status(404).json({ error: "Not found" });
+  }
   res.json({ data: item });
 }));
 

@@ -16,16 +16,13 @@ import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from 
 import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from "./payroll-recalc-drainer.worker.js";
 // NOTE: the LMS due-date reminder scheduler is PARKED, not deleted — see the WORKERS
 // array below for what is missing and how to restore it.
-import { startDbBillFinanceSyncWorker, stopDbBillFinanceSyncWorker } from "./db-bill-finance-sync.worker.js";
 import { startCostCentreProcessResolverWorker, stopCostCentreProcessResolverWorker } from "./cost-centre-process-resolver.worker.js";
-import { startDbBillHrSyncWorker, stopDbBillHrSyncWorker } from "./db-bill-hr-sync.worker.js";
 import { startPnlRunningSalaryRefreshWorker, stopPnlRunningSalaryRefreshWorker } from "./pnl-running-salary-refresh.worker.js";
 import { startGstExportAutoWorker, stopGstExportAutoWorker } from "./gst-export-auto.worker.js";
 import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vicidial-sync.worker.js";
 import { startMolecularEmailSyncWorker, stopMolecularEmailSyncWorker } from "./molecular-email-sync.worker.js";
 import { startEsignComplianceWorker, stopEsignComplianceWorker } from "./esign-compliance.worker.js";
 import { startEsignReconciliationWorker, stopEsignReconciliationWorker } from "./esign-reconciliation.worker.js";
-import { legacySyncWorker } from "./legacy-sync-worker.js";
 import { startMcnmeetCron, stopMcnmeetCron } from "../modules/mcnmeet/mcnmeet.cron.js";
 import { startSocialFeedCron } from "../modules/social-feed/social-feed.cron.js";
 import { startTenureBadgeScheduler, stopTenureBadgeScheduler } from "../modules/engagement/tenure.cron.js";
@@ -140,10 +137,6 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startAttendanceEngineScheduler(); return Promise.resolve(); },
   },
   {
-    name: "legacy-sync",
-    start: () => { legacySyncWorker.start(); return Promise.resolve(); },
-  },
-  {
     // Both were started at app.ts module scope and registered in no worker file,
     // so they ran in the API process only — outside every guard, absent from
     // worker_config, and stoppable only by a deploy. mcnmeet mails meeting
@@ -181,24 +174,12 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startPerformanceIngestionScheduler(); return Promise.resolve(); },
   },
   {
-    // db_bill is where finance raises invoices, budgets and GRNs; mas_hrms mirrors them and the
-    // P&L reads the mirror. Nothing called the sync before, so it only advanced when someone ran
-    // it by hand — the invoice snapshot was nine days stale and no August rows would ever have
-    // appeared.
-    name: "db-bill-finance-sync",
-    start: () => { startDbBillFinanceSyncWorker(); return Promise.resolve(); },
-  },
-  {
-    // Self-populates cost_centre_master.process_id for cost centres db-bill-finance-sync just
+    // Self-populates cost_centre_master.process_id for cost centres the (removed) db-bill-finance-sync just
     // brought in — see cost-centre-process-resolver.service.ts. Excludes NOIDA-DIALDESK/IDC by
     // branch_id (user-confirmed out of scope for MAS Callnet's P&L, 2026-09-11) regardless of
     // that branch's own (partly mislabelled) company_name.
     name: "cost-centre-process-resolver",
     start: () => { startCostCentreProcessResolverWorker(); return Promise.resolve(); },
-  },
-  {
-    name: "db-bill-hr-sync",
-    start: () => { startDbBillHrSyncWorker(); return Promise.resolve(); },
   },
   {
     // Keeps the accrued-payroll fallback Live P&L already reads (readPayroll() in
@@ -582,7 +563,6 @@ function shutdown(): void {
   stopCosecSyncWorker();
   stopRtaNightlyCron();
   stopEmployeeLifecycleWorker();
-  legacySyncWorker.stop();
   stopKpiDailySyncWorker();
   stopAnnualLeaveWorker();
   stopLeaveMonthlyWorker();
@@ -592,9 +572,7 @@ function shutdown(): void {
   stopLmsSyncWorker();
   stopPayrollNightlyRecalcWorker();
   stopPayrollRecalcDrainerWorker();
-  stopDbBillFinanceSyncWorker();
   stopCostCentreProcessResolverWorker();
-  stopDbBillHrSyncWorker();
   stopPnlRunningSalaryRefreshWorker();
   stopGstExportAutoWorker();
   stopPayrollPrepReminderWorker();

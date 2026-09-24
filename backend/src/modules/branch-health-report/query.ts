@@ -294,7 +294,12 @@ export interface ProcessPerformance {
 }
 
 export async function fetchProcessPerformance(branchId: string, today: string): Promise<ProcessPerformance[]> {
-  // Source: kpi_entry joined to kpi_definition for ops/quality categories per branch
+  // Guard: skip entirely if kpi tables are not yet created (avoids noisy pool-level ER_NO_SUCH_TABLE logs)
+  const [tableCheck] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kpi_entry' LIMIT 1`,
+  );
+  if (!(tableCheck as any[]).length) return [];
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT pm.process_name AS process,
             AVG(CASE WHEN LOWER(kd.kpi_category) IN ('ops','operations') THEN ke.score END)   AS ops_score,
@@ -307,7 +312,7 @@ export async function fetchProcessPerformance(branchId: string, today: string): 
       GROUP BY pm.process_name
       ORDER BY pm.process_name`,
     [branchId, today, today],
-  ).catch(() => [[]] as [any[]]);  // graceful fallback if kpi tables don't exist
+  );
 
   return (rows as any[]).map((r) => {
     const opsScore = r.ops_score != null ? Math.round(Number(r.ops_score)) : null;

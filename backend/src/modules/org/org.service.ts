@@ -37,6 +37,12 @@ interface ListOptions {
   entityType?: string;
   employeeId?: string;
   branch_id?: string;
+  /**
+   * Branch entitlement of the caller. Undefined = every branch (super_admin, finance_head,
+   * payroll_head). An EMPTY array means "entitled to no branch" and returns nothing - never
+   * "no filter".
+   */
+  branchIds?: string[];
   client_id?: string;
   lob_id?: string;
   process_id?: string;
@@ -589,7 +595,7 @@ async function logCostCentreChange(
 
 export const costCentreService = {
   async list(options: ListOptions = {}) {
-    const { q, active_status, page, limit, employeeId, branch_id, client_id, lob_id, process_id } = options;
+    const { q, active_status, page, limit, employeeId, branch_id, branchIds, client_id, lob_id, process_id } = options;
     const whereClauses: string[] = [];
     const params: (string | number)[] = [];
 
@@ -644,6 +650,14 @@ export const costCentreService = {
     // Relationship filters — same axes the Add/Edit form already requires (client, LOB,
     // branch, process), now usable to narrow the list too.
     if (branch_id)  { whereClauses.push("cc.branch_id = ?");  params.push(branch_id); }
+    if (branchIds) {
+      if (branchIds.length === 0) {
+        whereClauses.push("1=0");
+      } else {
+        whereClauses.push(`cc.branch_id IN (${branchIds.map(() => "?").join(",")})`);
+        params.push(...branchIds);
+      }
+    }
     if (client_id)  { whereClauses.push("cc.client_id = ?");  params.push(client_id); }
     if (lob_id)     { whereClauses.push("cc.lob_id = ?");     params.push(lob_id); }
     if (process_id) { whereClauses.push("cc.process_id = ?"); params.push(process_id); }
