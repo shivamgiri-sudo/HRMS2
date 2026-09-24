@@ -37,7 +37,7 @@ import { AcceptedCopyError, loadAcceptedCopy, type AcceptedCopyFile } from "./ap
 export const LETTER_LINK_INVALID = "LETTER_LINK_INVALID";
 export const LETTER_REVOKED = "LETTER_REVOKED";
 const INVALID_MESSAGE =
-  "This link is not valid. If you received a newer email from MAS Callnet, please use the link in that email, or contact HR.";
+  "This link is no longer active. It may have been replaced by a newer email from MAS Callnet — please use the link in your latest email, or ask HR to resend it.";
 const REVOKED_MESSAGE =
   "This appointment letter is no longer valid. Please contact HR for details.";
 /** Refresh a pending signature from the provider at most this often per letter. */
