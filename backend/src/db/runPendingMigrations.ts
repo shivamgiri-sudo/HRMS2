@@ -1141,6 +1141,8 @@ const MIGRATION_MANIFEST: string[] = [
   "1856_fix_salary_start_date_before_doj.sql", // Registered 2026-09-24. Corrective UPDATE: resets salary_start_date = date_of_joining for employees where salary_start_date was erroneously set before date_of_joining (batch-import paths lacked the >= DOJ guard). One-time data fix, idempotent (WHERE clause only matches affected rows).
   "1857_employees_salary_start_check_constraint.sql", // Registered 2026-09-24. DB-level CHECK constraint chk_ssd_not_before_doj on employees: salary_start_date >= date_of_joining (or NULL). MySQL 8.0.16+ enforces at write time. Migration 1856 corrected all pre-existing violations so this applies cleanly.
   "1858_appointment_letter_accept_flow.sql", // Registered 2026-09-24. Employee acceptance flow for issued appointment letters (the emailed Review & Accept link 404'd). Adds nullable accept_token_hash CHAR(64) UNIQUE to appointment_letter_issue (information_schema-guarded) and creates appointment_letter_esign_transaction (one row per Aadhaar eSign session, no FKs). Additive, idempotent.
+  "1859_roster_team_submission.sql", // Registered 2026-09-24. Team Roster submission workflow: roster_team_submission / _line / _audit plus roster_team_pending_cell (PRIMARY KEY (employee_id, roster_date) is the race-safe overlap lock). Collation-copied ids, no FKs. Nothing touches wfm_roster_assignment. Additive, idempotent.
+  "1860_team_roster_page_access.sql", // Registered 2026-09-24. page_catalog + role_page_access for WFM_TEAM_ROSTER (employee + manager-shaped + WFM roles + admin/hr/super_admin); the page and every endpoint enforce the real reporting-tree / WFM scope. Roles absent from workforce_role_catalog skipped. Additive, idempotent.
   ];
 
 export type MigrationHealth = {

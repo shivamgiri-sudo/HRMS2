@@ -34,6 +34,8 @@ export const ROLE_DASHBOARD_PAGE_CODES = [
 
 export const ROLE_SPECIFIC_PAGE_CODES = {
   admin: [
+    // Team Roster (migration 1860): the door only; every endpoint scopes to the reporting tree / WFM scope.
+    "WFM_TEAM_ROSTER",
     "ACCESS_CONTROL",
     "ATTENDANCE_DISPUTES",
     "MODULE_ACCESS",
@@ -64,6 +66,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "PAYROLL_HEAD_SALARY_REVIEW_DETAIL",
   ],
   hr: [
+    // Team Roster (migration 1860): the door only; every endpoint scopes to the reporting tree / WFM scope.
+    "WFM_TEAM_ROSTER",
     "JOB_REQUISITION",
     "HR_DASHBOARD",
     "EMPLOYEE_MANAGEMENT",
@@ -113,6 +117,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "ATS_EXTENSIONS",
   ],
   manager: [
+    // Team Roster (migration 1860): the door only; every endpoint scopes to the reporting tree / WFM scope.
+    "WFM_TEAM_ROSTER",
     "JOB_REQUISITION",
     "MANAGEMENT_DASHBOARD",
     "ATTENDANCE_DISPUTES",
@@ -141,6 +147,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "TEAM_KPI_SCORECARD",
   ],
   process_manager: [
+    // Team Roster (migration 1860): the door only; every endpoint scopes to the reporting tree / WFM scope.
+    "WFM_TEAM_ROSTER",
     "JOB_REQUISITION",
     "MANAGEMENT_DASHBOARD",
     "WFM_ROSTER",
@@ -169,6 +177,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "TEAM_KPI_SCORECARD",
   ],
   team_leader: [
+    // Team Roster (migration 1860): the door only; every endpoint scopes to the reporting tree / WFM scope.
+    "WFM_TEAM_ROSTER",
     "WFM_ROSTER",
     "RTA_BOARD",
     "GOALS",
@@ -182,6 +192,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "TEAM_KPI_SCORECARD",
   ],
   tl: [
+    // Team Roster (migration 1860): the door only; every endpoint scopes to the reporting tree / WFM scope.
+    "WFM_TEAM_ROSTER",
     "WFM_ROSTER",
     "RTA_BOARD",
     "GOALS",
@@ -195,6 +207,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "TEAM_KPI_SCORECARD",
   ],
   wfm: [
+    // Team Roster (migration 1860): the door only; every endpoint scopes to the reporting tree / WFM scope.
+    "WFM_TEAM_ROSTER",
     "BULK_UPLOAD_APPROVALS",
     "WFM_DASHBOARD",
     "WFM_ATTENDANCE_DASHBOARD",
@@ -308,6 +322,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "REPORTS_CENTER",
   ],
   operations_manager: [
+    // Team Roster (migration 1860): the door only; every endpoint scopes to the reporting tree / WFM scope.
+    "WFM_TEAM_ROSTER",
     "OPERATIONS_DASHBOARD",
     "WORKFORCE_COMMAND_CENTER",
     "CLIENT_MASTER",
@@ -463,7 +479,11 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "REPORTS_CENTER",
     "PROCESS_MANAGER_DASHBOARD",
   ],
-  employee: [],
+  employee: [
+    // Team Roster (migration 1860): 64 of 78 real managers hold ONLY this role. The grant is the door; the
+    // page and every /api/wfm/team-roster endpoint resolve the caller's reporting tree server-side.
+    "WFM_TEAM_ROSTER",
+  ],
 
   // ---------------------------------------------------------------------------
   // Roles that had real users and no entry here at all.
@@ -523,6 +543,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
   // those page codes have no mounted route. Dashboard registry already allows
   // MANAGEMENT, QUALITY and OPERATIONS for this role.
   branch_head: [
+    // Team Roster (migration 1860): the door only; every endpoint scopes to the reporting tree / WFM scope.
+    "WFM_TEAM_ROSTER",
     // The Branch Head / Payroll Head approval queue for gated bulk uploads. Its live
     // grants were seeded by migration 1522 but never added here, so the next run of
     // apply-rbac-page-matrix would have deactivated every one of them.
@@ -656,6 +678,7 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "PAYROLL_RUNNING_BREAKDOWN",
   ],
   assistant_manager: [
+    "WFM_TEAM_ROSTER",
     // Merged /wfm/roster-command-center console — Trends & Publish tab.
     "WFM_ROSTER_TRENDS",
     "MODULE_LAUNCHER",
@@ -757,6 +780,7 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "SALARY_CERTIFICATE",
   ],
   branch_wfm: [
+    "WFM_TEAM_ROSTER",
     "WFM_PROCESS_LOB_MAP",
     "WFM_ROSTER_OFFDAY_POLICY",
     // Bulk Upload Hub, Employee LOB Mapping upload type only (backend/sql/1854 + bulk-role-restriction.ts).

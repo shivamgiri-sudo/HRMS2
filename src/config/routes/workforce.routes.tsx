@@ -31,6 +31,7 @@ const NativeWFMAutoRoster          = lazy(() => import("@/pages/NativeWFMAutoRos
 const NativeWFMPlanningRules       = lazy(() => import("@/pages/NativeWFMPlanningRules"));
 const ProcessLobMapping            = lazy(() => import("@/pages/ProcessLobMapping"));
 const RosterOffdayPolicy           = lazy(() => import("@/pages/RosterOffdayPolicy"));
+const TeamRosterPage               = lazy(() => import("@/pages/wfm/TeamRosterPage"));
 const NativeSlotRequirementBuilder = lazy(() => import("@/pages/NativeSlotRequirementBuilder"));
 const NativeWeekOffDayRuleConfig   = lazy(() => import("@/pages/NativeWeekOffDayRuleConfig"));
 const NativeWFMRestPolicyConfig    = lazy(() => import("@/pages/NativeWFMRestPolicyConfig"));
@@ -225,6 +226,11 @@ export const workforceRouteElements = (
       <Route path="/wfm-manager-approvals" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMManagerApproval /></Gate></ProtectedRoute>} />
       <Route path="/wfm/process-lob-mapping" element={<ProtectedRoute roles={['super_admin','admin','hr','wfm','wfm_spoc','branch_wfm','ho_wfm']}><Gate pageCode="WFM_PROCESS_LOB_MAP"><ProcessLobMapping /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-offday-policy" element={<ProtectedRoute roles={['super_admin','admin','hr','wfm','wfm_spoc','branch_wfm','ho_wfm']}><Gate pageCode="WFM_ROSTER_OFFDAY_POLICY"><RosterOffdayPolicy /></Gate></ProtectedRoute>} />
+      {/* Team Roster: for anyone with people reporting to them (64 of 78 real managers hold only the
+          employee role), plus WFM approvers. No role ceiling on purpose: the page code is granted to
+          employee and the page + every /api/wfm/team-roster endpoint resolve the real reporting tree /
+          WFM scope server-side. pageCode must match navConfig.tsx and pageRoutePageCodes.ts. */}
+      <Route path="/wfm/team-roster" element={<ProtectedRoute><Gate pageCode="WFM_TEAM_ROSTER"><TeamRosterPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/planning-rules" element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm','branch_head']}><Gate pageCode="WFM_PLANNING_RULES"><NativeWFMPlanningRules /></Gate></ProtectedRoute>} />
       <Route path="/wfm/slot-requirements" element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_wfm','branch_head']}><Gate pageCode="WFM_SLOT_REQUIREMENTS"><NativeSlotRequirementBuilder /></Gate></ProtectedRoute>} />
       {/* Superseded by RosterBuilderPage — redirect */}

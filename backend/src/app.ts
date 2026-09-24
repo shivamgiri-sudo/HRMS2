@@ -16,6 +16,7 @@ import { integrationRouter } from "./modules/integration-hub/integration.routes.
 import { wfmRouter } from "./modules/wfm/wfm.routes.js";
 import { processLobMapRouter } from "./modules/wfm/process-lob-map.routes.js";
 import { rosterOffdayPolicyRouter } from "./modules/wfm/roster-offday-policy.routes.js";
+import { teamRosterRouter } from "./modules/wfm/team-roster.routes.js";
 import { wfmRegularizationSecureRouter } from "./modules/wfm/wfm.regularization.secure.routes.js";
 import { rosterActualSecureRouter } from "./modules/wfm/roster.actual.secure.routes.js";
 import { rosterRouter } from "./modules/wfm/roster.routes.js";
@@ -432,6 +433,8 @@ app.use("/api/integration-hub", integrationRouter);
 app.use("/api/wfm/auto-roster", autoRosterSyncedRouter);
 app.use("/api/wfm/process-lobs", processLobMapRouter);
 app.use("/api/wfm/roster-offday-policies", rosterOffdayPolicyRouter);
+// Mounted ahead of the catch-all /api/wfm routers below: its audience is anyone with reports, not a role list.
+app.use("/api/wfm/team-roster", teamRosterRouter);
 app.use("/api/wfm", wfmRegularizationSecureRouter);
 app.use("/api/wfm", wfmRouter);
 app.use("/api/wfm/roster", rosterActualSecureRouter);

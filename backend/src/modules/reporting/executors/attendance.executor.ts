@@ -161,6 +161,15 @@ export async function attendanceRegisterMonthly(
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   appendEmployeeStatusFilter(filters, clauses, params);
+  // Optional explicit employee-id list (Team Roster "Team Attendance" preview reuses this register
+  // query rather than re-deriving attendance rules). It only ever NARROWS: it is AND-ed with the scope
+  // and filters above, and an empty list matches nobody. Placed before the params snapshot below so the
+  // fast pre-pagination path and the worker path both carry it.
+  if (Array.isArray(filters.employeeIds)) {
+    const teamIds = filters.employeeIds.map((id) => String(id)).filter(Boolean);
+    clauses.push(teamIds.length ? `e.id IN (${teamIds.map(() => "?").join(",")})` : "1 = 0");
+    params.push(...teamIds);
+  }
   // Capture scope/filter params BEFORE the JOIN binds are unshifted below.
   // The pre-pagination query (which only reads the employees table) uses these
   // params + arm binds only — no JOIN binds needed.

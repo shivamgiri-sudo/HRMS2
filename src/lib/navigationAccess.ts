@@ -20,7 +20,7 @@ type AccessContext = {
 };
 
 export function canAccessNavItem(
-  item: Pick<NavItem, "href" | "pageCode" | "roles" | "public" | "managerVisible">,
+  item: Pick<NavItem, "href" | "pageCode" | "roles" | "public" | "managerVisible" | "managerGated">,
   access: AccessContext,
 ): boolean {
   const visibleSet = new Set(access.visiblePageCodes);
@@ -33,7 +33,13 @@ export function canAccessNavItem(
 
   if (dashboardCode) return canAccessDashboard(dashboardCode, access.roleKeys);
   if (isSuperAdmin) return true;
-  if (pageCode) return visibleSet.has(pageCode) || access.canViewPage(pageCode);
+  if (pageCode) {
+    const granted = visibleSet.has(pageCode) || access.canViewPage(pageCode);
+    // managerGated: the grant is only the door. Show the entry to people with direct reports or to the
+    // item's listed roles, not to every holder of the grant (the employee role holds it).
+    if (granted && item.managerGated && !access.isManager && !(item.roles?.length && access.hasAnyRole(...item.roles))) return false;
+    return granted;
+  }
   if (item.roles?.length) {
     if (access.hasAnyRole(...item.roles)) return true;
     // A listed role isn't the only way to qualify. 64 of 78 reporting managers hold only

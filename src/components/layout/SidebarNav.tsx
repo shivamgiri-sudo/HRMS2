@@ -22,6 +22,12 @@ export type NavItem = {
   description?: string;
   /** When true, also visible to anyone who has direct reports (is_manager), regardless of role */
   managerVisible?: boolean;
+  /**
+   * When true the page grant is necessary but NOT sufficient: the item also needs is_manager (at least one
+   * direct report) or one of `roles`. For pages whose grant goes to the employee role so that managers who
+   * hold no manager role can reach them, without showing the entry to every employee.
+   */
+  managerGated?: boolean;
   /** Sub-items — when present this item becomes a collapsible master */
   children?: NavItem[];
 };

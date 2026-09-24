@@ -21,6 +21,8 @@ export interface ExecFilters {
   managerId?: string;
   employeeCode?: string;
   employeeName?: string;
+  /** Narrowing-only explicit employee id list (attendance-register-monthly). Never widens scope. */
+  employeeIds?: string[];
   from?: string;
   to?: string;
   /** DOJ range for employee-master: filter by date_of_joining (not tenure window) */

@@ -209,6 +209,7 @@ export const navGroups: NavGroup[] = [
         label: "WFM & Roster",  href: "/wfm/roster", icon: ic(Clock), pageCode: "WFM_ROSTER", description: "Workforce management",
         children: [
           // "Roster Planning" removed — duplicate of group header "/wfm/roster"
+          { label: "Team Roster",            href: "/wfm/team-roster",           icon: ic(UsersRound),    pageCode: "WFM_TEAM_ROSTER", managerGated: true, roles: ["wfm","wfm_spoc","wfm_analyst","branch_wfm","ho_wfm","admin","super_admin"], description: "Fill and change your team's roster; manager then WFM approve before it is applied" },
           { label: "Roster Workspace",       href: "/wfm/roster-workspace",      icon: ic(CalendarDays),  pageCode: "WFM_ROSTER",      description: "Weekly shift grid and acknowledgement tracker" },
           { label: "Roster Import",          href: "/wfm/roster-import",         icon: ic(Upload),        pageCode: "WFM_ROSTER",      description: "Upload Excel roster — auto-detect headers, 12h/24h, night shifts" },
           { label: "Roster",                 href: "/wfm/roster-view",           icon: ic(CalendarDays),  pageCode: "WFM_ROSTER",      description: "See who is working what — filter by branch, process or person" },
