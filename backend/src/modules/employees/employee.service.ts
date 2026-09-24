@@ -196,6 +196,12 @@ export const employeeService = {
     const id = randomUUID();
     // salary_start_date defaults to date_of_joining when not explicitly set
     const salaryStartDate = input.salaryStartDate ?? input.dateOfJoining;
+    if (salaryStartDate && input.dateOfJoining && salaryStartDate < input.dateOfJoining) {
+      throw Object.assign(
+        new Error(`Salary start date (${salaryStartDate}) cannot be before date of joining (${input.dateOfJoining}).`),
+        { statusCode: 400, code: "SALARY_START_BEFORE_JOINING" }
+      );
+    }
 
     // Resolve branch_id and process_id from cost_centre if not explicitly provided
     let resolvedBranchId = input.branchId ?? null;
@@ -509,7 +515,7 @@ export const employeeService = {
     const [snapRows] = await db.execute<RowDataPacket[]>(
       `SELECT branch_id, department_id, process_id, designation_id,
               reporting_manager_id, employment_status, employment_type, active_status,
-              date_of_joining, first_name, last_name, official_email, mobile,
+              date_of_joining, salary_start_date, first_name, last_name, official_email, mobile,
               personal_email, date_of_birth, gender, blood_group, address1, city
        FROM employees WHERE id = ? LIMIT 1`,
       [id]
@@ -561,6 +567,19 @@ export const employeeService = {
           "This employee is deactivated. Reactivation must go through Employees → Reactivation (/employees/reactivation), which records a reason and takes branch head approval and HR confirmation. It cannot be done from a profile edit."
         ),
         { statusCode: 409, code: "REACTIVATION_REQUIRES_APPROVAL" }
+      );
+    }
+
+    // Guard: salary_start_date must never be before date_of_joining.
+    // Evaluate against the effective final values — caller may be changing one or both.
+    const effectiveDoj = input.dateOfJoining ?? (snap.date_of_joining ? String(snap.date_of_joining).slice(0, 10) : null);
+    const effectiveSsd = input.salaryStartDate !== undefined
+      ? (input.salaryStartDate ?? null)
+      : (snap.salary_start_date ? String(snap.salary_start_date).slice(0, 10) : null);
+    if (effectiveSsd && effectiveDoj && effectiveSsd < effectiveDoj) {
+      throw Object.assign(
+        new Error(`Salary start date (${effectiveSsd}) cannot be before date of joining (${effectiveDoj}).`),
+        { statusCode: 400, code: "SALARY_START_BEFORE_JOINING" }
       );
     }
 
