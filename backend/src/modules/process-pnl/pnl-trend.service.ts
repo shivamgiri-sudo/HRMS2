@@ -101,28 +101,30 @@ export interface PnlTrendResult {
 }
 
 const TREND_HOT_MONTHS = 4;
-const COLD_COST_TTL_MS = 6 * 60 * 60 * 1000;
-const coldCostCache = new Map<string, { at: number; value: Promise<RowDataPacket[]> }>();
-const coldCostCacheEnabled = process.env.VITEST !== "true" && process.env.NODE_ENV !== "test";
+const HISTORY_TTL_MS = 6 * 60 * 60 * 1000;
+const REAL_MONTHS_TTL_MS = 10 * 60 * 1000;
+const swrStore = new Map<string, { at: number; value: Promise<unknown> }>();
+const swrEnabled = process.env.VITEST !== "true" && process.env.NODE_ENV !== "test";
 
 /**
  * Stale-while-revalidate: an expired entry is returned at once and refreshed in the background, so
- * a user never waits on the slow scan after the first one. A failed refresh keeps the old value.
+ * a user never waits on a slow scan after the first one. A failed load is never cached, and a failed
+ * refresh keeps the old value.
  */
-function cachedColdCost(key: string, load: () => Promise<RowDataPacket[]>): Promise<RowDataPacket[]> {
-  if (!coldCostCacheEnabled) return load();
-  const hit = coldCostCache.get(key);
+function swrCache<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
+  if (!swrEnabled) return load();
+  const hit = swrStore.get(key);
   if (hit) {
-    if (Date.now() - hit.at > COLD_COST_TTL_MS) {
-      coldCostCache.set(key, { at: Date.now(), value: hit.value });
-      void load().then((fresh) => coldCostCache.set(key, { at: Date.now(), value: Promise.resolve(fresh) })).catch(() => undefined);
+    if (Date.now() - hit.at > ttlMs) {
+      swrStore.set(key, { at: Date.now(), value: hit.value });
+      void load().then((fresh) => swrStore.set(key, { at: Date.now(), value: Promise.resolve(fresh) })).catch(() => undefined);
     }
-    return hit.value;
+    return hit.value as Promise<T>;
   }
   const value = load();
-  if (coldCostCache.size >= 50) coldCostCache.delete(coldCostCache.keys().next().value as string);
-  coldCostCache.set(key, { at: Date.now(), value });
-  value.catch(() => coldCostCache.delete(key));
+  if (swrStore.size >= 50) swrStore.delete(swrStore.keys().next().value as string);
+  swrStore.set(key, { at: Date.now(), value });
+  value.catch(() => swrStore.delete(key));
   return value;
 }
 
@@ -151,7 +153,7 @@ export async function getPnlTrend(
   // list matches nothing (the resolver never sends one; it sends a no-match sentinel instead).
   const processList = filters.processIds ?? (filters.processId ? [filters.processId] : null);
   const narrowed = Boolean(filters.branchId) || processList !== null;
-  const realMonths = await getRealMonths();
+  const realMonths = await swrCache("real-months", REAL_MONTHS_TTL_MS, getRealMonths);
   if (realMonths.length === 0) {
     return {
       realMonths: [],
@@ -242,12 +244,12 @@ export async function getPnlTrend(
   };
   // Payroll for closed months is history, and reading every month's salary lines (130k rows) takes
   // over a minute on the production database — the endpoint 504'd at the gateway. Only the last few
-  // months can still move; the rest is served from a long-lived cache (see cachedColdCost).
+  // months can still move; the rest is served from a long-lived cache (see swrCache).
   const hotMonths = realMonths.slice(-TREND_HOT_MONTHS);
   const coldMonths = realMonths.slice(0, Math.max(0, realMonths.length - TREND_HOT_MONTHS));
   const coldKey = JSON.stringify({ b: filters.branchId ?? null, p: processList ? [...processList].sort() : null, m: coldMonths.length });
   const [coldCost, hotCost] = await Promise.all([
-    coldMonths.length ? cachedColdCost(coldKey, () => runCost(coldMonths)) : Promise.resolve([] as RowDataPacket[]),
+    coldMonths.length ? swrCache(`cold-cost:${coldKey}`, HISTORY_TTL_MS, () => runCost(coldMonths)) : Promise.resolve([] as RowDataPacket[]),
     runCost(hotMonths),
   ]);
   const costRows = [...coldCost, ...hotCost];
@@ -321,7 +323,7 @@ export async function getPnlTrend(
 
   if (!narrowed) {
     try {
-      const history = await getDbBillHistory(new Set(realMonths));
+      const history = await swrCache(`dbbill-history:${realMonths.length}`, HISTORY_TTL_MS, () => getDbBillHistory(new Set(realMonths)));
       companyHistory = history.months;
       historyDataStatus = {
         available: history.months.length > 0,
@@ -358,7 +360,7 @@ export async function getPnlTrend(
           byNormalizedName.set(norm, { id: String(row.id), name: String(row.process_name) });
         }
       }
-      const historyByProcess = await getDbBillHistoryByProcess();
+      const historyByProcess = await swrCache("dbbill-history-by-process", HISTORY_TTL_MS, () => getDbBillHistoryByProcess());
       for (const entry of historyByProcess) {
         const match = byNormalizedName.get(entry.processName.trim().toUpperCase());
         if (!match) continue; // db_bill cost_process value has no process_master counterpart
