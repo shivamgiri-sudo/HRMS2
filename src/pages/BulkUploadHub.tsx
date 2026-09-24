@@ -1362,7 +1362,7 @@ export default function BulkUploadHub() {
   const lobOnlyUser = isLobOnlyHubUser(roleKeys);
 
   const effectiveTab: HubTab =
-    activeTab === "apr" && lobOnlyUser ? "master" :
+    lobOnlyUser ? "master" :
     activeTab === "productivity" && !canUploadProductivity ? "master" :
     activeTab === "deduction-types" && !canManageDeductionTypes ? "master" :
     activeTab === "tds-upload" && !canUploadTds ? "master" :
