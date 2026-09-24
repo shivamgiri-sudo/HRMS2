@@ -121,7 +121,7 @@ export async function getSubmissionDetail(actor: Actor, id: number) {
     `SELECT l.id, l.employee_id, ${DATE("l.roster_date", "d")}, l.kind, l.old_assignment_type, l.old_shift_start_time, l.old_shift_end_time,
             l.new_assignment_type, l.reason, l.warnings_json, l.line_status, l.skip_reason, l.applied_assignment_id,
             e.employee_code, ${NAME("e")} AS employee_name, ot.shift_code AS old_code, nt.shift_code AS new_code,
-            nt.start_time AS new_start, nt.end_time AS new_end
+            l.new_shift_start_time AS new_start, l.new_shift_end_time AS new_end
        FROM roster_team_submission_line l
        LEFT JOIN employees e ON e.id = l.employee_id
        LEFT JOIN wfm_shift_template ot ON ot.id = l.old_shift_template_id

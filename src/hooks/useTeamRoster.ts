@@ -37,7 +37,7 @@ export interface GridCell {
   };
   leave?: "FULL" | "HALF";
   lockedBy?: { submissionId: number; submissionNo: string | null; status: string; submitter: string };
-  draft?: { kind: "FILL_BLANK" | "CHANGE"; type: CellType; shiftTemplateId: string | null; reason: string | null };
+  draft?: { kind: "FILL_BLANK" | "CHANGE"; type: CellType; shiftTemplateId: string | null; shiftStart: string | null; shiftEnd: string | null; reason: string | null };
 }
 
 export interface GridRow {
@@ -50,10 +50,13 @@ export interface GridResponse {
   teamTruncated: boolean; rows: GridRow[];
 }
 
-export interface DraftLine { employeeId: string; date: string; kind: string; type: CellType; shiftTemplateId: string | null; reason: string | null }
+export interface DraftLine { employeeId: string; date: string; kind: string; type: CellType; shiftTemplateId: string | null; shiftStart: string | null; shiftEnd: string | null; reason: string | null }
 export interface DraftResponse { draft: { id: number; note: string | null; createdAt: string; lines: DraftLine[] } | null }
 
-export interface LineUpsert { employeeId: string; date: string; type: CellType; shiftTemplateId?: string | null; reason?: string | null }
+export interface LineUpsert {
+  employeeId: string; date: string; type: CellType; shiftStart?: string | null; shiftEnd?: string | null;
+  shiftTemplateId?: string | null; shiftMasterId?: string | null; reason?: string | null;
+}
 export interface CellRef { employeeId: string; date: string }
 
 export interface SubmissionListItem {

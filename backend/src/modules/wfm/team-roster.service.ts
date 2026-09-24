@@ -8,6 +8,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { loadShiftOptions } from "./team-roster-shifts.js";
 import { loadApprovedLeave } from "./roster-leave-guard.service.js";
 import { resolveCallerEmployee, resolveTeamTree, type CallerEmployee } from "./team-roster-tree.js";
 import {
@@ -102,11 +103,14 @@ export async function listTemplates(actor: Actor) {
     });
     byProcess.set(String(t.process_id), list);
   }
+  const options = await loadShiftOptions(processIds, today);
   return {
     processes: procRows.map((r) => ({
       processId: String(r.process_id),
       processName: r.process_name ? String(r.process_name) : null,
       templates: byProcess.get(String(r.process_id)) ?? [],
+      // Merged shift options (templates + shifts actually in use + shift master), de-duplicated by (start, end).
+      options: (options.get(String(r.process_id)) ?? []).map(({ effectiveFrom: _f, effectiveTo: _t, ...o }) => o),
     })),
   };
 }
@@ -203,7 +207,8 @@ async function overlayCells(o: { ids: string[]; from: string; to: string; caller
     });
   }
   const drafts = rowsOf<RowDataPacket>(await db.execute(
-    `SELECT l.employee_id, DATE_FORMAT(l.roster_date, '%Y-%m-%d') AS d, l.kind, l.new_assignment_type, l.new_shift_template_id, l.reason
+    `SELECT l.employee_id, DATE_FORMAT(l.roster_date, '%Y-%m-%d') AS d, l.kind, l.new_assignment_type, l.new_shift_template_id,
+            l.new_shift_start_time, l.new_shift_end_time, l.reason
        FROM roster_team_submission_line l JOIN roster_team_submission s ON s.id = l.submission_id
       WHERE s.draft_owner_key = ? AND l.employee_id IN (${marks}) AND l.roster_date BETWEEN ? AND ?`,
     [o.callerId, ...o.ids, o.from, o.to],
@@ -212,6 +217,8 @@ async function overlayCells(o: { ids: string[]; from: string; to: string; caller
     o.put(String(l.employee_id), String(l.d), "draft", {
       kind: String(l.kind), type: String(l.new_assignment_type),
       shiftTemplateId: l.new_shift_template_id ? String(l.new_shift_template_id) : null,
+      shiftStart: l.new_shift_start_time ? String(l.new_shift_start_time).slice(0, 5) : null,
+      shiftEnd: l.new_shift_end_time ? String(l.new_shift_end_time).slice(0, 5) : null,
       reason: l.reason ? String(l.reason) : null,
     });
   }

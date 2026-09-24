@@ -9,7 +9,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { loadTemplatesByIds, templateProblem } from "./team-roster-guards.js";
+import { loadShiftOptions, resolveShiftChoice, type ShiftOption } from "./team-roster-shifts.js";
 import { requireTeam } from "./team-roster.service.js";
 import { isDuplicateKey, withTransaction } from "./team-roster-tx.js";
 import {
@@ -22,7 +22,11 @@ export interface LineInput {
   employeeId: string;
   date: string;
   type: NewAssignmentType;
+  /** Times are what is stored; the server re-derives ids from its own allowed options. */
+  shiftStart?: string | null;
+  shiftEnd?: string | null;
   shiftTemplateId?: string | null;
+  shiftMasterId?: string | null;
   reason?: string | null;
 }
 export interface CellRef { employeeId: string; date: string }
@@ -50,11 +54,10 @@ export async function loadCurrentCells(
 }
 
 /** True when the proposed value is the value already stored (nothing to change). */
-function sameAsStored(old: OldCellSnapshot, type: NewAssignmentType, templateId: string | null, tplTimes: { start: string | null; end: string | null }): boolean {
+function sameAsStored(old: OldCellSnapshot, type: NewAssignmentType, option: ShiftOption | null): boolean {
   if (old.assignmentType !== type) return false;
-  if (type !== "SHIFT") return true;
-  if (old.shiftTemplateId && templateId) return old.shiftTemplateId === templateId;
-  return old.shiftStartTime === (tplTimes.start?.slice(0, 5) ?? null) && old.shiftEndTime === (tplTimes.end?.slice(0, 5) ?? null);
+  if (type !== "SHIFT" || !option) return true;
+  return old.shiftStartTime === option.start && old.shiftEndTime === option.end;
 }
 
 async function getOrCreateDraftId(conn: SqlExecutor, caller: { id: string }, userId: string): Promise<number> {
@@ -102,7 +105,7 @@ export async function upsertDraftLines(
     if (l.date < today) return bad(l, "Past dates cannot be changed."), false;
     if (!team.has(l.employeeId)) return bad(l, "Employee is not in your reporting team."), false;
     if (!(NEW_ASSIGNMENT_TYPES as readonly string[]).includes(l.type)) return bad(l, "Choose Shift, Week off, Training or Unscheduled."), false;
-    if (l.type === "SHIFT" && !l.shiftTemplateId) return bad(l, "Pick a shift."), false;
+    if (l.type === "SHIFT" && !l.shiftTemplateId && !(l.shiftStart && l.shiftEnd)) return bad(l, "Pick a shift."), false;
     if (String(l.reason ?? "").length > MAX_REASON_LENGTH) return bad(l, `Reason is limited to ${MAX_REASON_LENGTH} characters.`), false;
     return true;
   });
@@ -114,21 +117,25 @@ export async function upsertDraftLines(
     const emp = rowsOf<RowDataPacket>(await db.execute(`SELECT id, process_id FROM employees WHERE id IN (${placeholders(empIds.length)})`, empIds));
     emp.forEach((r) => processOf.set(String(r.id), r.process_id ? String(r.process_id) : null));
   }
-  const templates = await loadTemplatesByIds(shapeOk.map((l) => l.shiftTemplateId ?? "").filter(Boolean));
+  const shiftOptions = shapeOk.some((l) => l.type === "SHIFT")
+    ? await loadShiftOptions([...new Set([...processOf.values()].filter((p): p is string => !!p))], today)
+    : new Map<string, ShiftOption[]>();
   const current = empIds.length ? await loadCurrentCells(empIds, dates[0], dates[dates.length - 1]) : new Map();
 
   const prepared = shapeOk.flatMap((l) => {
-    const tplId = l.type === "SHIFT" ? l.shiftTemplateId ?? null : null;
-    const tpl = tplId ? templates.get(tplId) : undefined;
+    let option: ShiftOption | null = null;
     if (l.type === "SHIFT") {
-      const problem = templateProblem(tpl, processOf.get(l.employeeId) ?? null, l.date);
-      if (problem) return bad(l, problem), [];
+      try {
+        option = resolveShiftChoice(l, shiftOptions.get(processOf.get(l.employeeId) ?? "") ?? [], l.date);
+      } catch (e) {
+        return bad(l, (e as Error).message), [];
+      }
     }
     const old = current.get(cellKey(l.employeeId, l.date)) ?? null;
-    if (old && sameAsStored(old, l.type, tplId, { start: tpl?.start ?? null, end: tpl?.end ?? null })) {
+    if (old && sameAsStored(old, l.type, option)) {
       return bad(l, "This is already what the roster says; nothing to change."), [];
     }
-    return [{ ...l, tplId, kind: (old ? "CHANGE" : "FILL_BLANK") as LineKind, old }];
+    return [{ ...l, option, kind: (old ? "CHANGE" : "FILL_BLANK") as LineKind, old }];
   });
   if (problems.length && !opts.lenient) throw new TeamRosterError(422, "Some cells could not be saved.", "LINE_VALIDATION", problems);
 
@@ -143,16 +150,17 @@ export async function upsertDraftLines(
         `INSERT INTO roster_team_submission_line
            (submission_id, employee_id, roster_date, kind, old_assignment_id, old_assignment_type, old_is_week_off,
             old_shift_template_id, old_shift_start_time, old_shift_end_time, new_assignment_type, new_shift_template_id,
-            reason, warnings_json, line_status, skip_reason, applied_assignment_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending', NULL, NULL)
+            new_shift_start_time, new_shift_end_time, new_shift_id, reason, warnings_json, line_status, skip_reason, applied_assignment_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending', NULL, NULL)
          ON DUPLICATE KEY UPDATE kind = VALUES(kind), old_assignment_id = VALUES(old_assignment_id),
            old_assignment_type = VALUES(old_assignment_type), old_is_week_off = VALUES(old_is_week_off),
            old_shift_template_id = VALUES(old_shift_template_id), old_shift_start_time = VALUES(old_shift_start_time),
            old_shift_end_time = VALUES(old_shift_end_time), new_assignment_type = VALUES(new_assignment_type),
-           new_shift_template_id = VALUES(new_shift_template_id), reason = VALUES(reason), warnings_json = NULL`,
+           new_shift_template_id = VALUES(new_shift_template_id), new_shift_start_time = VALUES(new_shift_start_time),
+           new_shift_end_time = VALUES(new_shift_end_time), new_shift_id = VALUES(new_shift_id), reason = VALUES(reason), warnings_json = NULL`,
         [draftId, l.employeeId, l.date, l.kind, o?.assignmentId ?? null, o?.assignmentType ?? null, o ? (o.isWeekOff ? 1 : 0) : null,
-          o?.shiftTemplateId ?? null, o?.shiftStartTime ?? null, o?.shiftEndTime ?? null, l.type, l.tplId,
-          l.reason ? String(l.reason).trim() : null],
+          o?.shiftTemplateId ?? null, o?.shiftStartTime ?? null, o?.shiftEndTime ?? null, l.type, l.option?.templateId ?? null,
+          l.option?.start ?? null, l.option?.end ?? null, l.option?.shiftMasterId ?? null, l.reason ? String(l.reason).trim() : null],
       );
     }
     const span = rowsOf<RowDataPacket>(await conn.execute(
@@ -186,7 +194,8 @@ export async function getMyDraft(actor: Actor) {
   ))[0];
   if (!head) return { draft: null };
   const lines = rowsOf<RowDataPacket>(await db.execute(
-    `SELECT l.employee_id, DATE_FORMAT(l.roster_date, '%Y-%m-%d') AS d, l.kind, l.new_assignment_type, l.new_shift_template_id, l.reason
+    `SELECT l.employee_id, DATE_FORMAT(l.roster_date, '%Y-%m-%d') AS d, l.kind, l.new_assignment_type, l.new_shift_template_id,
+            l.new_shift_start_time, l.new_shift_end_time, l.reason
        FROM roster_team_submission_line l WHERE l.submission_id = ? ORDER BY l.roster_date, l.employee_id`, [head.id],
   ));
   return {
@@ -194,7 +203,9 @@ export async function getMyDraft(actor: Actor) {
       id: Number(head.id), note: head.note ? String(head.note) : null, createdAt: String(head.created_at),
       lines: lines.map((l) => ({
         employeeId: String(l.employee_id), date: String(l.d), kind: String(l.kind), type: String(l.new_assignment_type),
-        shiftTemplateId: l.new_shift_template_id ? String(l.new_shift_template_id) : null, reason: l.reason ? String(l.reason) : null,
+        shiftTemplateId: l.new_shift_template_id ? String(l.new_shift_template_id) : null,
+        shiftStart: l.new_shift_start_time ? String(l.new_shift_start_time).slice(0, 5) : null,
+        shiftEnd: l.new_shift_end_time ? String(l.new_shift_end_time).slice(0, 5) : null, reason: l.reason ? String(l.reason) : null,
       })),
     },
   };

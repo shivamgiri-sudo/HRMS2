@@ -12,10 +12,26 @@ export const NON_SHIFT_CHOICES: Array<{ value: Exclude<CellType, "SHIFT">; label
   { value: "UNSCHEDULED", label: "Unscheduled", short: "UNS" },
 ];
 
-export interface TemplateOption { id: string; shiftCode: string; shiftName: string; start: string | null; end: string | null; night: boolean }
-export interface TemplateProcess { processId: string; processName: string | null; templates: TemplateOption[] }
+export type ShiftGroup = "Templates" | "In use" | "Shift master";
+/** A shift a manager may pick for an employee of a process (merged server-side, de-duplicated by start/end). */
+export interface ShiftOption {
+  key: string; start: string; end: string; night: boolean; label: string; code: string | null; name: string | null;
+  group: ShiftGroup; sources: string[]; useCount: number; templateId: string | null; shiftMasterId: string | null;
+}
+export interface TemplateProcess { processId: string; processName: string | null; options: ShiftOption[] }
 
-export interface CellChoice { type: CellType; shiftTemplateId: string | null }
+/** shiftKey = 'HH:MM-HH:MM', the identity of a ShiftOption. */
+export interface CellChoice { type: CellType; shiftKey: string | null }
+
+export const SHIFT_GROUP_ORDER: ShiftGroup[] = ["Templates", "In use", "Shift master"];
+
+export const shiftKeyOf = (start: string | null | undefined, end: string | null | undefined) =>
+  start && end ? `${start.slice(0, 5)}-${end.slice(0, 5)}` : null;
+
+export function splitShiftKey(key: string): { start: string; end: string } {
+  const [start, end] = key.split("-");
+  return { start, end };
+}
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -77,24 +93,23 @@ export const cellKey = (employeeId: string, date: string) => `${employeeId}|${da
 
 // ── choices ─────────────────────────────────────────────────────────────────
 
-export const choiceValue = (c: CellChoice | null) => (!c ? "" : c.type === "SHIFT" ? `SHIFT:${c.shiftTemplateId}` : c.type);
+export const choiceValue = (c: CellChoice | null) => (!c ? "" : c.type === "SHIFT" ? `SHIFT:${c.shiftKey}` : c.type);
 
 export function parseChoice(value: string): CellChoice | null {
   if (!value) return null;
-  if (value.startsWith("SHIFT:")) return { type: "SHIFT", shiftTemplateId: value.slice(6) };
-  return NON_SHIFT_CHOICES.some((c) => c.value === value) ? { type: value as CellType, shiftTemplateId: null } : null;
+  if (value.startsWith("SHIFT:")) return { type: "SHIFT", shiftKey: value.slice(6) };
+  return NON_SHIFT_CHOICES.some((c) => c.value === value) ? { type: value as CellType, shiftKey: null } : null;
 }
 
-export function templateLabel(t: TemplateOption): string {
-  return t.start && t.end ? `${t.shiftName} (${t.start}-${t.end})` : t.shiftName;
-}
+export const shiftOptionLabel = (o: ShiftOption) => o.label;
 
 const times = (start: string | null, end: string | null) => (start && end ? `${start.slice(0, 5)}-${end.slice(0, 5)}` : "");
 
-export function choiceLabel(c: CellChoice, templates: TemplateOption[]): { short: string; long: string } {
+export function choiceLabel(c: CellChoice, options: ShiftOption[]): { short: string; long: string } {
   if (c.type === "SHIFT") {
-    const t = templates.find((x) => x.id === c.shiftTemplateId);
-    return t ? { short: t.shiftCode || t.shiftName, long: templateLabel(t) } : { short: "Shift", long: "Shift" };
+    const o = options.find((x) => x.key === c.shiftKey);
+    if (o) return { short: o.code || `${o.start}-${o.end}`, long: o.label };
+    return c.shiftKey ? { short: c.shiftKey, long: c.shiftKey.replace("-", "–") } : { short: "Shift", long: "Shift" };
   }
   const meta = NON_SHIFT_CHOICES.find((x) => x.value === c.type);
   return { short: meta?.short ?? c.type, long: meta?.label ?? c.type };

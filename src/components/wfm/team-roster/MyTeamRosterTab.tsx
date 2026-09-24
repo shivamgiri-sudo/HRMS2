@@ -13,9 +13,9 @@ import {
 } from "@/hooks/useTeamRoster";
 import ChangeDialog, { type ChangeTarget } from "./ChangeDialog";
 import SubmitProblemsDialog from "./SubmitProblemsDialog";
-import TeamRosterGrid, { stagedKey, templatesFor, type StagedEdit } from "./TeamRosterGrid";
+import TeamRosterGrid, { shiftOptionsFor, stagedKey, type StagedEdit } from "./TeamRosterGrid";
 import {
-  RANGE_PRESETS, formatDmy, presetRange, spanDays, storedLabel, unpackError,
+  RANGE_PRESETS, formatDmy, presetRange, shiftKeyOf, spanDays, splitShiftKey, storedLabel, unpackError,
   type ApiFailure, type CellChoice, type RangePreset,
 } from "./teamRosterFormat";
 
@@ -56,6 +56,7 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
   const submit = useSubmitDraft();
   const discard = useDiscardDraft();
 
+  const rowByEmployee = useMemo(() => new Map((grid.data?.rows ?? []).map((r) => [r.employeeId, r])), [grid.data]);
   const names = useMemo(() => Object.fromEntries((grid.data?.rows ?? []).map((r) => [r.employeeId, r.name])), [grid.data]);
   const serverKeys = (draft.data?.draft?.lines ?? []).map((l) => stagedKey(l.employeeId, l.date));
   const changeCount = countDraftChanges(serverKeys, staged);
@@ -69,7 +70,15 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
     if (!dirty) return true;
     const upserts = Object.entries(staged).filter(([, e]) => e.choice).map(([k, e]) => {
       const [employeeId, date] = k.split("|");
-      return { employeeId, date, type: e.choice!.type, shiftTemplateId: e.choice!.shiftTemplateId, reason: e.reason };
+      // Times are what is stored; ids are hints the server re-derives from its own option list.
+      const t = e.choice!.type;
+      const key = e.choice!.shiftKey;
+      const opt = key ? shiftOptionsFor(templates.data?.processes ?? [], rowByEmployee.get(employeeId)?.processId ?? null).find((o) => o.key === key) : undefined;
+      const times = key ? splitShiftKey(key) : null;
+      return {
+        employeeId, date, type: t, shiftStart: times?.start ?? null, shiftEnd: times?.end ?? null,
+        shiftTemplateId: opt?.templateId ?? null, shiftMasterId: opt?.shiftMasterId ?? null, reason: e.reason,
+      };
     });
     const deletes = Object.entries(staged).filter(([, e]) => !e.choice).map(([k]) => {
       const [employeeId, date] = k.split("|");
@@ -114,11 +123,11 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
     if (!change) return null;
     const cell = change.row.cells[change.date];
     const edit = staged[stagedKey(change.row.employeeId, change.date)];
-    const fromServer = cell?.draft ? { type: cell.draft.type, shiftTemplateId: cell.draft.shiftTemplateId } : null;
+    const fromServer: CellChoice | null = cell?.draft ? { type: cell.draft.type, shiftKey: shiftKeyOf(cell.draft.shiftStart, cell.draft.shiftEnd) } : null;
     return {
       employeeName: change.row.name, date: change.date,
       currentLabel: cell?.assignment ? storedLabel(cell.assignment).long : "Unassigned",
-      options: templatesFor(templates.data?.processes ?? [], change.row.processId),
+      options: shiftOptionsFor(templates.data?.processes ?? [], change.row.processId),
       initial: edit !== undefined ? edit.choice : fromServer,
       initialReason: edit?.reason ?? cell?.draft?.reason ?? "",
     };

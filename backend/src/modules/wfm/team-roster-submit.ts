@@ -9,9 +9,10 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import {
-  evaluateGuards, loadEmployeeGuardInfo, loadTemplatesByIds, templateProblem, type GuardLine,
+  evaluateGuards, loadEmployeeGuardInfo, type GuardLine,
 } from "./team-roster-guards.js";
 import { loadCurrentCells, upsertDraftLines } from "./team-roster-draft.js";
+import { loadShiftOptions, shiftProblem } from "./team-roster-shifts.js";
 import { INBOX_TYPE_APPROVAL, closeApprovalItems, notifyUsers, recordAudit, userIdOfEmployee, wfmRecipientUserIds } from "./team-roster-audit.js";
 import { requireCaller, requireTeam } from "./team-roster.service.js";
 import type { CallerEmployee } from "./team-roster-tree.js";
@@ -30,6 +31,10 @@ export interface SubmitLine {
   old: OldCellSnapshot;
   newType: NewAssignmentType;
   templateId: string | null;
+  /** The shift as stored times ('HH:MM'); the source of truth for apply. */
+  newStart: string | null;
+  newEnd: string | null;
+  newShiftId: string | null;
   reason: string | null;
 }
 
@@ -48,6 +53,9 @@ function toSubmitLine(r: RowDataPacket): SubmitLine {
     },
     newType: String(r.new_assignment_type) as NewAssignmentType,
     templateId: r.new_shift_template_id ? String(r.new_shift_template_id) : null,
+    newStart: r.new_shift_start_time ? String(r.new_shift_start_time).slice(0, 5) : null,
+    newEnd: r.new_shift_end_time ? String(r.new_shift_end_time).slice(0, 5) : null,
+    newShiftId: r.new_shift_id ? String(r.new_shift_id) : null,
     reason: r.reason ? String(r.reason) : null,
   };
 }
@@ -56,7 +64,7 @@ export async function loadSubmissionLines(submissionId: number, exec: SqlExecuto
   return rowsOf<RowDataPacket>(await exec.execute(
     `SELECT id, employee_id, DATE_FORMAT(roster_date, '%Y-%m-%d') AS d, kind, old_assignment_id, old_assignment_type,
             old_is_week_off, old_shift_template_id, old_shift_start_time, old_shift_end_time,
-            new_assignment_type, new_shift_template_id, reason
+            new_assignment_type, new_shift_template_id, new_shift_start_time, new_shift_end_time, new_shift_id, reason
        FROM roster_team_submission_line WHERE submission_id = ? ORDER BY roster_date, employee_id`,
     [submissionId],
   )).map(toSubmitLine);
@@ -89,14 +97,16 @@ export async function validateLinesForSubmit(lines: SubmitLine[], teamIds: strin
   const today = todayIst();
   const ids = [...new Set(lines.map((l) => l.employeeId))];
   const info = await loadEmployeeGuardInfo(ids, exec);
-  const templates = await loadTemplatesByIds(lines.map((l) => l.templateId ?? "").filter(Boolean), exec);
+  const processIds = [...new Set([...info.values()].map((i) => i.processId).filter((p): p is string => !!p))];
+  const shiftOptions = lines.some((l) => l.newType === "SHIFT") ? await loadShiftOptions(processIds, today, exec) : new Map();
   const current = await loadCurrentCells(ids, from, to, exec);
 
   for (const l of lines) {
     if (l.date < today) { bad(l, "Past dates cannot be changed."); continue; }
     if (!team.has(l.employeeId)) { bad(l, "Employee is not in your reporting team."); continue; }
     if (l.newType === "SHIFT") {
-      const tp = templateProblem(l.templateId ? templates.get(l.templateId) : undefined, info.get(l.employeeId)?.processId ?? null, l.date);
+      // Recomputed server-side from the employee's process: stored times are never trusted on their own.
+      const tp = shiftProblem({ shiftStart: l.newStart, shiftEnd: l.newEnd }, shiftOptions.get(info.get(l.employeeId)?.processId ?? "") ?? [], l.date);
       if (tp) { bad(l, tp); continue; }
     }
     const now = current.get(cellKey(l.employeeId, l.date)) ?? null;
@@ -109,8 +119,8 @@ export async function validateLinesForSubmit(lines: SubmitLine[], teamIds: strin
       }
     }
   }
-  const guardLines: GuardLine[] = lines.map((l) => ({ employeeId: l.employeeId, date: l.date, newType: l.newType, templateId: l.templateId, oldAssignmentId: l.old.assignmentId }));
-  const verdicts = await evaluateGuards(guardLines, templates, exec);
+  const guardLines: GuardLine[] = lines.map((l) => ({ employeeId: l.employeeId, date: l.date, newType: l.newType, shiftStart: l.newStart, shiftEnd: l.newEnd, oldAssignmentId: l.old.assignmentId }));
+  const verdicts = await evaluateGuards(guardLines, exec);
   for (const l of lines) {
     const block = verdicts.get(cellKey(l.employeeId, l.date))?.block;
     if (block) bad(l, block);
@@ -245,7 +255,7 @@ export async function copySubmissionToDraft(actor: Actor, submissionId: number) 
   }
   const lines = await loadSubmissionLines(submissionId);
   const result = await upsertDraftLines(actor, {
-    upserts: lines.map((l) => ({ employeeId: l.employeeId, date: l.date, type: l.newType, shiftTemplateId: l.templateId, reason: l.reason })),
+    upserts: lines.map((l) => ({ employeeId: l.employeeId, date: l.date, type: l.newType, shiftStart: l.newStart, shiftEnd: l.newEnd, shiftTemplateId: l.templateId, shiftMasterId: l.newShiftId, reason: l.reason })),
   }, { lenient: true });
   await recordAudit(db, submissionId, "copied_to_draft", actor, null, { draftId: result.draftId, copied: result.lineCount, skipped: result.skipped.length });
   return { draftId: result.draftId, copied: result.lineCount, skipped: result.skipped };

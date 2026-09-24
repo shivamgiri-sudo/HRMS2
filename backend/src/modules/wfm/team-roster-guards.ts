@@ -1,5 +1,5 @@
 /**
- * Guards for Team Roster lines: shift-template validity, and the warnings / hard blocks computed at
+ * Guards for Team Roster lines: the warnings / hard blocks computed at
  * submit time (and re-run at apply time by team-roster-apply.ts).
  *
  * Hard blocks (line cannot be submitted / is skipped at apply):
@@ -23,19 +23,6 @@ import {
   cellKey, placeholders, rowsOf, type NewAssignmentType, type SqlExecutor,
 } from "./team-roster-types.js";
 
-export interface TemplateInfo {
-  id: string;
-  shiftCode: string;
-  shiftName: string;
-  processId: string | null;
-  start: string | null;
-  end: string | null;
-  night: boolean;
-  active: boolean;
-  effectiveFrom: string | null;
-  effectiveTo: string | null;
-}
-
 export interface EmployeeGuardInfo {
   processId: string | null;
   lobId: string | null;
@@ -46,7 +33,9 @@ export interface GuardLine {
   employeeId: string;
   date: string;
   newType: NewAssignmentType;
-  templateId: string | null;
+  /** 'HH:MM' start / end of a SHIFT line (end < start = crosses midnight); null for other types. */
+  shiftStart: string | null;
+  shiftEnd: string | null;
   oldAssignmentId: string | null;
 }
 
@@ -57,51 +46,6 @@ export interface GuardVerdict {
 
 /** Max SHIFT lines whose rest gap is pre-checked at submit; apply re-checks every line regardless. */
 export const REST_PRECHECK_LIMIT = 1000;
-
-export async function loadTemplatesByIds(ids: string[], exec: SqlExecutor = db): Promise<Map<string, TemplateInfo>> {
-  const map = new Map<string, TemplateInfo>();
-  const unique = [...new Set(ids.filter(Boolean))];
-  for (let i = 0; i < unique.length; i += 500) {
-    const chunk = unique.slice(i, i + 500);
-    const result = await exec.execute(
-      `SELECT id, shift_code, shift_name, process_id, start_time, end_time, night_shift, active_status,
-              DATE_FORMAT(effective_from, '%Y-%m-%d') AS effective_from,
-              DATE_FORMAT(effective_to, '%Y-%m-%d') AS effective_to
-         FROM wfm_shift_template WHERE id IN (${placeholders(chunk.length)})`,
-      chunk,
-    );
-    for (const r of rowsOf<RowDataPacket>(result)) {
-      const start = r.start_time != null ? String(r.start_time) : null;
-      const end = r.end_time != null ? String(r.end_time) : null;
-      map.set(String(r.id), {
-        id: String(r.id),
-        shiftCode: String(r.shift_code ?? ""),
-        shiftName: String(r.shift_name ?? r.shift_code ?? ""),
-        processId: r.process_id ? String(r.process_id) : null,
-        start,
-        end,
-        night: Boolean(start && end && end <= start) || Number(r.night_shift) === 1,
-        active: Number(r.active_status) === 1,
-        effectiveFrom: r.effective_from ? String(r.effective_from) : null,
-        effectiveTo: r.effective_to ? String(r.effective_to) : null,
-      });
-    }
-  }
-  return map;
-}
-
-/** Why this template cannot be used for this employee's process on this date; null when it can. */
-export function templateProblem(t: TemplateInfo | undefined, employeeProcessId: string | null, date: string): string | null {
-  if (!t) return "Shift template not found.";
-  if (!t.active) return `Shift ${t.shiftCode || t.shiftName} is not active.`;
-  if (!t.start || !t.end) return `Shift ${t.shiftCode || t.shiftName} has no start/end time.`;
-  if (!employeeProcessId || !t.processId || t.processId !== employeeProcessId) {
-    return `Shift ${t.shiftCode || t.shiftName} does not belong to this employee's process.`;
-  }
-  if (t.effectiveFrom && date < t.effectiveFrom) return `Shift ${t.shiftCode || t.shiftName} is not effective until ${t.effectiveFrom}.`;
-  if (t.effectiveTo && date > t.effectiveTo) return `Shift ${t.shiftCode || t.shiftName} expired on ${t.effectiveTo}.`;
-  return null;
-}
 
 export async function loadEmployeeGuardInfo(ids: string[], exec: SqlExecutor = db): Promise<Map<string, EmployeeGuardInfo>> {
   const map = new Map<string, EmployeeGuardInfo>();
@@ -158,11 +102,10 @@ async function offdayWarnings(lines: GuardLine[], info: Map<string, EmployeeGuar
 
 /**
  * Warnings and hard blocks for a set of lines, keyed by employee|date. The caller has already
- * validated templates; a line whose template is missing simply gets no shift-dependent checks.
+ * validated the shift choice; a non-SHIFT line simply gets no shift-dependent checks.
  */
 export async function evaluateGuards(
   lines: GuardLine[],
-  templates: Map<string, TemplateInfo>,
   exec: SqlExecutor = db,
 ): Promise<Map<string, GuardVerdict>> {
   const verdicts = new Map<string, GuardVerdict>();
@@ -189,9 +132,8 @@ export async function evaluateGuards(
       v.block = "Attendance for this date is already locked for payroll; it can no longer be rostered.";
       return;
     }
-    const tpl = l.templateId ? templates.get(l.templateId) : undefined;
     const verdict = checkLeaveConflict(leave, l.employeeId, l.date, {
-      isNightShift: Boolean(tpl?.night),
+      isNightShift: Boolean(l.shiftStart && l.shiftEnd && l.shiftEnd < l.shiftStart),
       assignmentType: l.newType === "SHIFT" || l.newType === "TRAINING" ? "SHIFT" : "UNASSIGNED",
     });
     if (verdict.blocked) v.block = verdict.reason ?? "Employee is on approved leave.";
@@ -201,27 +143,26 @@ export async function evaluateGuards(
   const policyWarnings = await offdayWarnings(lines, info, exec);
   policyWarnings.forEach((message, index) => verdictOf(lines[index]).warnings.push(message));
 
-  await restWarnings(lines, templates, info, verdicts, exec);
+  await restWarnings(lines, info, verdicts, exec);
   return verdicts;
 }
 
 async function restWarnings(
-  lines: GuardLine[], templates: Map<string, TemplateInfo>, info: Map<string, EmployeeGuardInfo>,
+  lines: GuardLine[], info: Map<string, EmployeeGuardInfo>,
   verdicts: Map<string, GuardVerdict>, exec: SqlExecutor,
 ): Promise<void> {
   try {
     if (!(await isRestPolicyFeatureActive(exec as any))) return;
     let checked = 0;
     for (const l of lines) {
-      const tpl = l.templateId ? templates.get(l.templateId) : undefined;
       const v = verdicts.get(cellKey(l.employeeId, l.date));
-      if (l.newType !== "SHIFT" || !tpl?.start || !tpl.end || !v || v.block) continue;
+      if (l.newType !== "SHIFT" || !l.shiftStart || !l.shiftEnd || !v || v.block) continue;
       if (checked >= REST_PRECHECK_LIMIT) break;
       checked += 1;
       const emp = info.get(l.employeeId);
       const rest = await validateMinimumRest(
         { employeeId: l.employeeId, processId: emp?.processId ?? null, branchId: emp?.branchId ?? null, forDate: l.date },
-        { startTime: tpl.start, endTime: tpl.end }, l.oldAssignmentId, exec as any,
+        { startTime: l.shiftStart, endTime: l.shiftEnd }, l.oldAssignmentId, exec as any,
       );
       if (rest.ok) continue;
       v.warnings.push(

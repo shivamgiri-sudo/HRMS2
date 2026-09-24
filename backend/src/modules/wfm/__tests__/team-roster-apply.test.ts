@@ -32,12 +32,14 @@ import { installBase, istDate, lineRow } from "./__fixtures__/team-roster-scenar
 const actor = { id: "wfm-user", role: "wfm", roles: ["wfm"] };
 const d1 = istDate(3);
 const fill = (id: number, employee: string, type: string, over: Record<string, unknown> = {}) =>
-  lineRow({ id, employee_id: employee, d: d1, kind: "FILL_BLANK", new_assignment_type: type, new_shift_template_id: type === "SHIFT" ? "t1" : null, ...over } as any);
+  lineRow({ id, employee_id: employee, d: d1, kind: "FILL_BLANK", new_assignment_type: type, new_shift_template_id: type === "SHIFT" ? "t1" : null,
+    new_shift_start_time: type === "SHIFT" ? "09:00" : null, new_shift_end_time: type === "SHIFT" ? "18:00" : null, ...over } as any);
 const change = (id: number, employee: string, type: string, over: Record<string, unknown> = {}) =>
   lineRow({
     id, employee_id: employee, d: d1, kind: "CHANGE", old_assignment_id: "a1", old_assignment_type: "SHIFT", old_is_week_off: 0,
     old_shift_template_id: "t1", old_shift_start_time: "09:00", old_shift_end_time: "18:00", new_assignment_type: type,
-    new_shift_template_id: type === "SHIFT" ? "t1" : null, reason: "Customer asked for cover", ...over,
+    new_shift_template_id: type === "SHIFT" ? "t1" : null,
+    new_shift_start_time: type === "SHIFT" ? "09:00" : null, new_shift_end_time: type === "SHIFT" ? "18:00" : null, reason: "Customer asked for cover", ...over,
   } as any);
 const storedRow = (over: Record<string, unknown> = {}) => ({
   id: "a1", cycle_id: "c1", assignment_type: "SHIFT", is_week_off: 0, shift_template_id: "t1", shift_start_time: "09:00:00", shift_end_time: "18:00:00", ...over,
@@ -75,7 +77,7 @@ describe("applySubmission - what is written", () => {
     expect(ins.sql).toMatch(/lifecycle_state, manager_employee_id/);
     expect(ins.sql).toMatch(/'DRAFT'/);
     // id, employee, date, type, is_week_off, start, end, template, scheduled_minutes, manager
-    expect(ins.params.slice(1)).toEqual(["e1", d1, "SHIFT", 0, "09:00:00", "18:00:00", "t1", 540, "boss"]);
+    expect(ins.params.slice(1)).toEqual(["e1", d1, "SHIFT", 0, "09:00", "18:00", "t1", 540, "boss"]);
     expect(fake.statements(/final_roster_status = 'pending_employee_ack'.*final_roster_status = 'generated'/)).toHaveLength(1);
     expect(mocks.stamp).toHaveBeenCalledWith("wra.id = ?", [ins.params[0]], null, fake.conn);
     expect(lineMarks()).toEqual([{ status: "applied", reason: null, assignment: ins.params[0], id: 1 }]);
@@ -105,7 +107,7 @@ describe("applySubmission - what is written", () => {
     expect(result.applied).toBe(1);
     expect(inserts()).toHaveLength(0);
     const upd = updates()[0];
-    expect(upd.params).toEqual(["WEEK_OFF", 1, null, null, null, null, "boss", "a1"]);
+    expect(upd.params).toEqual(["WEEK_OFF", 1, null, null, null, null, null, "boss", "a1"]);
     expect(fake.statements(/UPDATE wfm_roster_assignment SET final_roster_status = 'pending_employee_ack'/)[0].params).toEqual(["a1"]);
     expect(mocks.changeLog).toHaveBeenCalledWith(fake.conn, expect.objectContaining({
       entityId: "a1", cycleId: "c1", reason: "Customer asked for cover", changedBy: "wfm-user",
@@ -184,6 +186,58 @@ describe("applySubmission - re-checks at apply time", () => {
     mocks.applyRest.mockResolvedValue({ allowed: false, warned: false });
     await applySubmission(7, actor);
     expect(lineMarks()[0].reason).toMatch(/No minimum-rest policy/);
+  });
+});
+
+describe("applySubmission - time-only shifts (live rosters carry raw times, not templates)", () => {
+  const timeOnly = (id: number, employee: string, start: string, end: string, over: Record<string, unknown> = {}) =>
+    fill(id, employee, "SHIFT", { new_shift_template_id: null, new_shift_start_time: start, new_shift_end_time: end, ...over });
+
+  it("writes exactly what an imported time-only row gets: type, is_week_off 0, HH:MM times, scheduled_minutes, DRAFT; no template or shift id", async () => {
+    setup([timeOnly(1, "e1", "10:00", "19:00")]);
+    await applySubmission(7, actor);
+    const ins = inserts()[0];
+    expect(ins.sql).not.toMatch(/shift_id,/);
+    expect(ins.sql).toMatch(/'DRAFT'/);
+    expect(ins.params.slice(1)).toEqual(["e1", d1, "SHIFT", 0, "10:00", "19:00", null, 540, "boss"]);
+    expect(lineMarks()[0].status).toBe("applied");
+  });
+
+  it("stores shift_id only when the option came from the shift master", async () => {
+    setup([timeOnly(1, "e1", "08:00", "17:00", { new_shift_id: "sm-1" })]);
+    await applySubmission(7, actor);
+    const ins = inserts()[0];
+    expect(ins.sql).toMatch(/shift_template_id,\s+shift_id,/);
+    expect(ins.params).toContain("sm-1");
+  });
+
+  it("a night shift crossing midnight is measured cross-midnight for minutes and for the minimum-rest check", async () => {
+    mocks.restActive.value = true;
+    setup([timeOnly(1, "e1", "22:00", "06:00")]);
+    mocks.validateRest.mockResolvedValue({ ok: true });
+    await applySubmission(7, actor);
+    expect(mocks.validateRest).toHaveBeenCalledWith(expect.objectContaining({ employeeId: "e1", forDate: d1 }), { startTime: "22:00", endTime: "06:00" }, null, fake.conn);
+    expect(inserts()[0].params.slice(1)).toEqual(["e1", d1, "SHIFT", 0, "22:00", "06:00", null, 480, "boss"]);
+  });
+
+  it("a night shift is blocked by approved leave on the day it ends", async () => {
+    setup([timeOnly(1, "e1", "22:00", "06:00")]);
+    fake.on(/FROM leave_request/, () => rows([{ employee_id: "e1", from_date: istDate(4), to_date: istDate(4), total_days: 1 }]));
+    await applySubmission(7, actor);
+    expect(lineMarks()[0]).toMatchObject({ status: "skipped", reason: "approved leave on this date" });
+  });
+
+  it("a CHANGE whose stored times moved since the snapshot is skipped even though the row id is unchanged", async () => {
+    setup([change(1, "e1", "SHIFT", { new_shift_template_id: null, new_shift_start_time: "10:00", new_shift_end_time: "19:00" })], storedRow({ shift_end_time: "19:00" }));
+    await applySubmission(7, actor);
+    expect(updates()).toHaveLength(0);
+    expect(lineMarks()[0]).toMatchObject({ status: "skipped", reason: "changed since proposed" });
+  });
+
+  it("a CHANGE to another time-only shift updates times, clears template and shift ids", async () => {
+    setup([change(1, "e1", "SHIFT", { new_shift_template_id: null, new_shift_start_time: "10:00", new_shift_end_time: "19:00" })], storedRow());
+    await applySubmission(7, actor);
+    expect(updates()[0].params).toEqual(["SHIFT", 0, "10:00", "19:00", null, null, 540, "boss", "a1"]);
   });
 });
 

@@ -19,13 +19,14 @@ import { MANAGER, TEMPLATE, installBase, istDate, lineRow } from "./__fixtures__
 const actor = { id: "mgr-user", role: "employee", roles: ["employee"] };
 const future = istDate(3);
 const shiftLine = (over: Record<string, unknown> = {}) => lineRow({
-  id: 1, employee_id: "e1", d: future, kind: "FILL_BLANK", new_assignment_type: "SHIFT", new_shift_template_id: "t1", ...over,
+  id: 1, employee_id: "e1", d: future, kind: "FILL_BLANK", new_assignment_type: "SHIFT", new_shift_template_id: "t1", new_shift_start_time: "09:00", new_shift_end_time: "18:00", ...over,
 } as any);
 const toSubmitLine = (r: ReturnType<typeof lineRow>) => ({
   id: r.id, employeeId: r.employee_id, date: r.d, kind: r.kind,
   old: { assignmentId: r.old_assignment_id ?? null, assignmentType: r.old_assignment_type ?? null, isWeekOff: r.old_is_week_off === 1,
     shiftTemplateId: r.old_shift_template_id ?? null, shiftStartTime: r.old_shift_start_time ?? null, shiftEndTime: r.old_shift_end_time ?? null },
-  newType: r.new_assignment_type as any, templateId: r.new_shift_template_id ?? null, reason: r.reason ?? null,
+  newType: r.new_assignment_type as any, templateId: r.new_shift_template_id ?? null,
+  newStart: r.new_shift_start_time ?? null, newEnd: r.new_shift_end_time ?? null, newShiftId: r.new_shift_id ?? null, reason: r.reason ?? null,
 });
 const existing = (over: Record<string, unknown> = {}) => ({
   id: "a1", employee_id: "e1", d: future, assignment_type: "SHIFT", is_week_off: 0, shift_template_id: "t1",
@@ -89,10 +90,24 @@ describe("validateLinesForSubmit", () => {
     expect(messages(problems)).toMatch(/at least 8 characters/);
   });
 
-  it("rejects a shift template that belongs to another process", async () => {
-    installBase(fake, { templates: [{ ...TEMPLATE, process_id: "other-process" }] });
-    const { problems } = await validateLinesForSubmit([toSubmitLine(shiftLine())], ["e1"], fake);
-    expect(messages(problems)).toMatch(/does not belong to this employee's process/);
+  it("rejects a shift that is not one of the options of the employee's process (forged or foreign times)", async () => {
+    installBase(fake);
+    const { problems } = await validateLinesForSubmit([toSubmitLine(shiftLine({ new_shift_start_time: "03:15", new_shift_end_time: "11:45" }))], ["e1"], fake);
+    expect(messages(problems)).toMatch(/03:15–11:45 is not one of the shifts available/);
+  });
+
+  it("accepts a time-only shift that is merely in use in the process (no template, no shift master)", async () => {
+    installBase(fake, { templates: [], inUse: [{ process_id: "p1", shift_start_time: "10:00", shift_end_time: "19:00", uses: 40 }] });
+    const line = toSubmitLine(shiftLine({ new_shift_template_id: null, new_shift_start_time: "10:00", new_shift_end_time: "19:00" }));
+    const { problems } = await validateLinesForSubmit([line], ["e1"], fake);
+    expect(problems).toEqual([]);
+  });
+
+  it("refuses a zero-length shift", async () => {
+    installBase(fake, { templates: [], inUse: [{ process_id: "p1", shift_start_time: "10:00", shift_end_time: "10:00", uses: 40 }] });
+    const line = toSubmitLine(shiftLine({ new_shift_template_id: null, new_shift_start_time: "10:00", new_shift_end_time: "10:00" }));
+    const { problems } = await validateLinesForSubmit([line], ["e1"], fake);
+    expect(messages(problems)).toMatch(/not one of the shifts available|start and end/);
   });
 
   it("hard-blocks a working shift over approved full leave, but lets a week off through", async () => {

@@ -70,6 +70,7 @@ describe("GET /templates", () => {
     expect(out.processes).toHaveLength(1);
     expect(out.processes[0].templates.map((t: any) => t.id)).toEqual(["t2", "t3"]);
     expect(out.processes[0].templates[1]).toMatchObject({ start: "22:00", end: "06:00", night: true });
+    expect(out.processes[0].options.map((o: any) => o.key)).toEqual(["09:00-18:00", "22:00-06:00"]);
     const tplQuery = fake.statements(/FROM wfm_shift_template\s+WHERE process_id IN/)[0];
     expect(tplQuery.params.slice(0, 1)).toEqual(["p1"]);
   });
@@ -156,24 +157,41 @@ describe("PUT /draft/lines", () => {
     expect(ins.params.slice(0, 11)).toEqual([7, "e1", d3, "CHANGE", "a1", "SHIFT", 0, "t1", "09:00", "18:00", "WEEK_OFF"]);
   });
 
-  it("refuses past dates, out-of-tree employees, wrong-process shifts and no-op changes in one 422", async () => {
+  it("refuses past dates, out-of-tree employees, forged / foreign shift times and no-op changes in one 422", async () => {
     drafting([{ id: "a1", employee_id: "e2", d: d3, assignment_type: "WEEK_OFF", is_week_off: 1, shift_template_id: null, shift_start_time: null, shift_end_time: null }]);
-    fake.on(/FROM wfm_shift_template WHERE id IN/, () => rows([{ ...TEMPLATE, process_id: "px" }]));
     await expect(upsertDraftLines(actor, { upserts: [
       { ...weekOff, date: istDate(-1) },
       { ...weekOff, employeeId: "stranger" },
-      { employeeId: "e1", date: d3, type: "SHIFT", shiftTemplateId: "t1" },
+      { employeeId: "e1", date: d3, type: "SHIFT", shiftStart: "03:15", shiftEnd: "11:45" },
       { employeeId: "e2", date: d3, type: "WEEK_OFF" },
     ] })).rejects.toMatchObject({
       statusCode: 422, code: "LINE_VALIDATION",
       details: expect.arrayContaining([
         expect.objectContaining({ message: "Past dates cannot be changed." }),
         expect.objectContaining({ message: "Employee is not in your reporting team." }),
-        expect.objectContaining({ message: expect.stringMatching(/does not belong to this employee's process/) }),
+        expect.objectContaining({ message: expect.stringMatching(/not one of the shifts available for this employee's process/) }),
         expect.objectContaining({ message: expect.stringMatching(/nothing to change/) }),
       ]),
     });
     expect(fake.statements(/INSERT INTO roster_team_submission_line/)).toHaveLength(0);
+  });
+
+  it("stores a time-only shift (in use in the process, no template) as times, ignoring client-supplied ids", async () => {
+    drafting();
+    fake.on(/FROM wfm_shift_template\s+WHERE process_id IN/, () => rows([]));
+    fake.on(/FROM wfm_roster_assignment wra JOIN employees e/, () => rows([{ process_id: "p1", shift_start_time: "10:00", shift_end_time: "19:00", uses: 40 }]));
+    await upsertDraftLines(actor, { upserts: [{ employeeId: "e1", date: d3, type: "SHIFT", shiftStart: "10:00", shiftEnd: "19:00", shiftTemplateId: "forged", shiftMasterId: "forged" }] });
+    const ins = fake.statements(/INSERT INTO roster_team_submission_line/)[0];
+    // ... new_assignment_type, new_shift_template_id, new_shift_start_time, new_shift_end_time, new_shift_id, reason
+    expect(ins.params.slice(10, 16)).toEqual(["SHIFT", null, "10:00", "19:00", null, null]);
+  });
+
+  it("refuses to change a rostered time-only shift to the same times (nothing to change)", async () => {
+    drafting([{ id: "a1", employee_id: "e1", d: d3, assignment_type: "SHIFT", is_week_off: 0, shift_template_id: null, shift_start_time: "10:00", shift_end_time: "19:00" }]);
+    fake.on(/FROM wfm_shift_template\s+WHERE process_id IN/, () => rows([]));
+    fake.on(/FROM wfm_roster_assignment wra JOIN employees e/, () => rows([{ process_id: "p1", shift_start_time: "10:00", shift_end_time: "19:00", uses: 40 }]));
+    await expect(upsertDraftLines(actor, { upserts: [{ employeeId: "e1", date: d3, type: "SHIFT", shiftStart: "10:00", shiftEnd: "19:00", reason: "Same shift again" }] }))
+      .rejects.toMatchObject({ code: "LINE_VALIDATION", details: [expect.objectContaining({ message: expect.stringMatching(/nothing to change/) })] });
   });
 
   it("lenient mode (copy back) skips invalid cells instead of failing", async () => {

@@ -1,8 +1,9 @@
 import { Lock, Pencil } from "lucide-react";
+import ShiftChoiceOptions from "./ShiftChoiceOptions";
 import type { GridResponse, GridRow } from "@/hooks/useTeamRoster";
 import {
-  NON_SHIFT_CHOICES, cellKey, choiceLabel, choiceValue, formatDmy, parseChoice, storedLabel, templateLabel, weekdayShort,
-  type CellChoice, type TemplateOption, type TemplateProcess,
+  cellKey, choiceLabel, choiceValue, formatDmy, parseChoice, shiftKeyOf, storedLabel, weekdayShort,
+  type CellChoice, type ShiftOption, type TemplateProcess,
 } from "./teamRosterFormat";
 
 /** A local, not-yet-saved edit. choice = null means "remove the proposed value for this cell". */
@@ -19,12 +20,12 @@ export interface TeamRosterGridProps {
 
 export const stagedKey = cellKey;
 
-export function templatesFor(templates: TemplateProcess[], processId: string | null): TemplateOption[] {
-  return templates.find((p) => p.processId === processId)?.templates ?? [];
+export function shiftOptionsFor(processes: TemplateProcess[], processId: string | null): ShiftOption[] {
+  return processes.find((p) => p.processId === processId)?.options ?? [];
 }
 
 function ChoiceSelect({ row, date, value, options, onChange }: {
-  row: GridRow; date: string; value: string; options: TemplateOption[]; onChange: (v: string) => void;
+  row: GridRow; date: string; value: string; options: ShiftOption[]; onChange: (v: string) => void;
 }) {
   return (
     <select
@@ -34,14 +35,7 @@ function ChoiceSelect({ row, date, value, options, onChange }: {
       onChange={(e) => onChange(e.target.value)}
     >
       <option value="">-</option>
-      {options.length > 0 && (
-        <optgroup label="Shifts">
-          {options.map((t) => <option key={t.id} value={`SHIFT:${t.id}`}>{templateLabel(t)}</option>)}
-        </optgroup>
-      )}
-      <optgroup label="Other">
-        {NON_SHIFT_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-      </optgroup>
+      <ShiftChoiceOptions options={options} />
     </select>
   );
 }
@@ -49,9 +43,9 @@ function ChoiceSelect({ row, date, value, options, onChange }: {
 function GridCellView({ row, date, props }: { row: GridRow; date: string; props: TeamRosterGridProps }) {
   const { today, staged, templates, onChoose, onProposeChange } = props;
   const cell = row.cells[date] ?? {};
-  const options = templatesFor(templates, row.processId);
+  const options = shiftOptionsFor(templates, row.processId);
   const edit = staged[stagedKey(row.employeeId, date)];
-  const draft = cell.draft ? { type: cell.draft.type, shiftTemplateId: cell.draft.shiftTemplateId } : null;
+  const draft: CellChoice | null = cell.draft ? { type: cell.draft.type, shiftKey: shiftKeyOf(cell.draft.shiftStart, cell.draft.shiftEnd) } : null;
   const proposed: CellChoice | null = edit !== undefined ? edit.choice : draft;
   const past = date < today;
   const locked = cell.lockedBy;

@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import {
   effectiveType, isGlobalApprover, isWfmApprover, snapshotMatches, snapshotOf, spanDays, eachDate, isValidYmd, parseWarnings,
 } from "../team-roster-types.js";
-import { templateProblem } from "../team-roster-guards.js";
 
 const BACKEND = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 const read = (rel: string) => readFileSync(resolve(BACKEND, rel), "utf8");
@@ -49,17 +48,6 @@ describe("stored-cell helpers", () => {
     expect(isWfmApprover({ id: "u", role: "wfm" })).toBe(true);
   });
 
-  it("templateProblem: inactive, wrong process, not yet effective, expired, no times", () => {
-    const t = { id: "t", shiftCode: "GEN", shiftName: "General", processId: "p1", start: "09:00:00", end: "18:00:00", night: false, active: true, effectiveFrom: "2026-10-05", effectiveTo: "2026-10-20" };
-    expect(templateProblem(t, "p1", "2026-10-10")).toBeNull();
-    expect(templateProblem(t, "p2", "2026-10-10")).toMatch(/process/);
-    expect(templateProblem(t, null, "2026-10-10")).toMatch(/process/);
-    expect(templateProblem({ ...t, active: false }, "p1", "2026-10-10")).toMatch(/not active/);
-    expect(templateProblem(t, "p1", "2026-10-01")).toMatch(/not effective until/);
-    expect(templateProblem(t, "p1", "2026-10-25")).toMatch(/expired/);
-    expect(templateProblem({ ...t, end: null }, "p1", "2026-10-10")).toMatch(/no start\/end/);
-    expect(templateProblem(undefined, "p1", "2026-10-10")).toMatch(/not found/);
-  });
 });
 
 describe("migrations 1859 / 1860", () => {
@@ -99,10 +87,24 @@ describe("migrations 1859 / 1860", () => {
       return [...block.matchAll(/^\s+'? ?(\w+) (?:BIGINT|CHAR|VARCHAR|DATE|DATETIME|TINYINT|LONGTEXT)/gm)].map((m) => m[1]);
     };
     for (const t of ["roster_team_submission", "roster_team_submission_line", "roster_team_pending_cell", "roster_team_submission_audit"]) {
-      expect(snapshot.tables[t]).toEqual(created(t));
+      // 1861 appends the time-only shift columns to the line table right after new_shift_template_id
+      const expected = t === "roster_team_submission_line"
+        ? created(t).flatMap((c) => (c === "new_shift_template_id" ? [c, "new_shift_start_time", "new_shift_end_time", "new_shift_id"] : [c]))
+        : created(t);
+      expect(snapshot.tables[t]).toEqual(expected);
     }
     expect(snapshot.tableCount).toBe(Object.keys(snapshot.tables).length);
     expect(snapshot.columnCount).toBe(Object.values(snapshot.tables).reduce((n, c) => n + c.length, 0));
+  });
+
+  it("1861 is registered and only adds the three nullable time-only shift columns, guarded, collation copied from wfm_shift_master.id", () => {
+    const alter = read("sql/1861_roster_team_line_shift_times.sql");
+    expect(manifest).toContain('"1861_roster_team_line_shift_times.sql"');
+    for (const c of ["new_shift_start_time TIME NULL", "new_shift_end_time TIME NULL", "new_shift_id CHAR(36) CHARACTER SET utf8mb4 COLLATE"]) expect(alter).toContain(c);
+    expect((alter.match(/information_schema\.COLUMNS/g) ?? []).length).toBeGreaterThanOrEqual(4);
+    expect(alter).toMatch(/TABLE_NAME = 'wfm_shift_master' AND COLUMN_NAME = 'id'/);
+    expect(alter).not.toMatch(/(DROP|DELETE|TRUNCATE|MODIFY|RENAME)/i);
+    expect(alter).not.toMatch(/ADD COLUMN old_shift/);
   });
 
   it("page access registers WFM_TEAM_ROSTER at /wfm/team-roster for the employee role too (managers hold only that role)", () => {

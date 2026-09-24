@@ -29,7 +29,7 @@ import { checkLeaveConflict, loadApprovedLeave } from "./roster-leave-guard.serv
 import { stampRows } from "./roster-offday-apply.js";
 import { applyRestDecision, isRestPolicyFeatureActive, validateMinimumRest, withEmployeeRosterLock } from "./rest-policy.service.js";
 import { computeScheduledMinutes, rosterAssignmentColumns } from "./shift-scheduling.util.js";
-import { loadEmployeeGuardInfo, loadTemplatesByIds, type EmployeeGuardInfo, type TemplateInfo } from "./team-roster-guards.js";
+import { loadEmployeeGuardInfo, type EmployeeGuardInfo } from "./team-roster-guards.js";
 import { loadSubmissionLines, type SubmitLine } from "./team-roster-submit.js";
 import { isDuplicateKey } from "./team-roster-tx.js";
 import { snapshotMatches, snapshotOf, rowsOf, type Actor, type SqlExecutor } from "./team-roster-types.js";
@@ -41,7 +41,6 @@ type LineOutcome = { status: "applied" | "skipped"; reason?: string; assignmentI
 interface ApplyContext {
   submissionId: number;
   actor: Actor;
-  templates: Map<string, TemplateInfo>;
   info: Map<string, EmployeeGuardInfo>;
   managerOf: Map<string, string | null>;
   leave: Awaited<ReturnType<typeof loadApprovedLeave>>;
@@ -54,24 +53,31 @@ const txOf = (conn: SqlExecutor) => conn as unknown as { beginTransaction(): Pro
 const hhmm = (t: string | null) => (t ? t.slice(0, 5) : null);
 const skip = (reason: string): LineOutcome => ({ status: "skipped", reason });
 
-/** The stored-column values for a proposed cell (mirrors import: only SHIFT carries times). */
-function columnsFor(line: SubmitLine, tpl: TemplateInfo | undefined) {
+/**
+ * The stored-column values for a proposed cell. Mirrors an imported time-only shift row
+ * (roster-import.service.ts commit): assignment_type, is_week_off, shift_start_time / shift_end_time as
+ * 'HH:MM' (the columns are VARCHAR(5)); only SHIFT carries times. shift_template_id / shift_id are
+ * written only when the chosen option has one.
+ */
+function columnsFor(line: SubmitLine) {
   const isShift = line.newType === "SHIFT";
   return {
     assignmentType: line.newType,
     isWeekOff: line.newType === "WEEK_OFF" ? 1 : 0,
-    start: isShift ? tpl?.start ?? null : null,
-    end: isShift ? tpl?.end ?? null : null,
+    start: isShift ? hhmm(line.newStart) : null,
+    end: isShift ? hhmm(line.newEnd) : null,
     templateId: isShift ? line.templateId : null,
+    shiftId: isShift ? line.newShiftId : null,
   };
 }
 
-async function restRefusal(conn: SqlExecutor, ctx: ApplyContext, line: SubmitLine, tpl: TemplateInfo | undefined): Promise<string | null> {
-  if (line.newType !== "SHIFT" || !ctx.restActive || !tpl?.start || !tpl.end) return null;
+async function restRefusal(conn: SqlExecutor, ctx: ApplyContext, line: SubmitLine): Promise<string | null> {
+  // Uses the line's own times; a shift that ends before it starts crosses midnight and validateMinimumRest measures it that way.
+  if (line.newType !== "SHIFT" || !ctx.restActive || !line.newStart || !line.newEnd) return null;
   const emp = ctx.info.get(line.employeeId);
   const rest = await validateMinimumRest(
     { employeeId: line.employeeId, processId: emp?.processId ?? null, branchId: emp?.branchId ?? null, forDate: line.date },
-    { startTime: tpl.start, endTime: tpl.end }, line.old.assignmentId, conn as any,
+    { startTime: line.newStart, endTime: line.newEnd }, line.old.assignmentId, conn as any,
   );
   if (rest.ok) return null;
   const decision = await applyRestDecision(rest, { employeeId: line.employeeId, rosterDate: line.date, assignmentId: line.old.assignmentId }, conn as any);
@@ -81,8 +87,8 @@ async function restRefusal(conn: SqlExecutor, ctx: ApplyContext, line: SubmitLin
     : `Minimum rest not met (${rest.actualRestMinutes ?? "?"} of ${rest.requiredRestMinutes ?? "?"} minutes).`;
 }
 
-async function writeLine(conn: SqlExecutor, ctx: ApplyContext, line: SubmitLine, tpl: TemplateInfo | undefined): Promise<LineOutcome> {
-  const cols = columnsFor(line, tpl);
+async function writeLine(conn: SqlExecutor, ctx: ApplyContext, line: SubmitLine): Promise<LineOutcome> {
+  const cols = columnsFor(line);
   const minutes = ctx.hasScheduledMinutes && cols.start && cols.end ? computeScheduledMinutes(hhmm(cols.start)!, hhmm(cols.end)!) : null;
   const ackReset = `final_roster_status = 'pending_employee_ack', employee_ack_status = 'pending', employee_ack_at = NULL, employee_rejection_reason = NULL`;
   const current = rowsOf<RowDataPacket>(await conn.execute(
@@ -97,10 +103,10 @@ async function writeLine(conn: SqlExecutor, ctx: ApplyContext, line: SubmitLine,
       await conn.execute(
         `INSERT INTO wfm_roster_assignment
            (id, employee_id, roster_date, assignment_type, is_week_off, shift_start_time, shift_end_time, shift_template_id,
-            ${ctx.hasScheduledMinutes ? "scheduled_minutes," : ""} lifecycle_state, manager_employee_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${ctx.hasScheduledMinutes ? "?," : ""} 'DRAFT', ?, NOW())`,
+            ${cols.shiftId ? "shift_id," : ""} ${ctx.hasScheduledMinutes ? "scheduled_minutes," : ""} lifecycle_state, manager_employee_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${cols.shiftId ? "?," : ""} ${ctx.hasScheduledMinutes ? "?," : ""} 'DRAFT', ?, NOW())`,
         [id, line.employeeId, line.date, cols.assignmentType, cols.isWeekOff, cols.start, cols.end, cols.templateId,
-          ...(ctx.hasScheduledMinutes ? [minutes] : []), ctx.managerOf.get(line.employeeId) ?? null],
+          ...(cols.shiftId ? [cols.shiftId] : []), ...(ctx.hasScheduledMinutes ? [minutes] : []), ctx.managerOf.get(line.employeeId) ?? null],
       );
     } catch (err) {
       if (isDuplicateKey(err)) return skip("date already rostered");
@@ -116,11 +122,11 @@ async function writeLine(conn: SqlExecutor, ctx: ApplyContext, line: SubmitLine,
   const id = String(current.id);
   await conn.execute(
     `UPDATE wfm_roster_assignment
-        SET assignment_type = ?, is_week_off = ?, shift_start_time = ?, shift_end_time = ?, shift_template_id = ?,
+        SET assignment_type = ?, is_week_off = ?, shift_start_time = ?, shift_end_time = ?, shift_template_id = ?, shift_id = ?,
             ${ctx.hasScheduledMinutes ? "scheduled_minutes = ?," : ""} lifecycle_state = 'DRAFT',
             manager_employee_id = COALESCE(manager_employee_id, ?)
       WHERE id = ?`,
-    [cols.assignmentType, cols.isWeekOff, cols.start, cols.end, cols.templateId, ...(ctx.hasScheduledMinutes ? [minutes] : []),
+    [cols.assignmentType, cols.isWeekOff, cols.start, cols.end, cols.templateId, cols.shiftId, ...(ctx.hasScheduledMinutes ? [minutes] : []),
       ctx.managerOf.get(line.employeeId) ?? null, id],
   );
   await conn.execute(
@@ -142,7 +148,7 @@ function auditEntry(ctx: ApplyContext, assignmentId: string, line: SubmitLine, k
   return {
     actor_user_id: ctx.actor.id, action_type: "TEAM_ROSTER_LINE_APPLIED", module_key: "wfm_team_roster",
     entity_type: "wfm_roster_assignment", entity_id: assignmentId, reason: reason ?? undefined,
-    change_summary: { submission_id: ctx.submissionId, employee_id: line.employeeId, roster_date: line.date, kind, new_type: line.newType, shift_template_id: line.templateId },
+    change_summary: { submission_id: ctx.submissionId, employee_id: line.employeeId, roster_date: line.date, kind, new_type: line.newType, shift_template_id: line.templateId, shift_start: line.newStart, shift_end: line.newEnd },
   };
 }
 
@@ -151,14 +157,13 @@ async function applyLine(conn: SqlExecutor, ctx: ApplyContext, line: SubmitLine)
   if (!state || state.line_status !== "pending") return skip("already processed");
   const lock = await checkEmployeeDateNotLocked(conn as any, line.employeeId, line.date);
   if (lock.blocked) return skip("attendance locked for payroll");
-  const tpl = line.templateId ? ctx.templates.get(line.templateId) : undefined;
   const leave = checkLeaveConflict(ctx.leave, line.employeeId, line.date, {
-    isNightShift: Boolean(tpl?.night), assignmentType: line.newType === "SHIFT" || line.newType === "TRAINING" ? "SHIFT" : "UNASSIGNED",
+    isNightShift: Boolean(line.newStart && line.newEnd && line.newEnd < line.newStart), assignmentType: line.newType === "SHIFT" || line.newType === "TRAINING" ? "SHIFT" : "UNASSIGNED",
   });
   if (leave.blocked) return skip("approved leave on this date");
-  const refusal = await restRefusal(conn, ctx, line, tpl);
+  const refusal = await restRefusal(conn, ctx, line);
   if (refusal) return skip(refusal);
-  return writeLine(conn, ctx, line, tpl);
+  return writeLine(conn, ctx, line);
 }
 
 async function markLine(conn: SqlExecutor, line: SubmitLine, out: LineOutcome) {
@@ -245,7 +250,6 @@ export async function applySubmission(submissionId: number, actor: Actor): Promi
 
   const ctx: ApplyContext = {
     submissionId, actor,
-    templates: await loadTemplatesByIds(pending.map((l) => l.templateId ?? "").filter(Boolean)),
     info: await loadEmployeeGuardInfo(ids),
     managerOf,
     leave: await loadApprovedLeave(ids, dates[0], dates[dates.length - 1]),

@@ -3,9 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import ShiftChoiceOptions from "./ShiftChoiceOptions";
 import {
-  NON_SHIFT_CHOICES, choiceValue, formatDmy, parseChoice, templateLabel,
-  type CellChoice, type TemplateOption,
+  choiceValue, formatDmy, parseChoice,
+  type CellChoice, type ShiftOption,
 } from "./teamRosterFormat";
 
 export const MIN_REASON = 8;
@@ -14,7 +15,7 @@ export interface ChangeTarget {
   employeeName: string;
   date: string;
   currentLabel: string;
-  options: TemplateOption[];
+  options: ShiftOption[];
   initial: CellChoice | null;
   initialReason: string;
 }
@@ -63,14 +64,7 @@ export default function ChangeDialog({ target, onSave, onRemove, onClose }: Prop
                 onChange={(e) => setValue(e.target.value)}
               >
                 <option value="">Select a value</option>
-                {target.options.length > 0 && (
-                  <optgroup label="Shifts">
-                    {target.options.map((t) => <option key={t.id} value={`SHIFT:${t.id}`}>{templateLabel(t)}</option>)}
-                  </optgroup>
-                )}
-                <optgroup label="Other">
-                  {NON_SHIFT_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-                </optgroup>
+                <ShiftChoiceOptions options={target.options} />
               </select>
             </div>
             <div className="space-y-1">

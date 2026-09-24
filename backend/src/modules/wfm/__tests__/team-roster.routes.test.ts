@@ -62,7 +62,11 @@ describe("team-roster routes", () => {
     svc.upsertDraftLines.mockResolvedValue({ draftId: 1, lineCount: 1 });
     const ok = await request(app).put(`${base}/draft/lines`).send({ upserts: [{ employeeId: "e1", date: "2026-10-01", type: "SHIFT", shiftTemplateId: "t1" }], deletes: [] });
     expect(ok.status).toBe(200);
-    expect(svc.upsertDraftLines).toHaveBeenCalledWith(expect.anything(), { upserts: [{ employeeId: "e1", date: "2026-10-01", type: "SHIFT", shiftTemplateId: "t1", reason: null }], deletes: [] });
+    expect(svc.upsertDraftLines).toHaveBeenCalledWith(expect.anything(), { upserts: [{ employeeId: "e1", date: "2026-10-01", type: "SHIFT", shiftTemplateId: "t1", shiftStart: null, shiftEnd: null, shiftMasterId: null, reason: null }], deletes: [] });
+    const timeOnly = await request(app).put(`${base}/draft/lines`).send({ upserts: [{ employeeId: "e1", date: "2026-10-01", type: "SHIFT", shiftStart: "10:00", shiftEnd: "19:00" }] });
+    expect(timeOnly.status).toBe(200);
+    expect(svc.upsertDraftLines).toHaveBeenLastCalledWith(expect.anything(), { upserts: [expect.objectContaining({ shiftStart: "10:00", shiftEnd: "19:00", shiftTemplateId: null })], deletes: undefined });
+    expect((await request(app).put(`${base}/draft/lines`).send({ upserts: [{ employeeId: "e1", date: "2026-10-01", type: "SHIFT", shiftStart: "ten", shiftEnd: "19:00" }] })).status).toBe(400);
   });
 
   it("POST /draft/submit returns 201; a 409 conflict carries its cell details", async () => {

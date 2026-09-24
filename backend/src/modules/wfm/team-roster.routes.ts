@@ -30,6 +30,9 @@ const schemas = {
     upserts: z.array(cellRef.extend({
       type: z.enum(NEW_ASSIGNMENT_TYPES),
       shiftTemplateId: z.string().trim().max(36).nullish(),
+      shiftStart: z.string().trim().regex(/^\d{1,2}:\d{2}$/, "expected HH:MM").nullish(),
+      shiftEnd: z.string().trim().regex(/^\d{1,2}:\d{2}$/, "expected HH:MM").nullish(),
+      shiftMasterId: z.string().trim().max(36).nullish(),
       reason: z.string().trim().max(500).nullish(),
     })).max(2000).optional(),
     deletes: z.array(cellRef).max(2000).optional(),
@@ -95,7 +98,7 @@ teamRosterRouter.get("/attendance", run("query", schemas.attendance, (a, q) => g
 teamRosterRouter.get("/attendance/:employeeId", run("query", schemas.attendanceDetail, (a, q, req) => getTeamAttendanceDetail(a, String(req.params.employeeId).slice(0, 36), q.month)));
 teamRosterRouter.get("/draft", run("none", null, (a) => getMyDraft(a)));
 teamRosterRouter.put("/draft/lines", run("body", schemas.lines, (a, b) => upsertDraftLines(a, {
-  upserts: b.upserts?.map((u) => ({ ...u, shiftTemplateId: u.shiftTemplateId ?? null, reason: u.reason ?? null })),
+  upserts: b.upserts?.map((u) => ({ ...u, shiftTemplateId: u.shiftTemplateId ?? null, shiftStart: u.shiftStart ?? null, shiftEnd: u.shiftEnd ?? null, shiftMasterId: u.shiftMasterId ?? null, reason: u.reason ?? null })),
   deletes: b.deletes,
 })));
 teamRosterRouter.put("/draft/note", run("body", schemas.note, async (a, b) => { await setDraftNote(a, b.note); return { saved: true }; }));

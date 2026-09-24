@@ -25,7 +25,7 @@ import { DrawerBody, approvalSteps } from "@/components/wfm/team-roster/Submissi
 import { countDraftChanges } from "@/components/wfm/team-roster/MyTeamRosterTab";
 import { AttendanceDrawerBody } from "@/components/wfm/team-roster/TeamAttendanceDrawer";
 import {
-  ATTENDANCE_CELL_CLASS, attendanceCellClass, choiceValue, formatDmy, monthOptions, formatDmyTime, parseChoice, presetRange, storedLabel, unpackError,
+  ATTENDANCE_CELL_CLASS, attendanceCellClass, choiceLabel, choiceValue, formatDmy, monthOptions, shiftKeyOf, splitShiftKey, formatDmyTime, parseChoice, presetRange, storedLabel, unpackError,
 } from "@/components/wfm/team-roster/teamRosterFormat";
 import {
   approvalsKey, attendanceKey, draftKey, gridKey, meKey, submissionsKey, templatesKey,
@@ -46,7 +46,7 @@ const grid = (): GridResponse => ({
       employeeId: "e1", code: "MAS1", name: "Asha Kulkarni", processId: "p1", processName: "Collections",
       cells: {
         "2026-10-01": { assignment: { id: "a1", type: "SHIFT", isWeekOff: false, shiftTemplateId: "t1", shiftCode: "GEN", shiftName: "General", start: "09:00", end: "18:00", finalStatus: "acknowledged" } },
-        "2026-10-02": { draft: { kind: "FILL_BLANK", type: "WEEK_OFF", shiftTemplateId: null, reason: null } },
+        "2026-10-02": { draft: { kind: "FILL_BLANK", type: "WEEK_OFF", shiftTemplateId: null, shiftStart: null, shiftEnd: null, reason: null } },
         "2026-10-03": { leave: "FULL" },
       },
     },
@@ -68,8 +68,12 @@ function render(meData: TeamRosterMe | null, seed: (c: QueryClient) => void = ()
 
 const seedManager = (c: QueryClient) => {
   c.setQueryData(gridKey({ from: range.from, to: range.to, search: "", offset: 0, limit: 50 }), grid());
-  c.setQueryData(templatesKey, { processes: [{ processId: "p1", processName: "Collections", templates: [{ id: "t1", shiftCode: "GEN", shiftName: "General", start: "09:00", end: "18:00", night: false }] }] });
-  c.setQueryData(draftKey, { draft: { id: 5, note: null, createdAt: "2026-10-01 09:00:00", lines: [{ employeeId: "e1", date: "2026-10-02", kind: "FILL_BLANK", type: "WEEK_OFF", shiftTemplateId: null, reason: null }] } });
+  c.setQueryData(templatesKey, { processes: [{ processId: "p1", processName: "Collections", options: [
+    { key: "09:00-18:00", start: "09:00", end: "18:00", night: false, label: "09:00–18:00 - General", code: "GEN", name: "General", group: "Templates", sources: ["template"], useCount: 0, templateId: "t1", shiftMasterId: null },
+    { key: "10:00-19:00", start: "10:00", end: "19:00", night: false, label: "10:00–19:00", code: null, name: null, group: "In use", sources: ["in_use"], useCount: 40, templateId: null, shiftMasterId: null },
+    { key: "14:00-23:00", start: "14:00", end: "23:00", night: false, label: "14:00–23:00 - Evening", code: "EVE", name: "Evening", group: "Shift master", sources: ["shift_master"], useCount: 0, templateId: null, shiftMasterId: "sm1" },
+  ] }] });
+  c.setQueryData(draftKey, { draft: { id: 5, note: null, createdAt: "2026-10-01 09:00:00", lines: [{ employeeId: "e1", date: "2026-10-02", kind: "FILL_BLANK", type: "WEEK_OFF", shiftTemplateId: null, shiftStart: null, shiftEnd: null, reason: null }] } });
 };
 
 beforeEach(() => { vi.clearAllMocks(); access.pages.clear(); access.roles.clear(); });
@@ -145,7 +149,14 @@ describe("My Team Roster grid", () => {
   it("blank cells are dropdowns of the employee's process shifts plus the closed set Week off / Training / Unscheduled", () => {
     const out = html();
     expect(out).toContain("Roster for Asha Kulkarni on 02/10/2026");
-    expect(out).toContain("General (09:00-18:00)");
+    expect(out).toContain("09:00–18:00 - General");
+    // time-only shifts that are merely in use, and shift-master shifts, are offered too (live rosters carry raw times)
+    expect(out).toContain('<optgroup label="Templates">');
+    expect(out).toContain('<optgroup label="In use">');
+    expect(out).toContain('<optgroup label="Shift master">');
+    expect(out).toContain('value="SHIFT:10:00-19:00"');
+    expect(out).toContain("10:00–19:00 (40 in use)");
+    expect(out).toContain("14:00–23:00 - Evening");
     expect(out).toContain(">Week off<");
     expect(out).toContain(">Training<");
     expect(out).toContain(">Unscheduled<");
@@ -405,9 +416,9 @@ describe("pure helpers", () => {
   it("round-trips the closed set of cell choices", () => {
     expect(parseChoice("")).toBeNull();
     expect(parseChoice("HOLIDAY")).toBeNull();
-    expect(parseChoice("WEEK_OFF")).toEqual({ type: "WEEK_OFF", shiftTemplateId: null });
-    expect(parseChoice("SHIFT:t1")).toEqual({ type: "SHIFT", shiftTemplateId: "t1" });
-    expect(choiceValue(parseChoice("SHIFT:t1"))).toBe("SHIFT:t1");
+    expect(parseChoice("WEEK_OFF")).toEqual({ type: "WEEK_OFF", shiftKey: null });
+    expect(parseChoice("SHIFT:10:00-19:00")).toEqual({ type: "SHIFT", shiftKey: "10:00-19:00" });
+    expect(choiceValue(parseChoice("SHIFT:10:00-19:00"))).toBe("SHIFT:10:00-19:00");
     expect(choiceValue(null)).toBe("");
   });
 
@@ -417,11 +428,20 @@ describe("pure helpers", () => {
     expect(storedLabel({ type: "SHIFT", isWeekOff: true, shiftCode: null, shiftName: null, start: null, end: null }).short).toBe("WO");
   });
 
+  it("shift keys carry the times: build from stored HH:MM(:SS), split back, and label with or without a matching option", () => {
+    expect(shiftKeyOf("10:00:00", "19:00")).toBe("10:00-19:00");
+    expect(shiftKeyOf(null, "19:00")).toBeNull();
+    expect(splitShiftKey("22:00-06:00")).toEqual({ start: "22:00", end: "06:00" });
+    const opts = [{ key: "10:00-19:00", start: "10:00", end: "19:00", night: false, label: "10:00–19:00", code: null, name: null, group: "In use" as const, sources: ["in_use"], useCount: 3, templateId: null, shiftMasterId: null }];
+    expect(choiceLabel({ type: "SHIFT", shiftKey: "10:00-19:00" }, opts)).toEqual({ short: "10:00-19:00", long: "10:00–19:00" });
+    expect(choiceLabel({ type: "SHIFT", shiftKey: "03:15-11:45" }, opts).short).toBe("03:15-11:45"); // unknown option still shows its times
+  });
+
   it("counts draft changes as server lines plus staged additions minus staged removals", () => {
     expect(countDraftChanges(["a|1", "b|1"], {})).toBe(2);
-    expect(countDraftChanges(["a|1"], { "c|2": { choice: { type: "WEEK_OFF", shiftTemplateId: null }, reason: null } })).toBe(2);
+    expect(countDraftChanges(["a|1"], { "c|2": { choice: { type: "WEEK_OFF", shiftKey: null }, reason: null } })).toBe(2);
     expect(countDraftChanges(["a|1", "b|1"], { "a|1": { choice: null, reason: null } })).toBe(1);
-    expect(countDraftChanges(["a|1"], { "a|1": { choice: { type: "TRAINING", shiftTemplateId: null }, reason: null } })).toBe(1);
+    expect(countDraftChanges(["a|1"], { "a|1": { choice: { type: "TRAINING", shiftKey: null }, reason: null } })).toBe(1);
   });
 
   it("unpacks API failures, including the cell-level details of a 409/422", () => {
