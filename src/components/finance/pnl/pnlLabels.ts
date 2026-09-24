@@ -30,7 +30,7 @@ export const PNL_TERMS = {
   PEOPLE_COST: {
     label: "People Cost",
     tooltip:
-      "Salary cost of staff: the posted payroll run when it exists for the month, otherwise the running (earned-to-date) salary snapshot.",
+      "CTC paid for the month (gross paid + employer PF/ESIC/gratuity) less other deductions (other, loan EMI, advance recovery) and leave deduction, from the posted payroll run. Before payroll is run for the month it is the running (earned-to-date) salary snapshot, which is CTC only.",
   },
   INDIRECT_COST: {
     label: "Indirect Cost (GRN)",
