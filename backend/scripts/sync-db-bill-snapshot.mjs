@@ -23,7 +23,15 @@
  *   node backend/scripts/sync-db-bill-snapshot.mjs --only=bill_no_master
  *
  * Budget, GRN and invoice lines mirror the CURRENT financial year from April by default.
- * Override with --from=YYYY-MM.
+ * Override with --from=YYYY-MM to pull further back.
+ *
+ * For a FULL HISTORY migration of MAS Callnet India Pvt Ltd data only:
+ *   node backend/scripts/sync-db-bill-snapshot.mjs --from=2010-01 --company=mas_callnet
+ *
+ * --company=mas_callnet adds WHERE company_name LIKE '%Mas Callnet%' to the four tables
+ * that carry an explicit company discriminator: tbl_payment, bill_pay_particulars,
+ * other_deductions_bill, bill_no_master. Other tables (invoices, budget, GRN) are
+ * branch-mapped and do not need a separate company filter.
  *
  * Hosts default to the office LAN. Off-LAN, pass the public addresses — which one works
  * flips with the network the machine is on, and the wrong one gives ETIMEDOUT rather than
@@ -38,6 +46,14 @@ import fs from 'fs';
 
 const arg = (name, fallback) =>
   process.argv.find(a => a.startsWith(`--${name}=`))?.split('=')[1] ?? fallback;
+
+// --company=mas_callnet restricts payment/collection tables to MAS Callnet India Pvt Ltd rows.
+// Tables without an explicit company column (invoices, budget, GRN) are already scoped by
+// branch and do not need a separate filter.
+const COMPANY_FILTER = arg('company', null);
+const MAS_CALLNET_SQL = COMPANY_FILTER === 'mas_callnet'
+  ? " WHERE company_name LIKE '%Mas Callnet%'"
+  : '';
 
 // backend/.env is the same configuration the application itself uses, so a scheduled run
 // reaches whichever host the app reaches. Without this the script hardcoded the office-LAN
@@ -1147,7 +1163,7 @@ async function syncCollectionRuns(hrms, bill) {
     `SELECT id, company_name, financial_year, branch_name, pay_type, pay_no, bank_name,
             pays_date, pay_amount, deposit_bank, no_of_bills, pay_type_dates,
             pay_of_these_bills, username, createdate, PaymentFile, Approve_Payment
-       FROM tbl_payment ORDER BY id`);
+       FROM tbl_payment${MAS_CALLNET_SQL} ORDER BY id`);
   log(`  db_bill.tbl_payment rows: ${src.length}`);
 
   const rows = src.map(r => ({
@@ -1204,7 +1220,7 @@ async function syncBillCollections(hrms, bill) {
             pay_dates, pay_amount, deposit_bank, no_of_bills, bill_no, bill_amount, bill_passed,
             tds_ded, net_amount, deduction, status, remarks, pay_type_dates, collection_id,
             username, delete_status, createdate, PaymentFile, dialdesk
-       FROM bill_pay_particulars ORDER BY id`);
+       FROM bill_pay_particulars${MAS_CALLNET_SQL} ORDER BY id`);
   log(`  db_bill.bill_pay_particulars rows: ${src.length}`);
 
   const rows = src.map(r => ({
@@ -1268,7 +1284,7 @@ async function syncOtherDeductions(hrms, bill) {
     `SELECT id, company_name, branch_name, financial_year, pay_type, pay_no, pay_amount, bank_name,
             deposit_bank, pays_date, no_of_bills, pay_type_dates, status, bill_no, other_deduction,
             other_remarks, collection_id, username, createdate, PaymentFile
-       FROM other_deductions_bill ORDER BY id`);
+       FROM other_deductions_bill${MAS_CALLNET_SQL} ORDER BY id`);
   log(`  db_bill.other_deductions_bill rows: ${src.length}`);
 
   const rows = src.map(r => ({
@@ -1372,7 +1388,7 @@ async function syncBillNoMaster(hrms, bill) {
   const [src] = await bill.query(
     `SELECT id, company_name, finance_year, bill_no, RTGS, cost_center, proforma_bill_no,
             createdate, active, month_year
-       FROM bill_no_master ORDER BY id`);
+       FROM bill_no_master${MAS_CALLNET_SQL} ORDER BY id`);
   log(`  db_bill.bill_no_master rows: ${src.length}`);
 
   const rows = src.map(r => ({
