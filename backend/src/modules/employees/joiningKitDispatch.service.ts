@@ -20,7 +20,8 @@ import type { RowDataPacket } from "mysql2";
 import type { luckpayClient } from "../integrations/luckpay/luckpay.client.js";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
-import { assembleJoiningKit, kitEligibleDocuments } from "./joiningKitAssembly.service.js";
+import { assembleJoiningKit, kitEligibleDocuments, type AssembledKit } from "./joiningKitAssembly.service.js";
+import { regenerateMissingKitDrafts } from "./joiningKitDraftRepair.service.js";
 
 const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
 const STORAGE = (employeeId: string) =>
@@ -87,6 +88,30 @@ async function audit(
   ).catch((e: unknown) => {
     console.warn("[joining-kit] audit entry not written:", e instanceof Error ? e.message : e);
   });
+}
+
+/**
+ * Assemble; if the ONLY problem is documents with no generated file, regenerate
+ * exactly those drafts once and assemble once more. A kit that assembles first
+ * time never reaches the repair; a second failure (of any kind) propagates to
+ * the caller's blockKit, so there is no loop.
+ */
+async function assembleRepairingMissingDraftsOnce(
+  employeeId: string,
+  actorUserId: string | null,
+  assemble: () => Promise<AssembledKit>,
+): Promise<AssembledKit> {
+  try {
+    return await assemble();
+  } catch (e) {
+    if ((e as { code?: string }).code !== "draft_missing") throw e;
+    const repair = await regenerateMissingKitDrafts(employeeId, actorUserId).catch((repairErr: unknown) => {
+      console.error("[joining-kit] draft repair failed:", repairErr instanceof Error ? repairErr.message : repairErr);
+      return null;
+    });
+    if (!repair || repair.attempted === 0) throw e; // nothing repairable: keep the original block
+    return assemble();
+  }
 }
 
 async function blockKit(kitId: string, employeeId: string, reason: BlockedReason, message: string): Promise<DispatchOutcome> {
@@ -245,13 +270,13 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
   await db.execute(`UPDATE employee_joining_esign_kit SET status = 'assembling' WHERE id = ?`, [kitId]);
   let assembled;
   try {
-    assembled = await assembleJoiningKit(employeeId, {
+    assembled = await assembleRepairingMissingDraftsOnce(employeeId, actorUserId, () => assembleJoiningKit(employeeId, {
       employeeName: String(kit.full_name ?? ""),
       employeeCode: String(kit.employee_code ?? ""),
       designation: (kit.designation_name as string) ?? null,
       branchName: (kit.branch_name as string) ?? null,
       dateOfJoining: (kit.date_of_joining as Date | null) ?? null,
-    });
+    }));
   } catch (e) {
     const err = e as { code?: string; message: string };
     return blockKit(kitId, employeeId, (err.code as BlockedReason) ?? "draft_missing", err.message);

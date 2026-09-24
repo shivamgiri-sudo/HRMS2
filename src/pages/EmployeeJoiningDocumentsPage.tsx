@@ -803,6 +803,7 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
   const [pollPhase, setPollPhase] = useState<"idle" | "assembling" | "sent" | "failed" | "timeout">("idle");
   const [pollData, setPollData] = useState<{ docCount?: number; reason?: string } | null>(null);
   const [syncBusy, setSyncBusy] = useState(false);
+  const [repairBusy, setRepairBusy] = useState(false);
 
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollStart = useRef<number>(0);
@@ -893,6 +894,33 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
 
     pollTimer.current = setTimeout(tick, 5_000);
   }, [employeeId]);
+
+  /** Generate the PDFs of kit documents that have none (the draft_missing block). */
+  const regenerateMissingDrafts = async () => {
+    setRepairBusy(true);
+    try {
+      const response = await hrmsApi.post<{ data?: { attempted: number; generated: number; failed: Array<{ code: string; reason: string }> } }>(
+        `/api/employees/${employeeId}/joining-kit/regenerate-drafts`, {},
+      );
+      const out = response.data;
+      if (!out || out.attempted === 0) {
+        toast({ title: "Nothing to regenerate", description: "Every kit document already has a PDF." });
+      } else if (out.failed.length === 0) {
+        toast({ title: "Documents generated", description: `${out.generated} of ${out.attempted} missing document(s) generated. You can now send the kit.` });
+      } else {
+        toast({
+          title: "Some documents failed",
+          description: `${out.generated} generated, ${out.failed.length} failed: ${out.failed.map((f) => f.code).join(", ")}.`,
+          variant: "destructive",
+        });
+      }
+      void load();
+    } catch (err: any) {
+      toast({ title: "Regeneration failed", description: err?.message || "Unable to regenerate the documents.", variant: "destructive" });
+    } finally {
+      setRepairBusy(false);
+    }
+  };
 
   const send = async () => {
     const ccTrimmed = ccEmail.trim();
@@ -1002,6 +1030,15 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
                   <li key={d.code} className="text-sm text-red-900">• {d.name}</li>
                 ))}
               </ul>
+              <Button
+                type="button" size="sm" variant="outline"
+                disabled={repairBusy}
+                onClick={() => void regenerateMissingDrafts()}
+                className="mt-3 min-h-[36px] gap-1.5 border-red-300 bg-white text-red-700 hover:bg-red-50"
+              >
+                {repairBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                {repairBusy ? "Generating…" : "Regenerate missing documents"}
+              </Button>
             </div>
           )}
 

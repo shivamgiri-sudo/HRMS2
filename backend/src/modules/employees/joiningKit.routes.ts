@@ -19,6 +19,7 @@ import { getPublicKitSession, getPublicKitFile, startKitEsign } from "./joiningK
 import { queueJoiningKit, dispatchJoiningKit, resendKitEsignLink, redispatchDeadKit, kitEsignSessionIsAlive } from "./joiningKitDispatch.service.js";
 import { syncKitEsignStatus } from "./joiningKitSync.service.js";
 import { kitEligibleDocuments } from "./joiningKitAssembly.service.js";
+import { regenerateMissingKitDrafts } from "./joiningKitDraftRepair.service.js";
 
 type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
 const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
@@ -147,6 +148,20 @@ joiningKitRouter.post("/:employeeId/joining-kit/send", h(async (req: Authenticat
       err instanceof Error ? err.message : err,
     );
   });
+}));
+
+/**
+ * Regenerate kit documents that have a checklist row but no generated file (the
+ * `draft_missing` block). Only file-less, unsigned, non-terminal kit documents are
+ * touched; the service writes its own audit entry. Synchronous so HR sees the
+ * outcome, then re-send the kit as usual.
+ */
+joiningKitRouter.post("/:employeeId/joining-kit/regenerate-drafts", h(async (req: AuthenticatedRequest, res) => {
+  const result = await regenerateMissingKitDrafts(
+    String(req.params.employeeId),
+    req.authUser?.id ?? null,
+  );
+  return res.json({ success: true, data: result });
 }));
 
 /** Re-send the signing email for an already-sent kit without touching the provider. */

@@ -80,7 +80,7 @@ export class KitAssemblyError extends Error {
  * employeeJoiningDocuments.service.ts; both columns are checked because they
  * disagree on real rows.
  */
-const TERMINAL_STATUSES = [
+export const TERMINAL_STATUSES = [
   "verified", "completed", "esign_completed", "signed_verified", "wet_signed_uploaded",
 ] as const;
 const TERMINAL_SQL = TERMINAL_STATUSES.map(() => "?").join(",");

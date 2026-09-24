@@ -11,6 +11,8 @@ import { hasAnyRole, hasScopedAccess, getUserRoleKeys } from "../../shared/scope
 import { analyzeEmployeeJoiningDocument } from "./employeeJoiningDocumentAnalysis.service.js";
 import { esignWithUrl, generateClientTransactionId, sanitizeProviderPayload, luckpayClient } from "../integrations/luckpay/luckpay.client.js";
 import { generateChecklistDraft } from "./universalDigitalFormFill.service.js";
+import { generateDraftWithTimeout } from "./joiningKitDraftRepair.service.js";
+import { KIT_DOCUMENT_CODES } from "./joiningKitAssembly.service.js";
 import { templateFileExists } from "./joiningDocumentTemplatePath.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { emailService } from "../communication/email.service.js";
@@ -2694,9 +2696,20 @@ export async function autoGenerateJoiningDocuments(
     [employeeId],
   );
 
+  // Kit documents first. This loop runs detached after the HTTP response, so if
+  // one heavy document (the EPF acroforms) hangs or the process dies mid-loop,
+  // every document after it starves. Putting the six kit documents ahead of the
+  // acroform ones means such a stall can no longer block a kit. The sort is
+  // stable: the original ordering is kept within each group.
+  const kitCodes: readonly string[] = KIT_DOCUMENT_CODES;
+  const orderedRows = [
+    ...(checklistRows as RowDataPacket[]).filter((r) => kitCodes.includes(String(r.document_code))),
+    ...(checklistRows as RowDataPacket[]).filter((r) => !kitCodes.includes(String(r.document_code))),
+  ];
+
   let generated = 0;
   let skippedForPayrollApproval = 0;
-  for (const row of checklistRows as RowDataPacket[]) {
+  for (const row of orderedRows) {
     // EMPLOYMENT_CONTRACT must wait for payroll head approval — it prints the final
     // remuneration from the approved salary package, which doesn't exist yet at
     // employee creation time. Generating it now would bake in employee_salary_snapshot.gross
@@ -2707,7 +2720,8 @@ export async function autoGenerateJoiningDocuments(
       continue;
     }
     try {
-      await generateChecklistDraft(String(row.checklist_id), actorUserId);
+      // Bounded wait: a timed-out document is logged below and the loop moves on.
+      await generateDraftWithTimeout(String(row.checklist_id), actorUserId);
       generated++;
     } catch (err: unknown) {
       console.error('[autoGenerateJoiningDocuments] Failed to generate draft for checklist item:', {
@@ -2727,6 +2741,43 @@ export async function autoGenerateJoiningDocuments(
     draftsGenerated: generated,
     skippedForPayrollApproval,
   });
+
+  await logChecklistRowsWithoutFile(employeeId);
+}
+
+/**
+ * One summary line naming any eSign checklist rows that still have no generated
+ * file after the loop, so a stalled run is visible in the logs without having
+ * to compare rows and files by hand. EMPLOYMENT_CONTRACT is left out: it is
+ * skipped above by design until the Payroll Head approves. Never throws.
+ */
+async function logChecklistRowsWithoutFile(employeeId: string): Promise<void> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT c.document_code
+         FROM employee_joining_document_checklist c
+        WHERE c.employee_id = ? AND c.action_type = 'esign'
+          AND c.document_code <> 'EMPLOYMENT_CONTRACT'
+          AND NOT EXISTS (
+            SELECT 1 FROM employee_joining_document_file f
+             WHERE f.checklist_id = c.id AND f.deleted_at IS NULL
+               AND f.file_role IN ('generated', 'hr_uploaded')
+          )
+        ORDER BY c.document_code`,
+      [employeeId],
+    );
+    const missing = (rows as RowDataPacket[]).map((r) => String(r.document_code));
+    if (missing.length > 0) {
+      console.warn('[autoGenerateJoiningDocuments] eSign checklist rows still without a file:', {
+        employeeId,
+        missingCount: missing.length,
+        documentCodes: missing,
+      });
+    }
+  } catch (err: unknown) {
+    console.warn('[autoGenerateJoiningDocuments] Could not run the missing-file summary:',
+      err instanceof Error ? err.message : String(err));
+  }
 }
 
 /**
