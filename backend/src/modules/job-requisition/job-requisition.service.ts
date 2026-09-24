@@ -190,6 +190,9 @@ async function getEmailListSetting(settingKey: string): Promise<string[]> {
 }
 
 /** The brief's To line — the marketing team member who builds the META campaign. */
+/** cost_centre_master.company_name of MAS's own cost centres (the others are IDC and Pikquick). */
+const MAS_COMPANY_NAME = "Mas Callnet India Pvt Ltd";
+
 const getMarketingEmails = () => getEmailListSetting("marketing_team_emails");
 
 /** The brief's fixed Cc list. The requisition's branch head is added on top of this, not stored in it. */
@@ -1615,28 +1618,51 @@ ${bmiBlock}
   /**
    * Get process list for a branch from process_master (for cascading dropdown)
    *
-   * Excludes processes whose source cost centre is closed. The nightly
-   * backfillProcessMasterForOrphanedCostCentres() (cost-centre-sync.ts) inserts a
-   * process_master row per cost centre, with process_code derived from cost_centre_code,
-   * and never deactivates it when db_bill later closes the cost centre. Live 2026-09-24:
-   * NOIDA listed 76 processes, 48 of them closed clients with zero active employees
-   * (Spicejet, HDFC LIFE, seven "Boost Media" rows...). The code derivation here mirrors
-   * the insert: non-alphanumerics -> "_", upper-cased, first 50 chars.
+   * Only live MAS Callnet processes: a process is listed when it is tied to at least one
+   * open cost centre (active_status = 1, status not 'closed') of MAS_COMPANY_NAME. The tie
+   * is any of:
+   *   - cost_centre_master.process_id = the process;
+   *   - the process_code derived from an unmapped cost centre's code, the way the nightly
+   *     backfillProcessMasterForOrphanedCostCentres() (cost-centre-sync.ts) creates it
+   *     (non-alphanumerics -> "_", upper-cased, first 50 chars). Only when the cost centre
+   *     has no process_id, so the auto-created duplicate of a mapped client is not listed;
+   *   - an active employee of the process sitting on that cost centre (Bella-Vita's staff
+   *     are on the IDAM cost centre, with no direct mapping).
+   *
+   * Owner ruling 2026-09-24: "only mas callnet company process and active process for that
+   * branch". Live that day NOIDA went from 76 listed processes to 18: closed clients
+   * (Spicejet, HDFC LIFE, seven "Boost Media" rows), IDC cost centres (Terrier Security,
+   * GENLEAP) and auto-created duplicates (IDAM / IDAM NATURAL WELLNESS PRIVATE LIMITED)
+   * all dropped out.
    */
   async getProcessesForBranch(branchName: string): Promise<Array<{id: string; process_name: string; process_code: string}>> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT pm.id, pm.process_name, pm.process_code
-       FROM process_master pm
-       JOIN branch_master bm ON bm.id = pm.branch_id
-       WHERE LOWER(TRIM(bm.branch_name)) = LOWER(TRIM(?))
-         AND pm.active_status = 1
-         AND NOT EXISTS (
-           SELECT 1 FROM cost_centre_master cc
-            WHERE LEFT(UPPER(REGEXP_REPLACE(cc.cost_centre_code, '[^A-Za-z0-9]+', '_')), 50) = pm.process_code
-              AND (cc.active_status = 0 OR LOWER(cc.status) = 'closed')
-         )
-       ORDER BY pm.process_name ASC`,
-      [branchName]
+      `WITH open_cc AS (
+         SELECT id, process_id,
+                LEFT(UPPER(REGEXP_REPLACE(cost_centre_code, '[^A-Za-z0-9]+', '_')), 50) AS derived_code
+           FROM cost_centre_master
+          WHERE company_name = ?
+            AND active_status = 1
+            AND LOWER(COALESCE(status, '')) <> 'closed'
+       ),
+       live_process AS (
+         SELECT process_id AS id FROM open_cc WHERE process_id IS NOT NULL
+         UNION
+         SELECT pm2.id FROM process_master pm2
+           JOIN open_cc oc ON oc.process_id IS NULL AND oc.derived_code = pm2.process_code
+         UNION
+         SELECT e.process_id FROM employees e
+           JOIN open_cc oc ON oc.id = e.cost_centre_id
+          WHERE e.employment_status = 'active' AND e.process_id IS NOT NULL
+       )
+       SELECT pm.id, pm.process_name, pm.process_code
+         FROM process_master pm
+         JOIN branch_master bm ON bm.id = pm.branch_id
+         JOIN live_process lp ON lp.id = pm.id
+        WHERE LOWER(TRIM(bm.branch_name)) = LOWER(TRIM(?))
+          AND pm.active_status = 1
+        ORDER BY pm.process_name ASC`,
+      [MAS_COMPANY_NAME, branchName]
     );
     return rows as Array<{id: string; process_name: string; process_code: string}>;
   },
