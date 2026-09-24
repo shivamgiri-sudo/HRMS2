@@ -35,7 +35,7 @@ export const PNL_TERMS = {
   INDIRECT_COST: {
     label: "Indirect Cost (GRN)",
     tooltip:
-      "Vendor spend booked through GRNs against the month, ex-GST (amount without tax; no GST is counted, recoverable or not): GRN Consumed, plus GRN Committed (reserved) while the month's estimate window is open.",
+      "Vendor spend booked through GRNs against the month, ex-GST (amount without tax; no GST is counted, recoverable or not): GRN Consumed plus GRN Committed (reserved), for every month (owner rule 2026-09-24). Draft GRNs are not counted.",
   },
   GRN_CONSUMED: {
     label: "GRN Consumed",
@@ -44,7 +44,7 @@ export const PNL_TERMS = {
   GRN_COMMITTED: {
     label: "GRN Committed (reserved)",
     tooltip:
-      "Approved GRN spend reserved but not yet consumed, ex-GST (amount without tax) — a committed estimate for the open month, subtracted in Operating Profit so it is not overstated.",
+      "Approved GRN spend reserved but not yet consumed, ex-GST (amount without tax) — counted in Indirect Cost and subtracted in Operating Profit for every month, not only the open one. Draft GRNs are not counted.",
   },
   OPERATING_PROFIT: {
     label: "Operating Profit",

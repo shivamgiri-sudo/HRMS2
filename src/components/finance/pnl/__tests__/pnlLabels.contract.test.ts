@@ -70,6 +70,22 @@ describe("P&L glossary (audit items 23/24/28)", () => {
     expect(ceo).toContain("<FocusCell label={revenueLabel}");
   });
 
+  // Owner rule 2026-09-24: GRN cost = Consumed + Committed (reserved) on every surface, every month.
+  it("GRN Committed is described as counted every month, not only inside the estimate window", () => {
+    expect(PNL_TERMS.GRN_COMMITTED.tooltip).not.toMatch(/open month/);
+    expect(PNL_TERMS.INDIRECT_COST.tooltip).not.toMatch(/estimate window/);
+    expect(PNL_TERMS.INDIRECT_COST.tooltip).toMatch(/GRN Consumed plus GRN Committed \(reserved\)/);
+  });
+
+  it("the Statement labels and drills into its GRN Consumed / GRN Committed breakdown lines", () => {
+    const view = read(`${PNL_DIR}/PnlStatementView.tsx`);
+    expect(view).toContain('grn_consumed: "GRN_CONSUMED"');
+    expect(view).toContain('grn_committed: "GRN_COMMITTED"');
+    expect(view).toContain('grn_consumed: { metric: "indirect", grnKind: "consumed" }');
+    expect(view).toContain('grn_committed: { metric: "indirect", grnKind: "reserved" }');
+    expect(read("src/hooks/usePnlDrilldown.ts")).toContain('search.set("grnKind", params!.grnKind)');
+  });
+
   it("CEO People Cost tooltip describes the Statement's posted-payroll-first rule", () => {
     const ceo = read(`${PNL_DIR}/CeoOverviewPanel.tsx`);
     expect(ceo).not.toContain("separate day-by-day earned-to-date estimate");

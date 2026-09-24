@@ -1610,10 +1610,17 @@ router.get(
       );
     }
 
+    // Statement breakdown lines under Total Indirect Cost: GRN Consumed / GRN Committed (reserved).
+    const grnKindParam = req.query.grnKind ? String(req.query.grnKind) : undefined;
+    if (grnKindParam && !["consumed", "reserved"].includes(grnKindParam)) {
+      throw Object.assign(new Error("grnKind must be one of: consumed, reserved"), { statusCode: 400 });
+    }
+
     const data = await getPnlDrilldown({
       metric: metric as "revenue" | "people" | "indirect" | "budget",
       period,
       peopleBucket: bucketParam as "agent_salary" | "dsc_people" | "bmc_people" | undefined,
+      grnKind: grnKindParam as "consumed" | "reserved" | undefined,
       branchId: requestedBranchId ? (branchId ?? requestedBranchId) : undefined,
       processId: requestedProcessId ? (processId ?? requestedProcessId) : undefined,
       costCentreId,

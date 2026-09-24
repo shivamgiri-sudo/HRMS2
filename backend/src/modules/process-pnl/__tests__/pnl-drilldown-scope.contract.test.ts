@@ -284,6 +284,15 @@ describe("drilldowns tie to the tiles they open from (audit item 17)", () => {
     expect(result.total).toBe(140);
     const reservedSql = sqlCalls().find((c) => c.sql.includes("'reserved'"))!.sql;
     expect(reservedSql, "draft allocations are never committed cost").not.toContain("'draft'");
+
+    // The Statement's two breakdown lines open the same drilldown narrowed to their own lifecycle,
+    // so each list totals exactly the cell clicked.
+    const committed = await getPnlDrilldown({ metric: "indirect", period: "2026-03", branchId: BRANCH_ID, grnKind: "reserved" });
+    expect(committed.total).toBe(40);
+    expect(committed.hasEstimatedRows).toBe(true);
+    const consumed = await getPnlDrilldown({ metric: "indirect", period: "2026-03", branchId: BRANCH_ID, grnKind: "consumed" });
+    expect(consumed.total).toBe(100);
+    expect(consumed.hasEstimatedRows).toBe(false);
   });
 
   it("(b) people under cost-centre scope filters on the EFFECTIVE (post-override) cost centre", async () => {

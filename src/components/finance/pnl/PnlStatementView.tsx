@@ -18,12 +18,16 @@ import { pnlLabel, pnlTooltip, type PnlTermKey } from "./pnlLabels";
  * opening them would show a list whose total visibly disagrees with the number clicked. Left
  * closed until the service can answer them exactly — a wrong drilldown is worse than none.
  */
-const DRILLDOWN_BY_COMPONENT: Record<string, Pick<PnlDrilldownParams, "metric" | "peopleBucket">> = {
+const DRILLDOWN_BY_COMPONENT: Record<string, Pick<PnlDrilldownParams, "metric" | "peopleBucket" | "grnKind">> = {
   recognized_revenue: { metric: "revenue" },
   agent_salary: { metric: "people", peopleBucket: "agent_salary" },
   dsc_people: { metric: "people", peopleBucket: "dsc_people" },
   bmc_people: { metric: "people", peopleBucket: "bmc_people" },
   total_idc: { metric: "indirect" },
+  // The two breakdown lines under Total Indirect Cost (owner rule 2026-09-24): each opens the same
+  // GRN drilldown narrowed to its own lifecycle, so the list total equals the cell clicked.
+  grn_consumed: { metric: "indirect", grnKind: "consumed" },
+  grn_committed: { metric: "indirect", grnKind: "reserved" },
 };
 
 /** Mirrors PNL_WRITE_ROLES on the refresh endpoint; the backend enforces it regardless. */
@@ -45,6 +49,8 @@ function istToday(): string {
 const GLOSSARY_BY_COMPONENT: Record<string, PnlTermKey> = {
   recognized_revenue: "RECOGNISED_REVENUE",
   total_idc: "INDIRECT_COST",
+  grn_consumed: "GRN_CONSUMED",
+  grn_committed: "GRN_COMMITTED",
   operating_profit: "OPERATING_PROFIT",
   operating_profit_pct: "OPERATING_MARGIN",
 };

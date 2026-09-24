@@ -123,8 +123,8 @@ export function PnlReconciliationPanel({
     { label: pnlLabel("PEOPLE_COST"), value: money(data.totals.payrollCost), hint: pnlTooltip("PEOPLE_COST") },
     { label: pnlLabel("GRN_CONSUMED"), value: money(data.totals.grnActual), hint: pnlTooltip("GRN_CONSUMED") },
     {
-      // Approved GRN that has not been fully consumed yet — real committed spend, only inside
-      // the open month, folded into the cost side so OP is not overstated while the bill finishes.
+      // Approved GRN that has not been fully consumed yet — real committed spend, for every month
+      // (owner rule 2026-09-24), folded into the cost side so OP is not overstated.
       label: pnlLabel("GRN_COMMITTED"),
       value: money(data.totals.grnEstimated ?? 0),
       hint: pnlTooltip("GRN_COMMITTED"),

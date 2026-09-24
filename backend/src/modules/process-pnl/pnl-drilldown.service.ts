@@ -3,7 +3,7 @@ import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { assertNotFuturePeriod } from "./pnl-period-guard.js";
 import { entriesForCodes, readBudgetEntries, topUpsForCodes, type BudgetEntry } from "./pnl-budget-source.js";
-import { readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
+import { readGrnSpend, type GrnSpendKind, type GrnSpendRow } from "./pnl-actuals.service.js";
 import { getSeatBillingEstimate, isEstimateWindow } from "./pnl-seat-billing.service.js";
 import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
@@ -89,6 +89,12 @@ export type PnlDrilldownQuery = PnlDrilldownScope & {
    * drilldown reads the snapshot rather than posted payroll — the same basis as the cell.
    */
   peopleBucket?: PnlPeopleBucket;
+  /**
+   * Narrow the indirect (GRN) drilldown to one Statement breakdown line: "consumed" (GRN Consumed)
+   * or "reserved" (GRN Committed (reserved)). Omitted = both, which is what Total Indirect Cost
+   * sums — so each of the three cells opens a list whose total equals the cell clicked.
+   */
+  grnKind?: GrnSpendKind;
 };
 
 export type PnlPeopleBucket = "agent_salary" | "dsc_people" | "bmc_people";
@@ -474,7 +480,11 @@ const GRN_SOURCE_LABEL: Record<string, string> = {
  * Statement's "GRN Committed (reserved)" line apply — and flagged as committed. It used to be added
  * only inside the open estimate window. 'draft' allocations are never read.
  */
-async function indirectDrilldownRows(period: string, scope: PnlDrilldownScope): Promise<PnlDrilldownResult> {
+async function indirectDrilldownRows(
+  period: string,
+  scope: PnlDrilldownScope,
+  grnKind?: GrnSpendKind,
+): Promise<PnlDrilldownResult> {
   const readerScope = scope.costCentreId
     ? { costCentreIds: [scope.costCentreId] }
     : scope.processId ? { processIds: [scope.processId] } : {};
@@ -490,14 +500,18 @@ async function indirectDrilldownRows(period: string, scope: PnlDrilldownScope): 
     date: r.billDate ?? null,
   });
 
-  const consumed = (await readGrnSpend(period, "consumed", { ...readerScope, withDetail: true })).filter(inBranch);
-  const reserved = (await readGrnSpend(period, "reserved", { ...readerScope, withDetail: true })).filter(inBranch);
+  const consumed = grnKind === "reserved"
+    ? []
+    : (await readGrnSpend(period, "consumed", { ...readerScope, withDetail: true })).filter(inBranch);
+  const reserved = grnKind === "consumed"
+    ? []
+    : (await readGrnSpend(period, "reserved", { ...readerScope, withDetail: true })).filter(inBranch);
   const rows = [
     ...consumed.map((r, i) => toRow(r, false, i)),
     ...reserved.map((r, i) => toRow(r, true, i)),
   ].sort((a, b) => b.amount - a.amount);
   return {
-    metric: "indirect", scope: { period, ...scope }, rows,
+    metric: "indirect", scope: { period, ...scope, ...(grnKind ? { grnKind } : {}) }, rows,
     total: rows.reduce((s, r) => s + r.amount, 0),
     hasEstimatedRows: reserved.length > 0,
   };
@@ -597,7 +611,7 @@ export async function getPnlDrilldown(query: PnlDrilldownQuery): Promise<PnlDril
         ? peopleDrilldownRowsAggregated(query.period, scope)
         : peopleDrilldownRows(query.period, scope);
     }
-    case "indirect": return indirectDrilldownRows(query.period, scope);
+    case "indirect": return indirectDrilldownRows(query.period, scope, query.grnKind);
     case "budget":
       return budgetDrilldownRows(query.period, scope);
   }
