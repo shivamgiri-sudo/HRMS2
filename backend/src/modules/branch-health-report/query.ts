@@ -307,7 +307,7 @@ export async function fetchProcessPerformance(branchId: string, today: string): 
       GROUP BY pm.process_name
       ORDER BY pm.process_name`,
     [branchId, today, today],
-  ).catch(() => [[], []]);  // graceful fallback if kpi tables don't exist
+  ).catch(() => [[]] as [any[]]);  // graceful fallback if kpi tables don't exist
 
   return (rows as any[]).map((r) => {
     const opsScore = r.ops_score != null ? Math.round(Number(r.ops_score)) : null;
@@ -341,7 +341,7 @@ export async function fetchPendingActions(branchId: string): Promise<PendingActi
 
   const [leaveRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt
-       FROM leave_requests lr
+       FROM leave_request lr
        JOIN employees e ON e.id = lr.employee_id
       WHERE e.branch_id = ? AND lr.status = 'pending'`,
     [branchId],
