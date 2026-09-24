@@ -808,9 +808,7 @@ bulkApprovalRouter.post("/approvals/batches/:id/reapply", h(async (req: Authenti
     if (batch.approval_status !== "partially_applied") {
       return res.status(409).json({ success: false, message: `This batch is '${batch.approval_status}', not partially_applied. Nothing to retry.` });
     }
-    if (!(await hasAnyRole(userId, ...APPROVER_ROLES))) {
-      return res.status(403).json({ success: false, message: "Only approvers can re-apply a batch." });
-    }
+    await assertCanView(req.authUser!.id, batch); // super_admin, uploader, or any approver role
 
     const remarks = String((req.body as { remarks?: string })?.remarks ?? "").trim() || null;
     const outcome = await reapplyPartialBatch(batch, userId, remarks);
