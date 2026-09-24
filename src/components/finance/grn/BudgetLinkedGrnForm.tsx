@@ -78,6 +78,11 @@ import {
   type MonthSplitValue,
 } from "./sections/MonthSplitPanel";
 
+/** The production reverse proxy (nginx client_max_body_size 20M) refuses larger request bodies
+ *  with HTTP 413 before the API sees them; 19 MB leaves room for the multipart envelope. */
+const MAX_GRN_ATTACHMENT_MB = 19;
+const MAX_GRN_ATTACHMENT_BYTES = MAX_GRN_ATTACHMENT_MB * 1024 * 1024;
+
 /** Methods offered for GRN's auto-split, restricted to what's computable from a single batched
  *  driver fetch. "meter_wise" has no client formula (server-only). "grade_weighted_headcount"'s
  *  real weight is a server-side blended-CTC calculation — the client stand-in branch-budget
@@ -2019,15 +2024,32 @@ export function BudgetLinkedGrnForm({
 
       let uploadedDocuments: WorkspaceDocument[] = [];
       if (files.length) {
-        const body = new FormData();
-        files.forEach((file) => body.append("files", file));
-        body.append("documentType", "invoice");
-        body.append("primaryIndex", "0");
-        const uploadResponse = await hrmsApi.postForm<any>(
-          `/api/finance/grns/${current.id}/documents`,
-          body
-        );
-        uploadedDocuments = unwrapList(uploadResponse) as WorkspaceDocument[];
+        // One request per file. The production reverse proxy caps a request body at 20 MB, so
+        // sending every attachment in one multipart body returned HTTP 413 as soon as the files
+        // together passed 20 MB, even though each was individually fine. Only the first file is
+        // marked primary; later requests send an index that matches none of their files.
+        for (const [index, file] of files.entries()) {
+          const body = new FormData();
+          body.append("files", file);
+          body.append("documentType", "invoice");
+          body.append("primaryIndex", index === 0 ? "0" : "-1");
+          try {
+            const uploadResponse = await hrmsApi.postForm<any>(
+              `/api/finance/grns/${current.id}/documents`,
+              body
+            );
+            uploadedDocuments = [...uploadedDocuments, ...(unwrapList(uploadResponse) as WorkspaceDocument[])];
+          } catch (uploadError) {
+            const tooLarge =
+              (uploadError as { status?: number } | null)?.status === 413 ||
+              /413|too large/i.test(uploadError instanceof Error ? uploadError.message : String(uploadError));
+            throw new Error(
+              tooLarge
+                ? `"${file.name}" is too large to upload (limit ${MAX_GRN_ATTACHMENT_MB} MB per file). Compress or split it and try again.`
+                : `Could not upload "${file.name}": ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`
+            );
+          }
+        }
         setFiles([]);
       }
 
@@ -3289,7 +3311,7 @@ export function BudgetLinkedGrnForm({
                     Tap to attach invoice/receipt
                   </span>
                   <span className="ml-2 text-[11px] text-grn-ink-soft">
-                    PDF, JPG, PNG, WEBP · max 10 files
+                    PDF, JPG, PNG, WEBP · max 10 files, {MAX_GRN_ATTACHMENT_MB} MB each
                   </span>
                 </div>
                 <input
@@ -3298,7 +3320,16 @@ export function BudgetLinkedGrnForm({
                   accept=".pdf,.jpg,.jpeg,.png,.webp"
                   className="sr-only"
                   onChange={(event) => {
-                    const incoming = Array.from(event.target.files ?? []);
+                    const picked = Array.from(event.target.files ?? []);
+                    const oversize = picked.filter((f) => f.size > MAX_GRN_ATTACHMENT_BYTES);
+                    if (oversize.length) {
+                      toast({
+                        title: "File too large",
+                        description: `${oversize.map((f) => f.name).join(", ")} is over ${MAX_GRN_ATTACHMENT_MB} MB. Compress or split it before attaching.`,
+                        variant: "destructive",
+                      });
+                    }
+                    const incoming = picked.filter((f) => f.size <= MAX_GRN_ATTACHMENT_BYTES);
                     setFiles((prev) => {
                       const existingNames = new Set(prev.map((f) => f.name));
                       return [...prev, ...incoming.filter((f) => !existingNames.has(f.name))];
