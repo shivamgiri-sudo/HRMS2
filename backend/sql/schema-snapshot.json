@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1193,
-  "columnCount": 17798,
+  "tableCount": 1194,
+  "columnCount": 17814,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -15889,6 +15889,22 @@
       "started_at",
       "completed_at"
     ],
+    "roster_offday_policy": [
+      "id",
+      "process_id",
+      "lob_id",
+      "branch_id",
+      "off_type",
+      "fixed_weekdays",
+      "floating_offs_per_week",
+      "effective_from",
+      "effective_to",
+      "active_status",
+      "created_by",
+      "updated_by",
+      "created_at",
+      "updated_at"
+    ],
     "roster_template": [
       "id",
       "template_name",
@@ -19459,7 +19475,9 @@
       "manager_action_reason",
       "system_decision_reason",
       "published_to_rta_at",
-      "scheduled_minutes"
+      "scheduled_minutes",
+      "process_id",
+      "lob_id"
     ],
     "wfm_roster_assignment_control": [
       "assignment_id",

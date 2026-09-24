@@ -81,7 +81,7 @@ export async function resolveCallerScope(actor: Actor): Promise<ScopeSql> {
   }
 }
 
-async function loadProcessInScope(exec: SqlExecutor, scope: ScopeSql, processId: string) {
+export async function loadProcessInScope(exec: SqlExecutor, scope: ScopeSql, processId: string) {
   const r = rows(await exec.execute(
     `SELECT pm.id, pm.process_name, pm.branch_id FROM process_master pm WHERE pm.id = ? AND ${scope.sql} LIMIT 1`,
     [processId, ...scope.params],
@@ -90,7 +90,7 @@ async function loadProcessInScope(exec: SqlExecutor, scope: ScopeSql, processId:
   return r[0] as { id: string; process_name: string; branch_id: string | null };
 }
 
-async function loadActiveLob(exec: SqlExecutor, lobId: string) {
+export async function loadActiveLob(exec: SqlExecutor, lobId: string) {
   const r = rows(await exec.execute(
     `SELECT id, lob_code, lob_name FROM lob_master WHERE id = ? AND active_status = 1 LIMIT 1`, [lobId],
   ));

@@ -13,6 +13,7 @@ import { sqlLimitOffset } from '../../db/pagination.js';
 import { withEmployeeRosterLock, validateMinimumRest, applyRestDecision, isRestPolicyFeatureActive } from './rest-policy.service.js';
 import { checkEmployeeDateNotLocked } from '../roster/roster-lock-guard.js';
 import { parseShiftString } from './shift-parser.service.js';
+import { annotateImportPolicyWarnings, stampImportBatchRows } from './roster-offday-apply.js';
 
 // ── Public types ────────────────────────────────────────────────────────────
 
@@ -26,6 +27,8 @@ export interface BatchSummary {
   unassigned: number;
   dateRangeStart: string | null;
   dateRangeEnd: string | null;
+  /** Rows carrying an off-day policy warning (informational; only present when > 0). */
+  offdayPolicyWarnings?: number;
 }
 
 // ── Internal types ───────────────────────────────────────────────────────────
@@ -457,6 +460,9 @@ export async function createImportBatch(params: {
   // When the cross-check could not run, no warning is raised rather than a false one on every
   // LEAVE cell — but it is logged above, not swallowed.
 
+  // Off-day policy warnings (informational only; no-op when no policy is configured).
+  const offdayPolicyWarnings = await annotateImportPolicyWarnings(rowEntries);
+
   // ── Step 8: Insert rows into DB ─────────────────────────────────────────
   //
   // Chunked multi-row INSERT, not one statement per cell. A real roster is employees x dates —
@@ -529,6 +535,7 @@ export async function createImportBatch(params: {
     dateRangeStart,
     dateRangeEnd,
   };
+  if (offdayPolicyWarnings > 0) summary.offdayPolicyWarnings = offdayPolicyWarnings;
 
   // ── Step 10: Update batch record to PREVIEW ──────────────────────────────
   await db.execute(
@@ -1044,6 +1051,9 @@ export async function commitImportBatch(
       }
     });
   }
+
+  // File the written rows under their process/LOB (fills NULLs only; no-op before migration 1849).
+  await stampImportBatchRows(batchId, batch.process_id ? String(batch.process_id) : null);
 
   // Update batch status. Deliberately after every employee's lock scope has released, on the plain
   // pool — matches "partial success is still success" for the tallies above (unmatchedEmployees,

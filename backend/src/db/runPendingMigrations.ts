@@ -1131,6 +1131,9 @@ const MIGRATION_MANIFEST: string[] = [
   "1846_provisioning_hr_bgv_page_access.sql", // Registered 2026-09-24. Seeds page_catalog + role_page_access (hr, branch_hr, admin, super_admin) for PROVISIONING_HR_BGV, which shipped without them. Additive idempotent upserts.
   "1847_process_lob_map.sql", // Registered 2026-09-23. Creates process_lob_map (process x LOB mapping, no FKs) and soft-deactivates the ZZTEST-LOB lob_master row. Additive, idempotent.
   "1848_process_lob_map_page_access.sql", // Registered 2026-09-23. page_catalog + role_page_access for WFM_PROCESS_LOB_MAP (wfm/wfm_spoc/branch_wfm/ho_wfm/admin/hr/super_admin). Additive, idempotent.
+  "1849_roster_assignment_process_lob.sql", // Registered 2026-09-24. Nullable process_id/lob_id + indexes on wfm_roster_assignment (collation copied from process_master/lob_master; NO backfill - see scripts/backfill-roster-assignment-process-lob.mjs). Additive, idempotent.
+  "1850_roster_offday_policy.sql", // Registered 2026-09-24. Creates roster_offday_policy (fixed/floating weekly-off policy per process/LOB/branch, collation-copied ids, no FKs). Additive, idempotent.
+  "1851_roster_offday_policy_page_access.sql", // Registered 2026-09-24. page_catalog + role_page_access for WFM_ROSTER_OFFDAY_POLICY (wfm/wfm_spoc/branch_wfm/ho_wfm/admin/hr/super_admin). Additive, idempotent.
   ];
 
 export type MigrationHealth = {

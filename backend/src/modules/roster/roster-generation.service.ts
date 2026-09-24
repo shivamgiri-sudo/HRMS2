@@ -10,6 +10,7 @@ import type { WeekoffRule } from "./weekoff-rule.service.js";
 import { computeScheduledMinutes, rosterAssignmentColumns, shiftMasterColumns } from "../wfm/shift-scheduling.util.js";
 import { applyRestDecision, isRestPolicyFeatureActive, validateMinimumRest } from "../wfm/rest-policy.service.js";
 import { checkEmployeeDateNotLocked } from "./roster-lock-guard.js";
+import { stampGenerationRunRows } from "../wfm/roster-offday-apply.js";
 import {
   resolveWeekOffScopeDefault,
   parseRosterTemplatePattern,
@@ -863,6 +864,9 @@ async function syncGeneratedToLiveAssignments(
       params
     );
   }
+
+  // File the synced rows under their process/LOB (fills NULLs only; no-op before migration 1849).
+  await stampGenerationRunRows(runId, cycle.process_id);
 
   return { blockedEmployeeCodes };
 }
