@@ -16,6 +16,9 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { ResendLetterDialog, type ResendOptions } from "@/components/letters/ResendLetterDialog";
+import {
+  AcceptedCopySummary, IssuedDownloadButtons, LetterCopyToggle, type LetterCopy,
+} from "@/components/letters/SignedCopyControls";
 
 type Blocker = { code: string; reason: string; severity: "critical" | "warning" };
 type QueueRow = {
@@ -36,6 +39,9 @@ type IssuedRow = {
   designation: string | null; branch_name: string | null; is_ca_issued: number;
   employee_esign_status: string | null; employee_esign_at?: string | null;
   status: string; issued_at: string | null; revoked_at: string | null;
+  /** The employee signed with Aadhaar eSign and their signed file is stored. */
+  has_accepted_copy?: boolean;
+  accepted_copy_sha256?: string | null;
 };
 
 /** The employee's own Aadhaar eSign of the letter, in words HR would use. */
@@ -76,6 +82,12 @@ export default function NativeAppointmentLetterQueue() {
   const [drawerPdfLoading, setDrawerPdfLoading] = useState(false);
   const [drawerPdfError, setDrawerPdfError] = useState<string | null>(null);
   const drawerBlobRef = useRef<string | null>(null);
+  // Which copy the drawer shows for an issued letter. null = "not chosen yet", which
+  // means the employee-signed copy when there is one and the original otherwise.
+  const [copyChoice, setCopyChoice] = useState<LetterCopy | null>(null);
+  const drawerCopy: LetterCopy | null = drawer?.mode === "view"
+    ? (drawer.row.has_accepted_copy ? (copyChoice ?? "accepted") : "original")
+    : null;
   // Inline field, not window.prompt() — a native prompt() dialog is easy to
   // dismiss without realizing an action was waiting on it, and gives no
   // visible trace afterward. That is the leading theory for why
@@ -94,6 +106,7 @@ export default function NativeAppointmentLetterQueue() {
     setDrawer(null);
     setDrawerPdfError(null);
     setDrawerPdfUrl(null);
+    setCopyChoice(null);
     setOverrideReasonInput("");
     if (drawerBlobRef.current) {
       URL.revokeObjectURL(drawerBlobRef.current);
@@ -117,7 +130,9 @@ export default function NativeAppointmentLetterQueue() {
         const blob =
           drawer.mode === "preview"
             ? await hrmsApi.getBlob(`/api/letters/appointment-letters/preview/${drawer.row.employeeId}`)
-            : await hrmsApi.getBlob(`/api/letters/appointment-letters/${drawer.row.id}/download?inline=1`);
+            : await hrmsApi.getBlob(
+                `/api/letters/appointment-letters/${drawer.row.id}/download?inline=1${drawerCopy === "accepted" ? "&copy=accepted" : ""}`,
+              );
         if (!cancelled) {
           const url = URL.createObjectURL(blob);
           drawerBlobRef.current = url;
@@ -131,7 +146,7 @@ export default function NativeAppointmentLetterQueue() {
       }
     })();
     return () => { cancelled = true; };
-  }, [drawer]);
+  }, [drawer, drawerCopy]);
 
   // Resend history for an issued letter (drill-down audit section).
   const viewedIssueId = drawer?.mode === "view" ? drawer.row.id : null;
@@ -301,12 +316,14 @@ export default function NativeAppointmentLetterQueue() {
     }
   };
 
-  const download = async (row: IssuedRow) => {
+  const download = async (row: IssuedRow, copy: LetterCopy = "original") => {
     try {
-      const blob = await hrmsApi.getBlob(`/api/letters/appointment-letters/${row.id}/download`);
+      const blob = await hrmsApi.getBlob(
+        `/api/letters/appointment-letters/${row.id}/download${copy === "accepted" ? "?copy=accepted" : ""}`,
+      );
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url; a.download = `${row.letter_number}.pdf`; a.click();
+      a.href = url; a.download = copy === "accepted" ? `${row.letter_number}-accepted.pdf` : `${row.letter_number}.pdf`; a.click();
       URL.revokeObjectURL(url);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Unable to download this letter.");
@@ -590,12 +607,7 @@ export default function NativeAppointmentLetterQueue() {
                         >
                           <Eye className="h-4 w-4" /> View
                         </button>
-                        <button
-                          type="button" onClick={() => void download(row)}
-                          className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-blue-300 bg-white px-4 text-sm font-semibold text-blue-700 hover:bg-blue-50 transition-colors"
-                        >
-                          <Download className="h-4 w-4" /> PDF
-                        </button>
+                        <IssuedDownloadButtons row={row} onDownload={(copy) => void download(row, copy)} />
                         {row.status !== "revoked" && !isAccepted(row.employee_esign_status) && (
                           <>
                             <button
@@ -696,6 +708,23 @@ export default function NativeAppointmentLetterQueue() {
                   Issued {new Date(drawer.row.issued_at).toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric" })}
                 </span>
               )}
+            </div>
+          )}
+
+          {/* Which copy is on screen — only when the employee has signed and their file is stored */}
+          {drawer.mode === "view" && drawerCopy && (
+            <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-6 py-3 border-b border-slate-100 bg-white">
+              {drawer.row.has_accepted_copy ? (
+                <>
+                  <LetterCopyToggle value={drawerCopy} onChange={setCopyChoice} />
+                  <AcceptedCopySummary row={drawer.row} />
+                </>
+              ) : isAccepted(drawer.row.employee_esign_status) ? (
+                <p className="text-xs text-amber-700">
+                  The employee has accepted this letter, but their signed file has not been retrieved yet.
+                  Showing the company-signed original; use Check status to retry.
+                </p>
+              ) : null}
             </div>
           )}
 
@@ -848,10 +877,12 @@ export default function NativeAppointmentLetterQueue() {
                   Close
                 </button>
                 <button
-                  type="button" onClick={() => void download(drawer.row)}
+                  type="button" onClick={() => void download(drawer.row, drawerCopy ?? "original")}
                   className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-blue-300 bg-white px-4 text-sm font-semibold text-blue-700 hover:bg-blue-50 transition-colors"
                 >
-                  <Download className="h-4 w-4" /> Download PDF
+                  <Download className="h-4 w-4" /> {drawer.row.has_accepted_copy
+                    ? (drawerCopy === "accepted" ? "Download signed copy" : "Download original")
+                    : "Download PDF"}
                 </button>
                 {drawer.row.status !== "revoked" && !isAccepted(drawer.row.employee_esign_status) && (
                   <>

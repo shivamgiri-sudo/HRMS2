@@ -32,6 +32,7 @@ import {
   type EsignLetter,
   type StartOutcome,
 } from "./appointmentLetterEsign.service.js";
+import { AcceptedCopyError, loadAcceptedCopy, type AcceptedCopyFile } from "./appointmentLetterSignedCopy.service.js";
 
 export const LETTER_LINK_INVALID = "LETTER_LINK_INVALID";
 export const LETTER_REVOKED = "LETTER_REVOKED";
@@ -196,6 +197,33 @@ export async function getPublicLetterFile(token: string): Promise<{ storagePath:
     }
   }
   publicError("The letter document is not available. Please contact HR.", 404, "LETTER_FILE_MISSING");
+}
+
+/**
+ * The copy the employee signed, for the "Download your signed letter" button.
+ *
+ * Same token resolution as everything else on this page (so a revoked letter is a
+ * 410 before anything is read), and only once the employee has actually signed.
+ * Unlike getPublicLetterFile there is no fallback to the company-signed original:
+ * this button promises the signed copy, so absence is a 404, not a different file.
+ */
+export async function getPublicSignedLetter(token: string): Promise<AcceptedCopyFile> {
+  const row = await resolveLetterByToken(token);
+  if (!["signed", "completed"].includes(String(row.employee_esign_status ?? ""))) {
+    publicError("You have not signed this letter yet.", 404, "LETTER_NOT_SIGNED");
+  }
+  try {
+    return await loadAcceptedCopy(String(row.id), String(row.letter_number));
+  } catch (error) {
+    if (error instanceof AcceptedCopyError) {
+      // Wording written for the employee; nothing about paths or hashes.
+      const message = error.statusCode === 409
+        ? "Your signed letter cannot be downloaded right now. Please contact HR."
+        : "Your signed letter is not available to download yet. Please contact HR.";
+      publicError(message, error.statusCode, error.code);
+    }
+    throw error;
+  }
 }
 
 export type StartResult = StartOutcome;

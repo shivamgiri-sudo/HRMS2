@@ -6,6 +6,7 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 
 import { env } from "../../config/env.js";
 import { db } from "../../db/mysql.js";
+import { listSignedAppointmentLetters } from "./employeeSignedAppointmentLetter.service.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { hasAnyRole, hasScopedAccess, getUserRoleKeys } from "../../shared/scopeAccess.js";
 import { analyzeEmployeeJoiningDocument } from "./employeeJoiningDocumentAnalysis.service.js";
@@ -982,7 +983,7 @@ export async function getJoiningDocumentPack(employeeId: string, userId: string)
 
   // Three independent reads, run together rather than one after another —
   // none of them depends on the others' result.
-  const [checklist, generalDocs, auditRows] = await Promise.all([
+  const [checklist, generalDocs, auditRows, signedAppointmentLetters] = await Promise.all([
     getChecklistBundle(employeeId),
     db.execute<RowDataPacket[]>(
       `SELECT doc_type, doc_name, file_url, verified
@@ -998,6 +999,12 @@ export async function getJoiningDocumentPack(employeeId: string, userId: string)
         LIMIT 20`,
       [employeeId],
     ).then(([rows]) => rows as RowDataPacket[]),
+    // The letter the employee signed with Aadhaar eSign (read-only, from the
+    // appointment-letter tables). It must never take the whole pack down.
+    listSignedAppointmentLetters(employeeId, access).catch((error: unknown) => {
+      console.warn("[joining-documents] signed appointment letters unavailable:", error instanceof Error ? error.message : error);
+      return [];
+    }),
   ]);
 
   const checklistWithLinks = checklist.map((item) => {
@@ -1038,6 +1045,7 @@ export async function getJoiningDocumentPack(employeeId: string, userId: string)
     },
     checklist: checklistWithLinks,
     audit: auditRows,
+    signed_appointment_letters: signedAppointmentLetters,
   };
 }
 

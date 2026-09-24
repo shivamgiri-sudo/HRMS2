@@ -57,17 +57,18 @@ describe("mounting", () => {
     expect(read("src/app.ts")).toContain('app.use("/api/public/appointment-letter", publicAppointmentLetterRouter);');
   });
 
-  it("exposes exactly session, file and start — and rate-limits the billed one", () => {
+  it("exposes exactly session, file, signed-file and start — and rate-limits the billed one and the signed download", () => {
     const routes = strip(read("src/modules/letters/appointmentLetterPublic.routes.ts"));
     const verbs = [...routes.matchAll(/publicAppointmentLetterRouter\.(get|post|put|patch|delete)\("([^"]+)"/g)].map((m) => `${m[1]} ${m[2]}`);
-    expect(verbs.sort()).toEqual(["get /:token/file", "get /:token/session", "post /:token/start"]);
+    expect(verbs.sort()).toEqual(["get /:token/file", "get /:token/session", "get /:token/signed-file", "post /:token/start"]);
     expect(routes).toMatch(/post\("\/:token\/start", startLimiter/);
+    expect(routes).toMatch(/get\("\/:token\/signed-file", downloadLimiter/);
   });
 
   it("marks every response as private (the URL carries a bearer token)", () => {
     const routes = strip(read("src/modules/letters/appointmentLetterPublic.routes.ts"));
     expect(routes).toContain('"Cache-Control", "no-store"');
-    expect((routes.match(/privateResponse\(res\)/g) ?? []).length).toBe(3);
+    expect((routes.match(/privateResponse\(res\)/g) ?? []).length).toBe(4);
   });
 });
 

@@ -13,6 +13,7 @@ import rateLimit from "express-rate-limit";
 import {
   getPublicLetterFile,
   getPublicLetterSession,
+  getPublicSignedLetter,
   startPublicLetterEsign,
 } from "./appointmentLetterPublic.service.js";
 
@@ -26,6 +27,15 @@ export const publicAppointmentLetterRouter = Router();
 const startLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
   max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many attempts from this network. Please wait a few minutes and try again." },
+});
+
+/** A signed letter is a salary document behind a bearer token: bound guessing and scraping. */
+const downloadLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: "Too many attempts from this network. Please wait a few minutes and try again." },
@@ -73,6 +83,19 @@ publicAppointmentLetterRouter.get("/:token/file", h(async (req, res) => {
     else res.destroy();
   });
   stream.pipe(res);
+}));
+
+/**
+ * The employee-signed copy, as a download. Same token gate and no-store headers as
+ * /file; 404 until the employee has signed, 410 for a revoked letter.
+ */
+publicAppointmentLetterRouter.get("/:token/signed-file", downloadLimiter, h(async (req, res) => {
+  privateResponse(res);
+  const file = await getPublicSignedLetter(String(req.params.token));
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Length", String(file.bytes.length));
+  res.setHeader("Content-Disposition", `attachment; filename="${file.fileName.replace(/"/g, "")}"`);
+  return res.end(file.bytes);
 }));
 
 // Starting a session is a billed provider call: rate-limited on top of the global limiter.

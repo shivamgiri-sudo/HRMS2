@@ -48,6 +48,8 @@ import { parseResendRequest, maskEmailAddress } from "./appointmentLetterResendR
 import { renderAppointmentLetterPdf } from "./appointmentLetterPdf.service.js";
 import { resolveEmployeeLetterhead, assertPrintableLetterhead } from "../org/branchAddress.service.js";
 import { resolveAppointmentLetterSalary } from "./appointmentLetterData.service.js";
+import { AcceptedCopyError, loadAcceptedCopy } from "./appointmentLetterSignedCopy.service.js";
+import { auditAppointmentLetter } from "./appointmentLetterAudit.js";
 
 const router = Router();
 type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
@@ -160,7 +162,12 @@ router.get("/appointment-letters", requireRole(...VIEW_ROLES), h(async (req, res
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT i.id, i.letter_number, i.employee_id, i.employee_code, i.employee_name, i.designation,
             i.branch_name, i.date_of_joining, i.is_ca_issued, i.employee_esign_status,
-            i.employee_esign_at, i.status, i.issued_at, i.revoked_at
+            i.employee_esign_at, i.status, i.issued_at, i.revoked_at,
+            EXISTS (SELECT 1 FROM appointment_letter_esign_transaction t
+                     WHERE t.issue_id = i.id AND t.status = 'signed' AND t.signed_file_path IS NOT NULL) AS has_accepted_copy,
+            (SELECT t.signed_file_sha256 FROM appointment_letter_esign_transaction t
+              WHERE t.issue_id = i.id AND t.status = 'signed' AND t.signed_file_path IS NOT NULL
+              ORDER BY t.completed_at DESC, t.initiated_at DESC LIMIT 1) AS accepted_copy_sha256
        FROM appointment_letter_issue i
        LEFT JOIN employees e ON e.id = i.employee_id
       WHERE ${conds.join(" AND ")}
@@ -168,11 +175,24 @@ router.get("/appointment-letters", requireRole(...VIEW_ROLES), h(async (req, res
       LIMIT ${Math.min(Number(req.query.limit ?? 100) || 100, 500)}`,
     params,
   );
-  return res.json({ success: true, data: rows });
+  // EXISTS comes back as 0/1; the screen wants a real boolean.
+  const data = (rows as RowDataPacket[]).map((r) => ({ ...r, has_accepted_copy: Number(r.has_accepted_copy) === 1 }));
+  return res.json({ success: true, data });
 }));
 
-/** Download the signed PDF. */
+/**
+ * Download a letter PDF.
+ *
+ *  ?copy=original (default)  the company-signed letter, exactly as before.
+ *  ?copy=accepted            the copy the employee signed with Aadhaar eSign,
+ *                            served from the newest signed eSign transaction.
+ *  ?inline=1                 render in the browser instead of attaching.
+ */
 router.get("/appointment-letters/:issueId/download", requireRole(...VIEW_ROLES), h(async (req, res) => {
+  const copy = String(req.query.copy ?? "original").toLowerCase();
+  if (copy !== "original" && copy !== "accepted") {
+    return res.status(400).json({ success: false, message: "copy must be 'original' or 'accepted'" });
+  }
   // Scoped in the lookup rather than after it: the PDF carries the employee's
   // salary, so an out-of-branch letter must not even be read back here.
   const scope = await branchScope(req, "COALESCE(e.branch_id, i.branch_id)");
@@ -186,6 +206,27 @@ router.get("/appointment-letters/:issueId/download", requireRole(...VIEW_ROLES),
   const r = (rows as RowDataPacket[])[0];
   if (!r) return res.status(404).json({ success: false, message: "Letter not found" });
 
+  const inline = req.query.inline === "1" || req.query.inline === "true";
+
+  if (copy === "accepted") {
+    try {
+      const file = await loadAcceptedCopy(req.params.issueId, String(r.letter_number));
+      await auditAppointmentLetter(req.params.issueId, "SIGNED_COPY_VIEWED", req.authUser!.id, {
+        transactionId: file.transactionId, inline,
+      });
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Content-Length", String(file.bytes.length));
+      res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${file.fileName.replace(/"/g, "")}"`);
+      return res.end(file.bytes);
+    } catch (error) {
+      if (error instanceof AcceptedCopyError) {
+        return res.status(error.statusCode).json({ success: false, code: error.code, message: error.message });
+      }
+      throw error;
+    }
+  }
+
   const p = String(r.signed_file_path ?? "");
   if (!p || !fs.existsSync(p)) {
     // Say which letter is missing rather than a bare 404 — the row exists, the
@@ -195,7 +236,6 @@ router.get("/appointment-letters/:issueId/download", requireRole(...VIEW_ROLES),
       message: `The signed PDF for ${r.letter_number} is not on disk. It may need to be re-issued.`,
     });
   }
-  const inline = req.query.inline === "1" || req.query.inline === "true";
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${r.letter_number}.pdf"`);
   return fs.createReadStream(p).pipe(res);

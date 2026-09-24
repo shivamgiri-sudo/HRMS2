@@ -113,6 +113,36 @@ export default function EmployeeAppointmentLetterEsignPage() {
   };
 
   const fileUrl = `/api/public/appointment-letter/${token}/file`;
+  const signedFileUrl = `/api/public/appointment-letter/${token}/signed-file`;
+  const [downloading, setDownloading] = useState(false);
+
+  /**
+   * The copy the employee signed. Fetched rather than linked so that "not available
+   * yet" is said in words on this page instead of showing the browser a JSON body.
+   */
+  const downloadSigned = async () => {
+    if (!session) return;
+    setDownloading(true);
+    setError(null);
+    try {
+      const response = await fetch(signedFileUrl);
+      if (!response.ok) {
+        const body = await readPublicJson(response);
+        throw new Error(body?.message || "Your signed letter is not available to download yet. Please contact HR.");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${session.letterNumber}-accepted.pdf`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unable to download your signed letter.");
+    } finally {
+      setDownloading(false);
+    }
+  };
   const started = session?.esignStatus === "sent" || session?.esignStatus === "opened";
 
   return (
@@ -167,12 +197,14 @@ export default function EmployeeAppointmentLetterEsignPage() {
                   {session.letterNumber}{session.signedAt ? ` · signed ${formatIst(session.signedAt)} IST` : ""}. No further action is needed.
                   Keep your signed copy for your records.
                 </p>
-                <a
-                  href={fileUrl}
-                  className="mt-4 inline-flex min-h-[48px] items-center justify-center gap-2 rounded-2xl border border-emerald-400/40 bg-emerald-500/10 px-4 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/20"
+                <button
+                  type="button"
+                  disabled={downloading}
+                  onClick={() => void downloadSigned()}
+                  className="mt-4 inline-flex min-h-[48px] items-center justify-center gap-2 rounded-2xl border border-emerald-400/40 bg-emerald-500/10 px-4 text-sm font-semibold text-emerald-100 hover:bg-emerald-500/20 disabled:opacity-60"
                 >
-                  <Download className="h-4 w-4" /> Download your signed letter
-                </a>
+                  {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Download your signed letter
+                </button>
               </div>
             </div>
           </div>

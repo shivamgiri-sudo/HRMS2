@@ -10,6 +10,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { ESIGN_STATE_COLORS, esignStatusColor } from "@/lib/esignState";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { SignedAppointmentLetterPanel, type SignedAppointmentLetter } from "@/components/letters/SignedAppointmentLetterPanel";
 import { formatISTDate } from "@/lib/utils";
 import { useToast, toast } from "@/hooks/use-toast";
 
@@ -47,6 +48,8 @@ type Pack = {
   checklist: ChecklistItem[];
   permissions: { can_download: boolean; is_self: boolean };
   audit: Array<{ action_type: string; remarks: string | null; created_at: string; document_code: string | null }>;
+  /** The appointment letter the employee signed with Aadhaar eSign (read from the appointment-letter tables). */
+  signed_appointment_letters?: SignedAppointmentLetter[];
 };
 
 type ReviewValue = {
@@ -378,6 +381,10 @@ export default function EmployeeJoiningDocumentsPage() {
           <ErrorBanner message={error} onRetry={() => void load()} />
 
           {employeeId && <JoiningKitPanel employeeId={employeeId} onSent={() => void load()} />}
+
+          {employeeId && !loading && (
+            <SignedAppointmentLetterPanel employeeId={employeeId} letters={pack?.signed_appointment_letters ?? []} />
+          )}
 
           {/* Stat tiles */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

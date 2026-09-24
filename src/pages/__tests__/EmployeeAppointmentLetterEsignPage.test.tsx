@@ -59,8 +59,22 @@ describe("EmployeeAppointmentLetterEsignPage — public, token-gated wiring", ()
     expect(code).not.toMatch(/hrmsApi/);
     const apiCalls = [...code.matchAll(/`(\/api\/[^`]+)`/g)].map((m) => m[1]);
     expect(apiCalls.length).toBeGreaterThanOrEqual(3);
-    for (const call of apiCalls) expect(call).toMatch(/^\/api\/public\/appointment-letter\/\$\{token\}\/(session|file|start)/);
+    for (const call of apiCalls) expect(call).toMatch(/^\/api\/public\/appointment-letter\/\$\{token\}\/(session|file|signed-file|start)/);
     expect(code).toMatch(/fetch\(`\/api\/public\/appointment-letter\/\$\{token\}\/start`,\s*\{\s*method:\s*"POST"/);
+  });
+
+  it("the thank-you state downloads the signed copy from the token-gated signed-file endpoint, never the /file fallback", () => {
+    expect(code).toContain("`/api/public/appointment-letter/${token}/signed-file`");
+    expect(code).toContain("Download your signed letter");
+    const from = code.indexOf("session?.signed ?");
+    const thanks = code.slice(from, code.indexOf("session && (", from));
+    expect(thanks).toContain("downloadSigned()");
+    expect(thanks).not.toContain("fileUrl");
+    // A refusal is said in words on the page rather than showing the browser a JSON body.
+    const fn = code.slice(code.indexOf("const downloadSigned"), code.indexOf("const started"));
+    expect(fn).toContain("fetch(signedFileUrl)");
+    expect(fn).toContain("readPublicJson(response)");
+    expect(fn).toContain("setError(");
   });
 
   it("reads responses through readPublicJson so a gateway HTML error page is not shown as a broken link", () => {
