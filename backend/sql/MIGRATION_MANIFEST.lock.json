@@ -881,7 +881,8 @@
     "1836_journal_voucher.sql",
     "1841_ats_onboarding_request_created_at_index.sql",
     "1842_employee_master_report_window_function_indexes.sql",
-    "1843_it_provisioning_bgv_result_column.sql"
+    "1843_it_provisioning_bgv_result_column.sql",
+    "1845_onfido_wfm_manual_inputs.sql"
   ],
   "approvedDeletions": [
     {

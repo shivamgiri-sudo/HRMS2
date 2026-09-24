@@ -6,6 +6,7 @@ import * as clientDocSeries from "./onfido-client-doc-series.service.js";
 import { ensureDocTaskTypeColumn } from "./onfido-doc-task-type-column.js";
 import { onfidoResponseCache } from "./onfido-response-cache.js";
 import { mountPoaPageRoutes } from "./onfido-poa-pages.routes.js";
+import { mountOverviewReportRoutes } from "./onfido-overview-report.routes.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { readableProcessIds } from "../process-operations/process-operations.service.js";
@@ -157,6 +158,9 @@ router.get("/metric-records/:metric", requireAuth, requireRole(...VIEWER_ROLES),
 
 // POA Internal / External / Trail pages in the reference dashboard format (2026-09-18).
 mountPoaPageRoutes(router, [requireAuth, requireRole(...VIEWER_ROLES)]);
+
+// Overview / Analyst Performance / Utilization formats and their WFM inputs (2026-09-23).
+mountOverviewReportRoutes(router, [requireAuth, requireRole(...VIEWER_ROLES)]);
 
 // Literal routes above are declared before the :table wildcard routes below —
 // otherwise Express would try to match "overview"/"tl-breakdown"/etc as a table key.
