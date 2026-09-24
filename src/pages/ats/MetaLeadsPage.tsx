@@ -217,7 +217,7 @@ export default function MetaLeadsPage() {
   const saveCallingFeedback = useCallback(async (leadId: string, feedback: CallingFeedback, notes?: string) => {
     setSavingFeedback(true);
     try {
-      const res = await hrmsApi.post(`/meta/leads/${leadId}/calling-feedback`, {
+      const res = await hrmsApi.post(`/api/meta/leads/${leadId}/calling-feedback`, {
         calling_feedback: feedback,
         notes: notes || undefined,
       });
