@@ -146,6 +146,9 @@ export async function getSeatRevenueForecast(
 
   // Rates are resolved as of the last day of the period, so a rate signed mid-month applies to the
   // month it was signed for — the same rule getSeatRevenueActuals uses.
+  // GST BASIS UNVERIFIED (2026-09-24, owner rule: P&L revenue is ex-GST): cost_centre_seat_rate
+  // .seat_rate_monthly has no stated tax basis, so it is used as entered, not reduced by a guessed
+  // GST rate. See getSeatRevenueActuals' note for how to verify it.
   const [year, month] = period.split("-").map(Number);
   const periodEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
 

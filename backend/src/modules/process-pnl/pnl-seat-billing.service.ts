@@ -236,6 +236,13 @@ interface ConfiguredRow extends RowDataPacket {
   notes: string | null;
 }
 
+/**
+ * GST BASIS UNVERIFIED (2026-09-24, owner rule: P&L revenue is ex-GST). pnl_seat_billing_line
+ * .rate_monthly / monthly_amount are typed in by Finance with no stated tax basis, so this value is
+ * used as entered — not reduced by a guessed GST rate. Verify against the invoiced per-seat rate
+ * (billing_invoice_particular_snapshot.rate, is_seat_line = 1, a taxable value) before treating
+ * seat-billing revenue as ex-GST.
+ */
 function configuredLineValue(row: { line_kind: string; rate_monthly: unknown; seats: unknown; monthly_amount?: unknown }) {
   return row.line_kind === "fixed" ? n(row.monthly_amount ?? row.rate_monthly) : n(row.rate_monthly) * n(row.seats);
 }

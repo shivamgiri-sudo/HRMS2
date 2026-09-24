@@ -465,6 +465,12 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
   //   No /100 division is needed here.
   //   Used only for cost centres that have NO particular lines for the period (NOT EXISTS guard
   //   prevents double-counting).
+  //   GST BASIS UNVERIFIED (2026-09-24). The owner rule is that P&L revenue is ex-GST. Invoice
+  //   particulars (SOURCE A) are taxable values, but provision_master carries no tax split and no
+  //   stated basis, so provision_amt / billing_amt may or may not include GST. Read as-is; not
+  //   guessed. To verify, compare them with the same cost centre + month's invoice taxable value
+  //   (billing_invoice_snapshot.total_amt) vs its GST-inclusive grand_total — see the report of
+  //   the 2026-09-24 ex-GST change for the exact read-only SQL.
   //
   // SOURCE C — billing_credit_note_snapshot (credit notes from db_bill):
   //   Negative adjustments. Applied to whichever source contributed the positive amount; netted
@@ -679,6 +685,14 @@ export async function getSeatRevenueActuals(periodCode: string): Promise<SeatRev
   }
   // Rates are resolved as of the last day of the period, so a rate signed mid-month applies to
   // the month it was signed for rather than to whenever this happens to be run.
+  //
+  // GST BASIS UNVERIFIED (2026-09-24, owner rule: P&L revenue is ex-GST). None of the rate
+  // sources below — cost_centre_seat_rate / employee_seat_rate_override /
+  // process_role_billability .seat_rate_monthly, nor finance_cost_centre_monthly_driver
+  // .revenue_rate_per_head — records whether the rate includes GST. Used as entered; not
+  // adjusted by a guessed 18%. Verify against the invoiced per-seat rate
+  // (billing_invoice_particular_snapshot.rate on is_seat_line = 1, a taxable value) before
+  // treating these as ex-GST.
   const [year, month] = periodCode.split("-").map(Number);
   const periodEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
 

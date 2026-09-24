@@ -21,11 +21,11 @@ export const PNL_TERMS = {
   RECOGNISED_REVENUE: {
     label: "Recognised Revenue",
     tooltip:
-      "Invoiced revenue, plus the billing-provision top-up where the provision exceeds what was invoiced, plus a seat rate × seats estimate for cost centres not invoiced yet; net of credit notes.",
+      "Invoiced revenue, plus the billing-provision top-up where the provision exceeds what was invoiced, plus a seat rate × seats estimate for cost centres not invoiced yet; net of credit notes. All amounts ex-GST (taxable value, GST excluded).",
   },
   INVOICED_REVENUE: {
     label: "of which Invoiced",
-    tooltip: "The part of Recognised Revenue backed by raised invoices.",
+    tooltip: "The part of Recognised Revenue backed by raised invoices, ex-GST (taxable value).",
   },
   PEOPLE_COST: {
     label: "People Cost",
@@ -35,16 +35,16 @@ export const PNL_TERMS = {
   INDIRECT_COST: {
     label: "Indirect Cost (GRN)",
     tooltip:
-      "Vendor spend booked through GRNs against the month: GRN Consumed, plus GRN Committed (reserved) while the month's estimate window is open.",
+      "Vendor spend booked through GRNs against the month, ex-GST (amount without tax; no GST is counted, recoverable or not): GRN Consumed, plus GRN Committed (reserved) while the month's estimate window is open.",
   },
   GRN_CONSUMED: {
     label: "GRN Consumed",
-    tooltip: "GRN spend already consumed against bills for the month.",
+    tooltip: "GRN spend already consumed against bills for the month, ex-GST (amount without tax).",
   },
   GRN_COMMITTED: {
     label: "GRN Committed (reserved)",
     tooltip:
-      "Approved GRN spend reserved but not yet consumed — a committed estimate for the open month, subtracted in Operating Profit so it is not overstated.",
+      "Approved GRN spend reserved but not yet consumed, ex-GST (amount without tax) — a committed estimate for the open month, subtracted in Operating Profit so it is not overstated.",
   },
   OPERATING_PROFIT: {
     label: "Operating Profit",
