@@ -1138,6 +1138,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1853_meta_lead_messages_delivery_status.sql", // Registered 2026-09-24. Adds nullable delivery_status VARCHAR(20) and delivery_updated_at DATETIME to meta_lead_messages so the WhatsApp inbox shows real Wassenger delivery state (queued/sent/delivered/read/failed) instead of assuming accepted-into-queue means delivered. Additive, idempotent (information_schema guards).
   "1854_employee_lob_mapping_upload_template.sql", // Registered 2026-09-24 (renumbered from 1853 to resolve numbering collision). Seeds the EMPLOYEE_LOB_MAPPING upload_template_master row (employee_code, lob_code) for the Bulk Upload Hub. Insert-if-absent, additive, replay-safe.
   "1855_bulk_upload_lob_only_page_access.sql", // Registered 2026-09-24. role_page_access grant of BULK_UPLOAD (Bulk Upload Hub page) to branch_wfm/ho_wfm/wfm_spoc, which may use only the Employee LOB Mapping upload type (enforced in bulk-role-restriction.ts). Roles absent from workforce_role_catalog skipped. Additive, idempotent.
+  "1856_fix_salary_start_date_before_doj.sql", // Registered 2026-09-24. Corrective UPDATE: resets salary_start_date = date_of_joining for employees where salary_start_date was erroneously set before date_of_joining (batch-import paths lacked the >= DOJ guard). One-time data fix, idempotent (WHERE clause only matches affected rows).
   ];
 
 export type MigrationHealth = {

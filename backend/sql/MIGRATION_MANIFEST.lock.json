@@ -886,7 +886,9 @@
     "1846_provisioning_hr_bgv_page_access.sql",
     "1852_pnl_grn_allocation_view_ex_gst.sql",
     "1853_meta_lead_messages_delivery_status.sql",
-    "1854_employee_lob_mapping_upload_template.sql"
+    "1854_employee_lob_mapping_upload_template.sql",
+    "1855_bulk_upload_lob_only_page_access.sql",
+    "1856_fix_salary_start_date_before_doj.sql"
   ],
   "approvedDeletions": [
     {
