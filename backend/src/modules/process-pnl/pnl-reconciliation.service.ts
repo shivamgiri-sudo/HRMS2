@@ -7,6 +7,7 @@ import { getCurrentDateIST } from "../../shared/istDate.js";
 import { ccProcessJoin, ccProcessNameSql } from "./cost-centre-label.js";
 import { overrideJoinSql } from "./pnl-cost-centre-override.service.js";
 import { budgetByBranchId, budgetByCostCentreId, readBudgetEntries } from "./pnl-budget-source.js";
+import { cachedPnlRead } from "./pnl-read-cache.js";
 
 export type PnlReconciliationMode = "FINAL" | "LIVE_MTD" | "BLOCKED";
 export type PnlSourceStatus = "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL" | "ESTIMATED";
@@ -685,7 +686,63 @@ function sourceStatus(row: {
   return row.accrual > 0 ? "PARTIAL" : "ACTUAL";
 }
 
-export async function getPnlReconciliation(
+/**
+ * The company-wide, period-only reads behind every Live P&L scope: revenue, GRN, budget, payroll,
+ * below-the-line, source freshness and exceptions. None of them takes a branch or process filter —
+ * the scope is applied afterwards through readCostCentres() — so every scope of the same month
+ * (the page header, the Live P&L tab, CEO Overview's estimate, the Statement's live estimate, the
+ * trend) reads the SAME rows. Cached per period (60s, single-flight, pnl-read-cache.ts) so one
+ * page load runs them once instead of once per caller. The returned maps are shared: read-only.
+ */
+function readPeriodSources(period: string) {
+  return cachedPnlRead("pnl-reconciliation:period-sources", { period }, async () => {
+    const [revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut] = await Promise.all([
+      readRevenue(period),
+      readGrn(period),
+      readGrnCommitted(period),
+      readBudgets(period),
+      readPayroll(period),
+      readBelowTheLine(period),
+      Promise.all([
+        sourceFreshness("Invoice lines", "billing_invoice_particular_snapshot", period),
+        sourceFreshness("Billing provision", "billing_provision_snapshot", period),
+        sourceFreshness("Credit notes", "billing_credit_note_snapshot", period),
+        sourceFreshness("GRN", "grn_entry_snapshot", period),
+        payrollFreshness(period),
+        runningSalaryFreshness(period),
+      ]),
+      exceptions(period),
+    ]);
+    return { revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut };
+  });
+}
+
+/**
+ * Live P&L for a period and scope. Cached for 60s with single-flight (pnl-read-cache.ts): the key
+ * carries every input that shapes the result — period, the caller's resolved branch entitlement
+ * (branchIds), the client/search-derived processIds (undefined "no filter" and [] "nothing
+ * matched" stay distinct), includeInactive and the IST as-of date — so no scope is ever served
+ * another's figures, and the header, the Live P&L tab and CEO Overview asking for the same scope
+ * share one computation.
+ */
+export function getPnlReconciliation(
+  period: string,
+  filters: PnlReconciliationFilters = {},
+): Promise<PnlReconciliation> {
+  return cachedPnlRead(
+    "pnl-reconciliation",
+    {
+      period,
+      branchIds: filters.branchIds ?? [],
+      processIds: filters.processIds === undefined ? "none" : filters.processIds,
+      includeInactive: Boolean(filters.includeInactive),
+      asOfDate: filters.asOfDate ?? getCurrentDateIST(),
+    },
+    () => buildPnlReconciliation(period, filters),
+  );
+}
+
+async function buildPnlReconciliation(
   period: string,
   filters: PnlReconciliationFilters = {},
 ): Promise<PnlReconciliation> {
@@ -693,35 +750,22 @@ export async function getPnlReconciliation(
     throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
   }
 
-  const [allCostCentres, revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut, unallocated] = await Promise.all([
-    readCostCentres(filters),
-    readRevenue(period),
-    readGrn(period),
-    readGrnCommitted(period),
-    readBudgets(period),
-    readPayroll(period),
-    readBelowTheLine(period),
-    Promise.all([
-      sourceFreshness("Invoice lines", "billing_invoice_particular_snapshot", period),
-      sourceFreshness("Billing provision", "billing_provision_snapshot", period),
-      sourceFreshness("Credit notes", "billing_credit_note_snapshot", period),
-      sourceFreshness("GRN", "grn_entry_snapshot", period),
-      payrollFreshness(period),
-      runningSalaryFreshness(period),
-    ]),
-    exceptions(period),
-    readUnallocatedPayroll(period, filters.branchIds, filters.processIds),
-  ]);
-
-  const payrollPosted = (freshness.find((item) => item.source === "Payroll")?.rows ?? 0) > 0;
-
   // Seat-rate estimate for cost centres the month has not invoiced yet. Only inside the open
   // billing window: a closed month with no invoice stays at zero instead of acquiring revenue
   // nobody billed. A failure here degrades to "no estimate", never to a broken Live P&L.
+  // Read in parallel with the period sources (it depends on none of them).
   const asOfDate = filters.asOfDate ?? getCurrentDateIST();
   const estimateApplies = isEstimateWindow(period, asOfDate);
-  const seatBilling = await getSeatBillingEstimate(period, { branchIds: filters.branchIds, asOfDate })
-    .catch(() => null);
+
+  const [allCostCentres, sources, unallocated, seatBilling] = await Promise.all([
+    readCostCentres(filters),
+    readPeriodSources(period),
+    readUnallocatedPayroll(period, filters.branchIds, filters.processIds),
+    getSeatBillingEstimate(period, { branchIds: filters.branchIds, asOfDate }).catch(() => null),
+  ]);
+  const { revenue, grn, grnCommitted, budgets, payroll, belowTheLine, freshness, exceptionsOut } = sources;
+
+  const payrollPosted = (freshness.find((item) => item.source === "Payroll")?.rows ?? 0) > 0;
   const seatByCc = new Map<string, CostCentreSeatBilling>(
     (seatBilling?.costCentres ?? []).map((item) => [item.costCentreId, item]),
   );

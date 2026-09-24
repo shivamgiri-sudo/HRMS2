@@ -1,6 +1,7 @@
 import type { BpoPnlRow } from "./bpo-pnl.service.js";
 import { getCachedAllocationSummary } from "./canonical-pnl.service.js";
 import { costComponentDataFlags, type CostComponentDataFlags } from "./pnl-cost-component-flags.js";
+import { cachedPnlRead } from "./pnl-read-cache.js";
 
 /**
  * "Full P&L Waterfall" — a supplementary, ADDITIONAL branch/company-wide total, built by summing
@@ -96,12 +97,22 @@ function sumRows(rows: BpoPnlRow[]) {
  * already scopes the SQL to that branch (bpoPnlService.getSummary's branchFilters), so `rows` here
  * contains only that branch's active processes — no extra filtering is applied on top.
  */
-export async function getFullWaterfall(period: string, branchId?: string | null): Promise<FullWaterfallTotals> {
+export function getFullWaterfall(period: string, branchId?: string | null): Promise<FullWaterfallTotals> {
+  // 60s result cache + single-flight (pnl-read-cache.ts), keyed by period and the caller's
+  // RESOLVED branch scope (the route passes resolveFinanceBranchScope's answer), so a branch-bound
+  // user can never be served another branch's or the company's totals.
+  return cachedPnlRead("pnl-full-waterfall", { period, branchId: branchId ?? null }, () => buildFullWaterfall(period, branchId));
+}
+
+async function buildFullWaterfall(period: string, branchId?: string | null): Promise<FullWaterfallTotals> {
   const filters = branchId ? { period, branchId } : { period };
-  const summary = await getCachedAllocationSummary(filters);
+  // Independent reads, run together.
+  const [summary, flags] = await Promise.all([
+    getCachedAllocationSummary(filters),
+    costComponentDataFlags(period, branchId ? { branchId } : {}),
+  ]);
   const rows = summary.rows as BpoPnlRow[];
   const totals = sumRows(rows);
-  const flags = await costComponentDataFlags(period, branchId ? { branchId } : {});
 
   return {
     period,

@@ -49,6 +49,7 @@ import {
 import { getPnlTrendSeries } from "./pnl-trend-series.service.js";
 import { getPnlInsights } from "./pnl-insights.service.js";
 import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
+import { clearPnlReadCache } from "./pnl-read-cache.js";
 import { narrowProcessScope, resolveClientSearchProcessIds } from "./pnl-client-search-scope.js";
 import { refreshRunningSalarySnapshot } from "./pnl-running-salary.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
@@ -200,6 +201,20 @@ async function scopedBudget(req: AuthenticatedRequest, budgetId: string) {
 }
 
 router.use(requireAuth);
+
+/*
+ * A successful P&L write under /pnl (cost-centre override, manual adjustment, below-the-line cost,
+ * recalculate, …) clears the 60s read cache (pnl-read-cache.ts), so whoever made the change sees it
+ * on the next read rather than up to a minute later. Never blocks or denies: it always calls next().
+ */
+router.use("/pnl", (req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") {
+    res.on("finish", () => {
+      if (res.statusCode < 400) clearPnlReadCache();
+    });
+  }
+  next();
+});
 
 router.get(
   "/pnl/budgets",
