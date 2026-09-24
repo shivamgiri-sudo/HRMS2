@@ -24,6 +24,7 @@ describe("getRosterGrid", () => {
       employeeId: "emp-1", employeeName: "Jane Doe", rosterDate: "2026-08-24",
       assignmentId: "assign-1", shiftTemplateId: "shift-1", shiftTemplateName: "Day 09-18",
       isWeekOff: false, finalRosterStatus: "generated",
+      lobId: null, lobName: null,
     }]);
     const [sql, params] = executeMock.mock.calls[0];
     expect(String(sql)).toContain("wra.cycle_id = ?");
