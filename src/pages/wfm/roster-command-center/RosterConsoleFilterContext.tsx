@@ -19,6 +19,7 @@ import { createContext, useContext } from "react";
 export interface RosterConsoleFilters {
   branchId: string; // "" = all branches
   processId: string; // "" = all processes
+  lobId: string; // "" = all LOBs, "__none__" = employees with no LOB
   from: string; // YYYY-MM-DD
   to: string; // YYYY-MM-DD
 }
@@ -27,6 +28,8 @@ export interface RosterConsoleFilterContextValue {
   filters: RosterConsoleFilters;
   setBranchId: (branchId: string) => void;
   setProcessId: (processId: string) => void;
+  setLobId: (lobId: string) => void;
+  resetFilters: () => void;
   setDateRange: (from: string, to: string) => void;
 }
 

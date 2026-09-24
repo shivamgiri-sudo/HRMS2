@@ -2,7 +2,7 @@
  * Roster Analytics Dashboard — Phase 2
  *
  * Design System: MAS HRMS Frozen Patterns
- * - GlassCard containers with backdrop-blur
+ * - ConsoleCard containers with backdrop-blur
  * - Gradient headers (teal for attendance domain)
  * - Tone color system for KPIs
  * - Bento grid layout (density 8/10)
@@ -22,6 +22,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
+import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
+import { KpiTile, toKpiTone } from "@/components/wfm/console/KpiTile";
+import { PanelHeader } from "@/components/wfm/console/PanelHeader";
+import { FilterNote } from "@/components/wfm/console/FilterNote";
+import { scopeParams } from "./filterState";
 import {
   TrendingDown,
   TrendingUp,
@@ -171,21 +176,13 @@ function getPreviousMonth(): string {
 
 // ── Subcomponents ────────────────────────────────────────────────────────────
 
-function GlassCard({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div className={`rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm hover:shadow-md transition-all duration-200 ${className}`}>
-      {children}
-    </div>
-  );
-}
-
 function MetricTile({
   label,
   value,
   helper,
   tone = "slate",
   trend,
-  icon: Icon,
+  icon,
 }: {
   label: string;
   value: string | number;
@@ -194,29 +191,16 @@ function MetricTile({
   trend?: number;
   icon: React.ElementType;
 }) {
-  const colors = TONE[tone];
   return (
-    <GlassCard className="p-4">
-      <div className="flex items-start justify-between">
-        <div
-          className="flex h-10 w-10 items-center justify-center rounded-xl"
-          style={{ backgroundColor: colors.iconBg }}
-        >
-          <Icon className="h-5 w-5" style={{ color: colors.value }} />
-        </div>
-        {trend !== undefined && (
-          <div className={`flex items-center gap-1 text-xs font-medium ${trend >= 0 ? "text-red-600" : "text-emerald-600"}`}>
-            {trend >= 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-            {Math.abs(trend)}%
-          </div>
-        )}
-      </div>
-      <div className="mt-3">
-        <p className="text-2xl font-bold" style={{ color: colors.value }}>{value}</p>
-        <p className="text-sm font-medium text-slate-700">{label}</p>
-        {helper && <p className="text-xs text-slate-500 mt-0.5">{helper}</p>}
-      </div>
-    </GlassCard>
+    <KpiTile
+      label={label}
+      value={value}
+      sub={helper}
+      tone={toKpiTone(tone)}
+      icon={icon}
+      delta={trend}
+      deltaBad="up"
+    />
   );
 }
 
@@ -256,6 +240,7 @@ export default function AnalyticsPanel() {
   const { filters } = useRosterConsoleFilters();
   const branchId = filters.branchId || ALL;
   const processId = filters.processId || ALL;
+  const lobId = filters.lobId;
   const weekStart = getWeekStart();
   const period = getPreviousMonth();
 
@@ -269,21 +254,17 @@ export default function AnalyticsPanel() {
   });
 
   const { data: qualityData, isLoading: qualityLoading } = useQuery({
-    queryKey: ["roster-analytics", "quality", branchId, processId, period],
+    queryKey: ["roster-analytics", "quality", branchId, processId, lobId, period],
     queryFn: () => {
-      const params = new URLSearchParams({ period });
-      if (branchId !== ALL) params.set("branchId", branchId);
-      if (processId !== ALL) params.set("processId", processId);
+      const params = scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId }, { period });
       return hrmsApi.get<QualityCorrelation>(`/api/roster-analytics/quality-correlation?${params}`);
     },
   });
 
   const { data: costData, isLoading: costLoading } = useQuery({
-    queryKey: ["roster-analytics", "cost", branchId, processId, period],
+    queryKey: ["roster-analytics", "cost", branchId, processId, lobId, period],
     queryFn: () => {
-      const params = new URLSearchParams({ period });
-      if (branchId !== ALL) params.set("branchId", branchId);
-      if (processId !== ALL) params.set("processId", processId);
+      const params = scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId }, { period });
       return hrmsApi.get<CostImpact>(`/api/roster-analytics/cost-impact?${params}`);
     },
   });
@@ -295,49 +276,41 @@ export default function AnalyticsPanel() {
   });
 
   return (
-      <div className="bg-gradient-to-br from-slate-50 via-teal-50/30 to-cyan-50/20 p-4 sm:p-6 -m-4 sm:-m-6 rounded-b-2xl">
-        {/* Header with gradient (teal for attendance domain) */}
-        <div className="mb-6 rounded-2xl bg-gradient-to-r from-teal-600 via-cyan-600 to-blue-600 p-6 text-white shadow-lg shadow-teal-500/20">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur">
-                <BarChart3 className="h-6 w-6" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold">Roster Analytics Intelligence</h1>
-                <p className="text-teal-100 text-sm">Shrinkage patterns, quality correlation, cost impact, and forecasting</p>
-              </div>
-            </div>
-          </div>
-        </div>
+      <div>
+        <PanelHeader
+          icon={BarChart3}
+          title="Roster Analytics"
+          description="Shrinkage patterns, quality correlation, cost impact, and forecasting"
+        />
 
         <Tabs defaultValue="shrinkage" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 lg:w-[600px] bg-white/80 backdrop-blur">
-            <TabsTrigger value="shrinkage" className="flex items-center gap-2 data-[state=active]:bg-teal-500 data-[state=active]:text-white">
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 lg:w-[600px]">
+            <TabsTrigger value="shrinkage" className="flex items-center gap-2">
               <BarChart3 className="h-4 w-4" /> Shrinkage
             </TabsTrigger>
-            <TabsTrigger value="quality" className="flex items-center gap-2 data-[state=active]:bg-violet-500 data-[state=active]:text-white">
+            <TabsTrigger value="quality" className="flex items-center gap-2">
               <Target className="h-4 w-4" /> Quality
             </TabsTrigger>
-            <TabsTrigger value="cost" className="flex items-center gap-2 data-[state=active]:bg-red-500 data-[state=active]:text-white">
+            <TabsTrigger value="cost" className="flex items-center gap-2">
               <DollarSign className="h-4 w-4" /> Cost
             </TabsTrigger>
-            <TabsTrigger value="forecast" className="flex items-center gap-2 data-[state=active]:bg-blue-500 data-[state=active]:text-white">
+            <TabsTrigger value="forecast" className="flex items-center gap-2">
               <LineChart className="h-4 w-4" /> Forecast
             </TabsTrigger>
           </TabsList>
 
           {/* Shrinkage Tab */}
           <TabsContent value="shrinkage" className="space-y-4">
+            {lobId && <FilterNote />}
             {branchId === ALL ? (
-              <GlassCard className="py-12 text-center text-slate-500">
+              <ConsoleCard className="py-12 text-center text-slate-500">
                 <Calendar className="h-12 w-12 mx-auto mb-3 text-slate-300" />
                 <p className="font-medium">Select a branch to view shrinkage intelligence</p>
-              </GlassCard>
+              </ConsoleCard>
             ) : shrinkageLoading ? (
-              <GlassCard className="py-12 text-center">
+              <ConsoleCard className="py-12 text-center">
                 <div className="animate-pulse">Loading shrinkage data...</div>
-              </GlassCard>
+              </ConsoleCard>
             ) : shrinkageData ? (
               <>
                 {/* KPI Tiles */}
@@ -375,7 +348,7 @@ export default function AnalyticsPanel() {
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   {/* Breakdown */}
-                  <GlassCard>
+                  <ConsoleCard>
                     <div className="p-4 border-b border-slate-100">
                       <h3 className="font-semibold text-slate-800 flex items-center gap-2">
                         <BarChart3 className="h-5 w-5 text-teal-600" /> Shrinkage Breakdown
@@ -398,10 +371,10 @@ export default function AnalyticsPanel() {
                         </div>
                       ))}
                     </div>
-                  </GlassCard>
+                  </ConsoleCard>
 
                   {/* Day Pattern */}
-                  <GlassCard>
+                  <ConsoleCard>
                     <div className="p-4 border-b border-slate-100">
                       <h3 className="font-semibold text-slate-800 flex items-center gap-2">
                         <Calendar className="h-5 w-5 text-blue-600" /> Day-of-Week Pattern
@@ -423,11 +396,11 @@ export default function AnalyticsPanel() {
                         ))}
                       </div>
                     </div>
-                  </GlassCard>
+                  </ConsoleCard>
                 </div>
 
                 {/* Manager Ranking */}
-                <GlassCard>
+                <ConsoleCard>
                   <div className="p-4 border-b border-slate-100">
                     <div className="flex items-center gap-3">
                       <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100">
@@ -473,12 +446,12 @@ export default function AnalyticsPanel() {
                       </tbody>
                     </table>
                   </div>
-                </GlassCard>
+                </ConsoleCard>
 
                 {/* Merge-plan Phase B bug #5: processRanking was already computed
                     server-side but discarded by the frontend — render it. */}
                 {shrinkageData.processRanking.length > 0 ? (
-                  <GlassCard>
+                  <ConsoleCard>
                     <div className="p-4 border-b border-slate-100">
                       <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-teal-100">
@@ -514,7 +487,7 @@ export default function AnalyticsPanel() {
                         </tbody>
                       </table>
                     </div>
-                  </GlassCard>
+                  </ConsoleCard>
                 ) : null}
               </>
             ) : null}
@@ -523,13 +496,13 @@ export default function AnalyticsPanel() {
           {/* Quality Tab */}
           <TabsContent value="quality" className="space-y-4">
             {qualityLoading ? (
-              <GlassCard className="py-12 text-center">
+              <ConsoleCard className="py-12 text-center">
                 <div className="animate-pulse">Loading quality data...</div>
-              </GlassCard>
+              </ConsoleCard>
             ) : qualityData ? (
               <>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                  <GlassCard className="lg:col-span-2">
+                  <ConsoleCard className="lg:col-span-2">
                     <div className="p-4 border-b border-slate-100">
                       <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100">
@@ -552,9 +525,9 @@ export default function AnalyticsPanel() {
                         </div>
                       </div>
                     </div>
-                  </GlassCard>
+                  </ConsoleCard>
 
-                  <GlassCard>
+                  <ConsoleCard>
                     <div className="p-4 border-b border-slate-100">
                       <h3 className="font-semibold text-slate-800">Segment Analysis</h3>
                     </div>
@@ -576,11 +549,11 @@ export default function AnalyticsPanel() {
                         );
                       })}
                     </div>
-                  </GlassCard>
+                  </ConsoleCard>
                 </div>
 
                 {qualityData.actionableInsights.length > 0 && (
-                  <GlassCard className="border-amber-200 bg-gradient-to-br from-amber-50/80 to-white">
+                  <ConsoleCard className="border-amber-200 bg-amber-50">
                     <div className="p-4 border-b border-amber-100">
                       <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100">
@@ -599,11 +572,11 @@ export default function AnalyticsPanel() {
                         ))}
                       </ul>
                     </div>
-                  </GlassCard>
+                  </ConsoleCard>
                 )}
 
                 {qualityData.outliers.length > 0 && (
-                  <GlassCard>
+                  <ConsoleCard>
                     <div className="p-4 border-b border-slate-100">
                       <h3 className="font-semibold text-slate-800">Notable Outliers</h3>
                       <p className="text-xs text-slate-500">Employees with unusual quality/adherence patterns</p>
@@ -640,7 +613,7 @@ export default function AnalyticsPanel() {
                         </tbody>
                       </table>
                     </div>
-                  </GlassCard>
+                  </ConsoleCard>
                 )}
               </>
             ) : null}
@@ -649,9 +622,9 @@ export default function AnalyticsPanel() {
           {/* Cost Tab */}
           <TabsContent value="cost" className="space-y-4">
             {costLoading ? (
-              <GlassCard className="py-12 text-center">
+              <ConsoleCard className="py-12 text-center">
                 <div className="animate-pulse">Loading cost data...</div>
-              </GlassCard>
+              </ConsoleCard>
             ) : costData ? (
               <>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
@@ -686,7 +659,7 @@ export default function AnalyticsPanel() {
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <GlassCard>
+                  <ConsoleCard>
                     <div className="p-4 border-b border-slate-100">
                       <h3 className="font-semibold text-slate-800 flex items-center gap-2">
                         <DollarSign className="h-5 w-5 text-red-600" /> Cost Breakdown
@@ -713,9 +686,9 @@ export default function AnalyticsPanel() {
                         );
                       })}
                     </div>
-                  </GlassCard>
+                  </ConsoleCard>
 
-                  <GlassCard>
+                  <ConsoleCard>
                     <div className="p-4 border-b border-slate-100">
                       <h3 className="font-semibold text-slate-800 flex items-center gap-2">
                         <LineChart className="h-5 w-5 text-blue-600" /> Annual Projection
@@ -741,10 +714,10 @@ export default function AnalyticsPanel() {
                         </span>
                       </div>
                     </div>
-                  </GlassCard>
+                  </ConsoleCard>
                 </div>
 
-                <GlassCard>
+                <ConsoleCard>
                   <div className="p-4 border-b border-slate-100">
                     <h3 className="font-semibold text-slate-800 flex items-center gap-2">
                       <Target className="h-5 w-5 text-indigo-600" /> Industry Benchmark
@@ -769,26 +742,27 @@ export default function AnalyticsPanel() {
                       </Badge>
                     </div>
                   </div>
-                </GlassCard>
+                </ConsoleCard>
               </>
             ) : null}
           </TabsContent>
 
           {/* Forecast Tab */}
           <TabsContent value="forecast" className="space-y-4">
+            {lobId && <FilterNote />}
             {branchId === ALL ? (
-              <GlassCard className="py-12 text-center text-slate-500">
+              <ConsoleCard className="py-12 text-center text-slate-500">
                 <LineChart className="h-12 w-12 mx-auto mb-3 text-slate-300" />
                 <p className="font-medium">Select a branch to view shrinkage forecast</p>
-              </GlassCard>
+              </ConsoleCard>
             ) : forecastLoading ? (
-              <GlassCard className="py-12 text-center">
+              <ConsoleCard className="py-12 text-center">
                 <div className="animate-pulse">Loading forecast data...</div>
-              </GlassCard>
+              </ConsoleCard>
             ) : forecastData ? (
               <>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                  <GlassCard className="lg:col-span-2">
+                  <ConsoleCard className="lg:col-span-2">
                     <div className="p-4 border-b border-slate-100">
                       <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100">
@@ -832,9 +806,9 @@ export default function AnalyticsPanel() {
                         </div>
                       </div>
                     </div>
-                  </GlassCard>
+                  </ConsoleCard>
 
-                  <GlassCard>
+                  <ConsoleCard>
                     <div className="p-4 border-b border-slate-100">
                       <h3 className="font-semibold text-slate-800">Historical Patterns</h3>
                     </div>
@@ -852,11 +826,11 @@ export default function AnalyticsPanel() {
                         </div>
                       ))}
                     </div>
-                  </GlassCard>
+                  </ConsoleCard>
                 </div>
 
                 {forecastData.recommendations.length > 0 && (
-                  <GlassCard className="border-blue-200 bg-gradient-to-br from-blue-50/80 to-white">
+                  <ConsoleCard className="border-blue-200 bg-blue-50">
                     <div className="p-4 border-b border-blue-100">
                       <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100">
@@ -875,7 +849,7 @@ export default function AnalyticsPanel() {
                         ))}
                       </ul>
                     </div>
-                  </GlassCard>
+                  </ConsoleCard>
                 )}
               </>
             ) : null}

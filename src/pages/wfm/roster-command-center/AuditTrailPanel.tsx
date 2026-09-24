@@ -24,6 +24,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { useRosterConsoleFilters } from './RosterConsoleFilterContext';
+import { KpiTile } from '@/components/wfm/console/KpiTile';
+import { PanelHeader } from '@/components/wfm/console/PanelHeader';
+import { FilterNote } from '@/components/wfm/console/FilterNote';
+import { scopeParams } from './filterState';
 import {
   Select,
   SelectContent,
@@ -134,10 +139,8 @@ const toneColors = {
 
 export default function AuditTrailPanel() {
   const [activeTab, setActiveTab] = useState('trails');
-  const [dateFrom, setDateFrom] = useState(
-    new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-  );
-  const [dateTo, setDateTo] = useState(new Date().toISOString().slice(0, 10));
+  const { filters } = useRosterConsoleFilters();
+  const { from: dateFrom, to: dateTo, branchId, processId, lobId } = filters;
   const [changeTypeFilter, setChangeTypeFilter] = useState<string>('all');
   const [amendDialogOpen, setAmendDialogOpen] = useState(false);
   const [amendCycleId, setAmendCycleId] = useState('');
@@ -148,9 +151,9 @@ export default function AuditTrailPanel() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   const { data: trailsData, isLoading: trailsLoading, refetch: refetchTrails } = useQuery({
-    queryKey: ['roster-audit-trails', dateFrom, dateTo, changeTypeFilter],
+    queryKey: ['roster-audit-trails', dateFrom, dateTo, branchId, processId, lobId, changeTypeFilter],
     queryFn: async () => {
-      const params = new URLSearchParams();
+      const params = scopeParams({ branchId, processId, lobId });
       if (dateFrom) params.append('dateFrom', dateFrom);
       if (dateTo) params.append('dateTo', dateTo);
       if (changeTypeFilter && changeTypeFilter !== 'all') {
@@ -163,9 +166,9 @@ export default function AuditTrailPanel() {
   });
 
   const { data: summaryData, isLoading: summaryLoading } = useQuery({
-    queryKey: ['roster-audit-summary', dateFrom, dateTo],
+    queryKey: ['roster-audit-summary', dateFrom, dateTo, branchId, processId, lobId],
     queryFn: async () => {
-      const params = new URLSearchParams();
+      const params = scopeParams({ branchId, processId, lobId });
       if (dateFrom) params.append('dateFrom', dateFrom);
       if (dateTo) params.append('dateTo', dateTo);
       const res = await api.get(`/roster-audit/summary?${params}`);
@@ -231,174 +234,37 @@ export default function AuditTrailPanel() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100 p-4 sm:p-6">
-      <div className="max-w-[1600px] mx-auto space-y-6">
-        {/* Header */}
-        <div className="rounded-2xl bg-gradient-to-br from-slate-700 via-slate-800 to-slate-900 p-6 text-white shadow-lg">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center">
-                <History className="w-6 h-6 text-white" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold">Roster Audit Trail</h1>
-                <p className="text-slate-300 text-sm">
-                  Track every roster change for compliance and accountability
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 bg-white/10 rounded-lg px-3 py-2">
-                <Calendar className="w-4 h-4" />
-                <Input
-                  type="date"
-                  value={dateFrom}
-                  onChange={(e) => setDateFrom(e.target.value)}
-                  className="bg-transparent border-0 text-white w-32 h-6 p-0"
-                />
-                <span>to</span>
-                <Input
-                  type="date"
-                  value={dateTo}
-                  onChange={(e) => setDateTo(e.target.value)}
-                  className="bg-transparent border-0 text-white w-32 h-6 p-0"
-                />
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => refetchTrails()}
-                className="bg-white/10 border-white/20 text-white hover:bg-white/20"
-              >
+    <div className="space-y-4">
+      <div className="space-y-4">
+        <PanelHeader
+          icon={History}
+          title="Roster Audit Trail"
+          description="Track every roster change for compliance and accountability"
+          actions={
+            <>
+              <Button variant="outline" size="sm" className="cursor-pointer" onClick={() => refetchTrails()}>
                 <RefreshCw className="w-4 h-4 mr-1" />
                 Refresh
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setAmendDialogOpen(true)}
-                className="bg-amber-500/80 border-amber-400 text-white hover:bg-amber-500"
-              >
+              <Button size="sm" className="cursor-pointer" onClick={() => setAmendDialogOpen(true)}>
                 Record Amendment
               </Button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+        />
 
-        {/* Summary Cards */}
         {!summaryLoading && summaryData && (
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-            <Card className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-10 h-10 rounded-lg flex items-center justify-center"
-                    style={{ backgroundColor: toneColors.blue.iconBg }}
-                  >
-                    <FileText className="w-5 h-5" style={{ color: toneColors.blue.value }} />
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500 uppercase font-medium">Total Changes</p>
-                    <p className="text-xl font-bold" style={{ color: toneColors.blue.value }}>
-                      {summaryData.totalChanges.toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-10 h-10 rounded-lg flex items-center justify-center"
-                    style={{ backgroundColor: toneColors.amber.iconBg }}
-                  >
-                    <User className="w-5 h-5" style={{ color: toneColors.amber.value }} />
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500 uppercase font-medium">Manual Overrides</p>
-                    <p className="text-xl font-bold" style={{ color: toneColors.amber.value }}>
-                      {summaryData.manualOverrides}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-10 h-10 rounded-lg flex items-center justify-center"
-                    style={{ backgroundColor: toneColors.violet.iconBg }}
-                  >
-                    <GitBranch className="w-5 h-5" style={{ color: toneColors.violet.value }} />
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500 uppercase font-medium">Override Rate</p>
-                    <p className="text-xl font-bold" style={{ color: toneColors.violet.value }}>
-                      {summaryData.overrideRate}%
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-10 h-10 rounded-lg flex items-center justify-center"
-                    style={{ backgroundColor: toneColors.green.iconBg }}
-                  >
-                    <CheckCircle className="w-5 h-5" style={{ color: toneColors.green.value }} />
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500 uppercase font-medium">Auto Runs</p>
-                    <p className="text-xl font-bold" style={{ color: toneColors.green.value }}>
-                      {summaryData.generationRuns.auto}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-10 h-10 rounded-lg flex items-center justify-center"
-                    style={{
-                      backgroundColor:
-                        summaryData.generationRuns.totalConflicts > 0
-                          ? '#fff0f1'
-                          : toneColors.slate.iconBg,
-                    }}
-                  >
-                    <AlertTriangle
-                      className="w-5 h-5"
-                      style={{
-                        color:
-                          summaryData.generationRuns.totalConflicts > 0 ? '#dc2626' : '#64748b',
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500 uppercase font-medium">Conflicts</p>
-                    <p
-                      className="text-xl font-bold"
-                      style={{
-                        color:
-                          summaryData.generationRuns.totalConflicts > 0 ? '#dc2626' : '#64748b',
-                      }}
-                    >
-                      {summaryData.generationRuns.totalConflicts}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+            <KpiTile icon={FileText} tone="blue" label="Total Changes" value={summaryData.totalChanges.toLocaleString()} />
+            <KpiTile icon={User} tone="amber" label="Manual Overrides" value={summaryData.manualOverrides} />
+            <KpiTile icon={GitBranch} tone="violet" label="Override Rate" value={`${summaryData.overrideRate}%`} />
+            <KpiTile icon={CheckCircle} tone="green" label="Auto Runs" value={summaryData.generationRuns.auto} />
+            <KpiTile
+              icon={AlertTriangle}
+              tone={summaryData.generationRuns.totalConflicts > 0 ? "red" : "neutral"}
+              label="Conflicts"
+              value={summaryData.generationRuns.totalConflicts}
+            />
           </div>
         )}
 
@@ -416,7 +282,7 @@ export default function AuditTrailPanel() {
           </TabsList>
 
           <TabsContent value="trails" className="mt-4">
-            <Card className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm">
+            <Card className="rounded-lg">
               <CardHeader className="border-b pb-4">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-lg font-semibold flex items-center gap-2">
@@ -522,7 +388,10 @@ export default function AuditTrailPanel() {
           </TabsContent>
 
           <TabsContent value="runs" className="mt-4">
-            <Card className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm">
+            {(branchId || processId || lobId) && (
+              <FilterNote className="mb-2">Branch / Process / LOB filters not applied to generation runs</FilterNote>
+            )}
+            <Card className="rounded-lg">
               <CardHeader className="border-b pb-4">
                 <CardTitle className="text-lg font-semibold flex items-center gap-2">
                   <GitBranch className="w-5 h-5 text-slate-600" />

@@ -24,7 +24,7 @@ import {
   Bar,
   BarChart,
 } from "recharts";
-import { CalendarClock, Send, TrendingDown, Users } from "lucide-react";
+import { CalendarClock, Send, TrendingDown, TrendingUp, Users } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   AXIS_TICK,
@@ -40,6 +40,9 @@ import {
   pct,
   ratio,
 } from "@/components/analytics/analytics-kit";
+import { PanelHeader } from "@/components/wfm/console/PanelHeader";
+import { FilterNote } from "@/components/wfm/console/FilterNote";
+import { scopeParams } from "./filterState";
 import { useRosterConsoleFilters, type RosterConsoleFilters as Filters } from "./RosterConsoleFilterContext";
 
 /* ── Section switcher ──────────────────────────────────────────────────────── */
@@ -236,11 +239,9 @@ const PUBLISH_LABEL: Record<string, string> = {
 
 function PublishSection({ filters }: { filters: Filters }) {
   const q = useQuery({
-    queryKey: ["roster-status-summary", filters.from, filters.to, filters.branchId, filters.processId],
+    queryKey: ["roster-status-summary", filters.from, filters.to, filters.branchId, filters.processId, filters.lobId],
     queryFn: async () => {
-      const params = new URLSearchParams({ fromDate: filters.from, toDate: filters.to });
-      if (filters.branchId) params.set("branchId", filters.branchId);
-      if (filters.processId) params.set("processId", filters.processId);
+      const params = scopeParams(filters, { fromDate: filters.from, toDate: filters.to });
       return hrmsApi.get<RosterStatusSummary>(`/api/wfm/roster-imports/status-summary?${params}`);
     },
   });
@@ -470,8 +471,18 @@ export default function TrendsPanel() {
   const { filters } = useRosterConsoleFilters();
   const [section, setSection] = useState<Section>("shrinkage");
 
+  // Only the roster-publish section sends lobId; the RTA / reports-suite sections are not
+  // LOB-aware, so say so instead of silently ignoring an active LOB filter.
+  const lobIgnored = !!filters.lobId && section !== "publish";
+
   return (
     <div className="space-y-4">
+      <PanelHeader
+        icon={TrendingUp}
+        title="Trends & Publish"
+        description="Shrinkage trend, roster publish status, attrition by tenure and lateness for the selected dates"
+        actions={lobIgnored ? <FilterNote /> : undefined}
+      />
       <SectionSwitcher active={section} onChange={setSection} />
       {section === "shrinkage" && <ShrinkageTrendSection filters={filters} />}
       {section === "publish" && <PublishSection filters={filters} />}

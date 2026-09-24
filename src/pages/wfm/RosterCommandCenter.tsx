@@ -34,10 +34,13 @@
 // the new "Team Roster" color-coded panel (2nd tab, right after Live Monitoring) — see
 // the approved merge plan for the full bug list and phasing.
 
-import { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { ShieldAlert, RefreshCw } from "lucide-react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  ShieldAlert, RefreshCw, Activity, Users, BarChart3, TrendingUp, ShieldCheck, Clock3, Lightbulb, History,
+} from "lucide-react";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { RequestAccessButton } from "@/components/security/WorkforcePageGate";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
@@ -46,6 +49,8 @@ import {
   type RosterConsoleFilters,
 } from "./roster-command-center/RosterConsoleFilterContext";
 import { RosterConsoleFilterBar } from "./roster-command-center/RosterConsoleFilterBar";
+import { ConsoleTabsBar } from "./roster-command-center/ConsoleTabsBar";
+import { defaultFilters, nextParamsForProcess, nextParamsForReset } from "./roster-command-center/filterState";
 
 const LiveMonitoringPanel = lazy(() => import("./roster-command-center/LiveMonitoringPanel"));
 const ProcessTeamRosterPanel = lazy(() => import("./roster-command-center/ProcessTeamRosterPanel"));
@@ -69,20 +74,21 @@ type TabKey =
 type TabDef = {
   key: TabKey;
   label: string;
+  icon: React.ElementType;
   /** New per-tab page code — see backend/sql/1757_roster_command_center_console_page_codes.sql */
   pageCode: string;
   Component: React.ComponentType;
 };
 
 const TAB_DEFS: TabDef[] = [
-  { key: "live", label: "Live Monitoring", pageCode: "WFM_ROSTER_LIVE_MONITORING", Component: LiveMonitoringPanel },
-  { key: "team-roster", label: "Team Roster", pageCode: "WFM_ROSTER_TEAM_ROSTER", Component: ProcessTeamRosterPanel },
-  { key: "analytics", label: "Analytics", pageCode: "WFM_ROSTER_ANALYTICS", Component: AnalyticsPanel },
-  { key: "trends", label: "Trends & Publish", pageCode: "WFM_ROSTER_TRENDS", Component: TrendsPanel },
-  { key: "compliance", label: "Compliance", pageCode: "WFM_ROSTER_COMPLIANCE", Component: CompliancePanel },
-  { key: "shifts", label: "Shift Effectiveness", pageCode: "WFM_ROSTER_SHIFT_EFFECTIVENESS", Component: ShiftEffectivenessPanel },
-  { key: "interventions", label: "Interventions", pageCode: "WFM_ROSTER_INTERVENTIONS", Component: InterventionsPanel },
-  { key: "audit", label: "Audit Trail", pageCode: "WFM_ROSTER_AUDIT_TRAIL", Component: AuditTrailPanel },
+  { key: "live", icon: Activity, label: "Live Monitoring", pageCode: "WFM_ROSTER_LIVE_MONITORING", Component: LiveMonitoringPanel },
+  { key: "team-roster", icon: Users, label: "Team Roster", pageCode: "WFM_ROSTER_TEAM_ROSTER", Component: ProcessTeamRosterPanel },
+  { key: "analytics", icon: BarChart3, label: "Analytics", pageCode: "WFM_ROSTER_ANALYTICS", Component: AnalyticsPanel },
+  { key: "trends", icon: TrendingUp, label: "Trends & Publish", pageCode: "WFM_ROSTER_TRENDS", Component: TrendsPanel },
+  { key: "compliance", icon: ShieldCheck, label: "Compliance", pageCode: "WFM_ROSTER_COMPLIANCE", Component: CompliancePanel },
+  { key: "shifts", icon: Clock3, label: "Shift Effectiveness", pageCode: "WFM_ROSTER_SHIFT_EFFECTIVENESS", Component: ShiftEffectivenessPanel },
+  { key: "interventions", icon: Lightbulb, label: "Interventions", pageCode: "WFM_ROSTER_INTERVENTIONS", Component: InterventionsPanel },
+  { key: "audit", icon: History, label: "Audit Trail", pageCode: "WFM_ROSTER_AUDIT_TRAIL", Component: AuditTrailPanel },
 ];
 
 /** The code offered to the Request Access flow when no tab is visible at all. */
@@ -97,15 +103,11 @@ function TabFallback() {
   );
 }
 
-function todayISO(offsetDays = 0) {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  return d.toISOString().slice(0, 10);
-}
-
 export default function RosterCommandCenter() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { isResolved, isLoading, isError, error, canViewPage } = useWorkforceAccess();
+  const queryClient = useQueryClient();
+  const [updatedAt, setUpdatedAt] = useState(() => new Date());
 
   const requestedTab = searchParams.get("tab");
 
@@ -157,15 +159,16 @@ export default function RosterCommandCenter() {
   // Shared filter state — owned here, in the URL, so any tab+filter combination is
   // independently deep-linkable. Defaults: no branch/process filter, last 14 days
   // (matches TrendsPanel's own prior default before this merge).
-  const filters: RosterConsoleFilters = useMemo(
-    () => ({
+  const filters: RosterConsoleFilters = useMemo(() => {
+    const d = defaultFilters();
+    return {
       branchId: searchParams.get("branchId") ?? "",
       processId: searchParams.get("processId") ?? "",
-      from: searchParams.get("from") ?? todayISO(-13),
-      to: searchParams.get("to") ?? todayISO(),
-    }),
-    [searchParams],
-  );
+      lobId: searchParams.get("lob") ?? "",
+      from: searchParams.get("from") ?? d.from,
+      to: searchParams.get("to") ?? d.to,
+    };
+  }, [searchParams]);
 
   const setBranchId = useCallback(
     (branchId: string) => {
@@ -179,15 +182,26 @@ export default function RosterCommandCenter() {
     [setSearchParams],
   );
 
+  // LOBs are process-scoped, so changing the process also clears the LOB.
   const setProcessId = useCallback(
-    (processId: string) => {
+    (processId: string) => setSearchParams((prev) => nextParamsForProcess(prev, processId), { replace: true }),
+    [setSearchParams],
+  );
+
+  const setLobId = useCallback(
+    (lobId: string) => {
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev);
-        if (processId) next.set("processId", processId);
-        else next.delete("processId");
+        if (lobId) next.set("lob", lobId);
+        else next.delete("lob");
         return next;
       }, { replace: true });
     },
+    [setSearchParams],
+  );
+
+  const resetFilters = useCallback(
+    () => setSearchParams((prev) => nextParamsForReset(prev), { replace: true }),
     [setSearchParams],
   );
 
@@ -204,9 +218,14 @@ export default function RosterCommandCenter() {
   );
 
   const filterContextValue = useMemo(
-    () => ({ filters, setBranchId, setProcessId, setDateRange }),
-    [filters, setBranchId, setProcessId, setDateRange],
+    () => ({ filters, setBranchId, setProcessId, setLobId, setDateRange, resetFilters }),
+    [filters, setBranchId, setProcessId, setLobId, setDateRange, resetFilters],
   );
+
+  const handleRefresh = useCallback(() => {
+    void queryClient.invalidateQueries();
+    setUpdatedAt(new Date());
+  }, [queryClient]);
 
   let body: React.ReactNode;
 
@@ -255,36 +274,34 @@ export default function RosterCommandCenter() {
   } else {
     body = (
       <RosterConsoleFilterProvider value={filterContextValue}>
-        <div className="space-y-6">
-          <div className="rounded-2xl bg-gradient-to-r from-teal-600 via-cyan-600 to-blue-600 p-6 text-white shadow-lg shadow-teal-500/20">
-            <p className="text-xs font-semibold uppercase tracking-widest text-teal-100">WFM · Roster</p>
-            <h1 className="mt-1 text-2xl font-bold">Roster Command Center</h1>
-            <p className="mt-1 max-w-2xl text-sm text-teal-100">
-              Live attendance, analytics, compliance, shift effectiveness, interventions and audit
-              trail — one console, gated per tab to what your role can open.
-            </p>
-            <div className="mt-4">
-              <RosterConsoleFilterBar />
+        <div className="mx-auto max-w-[1600px] space-y-3">
+          <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-xl font-semibold text-slate-900">Roster Command Center</h1>
+              <p className="text-sm text-slate-600">
+                Live attendance, analytics, compliance, shift effectiveness, interventions and audit trail in one console.
+              </p>
             </div>
-          </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-slate-600">
+                Updated {updatedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </span>
+              <Button type="button" variant="outline" size="sm" className="cursor-pointer" onClick={handleRefresh}>
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Refresh
+              </Button>
+            </div>
+          </header>
 
           <Tabs value={activeKey} onValueChange={handleTabChange}>
-            <TabsList className="h-auto w-full flex-nowrap justify-start gap-1 overflow-x-auto">
-              {visibleTabs.map((t) => (
-                <TabsTrigger
-                  key={t.key}
-                  value={t.key}
-                  className="min-h-11 min-w-11 flex-shrink-0 px-4 text-xs sm:text-sm"
-                >
-                  {t.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
+            <div className="z-20 space-y-2 bg-background pb-2 md:sticky md:top-0">
+              <RosterConsoleFilterBar activeTabKey={activeKey} />
+              <ConsoleTabsBar tabs={visibleTabs} activeKey={activeKey} />
+            </div>
 
             {visibleTabs.map((t) => (
               // Radix only mounts the active TabsContent's children, so only the selected
               // panel's lazy chunk (and its data fetch) is triggered.
-              <TabsContent key={t.key} value={t.key} className="mt-4">
+              <TabsContent key={t.key} value={t.key} className="mt-3">
                 <Suspense fallback={<TabFallback />}>
                   <t.Component />
                 </Suspense>

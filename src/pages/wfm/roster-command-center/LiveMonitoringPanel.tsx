@@ -8,7 +8,7 @@
  * no-op digest filter, decorative buttons) land in Phase B against this file.
  *
  * Design System: MAS HRMS Frozen Patterns
- * - GlassCard containers with backdrop-blur
+ * - ConsoleCard containers with backdrop-blur
  * - Gradient headers (teal for attendance domain)
  * - Tone color system for KPIs
  * - Bento grid layout (density 8/10)
@@ -32,6 +32,10 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
+import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
+import { KpiTile, toKpiTone } from "@/components/wfm/console/KpiTile";
+import { PanelHeader } from "@/components/wfm/console/PanelHeader";
+import { scopeParams } from "./filterState";
 import {
   Activity,
   AlertTriangle,
@@ -117,15 +121,6 @@ function LivePulse({ active = true }: { active?: boolean }) {
   );
 }
 
-/** Glass card wrapper (MAS HRMS pattern) */
-function GlassCard({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div className={`rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm hover:shadow-md transition-all duration-200 ${className}`}>
-      {children}
-    </div>
-  );
-}
-
 /** KPI Metric Tile with tone color */
 function MetricTile({
   label,
@@ -133,7 +128,7 @@ function MetricTile({
   helper,
   tone = "slate",
   trend,
-  icon: Icon,
+  icon,
   pulse,
 }: {
   label: string;
@@ -144,30 +139,17 @@ function MetricTile({
   icon: React.ElementType;
   pulse?: boolean;
 }) {
-  const colors = TONE[tone];
   return (
-    <GlassCard className="p-4">
-      <div className="flex items-start justify-between">
-        <div
-          className="flex h-10 w-10 items-center justify-center rounded-xl"
-          style={{ backgroundColor: colors.iconBg }}
-        >
-          <Icon className="h-5 w-5" style={{ color: colors.value }} />
-        </div>
-        {pulse && <LivePulse />}
-        {trend !== undefined && (
-          <div className={`flex items-center gap-1 text-xs font-medium ${trend >= 0 ? "text-red-600" : "text-emerald-600"}`}>
-            {trend >= 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-            {Math.abs(trend)}%
-          </div>
-        )}
-      </div>
-      <div className="mt-3">
-        <p className="text-2xl font-bold" style={{ color: colors.value }}>{value}</p>
-        <p className="text-sm font-medium text-slate-700">{label}</p>
-        {helper && <p className="text-xs text-slate-500 mt-0.5">{helper}</p>}
-      </div>
-    </GlassCard>
+    <KpiTile
+      label={label}
+      value={value}
+      sub={helper}
+      tone={toKpiTone(tone)}
+      icon={icon}
+      delta={trend}
+      deltaBad="up"
+      adornment={pulse ? <LivePulse /> : undefined}
+    />
   );
 }
 
@@ -223,7 +205,7 @@ function ManagerEffectivenessCard({ digest }: { digest: ManagerDigest }) {
   const tone = totalScore >= 80 ? "green" : totalScore >= 60 ? "amber" : "red";
 
   return (
-    <GlassCard className="p-4">
+    <ConsoleCard className="p-4">
       <div className="flex items-center gap-4">
         <div className="relative">
           <ScoreRing score={totalScore} size={64} strokeWidth={6} />
@@ -254,7 +236,7 @@ function ManagerEffectivenessCard({ digest }: { digest: ManagerDigest }) {
           <p className="text-[10px] text-slate-500 uppercase">APR</p>
         </div>
       </div>
-    </GlassCard>
+    </ConsoleCard>
   );
 }
 
@@ -321,6 +303,7 @@ function AbsenceAlertRow({
 export default function LiveMonitoringPanel() {
   const { filters } = useRosterConsoleFilters();
   const branchId = filters.branchId || ALL;
+  const { processId, lobId } = filters;
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedManager, setSelectedManager] = useState<ManagerDigest | null>(null);
   const [lastRefresh, setLastRefresh] = useState(new Date());
@@ -381,15 +364,19 @@ export default function LiveMonitoringPanel() {
 
   // Live unplanned absences
   const { data: liveData, isLoading: liveLoading, refetch: refetchLive } = useQuery({
-    queryKey: ["command-center", "live", refreshKey],
-    queryFn: () => hrmsApi.get<LiveAttendanceData>("/api/roster-intelligence/unplanned-absences?gracePeriod=15"),
+    queryKey: ["command-center", "live", refreshKey, filters.branchId, processId, lobId],
+    queryFn: () => hrmsApi.get<LiveAttendanceData>(
+      `/api/roster-intelligence/unplanned-absences?${scopeParams({ branchId: filters.branchId, processId, lobId }, { gracePeriod: "15" })}`,
+    ),
     refetchInterval: 60000,
   });
 
   // Manager digests for today
   const { data: digestsData, isLoading: digestsLoading } = useQuery({
-    queryKey: ["command-center", "digests", refreshKey],
-    queryFn: () => hrmsApi.get<{ digests: ManagerDigest[]; count: number }>("/api/roster-intelligence/manager-digests"),
+    queryKey: ["command-center", "digests", refreshKey, filters.branchId, processId, lobId],
+    queryFn: () => hrmsApi.get<{ digests: ManagerDigest[]; count: number }>(
+      `/api/roster-intelligence/manager-digests?${scopeParams({ branchId: filters.branchId, processId, lobId })}`,
+    ),
   });
 
   const alerts = liveData?.alerts ?? [];
@@ -429,41 +416,20 @@ export default function LiveMonitoringPanel() {
   };
 
   return (
-    <div className="bg-gradient-to-br from-slate-50 via-teal-50/30 to-cyan-50/20 p-4 sm:p-6 -m-4 sm:-m-6 rounded-b-2xl">
-      {/* Header with gradient (teal for attendance domain) */}
-      <div className="mb-6 rounded-2xl bg-gradient-to-r from-teal-600 via-cyan-600 to-blue-600 p-6 text-white shadow-lg shadow-teal-500/20">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur">
-                <Activity className="h-6 w-6" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold">Live Monitoring</h1>
-                <p className="text-teal-100 text-sm">Real-time attendance intelligence</p>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 rounded-lg bg-white/10 px-3 py-2">
-              <LivePulse />
-              <span className="text-sm font-medium">LIVE</span>
-            </div>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleRefresh}
-              className="bg-white/20 hover:bg-white/30 text-white border-0"
-            >
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Refresh
-            </Button>
-          </div>
-        </div>
-        <p className="mt-3 text-xs text-teal-200">
-          Last updated: {lastRefresh.toLocaleTimeString()} • Auto-refresh every 2 minutes
-        </p>
-      </div>
+    <div>
+      <PanelHeader
+        icon={Activity}
+        title="Live Monitoring"
+        description="Real-time attendance intelligence. Auto-refreshes every 2 minutes."
+        live
+        updatedLabel={`Updated ${lastRefresh.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
+        actions={
+          <Button variant="outline" size="sm" onClick={handleRefresh} className="cursor-pointer">
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
+          </Button>
+        }
+      />
 
       {/* KPI Tiles — Bento grid layout */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 mb-6">
@@ -517,7 +483,7 @@ export default function LiveMonitoringPanel() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6">
         {/* Left: Live Alerts (2 cols on xl) */}
         <div className="xl:col-span-2 space-y-4">
-          <GlassCard>
+          <ConsoleCard>
             <div className="p-4 border-b border-slate-100">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -557,10 +523,10 @@ export default function LiveMonitoringPanel() {
                 </p>
               )}
             </div>
-          </GlassCard>
+          </ConsoleCard>
 
           {/* Shrinkage Gauge */}
-          <GlassCard className="p-6">
+          <ConsoleCard className="p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100">
                 <TrendingUp className="h-5 w-5 text-amber-600" />
@@ -599,12 +565,12 @@ export default function LiveMonitoringPanel() {
                 </div>
               </div>
             </div>
-          </GlassCard>
+          </ConsoleCard>
         </div>
 
         {/* Right: Manager Effectiveness */}
         <div className="space-y-4">
-          <GlassCard>
+          <ConsoleCard>
             <div className="p-4 border-b border-slate-100">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100">
@@ -638,10 +604,10 @@ export default function LiveMonitoringPanel() {
                 ))
               )}
             </div>
-          </GlassCard>
+          </ConsoleCard>
 
           {/* Quick Actions */}
-          <GlassCard className="p-4">
+          <ConsoleCard className="p-4">
             <h3 className="font-semibold text-slate-800 mb-3">Quick Actions</h3>
             <div className="space-y-2">
               <Button variant="outline" className="w-full justify-start gap-2" onClick={handleRefresh}>
@@ -667,7 +633,7 @@ export default function LiveMonitoringPanel() {
                 {notifyAllManagers.isPending ? "Sending…" : "Notify All Managers"}
               </Button>
             </div>
-          </GlassCard>
+          </ConsoleCard>
         </div>
       </div>
 

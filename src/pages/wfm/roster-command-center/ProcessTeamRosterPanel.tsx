@@ -28,6 +28,10 @@ import {
   Hourglass,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { PanelHeader } from "@/components/wfm/console/PanelHeader";
+import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
+import { scopeParams } from "./filterState";
 import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
 
 type Status = "ON_TIME" | "LATE" | "ABSENT" | "ON_LEAVE" | "WEEK_OFF_HOLIDAY" | "UPCOMING";
@@ -45,6 +49,9 @@ interface Member {
   clockOutTime: string | null;
   minutesLate: number | null;
   leaveType: string | null;
+  /** Present once the backend returns it; rendered only when set. */
+  lobId?: string | null;
+  lobName?: string | null;
 }
 
 interface RosterView {
@@ -89,15 +96,17 @@ interface EmployeeProfileDetail {
 }
 
 export default function ProcessTeamRosterPanel() {
-  const { filters } = useRosterConsoleFilters();
+  const { filters, setProcessId } = useRosterConsoleFilters();
   const [date, setDate] = useState(todayISO());
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<Status | null>(null);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: ["process-team-roster", filters.processId, date],
-    queryFn: () => hrmsApi.get<RosterView>(`/api/roster-analytics/process-roster?processId=${filters.processId}&date=${date}`),
+    queryKey: ["process-team-roster", filters.processId, filters.lobId, date],
+    queryFn: () => hrmsApi.get<RosterView>(
+      `/api/roster-analytics/process-roster?${scopeParams({ branchId: "", processId: filters.processId, lobId: filters.lobId }, { date })}`,
+    ),
     enabled: !!filters.processId,
   });
 
@@ -107,7 +116,21 @@ export default function ProcessTeamRosterPanel() {
     enabled: !!selectedEmployeeId,
   });
 
-  const members = data?.members ?? [];
+  // Same list the toolbar's Process filter uses (shared cache key), so this costs no extra request.
+  const { data: procData, isLoading: procLoading } = useQuery({
+    queryKey: ["roster-console", "processes-list"],
+    queryFn: () => hrmsApi.get<{ data: Array<{ id: string; process_name: string }> }>("/api/processes?limit=200"),
+  });
+  const processOptions = useMemo(
+    () => (procData?.data ?? []).map((p) => ({ value: p.id, label: p.process_name })),
+    [procData],
+  );
+
+  // The endpoint is process-keyed; the shared Branch filter narrows the returned members here.
+  const members = useMemo(
+    () => (data?.members ?? []).filter((m) => !filters.branchId || m.branchId === filters.branchId),
+    [data, filters.branchId],
+  );
 
   const filteredMembers = useMemo(() => {
     let list = members;
@@ -121,36 +144,61 @@ export default function ProcessTeamRosterPanel() {
 
   if (!filters.processId) {
     return (
-      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 py-16 text-center">
-        <Users className="mx-auto h-10 w-10 text-slate-300" />
-        <p className="mt-3 font-medium text-slate-600">Select a process above to see its team roster</p>
-        <p className="mt-1 text-sm text-slate-400">Pick a process from the Process filter in the header to load this view.</p>
-      </div>
+      <ConsoleCard className="mx-auto max-w-xl p-6 text-center">
+        <Users className="mx-auto h-8 w-8 text-slate-500" aria-hidden />
+        <h2 className="mt-2 text-base font-semibold text-slate-900">Choose a process</h2>
+        <p className="mt-1 text-sm text-slate-600">Pick a process to see its team roster for the day.</p>
+        <div className="mt-4 text-left">
+          <SearchableSelect
+            options={processOptions}
+            value=""
+            onChange={setProcessId}
+            loading={procLoading}
+            placeholder="Select a process..."
+            searchPlaceholder="Search processes..."
+            aria-label="Process"
+          />
+        </div>
+        {processOptions.length > 0 && (
+          <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+            {processOptions.slice(0, 6).map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => setProcessId(o.value)}
+                className="cursor-pointer rounded-full border border-border bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition-colors duration-150 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </ConsoleCard>
     );
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-slate-800">
-            {data?.processName ?? "Team Roster"}
-          </h2>
-          <p className="text-sm text-slate-500">Live status for every team member scheduled on this date</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Input
-            type="date"
-            value={date}
-            max={todayISO()}
-            onChange={(e) => setDate(e.target.value)}
-            className="h-9 w-[150px]"
-          />
-          <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
-            <RefreshCw className={`h-4 w-4 mr-1 ${isFetching ? "animate-spin" : ""}`} /> Refresh
-          </Button>
-        </div>
-      </div>
+      <PanelHeader
+        icon={Users}
+        title={data?.processName ?? "Team Roster"}
+        description="Live status for every team member scheduled on this date"
+        actions={
+          <>
+            <Input
+              type="date"
+              value={date}
+              max={todayISO()}
+              onChange={(e) => setDate(e.target.value)}
+              className="h-9 w-[150px] bg-white text-slate-900"
+              aria-label="Roster date"
+            />
+            <Button variant="outline" size="sm" className="cursor-pointer" onClick={() => refetch()} disabled={isFetching}>
+              <RefreshCw className={`h-4 w-4 mr-1 ${isFetching ? "animate-spin" : ""}`} /> Refresh
+            </Button>
+          </>
+        }
+      />
 
       {isLoading ? (
         <div className="py-16 text-center text-slate-500 animate-pulse">Loading team roster...</div>
@@ -229,12 +277,15 @@ export default function ProcessTeamRosterPanel() {
                     return (
                       <tr
                         key={m.employeeId}
-                        className="hover:bg-slate-50 cursor-pointer"
+                        className="cursor-pointer transition-colors duration-150 hover:bg-blue-50 motion-reduce:transition-none"
                         onClick={() => setSelectedEmployeeId(m.employeeId)}
                       >
                         <td className="px-4 py-3">
                           <div className="font-medium text-slate-800">{m.employeeName}</div>
-                          <div className="text-xs text-slate-500">{m.employeeCode}{m.branchName ? ` · ${m.branchName}` : ""}</div>
+                          <div className="text-xs text-slate-600">
+                            {m.employeeCode}{m.branchName ? ` · ${m.branchName}` : ""}
+                            {m.lobName ? <Badge variant="outline" className="ml-1.5 px-1.5 py-0 text-[10px] font-medium">{m.lobName}</Badge> : null}
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <Badge variant="outline" className={cfg.badge}>

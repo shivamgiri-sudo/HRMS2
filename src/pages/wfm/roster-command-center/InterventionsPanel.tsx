@@ -2,7 +2,7 @@
  * Roster Intervention Dashboard — Phase 4
  *
  * Design System: MAS HRMS Frozen Patterns
- * - GlassCard containers with backdrop-blur
+ * - ConsoleCard containers with backdrop-blur
  * - Gradient headers (violet for HR/intervention domain)
  * - Tone color system for priority levels
  * - Bento grid layout (density 8/10)
@@ -24,6 +24,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
+import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
+import { KpiTile, toKpiTone } from "@/components/wfm/console/KpiTile";
+import { PanelHeader } from "@/components/wfm/console/PanelHeader";
+import { scopeParams } from "./filterState";
 import {
   AlertTriangle,
   ArrowRight,
@@ -210,20 +215,12 @@ const PRIORITY_CONFIG = {
 
 // ── Subcomponents ────────────────────────────────────────────────────────────
 
-function GlassCard({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div className={`rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm hover:shadow-md transition-all duration-200 ${className}`}>
-      {children}
-    </div>
-  );
-}
-
 function MetricTile({
   label,
   value,
   helper,
   tone = "slate",
-  icon: Icon,
+  icon,
 }: {
   label: string;
   value: string | number;
@@ -231,23 +228,14 @@ function MetricTile({
   tone?: keyof typeof TONE;
   icon: React.ElementType;
 }) {
-  const colors = TONE[tone];
   return (
-    <GlassCard className="p-4">
-      <div className="flex items-start justify-between">
-        <div
-          className="flex h-10 w-10 items-center justify-center rounded-xl"
-          style={{ backgroundColor: colors.iconBg }}
-        >
-          <Icon className="h-5 w-5" style={{ color: colors.value }} />
-        </div>
-      </div>
-      <div className="mt-3">
-        <p className="text-2xl font-bold" style={{ color: colors.value }}>{value}</p>
-        <p className="text-sm font-medium text-slate-700">{label}</p>
-        {helper && <p className="text-xs text-slate-500 mt-0.5">{helper}</p>}
-      </div>
-    </GlassCard>
+    <KpiTile
+      label={label}
+      value={value}
+      sub={helper}
+      tone={toKpiTone(tone)}
+      icon={icon}
+    />
   );
 }
 
@@ -278,7 +266,7 @@ function InterventionCard({
   const colors = TONE[tierConfig.tone];
 
   return (
-    <GlassCard className="overflow-hidden">
+    <ConsoleCard className="overflow-hidden">
       <div
         className="h-1"
         style={{ backgroundColor: colors.value }}
@@ -387,7 +375,7 @@ function InterventionCard({
           </div>
         </div>
       </div>
-    </GlassCard>
+    </ConsoleCard>
   );
 }
 
@@ -402,6 +390,8 @@ export default function InterventionsPanel() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const queryClient = useQueryClient();
+  const { filters } = useRosterConsoleFilters();
+  const { branchId, processId, lobId } = filters;
 
   /*
    * These three called /api/analytics/interventions/*, which nothing serves. The real router is
@@ -414,19 +404,19 @@ export default function InterventionsPanel() {
    * that a 401 from an unserved URL used to be indistinguishable from a genuinely quiet week.
    */
   const { data: summaryData, isError: summaryError } = useQuery({
-    queryKey: ["interventions", "summary"],
+    queryKey: ["interventions", "summary", branchId, processId, lobId],
     queryFn: async () => {
       const raw = await hrmsApi.get<{ data?: InterventionOutcomesApi }>(
-        "/api/analytics/intervention-recommendations/outcomes",
+        `/api/analytics/intervention-recommendations/outcomes?${scopeParams({ branchId, processId, lobId })}`,
       );
       return adaptSummary(raw?.data);
     },
   });
 
   const { data: interventionsData, isLoading } = useQuery({
-    queryKey: ["interventions", "list", tierFilter, ownerFilter],
+    queryKey: ["interventions", "list", tierFilter, ownerFilter, branchId, processId, lobId],
     queryFn: async () => {
-      const params = new URLSearchParams();
+      const params = scopeParams({ branchId, processId, lobId });
       // The API supports `owner` and `limit` only; tier is filtered client-side below rather
       // than sent as a parameter the handler would silently ignore.
       if (ownerFilter !== ALL) params.set("owner", ownerFilter);
@@ -491,30 +481,23 @@ export default function InterventionsPanel() {
 
   return (
     <>
-      <div className="bg-gradient-to-br from-slate-50 via-violet-50/30 to-purple-50/20 p-4 sm:p-6 -m-4 sm:-m-6 rounded-b-2xl">
-        {/* Header with gradient (violet for intervention/HR domain) */}
-        <div className="mb-6 rounded-2xl bg-gradient-to-r from-violet-600 via-purple-600 to-indigo-600 p-6 text-white shadow-lg shadow-violet-500/20">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur">
-                <Shield className="h-6 w-6" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold">Roster Intervention Dashboard</h1>
-                <p className="text-violet-100 text-sm">Track and manage retention interventions for at-risk employees</p>
-              </div>
-            </div>
+      <div>
+        <PanelHeader
+          icon={Shield}
+          title="Retention Interventions"
+          description="Track and manage retention interventions for at-risk employees"
+          actions={
             <Button
-              variant="secondary"
+              variant="outline"
               size="sm"
+              className="cursor-pointer"
               onClick={() => queryClient.invalidateQueries({ queryKey: ["interventions"] })}
-              className="bg-white/20 hover:bg-white/30 text-white border-0"
             >
               <RefreshCw className="h-4 w-4 mr-2" />
               Refresh
             </Button>
-          </div>
-        </div>
+          }
+        />
 
         {/*
           `summary` falls back to an all-zero default, so a failed request renders as
@@ -579,7 +562,7 @@ export default function InterventionsPanel() {
         </div>
 
         {/* Filters */}
-        <GlassCard className="mb-6">
+        <ConsoleCard className="mb-6">
           <div className="p-4 flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-slate-400" />
@@ -613,19 +596,19 @@ export default function InterventionsPanel() {
               {interventions.length} interventions
             </div>
           </div>
-        </GlassCard>
+        </ConsoleCard>
 
         {/* Intervention List */}
         {isLoading ? (
-          <GlassCard className="py-12 text-center">
+          <ConsoleCard className="py-12 text-center">
             <div className="animate-pulse">Loading interventions...</div>
-          </GlassCard>
+          </ConsoleCard>
         ) : interventions.length === 0 ? (
-          <GlassCard className="py-12 text-center">
+          <ConsoleCard className="py-12 text-center">
             <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-green-400" />
             <p className="font-medium text-green-700">No interventions match your filters</p>
             <p className="text-sm text-slate-500 mt-1">Try adjusting your filter criteria</p>
-          </GlassCard>
+          </ConsoleCard>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {interventions.map((intervention) => (

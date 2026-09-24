@@ -2,7 +2,7 @@
  * Roster Compliance Monitor — Phase 5
  *
  * Design System: MAS HRMS Frozen Patterns
- * - GlassCard containers with backdrop-blur
+ * - ConsoleCard containers with backdrop-blur
  * - Gradient headers (amber for compliance/warning domain)
  * - Tone color system for violation severity
  * - Responsive: mobile-first grid
@@ -23,6 +23,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
+import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
+import { KpiTile, toKpiTone } from "@/components/wfm/console/KpiTile";
+import { PanelHeader } from "@/components/wfm/console/PanelHeader";
+import { scopeParams } from "./filterState";
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -151,21 +155,13 @@ const SEVERITY_CONFIG = {
 
 // ── Subcomponents ────────────────────────────────────────────────────────────
 
-function GlassCard({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div className={`rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm hover:shadow-md transition-all duration-200 ${className}`}>
-      {children}
-    </div>
-  );
-}
-
 function MetricTile({
   label,
   value,
   helper,
   tone = "slate",
   trend,
-  icon: Icon,
+  icon,
 }: {
   label: string;
   value: string | number;
@@ -174,29 +170,16 @@ function MetricTile({
   trend?: number;
   icon: React.ElementType;
 }) {
-  const colors = TONE[tone];
   return (
-    <GlassCard className="p-4">
-      <div className="flex items-start justify-between">
-        <div
-          className="flex h-10 w-10 items-center justify-center rounded-xl"
-          style={{ backgroundColor: colors.iconBg }}
-        >
-          <Icon className="h-5 w-5" style={{ color: colors.value }} />
-        </div>
-        {trend !== undefined && (
-          <div className={`flex items-center gap-1 text-xs font-medium ${trend >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-            {trend >= 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-            {Math.abs(trend)}%
-          </div>
-        )}
-      </div>
-      <div className="mt-3">
-        <p className="text-2xl font-bold" style={{ color: colors.value }}>{value}</p>
-        <p className="text-sm font-medium text-slate-700">{label}</p>
-        {helper && <p className="text-xs text-slate-500 mt-0.5">{helper}</p>}
-      </div>
-    </GlassCard>
+    <KpiTile
+      label={label}
+      value={value}
+      sub={helper}
+      tone={toKpiTone(tone)}
+      icon={icon}
+      delta={trend}
+      deltaBad="down"
+    />
   );
 }
 
@@ -254,7 +237,7 @@ function RuleComplianceCard({
   const colors = TONE[tone];
 
   return (
-    <GlassCard className="p-4">
+    <ConsoleCard className="p-4">
       <div className="flex items-center gap-3 mb-3">
         <div
           className="flex h-10 w-10 items-center justify-center rounded-xl"
@@ -277,7 +260,7 @@ function RuleComplianceCard({
         </div>
         <Progress value={data.score} className={`h-2 [&>div]:bg-${tone === "green" ? "emerald" : tone}-500`} />
       </div>
-    </GlassCard>
+    </ConsoleCard>
   );
 }
 
@@ -497,23 +480,22 @@ function adaptViolation(v: ApiViolation): Violation {
 export default function CompliancePanel() {
   const { filters } = useRosterConsoleFilters();
   const branchFilter = filters.branchId || ALL;
+  const { processId, lobId } = filters;
   const [ruleFilter, setRuleFilter] = useState(ALL);
 
   const { data: summaryData, isLoading: summaryLoading, isError: summaryError } = useQuery({
-    queryKey: ["compliance", "summary", branchFilter],
+    queryKey: ["compliance", "summary", branchFilter, processId, lobId],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      if (branchFilter !== ALL) params.set("branchId", branchFilter);
+      const params = scopeParams({ branchId: filters.branchId, processId, lobId });
       const raw = await hrmsApi.get<ComplianceApiSummary>(`/api/wfm/compliance/summary?${params}`);
       return adaptSummary(raw);
     },
   });
 
   const { data: violationsData, isLoading: violationsLoading, refetch } = useQuery({
-    queryKey: ["compliance", "violations", branchFilter, ruleFilter],
+    queryKey: ["compliance", "violations", branchFilter, processId, lobId, ruleFilter],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      if (branchFilter !== ALL) params.set("branchId", branchFilter);
+      const params = scopeParams({ branchId: filters.branchId, processId, lobId });
       // Merge-plan Phase B bug #9: ruleFilter's options are now EXCEPTION_TYPE_CONFIG's real
       // ids (ABSENT_NO_CALL/LATE_ARRIVAL/ADHERENCE), which the API's ruleId param actually
       // matches — previously this sent one of the 5 roster-rule ids, which never matched
@@ -528,10 +510,9 @@ export default function CompliancePanel() {
   });
 
   const { data: trendData } = useQuery({
-    queryKey: ["compliance", "trend", branchFilter],
+    queryKey: ["compliance", "trend", branchFilter, processId, lobId],
     queryFn: async () => {
-      const params = new URLSearchParams();
-      if (branchFilter !== ALL) params.set("branchId", branchFilter);
+      const params = scopeParams({ branchId: filters.branchId, processId, lobId });
       const raw = await hrmsApi.get<{ trend: ApiTrendPoint[] }>(`/api/wfm/compliance/trend?${params}`);
       return {
         trend: (raw?.trend ?? []).map((t) => ({
@@ -570,31 +551,18 @@ export default function CompliancePanel() {
   const openViolations = violations.length;
 
   return (
-      <div className="bg-gradient-to-br from-slate-50 via-amber-50/30 to-orange-50/20 p-4 sm:p-6 -m-4 sm:-m-6 rounded-b-2xl">
-        {/* Header with gradient (amber for compliance/warning domain) */}
-        <div className="mb-6 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 p-6 text-white shadow-lg shadow-amber-500/20">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur">
-                <ShieldCheck className="h-6 w-6" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold">Roster Compliance Monitor</h1>
-                <p className="text-amber-100 text-sm">Track WFM rule violations and compliance scores</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => refetch()}
-                className="bg-white/20 hover:bg-white/30 text-white border-0"
-              >
-                <RefreshCw className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        </div>
+      <div>
+        <PanelHeader
+          icon={ShieldCheck}
+          title="Roster Compliance"
+          description="Track WFM rule violations and compliance scores"
+          actions={
+            <Button variant="outline" size="sm" onClick={() => refetch()} className="cursor-pointer" aria-label="Refresh compliance data">
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh
+            </Button>
+          }
+        />
 
         {/*
           Without this the page is actively misleading rather than merely empty. When the
@@ -672,10 +640,10 @@ export default function CompliancePanel() {
           <TabsContent value="overview" className="space-y-4">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               {/* Compliance Gauge */}
-              <GlassCard className="p-6">
+              <ConsoleCard className="p-6">
                 <h3 className="font-semibold text-slate-800 mb-4 text-center">Overall Compliance</h3>
                 <ComplianceGauge score={summary.overallScore} />
-              </GlassCard>
+              </ConsoleCard>
 
               {/* Rule Breakdown — all 5 configured rules. Night Shift Limit (5th) was
                   computed by the backend and typed in RULE_CONFIG the whole time but never
@@ -690,7 +658,7 @@ export default function CompliancePanel() {
             </div>
 
             {/* Branch Ranking */}
-            <GlassCard>
+            <ConsoleCard>
               <div className="p-4 border-b border-slate-100">
                 <h3 className="font-semibold text-slate-800">Branch Compliance Ranking</h3>
               </div>
@@ -732,7 +700,7 @@ export default function CompliancePanel() {
                   </tbody>
                 </table>
               </div>
-            </GlassCard>
+            </ConsoleCard>
           </TabsContent>
 
           {/* Attendance Exceptions Tab (formerly "Violations" — merge-plan Phase B bug #9:
@@ -749,7 +717,7 @@ export default function CompliancePanel() {
                 no acknowledge/resolve workflow or table backs it — and its default value
                 ("OPEN") never matched the API's real WEEK_OFF/WORKING status, so this tab
                 showed zero rows by default before today's fix. */}
-            <GlassCard className="p-4">
+            <ConsoleCard className="p-4">
               <div className="flex flex-wrap items-center gap-4">
                 <div className="flex items-center gap-2">
                   <Filter className="h-4 w-4 text-slate-400" />
@@ -770,10 +738,10 @@ export default function CompliancePanel() {
                   {violations.length} exceptions
                 </div>
               </div>
-            </GlassCard>
+            </ConsoleCard>
 
             {/* Violations List */}
-            <GlassCard>
+            <ConsoleCard>
               {violationsLoading ? (
                 <div className="py-12 text-center text-slate-400">Loading violations...</div>
               ) : violations.length === 0 ? (
@@ -787,12 +755,12 @@ export default function CompliancePanel() {
                   <ViolationRow key={violation.id} violation={violation} />
                 ))
               )}
-            </GlassCard>
+            </ConsoleCard>
           </TabsContent>
 
           {/* Trend Tab */}
           <TabsContent value="trend" className="space-y-4">
-            <GlassCard>
+            <ConsoleCard>
               <div className="p-4 border-b border-slate-100">
                 {/* Merge-plan Phase B bug #10: backend groups by calendar month
                     (DATE_FORMAT(roster_date,'%Y-%m')) over a 6-month window, not weekly —
@@ -803,7 +771,7 @@ export default function CompliancePanel() {
               <div className="p-6">
                 <TrendChart data={trend} />
               </div>
-            </GlassCard>
+            </ConsoleCard>
           </TabsContent>
         </Tabs>
       </div>

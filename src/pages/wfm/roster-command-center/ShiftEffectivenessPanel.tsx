@@ -2,7 +2,7 @@
  * Shift Effectiveness Dashboard — Phase 5
  *
  * Design System: MAS HRMS Frozen Patterns
- * - GlassCard containers with backdrop-blur
+ * - ConsoleCard containers with backdrop-blur
  * - Gradient headers (blue for analytics domain)
  * - Tone color system for performance
  * - Responsive: mobile-first grid
@@ -23,6 +23,10 @@ import { Progress } from "@/components/ui/progress";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
+import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
+import { KpiTile, toKpiTone } from "@/components/wfm/console/KpiTile";
+import { PanelHeader } from "@/components/wfm/console/PanelHeader";
+import { scopeParams } from "./filterState";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -159,21 +163,13 @@ const SHIFT_TYPE_CONFIG = {
 
 // ── Subcomponents ────────────────────────────────────────────────────────────
 
-function GlassCard({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div className={`rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm hover:shadow-md transition-all duration-200 ${className}`}>
-      {children}
-    </div>
-  );
-}
-
 function MetricTile({
   label,
   value,
   helper,
   tone = "slate",
   trend,
-  icon: Icon,
+  icon,
 }: {
   label: string;
   value: string | number;
@@ -182,29 +178,16 @@ function MetricTile({
   trend?: number;
   icon: React.ElementType;
 }) {
-  const colors = TONE[tone];
   return (
-    <GlassCard className="p-4">
-      <div className="flex items-start justify-between">
-        <div
-          className="flex h-10 w-10 items-center justify-center rounded-xl"
-          style={{ backgroundColor: colors.iconBg }}
-        >
-          <Icon className="h-5 w-5" style={{ color: colors.value }} />
-        </div>
-        {trend !== undefined && (
-          <div className={`flex items-center gap-1 text-xs font-medium ${trend >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-            {trend >= 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-            {Math.abs(trend)}%
-          </div>
-        )}
-      </div>
-      <div className="mt-3">
-        <p className="text-2xl font-bold" style={{ color: colors.value }}>{value}</p>
-        <p className="text-sm font-medium text-slate-700">{label}</p>
-        {helper && <p className="text-xs text-slate-500 mt-0.5">{helper}</p>}
-      </div>
-    </GlassCard>
+    <KpiTile
+      label={label}
+      value={value}
+      sub={helper}
+      tone={toKpiTone(tone)}
+      icon={icon}
+      delta={trend}
+      deltaBad="up"
+    />
   );
 }
 
@@ -214,7 +197,7 @@ function ShiftCard({ shift }: { shift: ShiftEffectiveness }) {
   const adherenceTone = shift.metrics.adherencePct >= 90 ? "green" : shift.metrics.adherencePct >= 75 ? "amber" : "red";
 
   return (
-    <GlassCard className={`overflow-hidden ${shift.isOptimal ? "ring-2 ring-emerald-500 ring-offset-2" : ""}`}>
+    <ConsoleCard className={`overflow-hidden ${shift.isOptimal ? "ring-2 ring-emerald-500 ring-offset-2" : ""}`}>
       {shift.isOptimal && (
         <div className="bg-emerald-500 text-white text-xs font-medium py-1 px-3 flex items-center justify-center gap-1">
           <Star className="h-3 w-3" /> Optimal Shift
@@ -269,7 +252,7 @@ function ShiftCard({ shift }: { shift: ShiftEffectiveness }) {
           </span>
         </div>
       </div>
-    </GlassCard>
+    </ConsoleCard>
   );
 }
 
@@ -283,7 +266,7 @@ function BreakComplianceCard({
   const overBudget = data.avgBreakMinutes > data.budgetMinutes;
 
   return (
-    <GlassCard className="p-4">
+    <ConsoleCard className="p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <div
@@ -315,7 +298,7 @@ function BreakComplianceCard({
           <span>{Math.round(data.budgetMinutes * 1.5)}m</span>
         </div>
       </div>
-    </GlassCard>
+    </ConsoleCard>
   );
 }
 
@@ -323,7 +306,7 @@ function RecommendationCard({ rec }: { rec: ShiftRecommendation }) {
   const confidenceColor = rec.confidence === "HIGH" ? "green" : rec.confidence === "MEDIUM" ? "amber" : "blue";
 
   return (
-    <GlassCard className="p-4">
+    <ConsoleCard className="p-4">
       <div className="flex items-start gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 flex-shrink-0">
           <Zap className="h-5 w-5 text-blue-600" />
@@ -355,7 +338,7 @@ function RecommendationCard({ rec }: { rec: ShiftRecommendation }) {
           </div>
         </div>
       </div>
-    </GlassCard>
+    </ConsoleCard>
   );
 }
 
@@ -363,37 +346,32 @@ function RecommendationCard({ rec }: { rec: ShiftRecommendation }) {
 
 export default function ShiftEffectivenessPanel() {
   const { filters } = useRosterConsoleFilters();
+  const lobId = filters.lobId;
   const branchFilter = filters.branchId || ALL;
   const processFilter = filters.processId || ALL;
   // Merge-plan Phase B bug #14
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
 
   const { data: shiftsData, isLoading: shiftsLoading } = useQuery({
-    queryKey: ["shift-effectiveness", "shifts", branchFilter, processFilter],
+    queryKey: ["shift-effectiveness", "shifts", branchFilter, processFilter, lobId],
     queryFn: () => {
-      const params = new URLSearchParams();
-      if (branchFilter !== ALL) params.set("branchId", branchFilter);
-      if (processFilter !== ALL) params.set("processId", processFilter);
+      const params = scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId });
       return hrmsApi.get<{ shifts: ShiftEffectiveness[] }>(`/api/roster-analytics/shift-effectiveness?${params}`);
     },
   });
 
   const { data: breakData, isLoading: breakLoading } = useQuery({
-    queryKey: ["shift-effectiveness", "breaks", branchFilter, processFilter],
+    queryKey: ["shift-effectiveness", "breaks", branchFilter, processFilter, lobId],
     queryFn: () => {
-      const params = new URLSearchParams();
-      if (branchFilter !== ALL) params.set("branchId", branchFilter);
-      if (processFilter !== ALL) params.set("processId", processFilter);
+      const params = scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId });
       return hrmsApi.get<BreakCompliance>(`/api/roster-analytics/break-compliance?${params}`);
     },
   });
 
   const { data: recsData } = useQuery({
-    queryKey: ["shift-effectiveness", "recommendations", branchFilter, processFilter],
+    queryKey: ["shift-effectiveness", "recommendations", branchFilter, processFilter, lobId],
     queryFn: () => {
-      const params = new URLSearchParams();
-      if (branchFilter !== ALL) params.set("branchId", branchFilter);
-      if (processFilter !== ALL) params.set("processId", processFilter);
+      const params = scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId });
       return hrmsApi.get<{ recommendations: ShiftRecommendation[] }>(`/api/roster-analytics/shift-recommendations?${params}`);
     },
   });
@@ -420,21 +398,12 @@ export default function ShiftEffectivenessPanel() {
 
   return (
     <>
-      <div className="bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/20 p-4 sm:p-6 -m-4 sm:-m-6 rounded-b-2xl">
-        {/* Header with gradient (blue for analytics domain) */}
-        <div className="mb-6 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 p-6 text-white shadow-lg shadow-blue-500/20">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur">
-                <BarChart3 className="h-6 w-6" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold">Shift Effectiveness Dashboard</h1>
-                <p className="text-blue-100 text-sm">Analyze shift performance, break compliance, and optimize assignments</p>
-              </div>
-            </div>
-          </div>
-        </div>
+      <div>
+        <PanelHeader
+          icon={BarChart3}
+          title="Shift Effectiveness"
+          description="Analyze shift performance, break compliance, and optimize assignments"
+        />
 
         {/* KPI Row */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 mb-6">
@@ -498,19 +467,19 @@ export default function ShiftEffectivenessPanel() {
           {/* Shifts Tab */}
           <TabsContent value="shifts" className="space-y-4">
             {shiftsLoading ? (
-              <GlassCard className="py-12 text-center">
+              <ConsoleCard className="py-12 text-center">
                 <div className="animate-pulse">Loading shift data...</div>
-              </GlassCard>
+              </ConsoleCard>
             ) : shifts.length === 0 ? (
-              <GlassCard className="py-12 text-center">
+              <ConsoleCard className="py-12 text-center">
                 <Calendar className="h-12 w-12 mx-auto mb-3 text-slate-300" />
                 <p className="font-medium text-slate-700">No shift data available</p>
-              </GlassCard>
+              </ConsoleCard>
             ) : (
               <>
                 {/* Best Shift Highlight */}
                 {bestShift && (
-                  <GlassCard className="p-4 bg-gradient-to-r from-emerald-50 to-green-50 border-emerald-200">
+                  <ConsoleCard className="p-4 bg-emerald-50 border-emerald-200">
                     <div className="flex items-center gap-3">
                       <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100">
                         <Star className="h-5 w-5 text-emerald-600" />
@@ -522,7 +491,7 @@ export default function ShiftEffectivenessPanel() {
                         </p>
                       </div>
                     </div>
-                  </GlassCard>
+                  </ConsoleCard>
                 )}
 
                 {/* Shift Cards Grid */}
@@ -538,9 +507,9 @@ export default function ShiftEffectivenessPanel() {
           {/* Breaks Tab */}
           <TabsContent value="breaks" className="space-y-4">
             {breakLoading ? (
-              <GlassCard className="py-12 text-center">
+              <ConsoleCard className="py-12 text-center">
                 <div className="animate-pulse">Loading break data...</div>
-              </GlassCard>
+              </ConsoleCard>
             ) : (
               <>
                 {/* Break Compliance by Shift */}
@@ -552,7 +521,7 @@ export default function ShiftEffectivenessPanel() {
 
                 {/* Top Violators */}
                 {breakCompliance.topViolators.length > 0 && (
-                  <GlassCard>
+                  <ConsoleCard>
                     <div className="p-4 border-b border-slate-100">
                       <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-100">
@@ -595,7 +564,7 @@ export default function ShiftEffectivenessPanel() {
                         </tbody>
                       </table>
                     </div>
-                  </GlassCard>
+                  </ConsoleCard>
                 )}
               </>
             )}
@@ -604,11 +573,11 @@ export default function ShiftEffectivenessPanel() {
           {/* Recommendations Tab */}
           <TabsContent value="recommendations" className="space-y-4">
             {recommendations.length === 0 ? (
-              <GlassCard className="py-12 text-center">
+              <ConsoleCard className="py-12 text-center">
                 <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-green-400" />
                 <p className="font-medium text-green-700">No shift change recommendations</p>
                 <p className="text-sm text-slate-500">Current assignments are optimal</p>
-              </GlassCard>
+              </ConsoleCard>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {recommendations.map((rec) => (
