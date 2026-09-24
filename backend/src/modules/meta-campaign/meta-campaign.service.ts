@@ -1024,7 +1024,7 @@ export const metaCampaignService = {
    * at ingest time leaves the lead qualified with ats_candidate_id NULL and nothing retries it),
    * and re-fetch leads stranded as Graph-fetch stubs. Candidate creation sends no messages.
    */
-  async healUnsyncedLeads(sinceDays = 7, limit = 200): Promise<{ candidatesCreated: number; stubsRetried: number; stubsHealed: number }> {
+  async healUnsyncedLeads(sinceDays = 2, limit = 200): Promise<{ candidatesCreated: number; stubsRetried: number; stubsHealed: number }> {
     const [orphans] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM meta_lead_raw
         WHERE screening_result = 'qualified' AND ats_candidate_id IS NULL
