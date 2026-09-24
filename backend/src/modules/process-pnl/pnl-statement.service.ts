@@ -629,6 +629,21 @@ async function getStatementSummary(filters: Partial<PnlQueryFilters>) {
   };
 }
 
+/**
+ * The Statement's people cost for a period (the default `getPeopleCost` dependency): actual payroll
+ * (bpo-pnl getActualPeopleCost) when the period has any, else the running-salary snapshot
+ * (getRunningPeopleCost). Both attribute pay with payrollAttributionSql — the EFFECTIVE
+ * (override-aware) cost centre's branch, the home branch only for staff with no cost centre — the
+ * same rule as Live P&L readPayroll/readUnallocatedPayroll, so the Branch view's people cost per
+ * branch matches Live P&L's. Exported so that agreement can be pinned by a test
+ * (__tests__/payroll-statement-branch-view.test.ts).
+ */
+export async function getStatementPeopleCost(period: string): Promise<PeopleCostByKey> {
+  const actual = await getActualPeopleCost(period);
+  if (actual.byBranch.size > 0 || actual.byProcess.size > 0) return actual;
+  return getRunningPeopleCost(period);
+}
+
 const defaultDependencies: StatementDependencies = {
   getComponents,
   getSummary: (filters) => getStatementSummary(filters),
@@ -649,11 +664,7 @@ const defaultDependencies: StatementDependencies = {
    * The snapshot is kept as the fallback rather than deleted: it still answers for a period whose
    * payroll run has not happened yet, where it is the only estimate available.
    */
-  getPeopleCost: async (period) => {
-    const actual = await getActualPeopleCost(period);
-    if (actual.byBranch.size > 0 || actual.byProcess.size > 0) return actual;
-    return getRunningPeopleCost(period);
-  },
+  getPeopleCost: (period) => getStatementPeopleCost(period),
   getManualAdjustments: (period) => getApprovedAdjustmentsByProcess(period),
 };
 
