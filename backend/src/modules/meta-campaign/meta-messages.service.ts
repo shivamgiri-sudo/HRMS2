@@ -143,7 +143,7 @@ export async function getInbox(opts: {
          GROUP BY lead_id
      ) lm ON lm.lead_id = ml.id
      LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id
-     INNER JOIN meta_campaign mc ON mc.id = ml.campaign_id AND mc.campaign_status = 'active'
+     INNER JOIN meta_campaign mc ON mc.id = ml.campaign_id AND mc.campaign_status IN ('active', 'draft')
      WHERE 1=1
        ${branchFilter}
        ${searchFilter}
@@ -189,7 +189,7 @@ export async function getTotalUnread(opts: { scope: BranchScope }): Promise<numb
        FROM meta_lead_messages mlm
        JOIN meta_lead_raw ml ON ml.id = mlm.lead_id
        LEFT JOIN job_requisition jr ON jr.id = ml.requisition_id
-       INNER JOIN meta_campaign mc ON mc.id = ml.campaign_id AND mc.campaign_status = 'active'
+       INNER JOIN meta_campaign mc ON mc.id = ml.campaign_id AND mc.campaign_status IN ('active', 'draft')
       WHERE mlm.direction = 'inbound' AND mlm.read_at IS NULL
         ${branchFilter}`,
     params
