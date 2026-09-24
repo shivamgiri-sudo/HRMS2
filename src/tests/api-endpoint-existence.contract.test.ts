@@ -123,6 +123,12 @@ function walkRouter(file: string, prefix: string, depth: number): void {
       walkRouter(target, subPrefix, depth + 1);
     }
   }
+
+  // Routes registered by a helper that receives the router, e.g. `mountOverviewReportRoutes(router, guards)`.
+  for (const m of src.matchAll(/\b(mount[A-Za-z0-9_$]*Routes)\s*\(\s*[\w$]*router\b/gi)) {
+    const target = imports.get(m[1]!);
+    if (target) walkRouter(target, prefix, depth + 1);
+  }
 }
 
 const appSrc = read(`${BE}/app.ts`)!;
