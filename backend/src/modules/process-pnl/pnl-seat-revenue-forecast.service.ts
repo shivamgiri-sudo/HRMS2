@@ -1,7 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
-import { OWN_COMPANY_SQL } from "./pnl-actuals.service.js";
+import { OWN_COMPANY_SQL, PROCESS_BY_COST_CENTRE } from "./pnl-actuals.service.js";
 
 /**
  * Where this month's seat revenue is heading, from seat count times seat rate.
@@ -161,16 +161,14 @@ export async function getSeatRevenueForecast(
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ccm.id AS cost_centre_id, ccm.cost_centre_name, bm.branch_name,
             sr.seat_rate_monthly,
-            (SELECT e2.process_id FROM employees e2
-              WHERE e2.cost_centre_id = ccm.id AND e2.active_status = 1
-                AND e2.process_id IS NOT NULL
-              GROUP BY e2.process_id ORDER BY COUNT(*) DESC LIMIT 1) AS process_id,
+            pcc.process_id AS process_id,
             COUNT(e.id) AS active_headcount,
             SUM(CASE WHEN snap.pnl_bucket = 'agent_salary' THEN 1 ELSE 0 END) AS billable_seats,
             SUM(CASE WHEN snap.employee_id IS NULL THEN 1 ELSE 0 END) AS unclassified
        FROM cost_centre_seat_rate sr
        JOIN cost_centre_master ccm ON ccm.id = sr.cost_centre_id
        LEFT JOIN branch_master bm ON bm.id = ccm.branch_id
+       LEFT JOIN ${PROCESS_BY_COST_CENTRE} pcc ON pcc.cost_centre_id = ccm.id
        JOIN employees e ON e.cost_centre_id = sr.cost_centre_id AND e.active_status = 1
        LEFT JOIN pnl_running_salary_snapshot snap
               ON snap.employee_id = e.id AND snap.period_code = ?
@@ -181,7 +179,7 @@ export async function getSeatRevenueForecast(
         AND sr.effective_from <= ? AND (sr.effective_to IS NULL OR sr.effective_to >= ?)
         AND ${OWN_COMPANY_SQL}
         ${branchClause}
-      GROUP BY ccm.id, ccm.cost_centre_name, bm.branch_name, sr.seat_rate_monthly, process_id
+      GROUP BY ccm.id, ccm.cost_centre_name, bm.branch_name, sr.seat_rate_monthly, pcc.process_id
       ORDER BY (SUM(CASE WHEN snap.pnl_bucket = 'agent_salary' THEN 1 ELSE 0 END)
                 * sr.seat_rate_monthly) DESC`,
     params,

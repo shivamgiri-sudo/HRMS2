@@ -26,7 +26,10 @@ const { execute, tableExists } = vi.hoisted(() => ({
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 vi.mock("../../../shared/dbHelpers.js", () => ({ tableExists }));
-vi.mock("../pnl-actuals.service.js", () => ({ OWN_COMPANY_SQL: "1=1" }));
+vi.mock("../pnl-actuals.service.js", () => ({
+  OWN_COMPANY_SQL: "1=1",
+  PROCESS_BY_COST_CENTRE: "(SELECT 1 AS cost_centre_id, 1 AS process_id)",
+}));
 
 import { getSeatRevenueForecast } from "../pnl-seat-revenue-forecast.service.js";
 
@@ -88,6 +91,18 @@ describe("projection arithmetic", () => {
     const result = await getSeatRevenueForecast("2026-09", { asOfDate: "2026-09-30" });
     expect(result.daysElapsed).toBe(30);
     expect(result.earnedToDate).toBe(result.projectedMonthEnd);
+  });
+});
+
+describe("query shape", () => {
+  it("looks the cost centre's process up once through the shared lookup, not per employee row", async () => {
+    fixture();
+    await getSeatRevenueForecast("2026-09", { asOfDate: "2026-09-03" });
+    const sql = execute.mock.calls.map((c) => String(c[0])).find((t) => t.includes("FROM cost_centre_seat_rate")) ?? "";
+    // A correlated employees subquery in the select list re-runs for every joined employee and took
+    // /pnl/daily-trend past the 120s gateway limit in production.
+    expect(sql).not.toMatch(/SELECT e2\.process_id/);
+    expect(sql).toContain("pcc.process_id");
   });
 });
 
