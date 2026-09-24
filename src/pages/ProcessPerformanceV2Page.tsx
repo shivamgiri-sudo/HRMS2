@@ -203,6 +203,7 @@ const APPRECIATE_HEALTH_UPLOADERS = [
   { code: "AW_MANDATE_MASMIS", label: "Mandate",   description: "Upload Appreciate Wealth billing mandate", icon: ClipboardList },
   { code: "AW_NEW_CDR_MASMIS", label: "New CDR",   description: "Upload Appreciate Wealth new CDR data",   icon: Activity },
   { code: "AW_OUT_MASMIS",     label: "Outbound",  description: "Upload Appreciate Wealth outbound data",  icon: PhoneOutgoing },
+  { code: "AW_CHAT_MASMIS",    label: "Chat",      description: "Upload Appreciate Wealth chat data",      icon: MessageSquare },
 ];
 
 /** Housing Owner's 3 uploaders, writing into brand-new db_masmis tables

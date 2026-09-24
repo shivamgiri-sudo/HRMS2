@@ -5,6 +5,10 @@ import {
   getAppreciateWealthDashboard, getAgentDetail, getAgentDayDetail, getBillingTypeDetail, getCallDetail, getDayDetail,
   getGroupDetail, getMandateDetail, getSourceDetail, parseFilters,
 } from "./appreciate-wealth-dashboard.service.js";
+import { getAwControlCenter } from "./appreciate-wealth-control-center.service.js";
+import { getAwInboundCenter } from "./appreciate-wealth-inbound-center.service.js";
+import { getAwOutboundCenter } from "./appreciate-wealth-outbound-center.service.js";
+import { getAwCdrCenter } from "./appreciate-wealth-cdr-center.service.js";
 
 /**
  * Appreciate Wealth dashboards -- read-only (GET only, no writes, no state
@@ -26,6 +30,26 @@ const notFound = (res: Response) => res.status(404).json({ success: false, error
 
 router.get(`${BASE}/dashboard`, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const data = await getAppreciateWealthDashboard(q(req, "from"), q(req, "to"), parseFilters(req.query));
+  res.json({ success: true, data });
+}));
+
+router.get(`${BASE}/inbound-center`, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await getAwInboundCenter(q(req, "from"), q(req, "to"));
+  res.json({ success: true, data });
+}));
+
+router.get(`${BASE}/cdr-center`, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await getAwCdrCenter(q(req, "from"), q(req, "to"));
+  res.json({ success: true, data });
+}));
+
+router.get(`${BASE}/outbound-center`, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await getAwOutboundCenter(q(req, "from"), q(req, "to"));
+  res.json({ success: true, data });
+}));
+
+router.get(`${BASE}/control-center`, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await getAwControlCenter(q(req, "from"), q(req, "to"), q(req, "segment"));
   res.json({ success: true, data });
 }));
 

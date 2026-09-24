@@ -44,6 +44,7 @@ const RPC_BY_TYPE: Record<string, string> = {
   AW_MANDATE_MASMIS: "import_aw_mandate_batch",
   AW_NEW_CDR_MASMIS: "import_aw_new_cdr_batch",
   AW_OUT_MASMIS: "import_aw_out_batch",
+  AW_CHAT_MASMIS: "import_aw_chat_batch",
   OWNER_SALE_MASMIS: "import_owner_sale_batch",
   OWNER_CDR_MASMIS: "import_owner_cdr_batch",
   OWNER_AGENT_DETAILS_MASMIS: "import_owner_agent_details_batch",

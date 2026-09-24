@@ -84,7 +84,7 @@ router.get("/templates", requireRole(...HUB_ROLES), h(async (req: AuthenticatedR
  * their own branch/process, not the whole company's.
  */
 const PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES = [
-  "AW_BILLING_MASMIS", "AW_INBOUND_MASMIS", "AW_MANDATE_MASMIS", "AW_NEW_CDR_MASMIS", "AW_OUT_MASMIS",
+  "AW_BILLING_MASMIS", "AW_INBOUND_MASMIS", "AW_MANDATE_MASMIS", "AW_NEW_CDR_MASMIS", "AW_OUT_MASMIS", "AW_CHAT_MASMIS",
   "BB_APR_MASMIS", "BB_CART_MASMIS", "BB_CHAT_MASMIS", "BB_SALE_MASMIS",
   "BIRLANU_APR_MASMIS", "BIRLANU_SALE_MASMIS",
   "CL_APR_MASMIS", "CL_CHAT_MASMIS", "CL_DISPO_MASMIS", "CL_EMAIL_RAW_MASMIS", "CL_FEEDBACK_MASMIS",
@@ -557,6 +557,7 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_neemans_allocation_masmis_batch",
   "import_neemans_apr_masmis_batch",
   "import_aw_out_batch",
+  "import_aw_chat_batch",
   "import_aw_billing_batch",
   "import_aw_mandate_batch",
   "import_aw_inbound_batch",
