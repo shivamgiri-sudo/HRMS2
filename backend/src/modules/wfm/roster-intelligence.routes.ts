@@ -6,6 +6,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
+import { readLobFilter } from '../../shared/lobFilter.js';
 import {
   generateManagerDailyDigests,
   generateBranchDashboard,
@@ -49,7 +50,7 @@ const LIVE_MONITORING_ROLES = ['super_admin', 'wfm', 'branch_head', 'branch_wfm'
  * requirement, and fails CLOSED (empty arrays, matching detectUnplannedAbsences's own
  * convention) rather than falling through to unrestricted on an unresolvable scope.
  */
-async function resolveLiveMonitoringScope(req: AuthenticatedRequest): Promise<RosterIntelligenceScope | undefined> {
+export async function resolveLiveMonitoringScope(req: AuthenticatedRequest): Promise<RosterIntelligenceScope | undefined> {
   const user = req.authUser!;
   try {
     const context = await getUserRoleContext(user.id);
@@ -199,8 +200,13 @@ router.get('/unplanned-absences', requireRole(...LIVE_MONITORING_ROLES), async (
   try {
     const date = req.query.date ? String(req.query.date) : undefined;
     const gracePeriod = req.query.gracePeriod ? parseInt(String(req.query.gracePeriod), 10) : 30;
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const processId = req.query.processId ? String(req.query.processId) : undefined;
     const scope = await resolveLiveMonitoringScope(req as AuthenticatedRequest);
-    const alerts = await detectUnplannedAbsences(date, gracePeriod, scope);
+    // branchId/processId/lobId only NARROW within the RBAC scope (they are extra ANDed conditions).
+    const alerts = await detectUnplannedAbsences(date, gracePeriod, scope, { branchId, processId, lob });
 
     // Group by manager for easier processing
     const byManager = new Map<string, typeof alerts>();

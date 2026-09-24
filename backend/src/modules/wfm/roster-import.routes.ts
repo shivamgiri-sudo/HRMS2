@@ -6,6 +6,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
+import { readLobFilter } from '../../shared/lobFilter.js';
 import {
   createImportBatch,
   getImportBatch,
@@ -382,11 +383,14 @@ rosterImportRouter.get('/status-summary', requireRole(...WFM_VIEW_ROLES), async 
       res.status(400).json({ error: 'fromDate and toDate are required (YYYY-MM-DD)' });
       return;
     }
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     const result = await getRosterStatusSummary({
       fromDate: q.fromDate,
       toDate: q.toDate,
       branchId: q.branchId || undefined,
       processId: q.processId || undefined,
+      lob,
     });
     res.json(result);
   } catch (err: any) {

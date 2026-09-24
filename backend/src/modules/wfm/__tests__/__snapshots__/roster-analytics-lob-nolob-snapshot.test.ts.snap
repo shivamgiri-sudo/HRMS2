@@ -1,0 +1,196 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`roster-analytics unfiltered SQL is unchanged > break 1`] = `
+[
+  {
+    "params": [
+      "b1",
+    ],
+    "sql": "SELECT COUNT(*) AS total_sessions, AVG(wb.total_break) AS avg_break, 30 AS budget, SUM(CASE WHEN wb.total_break > 30 THEN 1 ELSE 0 END) AS over_break, SUM(CASE WHEN wb.total_break < 15 THEN 1 ELSE 0 END) AS under_break FROM ( -- wfm_break_log has no session_date/break_duration_minutes columns (that was a -- pre-existing bug predating this merge, reproduced live: "Unknown column -- 'session_date' in 'field list'", breaking this whole endpoint including -- overall/byShift/topViolators, not just the new byProcess added here). The real -- columns are break_start (DATETIME) and duration_minutes (INT) — see -- sql/005_attendance_wfm.sql. Aliased back to the names the rest of this query -- already expects so only these 4 subqueries need the fix. SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break FROM wfm_break_log WHERE break_start >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY employee_id, DATE(break_start) ) wb JOIN employees e ON wb.employee_id = e.id JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date WHERE 1=1 AND e.branch_id = ?",
+  },
+  {
+    "params": [
+      "b1",
+    ],
+    "sql": "SELECT sm.id AS shift_id, sm.shift_name, AVG(wb.total_break) AS avg_break, 30 AS budget FROM ( -- Same real-column fix as the "overall" query above. SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break FROM wfm_break_log WHERE break_start >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY employee_id, DATE(break_start) ) wb JOIN employees e ON wb.employee_id = e.id JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id WHERE 1=1 AND e.branch_id = ? GROUP BY sm.id, sm.shift_name",
+  },
+  {
+    "params": [
+      "b1",
+    ],
+    "sql": "SELECT e.id AS employee_id, e.employee_code, e.full_name AS employee_name, AVG(wb.total_break - 30) AS avg_excess, COUNT(*) AS occurrences FROM ( -- Same real-column fix as the "overall" query above. SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break FROM wfm_break_log WHERE break_start >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY employee_id, DATE(break_start) ) wb JOIN employees e ON wb.employee_id = e.id JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date WHERE wb.total_break > 30 AND e.branch_id = ? GROUP BY e.id, e.employee_code, e.full_name HAVING AVG(wb.total_break - 30) > 5 ORDER BY avg_excess DESC LIMIT 10",
+  },
+  {
+    "params": [
+      "b1",
+    ],
+    "sql": "SELECT p.id AS process_id, p.process_name, AVG(wb.total_break) AS avg_break, 30 AS budget FROM ( -- Same real-column fix as the "overall" query above. SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break FROM wfm_break_log WHERE break_start >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY employee_id, DATE(break_start) ) wb JOIN employees e ON wb.employee_id = e.id JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date JOIN process_master p ON e.process_id = p.id WHERE 1=1 AND e.branch_id = ? GROUP BY p.id, p.process_name",
+  },
+]
+`;
+
+exports[`roster-analytics unfiltered SQL is unchanged > cost 1`] = `
+[
+  {
+    "params": [
+      "b1",
+      "p1",
+      "2026-08-01",
+      "2026-08-31",
+    ],
+    "sql": "SELECT ra.assignment_type, ra.shift_start_time, ra.shift_end_time, st.start_time AS template_start, st.end_time AS template_end, att.clock_in_time AS first_in, att.raw_minutes / 60 AS total_hours FROM employees e JOIN wfm_roster_assignment ra ON ra.employee_id = e.id LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date WHERE e.active_status = 1 AND ra.assignment_type NOT IN ('WEEK_OFF', 'HOLIDAY') AND e.branch_id = ? AND e.process_id = ? AND ra.roster_date BETWEEN ? AND ?",
+  },
+]
+`;
+
+exports[`roster-analytics unfiltered SQL is unchanged > forecast 1`] = `
+[
+  {
+    "params": [
+      "b1",
+      "2026-07-30",
+      "2026-09-24",
+    ],
+    "sql": "SELECT DAYOFWEEK(ra.roster_date) AS dow, DAY(ra.roster_date) AS dom, COUNT(CASE WHEN ra.assignment_type NOT IN ('WEEK_OFF', 'HOLIDAY') THEN 1 END) AS planned, COUNT(CASE WHEN ra.assignment_type NOT IN ('WEEK_OFF', 'HOLIDAY', 'LEAVE', 'TRAINING') AND att.clock_in_time IS NULL THEN 1 END) AS absent FROM employees e JOIN wfm_roster_assignment ra ON ra.employee_id = e.id LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date WHERE e.branch_id = ? AND e.active_status = 1 AND ra.roster_date BETWEEN ? AND ? GROUP BY DAYOFWEEK(ra.roster_date), DAY(ra.roster_date)",
+  },
+]
+`;
+
+exports[`roster-analytics unfiltered SQL is unchanged > mobile 1`] = `
+[
+  {
+    "params": [
+      "2026-09-24",
+      "2026-09-24",
+      "2026-09-24",
+      "2026-09-24",
+      "u1",
+    ],
+    "sql": "SELECT e.id AS employee_id, e.employee_code, e.full_name AS employee_name, sm.shift_name, CASE WHEN ra.is_week_off = 1 THEN 'WEEK_OFF' ELSE 'WORKING' END AS roster_status, adr.attendance_status, adr.clock_in_time AS login_time, TIMESTAMPDIFF(MINUTE, CONCAT(?, ' ', sm.start_time), adr.clock_in_time) AS late_minutes, wb.on_break FROM employees e LEFT JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = ? LEFT JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id AND adr.record_date = ? LEFT JOIN ( -- Same pre-existing wfm_break_log column bug as break-compliance/shift-effectiveness -- above: no session_date or end_time columns exist. Real columns: break_start -- (DATETIME) and break_end (DATETIME, NULL while the break is still open) — see -- sql/005_attendance_wfm.sql. SELECT employee_id, 1 AS on_break FROM wfm_break_log WHERE DATE(break_start) = ? AND break_end IS NULL ) wb ON wb.employee_id = e.id WHERE e.reporting_manager_id = ? AND e.active_status = 1 AND e.employment_status = 'Active' ORDER BY e.full_name",
+  },
+]
+`;
+
+exports[`roster-analytics unfiltered SQL is unchanged > quality 1`] = `
+[
+  {
+    "params": [
+      "b1",
+      "p1",
+      "2026-08-01",
+      "2026-08-31",
+    ],
+    "sql": "SELECT e.id AS employee_id, e.employee_code, e.full_name AS employee_name, COUNT(CASE WHEN ra.assignment_type NOT IN ('WEEK_OFF', 'LEAVE', 'HOLIDAY', 'TRAINING') THEN 1 END) AS planned_shifts, COUNT(CASE WHEN ra.assignment_type NOT IN ('WEEK_OFF', 'LEAVE', 'HOLIDAY', 'TRAINING') AND att.clock_in_time IS NOT NULL THEN 1 END) AS attended_shifts FROM employees e JOIN wfm_roster_assignment ra ON ra.employee_id = e.id LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date WHERE e.active_status = 1 AND e.branch_id = ? AND e.process_id = ? AND ra.roster_date BETWEEN ? AND ? GROUP BY e.id, e.employee_code, e.full_name HAVING planned_shifts >= 10",
+  },
+  {
+    "params": [
+      "2026-08",
+    ],
+    "sql": "SELECT ks.employee_id, AVG(ks.actual_value) AS avg_quality FROM kpi_score ks JOIN kpi_metric_master km ON km.id = ks.metric_id WHERE km.family = 'quality' AND ks.period = ? GROUP BY ks.employee_id",
+  },
+]
+`;
+
+exports[`roster-analytics unfiltered SQL is unchanged > shift-eff 1`] = `
+[
+  {
+    "params": [
+      "b1",
+      "p1",
+    ],
+    "sql": "SELECT sm.id AS shift_id, sm.shift_name, CONCAT(TIME_FORMAT(sm.start_time, '%H:%i'), ' - ', TIME_FORMAT(sm.end_time, '%H:%i')) AS shift_time, CASE WHEN HOUR(sm.start_time) >= 20 OR HOUR(sm.start_time) < 6 THEN 'NIGHT' WHEN HOUR(sm.start_time) >= 14 THEN 'EVENING' ELSE 'MORNING' END AS shift_type, COUNT(DISTINCT ra.employee_id) AS total_employees, AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct, AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') AND adr.late_mark = 0 THEN 100 ELSE 0 END) AS on_time_pct, AVG(COALESCE(qa.quality_percentage, 0)) AS quality_avg, 30 AS break_budget, AVG(COALESCE(wb.total_break_minutes, 30)) AS avg_break_minutes FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date LEFT JOIN ( -- call_quality_assessment lives in db_audit, not mas_hrms, and is keyed by the -- agent's \`User\` login code (CallDate for the call date) — not employee_id/punch_date, -- which don't exist on this table at all. Unqualified + wrong columns meant this whole -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here. -- -- Live-verified the WHERE CallDate bound below is not optional: this subquery had no -- date filter at all, so it grouped the entire historical table on every call to this -- endpoint. Timed directly against the live DB: 115.5s unbounded vs 2.5s bounded to the -- same 30-day window used elsewhere in this file — this alone was making -- /shift-effectiveness time out, and /team-comparison runs this exact unbounded query 3x -- per request (team/process/branch rankings). Every other query against this table -- elsewhere in the codebase (quality-queries.ts) already bounds it by CallDate. SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage FROM db_audit.call_quality_assessment WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate) ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d LEFT JOIN ( -- wfm_break_log has no session_date/break_duration_minutes columns — same -- pre-existing bug as break-compliance below (real columns: break_start, -- duration_minutes; see sql/005_attendance_wfm.sql). This LEFT JOIN's subquery -- still fails to parse regardless of join type, so this 500'd the whole endpoint. SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break_minutes FROM wfm_break_log GROUP BY employee_id, DATE(break_start) ) wb ON ra.employee_id = wb.employee_id AND ra.roster_date = wb.session_date WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND e.branch_id = ? AND e.process_id = ? GROUP BY sm.id, sm.shift_name, sm.start_time, sm.end_time ORDER BY adherence_pct DESC",
+  },
+]
+`;
+
+exports[`roster-analytics unfiltered SQL is unchanged > shift-eff-nofilter 1`] = `
+[
+  {
+    "params": [],
+    "sql": "SELECT sm.id AS shift_id, sm.shift_name, CONCAT(TIME_FORMAT(sm.start_time, '%H:%i'), ' - ', TIME_FORMAT(sm.end_time, '%H:%i')) AS shift_time, CASE WHEN HOUR(sm.start_time) >= 20 OR HOUR(sm.start_time) < 6 THEN 'NIGHT' WHEN HOUR(sm.start_time) >= 14 THEN 'EVENING' ELSE 'MORNING' END AS shift_type, COUNT(DISTINCT ra.employee_id) AS total_employees, AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct, AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') AND adr.late_mark = 0 THEN 100 ELSE 0 END) AS on_time_pct, AVG(COALESCE(qa.quality_percentage, 0)) AS quality_avg, 30 AS break_budget, AVG(COALESCE(wb.total_break_minutes, 30)) AS avg_break_minutes FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date LEFT JOIN ( -- call_quality_assessment lives in db_audit, not mas_hrms, and is keyed by the -- agent's \`User\` login code (CallDate for the call date) — not employee_id/punch_date, -- which don't exist on this table at all. Unqualified + wrong columns meant this whole -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here. -- -- Live-verified the WHERE CallDate bound below is not optional: this subquery had no -- date filter at all, so it grouped the entire historical table on every call to this -- endpoint. Timed directly against the live DB: 115.5s unbounded vs 2.5s bounded to the -- same 30-day window used elsewhere in this file — this alone was making -- /shift-effectiveness time out, and /team-comparison runs this exact unbounded query 3x -- per request (team/process/branch rankings). Every other query against this table -- elsewhere in the codebase (quality-queries.ts) already bounds it by CallDate. SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage FROM db_audit.call_quality_assessment WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate) ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d LEFT JOIN ( -- wfm_break_log has no session_date/break_duration_minutes columns — same -- pre-existing bug as break-compliance below (real columns: break_start, -- duration_minutes; see sql/005_attendance_wfm.sql). This LEFT JOIN's subquery -- still fails to parse regardless of join type, so this 500'd the whole endpoint. SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break_minutes FROM wfm_break_log GROUP BY employee_id, DATE(break_start) ) wb ON ra.employee_id = wb.employee_id AND ra.roster_date = wb.session_date WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) GROUP BY sm.id, sm.shift_name, sm.start_time, sm.end_time ORDER BY adherence_pct DESC",
+  },
+]
+`;
+
+exports[`roster-analytics unfiltered SQL is unchanged > shift-rec 1`] = `
+[
+  {
+    "params": [
+      "b1",
+      "p1",
+    ],
+    "sql": "SELECT sm.id AS shift_id, sm.shift_name, CONCAT(TIME_FORMAT(sm.start_time, '%H:%i'), ' - ', TIME_FORMAT(sm.end_time, '%H:%i')) AS shift_time, COUNT(DISTINCT ra.employee_id) AS total_employees, AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND e.branch_id = ? AND e.process_id = ? GROUP BY sm.id, sm.shift_name, sm.start_time, sm.end_time",
+  },
+]
+`;
+
+exports[`roster-analytics unfiltered SQL is unchanged > shrinkage 1`] = `
+[
+  {
+    "params": [
+      "b1",
+    ],
+    "sql": "SELECT id, branch_name FROM branch_master WHERE id = ?",
+  },
+  {
+    "params": [
+      "b1",
+      "2026-09-14",
+      "2026-09-20",
+    ],
+    "sql": "SELECT e.id AS employee_id, e.reporting_manager_id, e.process_id, mgr.full_name AS manager_name, pm.process_name, ra.roster_date, ra.assignment_type, ra.shift_start_time, ra.shift_end_time, st.start_time AS template_start, st.end_time AS template_end, att.clock_in_time AS first_in, att.clock_out_time AS last_out, att.raw_minutes / 60 AS total_hours FROM employees e JOIN wfm_roster_assignment ra ON ra.employee_id = e.id LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id LEFT JOIN process_master pm ON pm.id = e.process_id WHERE e.branch_id = ? AND e.active_status = 1 AND ra.roster_date BETWEEN ? AND ?",
+  },
+  {
+    "params": [
+      "b1",
+    ],
+    "sql": "SELECT shrinkage_buffer_pct FROM workforce_mandate WHERE branch_id = ? AND active_status = 1 LIMIT 1",
+  },
+  {
+    "params": [
+      "b1",
+      "2026-09-07",
+      "2026-09-13",
+    ],
+    "sql": "SELECT COUNT(CASE WHEN ra.assignment_type IN ('LEAVE', 'TRAINING') OR att.clock_in_time IS NULL THEN 1 END) AS shrinkage, COUNT(*) AS total FROM employees e JOIN wfm_roster_assignment ra ON ra.employee_id = e.id LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date WHERE e.branch_id = ? AND e.active_status = 1 AND ra.roster_date BETWEEN ? AND ? AND ra.assignment_type NOT IN ('WEEK_OFF', 'HOLIDAY')",
+  },
+]
+`;
+
+exports[`roster-analytics unfiltered SQL is unchanged > team-cmp 1`] = `
+[
+  {
+    "params": [
+      "b1",
+    ],
+    "sql": "SELECT m.id AS manager_id, m.full_name AS manager_name, p.process_name, b.branch_name, COUNT(DISTINCT ra.employee_id) AS team_size, AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct, AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') AND adr.late_mark = 0 THEN 100 ELSE 0 END) AS on_time_pct, AVG(COALESCE(qa.quality_percentage, 0)) AS quality_avg, AVG(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 100 ELSE 0 END) AS shrinkage_pct, 90 AS break_compliance_pct FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id JOIN employees m ON e.reporting_manager_id = m.id LEFT JOIN process_master p ON e.process_id = p.id LEFT JOIN branch_master b ON e.branch_id = b.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date LEFT JOIN ( -- call_quality_assessment lives in db_audit, not mas_hrms, and is keyed by the -- agent's \`User\` login code (CallDate for the call date) — not employee_id/punch_date, -- which don't exist on this table at all. Unqualified + wrong columns meant this whole -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here. -- -- Live-verified the WHERE CallDate bound below is not optional: this subquery had no -- date filter at all, so it grouped the entire historical table on every call to this -- endpoint. Timed directly against the live DB: 115.5s unbounded vs 2.5s bounded to the -- same 30-day window used elsewhere in this file — this alone was making -- /shift-effectiveness time out, and /team-comparison runs this exact unbounded query 3x -- per request (team/process/branch rankings). Every other query against this table -- elsewhere in the codebase (quality-queries.ts) already bounds it by CallDate. SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage FROM db_audit.call_quality_assessment WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate) ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND e.branch_id = ? GROUP BY m.id, m.full_name, p.process_name, b.branch_name HAVING team_size >= 3 ORDER BY adherence_pct DESC LIMIT 50",
+  },
+  {
+    "params": [
+      "b1",
+    ],
+    "sql": "SELECT p.id AS process_id, p.process_name, b.branch_name, COUNT(DISTINCT ra.employee_id) AS employee_count, AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct, AVG(COALESCE(qa.quality_percentage, 0)) AS quality_avg, AVG(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 100 ELSE 0 END) AS shrinkage_pct FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id JOIN process_master p ON e.process_id = p.id LEFT JOIN branch_master b ON e.branch_id = b.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date LEFT JOIN ( -- call_quality_assessment lives in db_audit, not mas_hrms, and is keyed by the -- agent's \`User\` login code (CallDate for the call date) — not employee_id/punch_date, -- which don't exist on this table at all. Unqualified + wrong columns meant this whole -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here. -- -- Live-verified the WHERE CallDate bound below is not optional: this subquery had no -- date filter at all, so it grouped the entire historical table on every call to this -- endpoint. Timed directly against the live DB: 115.5s unbounded vs 2.5s bounded to the -- same 30-day window used elsewhere in this file — this alone was making -- /shift-effectiveness time out, and /team-comparison runs this exact unbounded query 3x -- per request (team/process/branch rankings). Every other query against this table -- elsewhere in the codebase (quality-queries.ts) already bounds it by CallDate. SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage FROM db_audit.call_quality_assessment WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate) ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND e.branch_id = ? GROUP BY p.id, p.process_name, b.branch_name ORDER BY adherence_pct DESC",
+  },
+  {
+    "params": [],
+    "sql": "SELECT b.id AS branch_id, b.branch_name, COUNT(DISTINCT ra.employee_id) AS employee_count, COUNT(DISTINCT e.reporting_manager_id) AS manager_count, AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct, AVG(COALESCE(qa.quality_percentage, 0)) AS quality_avg, AVG(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 100 ELSE 0 END) AS shrinkage_pct FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id JOIN branch_master b ON e.branch_id = b.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date LEFT JOIN ( -- call_quality_assessment lives in db_audit, not mas_hrms, and is keyed by the -- agent's \`User\` login code (CallDate for the call date) — not employee_id/punch_date, -- which don't exist on this table at all. Unqualified + wrong columns meant this whole -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here. -- -- Live-verified the WHERE CallDate bound below is not optional: this subquery had no -- date filter at all, so it grouped the entire historical table on every call to this -- endpoint. Timed directly against the live DB: 115.5s unbounded vs 2.5s bounded to the -- same 30-day window used elsewhere in this file — this alone was making -- /shift-effectiveness time out, and /team-comparison runs this exact unbounded query 3x -- per request (team/process/branch rankings). Every other query against this table -- elsewhere in the codebase (quality-queries.ts) already bounds it by CallDate. SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage FROM db_audit.call_quality_assessment WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate) ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) GROUP BY b.id, b.branch_name ORDER BY adherence_pct DESC",
+  },
+]
+`;
+
+exports[`roster-analytics unfiltered SQL is unchanged > team-cmp-nofilter 1`] = `
+[
+  {
+    "params": [],
+    "sql": "SELECT m.id AS manager_id, m.full_name AS manager_name, p.process_name, b.branch_name, COUNT(DISTINCT ra.employee_id) AS team_size, AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct, AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') AND adr.late_mark = 0 THEN 100 ELSE 0 END) AS on_time_pct, AVG(COALESCE(qa.quality_percentage, 0)) AS quality_avg, AVG(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 100 ELSE 0 END) AS shrinkage_pct, 90 AS break_compliance_pct FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id JOIN employees m ON e.reporting_manager_id = m.id LEFT JOIN process_master p ON e.process_id = p.id LEFT JOIN branch_master b ON e.branch_id = b.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date LEFT JOIN ( -- call_quality_assessment lives in db_audit, not mas_hrms, and is keyed by the -- agent's \`User\` login code (CallDate for the call date) — not employee_id/punch_date, -- which don't exist on this table at all. Unqualified + wrong columns meant this whole -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here. -- -- Live-verified the WHERE CallDate bound below is not optional: this subquery had no -- date filter at all, so it grouped the entire historical table on every call to this -- endpoint. Timed directly against the live DB: 115.5s unbounded vs 2.5s bounded to the -- same 30-day window used elsewhere in this file — this alone was making -- /shift-effectiveness time out, and /team-comparison runs this exact unbounded query 3x -- per request (team/process/branch rankings). Every other query against this table -- elsewhere in the codebase (quality-queries.ts) already bounds it by CallDate. SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage FROM db_audit.call_quality_assessment WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate) ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) GROUP BY m.id, m.full_name, p.process_name, b.branch_name HAVING team_size >= 3 ORDER BY adherence_pct DESC LIMIT 50",
+  },
+  {
+    "params": [],
+    "sql": "SELECT p.id AS process_id, p.process_name, b.branch_name, COUNT(DISTINCT ra.employee_id) AS employee_count, AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct, AVG(COALESCE(qa.quality_percentage, 0)) AS quality_avg, AVG(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 100 ELSE 0 END) AS shrinkage_pct FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id JOIN process_master p ON e.process_id = p.id LEFT JOIN branch_master b ON e.branch_id = b.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date LEFT JOIN ( -- call_quality_assessment lives in db_audit, not mas_hrms, and is keyed by the -- agent's \`User\` login code (CallDate for the call date) — not employee_id/punch_date, -- which don't exist on this table at all. Unqualified + wrong columns meant this whole -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here. -- -- Live-verified the WHERE CallDate bound below is not optional: this subquery had no -- date filter at all, so it grouped the entire historical table on every call to this -- endpoint. Timed directly against the live DB: 115.5s unbounded vs 2.5s bounded to the -- same 30-day window used elsewhere in this file — this alone was making -- /shift-effectiveness time out, and /team-comparison runs this exact unbounded query 3x -- per request (team/process/branch rankings). Every other query against this table -- elsewhere in the codebase (quality-queries.ts) already bounds it by CallDate. SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage FROM db_audit.call_quality_assessment WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate) ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) GROUP BY p.id, p.process_name, b.branch_name ORDER BY adherence_pct DESC",
+  },
+  {
+    "params": [],
+    "sql": "SELECT b.id AS branch_id, b.branch_name, COUNT(DISTINCT ra.employee_id) AS employee_count, COUNT(DISTINCT e.reporting_manager_id) AS manager_count, AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct, AVG(COALESCE(qa.quality_percentage, 0)) AS quality_avg, AVG(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 100 ELSE 0 END) AS shrinkage_pct FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id JOIN branch_master b ON e.branch_id = b.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date LEFT JOIN ( -- call_quality_assessment lives in db_audit, not mas_hrms, and is keyed by the -- agent's \`User\` login code (CallDate for the call date) — not employee_id/punch_date, -- which don't exist on this table at all. Unqualified + wrong columns meant this whole -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here. -- -- Live-verified the WHERE CallDate bound below is not optional: this subquery had no -- date filter at all, so it grouped the entire historical table on every call to this -- endpoint. Timed directly against the live DB: 115.5s unbounded vs 2.5s bounded to the -- same 30-day window used elsewhere in this file — this alone was making -- /shift-effectiveness time out, and /team-comparison runs this exact unbounded query 3x -- per request (team/process/branch rankings). Every other query against this table -- elsewhere in the codebase (quality-queries.ts) already bounds it by CallDate. SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage FROM db_audit.call_quality_assessment WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate) ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) GROUP BY b.id, b.branch_name ORDER BY adherence_pct DESC",
+  },
+]
+`;

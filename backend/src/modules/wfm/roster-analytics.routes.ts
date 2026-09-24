@@ -14,6 +14,7 @@ import {
 } from './roster-analytics.service.js';
 import { getProcessTeamRosterView } from './process-team-roster.service.js';
 import { todayLocalDateStr } from './shift-due.util.js';
+import { lobAnd, readLobFilter } from '../../shared/lobFilter.js';
 
 const router = Router();
 
@@ -49,6 +50,8 @@ const TEAM_ROSTER_ROLES = ['super_admin', 'admin', 'hr', 'wfm', 'branch_head', '
 router.get('/shrinkage-intelligence/:branchId', requireRole(...ANALYTICS_ROLES), async (req, res) => {
   try {
     const { branchId } = req.params;
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
 
     // Default to start of current week (Monday)
     let weekStart = req.query.weekStart ? String(req.query.weekStart) : undefined;
@@ -59,7 +62,7 @@ router.get('/shrinkage-intelligence/:branchId', requireRole(...ANALYTICS_ROLES),
       weekStart = d.toISOString().slice(0, 10);
     }
 
-    const data = await getWeeklyShrinkageIntelligence(branchId, weekStart);
+    const data = await getWeeklyShrinkageIntelligence(branchId, weekStart, lob);
     res.json(data);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -74,6 +77,8 @@ router.get('/shrinkage-intelligence/:branchId', requireRole(...ANALYTICS_ROLES),
  */
 router.get('/quality-correlation', requireRole(...ANALYTICS_ROLES), async (req, res) => {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     // Default to previous month
     let period = req.query.period ? String(req.query.period) : undefined;
     if (!period) {
@@ -85,7 +90,7 @@ router.get('/quality-correlation', requireRole(...ANALYTICS_ROLES), async (req, 
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
     const processId = req.query.processId ? String(req.query.processId) : undefined;
 
-    const data = await getQualityAdherenceCorrelation(period, branchId, processId);
+    const data = await getQualityAdherenceCorrelation(period, branchId, processId, lob);
     res.json(data);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -100,6 +105,8 @@ router.get('/quality-correlation', requireRole(...ANALYTICS_ROLES), async (req, 
  */
 router.get('/cost-impact', requireRole(...ANALYTICS_ROLES), async (req, res) => {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     // Default to previous month
     let period = req.query.period ? String(req.query.period) : undefined;
     if (!period) {
@@ -111,7 +118,7 @@ router.get('/cost-impact', requireRole(...ANALYTICS_ROLES), async (req, res) => 
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
     const processId = req.query.processId ? String(req.query.processId) : undefined;
 
-    const data = await getCostOfNonAdherence(period, branchId, processId);
+    const data = await getCostOfNonAdherence(period, branchId, processId, lob);
     res.json(data);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -127,7 +134,9 @@ router.get('/cost-impact', requireRole(...ANALYTICS_ROLES), async (req, res) => 
 router.get('/forecast/:branchId', requireRole(...ANALYTICS_ROLES), async (req, res) => {
   try {
     const { branchId } = req.params;
-    const data = await getShrinkageForecast(branchId);
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const data = await getShrinkageForecast(branchId, lob);
     res.json(data);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -142,6 +151,8 @@ router.get('/forecast/:branchId', requireRole(...ANALYTICS_ROLES), async (req, r
  */
 router.get('/summary', requireRole(...ANALYTICS_ROLES), async (req, res) => {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
 
     // Current week shrinkage
@@ -158,7 +169,7 @@ router.get('/summary', requireRole(...ANALYTICS_ROLES), async (req, res) => {
     const results: Record<string, unknown> = {};
 
     if (branchId) {
-      const shrinkage = await getWeeklyShrinkageIntelligence(branchId, weekStart);
+      const shrinkage = await getWeeklyShrinkageIntelligence(branchId, weekStart, lob);
       results.currentWeekShrinkage = {
         pct: shrinkage.breakdown.total.pct,
         budgetPct: shrinkage.budgetPct,
@@ -166,14 +177,14 @@ router.get('/summary', requireRole(...ANALYTICS_ROLES), async (req, res) => {
         trend: shrinkage.trendVsPrevWeek,
       };
 
-      const cost = await getCostOfNonAdherence(period, branchId);
+      const cost = await getCostOfNonAdherence(period, branchId, undefined, lob);
       results.monthCostImpact = {
         hoursLost: cost.metrics.hoursLost,
         costINR: cost.metrics.directCostLossINR,
         annualProjection: cost.projectedAnnual.currentTrend,
       };
 
-      const forecast = await getShrinkageForecast(branchId);
+      const forecast = await getShrinkageForecast(branchId, lob);
       results.nextWeekForecast = {
         predictedPct: forecast.nextWeek.predictedShrinkagePct,
         confidence: forecast.nextWeek.confidence,
@@ -181,7 +192,7 @@ router.get('/summary', requireRole(...ANALYTICS_ROLES), async (req, res) => {
       };
     }
 
-    const quality = await getQualityAdherenceCorrelation(period, branchId);
+    const quality = await getQualityAdherenceCorrelation(period, branchId, undefined, lob);
     results.qualityCorrelation = {
       coefficient: quality.correlation.coefficient,
       interpretation: quality.correlation.interpretation,
@@ -442,6 +453,8 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
  */
 router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), async (req, res) => {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     const { db } = await import('../../db/mysql.js');
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
     const processId = req.query.processId ? String(req.query.processId) : undefined;
@@ -457,6 +470,9 @@ router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), async (req, 
       whereClause += ' AND e.process_id = ?';
       params.push(processId);
     }
+    const lobSql = lobAnd(lob);
+    whereClause += lobSql.sql;
+    params.push(...lobSql.params);
 
     const [rows] = await db.execute<any[]>(
       `SELECT
@@ -544,8 +560,11 @@ router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), async (req, 
  */
 router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res) => {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     const { db } = await import('../../db/mysql.js');
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const processId = req.query.processId ? String(req.query.processId) : undefined;
 
     let branchFilter = '';
     const params: string[] = [];
@@ -553,6 +572,13 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
       branchFilter = 'AND e.branch_id = ?';
       params.push(branchId);
     }
+    if (processId) {
+      branchFilter += ' AND e.process_id = ?';
+      params.push(processId);
+    }
+    const lobSql = lobAnd(lob);
+    branchFilter += lobSql.sql;
+    params.push(...lobSql.params);
 
     // Overall break compliance
     const [overallRows] = await db.execute<any[]>(
@@ -711,6 +737,8 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
  */
 router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), async (req, res) => {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     const { db } = await import('../../db/mysql.js');
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
     const processId = req.query.processId ? String(req.query.processId) : undefined;
@@ -725,6 +753,9 @@ router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), async (req
       whereClause += ' AND e.process_id = ?';
       params.push(processId);
     }
+    const lobSql = lobAnd(lob);
+    whereClause += lobSql.sql;
+    params.push(...lobSql.params);
 
     // Per-shift cohort adherence (same shape as /shift-effectiveness, minimal fields).
     const [shiftRows] = await db.execute<any[]>(
@@ -812,6 +843,8 @@ router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), async (req
  */
 router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res) => {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     const { db } = await import('../../db/mysql.js');
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
     const period = req.query.period ? String(req.query.period) : 'current';
@@ -829,6 +862,9 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
       branchFilter = 'AND e.branch_id = ?';
       params.push(branchId);
     }
+    const lobSql = lobAnd(lob);
+    branchFilter += lobSql.sql;
+    params.push(...lobSql.params);
 
     // Team rankings (by manager)
     const [teamRows] = await db.execute<any[]>(
@@ -1026,6 +1062,8 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
  */
 router.get('/team-status-mobile', requireRole(...ANALYTICS_ROLES, 'manager', 'process_manager', 'tl'), async (req, res) => {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     const { db } = await import('../../db/mysql.js');
     const authReq = req as any;
     const managerId = authReq.authUser?.id;
@@ -1061,9 +1099,9 @@ router.get('/team-status-mobile', requireRole(...ANALYTICS_ROLES, 'manager', 'pr
        ) wb ON wb.employee_id = e.id
        WHERE e.reporting_manager_id = ?
          AND e.active_status = 1
-         AND e.employment_status = 'Active'
+         AND e.employment_status = 'Active'${lobAnd(lob).sql}
        ORDER BY e.full_name`,
-      [today, today, today, today, managerId]
+      [today, today, today, today, managerId, ...lobAnd(lob).params]
     );
 
     const members = teamRows.map((r: any) => {
@@ -1125,6 +1163,8 @@ router.get('/team-status-mobile', requireRole(...ANALYTICS_ROLES, 'manager', 'pr
  */
 router.get('/process-roster', requireRole(...TEAM_ROSTER_ROLES), async (req, res) => {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     const processId = req.query.processId ? String(req.query.processId) : undefined;
     if (!processId) {
       res.status(400).json({ error: 'processId is required' });
@@ -1137,7 +1177,7 @@ router.get('/process-roster', requireRole(...TEAM_ROSTER_ROLES), async (req, res
       return;
     }
 
-    const view = await getProcessTeamRosterView(processId, date);
+    const view = await getProcessTeamRosterView(processId, date, lob);
     res.json(view);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';

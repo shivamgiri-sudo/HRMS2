@@ -10,6 +10,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
+import { lobCondition, readLobFilter } from '../../shared/lobFilter.js';
 
 const router = Router();
 const wrap = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -26,6 +27,8 @@ router.get(
   wrap(async (req: AuthenticatedRequest, res: Response) => {
     const { employeeId, branchId, processId, dateFrom, dateTo, changeType, limit } = req.query;
     const maxLimit = Math.min(parseInt(limit as string) || 100, 500);
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
 
     const conditions: string[] = ['1=1'];
     const params: (string | number)[] = [];
@@ -41,6 +44,13 @@ router.get(
     if (processId) {
       conditions.push('e.process_id = ?');
       params.push(String(processId));
+    }
+    // NOTE: roster_decision_audit is LEFT JOINed to employees, so a process/LOB filter drops audit rows
+    // that have no employee (employee_id NULL or deleted). Accepted: those rows cannot belong to a LOB.
+    const lobCond = lobCondition(lob);
+    if (lobCond) {
+      conditions.push(lobCond.sql);
+      params.push(...lobCond.params);
     }
     if (dateFrom) {
       conditions.push('rda.roster_date >= ?');
@@ -252,7 +262,9 @@ router.get(
   // aligned for consistency (2026-09-11).
   requireRole('hr', 'wfm', 'admin', 'super_admin', 'operations_manager'),
   wrap(async (req: AuthenticatedRequest, res: Response) => {
-    const { branchId, dateFrom, dateTo } = req.query;
+    const { branchId, processId, dateFrom, dateTo } = req.query;
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     const period = dateFrom && dateTo
       ? [String(dateFrom), String(dateTo)]
       : [
@@ -265,6 +277,17 @@ router.get(
     if (branchId) {
       branchFilter = 'AND e.branch_id = ?';
       params.push(String(branchId));
+    }
+    if (processId) {
+      branchFilter += ' AND e.process_id = ?';
+      params.push(String(processId));
+    }
+    // LEFT JOIN employees: a process/LOB filter drops audit rows with no employee (documented, accepted).
+    // The roster_generation_run block below is not employee-keyed and stays unfiltered.
+    const lobCond = lobCondition(lob);
+    if (lobCond) {
+      branchFilter += ` AND ${lobCond.sql}`;
+      params.push(...lobCond.params);
     }
 
     const [typeRows] = await db.execute<RowDataPacket[]>(

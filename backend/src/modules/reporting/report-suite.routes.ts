@@ -34,6 +34,7 @@ import {
 import { buildCatalogWorkbook } from "./catalog-workbook.js";
 import type { CatalogWorkbookColumn } from "./catalog-workbook.js";
 import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from "./report-audit.service.js";
+import { readLobFilter } from "../../shared/lobFilter.js";
 
 /** Report codes that render through the business-mandated Leave Balance workbook. */
 const LEAVE_BALANCE_CODES = new Set(["leave-balance", "leave-balance-export"]);
@@ -251,7 +252,10 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
   }
 
   // Build ExecFilters from query string
+  const lobParsed = readLobFilter(req, res);
+  if (!lobParsed) return;
   const filters: ExecFilters = {
+    lobId:          req.query.lobId ? String(req.query.lobId) : undefined,
     branchId:       req.query.branchId    as string | undefined,
     processId:      req.query.processId   as string | undefined,
     departmentId:   req.query.departmentId as string | undefined,
@@ -3214,7 +3218,10 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       // Attempt executor layer for codes not yet in the switch above.
       const userId = (req as any).authUser?.id as string;
       const execScope = await resolveFullScope(userId);
+      const lobParsed = readLobFilter(req, res);
+      if (!lobParsed) return;
       const execFilters: ExecFilters = {
+        lobId:        req.query.lobId ? String(req.query.lobId) : undefined,
         branchId:     req.query.branchId     as string | undefined,
         processId:    req.query.processId    as string | undefined,
         departmentId: req.query.departmentId as string | undefined,

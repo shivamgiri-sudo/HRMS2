@@ -1,0 +1,224 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`unfiltered SQL is unchanged > audit summary 1`] = `
+[
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "b1",
+    ],
+    "sql": "SELECT rda.decision_type, COUNT(*) AS count FROM roster_decision_audit rda LEFT JOIN employees e ON rda.employee_id = e.id WHERE rda.roster_date BETWEEN ? AND ? AND e.branch_id = ? GROUP BY rda.decision_type",
+  },
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "b1",
+    ],
+    "sql": "SELECT COUNT(*) AS count FROM roster_decision_audit rda LEFT JOIN employees e ON rda.employee_id = e.id WHERE rda.roster_date BETWEEN ? AND ? AND rda.override_by IS NOT NULL AND e.branch_id = ?",
+  },
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+    ],
+    "sql": "SELECT rgr.run_type, COUNT(*) AS count, SUM(rgr.assignments_created) AS assignments, SUM(rgr.conflicts_found) AS conflicts FROM roster_generation_run rgr WHERE rgr.started_at BETWEEN ? AND DATE_ADD(?, INTERVAL 1 DAY) GROUP BY rgr.run_type",
+  },
+]
+`;
+
+exports[`unfiltered SQL is unchanged > audit trails 1`] = `
+[
+  {
+    "params": [
+      "b1",
+      "p1",
+      "2026-08-01",
+      "2026-08-31",
+    ],
+    "sql": "SELECT rda.id, rda.roster_date AS date, rda.decision_type AS changeType, rda.rule_applied AS reason, rda.override_reason AS overrideReason, rda.created_at AS timestamp, e.id AS employeeId, e.employee_code AS employeeCode, e.full_name AS employeeName, p.process_name AS processName, b.branch_name AS branchName, sm.shift_name AS shiftName, actor.full_name AS changedByName, rda.override_by AS changedById, rgr.run_type AS runType, rgr.triggered_by AS triggeredById, trigger_user.full_name AS triggeredByName FROM roster_decision_audit rda LEFT JOIN employees e ON rda.employee_id = e.id LEFT JOIN process_master p ON e.process_id = p.id LEFT JOIN branch_master b ON e.branch_id = b.id LEFT JOIN wfm_shift_master sm ON rda.assigned_shift_template_id = sm.id LEFT JOIN employees actor ON rda.override_by = actor.id LEFT JOIN roster_generation_run rgr ON rda.run_id = rgr.id LEFT JOIN employees trigger_user ON rgr.triggered_by = trigger_user.id WHERE 1=1 AND e.branch_id = ? AND e.process_id = ? AND rda.roster_date >= ? AND rda.roster_date <= ? ORDER BY rda.created_at DESC LIMIT 100",
+  },
+]
+`;
+
+exports[`unfiltered SQL is unchanged > compliance summary (no branch) 1`] = `
+[
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "p1",
+    ],
+    "sql": "SELECT COUNT(DISTINCT ra.employee_id) AS total_employees, SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS compliant, SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 1 ELSE 0 END) AS violations, SUM(CASE WHEN ra.is_week_off = 0 THEN 1 ELSE 0 END) AS total_shifts FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date WHERE ra.roster_date BETWEEN ? AND ? AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND e.process_id = ?",
+  },
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "p1",
+    ],
+    "sql": "SELECT COUNT(*) AS count FROM ( SELECT ra1.employee_id, ra1.roster_date, TIMESTAMPDIFF(HOUR, CONCAT(ra1.roster_date, ' ', sm1.end_time), CONCAT(ra2.roster_date, ' ', sm2.start_time) ) AS rest_hours FROM wfm_roster_assignment ra1 JOIN wfm_roster_assignment ra2 ON ra1.employee_id = ra2.employee_id AND ra2.roster_date = DATE_ADD(ra1.roster_date, INTERVAL 1 DAY) JOIN employees e ON ra1.employee_id = e.id JOIN wfm_shift_template sm1 ON ra1.shift_template_id = sm1.id JOIN wfm_shift_template sm2 ON ra2.shift_template_id = sm2.id WHERE ra1.roster_date BETWEEN ? AND DATE_SUB(?, INTERVAL 1 DAY) AND NOT (ra1.import_batch_id IS NULL AND ra1.cycle_id IS NULL AND ra1.assignment_type IS NULL AND ra1.shift_template_id IS NULL) AND NOT (ra2.import_batch_id IS NULL AND ra2.cycle_id IS NULL AND ra2.assignment_type IS NULL AND ra2.shift_template_id IS NULL) AND e.process_id = ? HAVING rest_hours < 11 ) AS rest_violations",
+  },
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "p1",
+    ],
+    "sql": "SELECT COUNT(DISTINCT employee_id) AS count FROM ( SELECT employee_id, consecutive FROM ( SELECT employee_id, roster_date, @seq := IF(@prev_emp = employee_id AND DATEDIFF(roster_date, @prev_date) = 1, @seq + 1, 1) AS consecutive, @prev_emp := employee_id, @prev_date := roster_date FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id, (SELECT @seq := 0, @prev_emp := '', @prev_date := NULL) AS vars WHERE ra.roster_date BETWEEN ? AND ? AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND ra.is_week_off = 0 AND e.process_id = ? ORDER BY employee_id, roster_date ) AS seq_calc WHERE consecutive > 6 ) AS consec_violations",
+  },
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "p1",
+    ],
+    "sql": "SELECT COUNT(*) AS count FROM ( SELECT e.id, COUNT(*) AS weekoffs FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id WHERE ra.roster_date BETWEEN ? AND ? AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND ra.is_week_off = 1 AND e.process_id = ? GROUP BY e.id HAVING weekoffs < 4 ) AS weekoff_violations",
+  },
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "p1",
+    ],
+    "sql": "SELECT COUNT(DISTINCT employee_id) AS count FROM ( SELECT ra.employee_id, WEEK(ra.roster_date) AS wk, SUM(COALESCE(sm.productive_minutes, 480)) / 60 AS weekly_hours FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id LEFT JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id WHERE ra.roster_date BETWEEN ? AND ? AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND ra.is_week_off = 0 AND e.process_id = ? GROUP BY ra.employee_id, WEEK(ra.roster_date) HAVING weekly_hours > 48 ) AS hours_violations",
+  },
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "p1",
+    ],
+    "sql": "SELECT COUNT(DISTINCT employee_id) AS count FROM ( SELECT ra.employee_id, COUNT(*) AS night_count FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id WHERE ra.roster_date BETWEEN ? AND ? AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND (HOUR(sm.start_time) >= 20 OR HOUR(sm.start_time) < 6) AND e.process_id = ? GROUP BY ra.employee_id, WEEK(ra.roster_date) HAVING night_count > 5 ) AS night_violations",
+  },
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "p1",
+    ],
+    "sql": "SELECT e.branch_id AS branch_id, b.branch_name AS branch_name, SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS compliant, SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 1 ELSE 0 END) AS violations, SUM(CASE WHEN ra.is_week_off = 0 THEN 1 ELSE 0 END) AS total_shifts FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id JOIN branch_master b ON e.branch_id = b.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date WHERE ra.roster_date BETWEEN ? AND ? AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND e.process_id = ? GROUP BY e.branch_id, b.branch_name HAVING total_shifts > 0 ORDER BY compliant / total_shifts ASC",
+  },
+]
+`;
+
+exports[`unfiltered SQL is unchanged > compliance summary 1`] = `
+[
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "b1",
+      "p1",
+    ],
+    "sql": "SELECT COUNT(DISTINCT ra.employee_id) AS total_employees, SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS compliant, SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 1 ELSE 0 END) AS violations, SUM(CASE WHEN ra.is_week_off = 0 THEN 1 ELSE 0 END) AS total_shifts FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date WHERE ra.roster_date BETWEEN ? AND ? AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND e.branch_id = ? AND e.process_id = ?",
+  },
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "b1",
+      "p1",
+    ],
+    "sql": "SELECT COUNT(*) AS count FROM ( SELECT ra1.employee_id, ra1.roster_date, TIMESTAMPDIFF(HOUR, CONCAT(ra1.roster_date, ' ', sm1.end_time), CONCAT(ra2.roster_date, ' ', sm2.start_time) ) AS rest_hours FROM wfm_roster_assignment ra1 JOIN wfm_roster_assignment ra2 ON ra1.employee_id = ra2.employee_id AND ra2.roster_date = DATE_ADD(ra1.roster_date, INTERVAL 1 DAY) JOIN employees e ON ra1.employee_id = e.id JOIN wfm_shift_template sm1 ON ra1.shift_template_id = sm1.id JOIN wfm_shift_template sm2 ON ra2.shift_template_id = sm2.id WHERE ra1.roster_date BETWEEN ? AND DATE_SUB(?, INTERVAL 1 DAY) AND NOT (ra1.import_batch_id IS NULL AND ra1.cycle_id IS NULL AND ra1.assignment_type IS NULL AND ra1.shift_template_id IS NULL) AND NOT (ra2.import_batch_id IS NULL AND ra2.cycle_id IS NULL AND ra2.assignment_type IS NULL AND ra2.shift_template_id IS NULL) AND e.branch_id = ? AND e.process_id = ? HAVING rest_hours < 11 ) AS rest_violations",
+  },
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "b1",
+      "p1",
+    ],
+    "sql": "SELECT COUNT(DISTINCT employee_id) AS count FROM ( SELECT employee_id, consecutive FROM ( SELECT employee_id, roster_date, @seq := IF(@prev_emp = employee_id AND DATEDIFF(roster_date, @prev_date) = 1, @seq + 1, 1) AS consecutive, @prev_emp := employee_id, @prev_date := roster_date FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id, (SELECT @seq := 0, @prev_emp := '', @prev_date := NULL) AS vars WHERE ra.roster_date BETWEEN ? AND ? AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND ra.is_week_off = 0 AND e.branch_id = ? AND e.process_id = ? ORDER BY employee_id, roster_date ) AS seq_calc WHERE consecutive > 6 ) AS consec_violations",
+  },
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "b1",
+      "p1",
+    ],
+    "sql": "SELECT COUNT(*) AS count FROM ( SELECT e.id, COUNT(*) AS weekoffs FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id WHERE ra.roster_date BETWEEN ? AND ? AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND ra.is_week_off = 1 AND e.branch_id = ? AND e.process_id = ? GROUP BY e.id HAVING weekoffs < 4 ) AS weekoff_violations",
+  },
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "b1",
+      "p1",
+    ],
+    "sql": "SELECT COUNT(DISTINCT employee_id) AS count FROM ( SELECT ra.employee_id, WEEK(ra.roster_date) AS wk, SUM(COALESCE(sm.productive_minutes, 480)) / 60 AS weekly_hours FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id LEFT JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id WHERE ra.roster_date BETWEEN ? AND ? AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND ra.is_week_off = 0 AND e.branch_id = ? AND e.process_id = ? GROUP BY ra.employee_id, WEEK(ra.roster_date) HAVING weekly_hours > 48 ) AS hours_violations",
+  },
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "b1",
+      "p1",
+    ],
+    "sql": "SELECT COUNT(DISTINCT employee_id) AS count FROM ( SELECT ra.employee_id, COUNT(*) AS night_count FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id WHERE ra.roster_date BETWEEN ? AND ? AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND (HOUR(sm.start_time) >= 20 OR HOUR(sm.start_time) < 6) AND e.branch_id = ? AND e.process_id = ? GROUP BY ra.employee_id, WEEK(ra.roster_date) HAVING night_count > 5 ) AS night_violations",
+  },
+]
+`;
+
+exports[`unfiltered SQL is unchanged > compliance trend 1`] = `
+[
+  {
+    "params": [
+      "b1",
+    ],
+    "sql": "SELECT DATE_FORMAT(ra.roster_date, '%Y-%m') AS month, SUM(CASE WHEN ra.is_week_off = 0 THEN 1 ELSE 0 END) AS total_shifts, SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS compliant, SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 1 ELSE 0 END) AS violations FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH) AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND e.branch_id = ? GROUP BY DATE_FORMAT(ra.roster_date, '%Y-%m') ORDER BY month",
+  },
+]
+`;
+
+exports[`unfiltered SQL is unchanged > compliance violations 1`] = `
+[
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "b1",
+    ],
+    "sql": "SELECT ra.id AS violation_id, ra.roster_date AS date, e.id AS employee_id, e.employee_code, e.full_name AS employee_name, p.process_name, b.branch_name, CASE WHEN adr.attendance_status IS NULL OR adr.attendance_status = 'absent' THEN 'ABSENT_NO_CALL' WHEN adr.clock_in_time IS NOT NULL AND sm.start_time IS NOT NULL AND TIMESTAMPDIFF(MINUTE, CONCAT(ra.roster_date, ' ', sm.start_time), adr.clock_in_time) > 5 THEN 'LATE_ARRIVAL' ELSE 'ADHERENCE' END AS rule_id, CASE WHEN adr.attendance_status IS NULL OR adr.attendance_status = 'absent' THEN 'Absent Without Notification' WHEN adr.clock_in_time IS NOT NULL AND sm.start_time IS NOT NULL AND TIMESTAMPDIFF(MINUTE, CONCAT(ra.roster_date, ' ', sm.start_time), adr.clock_in_time) > 5 THEN 'Late Arrival' ELSE 'Adherence Violation' END AS rule_name, CASE WHEN adr.attendance_status IS NULL OR adr.attendance_status = 'absent' THEN 'RED' WHEN adr.clock_in_time IS NOT NULL AND sm.start_time IS NOT NULL AND TIMESTAMPDIFF(MINUTE, CONCAT(ra.roster_date, ' ', sm.start_time), adr.clock_in_time) > 5 THEN 'AMBER' ELSE 'AMBER' END AS severity, sm.shift_name, CASE WHEN ra.is_week_off = 1 THEN 'WEEK_OFF' ELSE 'WORKING' END AS status FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id LEFT JOIN process_master p ON e.process_id = p.id LEFT JOIN branch_master b ON e.branch_id = b.id LEFT JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date WHERE ra.roster_date BETWEEN ? AND ? AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') AND e.branch_id = ? ORDER BY ra.roster_date DESC LIMIT 50",
+  },
+]
+`;
+
+exports[`unfiltered SQL is unchanged > status-summary 1`] = `
+[
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "b1",
+      "p1",
+    ],
+    "sql": "SELECT COALESCE(ra.final_roster_status, 'generated') AS status, COUNT(*) AS cnt FROM wfm_roster_assignment ra JOIN employees e ON e.id = ra.employee_id WHERE ra.roster_date BETWEEN ? AND ? AND e.branch_id = ? AND e.process_id = ? GROUP BY status",
+  },
+  {
+    "params": [
+      "2026-08-01",
+      "2026-08-31",
+      "b1",
+      "p1",
+    ],
+    "sql": "SELECT COALESCE(ra.employee_ack_status, 'pending') AS status, COUNT(*) AS cnt FROM wfm_roster_assignment ra JOIN employees e ON e.id = ra.employee_id WHERE ra.roster_date BETWEEN ? AND ? AND e.branch_id = ? AND e.process_id = ? GROUP BY status",
+  },
+]
+`;
+
+exports[`unfiltered SQL is unchanged > unplanned-absences 1`] = `
+[
+  {
+    "params": [
+      "2026-09-01",
+      "2026-09-01",
+      "scope-b1",
+      "scope-b2",
+    ],
+    "sql": "SELECT e.id AS employee_id, e.employee_code, e.full_name AS employee_name, e.reporting_manager_id, mgr.full_name AS manager_name, mgr.official_email AS manager_email, pm.process_name, bm.branch_name, COALESCE(st.start_time, ra.shift_start_time) AS shift_start, COALESCE(st.end_time, ra.shift_end_time) AS shift_end FROM employees e JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = ? LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ? LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id LEFT JOIN process_master pm ON pm.id = e.process_id LEFT JOIN branch_master bm ON bm.id = e.branch_id WHERE e.active_status = 1 AND e.employment_status = 'Active' AND ra.assignment_type NOT IN ('WEEK_OFF', 'LEAVE', 'HOLIDAY', 'TRAINING') AND att.clock_in_time IS NULL AND e.branch_id IN (?,?)",
+  },
+]
+`;

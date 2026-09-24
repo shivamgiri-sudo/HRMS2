@@ -4,6 +4,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireQueryScope } from "../../middleware/scopeMiddleware.js";
+import { lobWhere, readLobFilter, type LobFilter } from "../../shared/lobFilter.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
@@ -13,6 +14,21 @@ import {
 } from "./wfm-compliance-analytics.service.js";
 
 const router = Router();
+
+/**
+ * Optional branch / process / LOB narrowing on the employee alias `e`, in that fixed order
+ * (params match the placeholders). Replaces the copy-pasted `branchId && processId ? [...] : ...`
+ * param arrays. Returns sql '' when nothing is selected.
+ */
+export function buildEmployeeScope(f: { branchId?: string; processId?: string; lob?: LobFilter }): { sql: string; params: string[] } {
+  const parts: string[] = [];
+  const params: string[] = [];
+  if (f.branchId) { parts.push('AND e.branch_id = ?'); params.push(f.branchId); }
+  if (f.processId) { parts.push('AND e.process_id = ?'); params.push(f.processId); }
+  const lobSql = f.lob ? lobWhere(f.lob) : { sql: '', params: [] as string[] };
+  if (lobSql.sql) { parts.push(lobSql.sql); params.push(...lobSql.params); }
+  return { sql: parts.join(' '), params };
+}
 
 router.use(requireAuth);
 
@@ -134,22 +150,16 @@ router.get(
     try {
       const branchId = req.query.branchId as string | undefined;
       const processId = req.query.processId as string | undefined;
+      const lob = readLobFilter(req, res);
+      if (!lob) return;
+      const scope = buildEmployeeScope({ branchId, processId, lob });
       const period = (req.query.period as string) || new Date().toISOString().slice(0, 7);
 
       const periodStart = `${period}-01`;
       const periodEnd = `${period}-${new Date(+period.split('-')[0], +period.split('-')[1], 0).getDate().toString().padStart(2, '0')}`;
 
-      let whereClause = `ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}`;
-      const params: (string | number)[] = [periodStart, periodEnd];
-
-      if (branchId) {
-        whereClause += ' AND e.branch_id = ?';
-        params.push(branchId);
-      }
-      if (processId) {
-        whereClause += ' AND e.process_id = ?';
-        params.push(processId);
-      }
+      const whereClause = `ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}${scope.sql ? ` ${scope.sql}` : ''}`;
+      const params: (string | number)[] = [periodStart, periodEnd, ...scope.params];
 
       // Overall compliance score (attendance-based)
       const [compRows] = await db.execute<RowDataPacket[]>(
@@ -186,17 +196,10 @@ router.get(
            JOIN wfm_shift_template sm2 ON ra2.shift_template_id = sm2.id
            WHERE ra1.roster_date BETWEEN ? AND DATE_SUB(?, INTERVAL 1 DAY)
              AND ${realRoster('ra1')} AND ${realRoster('ra2')}
-             ${branchId ? 'AND e.branch_id = ?' : ''}
-             ${processId ? 'AND e.process_id = ?' : ''}
+             ${scope.sql}
            HAVING rest_hours < 11
          ) AS rest_violations`,
-        branchId && processId
-          ? [periodStart, periodEnd, branchId, processId]
-          : branchId
-            ? [periodStart, periodEnd, branchId]
-            : processId
-              ? [periodStart, periodEnd, processId]
-              : [periodStart, periodEnd]
+        [periodStart, periodEnd, ...scope.params]
       );
 
       // Rule 2: Consecutive days (> 6 consecutive working days)
@@ -218,19 +221,12 @@ router.get(
                (SELECT @seq := 0, @prev_emp := '', @prev_date := NULL) AS vars
              WHERE ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}
                AND ra.is_week_off = 0
-               ${branchId ? 'AND e.branch_id = ?' : ''}
-               ${processId ? 'AND e.process_id = ?' : ''}
+               ${scope.sql}
              ORDER BY employee_id, roster_date
            ) AS seq_calc
            WHERE consecutive > 6
          ) AS consec_violations`,
-        branchId && processId
-          ? [periodStart, periodEnd, branchId, processId]
-          : branchId
-            ? [periodStart, periodEnd, branchId]
-            : processId
-              ? [periodStart, periodEnd, processId]
-              : [periodStart, periodEnd]
+        [periodStart, periodEnd, ...scope.params]
       );
 
       // Rule 3: Weekly off fairness (unfair distribution)
@@ -241,18 +237,11 @@ router.get(
            JOIN employees e ON ra.employee_id = e.id
            WHERE ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}
              AND ra.is_week_off = 1
-             ${branchId ? 'AND e.branch_id = ?' : ''}
-             ${processId ? 'AND e.process_id = ?' : ''}
+             ${scope.sql}
            GROUP BY e.id
            HAVING weekoffs < 4
          ) AS weekoff_violations`,
-        branchId && processId
-          ? [periodStart, periodEnd, branchId, processId]
-          : branchId
-            ? [periodStart, periodEnd, branchId]
-            : processId
-              ? [periodStart, periodEnd, processId]
-              : [periodStart, periodEnd]
+        [periodStart, periodEnd, ...scope.params]
       );
 
       // Rule 4: Max hours/week (> 48 hours) - simplified count
@@ -265,18 +254,11 @@ router.get(
            LEFT JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id
            WHERE ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}
              AND ra.is_week_off = 0
-             ${branchId ? 'AND e.branch_id = ?' : ''}
-             ${processId ? 'AND e.process_id = ?' : ''}
+             ${scope.sql}
            GROUP BY ra.employee_id, WEEK(ra.roster_date)
            HAVING weekly_hours > 48
          ) AS hours_violations`,
-        branchId && processId
-          ? [periodStart, periodEnd, branchId, processId]
-          : branchId
-            ? [periodStart, periodEnd, branchId]
-            : processId
-              ? [periodStart, periodEnd, processId]
-              : [periodStart, periodEnd]
+        [periodStart, periodEnd, ...scope.params]
       );
 
       // Rule 5: Night shift limit (> 5 consecutive night shifts)
@@ -288,18 +270,11 @@ router.get(
            JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id
            WHERE ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}
              AND (HOUR(sm.start_time) >= 20 OR HOUR(sm.start_time) < 6)
-             ${branchId ? 'AND e.branch_id = ?' : ''}
-             ${processId ? 'AND e.process_id = ?' : ''}
+             ${scope.sql}
            GROUP BY ra.employee_id, WEEK(ra.roster_date)
            HAVING night_count > 5
          ) AS night_violations`,
-        branchId && processId
-          ? [periodStart, periodEnd, branchId, processId]
-          : branchId
-            ? [periodStart, periodEnd, branchId]
-            : processId
-              ? [periodStart, periodEnd, processId]
-              : [periodStart, periodEnd]
+        [periodStart, periodEnd, ...scope.params]
       );
 
       const rules = [
@@ -357,6 +332,8 @@ router.get(
       // real perf cost for a number this page doesn't ask to see per-branch anyway.
       let byBranch: Array<{ branchId: string; branchName: string; score: number; violations: number; trend: number }> = [];
       if (!branchId) {
+        // Branch ranking: the branch dimension is what's being ranked, so only process/LOB narrow it.
+        const branchScope = buildEmployeeScope({ processId, lob });
         const [branchRows] = await db.execute<RowDataPacket[]>(
           `SELECT
              e.branch_id AS branch_id,
@@ -369,11 +346,11 @@ router.get(
            JOIN branch_master b ON e.branch_id = b.id
            LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
            WHERE ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}
-             ${processId ? 'AND e.process_id = ?' : ''}
+             ${branchScope.sql}
            GROUP BY e.branch_id, b.branch_name
            HAVING total_shifts > 0
            ORDER BY compliant / total_shifts ASC`,
-          processId ? [periodStart, periodEnd, processId] : [periodStart, periodEnd]
+          [periodStart, periodEnd, ...branchScope.params]
         );
         byBranch = branchRows.map((r: RowDataPacket) => ({
           branchId: String(r.branch_id),
@@ -411,6 +388,9 @@ router.get(
   async (req, res, next) => {
     try {
       const branchId = req.query.branchId as string | undefined;
+      const processId = req.query.processId as string | undefined;
+      const lob = readLobFilter(req, res);
+      if (!lob) return;
       const ruleId = req.query.ruleId as string | undefined;
       const period = (req.query.period as string) || new Date().toISOString().slice(0, 7);
       const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
@@ -425,12 +405,8 @@ router.get(
       // data-dependent, this failed even on an empty result set). `limit` is already clamped to
       // 1-200 above via Math.min(parseInt(...), 200), so interpolating it directly is safe — same
       // pattern already used for LIMIT elsewhere in this module (attendance-exceptions.routes.ts).
-      const params: (string | number)[] = [periodStart, periodEnd];
-      let branchFilter = '';
-      if (branchId) {
-        branchFilter = 'AND e.branch_id = ?';
-        params.push(branchId);
-      }
+      const scope = buildEmployeeScope({ branchId, processId, lob });
+      const params: (string | number)[] = [periodStart, periodEnd, ...scope.params];
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT
            ra.id AS violation_id,
@@ -469,7 +445,7 @@ router.get(
          WHERE ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}
            AND ra.is_week_off = 0
            AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day')
-           ${branchFilter}
+           ${scope.sql}
          ORDER BY ra.roster_date DESC
          LIMIT ${limit}`,
         params
@@ -509,13 +485,11 @@ router.get(
   async (req, res, next) => {
     try {
       const branchId = req.query.branchId as string | undefined;
-
-      let branchFilter = '';
-      const params: string[] = [];
-      if (branchId) {
-        branchFilter = 'AND e.branch_id = ?';
-        params.push(branchId);
-      }
+      const processId = req.query.processId as string | undefined;
+      const lob = readLobFilter(req, res);
+      if (!lob) return;
+      const scope = buildEmployeeScope({ branchId, processId, lob });
+      const params = scope.params;
 
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT
@@ -528,7 +502,7 @@ router.get(
          LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
          WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
            AND ${realRoster('ra')}
-           ${branchFilter}
+           ${scope.sql}
          GROUP BY DATE_FORMAT(ra.roster_date, '%Y-%m')
          ORDER BY month`,
         params

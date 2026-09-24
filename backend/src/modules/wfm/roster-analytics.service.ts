@@ -9,6 +9,7 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { isShiftDueYet } from './shift-due.util.js';
+import { lobAnd, lobCondition, type LobFilter } from '../../shared/lobFilter.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -170,8 +171,10 @@ const INDUSTRY_AVG_SHRINKAGE = 12; // BPO industry benchmark
 
 export async function getWeeklyShrinkageIntelligence(
   branchId: string,
-  weekStartDate: string
+  weekStartDate: string,
+  lob: LobFilter = { kind: 'none' }
 ): Promise<WeeklyShrinkageIntelligence> {
+  const lobSql = lobAnd(lob);
   const { start, end, dates } = getWeekDates(weekStartDate);
 
   // Get branch info
@@ -205,9 +208,9 @@ export async function getWeeklyShrinkageIntelligence(
      LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
      LEFT JOIN process_master pm ON pm.id = e.process_id
      WHERE e.branch_id = ?
-       AND e.active_status = 1
+       AND e.active_status = 1${lobSql.sql}
        AND ra.roster_date BETWEEN ? AND ?`,
-    [branchId, start, end]
+    [branchId, ...lobSql.params, start, end]
   );
 
   // Initialize counters
@@ -360,10 +363,10 @@ export async function getWeeklyShrinkageIntelligence(
        JOIN wfm_roster_assignment ra ON ra.employee_id = e.id
        LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
        WHERE e.branch_id = ?
-         AND e.active_status = 1
+         AND e.active_status = 1${lobSql.sql}
          AND ra.roster_date BETWEEN ? AND ?
          AND ra.assignment_type NOT IN ('WEEK_OFF', 'HOLIDAY')`,
-      [branchId, formatDate(prevWeekStart), formatDate(new Date(prevWeekStart.getTime() + 6 * 86400000))]
+      [branchId, ...lobSql.params, formatDate(prevWeekStart), formatDate(new Date(prevWeekStart.getTime() + 6 * 86400000))]
     );
     if (prevRows[0]?.total > 0) {
       const prevPct = (Number(prevRows[0].shrinkage) / Number(prevRows[0].total)) * 100;
@@ -432,7 +435,8 @@ export async function getWeeklyShrinkageIntelligence(
 export async function getQualityAdherenceCorrelation(
   period: string, // YYYY-MM
   branchId?: string,
-  processId?: string
+  processId?: string,
+  lob: LobFilter = { kind: 'none' }
 ): Promise<QualityCorrelation> {
   const [year, month] = period.split('-').map(Number);
   const firstDay = `${period}-01`;
@@ -448,6 +452,11 @@ export async function getQualityAdherenceCorrelation(
   if (processId) {
     conditions.push('e.process_id = ?');
     params.push(processId);
+  }
+  const lobCond = lobCondition(lob);
+  if (lobCond) {
+    conditions.push(lobCond.sql);
+    params.push(...lobCond.params);
   }
   const whereClause = conditions.join(' AND ');
 
@@ -634,7 +643,8 @@ export async function getQualityAdherenceCorrelation(
 export async function getCostOfNonAdherence(
   period: string, // YYYY-MM
   branchId?: string,
-  processId?: string
+  processId?: string,
+  lob: LobFilter = { kind: 'none' }
 ): Promise<CostOfNonAdherence> {
   const [year, month] = period.split('-').map(Number);
   const firstDay = `${period}-01`;
@@ -649,6 +659,11 @@ export async function getCostOfNonAdherence(
   if (processId) {
     conditions.push('e.process_id = ?');
     params.push(processId);
+  }
+  const lobCond = lobCondition(lob);
+  if (lobCond) {
+    conditions.push(lobCond.sql);
+    params.push(...lobCond.params);
   }
   const whereClause = conditions.join(' AND ');
 
@@ -756,7 +771,11 @@ export async function getCostOfNonAdherence(
 
 // ── Shrinkage Forecast ───────────────────────────────────────────────────────
 
-export async function getShrinkageForecast(branchId: string): Promise<ShrinkageForecast> {
+export async function getShrinkageForecast(
+  branchId: string,
+  lob: LobFilter = { kind: 'none' }
+): Promise<ShrinkageForecast> {
+  const lobSql = lobAnd(lob);
   const today = new Date();
   const nextMonday = new Date(today);
   nextMonday.setDate(today.getDate() + ((8 - today.getDay()) % 7 || 7));
@@ -777,10 +796,10 @@ export async function getShrinkageForecast(branchId: string): Promise<ShrinkageF
      JOIN wfm_roster_assignment ra ON ra.employee_id = e.id
      LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
      WHERE e.branch_id = ?
-       AND e.active_status = 1
+       AND e.active_status = 1${lobSql.sql}
        AND ra.roster_date BETWEEN ? AND ?
      GROUP BY DAYOFWEEK(ra.roster_date), DAY(ra.roster_date)`,
-    [branchId, formatDate(eightWeeksAgo), formatDate(today)]
+    [branchId, ...lobSql.params, formatDate(eightWeeksAgo), formatDate(today)]
   );
 
   // Calculate day-of-week patterns (Monday=2, Friday=6 in MySQL)

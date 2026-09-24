@@ -163,6 +163,7 @@ import { opsControlTowerRouter } from "./modules/ops-control-tower/ops-control-t
 import { rosterBuilderRouter } from "./modules/wfm/roster-builder.routes.js";
 import { rosterIntelligenceRouter } from "./modules/wfm/roster-intelligence.routes.js";
 import { rosterAnalyticsRouter } from "./modules/wfm/roster-analytics.routes.js";
+import { rosterConsoleLobCoverageRouter } from "./modules/wfm/roster-console-lob-coverage.routes.js";
 import shiftAliasRouter from "./modules/wfm/shift-alias.routes.js";
 import headerMappingProfileRouter from "./modules/wfm/header-mapping-profile.routes.js";
 import { planningModeRouter } from "./modules/wfm/planning-mode.routes.js";
@@ -435,6 +436,7 @@ app.use("/api/wfm/process-lobs", processLobMapRouter);
 app.use("/api/wfm/roster-offday-policies", rosterOffdayPolicyRouter);
 // Mounted ahead of the catch-all /api/wfm routers below: its audience is anyone with reports, not a role list.
 app.use("/api/wfm/team-roster", teamRosterRouter);
+app.use("/api/wfm/roster-console", rosterConsoleLobCoverageRouter);
 app.use("/api/wfm", wfmRegularizationSecureRouter);
 app.use("/api/wfm", wfmRouter);
 app.use("/api/wfm/roster", rosterActualSecureRouter);

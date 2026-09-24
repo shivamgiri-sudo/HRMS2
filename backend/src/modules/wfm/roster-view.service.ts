@@ -19,6 +19,7 @@
  */
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
+import { lobCondition, type LobFilter } from '../../shared/lobFilter.js';
 
 export interface RosterViewFilters {
   fromDate: string;
@@ -421,6 +422,7 @@ export interface RosterStatusSummaryFilters {
   toDate: string;
   branchId?: string;
   processId?: string;
+  lob?: LobFilter;
 }
 
 export interface RosterStatusSummary {
@@ -556,6 +558,8 @@ export async function getRosterStatusSummary(
   const params: unknown[] = [filters.fromDate, filters.toDate];
   if (filters.branchId) { where.push('e.branch_id = ?'); params.push(filters.branchId); }
   if (filters.processId) { where.push('e.process_id = ?'); params.push(filters.processId); }
+  const lobCond = filters.lob ? lobCondition(filters.lob) : null;
+  if (lobCond) { where.push(lobCond.sql); params.push(...lobCond.params); }
   const whereSql = where.join(' AND ');
 
   const [publishRows] = await db.execute<RowDataPacket[]>(

@@ -12,6 +12,7 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { isShiftDueYet } from './shift-due.util.js';
+import { lobAnd, type LobFilter } from '../../shared/lobFilter.js';
 
 const GRACE_MINUTES = 5;
 
@@ -29,6 +30,8 @@ export interface ProcessTeamRosterMember {
   employeeName: string;
   branchId: string | null;
   branchName: string | null;
+  lobId: string | null;
+  lobName: string | null;
   status: ProcessTeamRosterStatus;
   shiftName: string | null;
   shiftTime: string | null;
@@ -61,8 +64,10 @@ function timeToMinutes(t: string): number {
 
 export async function getProcessTeamRosterView(
   processId: string,
-  date: string
+  date: string,
+  lob: LobFilter = { kind: 'none' }
 ): Promise<ProcessTeamRosterView> {
+  const lobSql = lobAnd(lob);
   const [processRows] = await db.execute<RowDataPacket[]>(
     `SELECT process_name FROM process_master WHERE id = ?`,
     [processId]
@@ -75,6 +80,7 @@ export async function getProcessTeamRosterView(
        e.employee_code,
        e.full_name AS employee_name,
        e.branch_id,
+       e.lob_id,
        b.branch_name,
        ra.assignment_type,
        ra.shift_start_time,
@@ -97,9 +103,9 @@ export async function getProcessTeamRosterView(
      LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
      WHERE e.process_id = ?
        AND e.active_status = 1
-       AND e.employment_status = 'Active'
+       AND e.employment_status = 'Active'${lobSql.sql}
      ORDER BY e.full_name`,
-    [date, date, date, processId]
+    [date, date, date, processId, ...lobSql.params]
   );
 
   const counts = {
@@ -156,6 +162,8 @@ export async function getProcessTeamRosterView(
       employeeName: String(r.employee_name),
       branchId: r.branch_id ? String(r.branch_id) : null,
       branchName: r.branch_name ? String(r.branch_name) : null,
+      lobId: r.lob_id ? String(r.lob_id) : null,
+      lobName: null,
       status,
       shiftName: r.shift_name ? String(r.shift_name) : null,
       shiftTime,
@@ -165,6 +173,18 @@ export async function getProcessTeamRosterView(
       leaveType: r.leave_name ? String(r.leave_name) : (type === 'LEAVE' ? 'Leave' : null),
     };
   });
+
+  // LOB names by parameter (not a join): employees.lob_id and lob_master.id may not share a collation.
+  const lobIds = [...new Set(members.map((m) => m.lobId).filter((v): v is string => !!v))];
+  if (lobIds.length) {
+    const [lobRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, lob_name FROM lob_master WHERE id IN (${lobIds.map(() => '?').join(', ')})`,
+      lobIds
+    );
+    const lobNames = new Map<string, string>();
+    for (const l of lobRows ?? []) lobNames.set(String(l.id), String(l.lob_name));
+    for (const m of members) m.lobName = m.lobId ? (lobNames.get(m.lobId) ?? null) : null;
+  }
 
   return { processId, processName, date, members, counts };
 }

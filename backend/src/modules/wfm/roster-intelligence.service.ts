@@ -15,6 +15,7 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { isShiftDueYet } from './shift-due.util.js';
+import { lobCondition, type LobFilter } from '../../shared/lobFilter.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -525,6 +526,9 @@ export async function generateBranchDashboard(
 // branches/processes and must fail CLOSED (matches getCosecLatestPunches's convention).
 export type RosterIntelligenceScope = { branchIds?: string[]; processIds?: string[] };
 
+// Optional UI narrowing filters. They are ANDed onto (never replace) the caller's RBAC scope.
+export type RosterIntelligenceFilters = { branchId?: string; processId?: string; lob?: LobFilter };
+
 /**
  * Detect employees who are rostered for a shift but haven't punched in.
  * Called every 30 minutes to catch RED alerts.
@@ -534,7 +538,8 @@ export type RosterIntelligenceScope = { branchIds?: string[]; processIds?: strin
 export async function detectUnplannedAbsences(
   date: string = todayDate(),
   gracePeriodMinutes: number = 30,
-  scope?: RosterIntelligenceScope
+  scope?: RosterIntelligenceScope,
+  filters?: RosterIntelligenceFilters
 ): Promise<UnplannedAbsenceAlert[]> {
   if (scope?.branchIds?.length === 0 || scope?.processIds?.length === 0) return [];
 
@@ -550,6 +555,19 @@ export async function detectUnplannedAbsences(
   if (scope?.processIds) {
     scopeConds.push(`e.process_id IN (${scope.processIds.map(() => "?").join(",")})`);
     scopeParams.push(...scope.processIds);
+  }
+  if (filters?.branchId) {
+    scopeConds.push('e.branch_id = ?');
+    scopeParams.push(filters.branchId);
+  }
+  if (filters?.processId) {
+    scopeConds.push('e.process_id = ?');
+    scopeParams.push(filters.processId);
+  }
+  const lobCond = filters?.lob ? lobCondition(filters.lob) : null;
+  if (lobCond) {
+    scopeConds.push(lobCond.sql);
+    scopeParams.push(...lobCond.params);
   }
 
   // Find employees rostered for shifts that have started but haven't punched in
