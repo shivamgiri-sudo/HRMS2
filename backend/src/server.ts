@@ -170,6 +170,8 @@ function startServer() {
     // are never killed mid-flight. Nginx proxy_read_timeout (120s/300s) is the outer
     // guard; Express itself has no built-in request timeout.
     httpServer!.setTimeout(0);
+    // The P&L Trend reads years of payroll; fill its cache once the boot-time migrations and jobs have settled.
+    setTimeout(() => { void import("./modules/process-pnl/pnl-trend.service.js").then((m) => m.warmPnlTrendCache()); }, 180_000).unref();
     // Keep connections alive slightly longer than nginx's keepalive_timeout (60s) to
     // avoid the race where nginx sends a request on a reused connection at the exact
     // moment Node is closing it (produces a spurious 502).

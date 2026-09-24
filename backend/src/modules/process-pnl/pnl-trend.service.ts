@@ -100,6 +100,37 @@ export interface PnlTrendResult {
   processHistoryRevenue: { processId: string; processName: string; months: { period: string; revenue: number }[] }[];
 }
 
+const TREND_HOT_MONTHS = 4;
+const COLD_COST_TTL_MS = 6 * 60 * 60 * 1000;
+const coldCostCache = new Map<string, { at: number; value: Promise<RowDataPacket[]> }>();
+const coldCostCacheEnabled = process.env.VITEST !== "true" && process.env.NODE_ENV !== "test";
+
+/**
+ * Stale-while-revalidate: an expired entry is returned at once and refreshed in the background, so
+ * a user never waits on the slow scan after the first one. A failed refresh keeps the old value.
+ */
+function cachedColdCost(key: string, load: () => Promise<RowDataPacket[]>): Promise<RowDataPacket[]> {
+  if (!coldCostCacheEnabled) return load();
+  const hit = coldCostCache.get(key);
+  if (hit) {
+    if (Date.now() - hit.at > COLD_COST_TTL_MS) {
+      coldCostCache.set(key, { at: Date.now(), value: hit.value });
+      void load().then((fresh) => coldCostCache.set(key, { at: Date.now(), value: Promise.resolve(fresh) })).catch(() => undefined);
+    }
+    return hit.value;
+  }
+  const value = load();
+  if (coldCostCache.size >= 50) coldCostCache.delete(coldCostCache.keys().next().value as string);
+  coldCostCache.set(key, { at: Date.now(), value });
+  value.catch(() => coldCostCache.delete(key));
+  return value;
+}
+
+/** Fills the unscoped cold-cost entry after boot so the first Trend tab open is not the slow one. */
+export function warmPnlTrendCache(): Promise<unknown> {
+  return getPnlTrend({}).catch(() => undefined);
+}
+
 async function getRealMonths(): Promise<string[]> {
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT period_code, COUNT(*) AS n
@@ -191,7 +222,8 @@ export async function getPnlTrend(
   // tile for the same month. Runs: every salary_prep_run of the month, drafts included, again as the
   // tiles do — the trend used to drop draft runs, so a month still in draft showed a lower (or zero)
   // cost here than on the tile.
-  const [costRows] = await db.query<RowDataPacket[]>(
+  const runCost = async (months: string[]): Promise<RowDataPacket[]> => {
+    const [rows] = await db.query<RowDataPacket[]>(
     `SELECT pm.id AS processId, pm.process_name AS processName,
             sr.run_month AS period,
             SUM(${peopleCostSql("spl")}) AS cost,
@@ -204,8 +236,21 @@ export async function getPnlTrend(
        LEFT JOIN branch_master pbm ON pbm.id = pm.branch_id
       WHERE sr.run_month IN (?) ${branchClause ? `AND ${costAttr.effectiveBranchExpr} = ?` : ""} ${processClause} AND ${notDialDeskProcessSql("pm", "pbm")}
       GROUP BY pm.id, pm.process_name, sr.run_month`,
-    costParams
-  );
+    [months, ...costParams.slice(1)]
+    );
+    return rows;
+  };
+  // Payroll for closed months is history, and reading every month's salary lines (130k rows) takes
+  // over a minute on the production database — the endpoint 504'd at the gateway. Only the last few
+  // months can still move; the rest is served from a long-lived cache (see cachedColdCost).
+  const hotMonths = realMonths.slice(-TREND_HOT_MONTHS);
+  const coldMonths = realMonths.slice(0, Math.max(0, realMonths.length - TREND_HOT_MONTHS));
+  const coldKey = JSON.stringify({ b: filters.branchId ?? null, p: processList ? [...processList].sort() : null, m: coldMonths.length });
+  const [coldCost, hotCost] = await Promise.all([
+    coldMonths.length ? cachedColdCost(coldKey, () => runCost(coldMonths)) : Promise.resolve([] as RowDataPacket[]),
+    runCost(hotMonths),
+  ]);
+  const costRows = [...coldCost, ...hotCost];
 
   type Bucket = Map<string, PnlTrendMonth>;
   const byProcess = new Map<string, { processName: string; months: Bucket }>();
