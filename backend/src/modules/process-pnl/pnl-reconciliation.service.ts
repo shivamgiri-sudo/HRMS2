@@ -767,13 +767,16 @@ async function buildPnlReconciliation(
   // Real money booked to this cost centre for THIS period — invoice/provision/credit note, consumed
   // GRN, reserved GRN inside the estimate window, or payroll. Such a cost centre is always summed,
   // whatever its (or its branch's) status is today: closing a branch must not erase its history.
+  // Budget counts too (2026-09-24): a budgeted-but-idle cost centre closed after the month (132 MAS
+  // cost centres were deactivated that day) must keep that month's budget in allocatedBudget.
   const hasPeriodActivity = (id: string): boolean => {
     const rev = revenue.get(id);
     const hasRevenue = !!rev && (n(rev.invoice_amount) !== 0 || n(rev.provision_amount) !== 0 || n(rev.credit_note) !== 0);
     return hasRevenue
       || (grn.get(id) ?? 0) !== 0
       || (estimateApplies && (grnCommitted.get(id) ?? 0) !== 0)
-      || (payroll.get(id)?.cost ?? 0) !== 0;
+      || (payroll.get(id)?.cost ?? 0) !== 0
+      || (budgets.byCostCentre.get(id) ?? 0) !== 0;
   };
   const costCentres = allCostCentres.filter(
     (cc) => filters.includeInactive || isCurrentlyActive(cc) || hasPeriodActivity(String(cc.id)),

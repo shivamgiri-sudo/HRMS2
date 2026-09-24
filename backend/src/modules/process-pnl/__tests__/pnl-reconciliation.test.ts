@@ -444,3 +444,36 @@ describe("P&L reconciliation — below-the-line (depreciation, finance cost, tax
     expect(out.totals.truePat).toBe(out.totals.operatingProfit);
   });
 });
+
+describe("P&L reconciliation — budget of a cost centre closed after the month", () => {
+  it("keeps a closed, otherwise idle cost centre's period budget in allocatedBudget", async () => {
+    mockDb();
+    const base = execute.getMockImplementation()!;
+    execute.mockImplementation(async (sql: string, params?: unknown[]) => {
+      const q = String(sql);
+      if (q.includes("FROM cost_centre_master ccm") && q.includes("LEFT JOIN branch_master")) {
+        const [rows] = (await base(sql, params)) as [Record<string, unknown>[], unknown];
+        return [[...rows, {
+          id: "cc-noida-closed", cost_centre_code: "BSS/IB/Noida/777", cost_centre_name: "Noida Closed",
+          company_name: "Mas Callnet India Pvt Ltd", active_status: 0, branch_id: "branch-noida", branch_name: "NOIDA",
+        }], []];
+      }
+      if (q.includes("FROM finance_budget_header h") && q.includes("JOIN finance_budget_line l")) {
+        const [rows] = (await base(sql, params)) as [Record<string, unknown>[], unknown];
+        return [[...rows, {
+          budget_id: "fbh-1", branch_id: "branch-noida", branch_name: "NOIDA", line_id: "l3", allocation_id: null,
+          head: "Admin", sub_head: null, item_name: "Rent", cost_centre_id: "cc-noida-closed",
+          cost_centre_code: "BSS/IB/Noida/777", amount: 105000,
+        }], []];
+      }
+      return base(sql, params);
+    });
+    const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
+    const out = await getPnlReconciliation("2026-08", { branchIds: ["branch-noida"], asOfDate: "2026-09-24" });
+
+    const closed = out.rows.find((row) => row.costCentreId === "cc-noida-closed");
+    expect(closed, "closed cost centre with only budget still has a row for the month").toBeDefined();
+    expect(closed?.allocatedBudget).toBe(105000);
+    expect(out.totals.allocatedBudget).toBe(L(54) + 105000);
+  });
+});

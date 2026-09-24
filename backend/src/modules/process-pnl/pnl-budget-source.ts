@@ -64,10 +64,9 @@ import { budgetExGstSql } from "./pnl-ex-gst.js";
  *           cost centre. They ARE in branchBudget. By design: never invent a cost-centre split.
  *        b. lines on a cost centre that is not a row: not own-company (OWN_COMPANY_SQL), outside a
  *           branch/process filter, or CLOSED TODAY with no revenue / GRN / payroll in the period
- *           (hasPeriodActivity does not look at budget). (b-closed) is arguably a defect — a
- *           budgeted-but-idle cost centre closed after the month drops its budget from that month —
- *           but the fix belongs in hasPeriodActivity (add `|| budgets.byCostCentre.get(id)`), in a
- *           file under separate ownership; tracked, not changed here.
+ *           (b-closed was fixed 2026-09-24: hasPeriodActivity now also keeps a cost centre that
+ *           has budget for the period, so a budgeted-but-idle cost centre closed after the month
+ *           keeps that month's budget).
  *        c. mirror header top-ups (never carry a cost centre).
  *   2. branchBudget = SUM of budgetByBranchId over the branches that have at least one Live P&L
  *      cost-centre row (branchMap is built from the rows). A header whose branch has no row — all
