@@ -50,6 +50,33 @@ import { budgetExGstSql } from "./pnl-ex-gst.js";
  *     (active_status = 1 AND is_rejected = 0; 'Particular' rows repeat the same money), plus one
  *     header-level 'top_up' entry per budget carrying reopen_additional_amount, which names no cost
  *     centre (see budget-top-up-attribution.ts for how a scope may claim one).
+ *
+ * WHY LIVE P&L's THREE BUDGET FIGURES DIFFER (explained 2026-09-24; e.g. Aug 2026: raw HRMS line
+ * total Rs 98.61L ex-GST over 5 active headers, branchBudget Rs 98.12L, allocatedBudget Rs 96.37L).
+ * Nothing is lost to rounding: a branch-level line's allocation rows are produced by
+ * allocatePoolAmount's largest-remainder split and sum EXACTLY to the line (branch-budget-
+ * allocation.service computeLineAllocations), so expanding them changes no total. The gaps are
+ * scope, decided in pnl-reconciliation.service getPnlReconciliation, not in this reader:
+ *   1. allocatedBudget = SUM of budgetByCostCentreId over the ROWS Live P&L shows. It therefore
+ *      leaves out
+ *        a. branch-level lines with NO allocation rows (costCentreId null — computeLineAllocations
+ *           found no eligible own-company cost centre in the branch): budget of the branch, of no
+ *           cost centre. They ARE in branchBudget. By design: never invent a cost-centre split.
+ *        b. lines on a cost centre that is not a row: not own-company (OWN_COMPANY_SQL), outside a
+ *           branch/process filter, or CLOSED TODAY with no revenue / GRN / payroll in the period
+ *           (hasPeriodActivity does not look at budget). (b-closed) is arguably a defect — a
+ *           budgeted-but-idle cost centre closed after the month drops its budget from that month —
+ *           but the fix belongs in hasPeriodActivity (add `|| budgets.byCostCentre.get(id)`), in a
+ *           file under separate ownership; tracked, not changed here.
+ *        c. mirror header top-ups (never carry a cost centre).
+ *   2. branchBudget = SUM of budgetByBranchId over the branches that have at least one Live P&L
+ *      cost-centre row (branchMap is built from the rows). A header whose branch has no row — all
+ *      its cost centres non-own-company/closed-and-idle, or the header sits on a duplicate
+ *      branch_master spelling (three Head Office ids) its cost centres do not use — is left out,
+ *      as is a header with no branch_id ("" key).
+ * So raw - branchBudget = active-header budget on branches with no Live P&L row, and
+ * branchBudget - allocatedBudget = (1a) + (1b) + (1c) within the shown branches (a line on a cost
+ * centre of ANOTHER branch moves between branches but stays in allocatedBudget).
  */
 
 export type BudgetSource = "hrms" | "mirror";
