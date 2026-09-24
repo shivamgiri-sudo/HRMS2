@@ -157,6 +157,7 @@ export async function backfillProcessMasterForOrphanedCostCentres(): Promise<num
     WHERE cc.client_name IS NOT NULL
       AND TRIM(cc.client_name) <> ''
       AND cc.active_status = 1
+      AND LOWER(COALESCE(cc.status, '')) <> 'closed'
       AND NOT EXISTS (
         SELECT 1 FROM process_master pm
         WHERE TRIM(LOWER(pm.process_name)) = TRIM(LOWER(cc.client_name))

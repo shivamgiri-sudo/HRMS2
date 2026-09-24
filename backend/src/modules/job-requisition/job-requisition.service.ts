@@ -1614,6 +1614,14 @@ ${bmiBlock}
 
   /**
    * Get process list for a branch from process_master (for cascading dropdown)
+   *
+   * Excludes processes whose source cost centre is closed. The nightly
+   * backfillProcessMasterForOrphanedCostCentres() (cost-centre-sync.ts) inserts a
+   * process_master row per cost centre, with process_code derived from cost_centre_code,
+   * and never deactivates it when db_bill later closes the cost centre. Live 2026-09-24:
+   * NOIDA listed 76 processes, 48 of them closed clients with zero active employees
+   * (Spicejet, HDFC LIFE, seven "Boost Media" rows...). The code derivation here mirrors
+   * the insert: non-alphanumerics -> "_", upper-cased, first 50 chars.
    */
   async getProcessesForBranch(branchName: string): Promise<Array<{id: string; process_name: string; process_code: string}>> {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -1622,6 +1630,11 @@ ${bmiBlock}
        JOIN branch_master bm ON bm.id = pm.branch_id
        WHERE LOWER(TRIM(bm.branch_name)) = LOWER(TRIM(?))
          AND pm.active_status = 1
+         AND NOT EXISTS (
+           SELECT 1 FROM cost_centre_master cc
+            WHERE LEFT(UPPER(REGEXP_REPLACE(cc.cost_centre_code, '[^A-Za-z0-9]+', '_')), 50) = pm.process_code
+              AND (cc.active_status = 0 OR LOWER(cc.status) = 'closed')
+         )
        ORDER BY pm.process_name ASC`,
       [branchName]
     );
