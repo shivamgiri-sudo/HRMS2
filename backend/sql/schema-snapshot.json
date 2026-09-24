@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1199,
-  "columnCount": 17895,
+  "tableCount": 1200,
+  "columnCount": 17900,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -14747,6 +14747,13 @@
       "close_date",
       "planning_mode",
       "slug"
+    ],
+    "process_master_auto_deactivation": [
+      "process_id",
+      "process_code",
+      "process_name",
+      "deactivated_at",
+      "reactivated_at"
     ],
     "process_metric_actual": [
       "id",

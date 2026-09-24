@@ -3,7 +3,7 @@ import { registerTimer, unregisterTimer, withWorkerLock } from "./worker-utils.j
 import { resolveCostCentreProcesses } from "../modules/process-pnl/cost-centre-process-resolver.service.js";
 import { bpoPnlService } from "../modules/process-pnl/bpo-pnl.service.js";
 import { processPnlService } from "../modules/process-pnl/process-pnl.service.js";
-import { backfillProcessMasterForOrphanedCostCentres } from "../shared/cost-centre-sync.js";
+import { backfillProcessMasterForOrphanedCostCentres, syncProcessActiveStatusWithCostCentres } from "../shared/cost-centre-sync.js";
 
 /**
  * Keeps cost_centre_master.process_id self-populating.
@@ -47,6 +47,18 @@ async function cycle(): Promise<void> {
       const backfilled = await backfillProcessMasterForOrphanedCostCentres();
       if (backfilled > 0) {
         logger.info({ worker: WORKER_NAME, backfilled }, `[cost-centre-process-resolver] created ${backfilled} new process_master entries from orphaned cost centres`);
+      }
+
+      // A process whose cost centres are all closed goes inactive with them (and comes back if
+      // one reopens) — see syncProcessActiveStatusWithCostCentres for the exemptions.
+      const { deactivated, reactivated } = await syncProcessActiveStatusWithCostCentres();
+      if (deactivated > 0 || reactivated > 0) {
+        processPnlService.invalidateCaches();
+        bpoPnlService.invalidateCaches();
+        logger.info(
+          { worker: WORKER_NAME, deactivated, reactivated },
+          `[cost-centre-process-resolver] process_master: ${deactivated} deactivated (all cost centres closed), ${reactivated} reactivated (cost centre reopened)`,
+        );
       }
     } catch (error) {
       // Never throws: same reasoning as db-bill-finance-sync — a failed run must not take the

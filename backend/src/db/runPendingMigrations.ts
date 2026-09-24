@@ -1144,6 +1144,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1859_roster_team_submission.sql", // Registered 2026-09-24. Team Roster submission workflow: roster_team_submission / _line / _audit plus roster_team_pending_cell (PRIMARY KEY (employee_id, roster_date) is the race-safe overlap lock). Collation-copied ids, no FKs. Nothing touches wfm_roster_assignment. Additive, idempotent.
   "1860_team_roster_page_access.sql", // Registered 2026-09-24. page_catalog + role_page_access for WFM_TEAM_ROSTER (employee + manager-shaped + WFM roles + admin/hr/super_admin); the page and every endpoint enforce the real reporting-tree / WFM scope. Roles absent from workforce_role_catalog skipped. Additive, idempotent.
   "1861_roster_team_line_shift_times.sql", // Registered 2026-09-24. Adds nullable new_shift_start_time TIME, new_shift_end_time TIME and new_shift_id CHAR(36) (collation copied from wfm_shift_master.id) to roster_team_submission_line so a Team Roster line stores its shift as times (live rosters carry raw times, not templates). information_schema-guarded ADD COLUMNs on a new empty table; additive, idempotent.
+  "1862_process_master_auto_deactivation.sql", // Registered 2026-09-24, owner ruling (process goes inactive when all its cost centres close, automatically). New table process_master_auto_deactivation (process_id PK, collation copied from process_master.id) logging each automatic deactivation so only those are auto-reactivated. CREATE TABLE IF NOT EXISTS; additive, idempotent.
   ];
 
 export type MigrationHealth = {
