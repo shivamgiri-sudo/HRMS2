@@ -602,6 +602,10 @@ export const costCentreService = {
     } else {
       whereClauses.push("cc.active_status = 1");
       whereClauses.push("cc.status = 'active'"); // Exclude draft and closed
+      // A cost centre cannot be operational under a branch that has been closed. Without this the
+      // GRN and every other picker kept offering cost centres flagged active whose branch is
+      // closed (39 IDC + 1 Pikquick on 2026-09-24). No branch at all still passes.
+      whereClauses.push("COALESCE(b.active_status, 1) = 1");
     }
 
     /**
