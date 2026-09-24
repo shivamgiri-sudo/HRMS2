@@ -9,7 +9,7 @@ import { getBatchJob, readBatchProgress } from "./batch-job.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { loadRowsWithLiveStatus, reconcileStuckRows } from "./bulk-approval.service.js";
 import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
-import { dispatchImport, assertGatedUploader, assertDepartmentStructureUploader } from "./bulk-dispatch.js";
+import { dispatchImport, assertGatedUploader, assertDepartmentStructureUploader, assertEmployeeLobUploader } from "./bulk-dispatch.js";
 import { ONFIDO_REPORT_CONFIGS } from "./onfido-report-configs.js";
 
 /**
@@ -373,6 +373,8 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_asset_upload_batch",
   "import_branch_upload_batch",
   "import_lob_upload_batch",
+  // Employee LOB Mapping: employees.lob_id from employee_code + lob_code (WFM roles, row-scoped).
+  "import_employee_lob_batch",
   "import_designation_upload_batch",
   // Approval-gated types. These stage rows into their real domain tables in a pending
   // state; nothing applies until a Branch Head approves via /approvals/batches/:id/approve.
@@ -629,6 +631,7 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
   try {
     await assertGatedUploader(rpc_name, req.authUser!.id);
     await assertDepartmentStructureUploader(rpc_name, req.authUser!.id);
+    await assertEmployeeLobUploader(rpc_name, req.authUser!.id);
   } catch (err) {
     await db.execute(
       `UPDATE upload_batch SET batch_status = 'validated', updated_at = NOW() WHERE id = ?`,

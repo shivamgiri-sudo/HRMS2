@@ -1135,6 +1135,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1850_roster_offday_policy.sql", // Registered 2026-09-24. Creates roster_offday_policy (fixed/floating weekly-off policy per process/LOB/branch, collation-copied ids, no FKs). Additive, idempotent.
   "1851_roster_offday_policy_page_access.sql", // Registered 2026-09-24. page_catalog + role_page_access for WFM_ROSTER_OFFDAY_POLICY (wfm/wfm_spoc/branch_wfm/ho_wfm/admin/hr/super_admin). Additive, idempotent.
   "1852_pnl_grn_allocation_view_ex_gst.sql", // Registered 2026-09-24. Owner rule: Process P&L GRN must be ex-GST. CREATE OR REPLACE of vw_process_pnl_grn_allocation with the exact sql/418 body plus one new column, ex_gst_amount (amount_without_tax, guarded for legacy 0-default rows), appended last. Existing columns unchanged. Additive, idempotent.
+  "1853_employee_lob_mapping_upload_template.sql", // Registered 2026-09-24. Seeds the EMPLOYEE_LOB_MAPPING upload_template_master row (employee_code, lob_code) for the Bulk Upload Hub. Insert-if-absent, additive, replay-safe.
   ];
 
 export type MigrationHealth = {
