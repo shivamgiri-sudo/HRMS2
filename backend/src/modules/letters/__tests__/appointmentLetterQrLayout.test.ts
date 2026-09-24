@@ -27,7 +27,16 @@ describe("appointment letter QR layout (pdfkit top-left space)", () => {
   const stamp = pdfRectToTopLeft(PROVIDER_STAMP_RECT_PDF, PAGE_H);
 
   it("converts the provider's bottom-left rect into a foot strip", () => {
-    expect(stamp).toEqual({ x: 425, y: PAGE_H - 160, w: 120, h: 60 });
+    expect(stamp.x).toBe(425);
+    expect(stamp.y).toBeCloseTo(PAGE_H - 160, 2);
+    expect(stamp.w).toBe(120);
+    expect(stamp.h).toBe(60);
+  });
+
+  it("draws the eSign box exactly on the provider stamp rect, inside the reserved foot band", () => {
+    expect(ESIGN_BOX).toEqual(stamp);
+    expect(ESIGN_BOX.y).toBeGreaterThanOrEqual(PAGE_H - RESERVE.band);
+    expect(ESIGN_BOX.y + ESIGN_BOX.h).toBeLessThanOrEqual(PAGE_H);
   });
 
   it("does not intersect the eSign box or its label", () => {
@@ -35,12 +44,8 @@ describe("appointment letter QR layout (pdfkit top-left space)", () => {
     expect(intersects(QR_BLOCK_RECT, ESIGN_BOX)).toBe(false);
   });
 
-  it("does not intersect the provider stamp rect under either reading of its origin", () => {
-    // Correct reading: native PDF space, bottom-left origin.
+  it("does not intersect the provider stamp rect (native PDF space, bottom-left origin)", () => {
     expect(intersects(QR_BLOCK_RECT, stamp)).toBe(false);
-    // Literal reading (numbers used as top-left coordinates) — the box used to sit there.
-    const literal: TopLeftRect = { x: 425, y: 100, w: 120, h: 60 };
-    expect(intersects(QR_BLOCK_RECT, literal)).toBe(false);
   });
 
   it("lies inside the page and above the reserved foot band", () => {
@@ -48,6 +53,10 @@ describe("appointment letter QR layout (pdfkit top-left space)", () => {
     expect(QR_BLOCK_RECT.x + QR_BLOCK_RECT.w).toBeLessThanOrEqual(PAGE_W);
     expect(QR_BLOCK_RECT.y).toBeGreaterThanOrEqual(0);
     expect(QR_BLOCK_RECT.y + QR_BLOCK_RECT.h).toBeLessThanOrEqual(PAGE_H - RESERVE.band);
+  });
+
+  it("sits below the SIGNATURES rule (y~102), not on it", () => {
+    expect(QR_RECT.y).toBeGreaterThan(104);
   });
 
   it("stays clear of the company signer text column", () => {

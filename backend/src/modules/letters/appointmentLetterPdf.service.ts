@@ -71,26 +71,30 @@ export function pdfRectToTopLeft(
   return { x: x1, y: pageHeight - y2, w: x2 - x1, h: y2 - y1 };
 }
 
-/** The dashed-look outline labelled "Aadhaar eSign area" (pdfkit space). */
-export const ESIGN_BOX: TopLeftRect = { x: 420, y: 94, w: 130, h: 78 };
+/**
+ * A4 page height in PDF points, as pdfkit sizes it. Needed to place the box in
+ * pdfkit space from the provider's bottom-left rect at module load.
+ */
+const A4_HEIGHT = 841.89;
 
 /**
- * Verification QR: directly UNDER the eSign box, left-aligned with it, so it can
- * neither cover the box's label nor be stamped over. The caption sits beneath it.
- * All of it stays in the upper-middle of the signature page, far above the
- * RESERVE.band foot strip the provider stamps into.
+ * The outline labelled "Aadhaar eSign area" is drawn EXACTLY on the provider's
+ * stamp rect, so what the employee sees is where their signature will land. The
+ * provider stamps the last page (the signature page), and the request carries no
+ * placement of its own (luckpay eSignWithURL sends only file + signer details).
+ */
+export const ESIGN_BOX: TopLeftRect = pdfRectToTopLeft(PROVIDER_STAMP_RECT_PDF, A4_HEIGHT);
+
+/**
+ * Verification QR: in the upper right of the signature page, beside the company
+ * signature block and just under the "SIGNATURES" rule (y~102), far from the foot
+ * band where the eSign box sits. The caption sits beneath it.
  */
 const QR_SIZE = 76;
-const QR_GAP_BELOW_BOX = 12;
 const QR_CAPTION = "Scan to verify this letter";
 const QR_CAPTION_GAP = 3;
 const QR_CAPTION_HEIGHT = 9;
-export const QR_RECT: TopLeftRect = {
-  x: ESIGN_BOX.x,
-  y: ESIGN_BOX.y + ESIGN_BOX.h + QR_GAP_BELOW_BOX,
-  w: QR_SIZE,
-  h: QR_SIZE,
-};
+export const QR_RECT: TopLeftRect = { x: 420, y: 112, w: QR_SIZE, h: QR_SIZE };
 /** QR plus its caption line. */
 export const QR_BLOCK_RECT: TopLeftRect = {
   ...QR_RECT,
@@ -238,8 +242,8 @@ function salaryTable(doc: Doc, s: AppointmentLetterSalary) {
  *
  * The lower portion is left deliberately empty — the provider stamps the
  * employee's Aadhaar signature at PROVIDER_STAMP_RECT_PDF ([425,100,545,160],
- * bottom-left origin, i.e. the foot strip) on this page. The verification QR is
- * kept out of both that strip and the drawn ESIGN_BOX (see QR_RECT).
+ * bottom-left origin, i.e. the foot strip) on this page; ESIGN_BOX is drawn on
+ * exactly that rect. The verification QR sits at the top right (see QR_RECT).
  */
 function signaturePage(doc: Doc, input: AppointmentLetterInput) {
   doc.addPage();
@@ -269,8 +273,7 @@ function signaturePage(doc: Doc, input: AppointmentLetterInput) {
   // Capture bottom of company block before drawing the eSign box (which resets doc.y to box coords).
   const companyBlockBottom = doc.y + 6;
 
-  // Aadhaar eSign box. Position comes from ESIGN_BOX; the QR is drawn clear of it.
-  const boxTop = ESIGN_BOX.y;
+  // Aadhaar eSign box: drawn on the provider stamp rect (foot of the page, inside the reserved band).
   doc.rect(ESIGN_BOX.x, ESIGN_BOX.y, ESIGN_BOX.w, ESIGN_BOX.h).lineWidth(0.8).strokeColor("#CBD5E1").stroke();
   doc.fontSize(6.5).fillColor(MUTED)
     .text("Aadhaar eSign area", ESIGN_BOX.x + 6, ESIGN_BOX.y + ESIGN_BOX.h - 14, { width: ESIGN_BOX.w - 10 });
@@ -280,12 +283,12 @@ function signaturePage(doc: Doc, input: AppointmentLetterInput) {
       const b64 = input.qrPngDataUrl.replace(/^data:image\/png;base64,/, "");
       doc.image(Buffer.from(b64, "base64"), QR_RECT.x, QR_RECT.y, { width: QR_RECT.w, height: QR_RECT.h });
       doc.font("Helvetica").fontSize(6.5).fillColor(MUTED)
-        .text(QR_CAPTION, QR_RECT.x, QR_RECT.y + QR_RECT.h + QR_CAPTION_GAP, { width: ESIGN_BOX.w, lineBreak: false });
+        .text(QR_CAPTION, QR_RECT.x, QR_RECT.y + QR_RECT.h + QR_CAPTION_GAP, { width: 130, lineBreak: false });
     } catch { /* a missing QR must never stop issuance */ }
   }
 
-  // Employee acceptance block — below whichever ends lower: company block or eSign box.
-  const acceptY = Math.max(companyBlockBottom, boxTop + ESIGN_BOX.h + 14);
+  // Employee acceptance block — below the company block, in the left column (the QR is to the right).
+  const acceptY = companyBlockBottom;
   doc.font("Helvetica-Bold").fontSize(9.5).fillColor(INK)
     .text("Accepted by the employee", left, acceptY, { width: 320 });
   doc.font("Helvetica").fontSize(8).fillColor(MUTED)
