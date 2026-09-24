@@ -256,7 +256,6 @@ function startServer() {
         // Self-guarding: no-ops unless NCOSEC_DB_HOST/USER/PASSWORD are set, and skips
         // when NCOSEC_SYNC_ENABLED=false, so this is inert where COSEC isn't configured.
         startCosecSyncWorker();
-        legacySyncWorker.start();
         startAccessExpiryScheduler();
         startMobilityTransferWorker();
         startITProvisioningLockScheduler();

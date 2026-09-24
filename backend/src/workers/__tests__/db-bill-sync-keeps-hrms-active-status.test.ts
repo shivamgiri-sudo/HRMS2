@@ -23,3 +23,14 @@ describe("no scheduled db_bill finance sync (owner directive 2026-09-24)", () =>
     expect(fs.existsSync(path.join(__dirname, "..", "db-bill-finance-sync.worker.ts"))).toBe(false);
   });
 });
+
+describe("no scheduled sync from db_bill at all (owner directive 2026-09-24)", () => {
+  it("registers neither the HR sync nor the legacy employee sync; both are manual only", () => {
+    const allWorkers = fs.readFileSync(path.join(__dirname, "..", "all-workers.ts"), "utf8");
+    const server = fs.readFileSync(path.join(__dirname, "..", "..", "server.ts"), "utf8");
+    expect(allWorkers).not.toMatch(/DbBillHrSync|db-bill-hr-sync/);
+    expect(allWorkers).not.toMatch(/name:\s*"legacy-sync"/);
+    expect(server).not.toMatch(/legacySyncWorker\.start\(\)/);
+    expect(fs.existsSync(path.join(__dirname, "..", "db-bill-hr-sync.worker.ts"))).toBe(false);
+  });
+});
