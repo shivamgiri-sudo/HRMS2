@@ -114,6 +114,28 @@ describe("GET /grid", () => {
     expect(q.params).toContain("%asha%");
   });
 
+  it("LOB filter narrows inside the tree; without it the WHERE has no lob fragment; names resolve by separate lookup", async () => {
+    const LOB = "11111111-2222-3333-4444-555555555555";
+    installBase(fake);
+    gridRoutes();
+    fake.on(/SELECT e\.id, e\.employee_code/, () => rows([{ id: "e1", employee_code: "MAS1", name: "Asha K", process_id: "p1", process_name: "C", lob_id: LOB }]));
+    fake.on(/SELECT id, lob_name FROM lob_master/, () => rows([{ id: LOB, lob_name: "Voice" }]));
+    const out = await getGrid(actor, { from: d3, to: d3, lob: { kind: "lob", id: LOB } });
+    expect((out.rows as any[])[0]).toMatchObject({ lobId: LOB, lobName: "Voice" });
+    const q = fake.statements(/SELECT e\.id, e\.employee_code/)[0];
+    expect(q.sql).toMatch(/e\.id IN \(\?,\?\) AND e\.lob_id = \?/);
+    expect(q.params).toEqual(["e1", "e2", LOB]);
+
+    fake.reset(); installBase(fake); gridRoutes();
+    await getGrid(actor, { from: d3, to: d3, lob: { kind: "unassigned" } });
+    expect(fake.statements(/SELECT e\.id, e\.employee_code/)[0].sql).toContain("e.lob_id IS NULL");
+
+    fake.reset(); installBase(fake); gridRoutes();
+    await getGrid(actor, { from: d3, to: d3 });
+    expect(fake.statements(/SELECT e\.id, e\.employee_code/)[0].sql).not.toContain("lob_id = ");
+    expect(fake.statements(/SELECT e\.id, e\.employee_code/)[0].params).toEqual(["e1", "e2"]);
+  });
+
   it("validates the range: bad dates, reversed, and more than 31 days", async () => {
     installBase(fake);
     await expect(getGrid(actor, { from: "2026-13-40", to: d3 })).rejects.toMatchObject({ code: "BAD_DATE" });

@@ -10,6 +10,7 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { requireAuth } from "../../middleware/authMiddleware.js";
+import { readLobFilter } from "../../shared/lobFilter.js";
 import { cancelSubmission, copySubmissionToDraft, submitDraft } from "./team-roster-submit.js";
 import { discardDraft, getMyDraft, setDraftNote, upsertDraftLines } from "./team-roster-draft.js";
 import { getSubmissionDetail, listApprovals, listMySubmissions } from "./team-roster-query.js";
@@ -93,8 +94,18 @@ const idOf = (req: Request) => {
 // Static paths first so nothing is captured by "/submissions/:id".
 teamRosterRouter.get("/me", run("none", null, (a) => getMe(a)));
 teamRosterRouter.get("/templates", run("none", null, (a) => listTemplates(a)));
-teamRosterRouter.get("/grid", run("query", schemas.grid, (a, q) => getGrid(a, q)));
-teamRosterRouter.get("/attendance", run("query", schemas.attendance, (a, q) => getTeamAttendance(a, q)));
+teamRosterRouter.get("/grid", (req, res, next) => {
+  const lob = readLobFilter(req, res);
+  if (!lob) return;
+  (req as any).lob = lob;
+  next();
+}, run("query", schemas.grid, (a, q, req) => getGrid(a, { ...q, lob: (req as any).lob })));
+teamRosterRouter.get("/attendance", (req, res, next) => {
+  const lob = readLobFilter(req, res);
+  if (!lob) return;
+  (req as any).lob = lob;
+  next();
+}, run("query", schemas.attendance, (a, q, req) => getTeamAttendance(a, { ...q, lob: (req as any).lob })));
 teamRosterRouter.get("/attendance/:employeeId", run("query", schemas.attendanceDetail, (a, q, req) => getTeamAttendanceDetail(a, String(req.params.employeeId).slice(0, 36), q.month)));
 teamRosterRouter.get("/draft", run("none", null, (a) => getMyDraft(a)));
 teamRosterRouter.put("/draft/lines", run("body", schemas.lines, (a, b) => upsertDraftLines(a, {

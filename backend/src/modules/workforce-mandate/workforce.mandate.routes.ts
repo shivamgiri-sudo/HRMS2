@@ -7,6 +7,7 @@ import { workforceMandateService } from "./workforce.mandate.service.js";
 import { getHcFormula } from "./hc-formula.service.js";
 import { lmsDb } from "../../db/lms-mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { lookupLobNames } from "../../shared/lobNames.js";
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -223,6 +224,31 @@ router.get(
          ${branchId ? 'AND e.branch_id = ?' : ''}`,
       branchId ? [processIds, branchId] : [processIds]
     );
+    // Read-only breakdown of the same active production seats by LOB (employees.lob_id). Mandates are
+    // per process/branch and are NOT LOB-keyed, so this is informational and changes no total above.
+    // LOB names come from a separate parameterised lookup (never a JOIN: mixed collations).
+    let headcountByLob: Array<{ lobId: string | null; lobName: string | null; activeHc: number }> = [];
+    if (processIds.length > 0) {
+      try {
+        const [lobRows] = await db.query<any[]>(
+          `SELECT e.lob_id AS lob_id, COUNT(*) AS cnt FROM employees e
+           JOIN designation_master d   ON d.id    = e.designation_id
+           LEFT JOIN department_master dept ON dept.id = e.department_id
+           WHERE e.active_status = 1 AND ${PROD_SEAT_SQL} AND e.process_id IN (?)
+           ${branchId ? 'AND e.branch_id = ?' : ''}
+           GROUP BY e.lob_id`,
+          branchId ? [processIds, branchId] : [processIds]
+        );
+        const lobNames = await lookupLobNames((lobRows ?? []).map((r: any) => (r.lob_id ? String(r.lob_id) : null)));
+        headcountByLob = (lobRows ?? []).map((r: any) => ({
+          lobId: r.lob_id ? String(r.lob_id) : null,
+          lobName: r.lob_id ? (lobNames.get(String(r.lob_id)) ?? null) : null,
+          activeHc: Number(r.cnt ?? 0),
+        })).sort((a, b) => b.activeHc - a.activeHc);
+      } catch (err: unknown) {
+        console.error("[capacity-summary] headcount-by-LOB lookup failed, omitting:", err);
+      }
+    }
     // In Training = live headcount sitting in an active NHT (New Hire Training) batch in the
     // LMS, for the processes actually in view — not the whole ats_candidate table (every
     // process, every branch, the platform's entire application history: 34,905 rows, which
@@ -348,6 +374,7 @@ router.get(
         trainingBufferPct: Math.round(avgTrainingBuffer * 10) / 10,
       },
       hiringByProcess,
+      headcountByLob,
     });
   })
 );

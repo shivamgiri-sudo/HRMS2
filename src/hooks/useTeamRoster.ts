@@ -41,7 +41,7 @@ export interface GridCell {
 }
 
 export interface GridRow {
-  employeeId: string; code: string | null; name: string; processId: string | null; processName: string | null;
+  employeeId: string; code: string | null; name: string; processId: string | null; processName: string | null; lobId?: string | null; lobName?: string | null;
   cells: Record<string, GridCell>;
 }
 
@@ -76,7 +76,7 @@ export interface SubmissionDetail {
     createdAt: string | null; submittedAt: string | null; appliedAt: string | null;
   };
   lines: Array<{
-    id: number; employeeId: string; employeeCode: string | null; employeeName: string; date: string; kind: "FILL_BLANK" | "CHANGE";
+    id: number; employeeId: string; employeeCode: string | null; employeeName: string; lobName?: string | null; date: string; kind: "FILL_BLANK" | "CHANGE";
     old: { type: string | null; label: string | null } | null; new: { type: string; label: string | null };
     reason: string | null; warnings: string[]; status: string; skipReason: string | null; appliedAssignmentId: string | null;
   }>;
@@ -90,7 +90,7 @@ export interface AttendanceTotals {
 }
 export interface AttendanceLegendItem { code: string; label: string }
 export interface TeamAttendanceRow {
-  employeeId: string | null; code: string | null; name: string; designation: string | null; processName: string | null;
+  employeeId: string | null; code: string | null; name: string; designation: string | null; processName: string | null; lobName?: string | null;
   days: string[]; regularizedDays: number[]; totals: AttendanceTotals;
 }
 export interface TeamAttendanceResponse {
@@ -109,11 +109,11 @@ export interface TeamAttendanceDetail {
 export const meKey = [...TEAM_ROSTER_KEY, "me"] as const;
 export const templatesKey = [...TEAM_ROSTER_KEY, "templates"] as const;
 export const draftKey = [...TEAM_ROSTER_KEY, "draft"] as const;
-export const gridKey = (f: { from: string; to: string; search: string; offset: number; limit: number }) => [...TEAM_ROSTER_KEY, "grid", f] as const;
+export const gridKey = (f: { from: string; to: string; search: string; offset: number; limit: number; lobId?: string }) => [...TEAM_ROSTER_KEY, "grid", f] as const;
 export const submissionsKey = (status: string, offset: number) => [...TEAM_ROSTER_KEY, "submissions", status, offset] as const;
 export const approvalsKey = (step: string, offset: number) => [...TEAM_ROSTER_KEY, "approvals", step, offset] as const;
 export const detailKey = (id: number | null) => [...TEAM_ROSTER_KEY, "detail", id] as const;
-export const attendanceKey = (f: { month: string; search: string; offset: number; limit: number }) => [...TEAM_ROSTER_KEY, "attendance", f] as const;
+export const attendanceKey = (f: { month: string; search: string; offset: number; limit: number; lobId?: string }) => [...TEAM_ROSTER_KEY, "attendance", f] as const;
 export const attendanceDetailKey = (employeeId: string | null, month: string) => [...TEAM_ROSTER_KEY, "attendance-detail", employeeId, month] as const;
 
 export const useTeamRosterMe = () =>
@@ -122,7 +122,7 @@ export const useTeamRosterMe = () =>
 export const useTeamRosterTemplates = (enabled: boolean) =>
   useQuery({ queryKey: templatesKey, enabled, staleTime: 5 * 60_000, queryFn: async () => unwrap<{ processes: TemplateProcess[] }>(await hrmsApi.get(`${BASE}/templates`)) });
 
-export const useTeamRosterGrid = (f: { from: string; to: string; search: string; offset: number; limit: number }, enabled: boolean) =>
+export const useTeamRosterGrid = (f: { from: string; to: string; search: string; offset: number; limit: number; lobId?: string }, enabled: boolean) =>
   useQuery({
     queryKey: gridKey(f), enabled, placeholderData: keepPreviousData,
     queryFn: async () => unwrap<GridResponse>(await hrmsApi.get(`${BASE}/grid${qs(f)}`)),
@@ -146,7 +146,7 @@ export const useApprovals = (step: "manager" | "wfm", offset: number, enabled: b
 export const useSubmissionDetail = (id: number | null) =>
   useQuery({ queryKey: detailKey(id), enabled: id !== null, queryFn: async () => unwrap<SubmissionDetail>(await hrmsApi.get(`${BASE}/submissions/${id}`)) });
 
-export const useTeamAttendance = (f: { month: string; search: string; offset: number; limit: number }, enabled: boolean) =>
+export const useTeamAttendance = (f: { month: string; search: string; offset: number; limit: number; lobId?: string }, enabled: boolean) =>
   useQuery({
     queryKey: attendanceKey(f), enabled, placeholderData: keepPreviousData, staleTime: 60_000,
     queryFn: async () => unwrap<TeamAttendanceResponse>(await hrmsApi.get(`${BASE}/attendance${qs(f)}`)),

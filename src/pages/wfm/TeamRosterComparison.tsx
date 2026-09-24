@@ -15,6 +15,7 @@
  * 5. Best practices from top performers
  */
 import { useState } from "react";
+import { LobSelect } from "@/components/wfm/LobSelect";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
@@ -368,6 +369,7 @@ function BranchRow({ branch }: { branch: BranchRanking }) {
 export default function TeamRosterComparison() {
   const [branchFilter, setBranchFilter] = useState(ALL);
   const [period, setPeriod] = useState("current");
+  const [lobId, setLobId] = useState("");
 
   const { data: branchData } = useQuery({
     queryKey: ["team-comparison", "branches"],
@@ -375,11 +377,12 @@ export default function TeamRosterComparison() {
   });
 
   const { data: comparisonData, isLoading, refetch } = useQuery({
-    queryKey: ["team-comparison", "data", branchFilter, period],
+    queryKey: ["team-comparison", "data", branchFilter, period, lobId],
     queryFn: () => {
       const params = new URLSearchParams();
       if (branchFilter !== ALL) params.set("branchId", branchFilter);
       params.set("period", period);
+      if (lobId) params.set("lobId", lobId);
       return hrmsApi.get<ComparisonData>(`/api/roster-analytics/team-comparison?${params}`);
     },
   });
@@ -434,6 +437,7 @@ export default function TeamRosterComparison() {
                   ))}
                 </SelectContent>
               </Select>
+              <LobSelect processId="" value={lobId} onChange={setLobId} includeUnassigned className="w-40 bg-white/10 border-white/20 text-white" />
               <Button
                 variant="secondary"
                 size="sm"

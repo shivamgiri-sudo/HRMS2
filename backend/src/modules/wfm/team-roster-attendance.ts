@@ -18,6 +18,8 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { lobCondition, type LobFilter } from "../../shared/lobFilter.js";
+import { lookupLobNames } from "../../shared/lobNames.js";
 import { attendanceRegisterMonthly } from "../reporting/executors/attendance.executor.js";
 import type { ExecScope } from "../reporting/executors/types.js";
 import { resolveCallerEmployee, resolveTeamTree } from "./team-roster-tree.js";
@@ -79,6 +81,7 @@ export interface AttendanceRow {
   name: string;
   designation: string | null;
   processName: string | null;
+  lobName?: string | null;
   /** One register code per calendar day of the month ('' = blank), index 0 = day 1. */
   days: string[];
   /** 1-based days whose status came from an approved regularization. */
@@ -131,6 +134,17 @@ async function idsByCode(codes: string[], teamIds: string[]): Promise<Map<string
   return map;
 }
 
+/** employee id -> lob_id for the ids on this page (ids come from the caller's tree). */
+async function lobIdsOf(ids: string[]): Promise<Map<string, string | null>> {
+  const map = new Map<string, string | null>();
+  if (!ids.length) return map;
+  const rows = rowsOf<RowDataPacket>(await db.execute(
+    `SELECT id, lob_id FROM employees WHERE id IN (${placeholders(ids.length)})`, ids,
+  ));
+  rows.forEach((r) => map.set(String(r.id), r.lob_id ? String(r.lob_id) : null));
+  return map;
+}
+
 async function teamIdsOf(actor: Actor): Promise<{ ids: string[]; truncated: boolean }> {
   const caller = await resolveCallerEmployee(actor.id);
   if (!caller) return { ids: [], truncated: false };
@@ -138,7 +152,7 @@ async function teamIdsOf(actor: Actor): Promise<{ ids: string[]; truncated: bool
   return { ids: tree.ids, truncated: tree.truncated };
 }
 
-export async function getTeamAttendance(actor: Actor, q: { month: string; search?: string; offset?: number; limit?: number }) {
+export async function getTeamAttendance(actor: Actor, q: { month: string; search?: string; offset?: number; limit?: number; lob?: LobFilter }) {
   const month = validateMonth(q.month);
   const daysInMonth = daysInMonthOf(month);
   const dates = eachDate(`${month}-01`, `${month}-${String(daysInMonth).padStart(2, "0")}`);
@@ -151,23 +165,32 @@ export async function getTeamAttendance(actor: Actor, q: { month: string; search
 
   let ids = team.ids;
   const search = (q.search ?? "").trim().slice(0, 100);
-  if (search) {
+  const lobCond = q.lob ? lobCondition(q.lob, "employees") : null;
+  if (search || lobCond) {
     const like = `%${search}%`;
+    const conds = [`id IN (${placeholders(team.ids.length)})`];
+    const params: unknown[] = [...team.ids];
+    if (search) { conds.push(`(full_name LIKE ? OR employee_code LIKE ? OR first_name LIKE ? OR last_name LIKE ?)`); params.push(like, like, like, like); }
+    if (lobCond) { conds.push(lobCond.sql); params.push(...lobCond.params); }
     ids = rowsOf<RowDataPacket>(await db.execute(
-      `SELECT id FROM employees WHERE id IN (${placeholders(team.ids.length)})
-          AND (full_name LIKE ? OR employee_code LIKE ? OR first_name LIKE ? OR last_name LIKE ?)`,
-      [...team.ids, like, like, like, like],
+      `SELECT id FROM employees WHERE ${conds.join(" AND ")}`, params,
     )).map((r) => String(r.id));
     if (!ids.length) return { ...base, total: 0, teamTruncated: team.truncated, rows: [] };
   }
 
   const page = await runRegister(month, ids, offset, limit);
   const byCode = await idsByCode(page.rows.map((r) => String(r.emp_code ?? "")).filter(Boolean), team.ids);
+  const lobIdOf = await lobIdsOf([...byCode.values()]);
+  const lobNames = await lookupLobNames([...lobIdOf.values()]);
   return {
     ...base,
     total: page.total,
     teamTruncated: team.truncated,
-    rows: page.rows.map((r) => ({ employeeId: byCode.get(String(r.emp_code)) ?? null, ...toAttendanceRow(r, daysInMonth) })),
+    rows: page.rows.map((r) => {
+      const id = byCode.get(String(r.emp_code)) ?? null;
+      const lobId = id ? lobIdOf.get(id) : null;
+      return { employeeId: id, lobName: lobId ? (lobNames.get(lobId) ?? null) : null, ...toAttendanceRow(r, daysInMonth) };
+    }),
   };
 }
 

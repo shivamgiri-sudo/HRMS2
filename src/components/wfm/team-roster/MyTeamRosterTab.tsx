@@ -11,6 +11,7 @@ import {
   useDiscardDraft, useSaveDraftLines, useSubmitDraft, useTeamRosterDraft, useTeamRosterGrid, useTeamRosterTemplates,
   type GridRow, type TeamRosterMe,
 } from "@/hooks/useTeamRoster";
+import { LobSelect } from "@/components/wfm/LobSelect";
 import ChangeDialog, { type ChangeTarget } from "./ChangeDialog";
 import SubmitProblemsDialog from "./SubmitProblemsDialog";
 import TeamRosterGrid, { shiftOptionsFor, stagedKey, type StagedEdit } from "./TeamRosterGrid";
@@ -38,6 +39,7 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
   const [search, setSearch] = useState("");
   const [pageSize, setPageSize] = useState<number>(50);
   const [offset, setOffset] = useState(0);
+  const [lobId, setLobId] = useState("");
   const [staged, setStaged] = useState<Record<string, StagedEdit>>({});
   const [change, setChange] = useState<{ row: GridRow; date: string } | null>(null);
   const [failure, setFailure] = useState<ApiFailure | null>(null);
@@ -49,7 +51,7 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
   const rangeError = !from || !to ? "Choose both dates." : to < from ? "The end date must not be before the start date."
     : spanDays(from, to) > me.maxRangeDays ? `A range can span at most ${me.maxRangeDays} days.` : null;
 
-  const grid = useTeamRosterGrid({ from, to, search: debounced.trim(), offset, limit: pageSize }, !rangeError);
+  const grid = useTeamRosterGrid({ from, to, search: debounced.trim(), offset, limit: pageSize, lobId }, !rangeError);
   const templates = useTeamRosterTemplates(true);
   const draft = useTeamRosterDraft(true);
   const save = useSaveDraftLines();
@@ -152,6 +154,10 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
         <div className="relative min-w-[200px] flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" aria-hidden />
           <Input aria-label="Search team" placeholder="Search name or employee code" value={search} onChange={(e) => { setSearch(e.target.value); setOffset(0); }} className="h-9 pl-8" />
+        </div>
+        <div className="space-y-1">
+          <Label>LOB</Label>
+          <LobSelect processId="" value={lobId} onChange={(v) => { setLobId(v); setOffset(0); }} includeUnassigned className="h-9 w-44" />
         </div>
         <div className="space-y-1">
           <Label htmlFor="tr-page-size">Rows</Label>

@@ -8,6 +8,8 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { buildDayColumnLabel } from "@/lib/attendance-register-columns";
 import { useTeamAttendance, type TeamAttendanceRow, type TeamRosterMe } from "@/hooks/useTeamRoster";
+import { LobBadge } from "@/components/wfm/LobBadge";
+import { LobSelect } from "@/components/wfm/LobSelect";
 import TeamAttendanceDrawer from "./TeamAttendanceDrawer";
 import {
   ATTENDANCE_TOTAL_COLUMNS, attendanceCellClass, monthLabel, monthOptions, unpackError, weekdayShort,
@@ -38,9 +40,10 @@ export default function TeamAttendanceTab({ me }: Props) {
   const [search, setSearch] = useState("");
   const [pageSize, setPageSize] = useState<number>(50);
   const [offset, setOffset] = useState(0);
+  const [lobId, setLobId] = useState("");
   const [open, setOpen] = useState<{ employeeId: string } | null>(null);
   const debounced = useDebounce(search, 300);
-  const q = useTeamAttendance({ month, search: debounced.trim(), offset, limit: pageSize }, true);
+  const q = useTeamAttendance({ month, search: debounced.trim(), offset, limit: pageSize, lobId }, true);
   const data = q.data;
 
   return (
@@ -55,6 +58,10 @@ export default function TeamAttendanceTab({ me }: Props) {
         <div className="relative min-w-[200px] flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" aria-hidden />
           <Input aria-label="Search team attendance" placeholder="Search name or employee code" value={search} onChange={(e) => { setSearch(e.target.value); setOffset(0); }} className="h-9 pl-8" />
+        </div>
+        <div className="space-y-1">
+          <Label>LOB</Label>
+          <LobSelect processId="" value={lobId} onChange={(v) => { setLobId(v); setOffset(0); }} includeUnassigned className="h-9 w-44" />
         </div>
         <div className="space-y-1">
           <Label htmlFor="ta-page-size">Rows</Label>
@@ -142,6 +149,7 @@ function AttendanceTable({ data, onOpen }: { data: NonNullable<ReturnType<typeof
               <th scope="row" className="sticky left-0 z-10 border-b border-r bg-white px-3 py-1.5 text-left font-normal">
                 <div className="font-semibold text-slate-800">{row.name}</div>
                 <div className="text-[11px] text-slate-500">{[row.code, row.designation, row.processName].filter(Boolean).join(" - ")}</div>
+                <LobBadge name={row.lobName} />
               </th>
               {row.days.map((code, i) => (
                 <td key={i} className="border-b border-l border-slate-100 p-0 text-center">

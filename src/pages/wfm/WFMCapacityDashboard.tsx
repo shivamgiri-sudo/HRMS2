@@ -73,6 +73,7 @@ interface CapacitySummaryApi {
     mandatedHc?: number; shrinkagePct?: number;
     attritionBufferPct?: number; trainingBufferPct?: number;
   };
+  headcountByLob?: Array<{ lobId: string | null; lobName: string | null; activeHc: number }>;
   hiringByProcess?: Array<{
     processId: string; processName: string; branchName?: string;
     mandatedHc?: number; requiredHc?: number; priority?: string;
@@ -759,6 +760,26 @@ export default function WFMCapacityDashboard() {
                 ))
               )}
             </GlassCard>
+
+            {/* Headcount by LOB (read-only; mandates are per process, not per LOB) */}
+            {(capacityData?.headcountByLob?.length ?? 0) > 0 && (
+              <GlassCard className="mb-6">
+                <div className="p-4">
+                  <h3 className="font-semibold text-slate-800">Headcount by LOB</h3>
+                  <p className="mb-3 text-xs text-slate-500">
+                    Active production headcount for the processes in view, split by line of business. Mandate targets are per process, so this is informational and does not change the coverage figures.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {(capacityData?.headcountByLob ?? []).map((l) => (
+                      <div key={l.lobId ?? "__none__"} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+                        <span className={l.lobId ? "font-medium text-slate-800" : "text-slate-400"}>{l.lobId ? (l.lobName ?? "Unknown LOB") : "Unassigned"}</span>
+                        <span className="ml-2 font-semibold text-slate-900">{l.activeHc}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </GlassCard>
+            )}
 
             {/* Hiring Demand by Priority */}
             <GlassCard className="mb-6">

@@ -5,6 +5,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { lookupLobNames } from "../../shared/lobNames.js";
 import { requireCaller } from "./team-roster.service.js";
 import { resolveCallerEmployee } from "./team-roster-tree.js";
 import { assertWfmScopeCoversSubmission, wfmEmployeeScope } from "./team-roster-workflow.js";
@@ -120,7 +121,7 @@ export async function getSubmissionDetail(actor: Actor, id: number) {
   const lines = rowsOf<RowDataPacket>(await db.execute(
     `SELECT l.id, l.employee_id, ${DATE("l.roster_date", "d")}, l.kind, l.old_assignment_type, l.old_shift_start_time, l.old_shift_end_time,
             l.new_assignment_type, l.reason, l.warnings_json, l.line_status, l.skip_reason, l.applied_assignment_id,
-            e.employee_code, ${NAME("e")} AS employee_name, ot.shift_code AS old_code, nt.shift_code AS new_code,
+            e.employee_code, e.lob_id, ${NAME("e")} AS employee_name, ot.shift_code AS old_code, nt.shift_code AS new_code,
             l.new_shift_start_time AS new_start, l.new_shift_end_time AS new_end
        FROM roster_team_submission_line l
        LEFT JOIN employees e ON e.id = l.employee_id
@@ -133,9 +134,10 @@ export async function getSubmissionDetail(actor: Actor, id: number) {
        FROM roster_team_submission_audit a LEFT JOIN employees ae ON ae.user_id = a.actor_user_id
       WHERE a.submission_id = ? ORDER BY a.id`, [id],
   ));
+  const lobNames = await lookupLobNames(lines.map((l) => (l.lob_id ? String(l.lob_id) : null)));
   const decorated = lines.map((l) => ({
     id: Number(l.id), employeeId: String(l.employee_id), employeeCode: l.employee_code ? String(l.employee_code) : null,
-    employeeName: String(l.employee_name ?? ""), date: String(l.d), kind: String(l.kind),
+    employeeName: String(l.employee_name ?? ""), lobName: l.lob_id ? (lobNames.get(String(l.lob_id)) ?? null) : null, date: String(l.d), kind: String(l.kind),
     old: l.kind === "CHANGE" ? { type: l.old_assignment_type ? String(l.old_assignment_type) : null, label: label(l.old_code, l.old_shift_start_time, l.old_shift_end_time) } : null,
     new: { type: String(l.new_assignment_type), label: label(l.new_code, l.new_start, l.new_end) },
     reason: l.reason ? String(l.reason) : null, warnings: parseWarnings(l.warnings_json),

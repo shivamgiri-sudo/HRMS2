@@ -35,6 +35,7 @@ function registerRoutes(records: Array<Record<string, unknown>>) {
   fake.on(/SELECT COUNT\(DISTINCT e\.id\) AS total FROM employees e/, () => rows([{ total: 2 }]));
   fake.on(/SELECT e\.id FROM employees e WHERE/, () => rows([{ id: "e1" }, { id: "e2" }]));
   fake.on(/FROM employees e LEFT JOIN attendance_daily_record adr/, () => rows(records));
+  fake.on(/SELECT id, lob_id FROM employees WHERE id IN/, () => rows([{ id: "e1", lob_id: null }, { id: "e2", lob_id: null }]));
   fake.on(/SELECT id, employee_code FROM employees WHERE employee_code IN/, () => rows([{ id: "e1", employee_code: "MAS1" }, { id: "e2", employee_code: "MAS2" }]));
 }
 
@@ -156,11 +157,11 @@ describe("parity with the Attendance Register", () => {
     expect(mocks.weekoff).toHaveBeenCalledWith("e1", computePaidBase(countDayCodes((d) => (out.rows[0] as any).days[d - 1], daysInMonth)), month, 1);
   });
 
-  it("a row exposes only manager-safe fields: no salary days, cost centre, biometric code, branch, LOB or profile", async () => {
+  it("a row exposes only manager-safe fields: no salary days, cost centre, biometric code, branch, register LOB text or profile (only the employee LOB name is shown)", async () => {
     registerRoutes(records());
     const out = await getTeamAttendance(actor, { month });
     const asha: any = out.rows[0];
-    expect(Object.keys(asha).sort()).toEqual(["code", "days", "designation", "employeeId", "name", "processName", "regularizedDays", "totals"]);
+    expect(Object.keys(asha).sort()).toEqual(["code", "days", "designation", "employeeId", "lobName", "name", "processName", "regularizedDays", "totals"]);
     expect(Object.keys(asha.totals).sort()).toEqual(["absent", "halfDay", "holiday", "leave", "onDuty", "present", "totalWorkingDays", "weekOff"]);
     const wire = JSON.stringify(out);
     for (const leaked of ["sal_days", "CC-9", "B1", "Noida", "Voice", "Regular", "cost_center"]) expect(wire).not.toContain(leaked);

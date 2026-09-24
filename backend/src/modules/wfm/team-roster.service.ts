@@ -8,6 +8,8 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { lobCondition, type LobFilter } from "../../shared/lobFilter.js";
+import { lookupLobNames } from "../../shared/lobNames.js";
 import { loadShiftOptions } from "./team-roster-shifts.js";
 import { loadApprovedLeave } from "./roster-leave-guard.service.js";
 import { resolveCallerEmployee, resolveTeamTree, type CallerEmployee } from "./team-roster-tree.js";
@@ -72,7 +74,7 @@ export async function getMe(actor: Actor) {
 export async function listTemplates(actor: Actor) {
   const { teamIds } = await requireTeam(actor);
   const procRows = rowsOf<RowDataPacket>(await db.execute(
-    `SELECT DISTINCT e.process_id, pm.process_name
+    `SELECT DISTINCT e.process_id, pm.process_name, e.lob_id
        FROM employees e LEFT JOIN process_master pm ON pm.id = e.process_id
       WHERE e.id IN (${placeholders(teamIds.length)}) AND e.process_id IS NOT NULL`,
     teamIds,
@@ -115,7 +117,7 @@ export async function listTemplates(actor: Actor) {
   };
 }
 
-export interface GridQuery { from: string; to: string; search?: string; offset?: number; limit?: number }
+export interface GridQuery { from: string; to: string; search?: string; offset?: number; limit?: number; lob?: LobFilter }
 
 function validateRange(from: string, to: string) {
   if (!isValidYmd(from) || !isValidYmd(to)) throw new TeamRosterError(400, "from and to must be valid YYYY-MM-DD dates.", "BAD_DATE");
@@ -139,6 +141,8 @@ export async function getGrid(actor: Actor, q: GridQuery) {
     const like = `%${search}%`;
     params.push(like, like, like, like);
   }
+  const lobCond = q.lob ? lobCondition(q.lob, "e") : null;
+  if (lobCond) { where.push(lobCond.sql); params.push(...lobCond.params); }
   const total = Number(rowsOf<RowDataPacket>(await db.execute(
     `SELECT COUNT(*) AS c FROM employees e WHERE ${where.join(" AND ")}`, params,
   ))[0]?.c ?? 0);
@@ -149,6 +153,7 @@ export async function getGrid(actor: Actor, q: GridQuery) {
     params,
   ));
   const ids = people.map((p) => String(p.id));
+  const lobNames = await lookupLobNames(people.map((p) => (p.lob_id ? String(p.lob_id) : null)));
   const dates = eachDate(q.from, q.to);
   const cellsOf = new Map<string, Record<string, Record<string, unknown>>>(ids.map((id) => [id, {}]));
   const put = (emp: string, date: string, field: string, value: unknown) => {
@@ -166,6 +171,8 @@ export async function getGrid(actor: Actor, q: GridQuery) {
       name: String(p.name ?? ""),
       processId: p.process_id ? String(p.process_id) : null,
       processName: p.process_name ? String(p.process_name) : null,
+      lobId: p.lob_id ? String(p.lob_id) : null,
+      lobName: p.lob_id ? (lobNames.get(String(p.lob_id)) ?? null) : null,
       cells: cellsOf.get(String(p.id)) ?? {},
     })),
   };

@@ -1,3 +1,4 @@
+import { LobBadge } from "@/components/wfm/LobBadge";
 import { Lock, Pencil } from "lucide-react";
 import ShiftChoiceOptions from "./ShiftChoiceOptions";
 import type { GridResponse, GridRow } from "@/hooks/useTeamRoster";
@@ -124,6 +125,7 @@ export default function TeamRosterGrid(props: TeamRosterGridProps) {
               <th scope="row" className="sticky left-0 z-10 border-b border-r bg-white px-3 py-2 text-left font-normal">
                 <div className="font-semibold text-slate-800">{row.name}</div>
                 <div className="text-[11px] text-slate-500">{[row.code, row.processName].filter(Boolean).join(" - ")}</div>
+                <LobBadge name={row.lobName} />
               </th>
               {data.dates.map((d) => (
                 <td key={d} className="border-b px-1.5 py-1.5 align-middle"><GridCellView row={row} date={d} props={props} /></td>

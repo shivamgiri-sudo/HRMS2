@@ -1,3 +1,4 @@
+import { LobBadge } from "@/components/wfm/LobBadge";
 import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Circle, Loader2, MinusCircle, XCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -100,11 +101,12 @@ export function DrawerBody({ detail, busy, onAction }: {
         {lines.length === 0 ? <None /> : (
           <div className="overflow-x-auto rounded-lg border">
             <table className="w-full text-xs">
-              <thead className="bg-slate-50 text-left text-slate-500"><tr><th className="px-2 py-1.5">Employee</th><th className="px-2 py-1.5">Date</th><th className="px-2 py-1.5">Change</th><th className="px-2 py-1.5">Result</th></tr></thead>
+              <thead className="bg-slate-50 text-left text-slate-500"><tr><th className="px-2 py-1.5">Employee</th><th className="px-2 py-1.5">LOB</th><th className="px-2 py-1.5">Date</th><th className="px-2 py-1.5">Change</th><th className="px-2 py-1.5">Result</th></tr></thead>
               <tbody>
                 {lines.map((l) => (
                   <tr key={l.id} className="border-t align-top">
                     <td className="px-2 py-1.5"><div className="font-medium">{l.employeeName}</div><div className="text-slate-400">{l.employeeCode}</div></td>
+                    <td className="px-2 py-1.5"><LobBadge name={l.lobName} /></td>
                     <td className="px-2 py-1.5 whitespace-nowrap">{formatDmy(l.date)}</td>
                     <td className="px-2 py-1.5">
                       {l.kind === "CHANGE"

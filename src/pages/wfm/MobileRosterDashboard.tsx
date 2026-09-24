@@ -34,11 +34,14 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { hrmsApi } from '@/lib/hrmsApi';
+import { LobSelect } from '@/components/wfm/LobSelect';
+import { LobBadge } from '@/components/wfm/LobBadge';
 
 interface TeamMember {
   employeeId: string;
   employeeCode: string;
   employeeName: string;
+  lobName?: string | null;
   status: 'present' | 'absent' | 'late' | 'on_leave' | 'week_off';
   shiftName: string;
   loginTime?: string;
@@ -75,11 +78,12 @@ const statusLabels: Record<string, string> = {
 export default function MobileRosterDashboard() {
   const [selectedFilter, setSelectedFilter] = useState<string>('all');
   const [showActions, setShowActions] = useState(false);
+  const [lobId, setLobId] = useState('');
 
   const { data: teamData, isLoading, refetch, isFetching } = useQuery({
-    queryKey: ['mobile-team-status'],
+    queryKey: ['mobile-team-status', lobId],
     queryFn: async () => {
-      const res = await hrmsApi.get('/roster-analytics/team-status-mobile');
+      const res = await hrmsApi.get(`/roster-analytics/team-status-mobile${lobId ? `?lobId=${encodeURIComponent(lobId)}` : ''}`);
       return res.data;
     },
     refetchInterval: 60000, // Auto-refresh every minute
@@ -258,6 +262,10 @@ export default function MobileRosterDashboard() {
         </div>
       </div>
 
+      <div className="px-4 pb-2">
+        <LobSelect processId="" value={lobId} onChange={setLobId} includeUnassigned className="h-9 w-full bg-white" />
+      </div>
+
       {/* Filter Pills */}
       <div className="px-4 pb-3">
         <div className="flex gap-2 overflow-x-auto">
@@ -316,6 +324,7 @@ export default function MobileRosterDashboard() {
                   <p className="text-xs text-gray-500">
                     {member.employeeCode} • {member.shiftName}
                   </p>
+                  {member.lobName !== undefined && <LobBadge name={member.lobName} />}
                   <div className="flex items-center gap-2 mt-1">
                     <Badge
                       className={`text-[10px] ${statusColors[member.status].bg} ${statusColors[member.status].text}`}
