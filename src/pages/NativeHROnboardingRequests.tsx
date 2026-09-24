@@ -506,6 +506,7 @@ export default function NativeHROnboardingRequests() {
   // ── Send appointment letter state
   const [sendLetterLoading, setSendLetterLoading] = useState(false);
   const [sendLetterResult, setSendLetterResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [sendLetterCcEmail, setSendLetterCcEmail] = useState('');
   const [notJoiningId, setNotJoiningId] = useState<string | null>(null);
   const [notJoiningResult, setNotJoiningResult] = useState<{ id: string; ok: boolean; msg: string } | null>(null);
 
@@ -2637,7 +2638,7 @@ export default function NativeHROnboardingRequests() {
                           <span className="text-xs text-slate-400">{esign.status ?? '—'}</span>
                         )}
                         {esign.status === 'signed' && (
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex flex-wrap items-center gap-1.5">
                             <a
                               href={`/api/letters/appointment/by-candidate/${selected.candidate_id}/download`}
                               target="_blank"
@@ -2646,15 +2647,27 @@ export default function NativeHROnboardingRequests() {
                             >
                               ↓ Download
                             </a>
+                            <input
+                              type="email"
+                              value={sendLetterCcEmail}
+                              onChange={(e) => setSendLetterCcEmail(e.target.value)}
+                              placeholder="CC email (optional)"
+                              className="h-6 w-44 rounded border border-slate-300 px-2 text-xs text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none"
+                            />
                             <button
                               type="button"
                               disabled={sendLetterLoading}
                               onClick={async () => {
+                                const cc = sendLetterCcEmail.trim();
+                                if (cc && !cc.includes('@')) {
+                                  setSendLetterResult({ ok: false, msg: 'CC email address looks invalid.' });
+                                  return;
+                                }
                                 setSendLetterLoading(true);
                                 setSendLetterResult(null);
                                 try {
-                                  await hrmsApi.post(`/api/letters/appointment/by-candidate/${selected.candidate_id}/hr-send`, {});
-                                  setSendLetterResult({ ok: true, msg: 'Appointment letter sent to employee email.' });
+                                  await hrmsApi.post(`/api/letters/appointment/by-candidate/${selected.candidate_id}/hr-send`, cc ? { ccEmail: cc } : {});
+                                  setSendLetterResult({ ok: true, msg: cc ? `Appointment letter sent${`, CC: ${cc}`}.` : 'Appointment letter sent to employee email.' });
                                   setTimeout(() => setSendLetterResult(null), 6000);
                                 } catch (e: any) {
                                   setSendLetterResult({ ok: false, msg: e?.message ?? 'Failed to send' });

@@ -145,7 +145,7 @@ export async function queueJoiningKit(params: {
  * clientTransactionId on first receipt, so a resend returns 409 permanently and
  * the first attempt may already have been billed.
  */
-export async function dispatchJoiningKit(kitId: string, actorUserId: string | null = null): Promise<DispatchOutcome> {
+export async function dispatchJoiningKit(kitId: string, actorUserId: string | null = null, ccEmails: string[] = []): Promise<DispatchOutcome> {
   const [kits] = await db.execute<RowDataPacket[]>(
     `SELECT k.*, e.employee_code, e.personal_email, e.branch_id,
             COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS official_email,
@@ -384,9 +384,11 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
   const emailedTo: string[] = [];
   try {
     const { emailService } = await import("../communication/email.service.js");
+    const validCcEmails = ccEmails.filter((e) => typeof e === "string" && e.includes("@"));
     for (const addr of [...new Set(recipients)]) {
       await emailService.send({
         to: addr,
+        ...(validCcEmails.length > 0 ? { cc: validCcEmails.join(",") } : {}),
         subject: `Action Required: Sign your joining documents — MAS Callnet`,
         html: buildKitEmailHtml({
           employeeName: String(kit.full_name ?? ""),

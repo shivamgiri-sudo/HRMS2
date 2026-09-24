@@ -230,6 +230,8 @@ router.post("/appointment/by-candidate/:candidateId/hr-send", requireRole("admin
   const emailedTo: string[] = [];
   const candidateName = String(alRow.full_name ?? "");
   const candidateEmail = String(alRow.email ?? "");
+  const rawCcEmail: unknown = req.body?.ccEmail ?? req.body?.cc_email ?? "";
+  const ccEmail = String(rawCcEmail ?? "").trim();
   try {
     const { emailService } = await import("../communication/email.service.js");
     if (candidateEmail.includes("@")) {
@@ -237,6 +239,7 @@ router.post("/appointment/by-candidate/:candidateId/hr-send", requireRole("admin
       const downloadUrl = `${frontendBase}/api/letters/appointment/by-candidate/${candidateId}/download`;
       await emailService.send({
         to: candidateEmail,
+        ...(ccEmail.includes("@") ? { cc: ccEmail } : {}),
         subject: `Your Appointment Letter — MAS Callnet`,
         html: `<p>Dear ${candidateName},</p>
                <p>Your appointment letter has been signed and is ready. Please find it attached or download it using the link below:</p>
@@ -246,6 +249,7 @@ router.post("/appointment/by-candidate/:candidateId/hr-send", requireRole("admin
         attachments: pdfBytes ? [{ filename: "Appointment_Letter.pdf", content: pdfBytes }] : undefined,
       });
       emailedTo.push(candidateEmail);
+      if (ccEmail.includes("@")) emailedTo.push(`cc:${ccEmail}`);
     }
   } catch (err) {
     console.warn("[appointment-hr-send] Email failed:", err instanceof Error ? err.message : err);

@@ -86,6 +86,7 @@ joiningKitRouter.get("/:employeeId/joining-kit/preview", h(async (req, res) => {
         name: String(d.document_name ?? d.document_code),
         status: String(d.status ?? ""),
         fillStatus: d.fill_status ? String(d.fill_status) : null,
+        hasFile: !!d.storage_path,
       })),
       hrFillPending: pending.map((p) => String(p.document_name)),
       kits: existing,
@@ -103,6 +104,11 @@ joiningKitRouter.get("/:employeeId/joining-kit/preview", h(async (req, res) => {
 joiningKitRouter.post("/:employeeId/joining-kit/send", h(async (req: AuthenticatedRequest, res) => {
   const employeeId = String(req.params.employeeId);
   const actorUserId = req.authUser?.id ?? null;
+  // Optional CC / extra recipients: comma-separated string or array
+  const rawCc: unknown = req.body?.ccEmails ?? req.body?.cc_emails ?? "";
+  const ccEmails: string[] = (Array.isArray(rawCc) ? rawCc : String(rawCc ?? "").split(","))
+    .map((e: string) => e.trim())
+    .filter((e: string) => e.includes("@"));
 
   const queued = await queueJoiningKit({
     employeeId,
@@ -135,7 +141,7 @@ joiningKitRouter.post("/:employeeId/joining-kit/send", h(async (req: Authenticat
 
   // Fire-and-forget. Errors are logged; kit status moves to "failed" inside
   // dispatchJoiningKit on any unhandled throw.
-  dispatchJoiningKit(queued.kitId, actorUserId).catch((err: unknown) => {
+  dispatchJoiningKit(queued.kitId, actorUserId, ccEmails).catch((err: unknown) => {
     console.error(
       "[joining-kit] background dispatch error:",
       err instanceof Error ? err.message : err,

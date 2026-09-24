@@ -760,6 +760,17 @@ type KitRecord = {
   sessionAlive?: boolean;
 };
 
+const KIT_BLOCKED_REASON_LABEL: Record<string, string> = {
+  draft_missing:             "One or more documents don't have a generated PDF yet. Open each document, regenerate the draft, then retry.",
+  placeholder_draft:         "One document is still an unconfigured placeholder. Configure its template before sending.",
+  hr_fill_pending:           "Some documents still have fields that HR must fill in before the kit can be sent.",
+  no_recipient_email:        "This employee has no email address on record. Add one and retry.",
+  feature_disabled:          "The consolidated joining kit feature is currently disabled.",
+  provider_disabled:         "The eSign provider is currently disabled.",
+  per_document_flow_active:  "This employee already has an active per-document signing link. Let it complete or expire first.",
+  payroll_head_not_approved: "The salary has not been approved by Payroll Head. Get salary approved before sending the kit.",
+};
+
 const KIT_BADGE: Record<string, string> = {
   queued:     "bg-amber-100 text-amber-700",
   assembling: "bg-amber-100 text-amber-700",
@@ -781,12 +792,13 @@ const KIT_BADGE: Record<string, string> = {
  */
 function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: () => void }) {
   const [preview, setPreview] = useState<{
-    documents: Array<{ code: string; name: string; status: string; fillStatus: string | null }>;
+    documents: Array<{ code: string; name: string; status: string; fillStatus: string | null; hasFile?: boolean }>;
     hrFillPending: string[];
     kits: Array<KitRecord>;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [ccEmail, setCcEmail] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "blocked" | "error"; text: string } | null>(null);
   const [pollPhase, setPollPhase] = useState<"idle" | "assembling" | "sent" | "failed" | "timeout">("idle");
   const [pollData, setPollData] = useState<{ docCount?: number; reason?: string } | null>(null);
@@ -883,8 +895,14 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
   }, [employeeId]);
 
   const send = async () => {
+    const ccTrimmed = ccEmail.trim();
+    if (ccTrimmed && !ccTrimmed.includes("@")) {
+      setMsg({ kind: "error", text: "The additional email address looks invalid." });
+      return;
+    }
+    const ccLine = ccTrimmed ? `\n\nAdditional email (CC): ${ccTrimmed}` : "";
     if (!window.confirm(
-      `Send all ${preview?.documents.length ?? 0} joining documents to this employee in one email?\n\n` +
+      `Send all ${preview?.documents.length ?? 0} joining documents to this employee in one email?${ccLine}\n\n` +
       "This makes one billed eSign call. The employee signs once and the signature is applied to every document.",
     )) return;
     setSending(true);
@@ -893,7 +911,8 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
     setPollData(null);
     try {
       await hrmsApi.post<{ message?: string; data?: { kitId: string; status: string } }>(
-        `/api/employees/${employeeId}/joining-kit/send`, {},
+        `/api/employees/${employeeId}/joining-kit/send`,
+        ccTrimmed ? { ccEmails: ccTrimmed } : {},
       );
       // Backend now returns { status: "queued" } — watch for completion via poll
       setPollPhase("assembling");
@@ -911,6 +930,8 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
 
   const open = preview?.kits.find((k) => k.status === "sent" || k.status === "queued");
   const blocked = (preview?.hrFillPending.length ?? 0) > 0;
+  const missingFileDocs = preview?.documents.filter((d) => d.hasFile === false) ?? [];
+  const hasMissingFiles = missingFileDocs.length > 0;
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -925,14 +946,28 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
           </p>
         </div>
         {pollPhase === "idle" && !open && (
-          <Button
-            type="button" onClick={() => void send()}
-            disabled={sending || loading || blocked || !preview?.documents.length}
-            className="min-h-[44px] gap-2"
-          >
-            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            Send all in one email
-          </Button>
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex items-center gap-2">
+              <input
+                type="email"
+                value={ccEmail}
+                onChange={(e) => setCcEmail(e.target.value)}
+                placeholder="CC email (optional)"
+                className="h-9 w-52 rounded-lg border border-slate-300 px-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none"
+              />
+              <Button
+                type="button" onClick={() => void send()}
+                disabled={sending || loading || blocked || !preview?.documents.length || hasMissingFiles}
+                className="min-h-[36px] gap-2"
+              >
+                {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                Send all in one email
+              </Button>
+            </div>
+            {ccEmail.trim() && !ccEmail.includes("@") && (
+              <p className="text-xs text-red-500">Enter a valid email address</p>
+            )}
+          </div>
         )}
       </div>
 
@@ -943,13 +978,31 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
           {preview?.documents.length ? (
             <div className="mt-4 flex flex-wrap gap-1.5">
               {preview.documents.map((d) => (
-                <span key={d.code} className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-                  {d.name}
+                <span
+                  key={d.code}
+                  className={`rounded-lg px-2.5 py-1 text-xs font-medium ${d.hasFile === false ? "bg-red-100 text-red-700 ring-1 ring-red-300" : "bg-slate-100 text-slate-700"}`}
+                  title={d.hasFile === false ? "PDF not yet generated — open this document and regenerate" : undefined}
+                >
+                  {d.name}{d.hasFile === false ? " ⚠" : ""}
                 </span>
               ))}
             </div>
           ) : (
             <p className="mt-4 text-sm text-slate-500">No documents are eligible for a kit yet.</p>
+          )}
+
+          {hasMissingFiles && (
+            <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-red-700">Documents not yet generated</p>
+              <p className="mt-1 text-sm text-red-800">
+                The following documents don&apos;t have a PDF file yet. Open each one and use the &quot;Regenerate&quot; action before sending the kit:
+              </p>
+              <ul className="mt-1.5 space-y-0.5">
+                {missingFileDocs.map((d) => (
+                  <li key={d.code} className="text-sm text-red-900">• {d.name}</li>
+                ))}
+              </ul>
+            </div>
           )}
 
           {blocked && (
@@ -981,7 +1034,11 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
                       {k.completed_at && (
                         <span className="font-medium text-emerald-600">Signed {new Date(k.completed_at).toLocaleString("en-IN")}</span>
                       )}
-                      {k.blocked_reason && <span className="text-red-600">{k.blocked_reason}</span>}
+                      {k.blocked_reason && (
+                        <span className="text-red-600" title={k.blocked_reason}>
+                          {KIT_BLOCKED_REASON_LABEL[k.blocked_reason] ?? k.blocked_reason}
+                        </span>
+                      )}
                       {(k.status === "signed" || k.status === "sent") && (
                         <button
                           type="button"
