@@ -561,18 +561,20 @@ async function spendByBranch(period: string, s: CeoScope): Promise<Map<string, n
   };
   const scope = { costCentreIds: s.costCentreIds, processIds: s.processIds };
 
-  // Committed-not-yet-consumed GRN ('reserved'), only inside the open estimate window — the same
-  // rule and the same real spend pnl-reconciliation.service.ts's readGrnCommitted() reads.
-  // Folded straight into indirectCost (no separate label yet, unlike revenueEstimated) because the
-  // point of this addition is parity: without it, this tab under-counted IDC against Live P&L for
-  // every open month with approved-but-unconsumed GRN, which was most of them.
+  // Committed-not-yet-consumed GRN ('reserved', ex-GST) for EVERY period — owner rule 2026-09-24:
+  // "Reserved + Consumed should be there in P&L". It used to be read only inside the open estimate
+  // window (isEstimateWindow), which dropped Aug-26's Rs 36,719 reserved once Aug left the window.
+  // The seat-rate revenue estimate keeps that window; GRN reserved is real approved spend, not a
+  // projection, so it does not. Same real spend pnl-reconciliation.service.ts's readGrnCommitted()
+  // and the Statement's "GRN Committed (reserved)" line read. 'draft' is never counted.
+  // Folded straight into indirectCost (no separate label yet, unlike revenueEstimated).
   // The two legs are independent reads, so they run together; summed in the same order as before.
   const [consumed, reserved] = await Promise.all([
     readGrnSpend(period, "consumed", scope),
-    isEstimateWindow(period, getCurrentDateIST()) ? readGrnSpend(period, "reserved", scope) : Promise.resolve(null),
+    readGrnSpend(period, "reserved", scope),
   ]);
   add(consumed);
-  if (reserved) add(reserved);
+  add(reserved);
 
   return out;
 }
@@ -942,8 +944,8 @@ function payrollPending(peopleCost: number, estimated: number): boolean {
  * Does ANY GRN (indirect cost) map to a MAS cost centre for this month, company-wide?
  *
  * Same rule as Live P&L's `idcMissing` (pnl-reconciliation.service.ts): its readGrn() is
- * company-wide whatever the branch filter, and it counts reserved GRN as IDC data only inside the
- * estimate window — exactly what spendByBranch() reads. When no GRN exists anywhere the overhead
+ * company-wide whatever the branch filter, and it counts reserved GRN as IDC data for every
+ * period (owner rule 2026-09-24) — exactly what spendByBranch() reads. When no GRN exists anywhere the overhead
  * data is absent rather than nil (March 2026 read 40.6% with Rs 0 of indirect cost), so the margin
  * is NA. Audit item 11: CEO Overview used to show that misleading margin while Live P&L blanked it.
  *

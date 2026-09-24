@@ -60,8 +60,8 @@ export interface PnlReconciliationRow {
   /** Monthly seat billing / days in month — the daily run-rate, whatever the revenue basis. */
   perDayRevenue: number;
   grnActual: number;
-  /** Approved GRN spend (reserved, not yet consumed) for the open month — a committed estimate,
-   *  same treatment as revenueEstimated. Zero for a closed month or once the bill is consumed. */
+  /** Approved GRN spend (reserved, not yet consumed) for the period — GRN Committed, ex-GST.
+   *  Counted for EVERY period (owner rule 2026-09-24: Reserved + Consumed in P&L); zero once consumed. */
   grnEstimated: number;
   allocatedBudget: number;
   branchBudget: number;
@@ -380,11 +380,14 @@ async function readGrn(period: string): Promise<Map<string, number>> {
  * i.e. a branch head has signed off the request and it is booked against a cost centre, but the
  * bill has not been fully processed. Real spend the company is on the hook for, just not final.
  *
- * Read only for the open estimate window (see isEstimateWindow / the seat-rate revenue estimate
- * it mirrors): a closed month's IDC is whatever was actually consumed, never a committed figure
- * that should have long since resolved to consumed-or-cancelled. Live-checked 2026-09-16: Sep-26
- * carried Rs 1.37 L consumed against Rs 11.65 L reserved — the whole reason live GRN read as
- * near-zero while real committed spend already existed.
+ * Read for EVERY period (owner rule 2026-09-24: "Reserved + Consumed should be there in P&L").
+ * Until then it was read only inside the open estimate window (isEstimateWindow), on the theory
+ * that a closed month's reserved GRN should long since have resolved to consumed-or-cancelled —
+ * but live Aug-26 still carried Rs 36,719 ex-GST reserved after leaving the window, so the
+ * Statement/Live/CEO would have silently dropped real committed cost. The seat-rate REVENUE
+ * estimate keeps its window; GRN reserved does not. 'draft' is never read (not approved).
+ * Live-checked 2026-09-16: Sep-26 carried Rs 1.37 L consumed against Rs 11.65 L reserved — the
+ * whole reason live GRN read as near-zero while real committed spend already existed.
  *
  * No mirror UNION: 'reserved' is a workflow state internal to this app's own GRN approval chain,
  * not something the legacy db_bill snapshot (a bill inventory, not an approval queue) ever holds.
@@ -765,7 +768,7 @@ async function buildPnlReconciliation(
   );
 
   // Real money booked to this cost centre for THIS period — invoice/provision/credit note, consumed
-  // GRN, reserved GRN inside the estimate window, or payroll. Such a cost centre is always summed,
+  // GRN, reserved GRN (any period, owner rule 2026-09-24), or payroll. Such a cost centre is always summed,
   // whatever its (or its branch's) status is today: closing a branch must not erase its history.
   // Budget counts too (2026-09-24): a budgeted-but-idle cost centre closed after the month (132 MAS
   // cost centres were deactivated that day) must keep that month's budget in allocatedBudget.
@@ -774,7 +777,7 @@ async function buildPnlReconciliation(
     const hasRevenue = !!rev && (n(rev.invoice_amount) !== 0 || n(rev.provision_amount) !== 0 || n(rev.credit_note) !== 0);
     return hasRevenue
       || (grn.get(id) ?? 0) !== 0
-      || (estimateApplies && (grnCommitted.get(id) ?? 0) !== 0)
+      || (grnCommitted.get(id) ?? 0) !== 0
       || (payroll.get(id)?.cost ?? 0) !== 0
       || (budgets.byCostCentre.get(id) ?? 0) !== 0;
   };
@@ -796,8 +799,10 @@ async function buildPnlReconciliation(
     const revenueBasis: PnlRevenueBasis = revenueInvoice > 0 ? "INVOICE" : revenueAccrual > 0 ? "ACCRUAL" : useEstimate ? "ESTIMATED" : "NONE";
     const recognisedRevenue = revenueInvoice + revenueAccrual + revenueEstimated - creditNote;
     const grnActual = grn.get(cc.id) ?? 0;
-    // Committed-not-yet-consumed GRN, only inside the open window — same rule as revenueEstimated.
-    const grnEstimated = estimateApplies ? (grnCommitted.get(cc.id) ?? 0) : 0;
+    // Committed-not-yet-consumed GRN ('reserved', ex-GST) for ANY period — owner rule 2026-09-24:
+    // P&L GRN cost = Consumed + Reserved. Unlike revenueEstimated this is NOT gated by the estimate
+    // window: it is real approved spend, not a projection.
+    const grnEstimated = grnCommitted.get(cc.id) ?? 0;
     const allocatedBudget = budgets.byCostCentre.get(cc.id) ?? 0;
     const branchBudget = budgets.byBranch.get(cc.branch_id ? String(cc.branch_id) : "") ?? 0;
     const pay = payroll.get(cc.id);
@@ -938,9 +943,8 @@ async function buildPnlReconciliation(
   // branch filter) means the overhead data is absent, not that overheads were nil: March 2026 read
   // 40.6% with Rs 0 of indirect cost — its 406 mirror GRNs match no MAS cost centre (Feb: 367, 32.6%). A margin without any overhead is not comparable with any other
   // month, so it is NA — the same treatment as a month with no people cost. Reserved (committed,
-  // not yet consumed) GRN counts as IDC data existing too, but only inside the estimate window —
-  // exactly the cases readGrnCommitted() is read for.
-  const idcMissing = grn.size === 0 && (!estimateApplies || grnCommitted.size === 0) && totals.payrollCost > 0;
+  // not yet consumed) GRN counts as IDC data existing too, for any period (owner rule 2026-09-24).
+  const idcMissing = grn.size === 0 && grnCommitted.size === 0 && totals.payrollCost > 0;
   if (idcMissing) {
     totals.marginPct = null;
     totals.truePatPct = null;

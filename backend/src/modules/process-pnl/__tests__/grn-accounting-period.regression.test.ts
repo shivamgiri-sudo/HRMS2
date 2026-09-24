@@ -38,7 +38,9 @@ beforeEach(() => {
     // spendByBranch's app-side query: grn_cost_allocation joined to grn_request. Answer as a real
     // table would, keyed on whichever date column the query text actually filters on.
     // Keyed on amount_without_tax: the shared reader is ex-GST since the 2026-09-24 owner rule.
-    if (q.includes("FROM grn_cost_allocation") && q.includes("amount_without_tax")) {
+    // Consumed leg only: the GRN is consumed. (Reserved is read for every period since the
+    // 2026-09-24 owner rule, so an unscoped match here would count this one GRN twice.)
+    if (q.includes("FROM grn_cost_allocation") && q.includes("amount_without_tax") && q.includes("'consumed'")) {
       const period = params[0];
       const matches = q.includes("gr.accounting_period = ?")
         ? period === GRN_ACCOUNTING_PERIOD

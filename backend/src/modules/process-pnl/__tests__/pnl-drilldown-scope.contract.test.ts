@@ -263,10 +263,27 @@ describe("drilldowns tie to the tiles they open from (audit item 17)", () => {
     expect(consumedSql).toContain("FROM grn_request gr");
     expect(consumedSql).toContain("FROM grn_entry_line_snapshot l");
     expect(consumedSql, "mirror rows for a GRN the app already consumed are excluded").toContain("NOT EXISTS");
-    // Branch scope keeps only this branch's rows; the reserved row is inside the open window.
+    // Branch scope keeps only this branch's rows; reserved (committed) GRN is always included.
     expect(result.total).toBe(5000 + 1200 + 300);
     expect(result.hasEstimatedRows).toBe(true);
     expect(result.rows.find((r) => r.amount === 300)?.detail).toContain("not yet consumed");
+  });
+
+  it("(a) indirect includes reserved GRN for a closed month outside the estimate window (owner rule 2026-09-24)", async () => {
+    execute.mockImplementation(async (sql: string) => {
+      const q = String(sql);
+      if (q.includes("grn_cost_allocation a") && q.includes("'consumed'")) {
+        return [[{ branch_id: BRANCH_ID, cost_centre_id: COST_CENTRE_ID, process_id: null, source: "app_allocation", grn_ref: "GRN/1", label: "Vendor A", bill_date: null, amount: "100" }], []];
+      }
+      if (q.includes("'reserved'")) {
+        return [[{ branch_id: BRANCH_ID, cost_centre_id: COST_CENTRE_ID, process_id: null, source: "app_allocation", grn_ref: "GRN/2", label: "Vendor C", bill_date: null, amount: "40" }], []];
+      }
+      return [[], []];
+    });
+    const result = await getPnlDrilldown({ metric: "indirect", period: "2026-03", branchId: BRANCH_ID });
+    expect(result.total).toBe(140);
+    const reservedSql = sqlCalls().find((c) => c.sql.includes("'reserved'"))!.sql;
+    expect(reservedSql, "draft allocations are never committed cost").not.toContain("'draft'");
   });
 
   it("(b) people under cost-centre scope filters on the EFFECTIVE (post-override) cost centre", async () => {

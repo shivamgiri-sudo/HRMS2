@@ -469,8 +469,10 @@ const GRN_SOURCE_LABEL: Record<string, string> = {
  *
  * Same legs, same company rule, same ex-GST amount (2026-09-24), same dedup; only one row per GRN. Branch
  * scope keeps the reader's own branch attribution (cost centre's branch, else the GRN's). Reserved
- * (approved, not yet consumed) GRN is added inside the open estimate window — the same rule both
- * Live P&L (grnEstimated) and CEO Overview apply — and flagged as estimated.
+ * (approved, not yet consumed) GRN is added for EVERY period — owner rule 2026-09-24 ("Reserved +
+ * Consumed should be there in P&L"), the same rule Live P&L (grnEstimated), CEO Overview and the
+ * Statement's "GRN Committed (reserved)" line apply — and flagged as committed. It used to be added
+ * only inside the open estimate window. 'draft' allocations are never read.
  */
 async function indirectDrilldownRows(period: string, scope: PnlDrilldownScope): Promise<PnlDrilldownResult> {
   const readerScope = scope.costCentreId
@@ -489,9 +491,7 @@ async function indirectDrilldownRows(period: string, scope: PnlDrilldownScope): 
   });
 
   const consumed = (await readGrnSpend(period, "consumed", { ...readerScope, withDetail: true })).filter(inBranch);
-  const reserved = isEstimateWindow(period, getCurrentDateIST())
-    ? (await readGrnSpend(period, "reserved", { ...readerScope, withDetail: true })).filter(inBranch)
-    : [];
+  const reserved = (await readGrnSpend(period, "reserved", { ...readerScope, withDetail: true })).filter(inBranch);
   const rows = [
     ...consumed.map((r, i) => toRow(r, false, i)),
     ...reserved.map((r, i) => toRow(r, true, i)),

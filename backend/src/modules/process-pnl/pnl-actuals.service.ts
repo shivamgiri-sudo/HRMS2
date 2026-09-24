@@ -175,8 +175,9 @@ export const OWN_COMPANY_SQL =
  *   - 'consumed' = allocation rows with lifecycle_status 'consumed' + ordinary GRNs (budget line,
  *     no allocation rows, not draft/rejected/cancelled) + mirror gap-fill.
  *     'reserved' = allocation rows with lifecycle_status 'reserved' only (an in-app approval state
- *     the mirror never holds; ordinary GRNs have no reserved stage). Whether reserved spend is
- *     shown at all is the caller's rule (the estimate window) — this only reads it.
+ *     the mirror never holds; ordinary GRNs have no reserved stage). 'draft' is never read.
+ *     Owner rule 2026-09-24: "Reserved + Consumed should be there in P&L" — every P&L surface
+ *     adds reserved to consumed for EVERY period (no estimate-window gate any more).
  *
  * Deliberately NOT routed here, and why:
  *   - process-pnl.service.ts's indirect pool (vendor_payment_tracking by due_date) — a different

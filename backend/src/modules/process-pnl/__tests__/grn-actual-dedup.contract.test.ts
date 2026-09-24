@@ -86,12 +86,14 @@ describe("GRN actual spend is not double-counted across the app and the db_bill 
     expect(body).not.toContain("FROM grn_cost_allocation");
   });
 
-  it("ceo-overview.service.ts spendByBranch reads the shared reader (consumed + reserved in window)", () => {
+  it("ceo-overview.service.ts spendByBranch reads the shared reader (consumed + reserved, every period)", () => {
     const service = read("src/modules/process-pnl/ceo-overview.service.ts");
     const fn = service.slice(service.indexOf("async function spendByBranch("));
     const body = fn.slice(0, fn.indexOf("\n}\n"));
     expect(body).toContain("readGrnSpend(period, \"consumed\", scope)");
     expect(body).toContain("readGrnSpend(period, \"reserved\", scope)");
+    // Owner rule 2026-09-24: reserved is counted for EVERY period — no estimate-window gate.
+    expect(body).not.toContain("isEstimateWindow(");
     expect(body).not.toContain("FROM grn_cost_allocation");
   });
 
@@ -107,6 +109,9 @@ describe("GRN actual spend is not double-counted across the app and the db_bill 
     const service = read("src/modules/process-pnl/pnl-reconciliation.service.ts");
     expect(service).toContain("readGrnSpend(period, \"consumed\")");
     expect(service).toContain("readGrnSpend(period, \"reserved\")");
+    // Owner rule 2026-09-24: grnEstimated (reserved) is not gated by the revenue estimate window.
+    expect(service).not.toMatch(/grnEstimated = estimateApplies/);
+    expect(service).not.toContain("estimateApplies && (grnCommitted");
     expect(service).not.toContain("FROM grn_cost_allocation");
   });
 });

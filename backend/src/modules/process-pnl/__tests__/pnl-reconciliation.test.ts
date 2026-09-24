@@ -332,16 +332,21 @@ describe("P&L reconciliation — committed GRN estimate (reserved, not yet consu
     expect(out.blockers.join(" ")).toMatch(/1 cost centre\(s\) also carry Rs 8\.00 L .* committed estimate/);
   });
 
-  it("never pulls reserved GRN into a closed month outside the estimate window", async () => {
+  // Owner rule 2026-09-24: "Reserved + Consumed should be there in P&L" — for EVERY month. This
+  // test used to pin the opposite (reserved dropped outside the estimate window); inverted on purpose.
+  it("counts reserved GRN for a closed month outside the estimate window too", async () => {
     withOverrides((q) => (q.includes("lifecycle_status = 'reserved'")
       ? [{ cost_centre_id: "cc-noida-2", amount: L(8) }]
       : undefined));
     const { getPnlReconciliation } = await import("../pnl-reconciliation.service.js");
     const out = await getPnlReconciliation("2026-03", { branchIds: ["branch-noida"], asOfDate: "2026-09-15" });
     const row = out.rows.find((r) => r.costCentreId === "cc-noida-2")!;
-    expect(row.grnEstimated).toBe(0);
-    expect(out.totals.grnEstimated).toBe(0);
-    expect(out.blockers.join(" ")).not.toMatch(/committed estimate/);
+    expect(row.grnEstimated).toBe(L(8));
+    expect(row.operatingProfit).toBe(-L(13));
+    expect(out.totals.grnEstimated).toBe(L(8));
+    // The seat-rate REVENUE estimate keeps its window: a closed month gets no revenue estimate.
+    expect(out.estimate.applied).toBe(false);
+    expect(out.totals.revenueEstimated).toBe(0);
   });
 
   it("reserved GRN alone (no consumed anywhere) satisfies the IDC-exists check and margin is not NA'd", async () => {

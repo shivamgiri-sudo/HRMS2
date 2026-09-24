@@ -803,7 +803,9 @@ describe("committed GRN (reserved, not yet consumed) — parity with Live P&L", 
     expect(out.operatingProfit).toBeCloseTo(L(35), 0); // 80 - 30 - 15
   });
 
-  it("never pulls reserved GRN into a closed month outside the estimate window", async () => {
+  // Owner rule 2026-09-24: "Reserved + Consumed should be there in P&L" — for EVERY month. This
+  // test used to pin the opposite (reserved dropped outside the estimate window); inverted on purpose.
+  it("counts reserved GRN for a closed month outside the estimate window too", async () => {
     withReservedGrn({
       branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
       revenue: [{ branch_id: "n", amount: L(80) }],
@@ -812,7 +814,8 @@ describe("committed GRN (reserved, not yet consumed) — parity with Live P&L", 
     }, [{ branch_id: "n", amount: L(5) }]);
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-01");
-    expect(out.indirectCost).toBeCloseTo(L(10), 0);
+    expect(out.indirectCost).toBeCloseTo(L(15), 0);
+    expect(out.operatingProfit).toBeCloseTo(L(35), 0); // 80 - 30 - 15
   });
 });
 
