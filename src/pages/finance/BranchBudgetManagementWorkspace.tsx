@@ -759,14 +759,11 @@ export default function BranchBudgetManagementWorkspace() {
       const subHead = l.sub_head ?? null;
       const key = `${l.head}|${subHead ?? ""}`;
       const entry = map.get(key) ?? { head: l.head, subHead, planned: 0, reserved: 0, consumed: 0, available: 0 };
-      const budgeted = Number(l.gross_amount ?? 0);
-      const reserved = Number(l.reserved_amount ?? 0);
-      const consumed = Number(l.consumed_amount ?? 0);
-      entry.planned += budgeted;
-      entry.reserved += reserved;
-      entry.consumed += consumed;
-      // Available = Budgeted - Reserved - Consumed (consistent calculation)
-      entry.available += budgeted - reserved - consumed;
+      // Non-GST spendable budget, the basis GRN approval checks — see lineAvailableBudget().
+      entry.planned += spendableBudget(l);
+      entry.reserved += Number(l.reserved_amount ?? 0);
+      entry.consumed += Number(l.consumed_amount ?? 0);
+      entry.available += lineAvailableBudget(l);
       map.set(key, entry);
     });
     return [...map.values()].sort((a, b) => a.head.localeCompare(b.head) || (a.subHead ?? "").localeCompare(b.subHead ?? ""));
@@ -804,14 +801,11 @@ export default function BranchBudgetManagementWorkspace() {
       const subHead = l.sub_head ?? null;
       const key = `${l.head}|${subHead ?? ""}`;
       const entry = map.get(key) ?? { head: l.head, subHead, planned: 0, reserved: 0, consumed: 0, available: 0 };
-      const budgeted = Number(l.gross_amount ?? 0);
-      const reserved = Number(l.reserved_amount ?? 0);
-      const consumed = Number(l.consumed_amount ?? 0);
-      entry.planned += budgeted;
-      entry.reserved += reserved;
-      entry.consumed += consumed;
-      // Available = Budgeted - Reserved - Consumed (consistent calculation)
-      entry.available += budgeted - reserved - consumed;
+      // Non-GST spendable budget, the basis GRN approval checks — see lineAvailableBudget().
+      entry.planned += spendableBudget(l);
+      entry.reserved += Number(l.reserved_amount ?? 0);
+      entry.consumed += Number(l.consumed_amount ?? 0);
+      entry.available += lineAvailableBudget(l);
       map.set(key, entry);
     });
     return [...map.values()].sort((a, b) => a.head.localeCompare(b.head) || (a.subHead ?? "").localeCompare(b.subHead ?? ""));
@@ -1315,11 +1309,10 @@ export default function BranchBudgetManagementWorkspace() {
           Head: line.head,
           "Sub-head": line.sub_head ?? "",
           Item: line.item_name,
-          Budgeted: Number(line.gross_amount ?? 0),
+          Budgeted: spendableBudget(line),
           Reserved: Number(line.reserved_amount ?? 0),
           Consumed: Number(line.consumed_amount ?? 0),
-          // Available = Budgeted - Reserved - Consumed (consistent with UI display)
-          Available: Number(line.gross_amount ?? 0) - Number(line.reserved_amount ?? 0) - Number(line.consumed_amount ?? 0),
+          Available: lineAvailableBudget(line),
         }))
         // Sort alphabetically by Head, then Sub-head
         .sort((a, b) => a.Head.localeCompare(b.Head) || (a["Sub-head"] ?? "").localeCompare(b["Sub-head"] ?? ""));
@@ -2537,7 +2530,7 @@ export default function BranchBudgetManagementWorkspace() {
                   <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
                     <span className="font-semibold text-amber-700">Reserved</span> = committed to a GRN approved by Branch Head, awaiting Finance Head ·{" "}
                     <span className="font-semibold text-emerald-700">Consumed</span> = fully approved spend ·{" "}
-                    <span className="font-semibold text-slate-600">Available</span> = gross − reserved − consumed.
+                    <span className="font-semibold text-slate-600">Available</span> = non-GST budget − reserved − consumed, the same figure GRN approval checks.
                     {" "}Rs 0.00 means nothing committed yet, not missing data.
                   </p>
                 </CardHeader>
@@ -3880,7 +3873,7 @@ function UtilizationBreakdown({
             <tr className="border-b bg-slate-50">
               <th className="h-8 px-3 text-left font-medium text-slate-500">Head</th>
               <th className="h-8 px-3 text-left font-medium text-slate-500">Sub-head</th>
-              <th className="h-8 px-3 text-right font-medium text-slate-500">Planned</th>
+              <th className="h-8 px-3 text-right font-medium text-slate-500" title="Non-GST budget (GST recoverable as input tax credit excluded)">Planned</th>
               <th className="h-8 px-3 text-right font-medium text-slate-500">Reserved</th>
               <th className="h-8 px-3 text-right font-medium text-slate-500">Consumed</th>
               <th className="h-8 px-3 text-right font-medium text-slate-500">Available</th>
