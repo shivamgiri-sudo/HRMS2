@@ -327,6 +327,17 @@ function consumedPct(consumed: number, budgeted: number) {
   return budgeted > 0 ? Math.round((consumed / budgeted) * 100) : 0;
 }
 
+/** What a budget line can actually carry: the P&L cost ceiling (GST recoverable as ITC excluded).
+ *  Falls back to gross for rows the API returned without pnl_cost_amount. */
+function spendableBudget(line: { gross_amount?: unknown; pnl_cost_amount?: unknown }) {
+  return Number(line.pnl_cost_amount ?? line.gross_amount ?? 0);
+}
+
+/** Headroom exactly as budgetConsumptionService.reserve() computes it at GRN approval. */
+function lineAvailableBudget(line: { gross_amount?: unknown; pnl_cost_amount?: unknown; reserved_amount?: unknown; consumed_amount?: unknown }) {
+  return spendableBudget(line) - Number(line.reserved_amount ?? 0) - Number(line.consumed_amount ?? 0);
+}
+
 function statusLabel(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
@@ -951,14 +962,21 @@ export default function BranchBudgetManagementWorkspace() {
   /** Footer totals for the Variance tab — that table had no totals row at all (unlike Cost
    *  Centre's ccTotals above), so Branch/Finance Head had no at-a-glance branch-level figure
    *  without adding every line up by hand. */
+  /* Budgeted and Available here are on the SAME basis the GRN approval gate uses:
+   *   spendable budget = pnl_cost_amount (gross minus GST recoverable as ITC)
+   *   available        = pnl_cost_amount - reserved - consumed  (= backend available_gross_amount)
+   * reserved/consumed are stored on that basis (the invoice taxable value on ITC lines), so
+   * subtracting them from the GST-inclusive gross_amount overstated Available by the line's
+   * recoverable GST and showed headroom that Branch Head approval then refused
+   * (NOIDA-2 Office Rent, Sep 2026: tab showed 5,93,503, gate allowed 4,21,603). */
   const varianceTotals = useMemo(() => {
     const lines = detailQuery.data?.lines ?? [];
     return lines.reduce(
       (acc, line) => ({
-        budgeted:  acc.budgeted  + Number(line.gross_amount ?? 0),
+        budgeted:  acc.budgeted  + spendableBudget(line),
         reserved:  acc.reserved  + Number(line.reserved_amount ?? 0),
         consumed:  acc.consumed  + Number(line.consumed_amount ?? 0),
-        available: acc.available + Number(line.gross_amount ?? 0) - Number(line.reserved_amount ?? 0) - Number(line.consumed_amount ?? 0),
+        available: acc.available + lineAvailableBudget(line),
       }),
       { budgeted: 0, reserved: 0, consumed: 0, available: 0 }
     );
@@ -976,9 +994,9 @@ export default function BranchBudgetManagementWorkspace() {
     for (const line of detailQuery.data?.lines ?? []) {
       const k = `${line.head}|${line.sub_head ?? ""}`;
       const row = map.get(k);
-      const lineAvailable = Number(line.gross_amount ?? 0) - Number(line.reserved_amount ?? 0) - Number(line.consumed_amount ?? 0);
+      const lineAvailable = lineAvailableBudget(line);
       if (row) {
-        row.budgeted  += Number(line.gross_amount ?? 0);
+        row.budgeted  += spendableBudget(line);
         row.reserved  += Number(line.reserved_amount ?? 0);
         row.consumed  += Number(line.consumed_amount ?? 0);
         row.available += lineAvailable;
@@ -986,7 +1004,7 @@ export default function BranchBudgetManagementWorkspace() {
       } else {
         map.set(k, {
           key: k, head: String(line.head), subHead: line.sub_head ?? null,
-          budgeted:  Number(line.gross_amount ?? 0),
+          budgeted:  spendableBudget(line),
           reserved:  Number(line.reserved_amount ?? 0),
           consumed:  Number(line.consumed_amount ?? 0),
           available: lineAvailable,
@@ -2916,7 +2934,7 @@ export default function BranchBudgetManagementWorkspace() {
                           <tr className="border-b bg-slate-50">
                             <th className="h-8 px-3 text-left font-medium text-slate-500">Head</th>
                             <th className="h-8 px-3 text-left font-medium text-slate-500">Sub-head</th>
-                            <th className="h-8 px-3 text-right font-medium text-slate-500">Budgeted</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500" title="Spendable budget: excludes GST recoverable as input tax credit, the same basis GRN approval checks against">Budgeted</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Reserved</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Consumed</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Available</th>
@@ -3200,7 +3218,7 @@ export default function BranchBudgetManagementWorkspace() {
                           <tr className="border-b bg-slate-50">
                             <th className="h-8 px-3 text-left font-medium text-slate-500">Cost Centre</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Budget Lines</th>
-                            <th className="h-8 px-3 text-right font-medium text-slate-500">Budgeted</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500" title="Spendable budget: excludes GST recoverable as input tax credit, the same basis GRN approval checks against">Budgeted</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Reserved</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Consumed</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Available</th>
