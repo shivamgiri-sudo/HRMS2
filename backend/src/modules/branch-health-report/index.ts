@@ -14,7 +14,6 @@ import { resolveRecipients } from "./recipients.js";
 
 async function activeBranchNames(): Promise<string[]> {
   const { db } = await import("../../db/mysql.js");
-  const { RowDataPacket } = await import("mysql2");
   const [rows] = await db.execute(
     `SELECT DISTINCT branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name`,
   );
