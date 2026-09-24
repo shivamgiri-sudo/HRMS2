@@ -7,6 +7,7 @@ import { applyRestDecision, isRestPolicyFeatureActive, hasAnyRestPolicyConfigure
 import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 import { resolveWeekOffScopeDefault } from "../roster/weekoff-policy.service.js";
 import { triggerRosterPublishPending } from "../work-inbox/work-inbox.triggers.js";
+import { loadPlanOffdayPolicy, markWeekOff, stampPlanRows } from "./roster-offday-apply.js";
 
 type AnyRow = Record<string, any>;
 
@@ -826,6 +827,8 @@ export const autoRosterSyncedService = {
       const explicit = prefs.get(empId);
       return explicit !== undefined ? explicit : (scopeDefault?.day ?? null);
     };
+    // Roster off-day policy (opt-in): inert unless WFM configured a policy for this process.
+    const offdayPolicy = await loadPlanOffdayPolicy(plan.process_id);
     const shrinkagePct = Number(control.shrinkage_pct ?? 15);
     const weekoffRules = await loadWeekoffRules(plan.process_id).catch(() => [] as Awaited<ReturnType<typeof loadWeekoffRules>>);
     const blackoutDates = new Set(
@@ -877,7 +880,7 @@ export const autoRosterSyncedService = {
         const scheduledMinutes = computeScheduledMinutes(slotStart, slotEnd);
 
         const candidates = pool
-          .filter((e) => !assignedToday.has(String(e.id)))
+          .filter((e) => !assignedToday.has(String(e.id)) && !offdayPolicy.isFixedOff(String(e.id), rosterDate))
           .sort((a, b) => {
             const prefA = preferredDayFor(String(a.id)) === dow ? 1 : 0;
             const prefB = preferredDayFor(String(b.id)) === dow ? 1 : 0;
@@ -1008,7 +1011,7 @@ export const autoRosterSyncedService = {
       const hcFloor = await getHcFloorForDate(plan.process_id, rosterDate);
       const currentlyRostered = assignedToday.size;
 
-      for (const emp of pool.filter((e) => !assignedToday.has(String(e.id)) && preferredDayFor(String(e.id)) === dow)) {
+      for (const emp of pool.filter((e) => !assignedToday.has(String(e.id)) && (offdayPolicy.isFixedOff(String(e.id), rosterDate) || (!offdayPolicy.isFixedGoverned(String(e.id), rosterDate) && preferredDayFor(String(e.id)) === dow)))) {
         const weekoffGranted = skipped; // already granted week-offs on this date so far
 
         // If floor is set and granting one more would leave us below floor → deny
@@ -1055,10 +1058,12 @@ export const autoRosterSyncedService = {
            VALUES (?, ?, 'draft_editable', 0, 'not_required')`,
           [assignmentId, planId]
         );
+        if (offdayPolicy.isFixedOff(String(emp.id), rosterDate)) await markWeekOff(String(emp.id), rosterDate);
         skipped++;
       }
     }
 
+    await stampPlanRows(planId, plan.process_id);
     const coverage = await recomputeCoverage(planId);
     await db.execute(
       `UPDATE wfm_roster_plan_control SET approval_status = 'generated', generated_at = NOW(), last_coverage_score = ?, updated_at = NOW() WHERE plan_id = ?`,

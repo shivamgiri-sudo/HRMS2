@@ -343,6 +343,7 @@ rosterImportRouter.get('/view/table', requireRole(...WFM_VIEW_ROLES), async (req
       branchId: q.branchId || undefined,
       processId: q.processId || undefined,
       costCentreId: q.costCentreId || undefined,
+      lobId: q.lobId || undefined,
       search: q.search || undefined,
       limit: q.limit ? parseInt(q.limit, 10) : undefined,
       offset: q.offset ? parseInt(q.offset, 10) : undefined,

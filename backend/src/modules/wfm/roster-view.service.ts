@@ -26,6 +26,8 @@ export interface RosterViewFilters {
   branchId?: string;
   processId?: string;
   costCentreId?: string;
+  /** Optional: only employees whose LOB (employees.lob_id) is this one. */
+  lobId?: string;
   /** Free text over employee code and name. */
   search?: string;
   limit?: number;
@@ -53,6 +55,9 @@ export interface RosterViewRow {
   processName: string | null;
   branchName: string | null;
   costCentre: string | null;
+  /** The employee's LOB (employees.lob_id); null when not set. */
+  lobId?: string | null;
+  lobName?: string | null;
   /** date (YYYY-MM-DD) -> what is planned that day */
   days: Record<string, string>;
   /** date (YYYY-MM-DD) -> detailed cell with adherence — only if includeAdherence=true */
@@ -134,6 +139,7 @@ export async function getRosterView(
   if (filters.branchId) { where.push('e.branch_id = ?'); params.push(filters.branchId); }
   if (filters.processId) { where.push('e.process_id = ?'); params.push(filters.processId); }
   if (filters.costCentreId) { where.push('e.cost_centre_id = ?'); params.push(filters.costCentreId); }
+  if (filters.lobId) { where.push('e.lob_id = ?'); params.push(filters.lobId); }
   if (filters.search) {
     where.push('(e.employee_code LIKE ? OR e.full_name LIKE ?)');
     params.push(`%${filters.search}%`, `%${filters.search}%`);
@@ -160,6 +166,7 @@ export async function getRosterView(
             b.branch_name       AS branch_name,
             b.id                AS branch_id,
             cc.cost_centre_name AS cost_centre,
+            e.lob_id            AS lob_id,
             DATE_FORMAT(ra.roster_date, '%Y-%m-%d') AS roster_date,
             ra.assignment_type,
             ra.shift_start_time  AS own_start_time,
@@ -250,6 +257,7 @@ export async function getRosterView(
         processName: row.process_name ? String(row.process_name) : null,
         branchName: row.branch_name ? String(row.branch_name) : null,
         costCentre: row.cost_centre ? String(row.cost_centre) : null,
+        lobId: row.lob_id ? String(row.lob_id) : null,
         days: {},
         dayCells: includeAdherence ? {} : undefined,
         _adherenceStats: { green: 0, amber: 0, red: 0, brown: 0, total: 0 },
@@ -338,6 +346,18 @@ export async function getRosterView(
       : undefined;
     const { _adherenceStats, ...rest } = emp;
     resultRows.push({ ...rest, adherencePct: includeAdherence ? adherencePct : undefined });
+  }
+
+  // LOB names by parameter (not a join): employees.lob_id and lob_master.id may not share a collation.
+  const lobIds = [...new Set(resultRows.map((r) => r.lobId).filter((v): v is string => !!v))];
+  if (lobIds.length) {
+    const [lobRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, lob_name FROM lob_master WHERE id IN (${lobIds.map(() => '?').join(', ')})`,
+      lobIds
+    );
+    const lobNames = new Map<string, string>();
+    for (const l of lobRows ?? []) lobNames.set(String(l.id), String(l.lob_name));
+    for (const r of resultRows) r.lobName = r.lobId ? (lobNames.get(r.lobId) ?? null) : null;
   }
 
   // Build analytics summary

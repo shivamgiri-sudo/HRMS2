@@ -41,6 +41,8 @@ interface ViewRow {
   processName: string | null;
   branchName: string | null;
   costCentre: string | null;
+  lobId?: string | null;
+  lobName?: string | null;
   days: Record<string, string>;
   dayCells?: Record<string, DayCell>;
   adherencePct?: number;
@@ -101,6 +103,7 @@ export default function RosterViewPage() {
   const [toDate, setToDate] = useState(addDays(weekStart(), 6));
   const [branchId, setBranchId] = useState(ALL);
   const [processId, setProcessId] = useState(ALL);
+  const [lobId, setLobId] = useState(ALL);
   const [search, setSearch] = useState("");
   const [applied, setApplied] = useState(0);
   const [showAdherence, setShowAdherence] = useState(true);
@@ -115,12 +118,24 @@ export default function RosterViewPage() {
     queryFn: () => hrmsApi.get<{ data: Array<{ id: string; process_name: string }> }>("/api/processes?limit=300"),
   });
 
+  // LOBs of the selected process (Process LOB Mapping). Optional: a role that cannot read the
+  // mapping simply gets no LOB filter, the grid is unaffected.
+  const { data: lobData } = useQuery({
+    queryKey: ["roster-view", "lob-options", processId],
+    enabled: processId !== ALL,
+    retry: false,
+    queryFn: () => hrmsApi.get<{ data: { options: Array<{ lob_id: string; lob_name: string }> } }>(
+      `/api/wfm/process-lobs/processes/${encodeURIComponent(processId)}/lob-options`,
+    ),
+  });
+
   const { data, isFetching, isError, error } = useQuery({
-    queryKey: ["roster-view", "table", fromDate, toDate, branchId, processId, search, applied, showAdherence],
+    queryKey: ["roster-view", "table", fromDate, toDate, branchId, processId, lobId, search, applied, showAdherence],
     queryFn: () => {
       const p = new URLSearchParams({ fromDate, toDate, limit: "200" });
       if (branchId !== ALL) p.set("branchId", branchId);
       if (processId !== ALL) p.set("processId", processId);
+      if (lobId !== ALL) p.set("lobId", lobId);
       if (search.trim()) p.set("search", search.trim());
       if (showAdherence) p.set("includeAdherence", "true");
       return hrmsApi.get<{ rows: ViewRow[]; dates: string[]; total: number; analytics?: Analytics }>(
@@ -293,7 +308,7 @@ export default function RosterViewPage() {
           </div>
           <div className="min-w-[190px]">
             <label className="mb-1 block text-xs font-semibold text-slate-500">PROCESS</label>
-            <Select value={processId} onValueChange={setProcessId}>
+            <Select value={processId} onValueChange={(v) => { setProcessId(v); setLobId(ALL); }}>
               <SelectTrigger><SelectValue placeholder="All processes" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value={ALL}>All processes</SelectItem>
@@ -303,6 +318,20 @@ export default function RosterViewPage() {
               </SelectContent>
             </Select>
           </div>
+          {processId !== ALL && (lobData?.data?.options?.length ?? 0) > 0 && (
+            <div className="min-w-[170px]">
+              <label className="mb-1 block text-xs font-semibold text-slate-500">LOB</label>
+              <Select value={lobId} onValueChange={setLobId}>
+                <SelectTrigger><SelectValue placeholder="All LOBs" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>All LOBs</SelectItem>
+                  {lobData!.data.options.map((l) => (
+                    <SelectItem key={l.lob_id} value={l.lob_id}>{l.lob_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="min-w-[190px] flex-1">
             <label className="mb-1 block text-xs font-semibold text-slate-500">EMPLOYEE</label>
             <Input
@@ -347,6 +376,7 @@ export default function RosterViewPage() {
                     <th className="px-3 py-2 text-left">Employee</th>
                     {showAdherence && <th className="px-3 py-2 text-center">Adh %</th>}
                     <th className="px-3 py-2 text-left">Process</th>
+                    <th className="px-3 py-2 text-left">LOB</th>
                     <th className="px-3 py-2 text-left">Branch</th>
                     {dates.map((d) => (
                       <th key={d} className="whitespace-nowrap px-2 py-2 text-center min-w-[70px]">
@@ -374,6 +404,7 @@ export default function RosterViewPage() {
                         </td>
                       )}
                       <td className="px-3 py-2 text-slate-600 truncate max-w-[120px]">{r.processName ?? "—"}</td>
+                      <td className="px-3 py-2 text-slate-600 truncate max-w-[120px]">{r.lobName ?? "—"}</td>
                       <td className="px-3 py-2 text-slate-600">{r.branchName ?? "—"}</td>
                       {dates.map((d) => {
                         const cell = showAdherence && r.dayCells ? r.dayCells[d] : null;
