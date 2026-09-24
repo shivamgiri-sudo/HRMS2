@@ -269,6 +269,97 @@ export async function applyDeductionBatch(
   return { applied, failed, errors };
 }
 
+/**
+ * Re-process the error rows of a partially_applied DEDUCTION_BULK batch.
+ * Only retries rows still in row_status='error' whose deduction entry is still 'pending_approval'.
+ */
+export async function reapplyDeductionBatch(
+  batch: BatchRecord,
+  approverUserId: string,
+  remarks: string | null,
+): Promise<ApplyOutcome> {
+  const [rawRows] = await db.execute<RowDataPacket[]>(
+    `SELECT ubr.id, ubr.row_no, ubr.created_entity_id
+       FROM upload_batch_row ubr
+       JOIN employee_deduction_entries ede ON ede.id = ubr.created_entity_id
+      WHERE ubr.upload_batch_id = ? AND ubr.created_entity_type = ?
+        AND ubr.row_status = 'error'
+        AND ede.status = 'pending_approval'
+      ORDER BY ubr.row_no ASC`,
+    [batch.id, ENTITY_TYPE],
+  );
+  const rows = rawRows as Array<{ id: string; row_no: number; created_entity_id: string }>;
+
+  const outcomes = await mapWithConcurrency(rows, BULK_ROW_CONCURRENCY, async (row) => {
+    try {
+      const [res] = await withBulkLockRetry(() =>
+        db.execute<ResultSetHeader>(
+          `UPDATE employee_deduction_entries
+              SET status = 'active', updated_at = NOW()
+            WHERE id = ? AND status = 'pending_approval'`,
+          [row.created_entity_id],
+        ),
+      );
+      if (res.affectedRows === 0) {
+        throw new Error("deduction entry is no longer pending approval");
+      }
+      await db.execute(
+        `UPDATE upload_batch_row SET row_status = 'imported', error_messages = NULL WHERE id = ?`,
+        [row.id],
+      );
+      void logSensitiveAction({
+        actor_user_id: approverUserId,
+        actor_role: "branch_head",
+        action_type: "DEDUCTION_APPROVED",
+        module_key: "payroll",
+        entity_type: ENTITY_TYPE,
+        entity_id: row.created_entity_id,
+        reason: remarks ?? undefined,
+        old_value_json: { status: "pending_approval" },
+        new_value_json: {
+          status: "active",
+          via_bulk_upload: true,
+          upload_batch_no: batch.upload_batch_no,
+        },
+      });
+      return { ok: true as const, entityId: row.created_entity_id };
+    } catch (err) {
+      const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
+      await markRowFailed(row.id, msg);
+      return { ok: false as const, msg };
+    }
+  });
+
+  const toLock: string[] = [];
+  const errors: string[] = [];
+  let applied = 0;
+  let failed = 0;
+  for (const outcome of outcomes) {
+    if (outcome.ok) {
+      applied++;
+      toLock.push(outcome.entityId);
+    } else {
+      failed++;
+      errors.push(outcome.msg);
+    }
+  }
+
+  if (toLock.length > 0) {
+    await lockEntities(
+      toLock.map((entityId) => ({
+        entityType: ENTITY_TYPE,
+        entityId,
+        batchId: batch.id,
+        batchNo: batch.upload_batch_no,
+        employeeId: null,
+        lockedBy: approverUserId,
+      })),
+    );
+  }
+
+  return { applied, failed, errors };
+}
+
 export async function rejectDeductionBatch(
   batch: BatchRecord,
   approverUserId: string,

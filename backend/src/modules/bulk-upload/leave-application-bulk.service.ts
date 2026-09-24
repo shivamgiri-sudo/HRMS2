@@ -319,6 +319,99 @@ export async function applyLeaveBatch(
   return { applied, failed, errors };
 }
 
+/**
+ * Re-process the error rows of a partially_applied LEAVE_APPLICATION_BULK batch.
+ * Only retries rows still in row_status='error' whose leave_request is still 'pending'.
+ */
+export async function reapplyLeaveBatch(
+  batch: BatchRecord,
+  approverUserId: string,
+  remarks: string | null,
+): Promise<ApplyOutcome> {
+  const [rawRows] = await db.execute<RowDataPacket[]>(
+    `SELECT ubr.id, ubr.row_no, ubr.created_entity_id, lr.employee_id
+       FROM upload_batch_row ubr
+       JOIN leave_request lr ON lr.id = ubr.created_entity_id
+      WHERE ubr.upload_batch_id = ? AND ubr.created_entity_type = ?
+        AND ubr.row_status = 'error'
+        AND lr.status = 'pending'
+      ORDER BY ubr.row_no ASC`,
+    [batch.id, ENTITY_TYPE],
+  );
+  const rows = rawRows as Array<{ id: string; row_no: number; created_entity_id: string; employee_id: string }>;
+
+  const byEmployee = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const key = row.employee_id ?? `__unresolved_${row.row_no}`;
+    if (!byEmployee.has(key)) byEmployee.set(key, []);
+    byEmployee.get(key)!.push(row);
+  }
+
+  const toLock: string[] = [];
+  const errors: string[] = [];
+  let applied = 0;
+  let failed = 0;
+
+  const groupResults = await mapWithConcurrency(
+    [...byEmployee.values()],
+    BULK_ROW_CONCURRENCY,
+    async (empRows) => {
+      let grpApplied = 0;
+      let grpFailed = 0;
+      const grpErrors: string[] = [];
+      const grpLocked: string[] = [];
+      for (const row of empRows) {
+        try {
+          await withBulkLockRetry(() =>
+            leaveService.reviewRequest(
+              row.created_entity_id,
+              {
+                status: "approved",
+                remarks: remarks
+                  ? `Branch Head bulk re-apply (${batch.upload_batch_no}): ${remarks}`
+                  : `Branch Head bulk re-apply (${batch.upload_batch_no})`,
+              },
+              approverUserId,
+            ),
+          );
+          await db.execute(
+            `UPDATE upload_batch_row SET row_status = 'imported', error_messages = NULL WHERE id = ?`,
+            [row.id],
+          );
+          grpLocked.push(row.created_entity_id);
+          grpApplied++;
+        } catch (err) {
+          const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
+          grpErrors.push(msg);
+          await markRowFailed(row.id, msg);
+          grpFailed++;
+        }
+      }
+      return { grpApplied, grpFailed, grpErrors, grpLocked };
+    },
+  );
+
+  for (const r of groupResults) {
+    applied += r.grpApplied;
+    failed += r.grpFailed;
+    errors.push(...r.grpErrors);
+    toLock.push(...r.grpLocked);
+  }
+
+  await lockEntities(
+    toLock.map((entityId) => ({
+      entityType: ENTITY_TYPE,
+      entityId,
+      batchId: batch.id,
+      batchNo: batch.upload_batch_no,
+      employeeId: null,
+      lockedBy: approverUserId,
+    })),
+  );
+
+  return { applied, failed, errors };
+}
+
 export async function rejectLeaveBatch(
   batch: BatchRecord,
   approverUserId: string,

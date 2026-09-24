@@ -25,9 +25,9 @@ import { notifyBatchCreator } from "./bulk-approval-notify.service.js";
 import { triggerBulkBatchApproval } from "../work-inbox/work-inbox.triggers.js";
 import { recordFinanceApprovalEvent, listFinanceApprovalEvents } from "../../shared/financeApprovalEvent.js";
 import { applyRegularizationBatch, rejectRegularizationBatch, reapplyPartialBatch } from "./attendance-regularization-bulk.service.js";
-import { applyLeaveBatch, rejectLeaveBatch } from "./leave-application-bulk.service.js";
-import { applyIncentiveBatch, rejectIncentiveBatch } from "./incentive-bulk.service.js";
-import { applyDeductionBatch, rejectDeductionBatch } from "./deduction-bulk.service.js";
+import { applyLeaveBatch, rejectLeaveBatch, reapplyLeaveBatch } from "./leave-application-bulk.service.js";
+import { applyIncentiveBatch, rejectIncentiveBatch, reapplyIncentiveBatch } from "./incentive-bulk.service.js";
+import { applyDeductionBatch, rejectDeductionBatch, reapplyDeductionBatch } from "./deduction-bulk.service.js";
 import {
   startBatchJob, getBatchJob, readBatchProgress, type BatchJobKind,
 } from "./batch-job.js";
@@ -793,28 +793,48 @@ bulkApprovalRouter.post("/approvals/batches/:id/approve", h((req, res) => runDec
 bulkApprovalRouter.post("/approvals/batches/:id/reject", h((req, res) => runDecision("reject", req, res)));
 
 /**
- * Re-process the error rows of a partially_applied ATTENDANCE_REGULARIZATION_BULK batch.
- * Intended for use after a root-cause fix that blocked the original apply run.
- * Only retries rows still in row_status='error' with a pending AR — already-applied rows are untouched.
+ * Re-process the error rows of a partially_applied batch.
+ * Supported for all four bulk upload types.
+ * Only retries rows still in row_status='error' whose underlying entity is still in a pending state.
+ * Already-applied rows are untouched.
  */
 bulkApprovalRouter.post("/approvals/batches/:id/reapply", h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.authUser!.id;
     const batch = await getBatch(req.params.id);
 
-    if (batch.upload_type_code !== "ATTENDANCE_REGULARIZATION_BULK") {
-      return res.status(400).json({ success: false, message: "reapply is only supported for ATTENDANCE_REGULARIZATION_BULK batches." });
+    const REAPPLY_SUPPORTED = [
+      "ATTENDANCE_REGULARIZATION_BULK",
+      "LEAVE_APPLICATION_BULK",
+      "INCENTIVE_BULK",
+      "DEDUCTION_BULK",
+    ] as const;
+    if (!(REAPPLY_SUPPORTED as readonly string[]).includes(batch.upload_type_code)) {
+      return res.status(400).json({ success: false, message: `reapply is not supported for ${batch.upload_type_code} batches.` });
     }
     if (batch.approval_status !== "partially_applied") {
       return res.status(409).json({ success: false, message: `This batch is '${batch.approval_status}', not partially_applied. Nothing to retry.` });
     }
-    await assertCanView(req.authUser!.id, batch); // super_admin, uploader, or any approver role
+    await assertCanView(req.authUser!.id, batch);
 
     const remarks = String((req.body as { remarks?: string })?.remarks ?? "").trim() || null;
-    const outcome = await reapplyPartialBatch(batch, userId, remarks);
 
-    const remaining = outcome.failed;
-    const finalStatus: BulkApprovalStatus = remaining > 0 ? "partially_applied" : "approved";
+    let outcome: Awaited<ReturnType<typeof reapplyPartialBatch>>;
+    switch (batch.upload_type_code) {
+      case "LEAVE_APPLICATION_BULK":
+        outcome = await reapplyLeaveBatch(batch, userId, remarks);
+        break;
+      case "INCENTIVE_BULK":
+        outcome = await reapplyIncentiveBatch(batch, userId, remarks);
+        break;
+      case "DEDUCTION_BULK":
+        outcome = await reapplyDeductionBatch(batch, userId, remarks);
+        break;
+      default:
+        outcome = await reapplyPartialBatch(batch, userId, remarks);
+    }
+
+    const finalStatus: BulkApprovalStatus = outcome.failed > 0 ? "partially_applied" : "approved";
     const summary = `Re-apply: ${outcome.applied} row(s) applied, ${outcome.failed} still failed.` +
       (outcome.errors.length ? ` First error: ${outcome.errors[0]}` : "");
 
