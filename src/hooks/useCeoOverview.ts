@@ -158,6 +158,9 @@ export function useCeoOverview(period: string, filters: CeoOverviewFilters = {})
      * Confirmed in the browser before and after: NOIDA then NOIDA-2 in one interaction.
      */
     placeholderData: (previous) => previous,
+    // Revisiting the tab or a scope already seen within a minute reuses the result instead of
+    // re-running the multi-source build.
+    staleTime: 60_000,
     queryFn: async () => {
       const params = new URLSearchParams({ period });
       if (branchIds.length) params.set("branchIds", branchIds.join(","));

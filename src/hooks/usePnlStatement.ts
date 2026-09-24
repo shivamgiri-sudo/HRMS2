@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import type { BpoPnlFilters } from "@/hooks/useBpoProcessPnl";
 
@@ -84,6 +84,8 @@ export function usePnlStatement(
       return response.data;
     },
     staleTime: 60_000,
+    // Keep the previous scope's figures on screen while a new branch/period loads.
+    placeholderData: keepPreviousData,
     enabled: options.enabled ?? true,
   });
 }

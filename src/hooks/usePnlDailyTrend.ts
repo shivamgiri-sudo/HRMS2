@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 /**
@@ -54,5 +54,7 @@ export function usePnlDailyTrend(period: string, branchId?: string) {
       return response.data;
     },
     staleTime: 60_000,
+    // Keep the previous scope's figures on screen while a new branch/period loads.
+    placeholderData: keepPreviousData,
   });
 }

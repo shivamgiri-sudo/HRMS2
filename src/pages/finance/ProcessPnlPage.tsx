@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { lazy, Suspense, useEffect, useState, useRef, useCallback } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Link, useSearchParams } from "react-router-dom";
 import { ChevronLeft, ChevronRight, Download } from "lucide-react";
@@ -16,17 +16,7 @@ import { useCeoOverview } from "@/hooks/useCeoOverview";
 import { CeoOverviewPanel } from "@/components/finance/pnl/CeoOverviewPanel";
 import { PnlStatementView } from "@/components/finance/pnl/PnlStatementView";
 import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiStrip";
-import { PnlCostLeakagePanel } from "@/components/finance/pnl/PnlCostLeakagePanel";
-import { PnlDailyTrendChart } from "@/components/finance/pnl/PnlDailyTrendChart";
-import { PnlSeatForecastCard } from "@/components/finance/pnl/PnlSeatForecastCard";
-import { PnlReconciliationPanel } from "@/components/finance/pnl/PnlReconciliationPanel";
-import { PnlTrendExplorer } from "@/components/finance/pnl/PnlTrendExplorer";
-import { PnlInsightsPanel } from "@/components/finance/pnl/PnlInsightsPanel";
-import { PnlTrendCharts } from "@/components/finance/pnl/PnlTrendCharts";
-import { PnlReceivablesAgeingPanel } from "@/components/finance/pnl/PnlReceivablesAgeingPanel";
-import { PnlSeatBillabilityPanel } from "@/components/finance/pnl/PnlSeatBillabilityPanel";
-import { BpoPnlMatrixTable } from "@/components/finance/pnl/BpoPnlMatrixTable";
-import { ProcessPnlAlertsWorkspace } from "@/components/finance/pnl/ProcessPnlAlertsWorkspace";
+import { DeferUntilVisible } from "@/components/finance/pnl/DeferUntilVisible";
 import { ProcessPnlMatrixToolbar } from "@/components/finance/pnl/ProcessPnlMatrixToolbar";
 import {
   buildLiveBasis,
@@ -38,6 +28,26 @@ import {
 } from "@/components/finance/pnl/headerKpiBasis";
 import { pnlLabel, pnlTooltip } from "@/components/finance/pnl/pnlLabels";
 import { getIssueCounts, type ProcessPnlDensity, type ProcessPnlIssueFilter, type ProcessPnlMatrixPreset, type ProcessPnlStatusFilter } from "@/components/finance/pnl/processPnlMatrixConfig";
+
+/*
+ * Code-split: every tab except the default CEO Overview, plus the below-the-fold trend charts, is
+ * loaded on first use. Radix Tabs already mounts only the active tab's content, so a tab's queries
+ * start when it is opened; splitting the modules as well keeps their JS (and recharts) off the
+ * first paint of the page.
+ */
+const PnlCostLeakagePanel = lazy(() => import("@/components/finance/pnl/PnlCostLeakagePanel").then((m) => ({ default: m.PnlCostLeakagePanel })));
+const PnlDailyTrendChart = lazy(() => import("@/components/finance/pnl/PnlDailyTrendChart").then((m) => ({ default: m.PnlDailyTrendChart })));
+const PnlSeatForecastCard = lazy(() => import("@/components/finance/pnl/PnlSeatForecastCard").then((m) => ({ default: m.PnlSeatForecastCard })));
+const PnlReconciliationPanel = lazy(() => import("@/components/finance/pnl/PnlReconciliationPanel").then((m) => ({ default: m.PnlReconciliationPanel })));
+const PnlTrendExplorer = lazy(() => import("@/components/finance/pnl/PnlTrendExplorer").then((m) => ({ default: m.PnlTrendExplorer })));
+const PnlInsightsPanel = lazy(() => import("@/components/finance/pnl/PnlInsightsPanel").then((m) => ({ default: m.PnlInsightsPanel })));
+const PnlTrendCharts = lazy(() => import("@/components/finance/pnl/PnlTrendCharts").then((m) => ({ default: m.PnlTrendCharts })));
+const PnlReceivablesAgeingPanel = lazy(() => import("@/components/finance/pnl/PnlReceivablesAgeingPanel").then((m) => ({ default: m.PnlReceivablesAgeingPanel })));
+const PnlSeatBillabilityPanel = lazy(() => import("@/components/finance/pnl/PnlSeatBillabilityPanel").then((m) => ({ default: m.PnlSeatBillabilityPanel })));
+const BpoPnlMatrixTable = lazy(() => import("@/components/finance/pnl/BpoPnlMatrixTable").then((m) => ({ default: m.BpoPnlMatrixTable })));
+const ProcessPnlAlertsWorkspace = lazy(() => import("@/components/finance/pnl/ProcessPnlAlertsWorkspace").then((m) => ({ default: m.ProcessPnlAlertsWorkspace })));
+
+const tabFallback = <Skeleton className="h-72 w-full rounded-md" />;
 
 const MATRIX_VIEW_STORAGE_KEY = "process-pnl-matrix:view";
 
@@ -142,7 +152,9 @@ export default function ProcessPnlPage() {
     search: search || undefined,
   };
   const bpoQuery = useBpoProcessPnl(filters);
-  const statementQuery = usePnlStatement(filters, statementViewBy);
+  // Only the Statement tab reads this view, so it is fetched when that tab is open — not on every
+  // page load alongside the header's own queries.
+  const statementQuery = usePnlStatement(filters, statementViewBy, { enabled: activeTab === "statement" });
   // The Live P&L can scope by branch only, so it drives the headline only when no client or
   // search filter is applied (see useLiveBasis below). Same query key as the Live P&L tab, so
   // opening that tab reuses this result instead of fetching twice.
@@ -167,6 +179,7 @@ export default function ProcessPnlPage() {
     },
     enabled: showYtd,
     staleTime: 5 * 60_000,
+    placeholderData: keepPreviousData,
   });
   const summary = bpoQuery.data;
   const rows = summary?.rows ?? [];
@@ -442,6 +455,7 @@ export default function ProcessPnlPage() {
             )}
             {bpoQuery.dataUpdatedAt > 0 && (
               <span className="text-[11px] text-muted-foreground">
+                {bpoQuery.isFetching ? "Updating… · " : null}
                 Data as of {new Date(bpoQuery.dataUpdatedAt).toLocaleTimeString()}
                 {" · "}
                 <button type="button" className="underline hover:text-foreground" onClick={() => void bpoQuery.refetch()}>Refresh</button>
@@ -518,7 +532,9 @@ export default function ProcessPnlPage() {
               <button type="button" className="underline" onClick={() => void bpoQuery.refetch()}>Retry</button>
             </p>
           ) : (
-            <PnlExecutiveKpiStrip items={kpiItems} />
+            <div className={bpoQuery.isPlaceholderData ? "opacity-60 transition-opacity" : undefined} aria-busy={bpoQuery.isPlaceholderData}>
+              <PnlExecutiveKpiStrip items={kpiItems} />
+            </div>
           )}
         </div>
 
@@ -614,7 +630,11 @@ export default function ProcessPnlPage() {
 
                 {/* Revenue/cost/margin trend + headcount-vs-revenue trend, over the real months
                     of invoicing data only (see PnlTrendCharts's own doc comment). */}
-                <PnlTrendCharts filters={{ branchId: branchId || undefined, clientId: clientId || undefined, search: search || undefined }} />
+                <DeferUntilVisible placeholder={<Skeleton className="h-96 w-full rounded-none" />}>
+                  <Suspense fallback={<Skeleton className="h-96 w-full rounded-none" />}>
+                    <PnlTrendCharts filters={{ branchId: branchId || undefined, clientId: clientId || undefined, search: search || undefined }} />
+                  </Suspense>
+                </DeferUntilVisible>
 
                 {/* YTD summary strip */}
                 <div className="rounded-2xl border border-slate-200 bg-card px-4 py-3">
@@ -678,28 +698,36 @@ export default function ProcessPnlPage() {
           </TabsContent>
 
           <TabsContent value="live" className="flex-1 overflow-auto px-4 py-3 m-0">
-            <PnlReconciliationPanel
-              period={period}
-              branchId={branchId || undefined}
-              clientId={clientId || undefined}
-              search={search || undefined}
-            />
+            <Suspense fallback={tabFallback}>
+              <PnlReconciliationPanel
+                period={period}
+                branchId={branchId || undefined}
+                clientId={clientId || undefined}
+                search={search || undefined}
+              />
+            </Suspense>
           </TabsContent>
 
           {/* Daily / weekly / monthly P&L trend for the company, a branch or a cost centre,
               built on the Live P&L so its numbers agree with the tab beside it. */}
           <TabsContent value="trend" className="flex-1 overflow-auto px-4 py-3 m-0">
-            <PnlTrendExplorer period={period} branchId={branchId || undefined} />
+            <Suspense fallback={tabFallback}>
+              <PnlTrendExplorer period={period} branchId={branchId || undefined} />
+            </Suspense>
           </TabsContent>
 
           {/* Margin heatmap, profit contribution, unit economics and revenue confidence — also read
               from the Live P&L rows, so every figure agrees with the Live P&L tab. */}
           <TabsContent value="insights" className="flex-1 overflow-auto px-4 py-3 m-0">
-            <PnlInsightsPanel period={period} branchId={branchId || undefined} />
+            <Suspense fallback={tabFallback}>
+              <PnlInsightsPanel period={period} branchId={branchId || undefined} />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="leakage" className="flex-1 overflow-auto px-4 py-3 m-0">
-            <PnlCostLeakagePanel period={period} />
+            <Suspense fallback={tabFallback}>
+              <PnlCostLeakagePanel period={period} />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="matrix" className="flex-1 overflow-auto px-4 py-3 m-0">
@@ -722,6 +750,7 @@ export default function ProcessPnlPage() {
                 <button type="button" className="underline" onClick={() => void bpoQuery.refetch()}>Retry</button>
               </p>
             ) : (
+              <Suspense fallback={tabFallback}>
               <div className="flex flex-col gap-5">
                 <BpoPnlMatrixTable
                   rows={rows}
@@ -733,16 +762,21 @@ export default function ProcessPnlPage() {
                   search={search}
                   alerts={summary?.alerts}
                 />
-                <PnlSeatBillabilityPanel filters={{ branchId: branchId || undefined }} />
+                <DeferUntilVisible placeholder={<Skeleton className="h-40 rounded-md" />}>
+                  <PnlSeatBillabilityPanel filters={{ branchId: branchId || undefined }} />
+                </DeferUntilVisible>
               </div>
+              </Suspense>
             )}
           </TabsContent>
 
           <TabsContent value="statement" className="flex-1 overflow-auto px-4 py-3 m-0">
+            <Suspense fallback={tabFallback}>
             <div className="mb-4 space-y-4">
               <PnlSeatForecastCard period={period} branchId={branchId || undefined} />
               <PnlDailyTrendChart period={period} branchId={branchId || undefined} />
             </div>
+            </Suspense>
             <PnlStatementView
               statement={statementQuery.data}
               isLoading={statementQuery.isLoading}
@@ -768,10 +802,14 @@ export default function ProcessPnlPage() {
                 <button type="button" className="underline" onClick={() => void bpoQuery.refetch()}>Retry</button>
               </p>
             ) : summary ? (
+              <Suspense fallback={tabFallback}>
               <div className="flex flex-col gap-5">
                 <ProcessPnlAlertsWorkspace alerts={summary.alerts} period={period} rows={rows} />
-                <PnlReceivablesAgeingPanel filters={{ branchId: branchId || undefined }} />
+                <DeferUntilVisible placeholder={<Skeleton className="h-40 rounded-md" />}>
+                  <PnlReceivablesAgeingPanel filters={{ branchId: branchId || undefined }} />
+                </DeferUntilVisible>
               </div>
+              </Suspense>
             ) : null}
           </TabsContent>
         </Tabs>
