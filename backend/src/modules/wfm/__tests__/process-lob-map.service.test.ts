@@ -71,9 +71,15 @@ describe("processScopeSql", () => {
 });
 
 describe("resolveCallerScope", () => {
-  it("maps a scope-configuration error to 403", async () => {
+  it("maps a scope-configuration error to 403 when the wfm user has no branch rows either", async () => {
     scopeMock.mockRejectedValue(new DashboardScopeConfigurationError("no scope"));
+    queue([]);
     await expect(resolveCallerScope(actor)).rejects.toMatchObject({ statusCode: 403, code: "SCOPE_NOT_CONFIGURED" });
+  });
+  it("treats a branch-only wfm assignment as branch scope instead of refusing", async () => {
+    scopeMock.mockRejectedValue(new DashboardScopeConfigurationError("no process"));
+    queue([{ branch_id: "b1" }]);
+    expect(await resolveCallerScope(actor)).toEqual({ sql: "pm.branch_id IN (?)", params: ["b1"] });
   });
 });
 

@@ -11,9 +11,9 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
+import { resolveWfmScope } from "./wfm-scope-fallback.js";
 import {
   DashboardScopeConfigurationError,
-  resolveDashboardScopeForRequest,
   type DashboardScope,
 } from "../../shared/dashboardScope.js";
 
@@ -68,10 +68,7 @@ export function processScopeSql(scope: DashboardScope, alias = "pm"): ScopeSql {
 
 export async function resolveCallerScope(actor: Actor): Promise<ScopeSql> {
   try {
-    const scope = await resolveDashboardScopeForRequest(
-      { id: actor.id, role: actor.role, isDemo: actor.isDemo },
-      actor.role ?? "",
-    );
+    const scope = await resolveWfmScope(actor);
     return processScopeSql(scope);
   } catch (err) {
     if (err instanceof DashboardScopeConfigurationError) {
