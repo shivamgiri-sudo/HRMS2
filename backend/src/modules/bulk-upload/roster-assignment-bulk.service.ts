@@ -5,6 +5,7 @@ import { logRosterChange } from "../roster/roster-change-log.js";
 import { computeScheduledMinutes, rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
 import { applyRestDecision, isRestPolicyFeatureActive, validateMinimumRest, withEmployeeRosterLock } from "../wfm/rest-policy.service.js";
 import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
+import { finalizeBulkRosterRows, type WrittenRosterCell } from "../wfm/roster-offday-bulk.js";
 
 export async function importRosterAssignmentBatch(
   batchId: string,
@@ -23,6 +24,7 @@ export async function importRosterAssignmentBatch(
   let imported = 0;
   let skipped = 0;
   const errors: string[] = [];
+  const writtenCells: WrittenRosterCell[] = [];
 
   try {
     await conn.beginTransaction();
@@ -261,6 +263,7 @@ export async function importRosterAssignmentBatch(
           insertVals
         );
 
+        writtenCells.push({ employeeId, rosterDate: roster_date });
         if (before && (before.shift_template_id !== shiftTemplateId || Boolean(before.is_week_off) !== isWeekOff)) {
           await logRosterChange(conn, {
             entityType: "wfm_roster_assignment",
@@ -300,6 +303,8 @@ export async function importRosterAssignmentBatch(
       );
       imported++;
     }
+
+    await finalizeBulkRosterRows(writtenCells, conn);
 
     // imported_by and imported_at are added by migration 1134. They did not exist
     // when this statement was first written, which is why naming them meant a batch

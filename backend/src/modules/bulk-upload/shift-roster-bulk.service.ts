@@ -3,6 +3,7 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { logRosterChange } from "../roster/roster-change-log.js";
 import { computeScheduledMinutes, rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
+import { finalizeBulkRosterRows, type WrittenRosterCell } from "../wfm/roster-offday-bulk.js";
 import { applyRestDecision, isRestPolicyFeatureActive, resolveRestPolicy, restGapMinutes, validateMinimumRest, withEmployeeRosterLock } from "../wfm/rest-policy.service.js";
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
@@ -236,6 +237,7 @@ export async function importShiftRosterBatch(
     // genuinely new timing behaves exactly as it did before this change.
     const shiftTemplateCache = new Map<string, string>();
 
+    const writtenCells: WrittenRosterCell[] = [];
     const rowStatusUpdates: { id: string; status: string; errors?: string[]; targetRecordIds: string[] }[] = [];
 
     for (const { batchRow, raw } of parsedRows) {
@@ -487,6 +489,7 @@ export async function importShiftRosterBatch(
         // roster_change_log instead of silently replacing the prior shift with no
         // record of what it used to be.
         if (weekAssignments.length > 0) {
+          writtenCells.push(...weekAssignments.map((a) => ({ employeeId: a.employee_id, rosterDate: a.roster_date })));
           const pairPlaceholders = weekAssignments.map(() => "(?,?)").join(",");
           const pairParams = weekAssignments.flatMap((a) => [a.employee_id, a.roster_date]);
           const [existingRows] = await conn.execute<RowDataPacket[]>(
@@ -583,6 +586,8 @@ export async function importShiftRosterBatch(
         imported += dayImported > 0 ? 1 : 0;
       }
     }
+
+    await finalizeBulkRosterRows(writtenCells, conn);
 
     // Batch update row statuses. target_record_id was previously never set here
     // (unlike roster-assignment-bulk.service.ts), so there was no way to trace a
