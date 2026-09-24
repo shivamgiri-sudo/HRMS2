@@ -2427,6 +2427,13 @@ export async function handleJoiningDocumentEsignWebhook(input: {
     provider_reference_id: string | null;
   }) | undefined;
   if (!tx) {
+    // Not a joining document: it may be an appointment letter's acceptance session.
+    // The callback payload is not trusted for the outcome — the provider is asked.
+    const { syncAppointmentEsignByClientTransaction } = await import("../letters/appointmentLetterEsign.service.js");
+    const appointment = clientTransactionId
+      ? await syncAppointmentEsignByClientTransaction(clientTransactionId)
+      : null;
+    if (appointment) return { matched: true, processed: appointment.state === "completed", result: appointment };
     return { matched: false, processed: false };
   }
 

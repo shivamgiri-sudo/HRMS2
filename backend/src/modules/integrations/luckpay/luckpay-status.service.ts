@@ -453,7 +453,23 @@ export async function syncEsignStatus(clientTransactionId: string): Promise<Sync
     [clientTransactionId],
   );
   const row = (rows as RowDataPacket[])[0];
-  if (!row) return { state: "not_started", message: "No eSign transaction found" };
+  if (!row) {
+    // Not a joining-document transaction: it may be an appointment letter's own
+    // acceptance session, which lives in its own table (migration 1857).
+    const { syncAppointmentEsignByClientTransaction } = await import("../../letters/appointmentLetterEsign.service.js");
+    const appointment = await syncAppointmentEsignByClientTransaction(clientTransactionId);
+    if (appointment) {
+      return {
+        state: appointment.state,
+        providerStatus: appointment.providerStatus ?? null,
+        clientTransactionId,
+        transactionId: appointment.transactionId ?? null,
+        message: appointment.message ?? null,
+        changed: appointment.changed,
+      };
+    }
+    return { state: "not_started", message: "No eSign transaction found" };
+  }
 
   const transactionId = String(row.provider_reference_id ?? "");
   if (!transactionId) {

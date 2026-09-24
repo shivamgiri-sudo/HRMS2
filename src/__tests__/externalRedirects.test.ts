@@ -29,6 +29,7 @@ const POST_AWAIT_REDIRECT_FILES = [
   "components/onboarding-full/useOnboardingFull.ts",
   "pages/EmployeeDocumentEsignReviewPage.tsx",
   "pages/EmployeeJoiningKitEsignPage.tsx",
+  "pages/EmployeeAppointmentLetterEsignPage.tsx",
 ];
 
 /** A real call, not the word appearing inside an explanatory comment. */

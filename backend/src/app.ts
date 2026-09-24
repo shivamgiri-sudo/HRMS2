@@ -109,6 +109,7 @@ import { appointmentEsignRouter } from "./modules/letters/appointment-esign.rout
 import { dscConfigRouter } from "./modules/letters/dscConfig.routes.js";
 import { notificationRecipientsRouter } from "./modules/it-provisioning/notification-recipients.routes.js";
 import { appointmentLetterRouter } from "./modules/letters/appointmentLetter.routes.js";
+import { publicAppointmentLetterRouter } from "./modules/letters/appointmentLetterPublic.routes.js";
 import { atsExtRouter } from "./modules/ats-extensions/ats-ext.routes.js";
 import { wfmExtRouter } from "./modules/wfm-extensions/wfm-ext.routes.js";
 import { managementRouter } from "./modules/management/management.routes.js";
@@ -605,6 +606,9 @@ app.use("/api/public/employee-documents", publicEmployeeDocumentRouter);
 // token, so it must sit above the catch-all too. Mounted below it, every
 // "Review & Sign All" button in every kit email would answer 401.
 app.use("/api/public/joining-kit", publicJoiningKitRouter);
+// The appointment letter's "Review & Accept" link is emailed to the employee and carries
+// its own token, so it sits above the catch-all for the same reason as the kit link.
+app.use("/api/public/appointment-letter", publicAppointmentLetterRouter);
 // The NOC Certificate employee form is reached from a bearer-less token link
 // (email/WhatsApp/SMS), so it must sit above the "/api" clientRouter mount
 // below that applies requireAuth to every /api/* path -- same load-bearing

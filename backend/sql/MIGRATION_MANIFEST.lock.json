@@ -889,7 +889,8 @@
     "1854_employee_lob_mapping_upload_template.sql",
     "1855_bulk_upload_lob_only_page_access.sql",
     "1856_fix_salary_start_date_before_doj.sql",
-    "1857_employees_salary_start_check_constraint.sql"
+    "1857_employees_salary_start_check_constraint.sql",
+    "1858_appointment_letter_accept_flow.sql"
   ],
   "approvedDeletions": [
     {

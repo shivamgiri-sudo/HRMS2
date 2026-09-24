@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle, BadgeCheck, Ban, CheckCircle2, Download, Eye, FileSignature,
-  Loader2, RefreshCw, Search, ShieldAlert, Users, X, XCircle,
+  Loader2, Mail, RefreshCw, Search, ShieldAlert, Users, X, XCircle,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -33,8 +33,24 @@ type QueueRow = {
 type IssuedRow = {
   id: string; letter_number: string; employee_code: string | null; employee_name: string | null;
   designation: string | null; branch_name: string | null; is_ca_issued: number;
-  employee_esign_status: string | null; status: string; issued_at: string | null; revoked_at: string | null;
+  employee_esign_status: string | null; employee_esign_at?: string | null;
+  status: string; issued_at: string | null; revoked_at: string | null;
 };
+
+/** The employee's own Aadhaar eSign of the letter, in words HR would use. */
+const ESIGN_LABELS: Record<string, string> = {
+  not_sent: "Awaiting employee",
+  sent: "Signing started",
+  opened: "Signing in progress",
+  signed: "Accepted",
+  accepted: "Accepted",
+  completed: "Accepted",
+  expired: "Session expired",
+};
+const esignLabel = (status: string | null): string =>
+  ESIGN_LABELS[String(status ?? "not_sent")] ?? String(status).replace(/_/g, " ");
+const isAccepted = (status: string | null): boolean =>
+  ["signed", "accepted", "completed"].includes(String(status ?? ""));
 
 type DrawerState =
   | { mode: "preview"; row: QueueRow }
@@ -236,6 +252,37 @@ export default function NativeAppointmentLetterQueue() {
       await load();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Unable to revoke this letter.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** Mirrors the joining kit's "resend": a fresh accept link is emailed; the provider is not touched. */
+  const resendLink = async (row: IssuedRow) => {
+    if (!window.confirm(`Email ${row.employee_name ?? "the employee"} a fresh Review & Accept link for ${row.letter_number}?\n\nThe link in their earlier email will stop working.`)) return;
+    setBusy(row.id);
+    try {
+      const res = await hrmsApi.post<{ message?: string }>(`/api/letters/appointment-letters/${row.id}/resend-link`, {});
+      setNotice(res.message ?? `Accept link re-sent for ${row.letter_number}.`);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unable to resend the accept link.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** Ask the provider now whether the employee has signed. */
+  const checkEsign = async (row: IssuedRow) => {
+    setBusy(row.id);
+    try {
+      const res = await hrmsApi.post<{ data?: { state?: string; message?: string | null } }>(
+        `/api/letters/appointment-letters/${row.id}/esign/check`, {});
+      setNotice(res.data?.state === "completed"
+        ? `${row.letter_number} has been accepted by the employee.`
+        : (res.data?.message ?? `${row.letter_number}: the employee has not completed signing yet.`));
+      await load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unable to check the signing status.");
     } finally {
       setBusy(null);
     }
@@ -515,11 +562,11 @@ export default function NativeAppointmentLetterQueue() {
                         <span className={`mt-1.5 inline-block rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
                           row.status === "revoked"
                             ? "bg-red-100 text-red-700"
-                            : (row.employee_esign_status === "signed" || row.employee_esign_status === "accepted")
+                            : isAccepted(row.employee_esign_status)
                               ? "bg-emerald-100 text-emerald-700"
                               : "bg-amber-100 text-amber-700"
                         }`}>
-                          {String(row.employee_esign_status ?? "pending").replace(/_/g, " ")}
+                          {esignLabel(row.employee_esign_status)}
                         </span>
                       </div>
                       <div className="flex gap-2">
@@ -536,6 +583,22 @@ export default function NativeAppointmentLetterQueue() {
                         >
                           <Download className="h-4 w-4" /> PDF
                         </button>
+                        {row.status !== "revoked" && !isAccepted(row.employee_esign_status) && (
+                          <>
+                            <button
+                              type="button" disabled={busy === row.id} onClick={() => void resendLink(row)}
+                              className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-cyan-300 bg-white px-4 text-sm font-semibold text-cyan-700 hover:bg-cyan-50 transition-colors disabled:opacity-60"
+                            >
+                              <Mail className="h-4 w-4" /> Resend link
+                            </button>
+                            <button
+                              type="button" disabled={busy === row.id} onClick={() => void checkEsign(row)}
+                              className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-60"
+                            >
+                              <RefreshCw className="h-4 w-4" /> Check status
+                            </button>
+                          </>
+                        )}
                         {row.status !== "revoked" && (
                           <button
                             type="button" disabled={busy === row.id} onClick={() => void revoke(row)}
@@ -599,12 +662,19 @@ export default function NativeAppointmentLetterQueue() {
               <span className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
                 drawer.row.status === "revoked"
                   ? "bg-red-100 text-red-700"
-                  : (drawer.row.employee_esign_status === "signed" || drawer.row.employee_esign_status === "accepted")
+                  : isAccepted(drawer.row.employee_esign_status)
                     ? "bg-emerald-100 text-emerald-700"
                     : "bg-amber-100 text-amber-700"
               }`}>
-                {String(drawer.row.employee_esign_status ?? "pending").replace(/_/g, " ")}
+                {esignLabel(drawer.row.employee_esign_status)}
               </span>
+              {drawer.row.employee_esign_at && isAccepted(drawer.row.employee_esign_status) && (
+                <span className="text-xs text-slate-500">
+                  Accepted {new Date(drawer.row.employee_esign_at).toLocaleString("en-IN", {
+                    day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
+                  }).replace(",", "")}
+                </span>
+              )}
               {!drawer.row.is_ca_issued && drawer.row.status !== "revoked" && (
                 <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">Self-signed</span>
               )}
@@ -740,6 +810,22 @@ export default function NativeAppointmentLetterQueue() {
                 >
                   <Download className="h-4 w-4" /> Download PDF
                 </button>
+                {drawer.row.status !== "revoked" && !isAccepted(drawer.row.employee_esign_status) && (
+                  <>
+                    <button
+                      type="button" disabled={busy === drawer.row.id} onClick={() => void resendLink(drawer.row)}
+                      className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-cyan-300 bg-white px-4 text-sm font-semibold text-cyan-700 hover:bg-cyan-50 transition-colors disabled:opacity-60"
+                    >
+                      <Mail className="h-4 w-4" /> Resend link
+                    </button>
+                    <button
+                      type="button" disabled={busy === drawer.row.id} onClick={() => void checkEsign(drawer.row)}
+                      className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-60"
+                    >
+                      <RefreshCw className="h-4 w-4" /> Check status
+                    </button>
+                  </>
+                )}
                 {drawer.row.status !== "revoked" && (
                   <button
                     type="button" disabled={busy === drawer.row.id}

@@ -34,6 +34,7 @@ const PortalSlugRoute      = lazy(() => import("@/components/portal/PortalSlugRo
 const EmployeeDocumentEsignReviewPage = lazy(() => import("@/pages/EmployeeDocumentEsignReviewPage"));
 const EmployeeNocFormPage = lazy(() => import("@/pages/EmployeeNocFormPage"));
 const EmployeeJoiningKitEsignPage     = lazy(() => import("@/pages/EmployeeJoiningKitEsignPage"));
+const EmployeeAppointmentLetterEsignPage = lazy(() => import("@/pages/EmployeeAppointmentLetterEsignPage"));
 const PublicAppointmentLetterVerify   = lazy(() => import("@/pages/PublicAppointmentLetterVerify").then(m => ({ default: m.PublicAppointmentLetterVerify })));
 const EmployeeEpfComplianceReviewPage = lazy(() => import("@/pages/EmployeeEpfComplianceReviewPage"));
 const VisitorSelfRegister = lazy(() => import("@/pages/VisitorSelfRegister"));
@@ -135,6 +136,8 @@ export const publicRouteElements = (
       <Route path="/employee/joining-documents/esign/:token" element={<EmployeeDocumentEsignReviewPage />} />
       {/* One link, all joining documents. joiningKitDispatch.service.ts emails this exact path. */}
       <Route path="/employee/joining-kit/esign/:token"       element={<EmployeeJoiningKitEsignPage />} />
+      {/* The appointment letter's "Review & Accept" button. appointmentLetterIssue.service.ts emails this exact path. */}
+      <Route path="/employee/appointment-letter/:token"      element={<EmployeeAppointmentLetterEsignPage />} />
       <Route path="/employee/epf-compliance/review/:token"   element={<EmployeeEpfComplianceReviewPage />} />
       {/* NOC Certificate — leaver's HRMS account is being deprovisioned, so this carries its own
           token rather than a session. noc-case.service.ts's mintInvite() emails this exact path. */}

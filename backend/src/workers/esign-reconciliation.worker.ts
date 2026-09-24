@@ -417,6 +417,14 @@ export async function startEsignReconciliationWorker(): Promise<void> {
     running = true;
     void runEsignReconciliationOnce()
       .catch((error) => console.warn("[esign-reconciliation] tick failed:", error))
+      // Appointment-letter acceptance sessions live in their own table with their own
+      // small budget (see reconcileAppointmentEsigns); a failure here never affects the
+      // joining-document poll above, which has already finished.
+      .then(async () => {
+        const { reconcileAppointmentEsigns } = await import("../modules/letters/appointmentLetterEsign.service.js");
+        await reconcileAppointmentEsigns();
+      })
+      .catch((error) => console.warn("[esign-reconciliation] appointment-letter tick failed:", error))
       .finally(() => { running = false; });
   }, TICK_MS);
 

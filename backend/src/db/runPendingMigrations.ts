@@ -1140,6 +1140,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1855_bulk_upload_lob_only_page_access.sql", // Registered 2026-09-24. role_page_access grant of BULK_UPLOAD (Bulk Upload Hub page) to branch_wfm/ho_wfm/wfm_spoc, which may use only the Employee LOB Mapping upload type (enforced in bulk-role-restriction.ts). Roles absent from workforce_role_catalog skipped. Additive, idempotent.
   "1856_fix_salary_start_date_before_doj.sql", // Registered 2026-09-24. Corrective UPDATE: resets salary_start_date = date_of_joining for employees where salary_start_date was erroneously set before date_of_joining (batch-import paths lacked the >= DOJ guard). One-time data fix, idempotent (WHERE clause only matches affected rows).
   "1857_employees_salary_start_check_constraint.sql", // Registered 2026-09-24. DB-level CHECK constraint chk_ssd_not_before_doj on employees: salary_start_date >= date_of_joining (or NULL). MySQL 8.0.16+ enforces at write time. Migration 1856 corrected all pre-existing violations so this applies cleanly.
+  "1858_appointment_letter_accept_flow.sql", // Registered 2026-09-24. Employee acceptance flow for issued appointment letters (the emailed Review & Accept link 404'd). Adds nullable accept_token_hash CHAR(64) UNIQUE to appointment_letter_issue (information_schema-guarded) and creates appointment_letter_esign_transaction (one row per Aadhaar eSign session, no FKs). Additive, idempotent.
   ];
 
 export type MigrationHealth = {

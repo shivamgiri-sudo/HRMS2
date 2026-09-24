@@ -41,6 +41,7 @@ import {
   evaluateAppointmentLetterEligibility, listAppointmentLetterQueue,
 } from "./appointmentLetterEligibility.service.js";
 import { issueAppointmentLetter, revokeAppointmentLetter } from "./appointmentLetterIssue.service.js";
+import { resendAppointmentAcceptLink, checkAppointmentEsignStatus } from "./appointmentLetterResend.service.js";
 import { renderAppointmentLetterPdf } from "./appointmentLetterPdf.service.js";
 import { resolveEmployeeLetterhead, assertPrintableLetterhead } from "../org/branchAddress.service.js";
 import { resolveAppointmentLetterSalary } from "./appointmentLetterData.service.js";
@@ -156,7 +157,7 @@ router.get("/appointment-letters", requireRole(...VIEW_ROLES), h(async (req, res
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT i.id, i.letter_number, i.employee_id, i.employee_code, i.employee_name, i.designation,
             i.branch_name, i.date_of_joining, i.is_ca_issued, i.employee_esign_status,
-            i.status, i.issued_at, i.revoked_at
+            i.employee_esign_at, i.status, i.issued_at, i.revoked_at
        FROM appointment_letter_issue i
        LEFT JOIN employees e ON e.id = i.employee_id
       WHERE ${conds.join(" AND ")}
@@ -272,6 +273,45 @@ router.get("/appointment-letters/preview/:employeeId", requireRole(...VIEW_ROLES
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `inline; filename="appointment-letter-preview-${emp.employee_code}.pdf"`);
   res.send(pdfBytes);
+}));
+
+/**
+ * True when this issued letter sits inside the actor's branch scope. Resend and
+ * status-check act on a letter id from the URL, so scope is resolved here in the
+ * lookup rather than trusted from the list the button came from.
+ */
+async function issuedLetterInScope(req: AuthenticatedRequest, issueId: string): Promise<boolean> {
+  const scope = await branchScope(req, "COALESCE(e.branch_id, i.branch_id)");
+  const [owned] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 AS ok
+       FROM appointment_letter_issue i
+       LEFT JOIN employees e ON e.id = i.employee_id
+      WHERE i.id = ? AND (${scope.sql}) LIMIT 1`,
+    [issueId, ...scope.params],
+  );
+  return (owned as RowDataPacket[]).length > 0;
+}
+
+/**
+ * Re-email the employee's Review & Accept link. Mirrors the joining kit's
+ * "resend": a fresh token is minted (only hashes are stored), the provider is
+ * never touched.
+ */
+router.post("/appointment-letters/:issueId/resend-link", requireRole(...ISSUE_ROLES), h(async (req, res) => {
+  if (!(await issuedLetterInScope(req, req.params.issueId))) {
+    return res.status(403).json({ success: false, message: OUT_OF_SCOPE });
+  }
+  const out = await resendAppointmentAcceptLink({ issueId: req.params.issueId, actorUserId: req.authUser!.id });
+  return res.status(out.resent ? 200 : 409).json({ success: out.resent, message: out.message, data: out });
+}));
+
+/** Pull the employee's signature state from the provider now (HR does not have to wait for the scheduled check). */
+router.post("/appointment-letters/:issueId/esign/check", requireRole(...ISSUE_ROLES), h(async (req, res) => {
+  if (!(await issuedLetterInScope(req, req.params.issueId))) {
+    return res.status(403).json({ success: false, message: OUT_OF_SCOPE });
+  }
+  const data = await checkAppointmentEsignStatus(req.params.issueId);
+  return res.json({ success: true, data });
 }));
 
 router.post("/appointment-letters/:issueId/revoke", requireRole("super_admin", "admin", "payroll_head"), h(async (req, res) => {
