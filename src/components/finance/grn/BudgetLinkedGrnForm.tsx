@@ -78,10 +78,41 @@ import {
   type MonthSplitValue,
 } from "./sections/MonthSplitPanel";
 
-/** The production reverse proxy (nginx client_max_body_size 20M) refuses larger request bodies
- *  with HTTP 413 before the API sees them; 19 MB leaves room for the multipart envelope. */
-const MAX_GRN_ATTACHMENT_MB = 19;
+/** The production reverse proxy refuses request bodies over 20 MB with HTTP 413. Files up to
+ *  DIRECT_UPLOAD_MAX_BYTES go in one request; bigger ones (a 50+ page scanned PDF) are sent in
+ *  UPLOAD_CHUNK_BYTES pieces to /documents/chunk and joined on the server. The ceiling matches
+ *  CHUNKED_FILE_MAX_BYTES in grn-smart.routes.ts. */
+const MAX_GRN_ATTACHMENT_MB = 150;
 const MAX_GRN_ATTACHMENT_BYTES = MAX_GRN_ATTACHMENT_MB * 1024 * 1024;
+const DIRECT_UPLOAD_MAX_BYTES = 15 * 1024 * 1024;
+const UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
+
+async function uploadGrnDocument(grnId: string, file: File, isPrimary: boolean): Promise<WorkspaceDocument[]> {
+  if (file.size <= DIRECT_UPLOAD_MAX_BYTES) {
+    const body = new FormData();
+    body.append("files", file);
+    body.append("documentType", "invoice");
+    // Only the first file is primary; later requests send an index that matches none of theirs.
+    body.append("primaryIndex", isPrimary ? "0" : "-1");
+    return unwrapList(await hrmsApi.postForm<any>(`/api/finance/grns/${grnId}/documents`, body)) as WorkspaceDocument[];
+  }
+  const uploadId = crypto.randomUUID();
+  const total = Math.ceil(file.size / UPLOAD_CHUNK_BYTES);
+  let response: any = null;
+  for (let index = 0; index < total; index += 1) {
+    const body = new FormData();
+    body.append("uploadId", uploadId);
+    body.append("index", String(index));
+    body.append("total", String(total));
+    body.append("fileName", file.name);
+    body.append("documentType", "invoice");
+    body.append("isPrimary", String(isPrimary));
+    // Text fields first: multer only sees fields that precede the file part.
+    body.append("chunk", file.slice(index * UPLOAD_CHUNK_BYTES, (index + 1) * UPLOAD_CHUNK_BYTES), file.name);
+    response = await hrmsApi.postForm<any>(`/api/finance/grns/${grnId}/documents/chunk`, body);
+  }
+  return unwrapList(response) as WorkspaceDocument[];
+}
 
 /** Methods offered for GRN's auto-split, restricted to what's computable from a single batched
  *  driver fetch. "meter_wise" has no client formula (server-only). "grade_weighted_headcount"'s
@@ -2024,28 +2055,18 @@ export function BudgetLinkedGrnForm({
 
       let uploadedDocuments: WorkspaceDocument[] = [];
       if (files.length) {
-        // One request per file. The production reverse proxy caps a request body at 20 MB, so
-        // sending every attachment in one multipart body returned HTTP 413 as soon as the files
-        // together passed 20 MB, even though each was individually fine. Only the first file is
-        // marked primary; later requests send an index that matches none of their files.
+        // One file at a time (large ones in pieces) — see uploadGrnDocument() for the 413 story.
         for (const [index, file] of files.entries()) {
-          const body = new FormData();
-          body.append("files", file);
-          body.append("documentType", "invoice");
-          body.append("primaryIndex", index === 0 ? "0" : "-1");
           try {
-            const uploadResponse = await hrmsApi.postForm<any>(
-              `/api/finance/grns/${current.id}/documents`,
-              body
-            );
-            uploadedDocuments = [...uploadedDocuments, ...(unwrapList(uploadResponse) as WorkspaceDocument[])];
+            const documents = await uploadGrnDocument(String(current.id), file, index === 0);
+            uploadedDocuments = [...uploadedDocuments, ...documents];
           } catch (uploadError) {
             const tooLarge =
               (uploadError as { status?: number } | null)?.status === 413 ||
               /413|too large/i.test(uploadError instanceof Error ? uploadError.message : String(uploadError));
             throw new Error(
               tooLarge
-                ? `"${file.name}" is too large to upload (limit ${MAX_GRN_ATTACHMENT_MB} MB per file). Compress or split it and try again.`
+                ? `"${file.name}" is too large to upload. Compress it and try again.`
                 : `Could not upload "${file.name}": ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`
             );
           }

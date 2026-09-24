@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync } from "fs";
+import { promises as fsp } from "fs";
 import path from "path";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
@@ -322,6 +323,126 @@ smartGrnRouter.post(
           documentType: type,
           isPrimary: String(req.body?.primaryIndex ?? "0") === String(index),
         })),
+        user.id
+      );
+      res.status(201).json({ success: true, data });
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Document upload failed",
+      });
+    }
+  }
+);
+
+/**
+ * Chunked upload for one large document (e.g. a 50+ page scanned PDF).
+ *
+ * The production reverse proxy refuses any request body over 20 MB with HTTP 413 before the API
+ * sees it, so a single large file could never be attached. The browser splits such a file into
+ * pieces of at most CHUNK_MAX_BYTES and sends them one per request; each piece is staged on disk
+ * and, when the last one arrives, the pieces are joined into one stored file and registered
+ * exactly like a direct upload (same registerDocuments call, same sha256, same access checks).
+ */
+const CHUNK_MAX_BYTES = 8 * 1024 * 1024;
+const CHUNKED_FILE_MAX_BYTES = 150 * 1024 * 1024;
+const CHUNK_MAX_COUNT = Math.ceil(CHUNKED_FILE_MAX_BYTES / CHUNK_MAX_BYTES);
+const CHUNK_STAGING_DIR = path.join(UPLOAD_DIR, ".chunks");
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MIME_BY_EXTENSION: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+};
+
+const chunkUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: CHUNK_MAX_BYTES, files: 1 },
+});
+
+function parseChunkRequest(req: SmartRequest) {
+  const body = req.body ?? {};
+  const uploadId = String(body.uploadId ?? "");
+  const index = Number(body.index);
+  const total = Number(body.total);
+  const fileName = String(body.fileName ?? "").trim();
+  const extension = path.extname(fileName).toLowerCase();
+  if (!UUID_PATTERN.test(uploadId)) throw new Error("Invalid upload id");
+  if (!Number.isInteger(total) || total < 1 || total > CHUNK_MAX_COUNT) {
+    throw new Error(`A chunked upload may have at most ${CHUNK_MAX_COUNT} parts (${CHUNKED_FILE_MAX_BYTES / (1024 * 1024)} MB)`);
+  }
+  if (!Number.isInteger(index) || index < 0 || index >= total) throw new Error("Invalid part number");
+  if (!fileName || !MIME_BY_EXTENSION[extension]) {
+    throw new Error(`"${fileName || "file"}" was not accepted: only ${ALLOWED_UPLOAD_EXTENSIONS.join(", ")} files can be attached.`);
+  }
+  return { uploadId, index, total, fileName, extension };
+}
+
+smartGrnRouter.post(
+  "/:id/documents/chunk",
+  requireWriteAccess,
+  requireRole(...SMART_WRITE_ROLES),
+  authorizeGrn,
+  (req: Request, res: Response, next: NextFunction) =>
+    chunkUpload.single("chunk")(req, res, (error: unknown) => {
+      if (error instanceof multer.MulterError) {
+        next(Object.assign(new Error(`Upload part rejected: ${error.code}`), { statusCode: 400, code: error.code }));
+        return;
+      }
+      next(error as any);
+    }),
+  async (req: SmartRequest, res) => {
+    try {
+      const chunk = req.file;
+      if (!chunk?.buffer?.length) {
+        res.status(400).json({ success: false, error: "Upload part is empty" });
+        return;
+      }
+      const { uploadId, index, total, fileName, extension } = parseChunkRequest(req);
+      // Scoped by GRN id as well as upload id, so one GRN can never complete another's upload.
+      const stagingDir = path.join(CHUNK_STAGING_DIR, `${req.params.id}-${uploadId}`);
+      await fsp.mkdir(stagingDir, { recursive: true });
+      await fsp.writeFile(path.join(stagingDir, String(index)), chunk.buffer);
+
+      const present = await fsp.readdir(stagingDir);
+      if (present.length < total) {
+        res.status(202).json({ success: true, data: { received: present.length, total } });
+        return;
+      }
+
+      const storedPath = path.join(UPLOAD_DIR, `${randomUUID()}${extension}`);
+      let size = 0;
+      try {
+        for (let part = 0; part < total; part += 1) {
+          const buffer = await fsp.readFile(path.join(stagingDir, String(part)));
+          size += buffer.length;
+          if (size > CHUNKED_FILE_MAX_BYTES) {
+            throw new Error(`"${fileName}" is larger than ${CHUNKED_FILE_MAX_BYTES / (1024 * 1024)} MB`);
+          }
+          await fsp.appendFile(storedPath, buffer);
+        }
+      } catch (assemblyError) {
+        await fsp.rm(storedPath, { force: true });
+        throw assemblyError;
+      } finally {
+        await fsp.rm(stagingDir, { recursive: true, force: true });
+      }
+
+      const user = actor(req);
+      const type = String(req.body?.documentType ?? "invoice") as
+        | "invoice" | "receipt" | "po" | "contract" | "supporting" | "other";
+      const data = await grnSmartService.registerDocuments(
+        req.params.id,
+        [{
+          originalName: fileName,
+          storedPath,
+          mimeType: MIME_BY_EXTENSION[extension],
+          fileSizeBytes: size,
+          documentType: type,
+          isPrimary: String(req.body?.isPrimary ?? "false") === "true",
+        }],
         user.id
       );
       res.status(201).json({ success: true, data });
