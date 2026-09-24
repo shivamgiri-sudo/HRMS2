@@ -10,6 +10,21 @@
 -- That column tracks the "display" date, which must stay >= DOJ. Payroll Head's
 -- effective_from on the assignment row is a different field not covered here.
 
-ALTER TABLE employees
-  ADD CONSTRAINT chk_ssd_not_before_doj
-  CHECK (salary_start_date IS NULL OR salary_start_date >= date_of_joining);
+-- Idempotent: production already holds this constraint (it was applied outside the runner), and a
+-- bare ADD CONSTRAINT then fails with "Duplicate check constraint name", which blocks server startup.
+SET @chk_exists = (
+  SELECT COUNT(*)
+    FROM information_schema.TABLE_CONSTRAINTS
+   WHERE CONSTRAINT_SCHEMA = DATABASE()
+     AND TABLE_NAME = 'employees'
+     AND CONSTRAINT_NAME = 'chk_ssd_not_before_doj'
+     AND CONSTRAINT_TYPE = 'CHECK'
+);
+
+SET @sql = IF(@chk_exists = 0,
+  'ALTER TABLE employees ADD CONSTRAINT chk_ssd_not_before_doj CHECK (salary_start_date IS NULL OR salary_start_date >= date_of_joining)',
+  'SELECT ''employees.chk_ssd_not_before_doj already exists'' AS message'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
