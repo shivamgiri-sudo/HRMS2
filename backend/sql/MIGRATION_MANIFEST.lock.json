@@ -1129,6 +1129,7 @@
     "revoke_salary_revision_employee_grant.sql",
     "setup-dialer-kpi-metrics.sql",
     "verify_ats_fix.sql",
-    "1844_pf_wage_ceiling_25000_documentation.sql"
+    "1844_pf_wage_ceiling_25000_documentation.sql",
+    "1853_employee_lob_mapping_upload_template.sql"
   ]
 }
