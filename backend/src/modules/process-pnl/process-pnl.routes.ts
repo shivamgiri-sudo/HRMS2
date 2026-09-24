@@ -69,6 +69,8 @@ import {
   bulkSetCostCentreOverride,
   deactivateCostCentreOverride,
   listCostCentreOverrides,
+  listOverrideCostCentreOptions,
+  searchEmployeesForOverride,
 } from "./pnl-cost-centre-override.service.js";
 
 const router = Router();
@@ -1784,6 +1786,26 @@ router.get(
   requireRole(...PNL_READ_ROLES),
   h(async (_req, res) => {
     const data = await listCostCentreOverrides();
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/cost-centre-overrides/cost-centres",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const branchId = req.query.branchId ? String(req.query.branchId) : null;
+    const data = await listOverrideCostCentreOptions(branchId);
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/cost-centre-overrides/employees",
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const branchId = req.query.branchId ? String(req.query.branchId) : null;
+    const data = await searchEmployeesForOverride(String(req.query.q ?? ""), branchId, Number(req.query.limit ?? 20));
     res.json({ success: true, data });
   })
 );

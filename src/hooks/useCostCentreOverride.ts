@@ -18,12 +18,64 @@ export interface CostCentreOverrideRow {
   targetCostCentreId: string;
   targetCostCentreCode: string | null;
   targetCostCentreName: string | null;
+  targetBranchId: string | null;
+  targetBranchName: string | null;
   reason: string | null;
   activeStatus: boolean;
   createdBy: string | null;
   createdByName: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface OverrideCostCentreOption {
+  id: string;
+  code: string;
+  name: string | null;
+  branchId: string | null;
+  branchName: string | null;
+  processName: string | null;
+}
+
+export interface OverrideEmployeeOption {
+  id: string;
+  employeeCode: string;
+  name: string | null;
+  branchName: string | null;
+  costCentreCode: string | null;
+  alreadyMappedTo: string | null;
+}
+
+/** Every open cost centre (optionally one branch's) — unpaginated, unlike the general cost-centre list. */
+export function useOverrideCostCentreOptions(branchId: string) {
+  return useQuery({
+    queryKey: ["pnl-cost-centre-override-cost-centres", branchId],
+    queryFn: async () => {
+      const qs = branchId ? `?branchId=${encodeURIComponent(branchId)}` : "";
+      const response = await hrmsApi.get<{ success: boolean; data: OverrideCostCentreOption[] }>(
+        `/api/finance/pnl/cost-centre-overrides/cost-centres${qs}`,
+      );
+      return response.data;
+    },
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useOverrideEmployeeSearch(query: string, branchId: string) {
+  const q = query.trim();
+  return useQuery({
+    queryKey: ["pnl-cost-centre-override-employees", q, branchId],
+    queryFn: async () => {
+      const params = new URLSearchParams({ q });
+      if (branchId) params.set("branchId", branchId);
+      const response = await hrmsApi.get<{ success: boolean; data: OverrideEmployeeOption[] }>(
+        `/api/finance/pnl/cost-centre-overrides/employees?${params.toString()}`,
+      );
+      return response.data;
+    },
+    enabled: q.length >= 2,
+    staleTime: 30_000,
+  });
 }
 
 export interface BulkSetOverrideResult {

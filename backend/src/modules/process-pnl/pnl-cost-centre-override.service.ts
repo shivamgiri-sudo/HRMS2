@@ -115,6 +115,8 @@ export interface CostCentreOverrideRow {
   targetCostCentreId: string;
   targetCostCentreCode: string | null;
   targetCostCentreName: string | null;
+  targetBranchId: string | null;
+  targetBranchName: string | null;
   reason: string | null;
   activeStatus: boolean;
   createdBy: string | null;
@@ -124,6 +126,8 @@ export interface CostCentreOverrideRow {
 }
 
 interface OverrideRowSql extends RowDataPacket {
+  target_branch_id: string | null;
+  target_branch_name: string | null;
   id: string;
   employee_id: string;
   employee_code: string | null;
@@ -154,6 +158,8 @@ function mapRow(r: OverrideRowSql): CostCentreOverrideRow {
     targetCostCentreId: r.target_cost_centre_id,
     targetCostCentreCode: r.target_cost_centre_code,
     targetCostCentreName: r.target_cost_centre_name,
+    targetBranchId: r.target_branch_id,
+    targetBranchName: r.target_branch_name,
     reason: r.reason,
     activeStatus: Number(r.active_status) === 1,
     createdBy: r.created_by,
@@ -168,24 +174,131 @@ export async function listCostCentreOverrides(): Promise<CostCentreOverrideRow[]
   if (!(await tableExists("pnl_employee_cost_centre_override"))) return [];
   const [rows] = await db.execute<OverrideRowSql[]>(
     `SELECT ov.id, ov.employee_id, e.employee_code,
-            NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.last_name)), '') AS employee_name,
+            COALESCE(NULLIF(TRIM(e.full_name), ''), NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.last_name)), '')) AS employee_name,
             e.cost_centre_id AS actual_cost_centre_id,
             accm.cost_centre_code AS actual_cost_centre_code,
             accm.cost_centre_name AS actual_cost_centre_name,
             ov.target_cost_centre_id,
             tccm.cost_centre_code AS target_cost_centre_code,
             tccm.cost_centre_name AS target_cost_centre_name,
+            tccm.branch_id AS target_branch_id,
+            tbm.branch_name AS target_branch_name,
             ov.reason, ov.active_status, ov.created_by,
-            NULLIF(TRIM(CONCAT_WS(' ', cu.first_name, cu.last_name)), '') AS created_by_name,
+            COALESCE(NULLIF(TRIM(cu.full_name), ''), NULLIF(TRIM(CONCAT_WS(' ', cu.first_name, cu.last_name)), '')) AS created_by_name,
             ov.created_at, ov.updated_at
        FROM pnl_employee_cost_centre_override ov
        JOIN employees e ON e.id = ov.employee_id
        LEFT JOIN cost_centre_master accm ON accm.id = e.cost_centre_id
        LEFT JOIN cost_centre_master tccm ON tccm.id = ov.target_cost_centre_id
+       LEFT JOIN branch_master tbm ON tbm.id = tccm.branch_id
        LEFT JOIN employees cu ON cu.id = ov.created_by
       ORDER BY ov.active_status DESC, ov.updated_at DESC`,
   );
   return rows.map(mapRow);
+}
+
+export interface OverrideCostCentreOption {
+  id: string;
+  code: string;
+  name: string | null;
+  branchId: string | null;
+  branchName: string | null;
+  processName: string | null;
+}
+
+/**
+ * EVERY cost centre an employee's pay can be redirected to: open today (its own flag and its
+ * branch's), optionally narrowed to one branch. Deliberately not paginated — the general cost-centre
+ * list caps a page at 100 rows, so the mapping dropdown built on it silently showed only the first
+ * 50 of ~900 cost centres.
+ */
+export async function listOverrideCostCentreOptions(branchId?: string | null): Promise<OverrideCostCentreOption[]> {
+  const where = ["cc.active_status = 1", "COALESCE(bm.active_status, 1) = 1"];
+  const params: unknown[] = [];
+  if (branchId) {
+    where.push("cc.branch_id = ?");
+    params.push(branchId);
+  }
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT cc.id, cc.cost_centre_code, cc.cost_centre_name, cc.branch_id, bm.branch_name,
+            COALESCE(pm.process_name, cc.process_name_bill) AS process_name
+       FROM cost_centre_master cc
+       LEFT JOIN branch_master bm ON bm.id = cc.branch_id
+       LEFT JOIN process_master pm ON pm.id = cc.process_id
+      WHERE ${where.join(" AND ")}
+      ORDER BY bm.branch_name, cc.cost_centre_code
+      LIMIT 3000`,
+    params,
+  );
+  return rows.map((r) => ({
+    id: String(r.id),
+    code: String(r.cost_centre_code ?? r.cost_centre_name ?? r.id),
+    name: r.cost_centre_name ? String(r.cost_centre_name) : null,
+    branchId: r.branch_id ? String(r.branch_id) : null,
+    branchName: r.branch_name ? String(r.branch_name) : null,
+    processName: r.process_name ? String(r.process_name) : null,
+  }));
+}
+
+export interface OverrideEmployeeOption {
+  id: string;
+  employeeCode: string;
+  name: string | null;
+  branchName: string | null;
+  costCentreCode: string | null;
+  alreadyMappedTo: string | null;
+}
+
+/**
+ * Active employees whose code or name contains `query`, straight from the employees table, so the
+ * mapping screen shows who a code belongs to before anyone is mapped. Company-wide on purpose (the
+ * mapping itself is company-wide and restricted to P&L writers); the general employee picker is
+ * scoped to the caller's own reports and would hide most of the people Finance needs.
+ */
+export async function searchEmployeesForOverride(
+  query: string,
+  branchId?: string | null,
+  limit = 20,
+): Promise<OverrideEmployeeOption[]> {
+  const q = query.trim();
+  if (q.length < 2) return [];
+  const like = `%${q}%`;
+  const where = [
+    "e.active_status = 1",
+    "(e.employee_code LIKE ? OR COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT_WS(' ', e.first_name, e.last_name))) LIKE ?)",
+  ];
+  const params: unknown[] = [like, like];
+  if (branchId) {
+    where.push("(e.branch_id = ? OR cc.branch_id = ?)");
+    params.push(branchId, branchId);
+  }
+  const overrideJoin = (await tableExists("pnl_employee_cost_centre_override"))
+    ? `LEFT JOIN pnl_employee_cost_centre_override ov ON ov.employee_id = e.id AND ov.active_status = 1
+       LEFT JOIN cost_centre_master tcc ON tcc.id = ov.target_cost_centre_id`
+    : "";
+  const mappedExpr = overrideJoin ? "tcc.cost_centre_code" : "NULL";
+  const safeLimit = Math.max(1, Math.min(Math.trunc(limit) || 20, 50));
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code,
+            COALESCE(NULLIF(TRIM(e.full_name), ''), NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.last_name)), '')) AS name,
+            bm.branch_name, cc.cost_centre_code, ${mappedExpr} AS already_mapped_to
+       FROM employees e
+       LEFT JOIN branch_master bm ON bm.id = e.branch_id
+       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+       ${overrideJoin}
+      WHERE ${where.join(" AND ")}
+      ORDER BY CASE WHEN e.employee_code = ? THEN 0 ELSE 1 END, name
+      LIMIT ${safeLimit}`,
+    [...params, q],
+  );
+  return rows.map((r) => ({
+    id: String(r.id),
+    employeeCode: String(r.employee_code),
+    name: r.name ? String(r.name) : null,
+    branchName: r.branch_name ? String(r.branch_name) : null,
+    costCentreCode: r.cost_centre_code ? String(r.cost_centre_code) : null,
+    alreadyMappedTo: r.already_mapped_to ? String(r.already_mapped_to) : null,
+  }));
 }
 
 export interface BulkSetOverrideInput {
