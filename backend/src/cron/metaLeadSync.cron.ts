@@ -73,7 +73,7 @@ async function runMetaLeadSync(): Promise<void> {
     // 1. Pull new leads for active campaigns only
     const [activeForms] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT mc.meta_form_id, mc.campaign_name FROM meta_campaign mc
-        WHERE mc.campaign_status = 'active'
+        WHERE mc.campaign_status IN ('active', 'draft')
           AND mc.meta_form_id IS NOT NULL AND mc.meta_form_id <> ''`
     );
 
