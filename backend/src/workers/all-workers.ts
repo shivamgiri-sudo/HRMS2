@@ -16,7 +16,6 @@ import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from 
 import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from "./payroll-recalc-drainer.worker.js";
 // NOTE: the LMS due-date reminder scheduler is PARKED, not deleted — see the WORKERS
 // array below for what is missing and how to restore it.
-import { startDbBillFinanceSyncWorker, stopDbBillFinanceSyncWorker } from "./db-bill-finance-sync.worker.js";
 import { startCostCentreProcessResolverWorker, stopCostCentreProcessResolverWorker } from "./cost-centre-process-resolver.worker.js";
 import { startDbBillHrSyncWorker, stopDbBillHrSyncWorker } from "./db-bill-hr-sync.worker.js";
 import { startPnlRunningSalaryRefreshWorker, stopPnlRunningSalaryRefreshWorker } from "./pnl-running-salary-refresh.worker.js";
@@ -181,15 +180,7 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startPerformanceIngestionScheduler(); return Promise.resolve(); },
   },
   {
-    // db_bill is where finance raises invoices, budgets and GRNs; mas_hrms mirrors them and the
-    // P&L reads the mirror. Nothing called the sync before, so it only advanced when someone ran
-    // it by hand — the invoice snapshot was nine days stale and no August rows would ever have
-    // appeared.
-    name: "db-bill-finance-sync",
-    start: () => { startDbBillFinanceSyncWorker(); return Promise.resolve(); },
-  },
-  {
-    // Self-populates cost_centre_master.process_id for cost centres db-bill-finance-sync just
+    // Self-populates cost_centre_master.process_id for cost centres the (removed) db-bill-finance-sync just
     // brought in — see cost-centre-process-resolver.service.ts. Excludes NOIDA-DIALDESK/IDC by
     // branch_id (user-confirmed out of scope for MAS Callnet's P&L, 2026-09-11) regardless of
     // that branch's own (partly mislabelled) company_name.
@@ -592,7 +583,6 @@ function shutdown(): void {
   stopLmsSyncWorker();
   stopPayrollNightlyRecalcWorker();
   stopPayrollRecalcDrainerWorker();
-  stopDbBillFinanceSyncWorker();
   stopCostCentreProcessResolverWorker();
   stopDbBillHrSyncWorker();
   stopPnlRunningSalaryRefreshWorker();

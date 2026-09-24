@@ -14,3 +14,12 @@ describe("db_bill snapshot sync never overwrites HRMS cost-centre status", () =>
     expect(update).not.toMatch(/close_date/);
   });
 });
+
+describe("no scheduled db_bill finance sync (owner directive 2026-09-24)", () => {
+  it("has no db-bill-finance-sync worker registered; the script is run by hand only", () => {
+    const allWorkers = fs.readFileSync(path.join(__dirname, "..", "all-workers.ts"), "utf8");
+    expect(allWorkers).not.toMatch(/DbBillFinanceSync/);
+    expect(allWorkers).not.toMatch(/name:\s*"db-bill-finance-sync"/);
+    expect(fs.existsSync(path.join(__dirname, "..", "db-bill-finance-sync.worker.ts"))).toBe(false);
+  });
+});
