@@ -27,9 +27,9 @@ import { budgetExGstSql, grnAllocationExGstSql } from "./pnl-ex-gst.js";
  * budgeted (was gross_amount) and measured reserved/consumed (was pnl_cost_amount) are both the
  * taxable value now, so the two stay on one basis. The simple-GRN fallback below still reads the
  * line's own reserved_amount/consumed_amount counters, which the enforcement path
- * (budget-consumption.service.ts) writes at pnl_cost_amount's basis — deliberately unchanged here
- * (enforcement is an owner decision), so on a line with non-recoverable GST those fallback rows
- * can sit slightly above the ex-GST basis.
+ * (budget-consumption.service.ts) charges at the invoice's taxable value, and — since the
+ * 2026-09-24 owner decision — checks against the line's ex-GST base_amount, so those fallback rows
+ * are on the same basis too (reservations written before 2026-08-31 may still carry GST).
  * The IS NULL / IS NOT NULL split makes double-counting structurally impossible rather than
  * merely unlikely; verified against production, 0 direct lines also carry allocation rows.
  *

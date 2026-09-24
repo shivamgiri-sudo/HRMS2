@@ -60,8 +60,12 @@ describe("selectableClassifications — budget is the floor", () => {
     const { sql } = selectableCall();
     expect(sql).toContain("bh.status = 'active'");
     expect(sql).toContain("HAVING available_amount > 0");
-    expect(sql, "headroom is gross minus reserved minus consumed, as budget-consumption defines it")
-      .toContain("l.gross_amount - l.reserved_amount - l.consumed_amount");
+    // Ex-GST ceiling (base_amount, guarded) minus reserved minus consumed — the basis
+    // budget-consumption enforces since the 2026-09-24 owner decision. Was gross_amount.
+    expect(sql, "headroom is the ex-GST ceiling minus reserved minus consumed, as budget-consumption defines it")
+      .toContain("COALESCE(NULLIF(l.base_amount, 0)");
+    expect(sql).toContain("- COALESCE(l.reserved_amount, 0) - COALESCE(l.consumed_amount, 0)");
+    expect(sql).not.toContain("l.gross_amount - l.reserved_amount");
   });
 
   it("resolves a budget line's free-text head using the same predicate as the P&L view", async () => {

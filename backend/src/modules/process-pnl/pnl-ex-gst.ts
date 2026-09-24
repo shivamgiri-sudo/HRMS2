@@ -6,10 +6,10 @@
  * (base + NON-recoverable GST). Every P&L figure built from a GRN, a vendor payable or a budget
  * line now reads the taxable value (the ex-GST column), so GRN spend and budget stay on one basis.
  *
- * Scope: READERS that feed P&L reporting only. The GRN submission gate and budget consumption
- * (budget-headroom-gate, budget-consumption, budget-coverage, the branch-budget ceiling queries)
- * still work on pnl_cost_amount and decide whether a real GRN is allowed — they are deliberately
- * untouched here (owner decision pending).
+ * Scope: READERS that feed P&L reporting. The GRN approval gate followed on 2026-09-24 (owner
+ * decision: "GRN approval limit: move to the excluding-GST amount") — budget-headroom-gate,
+ * budget-consumption and the branch-budget ceiling queries now read the line ceiling through
+ * budgetExGstSql() via budget-tax-basis.ts, so enforcement and reporting share one basis.
  *
  * Why each expression has a fallback: the ex-GST columns were added by ALTER TABLE ... NOT NULL
  * DEFAULT 0 (sql/411, 416, 425), so an old row that predates them holds 0, not NULL. A bare read of

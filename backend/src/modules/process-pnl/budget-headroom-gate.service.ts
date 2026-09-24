@@ -1,7 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { refuse } from "./finance-error.js";
-import { budgetCostRatio } from "./budget-tax-basis.js";
+import { budgetCostRatio, budgetLineAvailableSql } from "./budget-tax-basis.js";
 
 /** The narrowest thing both the pool wrapper and a `PoolConnection` satisfy. Their `execute`
  *  overloads differ enough that `Pick<typeof db, "execute">` rejects a connection outright, which
@@ -102,7 +102,8 @@ export async function getHeadSubHeadCoverage(
     `SELECT l.*,
             (l.quantity-l.reserved_quantity-l.consumed_quantity)
               AS available_quantity,
-            (l.pnl_cost_amount-l.reserved_amount-l.consumed_amount)
+            -- EX-GST headroom (owner decision 2026-09-24), same basis reserve() enforces.
+            ${budgetLineAvailableSql("l")}
               AS available_gross_amount
        FROM finance_budget_line l
        JOIN finance_budget_header h ON h.id = l.budget_id

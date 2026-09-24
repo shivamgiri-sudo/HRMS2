@@ -14,6 +14,7 @@ import {
 } from "./branch-budget-allocation.service.js";
 import { isPeriodLocked } from "./finance-period-lock.js";
 import { budgetExGstSql, grnAllocationExGstSql } from "./pnl-ex-gst.js";
+import { budgetLineAvailableSql } from "./budget-tax-basis.js";
 
 import { refuse } from "./finance-error.js";
 import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
@@ -1057,7 +1058,8 @@ export const branchBudgetService = {
               vm.vendor_name AS preferred_vendor_name,
               (l.quantity-l.reserved_quantity-l.consumed_quantity)
                 AS available_quantity,
-              (l.pnl_cost_amount-l.reserved_amount-l.consumed_amount)
+              -- Ex-GST headroom, the basis GRN approval enforces (budget-tax-basis.ts).
+              ${budgetLineAvailableSql("l")}
                 AS available_gross_amount
          FROM finance_budget_line l
          LEFT JOIN process_master pm ON pm.id = l.process_id
@@ -2289,7 +2291,8 @@ export const branchBudgetService = {
               vm.vendor_name AS preferred_vendor_name,
               (l.quantity-l.reserved_quantity-l.consumed_quantity)
                 AS available_quantity,
-              (l.pnl_cost_amount-l.reserved_amount-l.consumed_amount)
+              -- Ex-GST headroom, the basis GRN approval enforces (budget-tax-basis.ts).
+              ${budgetLineAvailableSql("l")}
                 AS available_gross_amount,
               -- Per-cost-centre headroom on a BRANCH-LEVEL line (cost_centre_id IS NULL).
               --
@@ -2308,7 +2311,8 @@ export const branchBudgetService = {
               -- Both advisory figures are EX-GST (owner rule 2026-09-24: P&L GRN and the budget it
               -- is compared with are non-GST): the cost centre's planned share at its base_amount,
               -- committed at amount_without_tax. They were gross_amount / amount_with_tax. The
-              -- enforcing available_gross_amount above is deliberately unchanged.
+              -- enforcing available_gross_amount above moved to the same ex-GST basis on
+              -- 2026-09-24 (owner decision: GRN approval limit on the excluding-GST amount).
               ${budgetExGstSql("alloc")} AS cost_centre_allocated_amount,
               COALESCE(committed.committed_amount, 0) AS cost_centre_committed_amount
          FROM finance_budget_line l
@@ -2352,7 +2356,8 @@ export const branchBudgetService = {
               vm.vendor_name AS preferred_vendor_name,
               (l.quantity-l.reserved_quantity-l.consumed_quantity)
                 AS available_quantity,
-              (l.pnl_cost_amount-l.reserved_amount-l.consumed_amount)
+              -- Ex-GST headroom, the basis GRN approval enforces (budget-tax-basis.ts).
+              ${budgetLineAvailableSql("l")}
                 AS available_gross_amount
          FROM finance_budget_line l
          JOIN finance_budget_header h ON h.id = l.budget_id

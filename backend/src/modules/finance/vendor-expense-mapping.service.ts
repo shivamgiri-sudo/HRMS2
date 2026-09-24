@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { budgetLineAvailableSql } from "../process-pnl/budget-tax-basis.js";
 
 /**
  * Which Head / Sub-head a vendor may be booked against, and — more importantly — which of
@@ -272,7 +273,10 @@ export const vendorExpenseMappingService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT h.id AS head_id, h.head_code, h.head_name,
               s.id AS sub_head_id, s.sub_head_code, s.sub_head_name,
-              SUM(l.gross_amount - l.reserved_amount - l.consumed_amount) AS available_amount
+              -- Ex-GST headroom, the same basis the GRN approval gate enforces (was gross_amount,
+              -- a GST-inclusive ceiling minus ex-GST counters, which offered sub-heads the gate
+              -- would then refuse).
+              SUM(${budgetLineAvailableSql("l")}) AS available_amount
          FROM finance_budget_line l
          JOIN finance_budget_header bh ON bh.id = l.budget_id
          JOIN finance_expense_head_master h ON ${HEAD_MATCH}
