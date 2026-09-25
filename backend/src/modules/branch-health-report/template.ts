@@ -234,7 +234,7 @@ export function renderEmail(
       color: C.success,
     },
     {
-      label: "Pending Approval",
+      label: "Pending Approval (all open)",
       value: String(raw.grnStats.pending),
       color:
         raw.grnStats.pending >= 5
@@ -333,7 +333,7 @@ export function renderEmail(
         ? C.warn
         : C.success;
   const shrinkageSourceNote = raw.shrinkage.rosterBased
-    ? `<p style="${FONT}font-size:10px;color:${C.muted};margin:6px 0 0 0;">Source: uploaded roster shift timings vs attendance (shifts not yet started, week-offs and approved leave excluded)</p>`
+    ? `<p style="${FONT}font-size:10px;color:${C.muted};margin:6px 0 0 0;">Source: today's uploaded roster (shift timings) vs first punch. Shrinkage = no punch ÷ planned, counting only shifts already started; week-offs, leave and yet-to-start shifts are excluded.</p>`
     : `<p style="${FONT}font-size:10px;color:${C.warn};margin:6px 0 0 0;">⚠ No roster uploaded for this branch today — shrinkage cannot be calculated</p>`;
   const shrinkageBody =
     kpiStrip([
@@ -358,11 +358,28 @@ export function renderEmail(
         color: C.muted,
       },
       {
+        label: "Yet to Start",
+        value: String(raw.shrinkage.yetToStart),
+        color: C.muted,
+      },
+      {
         label: "Shrinkage %",
         value: `${raw.shrinkage.shrinkagePct}%`,
         color: shrinkageColor,
       },
-    ]) + shrinkageSourceNote;
+    ]) +
+    (raw.shrinkage.byShift.length
+      ? dataTable(
+          ["Shift", "Planned", "Present", "Absent"],
+          raw.shrinkage.byShift.map((b) => [
+            b.shift,
+            String(b.planned),
+            String(b.present),
+            String(b.absent),
+          ]),
+        )
+      : "") +
+    shrinkageSourceNote;
 
   // ── 7. Open Hiring Pipeline ──
   const hiringBody =
@@ -382,27 +399,34 @@ export function renderEmail(
       : `<p style="${FONT}font-size:13px;color:${C.muted};margin:0;">No open hiring pipeline for this branch</p>`;
 
   // ── 8. Running P&L Snapshot ──
-  const pnlBody = raw.runningPnl.dataAvailable
+  const pnl = raw.runningPnl;
+  const opColor = pnl.operatingProfit < 0 ? C.danger : C.success;
+  const estimateWarn = pnl.revenueIsEstimate
+    ? `<p style="${FONT}font-size:10px;color:${C.warn};margin:6px 0 0 0;">⚠ Month still open: revenue is the full-month ${esc(pnl.revenueBasis)} estimate, salary cost is accrued only to ${esc(pnl.costAsOf ?? "the last refresh")} — OP % is indicative, not final.</p>`
+    : "";
+  const coverageWarn =
+    pnl.peopleCostCoveragePct != null && pnl.peopleCostCoveragePct < 99.5
+      ? `<p style="${FONT}font-size:10px;color:${C.warn};margin:6px 0 0 0;">⚠ Salary cost covers ${pnl.peopleCostCoveragePct}% of active headcount — operating profit is overstated by the uncovered staff.</p>`
+      : "";
+  const pnlBody = pnl.dataAvailable
     ? kpiStrip([
-        {
-          label: "Salary Cost MTD",
-          value: inr(raw.runningPnl.salaryCostMtd),
-          color: C.primary,
-          subtext: raw.runningPnl.periodCode,
-        },
-        {
-          label: "GRN Expense MTD",
-          value: inr(raw.runningPnl.grnExpenseMtd),
-          color: C.accent,
-          subtext: "HRMS-raised only",
-        },
-        {
-          label: "Total Cost MTD",
-          value: inr(raw.runningPnl.totalCostMtd),
-          color: raw.runningPnl.totalCostMtd > 0 ? C.warn : C.primary,
-        },
-      ])
-    : `<p style="${FONT}font-size:13px;color:${C.muted};margin:0;">No P&amp;L data available for ${raw.runningPnl.periodCode || reportDate.slice(0, 7)}</p>`;
+        { label: "Recognised Revenue", value: inr(pnl.revenueRecognized), color: C.primary, subtext: pnl.periodCode },
+        { label: "Invoiced", value: inr(pnl.revenueInvoiced), color: C.accent },
+        { label: "Projected (Contracted)", value: inr(pnl.revenueProjected), color: C.muted },
+      ]) +
+      kpiStrip([
+        { label: "Salary (Direct Cost)", value: inr(pnl.directCost), color: C.primary },
+        { label: "IDC (GRN Spend)", value: inr(pnl.indirectCost), color: C.accent },
+        { label: "Total Cost", value: inr(pnl.totalCost), color: C.warn },
+      ]) +
+      kpiStrip([
+        { label: "Operating Profit", value: inr(pnl.operatingProfit), color: opColor },
+        { label: "OP %", value: pnl.opPct != null ? `${pnl.opPct.toFixed(1)}%` : "—", color: opColor },
+      ]) +
+      `<p style="${FONT}font-size:10px;color:${C.muted};margin:6px 0 0 0;">Source: HRMS P&amp;L statement (branch view) — same engine as the P&amp;L page; revenue basis: ${esc(pnl.revenueBasis || "n/a")}.</p>` +
+      estimateWarn +
+      coverageWarn
+    : `<p style="${FONT}font-size:13px;color:${C.muted};margin:0;">No P&amp;L data available for ${pnl.periodCode || reportDate.slice(0, 7)}</p>`;
 
   // ── 9. Headcount ──
   const hcBody = `
@@ -432,17 +456,39 @@ export function renderEmail(
     </table>`;
 
   // ── 8. Process performance ──
+  const MAX_KPIS_PER_PROCESS = 6;
+  const attainColor = (pct: number) =>
+    pct >= 90 ? C.success : pct >= 70 ? C.warn : C.danger;
+  const kpiValue = (n: number, unit: string) =>
+    `${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}${unit.toLowerCase().startsWith("percent") ? "%" : ""}`;
   const perfBody = raw.processPerformance.length
     ? dataTable(
-        ["Process", "KPI Attainment", "Quality", "Status"],
-        raw.processPerformance.map((p) => [
-          p.process,
-          p.opsScore != null ? `${p.opsScore}%` : "—",
-          p.qualityScore != null ? `${p.qualityScore}%` : "—",
-          { raw: processBadge(p.status) },
+        ["Process / KPI", "Actual", "Target", "Attainment", "Status"],
+        raw.processPerformance.flatMap((p) => [
+          [
+            { raw: `<strong>${esc(p.process)}</strong>` },
+            "",
+            "",
+            {
+              raw: `<strong>${[p.opsScore, p.qualityScore]
+                .filter((v): v is number => v != null)
+                .map((v) => `${v}%`)
+                .join(" / ")}</strong>`,
+            },
+            { raw: processBadge(p.status) },
+          ],
+          ...p.metrics.slice(0, MAX_KPIS_PER_PROCESS).map((m) => [
+            { raw: `<span style="padding-left:12px;color:${C.muted};">${esc(m.name)}${m.lowerIsBetter ? " ↓" : ""}</span>` },
+            kpiValue(m.actual, m.unit),
+            kpiValue(m.target, m.unit),
+            { raw: `<span style="color:${attainColor(m.attainmentPct)};font-weight:700;">${m.attainmentPct}%</span>` },
+            "",
+          ]),
         ]),
-      )
-    : `<p style="${FONT}font-size:13px;color:${C.muted};margin:0;">No performance data available — KPI module not yet configured for this branch</p>`;
+        true,
+      ) +
+      `<p style="${FONT}font-size:10px;color:${C.muted};margin:6px 0 0 0;">Source: KPI module daily actuals, last 14 days average vs process target. Attainment capped at 120%; ↓ = lower is better. Showing the ${MAX_KPIS_PER_PROCESS} weakest KPIs per process.</p>`
+    : `<p style="${FONT}font-size:13px;color:${C.muted};margin:0;">No KPI actuals with a configured target in the last 14 days for this branch</p>`;
 
   // ── 9. Pending actions ──
   const actionsBody = raw.pendingActions.length
@@ -516,7 +562,7 @@ export function renderEmail(
     sectionHeader("10. Open Hiring Pipeline — Active Candidates"),
     `<tr><td>${card(hiringBody)}</td></tr>`,
     // Running P&L
-    sectionHeader("11. Running P&L Snapshot — Month-to-Date"),
+    sectionHeader("11. P&L Snapshot — Month-to-Date"),
     `<tr><td>${card(pnlBody)}</td></tr>`,
     // Signals
     sectionHeader("12. Critical Intervention Points"),

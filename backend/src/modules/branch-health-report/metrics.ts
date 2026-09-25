@@ -164,17 +164,20 @@ export function classifySignals(raw: BranchHealthRawData): {
   }
 
   // Running P&L snapshot
-  if (raw.runningPnl.dataAvailable) {
-    const salaryPct =
-      raw.runningPnl.totalCostMtd > 0
-        ? Math.round(
-            (raw.runningPnl.salaryCostMtd / raw.runningPnl.totalCostMtd) * 100,
-          )
-        : 0;
-    positiveAchievements.push({
-      label: `Running cost MTD: ₹${fmt(raw.runningPnl.totalCostMtd)}`,
-      detail: `Salary ${salaryPct}% · GRN expenses ₹${fmt(raw.runningPnl.grnExpenseMtd)}`,
-    });
+  const pnl = raw.runningPnl;
+  if (pnl.dataAvailable && pnl.opPct != null) {
+    if (pnl.opPct < 0 && !pnl.revenueIsEstimate) {
+      criticalPoints.push({
+        label: `Operating loss MTD: ${pnl.opPct.toFixed(1)}% OP`,
+        detail: `Revenue ₹${fmt(pnl.revenueRecognized)} vs cost ₹${fmt(pnl.totalCost)}`,
+        severity: "critical",
+      });
+    } else if (!pnl.revenueIsEstimate) {
+      positiveAchievements.push({
+        label: `Operating profit MTD: ${pnl.opPct.toFixed(1)}% OP`,
+        detail: `Revenue ₹${fmt(pnl.revenueRecognized)} · Cost ₹${fmt(pnl.totalCost)}`,
+      });
+    }
   }
 
   // Process performance

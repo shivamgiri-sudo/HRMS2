@@ -9,6 +9,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { getStatement } from "../process-pnl/pnl-statement.service.js";
 import { notDialDeskProcessSql } from "../../shared/ownCompanyCostCentre.js";
 import { isShiftDueYet } from "../wfm/shift-due.util.js";
 
@@ -102,6 +103,19 @@ const GRN_PENDING_STATUSES = [
   "returned_to_raiser",
 ];
 
+/** Open HRMS-raised GRNs awaiting approval, all-time. The one definition behind both the GRN
+ *  summary and the Pending Actions section so the two can never disagree. */
+export async function countPendingGrns(branchId: string): Promise<number> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM grn_request
+      WHERE branch_id = ?
+        AND bill_source_id IS NULL
+        AND status IN (${GRN_PENDING_STATUSES.map(() => "?").join(",")})`,
+    [branchId, ...GRN_PENDING_STATUSES],
+  );
+  return Number((rows[0] as any)?.cnt ?? 0);
+}
+
 export async function fetchGrnStats(
   branchId: string,
   today: string,
@@ -111,20 +125,19 @@ export async function fetchGrnStats(
     `SELECT
        COUNT(*)                                                           AS raised,
        SUM(status IN (${GRN_APPROVED_STATUSES.map(() => "?").join(",")})) AS approved,
-       SUM(status IN (${GRN_PENDING_STATUSES.map(() => "?").join(",")}))  AS pending,
        COALESCE(SUM(amount_with_tax), 0)                                  AS total_amount
      FROM grn_request
     WHERE branch_id = ?
       AND bill_source_id IS NULL
       AND status <> 'draft'
       AND DATE(created_at) >= ?`,
-    [...GRN_APPROVED_STATUSES, ...GRN_PENDING_STATUSES, branchId, monthStart],
+    [...GRN_APPROVED_STATUSES, branchId, monthStart],
   );
   const r = rows[0] as any;
   return {
     raised: Number(r?.raised ?? 0),
     approved: Number(r?.approved ?? 0),
-    pending: Number(r?.pending ?? 0),
+    pending: await countPendingGrns(branchId),
     totalRaisedAmount: Number(r?.total_amount ?? 0),
   };
 }
@@ -295,6 +308,11 @@ export interface ShrinkageStats {
   onLeave: number;
   shrinkagePct: number;
   rosterBased: boolean;
+  /** Rostered to work but their shift has not reached start + grace yet, and no punch so far. */
+  yetToStart: number;
+  /** Rostered week-off but punched in anyway — informational, not in the shrinkage maths. */
+  weekOffWorked: number;
+  byShift: { shift: string; planned: number; present: number; absent: number }[];
 }
 
 export interface OpenHiringStats {
@@ -304,40 +322,58 @@ export interface OpenHiringStats {
 
 export interface RunningPnlStats {
   periodCode: string;
-  salaryCostMtd: number;
-  grnExpenseMtd: number;
-  totalCostMtd: number;
+  /** Recognised revenue as the P&L statement books it (system revenue, before manual adjustments). */
+  revenueRecognized: number;
+  revenueInvoiced: number;
+  /** Contracted (planned-seat) revenue for the period — the projection the branch is working to. */
+  revenueProjected: number;
+  /** Direct cost: agent + DSC + BMC salaries. */
+  directCost: number;
+  /** Indirect cost: consumed + committed GRN spend allocated to the branch. */
+  indirectCost: number;
+  totalCost: number;
+  operatingProfit: number;
+  opPct: number | null;
+  /** Share of active headcount whose salary is in the cost — below 100 the profit is overstated. */
+  peopleCostCoveragePct: number | null;
+  revenueBasis: string;
+  /** Month still open and revenue not yet invoiced: revenue is a full-month estimate while cost accrues to costAsOf. */
+  revenueIsEstimate: boolean;
+  /** Date (YYYY-MM-DD) up to which salary cost has been accrued. */
+  costAsOf: string | null;
   dataAvailable: boolean;
 }
 
-const PRESENT_STATUSES = new Set(["present", "half_day", "missing_punch"]);
-const LEAVE_STATUSES = new Set([
-  "leave_approved",
-  "approved_leave",
-  "half_day_leave",
-  "leave",
-  "wfh",
-]);
+const LEAVE_STATUSES = new Set(["leave_approved", "approved_leave", "half_day_leave", "leave"]);
+const NON_WORKING_ASSIGNMENTS = new Set(["WEEK_OFF", "LEAVE", "HOLIDAY"]);
+
+const hhmm = (t: unknown): string => String(t ?? "").slice(0, 5);
 
 /**
- * Shrinkage = unplanned absences / employees who were rostered to work AND whose
- * shift has already started (isShiftDueYet). Week-offs, approved leave and shifts
- * not yet due carry no verdict, so they are excluded from the denominator. A punch
- * without a punch-out (missing_punch) still counts as present.
- * Any roster publish_status counts — the imported roster is the plan of record.
+ * Shrinkage = rostered people with no punch / rostered people whose shift is already due.
+ * Same rule as the WFM branch dashboard (roster-intelligence.service.ts):
+ *  - plan = the uploaded roster row for today: week-off, leave and holiday rows are not planned;
+ *  - presence = a real punch (attendance_daily_record.clock_in_time), NOT attendance_status —
+ *    dialler-sourced rows carry a provisional "absent" status although the person punched in;
+ *  - a shift that has not reached start + grace is "yet to start", excluded until it is due;
+ *  - approved leave (attendance side) is excluded from the plan like roster leave.
+ * Shift timing comes from the roster row, falling back to the shift template.
  */
 export async function fetchShrinkage(
   branchId: string,
   today: string,
 ): Promise<ShrinkageStats> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ra.shift_start_time, adr.attendance_status
+    `SELECT ra.assignment_type, ra.is_week_off,
+            COALESCE(ra.shift_start_time, st.start_time) AS shift_start,
+            COALESCE(ra.shift_end_time, st.end_time)     AS shift_end,
+            adr.clock_in_time, adr.attendance_status
        FROM wfm_roster_assignment ra
        JOIN employees e ON e.id = ra.employee_id AND e.branch_id = ? AND e.active_status = 1
+       LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id
        LEFT JOIN attendance_daily_record adr
               ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
-      WHERE ra.roster_date = ?
-        AND ra.is_week_off = 0`,
+      WHERE ra.roster_date = ?`,
     [branchId, today],
   );
 
@@ -345,18 +381,46 @@ export async function fetchShrinkage(
   let present = 0;
   let absent = 0;
   let onLeave = 0;
+  let yetToStart = 0;
+  let weekOffWorked = 0;
+  const shifts = new Map<string, { planned: number; present: number; absent: number }>();
+
   for (const r of rows as any[]) {
-    const status = String(r.attendance_status ?? "");
-    const punchedIn = PRESENT_STATUSES.has(status);
-    if (!punchedIn && !isShiftDueYet(r.shift_start_time, today)) continue;
-    if (LEAVE_STATUSES.has(status)) {
+    const type = String(r.assignment_type ?? "").toUpperCase();
+    const punched = r.clock_in_time != null;
+    if (NON_WORKING_ASSIGNMENTS.has(type) || Number(r.is_week_off) === 1) {
+      if (punched && type !== "LEAVE") weekOffWorked += 1;
+      if (type === "LEAVE") onLeave += 1;
+      continue;
+    }
+    if (LEAVE_STATUSES.has(String(r.attendance_status ?? ""))) {
       onLeave += 1;
       continue;
     }
+    if (!punched && !isShiftDueYet(r.shift_start ? String(r.shift_start) : null, today)) {
+      yetToStart += 1;
+      continue;
+    }
     scheduled += 1;
-    if (punchedIn) present += 1;
-    else absent += 1;
+    const key =
+      r.shift_start || r.shift_end
+        ? `${hhmm(r.shift_start)}–${hhmm(r.shift_end)}`
+        : "No shift time on roster";
+    const bucket = shifts.get(key) ?? { planned: 0, present: 0, absent: 0 };
+    bucket.planned += 1;
+    if (punched) {
+      present += 1;
+      bucket.present += 1;
+    } else {
+      absent += 1;
+      bucket.absent += 1;
+    }
+    shifts.set(key, bucket);
   }
+
+  const byShift = [...shifts.entries()]
+    .map(([shift, v]) => ({ shift, ...v }))
+    .sort((a, b) => a.shift.localeCompare(b.shift));
 
   return {
     scheduled,
@@ -365,6 +429,9 @@ export async function fetchShrinkage(
     onLeave,
     shrinkagePct: scheduled > 0 ? Math.round((absent / scheduled) * 100) : 0,
     rosterBased: (rows as any[]).length > 0,
+    yetToStart,
+    weekOffWorked,
+    byShift,
   };
 }
 
@@ -416,8 +483,18 @@ export async function fetchHeadcountMovement(
 
 // ─── 8. Process performance (ops + quality from kpi_entry) ───────────────────
 
+export interface ProcessKpiMetric {
+  name: string;
+  unit: string;
+  actual: number;
+  target: number;
+  lowerIsBetter: boolean;
+  attainmentPct: number;
+}
+
 export interface ProcessPerformance {
   process: string;
+  metrics: ProcessKpiMetric[];
   opsScore: number | null;
   qualityScore: number | null;
   status: "healthy" | "watch" | "critical";
@@ -458,6 +535,8 @@ export async function fetchProcessPerformance(
 ): Promise<ProcessPerformance[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT pm.process_name AS process,
+            mm.metric_name,
+            mm.unit,
             mm.direction,
             mm.family,
             mm.category,
@@ -475,12 +554,15 @@ export async function fetchProcessPerformance(
         AND d.score_date BETWEEN DATE_SUB(?, INTERVAL ${KPI_LOOKBACK_DAYS} DAY) AND ?
         AND d.actual_value IS NOT NULL
       GROUP BY pm.process_name, d.process_id_at_event, d.metric_id,
-               mm.direction, mm.family, mm.category
+               mm.metric_name, mm.unit, mm.direction, mm.family, mm.category
       ORDER BY pm.process_name`,
     [today, branchId, today, today],
   );
 
-  const byProcess = new Map<string, { ops: number[]; quality: number[] }>();
+  const byProcess = new Map<
+    string,
+    { ops: number[]; quality: number[]; metrics: ProcessKpiMetric[] }
+  >();
   for (const r of rows as any[]) {
     if (r.target == null) continue;
     const pct = kpiAttainmentPct(
@@ -490,11 +572,19 @@ export async function fetchProcessPerformance(
     );
     if (pct == null) continue;
     const name = String(r.process);
-    const bucket = byProcess.get(name) ?? { ops: [], quality: [] };
+    const bucket = byProcess.get(name) ?? { ops: [], quality: [], metrics: [] };
     const isQuality =
       String(r.family).toLowerCase() === "quality" ||
       String(r.category).toLowerCase() === "quality";
     (isQuality ? bucket.quality : bucket.ops).push(pct);
+    bucket.metrics.push({
+      name: String(r.metric_name),
+      unit: String(r.unit ?? ""),
+      actual: Number(r.avg_actual),
+      target: Number(r.target),
+      lowerIsBetter: r.direction === "lower_is_better",
+      attainmentPct: Math.round(pct),
+    });
     byProcess.set(name, bucket);
   }
 
@@ -513,7 +603,8 @@ export async function fetchProcessPerformance(
         : worst >= KPI_HEALTHY_PCT
           ? "healthy"
           : "watch";
-    return { process, opsScore, qualityScore, status };
+    const metrics = [...b.metrics].sort((x, y) => x.attainmentPct - y.attainmentPct);
+    return { process, metrics, opsScore, qualityScore, status };
   });
 }
 
@@ -547,41 +638,58 @@ export async function fetchOpenHiring(
 
 // ─── 10. Running P&L Snapshot ─────────────────────────────────────────────────
 
+/**
+ * Branch P&L for the month, taken from the same statement engine the P&L page renders
+ * (getStatement, viewBy=branch) so the email and the app can never quote different numbers.
+ */
 export async function fetchRunningPnl(
   branchId: string,
   today: string,
 ): Promise<RunningPnlStats> {
   const period = today.slice(0, 7); // YYYY-MM
-
-  // Earned salary costs MTD from running snapshot
-  const [salRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(earned_salary_till_date), 0) AS salary_cost
-       FROM pnl_running_salary_snapshot
-      WHERE branch_id = ? AND period_code = ?`,
-    [branchId, period],
-  );
-
-  // HRMS-native GRN expense MTD (pnl_cost_amount when set, else amount_with_tax)
-  const [grnRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(COALESCE(pnl_cost_amount, amount_with_tax)), 0) AS grn_cost
-       FROM grn_request
-      WHERE branch_id = ?
-        AND bill_source_id IS NULL
-        AND DATE_FORMAT(created_at, '%Y-%m') = ?
-        AND status NOT IN ('draft','rejected','cancelled')`,
-    [branchId, period],
-  );
-
-  const salaryCostMtd = Number((salRows[0] as any)?.salary_cost ?? 0);
-  const grnExpenseMtd = Number((grnRows[0] as any)?.grn_cost ?? 0);
-  const totalCostMtd = salaryCostMtd + grnExpenseMtd;
-
+  const empty: RunningPnlStats = {
+    periodCode: period,
+    revenueRecognized: 0,
+    revenueInvoiced: 0,
+    revenueProjected: 0,
+    directCost: 0,
+    indirectCost: 0,
+    totalCost: 0,
+    operatingProfit: 0,
+    opPct: null,
+    peopleCostCoveragePct: null,
+    revenueBasis: "",
+    revenueIsEstimate: false,
+    costAsOf: null,
+    dataAvailable: false,
+  };
+  const statement: any = await getStatement({ period, branchId }, "branch");
+  const column = statement.columns?.[0];
+  if (!column) return empty;
+  const value = (key: string): number => {
+    const row = statement.rows.find((r: any) => r.componentKey === key);
+    return Number(row?.values?.[column.id] ?? 0) || 0;
+  };
+  const revenueRecognized = value("recognized_revenue");
+  const totalCost = value("total_cost");
   return {
     periodCode: period,
-    salaryCostMtd,
-    grnExpenseMtd,
-    totalCostMtd,
-    dataAvailable: salaryCostMtd > 0 || grnExpenseMtd > 0,
+    revenueRecognized,
+    revenueInvoiced: value("invoiced_revenue"),
+    revenueProjected: value("planned_revenue"),
+    directCost: value("dc_total"),
+    indirectCost: value("total_idc"),
+    totalCost,
+    operatingProfit: value("operating_profit"),
+    opPct: revenueRecognized > 0 ? value("operating_profit_pct") : null,
+    peopleCostCoveragePct: column.peopleCostCoveragePct ?? null,
+    revenueBasis: String(statement.revenueBasis ?? ""),
+    revenueIsEstimate:
+      Boolean(statement.periodOpen) && statement.revenueBasis !== "invoiced",
+    costAsOf: statement.peopleCostAsOf
+      ? new Date(statement.peopleCostAsOf).toISOString().slice(0, 10)
+      : null,
+    dataAvailable: revenueRecognized > 0 || totalCost > 0,
   };
 }
 
@@ -598,15 +706,7 @@ export async function fetchPendingActions(
 ): Promise<PendingAction[]> {
   const results: PendingAction[] = [];
 
-  // Only HRMS-raised GRNs pending approval
-  const [grnRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS cnt FROM grn_request
-      WHERE branch_id = ?
-        AND bill_source_id IS NULL
-        AND status IN (${GRN_PENDING_STATUSES.map(() => "?").join(",")})`,
-    [branchId, ...GRN_PENDING_STATUSES],
-  );
-  const pendingGrns = Number((grnRows[0] as any)?.cnt ?? 0);
+  const pendingGrns = await countPendingGrns(branchId);
   if (pendingGrns > 0)
     results.push({
       type: "grn_pending",
@@ -700,6 +800,9 @@ export async function fetchAllBranchHealthData(
         onLeave: 0,
         shrinkagePct: 0,
         rosterBased: false,
+        yetToStart: 0,
+        weekOffWorked: 0,
+        byShift: [],
       },
       headcount: {
         joinedToday: 0,
@@ -712,9 +815,18 @@ export async function fetchAllBranchHealthData(
       openHiring: { activePipeline: 0, byStage: [] },
       runningPnl: {
         periodCode: today.slice(0, 7),
-        salaryCostMtd: 0,
-        grnExpenseMtd: 0,
-        totalCostMtd: 0,
+        revenueRecognized: 0,
+        revenueInvoiced: 0,
+        revenueProjected: 0,
+        directCost: 0,
+        indirectCost: 0,
+        totalCost: 0,
+        operatingProfit: 0,
+        opPct: null,
+        peopleCostCoveragePct: null,
+        revenueBasis: "",
+        revenueIsEstimate: false,
+        costAsOf: null,
         dataAvailable: false,
       },
       pendingActions: [],
