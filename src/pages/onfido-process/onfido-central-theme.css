@@ -652,3 +652,17 @@
 .onfido-central-theme th[aria-sort="ascending"],
 .onfido-central-theme th[aria-sort="descending"] { color: var(--blue); }
 .onfido-central-theme th.oc-right .oc-sortbtn { flex-direction: row-reverse; }
+
+/* OcDataTable fit: header labels wrap instead of forcing a sideways scroll in narrow
+   containers (the Analyst drawer), first-column values stay on one line, and the sort
+   arrow takes less room. */
+.onfido-central-theme .oc-table-scroll table.oc-table th {
+  white-space: normal;
+  line-height: 1.2;
+  padding: 8px 8px;
+  vertical-align: bottom;
+}
+.onfido-central-theme .oc-table-scroll table.oc-table td { padding: 8px 8px; }
+.onfido-central-theme .oc-table-scroll table.oc-table td:first-child { white-space: nowrap; }
+.onfido-central-theme .oc-sortbtn { gap: 3px; text-align: inherit; }
+.onfido-central-theme .oc-sortbtn svg { flex-shrink: 0; width: 10px; height: 10px; }
