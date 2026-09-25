@@ -8,9 +8,9 @@
 --
 -- DROP CHECK is metadata-only (no table rebuild). The rule it enforced is now enforced by
 -- salary-start-date.service.ts on every write path (a date before joining needs payroll_head /
--- super_admin authority and a recorded reason). A replacement database-level CHECK that honours
--- employees.salary_start_pre_joining_approved (added in 1883) needs a full rebuild of employees
--- (~15+ minutes on production, writes blocked), so it is deliberately left for a maintenance window.
+-- super_admin authority and a recorded reason). A replacement database-level CHECK needs a full
+-- rebuild of employees (~15+ minutes on production, writes blocked), so it is deliberately left for
+-- a maintenance window.
 -- Guarded, replay-safe.
 
 SET @v1_exists = (

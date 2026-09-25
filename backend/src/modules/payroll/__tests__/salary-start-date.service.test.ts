@@ -218,7 +218,6 @@ interface FakeState {
     employee_code: string;
     date_of_joining: string;
     salary_start_date: string | null;
-    salary_start_pre_joining_approved: number;
     candidate_id: string | null;
     branch_id: string | null;
     process_id: string | null;
@@ -257,7 +256,6 @@ function newState(over: Partial<FakeState> = {}): FakeState {
       employee_code: "MAS63435",
       date_of_joining: "2026-08-31",
       salary_start_date: "2026-08-31",
-      salary_start_pre_joining_approved: 0,
       candidate_id: "cand-1",
       branch_id: "branch-1",
       process_id: "proc-1",
@@ -295,8 +293,6 @@ function fakeExec(state: FakeState): SqlExecutor {
 
     if (q.startsWith("SELECT id, employee_code, date_of_joining"))
       return [[{ ...state.employee }], []];
-    if (q.startsWith("SELECT salary_start_pre_joining_approved AS f"))
-      return [[{ f: state.employee.salary_start_pre_joining_approved }], []];
     if (q.includes("FROM employee_payroll_head_review WHERE employee_id"))
       return [state.review ? [{ ...state.review }] : [], []];
     if (q.includes("FROM ats_payroll_hr_validation"))
@@ -336,7 +332,6 @@ function fakeExec(state: FakeState): SqlExecutor {
           code: "ER_CHECK_CONSTRAINT_VIOLATED",
         });
       state.employee.salary_start_date = params[0] as string;
-      state.employee.salary_start_pre_joining_approved = params[1] as number;
       return [{ affectedRows: 1 }, []];
     }
     if (q.startsWith("UPDATE ats_payroll_hr_validation")) {
@@ -418,7 +413,6 @@ describe("applySalaryStartDate", () => {
     expect(state.review?.package_effective_from).toBe("2026-09-30");
     expect(state.assignments[0].effective_from).toBe("2026-09-30");
     expect(state.component?.effective_date).toBe("2026-09-30");
-    expect(state.employee.salary_start_pre_joining_approved).toBe(0);
     expect(result).toMatchObject({
       changed: true,
       oldDate: "2026-08-31",
@@ -433,7 +427,7 @@ describe("applySalaryStartDate", () => {
     });
   });
 
-  it("backdating before joining by Payroll Head sets the pre-joining flag on employees and needs a reason", async () => {
+  it("backdating before joining by Payroll Head needs a reason and is audited as pre-joining", async () => {
     const state = newState({
       employee: {
         ...newState().employee,
@@ -459,7 +453,6 @@ describe("applySalaryStartDate", () => {
       today: "2026-09-25",
     });
     expect(state.employee.salary_start_date).toBe("2026-08-25");
-    expect(state.employee.salary_start_pre_joining_approved).toBe(1);
     expect(result).toMatchObject({ preJoining: true, beforeToday: true });
     expect(state.audit[0]).toMatchObject({
       pre_joining: 1,
@@ -467,21 +460,7 @@ describe("applySalaryStartDate", () => {
     });
   });
 
-  it("clears the pre-joining flag again when the date moves back to on/after joining", async () => {
-    const state = newState();
-    state.employee.salary_start_date = "2026-08-25";
-    state.employee.salary_start_pre_joining_approved = 1;
-    await applySalaryStartDate(fakeExec(state), {
-      ...PH,
-      employeeId: "emp-1",
-      newDate: "2026-08-31",
-      reason: "Restored to joining date",
-      today: "2026-09-25",
-    });
-    expect(state.employee.salary_start_pre_joining_approved).toBe(0);
-  });
-
-  it("refuses standard authority a date before joining and never sets the flag", async () => {
+  it("refuses standard authority a date before joining", async () => {
     const state = newState();
     await expect(
       applySalaryStartDate(fakeExec(state), {
@@ -493,7 +472,6 @@ describe("applySalaryStartDate", () => {
         today: "2026-08-20",
       }),
     ).rejects.toMatchObject({ code: "SALARY_START_BEFORE_JOINING" });
-    expect(state.employee.salary_start_pre_joining_approved).toBe(0);
     expect(state.audit).toHaveLength(0);
   });
 
@@ -651,7 +629,6 @@ describe("applySalaryStartDate", () => {
     });
 
     expect(state.employee.salary_start_date).toBe("2026-08-25");
-    expect(state.employee.salary_start_pre_joining_approved).toBe(1);
     expect(
       (await getSalaryStartDateConsistency(fakeExec(state), "emp-1"))
         .consistent,

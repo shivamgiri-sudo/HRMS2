@@ -108,11 +108,10 @@ async function seed(opts: {
     asg: uuid(4000 + seq),
     code: `SBX${RUN}${String(seq).padStart(3, "0")}`,
   };
-  const flag = opts.date < opts.doj ? 1 : 0;
   await db.execute(
-    `INSERT INTO employees (id, employee_code, first_name, date_of_joining, salary_start_date, salary_start_pre_joining_approved, candidate_id, branch_id)
-     VALUES (?, ?, 'Sandbox', ?, ?, ?, ?, ?)`,
-    [s.emp, s.code, opts.doj, opts.date, flag, s.cand, opts.branch ?? uuid(9)],
+    `INSERT INTO employees (id, employee_code, first_name, date_of_joining, salary_start_date, candidate_id, branch_id)
+     VALUES (?, ?, 'Sandbox', ?, ?, ?, ?)`,
+    [s.emp, s.code, opts.doj, opts.date, s.cand, opts.branch ?? uuid(9)],
   );
   await db.execute(
     `INSERT INTO ats_payroll_hr_validation (id, candidate_id, employment_type, gross_salary, joining_date, salary_start_date)
@@ -141,7 +140,7 @@ async function row(sql: string, params: unknown[]) {
 }
 const employeeDates = (emp: string) =>
   row(
-    `SELECT salary_start_date AS d, salary_start_pre_joining_approved AS f FROM employees WHERE id = ?`,
+    `SELECT salary_start_date AS d FROM employees WHERE id = ?`,
     [emp],
   );
 
@@ -150,14 +149,6 @@ describe.skipIf(!enabled)("salary start date against a real MySQL", () => {
     // Refuse to run against anything that is not the local throwaway server.
     const host = await row("SELECT @@hostname AS h, @@port AS p", []);
     expect(Number(host.p)).toBe(PORT);
-    const flagCol = await row(
-      `SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema = 'mas_hrms' AND table_name = 'employees' AND column_name = 'salary_start_pre_joining_approved'`,
-      [],
-    );
-    expect(
-      Number(flagCol.n),
-      "migration 1883 must be applied to the sandbox",
-    ).toBe(1);
   });
 
   beforeEach(async () => {
@@ -200,7 +191,7 @@ describe.skipIf(!enabled)("salary start date against a real MySQL", () => {
   });
 
   describe("applySalaryStartDate on real tables", () => {
-    it("carries Payroll Head's backdated date to every copy, sets the flag, and audits it", async () => {
+    it("carries Payroll Head's backdated date to every copy, and audits it", async () => {
       const s = await seed({ doj: "2030-03-10", date: "2030-03-10" });
       const result = await setSalaryStartDate({
         employeeId: s.emp,
@@ -218,7 +209,7 @@ describe.skipIf(!enabled)("salary start date against a real MySQL", () => {
         beforeToday: true,
         oldDate: "2030-03-10",
       });
-      expect(await employeeDates(s.emp)).toEqual({ d: "2030-03-01", f: 1 });
+      expect(await employeeDates(s.emp)).toEqual({ d: "2030-03-01" });
       expect(
         (
           await row(
@@ -275,7 +266,7 @@ describe.skipIf(!enabled)("salary start date against a real MySQL", () => {
           today: "2030-02-20",
         }),
       ).rejects.toMatchObject({ code: "SALARY_START_BEFORE_JOINING" });
-      expect(await employeeDates(s.emp)).toEqual({ d: "2030-03-10", f: 0 });
+      expect(await employeeDates(s.emp)).toEqual({ d: "2030-03-10" });
       expect(
         (
           await row(
@@ -390,7 +381,7 @@ describe.skipIf(!enabled)("salary start date against a real MySQL", () => {
           authority: "payroll_head", allowBackdate: true, today: "2030-03-05",
         }),
       ).rejects.toMatchObject({ code: "REASON_REQUIRED" });
-      expect(await employeeDates(s.emp)).toEqual({ d: "2030-03-10", f: 0 });
+      expect(await employeeDates(s.emp)).toEqual({ d: "2030-03-10" });
       expect((await row(`SELECT COUNT(*) AS n FROM employee_salary_start_date_audit WHERE employee_id = ?`, [s.emp])).n).toBe(0);
       // Row locks are released: a normal write goes straight through.
       await db.execute(`UPDATE employees SET first_name = 'Lock free' WHERE id = ?`, [s.emp]);
@@ -402,7 +393,7 @@ describe.skipIf(!enabled)("salary start date against a real MySQL", () => {
       // The live defect: assignment / package / validation carry Payroll Head's 1 March, employees carries joining.
       const s = await seed({ doj: "2030-03-10", date: "2030-03-01" });
       await db.execute(
-        `UPDATE employees SET salary_start_date = '2030-03-10', salary_start_pre_joining_approved = 0 WHERE id = ?`,
+        `UPDATE employees SET salary_start_date = '2030-03-10' WHERE id = ?`,
         [s.emp],
       );
 
@@ -446,7 +437,7 @@ describe.skipIf(!enabled)("salary start date against a real MySQL", () => {
       expect((await getSalaryStartDateConsistency(db, s.emp)).consistent).toBe(
         true,
       );
-      expect(await employeeDates(s.emp)).toEqual({ d: "2030-03-01", f: 1 });
+      expect(await employeeDates(s.emp)).toEqual({ d: "2030-03-01" });
     });
 
     it("flags two active assignments and an approved pre-joining date that has no audit row", async () => {
@@ -495,7 +486,7 @@ describe.skipIf(!enabled)("salary start date against a real MySQL", () => {
         changed: true,
       });
       const dates = await employeeDates(s.emp);
-      expect(dates).toEqual({ d: "2030-03-14", f: 0 });
+      expect(dates).toEqual({ d: "2030-03-14" });
       expect(
         (
           await row(
@@ -542,7 +533,7 @@ describe.skipIf(!enabled)("salary start date against a real MySQL", () => {
         PH_ROLES,
         "Trainee started 1 March",
       );
-      expect(await employeeDates(s.emp)).toEqual({ d: "2030-03-01", f: 1 });
+      expect(await employeeDates(s.emp)).toEqual({ d: "2030-03-01" });
     });
 
     it("updateAssignmentEffectiveDate: the previously-broken history write now commits, and every copy moves", async () => {

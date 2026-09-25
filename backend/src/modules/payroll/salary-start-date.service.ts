@@ -391,18 +391,12 @@ export async function commitSalaryStartDate(
   } = prepared;
 
   const copiesWritten: string[] = [];
-  const flag =
-    args.allowBackdate === true &&
-    emp.dateOfJoining &&
-    newDate < emp.dateOfJoining
-      ? 1
-      : 0;
-
-  // 1. employees - the column payroll reads. The check constraint (1884) refuses a date before
-  //    joining unless the approved flag is set in the same statement.
+  // 1. employees - the column payroll reads. Whether a date before joining is allowed was decided
+  //    in prepareSalaryStartDate (payroll_head/super_admin authority plus a recorded reason);
+  //    migration 1884 removed the database CHECK that used to refuse it.
   await exec.execute(
-    `UPDATE employees SET salary_start_date = ?, salary_start_pre_joining_approved = ? WHERE id = ?`,
-    [newDate, flag, emp.id],
+    `UPDATE employees SET salary_start_date = ? WHERE id = ?`,
+    [newDate, emp.id],
   );
   copiesWritten.push("employees.salary_start_date");
 
@@ -468,7 +462,6 @@ export async function commitSalaryStartDate(
     exec,
     emp.id,
     newDate,
-    flag,
     args.assignmentAlreadyWritten === true ||
       assignmentCarriesStartDate(state, oldDate),
   );
@@ -508,20 +501,13 @@ async function verifyCopies(
   exec: SqlExecutor,
   employeeId: string,
   expected: string,
-  expectedFlag: number,
   expectAssignment: boolean,
 ): Promise<void> {
   const emp = await loadEmployeeForUpdate(exec, employeeId);
   const state = await loadCopyState(exec, emp);
-  const [flagRows] = await exec.execute<RowDataPacket[]>(
-    `SELECT salary_start_pre_joining_approved AS f FROM employees WHERE id = ? LIMIT 1`,
-    [employeeId],
-  );
   const problems: string[] = [];
   if (emp.salaryStartDate !== expected)
     problems.push(`employees=${emp.salaryStartDate}`);
-  if (Number(flagRows[0]?.f ?? 0) !== expectedFlag)
-    problems.push("pre_joining_flag");
   if (state.validationId && state.validationDate !== expected)
     problems.push(`validation=${state.validationDate}`);
   if (state.reviewId && state.packageDate && state.packageDate !== expected)

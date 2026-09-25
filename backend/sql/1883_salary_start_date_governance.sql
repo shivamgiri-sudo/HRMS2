@@ -1,34 +1,17 @@
 -- 1883_salary_start_date_governance.sql
 -- Salary start date: one authoritative value, every change audited.
 --
--- Two additive objects, both guarded so a replay is a no-op:
+-- Two additive objects, both guarded so a replay is a no-op. NOTHING here alters employees (a
+-- column add on that table is a full COPY rebuild on production - 15+ minutes, and its final
+-- metadata lock times out behind long-running queries).
 --
---   1. employees.salary_start_pre_joining_approved  TINYINT(1) NOT NULL DEFAULT 0
---      Set to 1 ONLY by salary-start-date.service.ts when Payroll Head (or admin/super_admin)
---      deliberately backdates a salary start to before the date of joining, with a recorded
---      reason. Migration 1884 uses it so the database itself still refuses an unauthorised
---      salary_start_date < date_of_joining written by any other path (import, script, PATCH).
---      Default 0 keeps every existing row exactly as valid as it is today.
---
---   2. employee_salary_start_date_audit
+--   1. employee_salary_start_date_audit
 --      One row per change of employees.salary_start_date made through the service: old and new
 --      date, which path made it, who, why, whether it went before joining / before today.
 --      employee_id matches employees.id: CHAR(36) utf8mb4_unicode_ci (verified live 2026-09-25).
-
-SET @col_exists = (
-  SELECT COUNT(*)
-    FROM information_schema.COLUMNS
-   WHERE TABLE_SCHEMA = DATABASE()
-     AND TABLE_NAME = 'employees'
-     AND COLUMN_NAME = 'salary_start_pre_joining_approved'
-);
-SET @sql = IF(@col_exists = 0,
-  'ALTER TABLE employees ADD COLUMN salary_start_pre_joining_approved TINYINT(1) NOT NULL DEFAULT 0',
-  'SELECT ''employees.salary_start_pre_joining_approved already exists'' AS message'
-);
-PREPARE stmt FROM @sql;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
+--
+--   2. payroll_config_flags('salary_start_date_gate_enforced' = 'false'), the switch that turns the
+--      payroll readiness mismatch check from a warning into a blocker.
 
 CREATE TABLE IF NOT EXISTS employee_salary_start_date_audit (
   id CHAR(36) NOT NULL,
