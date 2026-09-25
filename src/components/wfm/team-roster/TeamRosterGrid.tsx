@@ -17,6 +17,12 @@ export interface TeamRosterGridProps {
   staged: Record<string, StagedEdit>;
   onChoose: (row: GridRow, date: string, choice: CellChoice | null) => void;
   onProposeChange: (row: GridRow, date: string) => void;
+  /** "Fill row": one choice for all of this person's empty cells in the range. */
+  onFillRow?: (row: GridRow, choice: CellChoice) => void;
+  /** "Fill day": one choice for everyone's empty cell on this date. */
+  onFillDay?: (date: string, choice: CellChoice) => void;
+  /** Shifts offered in the column-header select (union across the people shown). */
+  dayFillOptions?: ShiftOption[];
 }
 
 export const stagedKey = cellKey;
@@ -100,8 +106,23 @@ function GridCellView({ row, date, props }: { row: GridRow; date: string; props:
   );
 }
 
+function FillSelect({ label, options, onPick }: { label: string; options: ShiftOption[]; onPick: (c: CellChoice) => void }) {
+  return (
+    <select
+      aria-label={label}
+      title={label}
+      className="mt-1 h-6 w-full max-w-[112px] rounded border border-slate-200 bg-white px-0.5 text-[10px] font-normal text-slate-600"
+      value=""
+      onChange={(e) => { const c = parseChoice(e.target.value); if (c) onPick(c); }}
+    >
+      <option value="">Fill all...</option>
+      <ShiftChoiceOptions options={options} />
+    </select>
+  );
+}
+
 export default function TeamRosterGrid(props: TeamRosterGridProps) {
-  const { data, today } = props;
+  const { data, today, onFillRow, onFillDay, dayFillOptions, templates } = props;
   if (data.rows.length === 0) {
     return <p className="rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No team members match your search.</p>;
   }
@@ -115,6 +136,7 @@ export default function TeamRosterGrid(props: TeamRosterGridProps) {
               <th key={d} className={`sticky top-0 z-20 min-w-[112px] border-b bg-slate-50 px-2 py-2 text-center ${d === today ? "text-blue-700" : "text-slate-600"}`}>
                 <div className="font-semibold">{formatDmy(d)}</div>
                 <div className="text-[10px] font-normal text-slate-400">{weekdayShort(d)}</div>
+                {onFillDay && d >= today && <FillSelect label={`Fill ${formatDmy(d)} for everyone`} options={dayFillOptions ?? []} onPick={(c) => onFillDay(d, c)} />}
               </th>
             ))}
           </tr>
@@ -126,6 +148,7 @@ export default function TeamRosterGrid(props: TeamRosterGridProps) {
                 <div className="font-semibold text-slate-800">{row.name}</div>
                 <div className="text-[11px] text-slate-500">{[row.code, row.processName].filter(Boolean).join(" - ")}</div>
                 <LobBadge name={row.lobName} />
+                {onFillRow && <FillSelect label={`Fill all empty days for ${row.name}`} options={shiftOptionsFor(templates, row.processId)} onPick={(c) => onFillRow(row, c)} />}
               </th>
               {data.dates.map((d) => (
                 <td key={d} className="border-b px-1.5 py-1.5 align-middle"><GridCellView row={row} date={d} props={props} /></td>

@@ -912,7 +912,8 @@
     "1871_process_metric_actual_covering_indexes.sql",
     "1880_payroll_head_review_history_action_enum_reapply.sql",
     "1883_salary_start_date_governance.sql",
-    "1884_employees_salary_start_check_v2.sql"
+    "1884_employees_salary_start_check_v2.sql",
+    "migrations/1890_onfido_outlier_action.sql"
   ],
   "approvedDeletions": [
     {
@@ -967,7 +968,8 @@
     "migrations/1865_client_invoice_payment_tables.sql",
     "migrations/1866_bank_ledger_is_migrated_column.sql",
     "migrations/1867_ats_candidate_rewalkin.sql",
-    "migrations/1870_job_requisition_deadline_automation.sql"
+    "migrations/1870_job_requisition_deadline_automation.sql",
+    "migrations/1890_onfido_outlier_action.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",

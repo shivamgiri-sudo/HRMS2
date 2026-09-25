@@ -8,6 +8,7 @@ import { onfidoResponseCache } from "./onfido-response-cache.js";
 import { streamAttritionExitsCsv, streamRecordsCsv } from "./onfido-export.service.js";
 import { mountPoaPageRoutes } from "./onfido-poa-pages.routes.js";
 import { mountOverviewReportRoutes } from "./onfido-overview-report.routes.js";
+import { mountOutlierRoutes } from "./onfido-outlier.routes.js";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { readableProcessIds } from "../process-operations/process-operations.service.js";
@@ -163,6 +164,9 @@ mountPoaPageRoutes(router, [requireAuth, requireRole(...VIEWER_ROLES)]);
 
 // Overview / Analyst Performance / Utilization formats and their WFM inputs (2026-09-23).
 mountOverviewReportRoutes(router, [requireAuth, requireRole(...VIEWER_ROLES)]);
+
+// Outliers and action/closure tracking (2026-09-25 UAT).
+mountOutlierRoutes(router, [requireAuth, requireRole(...VIEWER_ROLES)]);
 
 // Literal routes above are declared before the :table wildcard routes below —
 // otherwise Express would try to match "overview"/"tl-breakdown"/etc as a table key.

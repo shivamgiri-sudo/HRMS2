@@ -152,7 +152,7 @@ async function teamIdsOf(actor: Actor): Promise<{ ids: string[]; truncated: bool
   return { ids: tree.ids, truncated: tree.truncated };
 }
 
-export async function getTeamAttendance(actor: Actor, q: { month: string; search?: string; offset?: number; limit?: number; lob?: LobFilter }) {
+export async function getTeamAttendance(actor: Actor, q: { month: string; search?: string; processId?: string; offset?: number; limit?: number; lob?: LobFilter }) {
   const month = validateMonth(q.month);
   const daysInMonth = daysInMonthOf(month);
   const dates = eachDate(`${month}-01`, `${month}-${String(daysInMonth).padStart(2, "0")}`);
@@ -166,12 +166,14 @@ export async function getTeamAttendance(actor: Actor, q: { month: string; search
   let ids = team.ids;
   const search = (q.search ?? "").trim().slice(0, 100);
   const lobCond = q.lob ? lobCondition(q.lob, "employees") : null;
-  if (search || lobCond) {
+  const processId = (q.processId ?? "").trim().slice(0, 36);
+  if (search || lobCond || processId) {
     const like = `%${search}%`;
     const conds = [`id IN (${placeholders(team.ids.length)})`];
     const params: unknown[] = [...team.ids];
     if (search) { conds.push(`(full_name LIKE ? OR employee_code LIKE ? OR first_name LIKE ? OR last_name LIKE ?)`); params.push(like, like, like, like); }
     if (lobCond) { conds.push(lobCond.sql); params.push(...lobCond.params); }
+    if (processId) { conds.push("process_id = ?"); params.push(processId); }
     ids = rowsOf<RowDataPacket>(await db.execute(
       `SELECT id FROM employees WHERE ${conds.join(" AND ")}`, params,
     )).map((r) => String(r.id));

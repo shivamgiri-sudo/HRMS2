@@ -58,6 +58,11 @@ export function addDaysYmd(ymd: string, days: number): string {
   return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
 }
 
+/** 0 = Sunday .. 6 = Saturday. */
+export function weekdayNumber(ymd: string): number {
+  return new Date(utc(ymd)).getUTCDay();
+}
+
 export function weekdayShort(ymd: string): string {
   return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(utc(ymd)).getUTCDay()];
 }

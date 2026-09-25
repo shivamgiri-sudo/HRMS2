@@ -117,7 +117,7 @@ export async function listTemplates(actor: Actor) {
   };
 }
 
-export interface GridQuery { from: string; to: string; search?: string; offset?: number; limit?: number; lob?: LobFilter }
+export interface GridQuery { from: string; to: string; search?: string; processId?: string; offset?: number; limit?: number; lob?: LobFilter }
 
 function validateRange(from: string, to: string) {
   if (!isValidYmd(from) || !isValidYmd(to)) throw new TeamRosterError(400, "from and to must be valid YYYY-MM-DD dates.", "BAD_DATE");
@@ -143,6 +143,7 @@ export async function getGrid(actor: Actor, q: GridQuery) {
   }
   const lobCond = q.lob ? lobCondition(q.lob, "e") : null;
   if (lobCond) { where.push(lobCond.sql); params.push(...lobCond.params); }
+  if (q.processId) { where.push("e.process_id = ?"); params.push(q.processId); }
   const total = Number(rowsOf<RowDataPacket>(await db.execute(
     `SELECT COUNT(*) AS c FROM employees e WHERE ${where.join(" AND ")}`, params,
   ))[0]?.c ?? 0);

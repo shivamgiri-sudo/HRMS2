@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { buildDayColumnLabel } from "@/lib/attendance-register-columns";
-import { useTeamAttendance, type TeamAttendanceRow, type TeamRosterMe } from "@/hooks/useTeamRoster";
+import { useTeamAttendance, useTeamRosterTemplates, type TeamAttendanceRow, type TeamRosterMe } from "@/hooks/useTeamRoster";
 import { LobBadge } from "@/components/wfm/LobBadge";
 import { LobSelect } from "@/components/wfm/LobSelect";
 import TeamAttendanceDrawer from "./TeamAttendanceDrawer";
@@ -41,9 +41,11 @@ export default function TeamAttendanceTab({ me }: Props) {
   const [pageSize, setPageSize] = useState<number>(50);
   const [offset, setOffset] = useState(0);
   const [lobId, setLobId] = useState("");
+  const [processId, setProcessId] = useState("");
+  const processes = useTeamRosterTemplates(true).data?.processes ?? [];
   const [open, setOpen] = useState<{ employeeId: string } | null>(null);
   const debounced = useDebounce(search, 300);
-  const q = useTeamAttendance({ month, search: debounced.trim(), offset, limit: pageSize, lobId: lobId || undefined }, true);
+  const q = useTeamAttendance({ month, search: debounced.trim(), offset, limit: pageSize, lobId: lobId || undefined, processId: processId || undefined }, true);
   const data = q.data;
 
   return (
@@ -60,8 +62,15 @@ export default function TeamAttendanceTab({ me }: Props) {
           <Input aria-label="Search team attendance" placeholder="Search name or employee code" value={search} onChange={(e) => { setSearch(e.target.value); setOffset(0); }} className="h-9 pl-8" />
         </div>
         <div className="space-y-1">
+          <Label htmlFor="ta-process">Process</Label>
+          <select id="ta-process" className="h-9 w-48 rounded-md border border-slate-200 bg-white px-2 text-sm" value={processId} onChange={(e) => { setProcessId(e.target.value); setLobId(""); setOffset(0); }}>
+            <option value="">All processes</option>
+            {processes.map((p) => <option key={p.processId} value={p.processId}>{p.processName ?? p.processId}</option>)}
+          </select>
+        </div>
+        <div className="space-y-1">
           <Label>LOB</Label>
-          <LobSelect processId="" value={lobId} onChange={(v) => { setLobId(v); setOffset(0); }} includeUnassigned className="h-9 w-44" />
+          <LobSelect processId={processId} value={lobId} onChange={(v) => { setLobId(v); setOffset(0); }} includeUnassigned className="h-9 w-44" />
         </div>
         <div className="space-y-1">
           <Label htmlFor="ta-page-size">Rows</Label>

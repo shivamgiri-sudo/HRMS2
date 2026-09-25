@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1206,
-  "columnCount": 17984,
+  "tableCount": 1207,
+  "columnCount": 18005,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -20360,6 +20360,29 @@
       "uploaded_by",
       "upload_batch_id",
       "inserted_at"
+    ],
+    "onfido_outlier_action": [
+      "id",
+      "analyst_email",
+      "analyst_name",
+      "tl_name",
+      "am_name",
+      "metric",
+      "period_from",
+      "period_to",
+      "observed_value",
+      "target_value",
+      "action_taken",
+      "rca",
+      "owner_name",
+      "due_date",
+      "status",
+      "closure_remarks",
+      "closed_at",
+      "created_by",
+      "created_by_name",
+      "created_at",
+      "updated_at"
     ],
     "job_requisition_alert_log": [
       "id",
