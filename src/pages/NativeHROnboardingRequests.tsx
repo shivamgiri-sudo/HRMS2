@@ -451,7 +451,7 @@ export default function NativeHROnboardingRequests() {
   const { user } = useAuth();
   const { roleKeys, isLoading: roleLoading } = useWorkforceAccess();
   const role = String((user as any)?.role ?? '').toLowerCase();
-  const allowed = roleKeys.some(k => ['admin', 'super_admin', 'hr', 'manager', 'payroll_hr', 'payroll'].includes(k));
+  const allowed = roleKeys.some(k => ['admin', 'super_admin', 'hr', 'manager', 'payroll_hr', 'payroll_head', 'payroll'].includes(k));
   const canChangePfEsi = roleKeys.some(k => ['payroll_hr', 'admin', 'super_admin', 'hr'].includes(k));
   // Narrower than the general page grant, matching the backend route gate on
   // PATCH .../not-joining — this is a decisive, terminal state change, not
@@ -1901,6 +1901,26 @@ export default function NativeHROnboardingRequests() {
               <div className="space-y-4">
                 {auditError && (
                   <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{auditError}</div>
+                )}
+                {!auditLoading && auditRows.length > 0 && (
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    <div className="rounded-2xl border border-white/60 bg-white/95 p-4 shadow-sm">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Offers by branch</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {Object.entries(auditRows.reduce<Record<string, number>>((acc, r) => { const k = (r.branch_name || "").trim() || "Not recorded"; acc[k] = (acc[k] ?? 0) + 1; return acc; }, {})).sort((x, y) => y[1] - x[1]).map(([name, n]) => (
+                          <span key={name} className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 text-blue-700 px-2.5 py-1 text-xs font-semibold">{name}<span className="rounded-full bg-white/70 px-1.5 text-[10px] font-bold">{n}</span></span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-white/60 bg-white/95 p-4 shadow-sm">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Offers by Payroll HR (created by)</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {Object.entries(auditRows.reduce<Record<string, number>>((acc, r) => { const k = (r.created_by_name || "").trim() || "Not recorded"; acc[k] = (acc[k] ?? 0) + 1; return acc; }, {})).sort((x, y) => y[1] - x[1]).map(([name, n]) => (
+                          <span key={name} className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 text-violet-700 px-2.5 py-1 text-xs font-semibold">{name}<span className="rounded-full bg-white/70 px-1.5 text-[10px] font-bold">{n}</span></span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
                 )}
                 {auditLoading ? (
                   <div className="flex items-center gap-2 py-12 justify-center text-slate-500"><Loader2 className="h-5 w-5 animate-spin" /> Loading offer submissions…</div>
