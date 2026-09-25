@@ -172,18 +172,9 @@ describe.skipIf(!enabled)("salary start date against a real MySQL", () => {
   });
 
   describe("migration 1884: the database itself", () => {
-    it("refuses salary_start_date < date_of_joining unless the approval flag is set in the same statement", async () => {
+    it("no longer refuses a salary start before joining at the database (the service enforces it)", async () => {
       const s = await seed({ doj: "2030-03-10", date: "2030-03-10" });
-      await expect(
-        db.execute(
-          `UPDATE employees SET salary_start_date = '2030-03-01' WHERE id = ?`,
-          [s.emp],
-        ),
-      ).rejects.toMatchObject({ code: "ER_CHECK_CONSTRAINT_VIOLATED" });
-      await db.execute(
-        `UPDATE employees SET salary_start_date = '2030-03-01', salary_start_pre_joining_approved = 1 WHERE id = ?`,
-        [s.emp],
-      );
+      await db.execute(`UPDATE employees SET salary_start_date = '2030-03-01' WHERE id = ?`, [s.emp]);
       expect((await employeeDates(s.emp)).d).toBe("2030-03-01");
     });
 
