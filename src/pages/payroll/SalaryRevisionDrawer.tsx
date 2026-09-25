@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { useToast } from '@/hooks/use-toast';
 import { CalendarDays } from 'lucide-react';
+import { useDateLockMin } from '@/hooks/useDateLockMin';
 
 interface Props {
   open: boolean;
@@ -22,6 +23,7 @@ export function SalaryRevisionDrawer({
   open, onClose, employeeId, employeeName, currentEffectiveFrom, dateOfJoining, onSuccess,
 }: Props) {
   const { toast } = useToast();
+  const dateMin = useDateLockMin();
   const [newDate, setNewDate] = useState('');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -84,7 +86,7 @@ export function SalaryRevisionDrawer({
             <Input
               type="date"
               value={newDate}
-              min={dateOfJoining}
+              min={[dateOfJoining, dateMin].filter(Boolean).sort().pop()}
               onChange={(e) => setNewDate(e.target.value)}
               className="rounded-xl"
             />

@@ -1,3 +1,4 @@
+import { useDateLockMin } from '@/hooks/useDateLockMin';
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { hrmsApi } from '@/lib/hrmsApi';
@@ -350,6 +351,7 @@ function RejectDialog({
 // ── Bulk Submit Fields ────────────────────────────────────────────────────────
 
 function BulkSubmitFields({ onSuccess }: { onSuccess: () => void }) {
+  const dateMin = useDateLockMin();
   const [codes, setCodes]                   = useState('');
   const [newDate, setNewDate]               = useState('');
   const [reason, setReason]                 = useState('');
@@ -453,6 +455,7 @@ function BulkSubmitFields({ onSuccess }: { onSuccess: () => void }) {
         <Input
           type="date"
           value={newDate}
+          min={dateMin}
           onChange={(e) => { setNewDate(e.target.value); setResults(null); }}
           className="rounded-xl h-9 text-sm"
         />
@@ -531,6 +534,7 @@ function BulkSubmitFields({ onSuccess }: { onSuccess: () => void }) {
 // ── Submit Form (Fixer view) ───────────────────────────────────────────────────
 
 function SubmitForm({ onSuccess }: { onSuccess: () => void }) {
+  const dateMin = useDateLockMin();
   const [mode, setMode] = useState<'single' | 'bulk'>('single');
   const [employee, setEmployee] = useState<EmployeeResult | null>(null);
   const [newDate, setNewDate] = useState('');
@@ -611,7 +615,7 @@ function SubmitForm({ onSuccess }: { onSuccess: () => void }) {
             <Label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               New Salary Date <span className="text-red-500">*</span>
             </Label>
-            <Input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)}
+            <Input type="date" value={newDate} min={dateMin} onChange={(e) => setNewDate(e.target.value)}
               className="rounded-xl h-9 text-sm" />
           </div>
         </div>

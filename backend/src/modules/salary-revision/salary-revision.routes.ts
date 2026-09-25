@@ -22,6 +22,7 @@ router.post("/", requireAuth, requireWriteAccess, requireRole(...FIXER_ROLES), h
     requested_effective_from: String(requested_effective_from),
     reason: String(reason),
     requested_by: String(req.authUser!.id),
+    actor_roles: req.authUser!.roles,
   });
   res.json({ success: true, data });
 }));
@@ -48,6 +49,7 @@ router.post("/bulk-validate", requireAuth, requireRole(...FIXER_ROLES), h(async 
   const results = await svc.bulkValidate({
     employee_codes: (employee_codes as unknown[]).map(String),
     requested_effective_from: String(requested_effective_from),
+    actor_roles: req.authUser!.roles,
   });
   res.json({ success: true, results });
 }));
@@ -68,6 +70,7 @@ router.post("/bulk", requireAuth, requireWriteAccess, requireRole(...FIXER_ROLES
     requested_effective_from: String(requested_effective_from),
     reason: String(reason),
     requested_by: String(req.authUser!.id),
+    actor_roles: req.authUser!.roles,
   });
   res.json({ success: true, ...result });
 }));
@@ -81,7 +84,8 @@ router.post("/:id/review", requireAuth, requireWriteAccess, requireRole(...REVIE
     Number(req.params.id),
     action as "approve" | "reject",
     String(req.authUser!.id),
-    typeof remarks === "string" ? remarks : undefined
+    typeof remarks === "string" ? remarks : undefined,
+    req.authUser!.roles
   );
   res.json({ success: true });
 }));

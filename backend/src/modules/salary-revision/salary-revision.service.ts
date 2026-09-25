@@ -1,4 +1,5 @@
 import { db } from "../../db/mysql.js";
+import { assertNotBeforeToday, canBackdateDates } from "../../utils/dateUtils.js";
 import type { RowDataPacket } from "mysql2";
 
 function httpError(msg: string, status: number, code: string) {
@@ -9,6 +10,7 @@ function httpError(msg: string, status: number, code: string) {
 export interface CreateRevisionInput {
   employee_id: string;
   requested_effective_from: string; // YYYY-MM-DD
+  actor_roles?: readonly string[]; // from the session; super_admin / payroll_head may pick a past date
   reason: string;
   requested_by: string; // auth_user.id (string in this codebase)
 }
@@ -32,6 +34,8 @@ export async function createRevisionRequest(input: CreateRevisionInput): Promise
   if (new Date(input.requested_effective_from) < new Date(doj)) {
     throw httpError("Requested date cannot be before date of joining.", 400, "INVALID_DATE");
   }
+  // Date lock: only super_admin / payroll_head may request a salary date before today.
+  assertNotBeforeToday(input.requested_effective_from, "Salary date", undefined, canBackdateDates(input.actor_roles));
 
   const [assignRows] = await db.execute<RowDataPacket[]>(
     `SELECT effective_from FROM employee_salary_assignment WHERE employee_id = ? AND active_status = 1 ORDER BY effective_from DESC LIMIT 1`,
@@ -83,7 +87,8 @@ export async function reviewRevisionRequest(
   id: number,
   action: "approve" | "reject",
   reviewedBy: string,
-  remarks?: string
+  remarks?: string,
+  reviewerRoles?: readonly string[]
 ): Promise<void> {
   if (action === "reject" && (!remarks || remarks.trim().length === 0)) {
     throw httpError("Remarks are required when rejecting.", 400, "REMARKS_REQUIRED");
@@ -96,6 +101,10 @@ export async function reviewRevisionRequest(
   const req = reqRows[0];
   if (!req) throw httpError("Revision request not found.", 404, "NOT_FOUND");
   if (req.status !== "pending") throw httpError("Request is no longer pending.", 409, "NOT_PENDING");
+  if (action === "approve") {
+    // Date lock at approval too: a past-dated request can only be approved by super_admin / payroll_head.
+    assertNotBeforeToday(req.requested_effective_from, "Salary date", undefined, canBackdateDates(reviewerRoles));
+  }
 
   const connection = await db.getConnection();
   try {
@@ -189,6 +198,7 @@ export async function reviewRevisionRequest(
 export interface BulkValidateInput {
   employee_codes: string[];          // raw codes from textarea, may have whitespace
   requested_effective_from: string;  // YYYY-MM-DD
+  actor_roles?: readonly string[];
 }
 
 export interface BulkValidateRow {
@@ -207,6 +217,7 @@ export async function bulkValidate(input: BulkValidateInput): Promise<BulkValida
   ) {
     throw httpError("requested_effective_from must be a valid YYYY-MM-DD date.", 400, "INVALID_DATE");
   }
+  assertNotBeforeToday(input.requested_effective_from, "Salary date", undefined, canBackdateDates(input.actor_roles));
 
   // Deduplicate and trim input codes
   const codes = Array.from(
@@ -272,6 +283,7 @@ export interface BulkCreateInput {
   requested_effective_from: string;
   reason: string;
   requested_by: string;
+  actor_roles?: readonly string[];
 }
 
 export interface BulkCreateDetailRow {
@@ -297,6 +309,7 @@ export async function bulkCreate(input: BulkCreateInput): Promise<BulkCreateResu
         requested_effective_from: input.requested_effective_from,
         reason: input.reason,
         requested_by: input.requested_by,
+        actor_roles: input.actor_roles,
       });
       details.push({ employee_id, status: 'ok', request_id: id });
     } catch (err: unknown) {
