@@ -16,15 +16,25 @@ export interface ResolvedRecipients {
 const CEO_COO_ROLES = ["ceo", "coo"];
 /** Hardcoded fallbacks confirmed by owner (same pattern as branch-activity-report). */
 const EXEC_FALLBACK_EMAILS: string[] = ["bhavana.harjani@teammas.in"];
+/** Individuals explicitly excluded from CC regardless of their system role. */
+const NEVER_CC = new Set([
+  "ashwani.wadhwa@teammas.in",
+  "ashish.awasthi@teammas.in",
+]);
 
 const isEmail = (v: unknown): v is string =>
   typeof v === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 
-const unique = (list: string[]) =>
-  [...new Map(list.map((e) => [e.trim().toLowerCase(), e.trim()])).values()];
+const unique = (list: string[]) => [
+  ...new Map(list.map((e) => [e.trim().toLowerCase(), e.trim()])).values(),
+];
 
-async function emailsForRoles(roles: string[], branchName: string | null): Promise<string[]> {
-  const branchClause = branchName === null ? "" : "AND (b.branch_name = ? OR b.branch_code = ?)";
+async function emailsForRoles(
+  roles: string[],
+  branchName: string | null,
+): Promise<string[]> {
+  const branchClause =
+    branchName === null ? "" : "AND (b.branch_name = ? OR b.branch_code = ?)";
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT au.email
        FROM user_roles ur
@@ -41,7 +51,9 @@ async function emailsForRoles(roles: string[], branchName: string | null): Promi
   return (rows as RowDataPacket[]).map((r) => String(r.email)).filter(isEmail);
 }
 
-export async function resolveRecipients(branchName: string): Promise<ResolvedRecipients> {
+export async function resolveRecipients(
+  branchName: string,
+): Promise<ResolvedRecipients> {
   const [branchHeads, execs] = await Promise.all([
     emailsForRoles(["branch_head"], branchName),
     emailsForRoles(CEO_COO_ROLES, null),
@@ -51,7 +63,7 @@ export async function resolveRecipients(branchName: string): Promise<ResolvedRec
   const to: string[] = toFellBackToHr ? [] : unique(branchHeads);
   const toSet = new Set(to.map((e) => e.toLowerCase()));
   const cc = unique([...EXEC_FALLBACK_EMAILS, ...execs]).filter(
-    (e) => !toSet.has(e.toLowerCase()),
+    (e) => !toSet.has(e.toLowerCase()) && !NEVER_CC.has(e.toLowerCase()),
   );
   return { to, cc, toFellBackToHr };
 }

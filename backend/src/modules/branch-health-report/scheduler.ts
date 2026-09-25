@@ -27,15 +27,23 @@ let started = false;
 export function msUntilNextRun(now: number = Date.now()): number {
   const ist = new Date(now + IST_OFFSET_MS);
   const target = Date.UTC(
-    ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate(),
-    RUN_HOUR_IST, 0, 0, 0,
+    ist.getUTCFullYear(),
+    ist.getUTCMonth(),
+    ist.getUTCDate(),
+    RUN_HOUR_IST,
+    0,
+    0,
+    0,
   );
   const istNow = now + IST_OFFSET_MS;
   return (target > istNow ? target : target + 24 * 60 * 60 * 1000) - istNow;
 }
 
 const csv = (v: string | undefined): string[] =>
-  (v ?? "").split(",").map((e) => e.trim()).filter(Boolean);
+  (v ?? "")
+    .split(",")
+    .map((e) => e.trim())
+    .filter(Boolean);
 
 async function runOnce(): Promise<void> {
   const dryRun = process.env.BRANCH_HEALTH_REPORT_DRY_RUN !== "false";
@@ -44,19 +52,33 @@ async function runOnce(): Promise<void> {
     reportDate: getCurrentDateIST(),
     dryRun,
     redirectTo: redirectTo.length ? redirectTo : undefined,
-    shouldSend: redirectTo.length ? undefined : (branch, date) => shouldAlert(WORKER_NAME, `${branch}:${date}`, SENT_COOLDOWN_MS),
-    onSent: redirectTo.length ? undefined : (branch, date) => markAlerted(WORKER_NAME, `${branch}:${date}`),
+    shouldSend: redirectTo.length
+      ? undefined
+      : (branch, date) =>
+          shouldAlert(WORKER_NAME, `${branch}:${date}`, SENT_COOLDOWN_MS),
+    onSent: redirectTo.length
+      ? undefined
+      : (branch, date) => markAlerted(WORKER_NAME, `${branch}:${date}`),
   });
   for (const r of results) {
-    console.log(`[${WORKER_NAME}] ${r.branch}: ${r.status}${r.reason ? ` (${r.reason})` : ""} to=${r.to.length} cc=${r.cc.length}${dryRun ? " [dry-run]" : ""}`);
+    console.log(
+      `[${WORKER_NAME}] ${r.branch}: ${r.status}${r.reason ? ` (${r.reason})` : ""} to=${r.to.length} cc=${r.cc.length}${dryRun ? " [dry-run]" : ""}`,
+    );
   }
 }
 
 function scheduleNext(): void {
   timer = setTimeout(() => {
     runOnce()
-      .catch((e: unknown) => console.error(`[${WORKER_NAME}] run failed:`, e instanceof Error ? e.message : e))
-      .finally(() => { if (started) scheduleNext(); });
+      .catch((e: unknown) =>
+        console.error(
+          `[${WORKER_NAME}] run failed:`,
+          e instanceof Error ? e.message : e,
+        ),
+      )
+      .finally(() => {
+        if (started) scheduleNext();
+      });
   }, msUntilNextRun());
 }
 
@@ -65,12 +87,18 @@ export function startBranchHealthReportScheduler(): void {
   if (started || process.env.BRANCH_HEALTH_REPORT_ENABLED !== "true") return;
   started = true;
   scheduleNext();
-  const mode = process.env.BRANCH_HEALTH_REPORT_DRY_RUN !== "false" ? "DRY-RUN" : "LIVE";
-  console.log(`[${WORKER_NAME}] scheduled daily at ${RUN_HOUR_IST}:00 IST (${mode})`);
+  const mode =
+    process.env.BRANCH_HEALTH_REPORT_DRY_RUN !== "false" ? "DRY-RUN" : "LIVE";
+  console.log(
+    `[${WORKER_NAME}] scheduled daily at ${RUN_HOUR_IST}:00 IST (${mode})`,
+  );
 }
 
 export function stopBranchHealthReportScheduler(): void {
   started = false;
-  if (timer) { clearTimeout(timer); timer = null; }
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
   console.log(`[${WORKER_NAME}] stopped`);
 }

@@ -104,9 +104,10 @@ export function classifySignals(raw: BranchHealthRawData): {
   }
 
   // SLA
-  const slaPct = raw.ats.slaTotal > 0
-    ? Math.round((raw.ats.slaBreaches / raw.ats.slaTotal) * 100)
-    : 0;
+  const slaPct =
+    raw.ats.slaTotal > 0
+      ? Math.round((raw.ats.slaBreaches / raw.ats.slaTotal) * 100)
+      : 0;
   if (slaPct >= T.sla.criticalPct) {
     criticalPoints.push({
       label: "ATS SLA critical",
@@ -131,9 +132,10 @@ export function classifySignals(raw: BranchHealthRawData): {
   }
 
   // ATS selection
-  const selectionPct = raw.ats.walkins > 0
-    ? Math.round((raw.ats.selected / raw.ats.walkins) * 100)
-    : 0;
+  const selectionPct =
+    raw.ats.walkins > 0
+      ? Math.round((raw.ats.selected / raw.ats.walkins) * 100)
+      : 0;
   if (raw.ats.walkins >= 5 && selectionPct >= T.ats.goodSelectionPct) {
     positiveAchievements.push({
       label: "Strong hiring conversion",
@@ -149,9 +151,39 @@ export function classifySignals(raw: BranchHealthRawData): {
     });
   }
 
+  // Open Hiring Pipeline
+  if (raw.openHiring.activePipeline > 0) {
+    const topStages = raw.openHiring.byStage
+      .slice(0, 3)
+      .map((s) => `${s.stage}: ${s.count}`)
+      .join(" · ");
+    positiveAchievements.push({
+      label: `${raw.openHiring.activePipeline} candidate${raw.openHiring.activePipeline > 1 ? "s" : ""} in hiring pipeline`,
+      detail: topStages,
+    });
+  }
+
+  // Running P&L snapshot
+  if (raw.runningPnl.dataAvailable) {
+    const salaryPct =
+      raw.runningPnl.totalCostMtd > 0
+        ? Math.round(
+            (raw.runningPnl.salaryCostMtd / raw.runningPnl.totalCostMtd) * 100,
+          )
+        : 0;
+    positiveAchievements.push({
+      label: `Running cost MTD: ₹${fmt(raw.runningPnl.totalCostMtd)}`,
+      detail: `Salary ${salaryPct}% · GRN expenses ₹${fmt(raw.runningPnl.grnExpenseMtd)}`,
+    });
+  }
+
   // Process performance
-  const criticalProcesses = raw.processPerformance.filter((p) => p.status === "critical");
-  const healthyProcesses = raw.processPerformance.filter((p) => p.status === "healthy");
+  const criticalProcesses = raw.processPerformance.filter(
+    (p) => p.status === "critical",
+  );
+  const healthyProcesses = raw.processPerformance.filter(
+    (p) => p.status === "healthy",
+  );
   if (criticalProcesses.length) {
     criticalPoints.push({
       label: "Process performance below threshold",
@@ -168,15 +200,30 @@ export function classifySignals(raw: BranchHealthRawData): {
 
   const hasCritical = criticalPoints.some((p) => p.severity === "critical");
   const hasWarning = criticalPoints.some((p) => p.severity === "warning");
-  const overallStatus: "healthy" | "watch" | "critical" =
-    hasCritical ? "critical" : hasWarning ? "watch" : "healthy";
+  const overallStatus: "healthy" | "watch" | "critical" = hasCritical
+    ? "critical"
+    : hasWarning
+      ? "watch"
+      : "healthy";
 
   return { criticalPoints, positiveAchievements, overallStatus };
 }
 
-export function buildBranchHealthReport(branch: string, reportDate: string, raw: BranchHealthRawData): BranchHealthReport {
-  const { criticalPoints, positiveAchievements, overallStatus } = classifySignals(raw);
-  return { branch, reportDate, raw, criticalPoints, positiveAchievements, overallStatus };
+export function buildBranchHealthReport(
+  branch: string,
+  reportDate: string,
+  raw: BranchHealthRawData,
+): BranchHealthReport {
+  const { criticalPoints, positiveAchievements, overallStatus } =
+    classifySignals(raw);
+  return {
+    branch,
+    reportDate,
+    raw,
+    criticalPoints,
+    positiveAchievements,
+    overallStatus,
+  };
 }
 
 function fmt(n: number): string {

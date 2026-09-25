@@ -3,9 +3,14 @@
  *
  * Each function is scoped to a single branch by branch_id (looked up via branch_name once and
  * passed through). All amounts in ₹. Dates are IST strings (the db session timezone is IST).
+ *
+ * GRN queries filter to bill_source_id IS NULL — HRMS-raised GRNs only, no db_bill migration data.
+ * Shrinkage is roster-based (wfm_roster_assignment shift timings vs attendance_daily_record).
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { notDialDeskProcessSql } from "../../shared/ownCompanyCostCentre.js";
+import { isShiftDueYet } from "../wfm/shift-due.util.js";
 
 // ─── shared helpers ──────────────────────────────────────────────────────────
 
@@ -28,12 +33,14 @@ export interface BudgetSummary {
   utilizationPct: number;
 }
 
-export async function fetchBudgetSummary(branchId: string, today: string): Promise<BudgetSummary> {
+export async function fetchBudgetSummary(
+  branchId: string,
+  today: string,
+): Promise<BudgetSummary> {
   const ym = today.slice(0, 7); // YYYY-MM — period_code is in this format
-  // Most recent approved/active budget for this branch's current financial year period
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT h.period_code,
-            h.gross_budget_amount                               AS total_budget,
+            h.pnl_budget_amount                                 AS total_budget,
             COALESCE(SUM(l.consumed_amount), 0)                AS consumed,
             COALESCE(SUM(l.reserved_amount), 0)                AS reserved
        FROM finance_budget_header h
@@ -48,7 +55,15 @@ export async function fetchBudgetSummary(branchId: string, today: string): Promi
     [branchId, ym],
   );
   const r = rows[0] as any;
-  if (!r) return { periodCode: null, totalBudget: 0, consumed: 0, reserved: 0, available: 0, utilizationPct: 0 };
+  if (!r)
+    return {
+      periodCode: null,
+      totalBudget: 0,
+      consumed: 0,
+      reserved: 0,
+      available: 0,
+      utilizationPct: 0,
+    };
   const total = Number(r.total_budget ?? 0);
   const consumed = Number(r.consumed ?? 0);
   const reserved = Number(r.reserved ?? 0);
@@ -62,7 +77,7 @@ export async function fetchBudgetSummary(branchId: string, today: string): Promi
   };
 }
 
-// ─── 2. GRN Stats ────────────────────────────────────────────────────────────
+// ─── 2. GRN Stats (HRMS-raised only — bill_source_id IS NULL) ────────────────
 
 export interface GrnStats {
   raised: number;
@@ -72,15 +87,25 @@ export interface GrnStats {
 }
 
 const GRN_APPROVED_STATUSES = [
-  "approved", "finance_head_approved", "pending_accounts_payment",
-  "payment_scheduled", "partially_paid", "paid",
+  "approved",
+  "finance_head_approved",
+  "pending_accounts_payment",
+  "payment_scheduled",
+  "partially_paid",
+  "paid",
 ];
 const GRN_PENDING_STATUSES = [
-  "submitted", "branch_head_approved", "accounts_head_approved",
-  "returned_to_branch_head", "returned_to_raiser",
+  "submitted",
+  "branch_head_approved",
+  "accounts_head_approved",
+  "returned_to_branch_head",
+  "returned_to_raiser",
 ];
 
-export async function fetchGrnStats(branchId: string, today: string): Promise<GrnStats> {
+export async function fetchGrnStats(
+  branchId: string,
+  today: string,
+): Promise<GrnStats> {
   const monthStart = today.slice(0, 7) + "-01";
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -90,6 +115,8 @@ export async function fetchGrnStats(branchId: string, today: string): Promise<Gr
        COALESCE(SUM(amount_with_tax), 0)                                  AS total_amount
      FROM grn_request
     WHERE branch_id = ?
+      AND bill_source_id IS NULL
+      AND status <> 'draft'
       AND DATE(created_at) >= ?`,
     [...GRN_APPROVED_STATUSES, ...GRN_PENDING_STATUSES, branchId, monthStart],
   );
@@ -102,7 +129,7 @@ export async function fetchGrnStats(branchId: string, today: string): Promise<Gr
   };
 }
 
-// ─── 3. GRN List (latest 15) ─────────────────────────────────────────────────
+// ─── 3. GRN List — latest 15 HRMS-raised GRNs ────────────────────────────────
 
 export interface GrnRow {
   grnNumber: string | null;
@@ -126,6 +153,7 @@ export async function fetchRecentGrns(branchId: string): Promise<GrnRow[]> {
             DATE_FORMAT(g.created_at, '%d/%m/%Y')    AS raised_on
        FROM grn_request g
       WHERE g.branch_id = ?
+        AND g.bill_source_id IS NULL
       ORDER BY g.created_at DESC
       LIMIT 15`,
     [branchId],
@@ -155,8 +183,10 @@ export interface AtsStats {
   slaTotal: number;
 }
 
-export async function fetchAtsStats(branchName: string, today: string): Promise<AtsStats> {
-  // Walk-ins: candidates registered today (queue tokens arriving today)
+export async function fetchAtsStats(
+  branchName: string,
+  today: string,
+): Promise<AtsStats> {
   const [tokenRows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*)                                                                                    AS tokens,
@@ -187,7 +217,6 @@ export async function fetchAtsStats(branchName: string, today: string): Promise<
     [today, branchName, branchName, branchName],
   );
 
-  // Walkins also include token-only registrations (no queue row)
   const [walkinRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(DISTINCT c.id) AS walkins
        FROM ats_candidate c
@@ -221,7 +250,10 @@ export interface LateStats {
   processWise: { process: string; count: number }[];
 }
 
-export async function fetchLateStats(branchId: string, today: string): Promise<LateStats> {
+export async function fetchLateStats(
+  branchId: string,
+  today: string,
+): Promise<LateStats> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(pm.process_name, 'Unassigned') AS process, COUNT(*) AS cnt
        FROM attendance_daily_record adr
@@ -245,7 +277,16 @@ export async function fetchLateStats(branchId: string, today: string): Promise<L
   };
 }
 
-// ─── 6. Shrinkage ─────────────────────────────────────────────────────────────
+// ─── 6. Shrinkage — roster-based with attendance fallback ────────────────────
+//
+// PRIMARY: employees on a published wfm_roster_assignment for today (non-week-off)
+//   scheduled = roster entries where is_week_off = 0
+//   absent    = scheduled with no attendance record OR status IN ('absent','unreconciled')
+//   on_leave  = scheduled with status IN ('approved_leave','half_day_leave','leave','wfh')
+//   shrinkage = absent / scheduled * 100
+//
+// FALLBACK: when no published roster exists for the branch today, count from
+//   attendance_daily_record (previous behaviour).
 
 export interface ShrinkageStats {
   scheduled: number;
@@ -253,32 +294,77 @@ export interface ShrinkageStats {
   absent: number;
   onLeave: number;
   shrinkagePct: number;
+  rosterBased: boolean;
 }
 
-export async function fetchShrinkage(branchId: string, today: string): Promise<ShrinkageStats> {
+export interface OpenHiringStats {
+  activePipeline: number;
+  byStage: { stage: string; count: number }[];
+}
+
+export interface RunningPnlStats {
+  periodCode: string;
+  salaryCostMtd: number;
+  grnExpenseMtd: number;
+  totalCostMtd: number;
+  dataAvailable: boolean;
+}
+
+const PRESENT_STATUSES = new Set(["present", "half_day", "missing_punch"]);
+const LEAVE_STATUSES = new Set([
+  "leave_approved",
+  "approved_leave",
+  "half_day_leave",
+  "leave",
+  "wfh",
+]);
+
+/**
+ * Shrinkage = unplanned absences / employees who were rostered to work AND whose
+ * shift has already started (isShiftDueYet). Week-offs, approved leave and shifts
+ * not yet due carry no verdict, so they are excluded from the denominator. A punch
+ * without a punch-out (missing_punch) still counts as present.
+ * Any roster publish_status counts — the imported roster is the plan of record.
+ */
+export async function fetchShrinkage(
+  branchId: string,
+  today: string,
+): Promise<ShrinkageStats> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       COUNT(*)                                                             AS scheduled,
-       SUM(adr.attendance_status IN ('present','half_day'))                AS present,
-       SUM(adr.attendance_status IN ('absent','unreconciled'))             AS absent,
-       SUM(adr.attendance_status IN ('approved_leave','half_day_leave',
-                                     'leave','wfh'))                       AS on_leave
-     FROM attendance_daily_record adr
-     JOIN employees e ON e.id = adr.employee_id
-    WHERE adr.record_date = ?
-      AND e.branch_id = ?
-      AND e.active_status = 1`,
-    [today, branchId],
+    `SELECT ra.shift_start_time, adr.attendance_status
+       FROM wfm_roster_assignment ra
+       JOIN employees e ON e.id = ra.employee_id AND e.branch_id = ? AND e.active_status = 1
+       LEFT JOIN attendance_daily_record adr
+              ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
+      WHERE ra.roster_date = ?
+        AND ra.is_week_off = 0`,
+    [branchId, today],
   );
-  const r = rows[0] as any;
-  const scheduled = Number(r?.scheduled ?? 0);
-  const absent = Number(r?.absent ?? 0);
+
+  let scheduled = 0;
+  let present = 0;
+  let absent = 0;
+  let onLeave = 0;
+  for (const r of rows as any[]) {
+    const status = String(r.attendance_status ?? "");
+    const punchedIn = PRESENT_STATUSES.has(status);
+    if (!punchedIn && !isShiftDueYet(r.shift_start_time, today)) continue;
+    if (LEAVE_STATUSES.has(status)) {
+      onLeave += 1;
+      continue;
+    }
+    scheduled += 1;
+    if (punchedIn) present += 1;
+    else absent += 1;
+  }
+
   return {
     scheduled,
-    present: Number(r?.present ?? 0),
+    present,
     absent,
-    onLeave: Number(r?.on_leave ?? 0),
+    onLeave,
     shrinkagePct: scheduled > 0 ? Math.round((absent / scheduled) * 100) : 0,
+    rosterBased: (rows as any[]).length > 0,
   };
 }
 
@@ -292,7 +378,10 @@ export interface HeadcountMovement {
   totalActive: number;
 }
 
-export async function fetchHeadcountMovement(branchId: string, today: string): Promise<HeadcountMovement> {
+export async function fetchHeadcountMovement(
+  branchId: string,
+  today: string,
+): Promise<HeadcountMovement> {
   const [joinRows] = await db.execute<RowDataPacket[]>(
     `SELECT CONCAT(first_name, ' ', COALESCE(last_name, '')) AS name
        FROM employees
@@ -325,7 +414,7 @@ export async function fetchHeadcountMovement(branchId: string, today: string): P
   };
 }
 
-// ─── 8. Process performance (ops + quality) ───────────────────────────────────
+// ─── 8. Process performance (ops + quality from kpi_entry) ───────────────────
 
 export interface ProcessPerformance {
   process: string;
@@ -334,39 +423,169 @@ export interface ProcessPerformance {
   status: "healthy" | "watch" | "critical";
 }
 
-export async function fetchProcessPerformance(branchId: string, today: string): Promise<ProcessPerformance[]> {
-  // Guard: skip entirely if kpi_entry is not yet created (avoids noisy ER_NO_SUCH_TABLE pool logs)
-  const [tableCheck] = await db.execute<RowDataPacket[]>(
-    `SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'kpi_entry' LIMIT 1`,
-  );
-  if (!(tableCheck as any[]).length) return [];
+const KPI_LOOKBACK_DAYS = 14;
+const KPI_HEALTHY_PCT = 90;
+const KPI_WATCH_PCT = 70;
 
+/** Attainment % of an average actual against its target, capped at 120 like the KPI module. */
+function kpiAttainmentPct(
+  actual: number,
+  target: number,
+  lowerIsBetter: boolean,
+): number | null {
+  if (!Number.isFinite(actual) || !Number.isFinite(target) || target <= 0)
+    return null;
+  if (lowerIsBetter && actual <= 0) return 120;
+  const pct = lowerIsBetter ? (target / actual) * 100 : (actual / target) * 100;
+  return Math.min(120, Math.max(0, pct));
+}
+
+function meanRounded(values: number[]): number | null {
+  return values.length
+    ? Math.round(values.reduce((a, b) => a + b, 0) / values.length)
+    : null;
+}
+
+/**
+ * Process performance comes straight from the KPI module: kpi_daily_actual (per-employee
+ * daily actuals) against the process target in kpi_process_config. Per process and metric the
+ * last KPI_LOOKBACK_DAYS of actuals are averaged and compared with the latest effective target.
+ * "Quality" = quality-family metrics; "KPI attainment" = every other targeted metric.
+ */
+export async function fetchProcessPerformance(
+  branchId: string,
+  today: string,
+): Promise<ProcessPerformance[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT pm.process_name AS process,
-            AVG(CASE WHEN LOWER(kd.kpi_category) IN ('ops','operations') THEN ke.score END)   AS ops_score,
-            AVG(CASE WHEN LOWER(kd.kpi_category) IN ('quality','qa','qc') THEN ke.score END) AS quality_score
-       FROM kpi_entry ke
-       JOIN kpi_definition kd ON kd.id = ke.kpi_id
-       JOIN process_master pm ON pm.id = ke.process_id
-       JOIN employees e ON e.process_id = pm.id AND e.branch_id = ? AND e.active_status = 1
-      WHERE ke.entry_date BETWEEN DATE_SUB(?, INTERVAL 7 DAY) AND ?
-      GROUP BY pm.process_name
+            mm.direction,
+            mm.family,
+            mm.category,
+            AVG(d.actual_value) AS avg_actual,
+            (SELECT c.target_value FROM kpi_process_config c
+              WHERE c.process_id = d.process_id_at_event AND c.metric_id = d.metric_id
+                AND c.effective_from <= ?
+              ORDER BY c.effective_from DESC LIMIT 1) AS target
+       FROM kpi_daily_actual d
+       JOIN kpi_metric_master mm ON mm.id = d.metric_id
+       JOIN process_master pm ON pm.id = d.process_id_at_event
+       LEFT JOIN branch_master bm ON bm.id = pm.branch_id
+      WHERE d.branch_id_at_event = ?
+        AND ${notDialDeskProcessSql("pm", "bm")}
+        AND d.score_date BETWEEN DATE_SUB(?, INTERVAL ${KPI_LOOKBACK_DAYS} DAY) AND ?
+        AND d.actual_value IS NOT NULL
+      GROUP BY pm.process_name, d.process_id_at_event, d.metric_id,
+               mm.direction, mm.family, mm.category
       ORDER BY pm.process_name`,
-    [branchId, today, today],
+    [today, branchId, today, today],
   );
 
-  return (rows as any[]).map((r) => {
-    const opsScore = r.ops_score != null ? Math.round(Number(r.ops_score)) : null;
-    const qualityScore = r.quality_score != null ? Math.round(Number(r.quality_score)) : null;
-    const minScore = [opsScore, qualityScore].filter((s): s is number => s != null);
-    const worst = minScore.length ? Math.min(...minScore) : null;
+  const byProcess = new Map<string, { ops: number[]; quality: number[] }>();
+  for (const r of rows as any[]) {
+    if (r.target == null) continue;
+    const pct = kpiAttainmentPct(
+      Number(r.avg_actual),
+      Number(r.target),
+      r.direction === "lower_is_better",
+    );
+    if (pct == null) continue;
+    const name = String(r.process);
+    const bucket = byProcess.get(name) ?? { ops: [], quality: [] };
+    const isQuality =
+      String(r.family).toLowerCase() === "quality" ||
+      String(r.category).toLowerCase() === "quality";
+    (isQuality ? bucket.quality : bucket.ops).push(pct);
+    byProcess.set(name, bucket);
+  }
+
+  return [...byProcess.entries()].map(([process, b]) => {
+    const opsScore = meanRounded(b.ops);
+    const qualityScore = meanRounded(b.quality);
+    const scores = [opsScore, qualityScore].filter(
+      (x): x is number => x != null,
+    );
+    const worst = scores.length ? Math.min(...scores) : null;
     const status: ProcessPerformance["status"] =
-      worst == null ? "watch" : worst >= 80 ? "healthy" : worst >= 60 ? "watch" : "critical";
-    return { process: String(r.process), opsScore, qualityScore, status };
+      worst == null || worst < KPI_WATCH_PCT
+        ? worst == null
+          ? "watch"
+          : "critical"
+        : worst >= KPI_HEALTHY_PCT
+          ? "healthy"
+          : "watch";
+    return { process, opsScore, qualityScore, status };
   });
 }
 
-// ─── 9. Pending actions ───────────────────────────────────────────────────────
+// ─── 9. Open Hiring Pipeline ──────────────────────────────────────────────────
+
+export async function fetchOpenHiring(
+  branchName: string,
+): Promise<OpenHiringStats> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COALESCE(NULLIF(TRIM(current_status), ''), 'Unknown') AS stage,
+       COUNT(*)                                               AS cnt
+     FROM ats_recruiter_hiring_activity
+    WHERE LOWER(branch_name) = LOWER(?)
+      AND activity_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+      AND NULLIF(TRIM(current_status), '') IS NOT NULL
+      AND current_status NOT IN ('Joined','Rejected','Walk-in Completed')
+    GROUP BY stage
+    ORDER BY cnt DESC`,
+    [branchName],
+  );
+  const byStage = (rows as any[]).map((r) => ({
+    stage: String(r.stage),
+    count: Number(r.cnt),
+  }));
+  return {
+    activePipeline: byStage.reduce((s, r) => s + r.count, 0),
+    byStage,
+  };
+}
+
+// ─── 10. Running P&L Snapshot ─────────────────────────────────────────────────
+
+export async function fetchRunningPnl(
+  branchId: string,
+  today: string,
+): Promise<RunningPnlStats> {
+  const period = today.slice(0, 7); // YYYY-MM
+
+  // Earned salary costs MTD from running snapshot
+  const [salRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(earned_salary_till_date), 0) AS salary_cost
+       FROM pnl_running_salary_snapshot
+      WHERE branch_id = ? AND period_code = ?`,
+    [branchId, period],
+  );
+
+  // HRMS-native GRN expense MTD (pnl_cost_amount when set, else amount_with_tax)
+  const [grnRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(COALESCE(pnl_cost_amount, amount_with_tax)), 0) AS grn_cost
+       FROM grn_request
+      WHERE branch_id = ?
+        AND bill_source_id IS NULL
+        AND DATE_FORMAT(created_at, '%Y-%m') = ?
+        AND status NOT IN ('draft','rejected','cancelled')`,
+    [branchId, period],
+  );
+
+  const salaryCostMtd = Number((salRows[0] as any)?.salary_cost ?? 0);
+  const grnExpenseMtd = Number((grnRows[0] as any)?.grn_cost ?? 0);
+  const totalCostMtd = salaryCostMtd + grnExpenseMtd;
+
+  return {
+    periodCode: period,
+    salaryCostMtd,
+    grnExpenseMtd,
+    totalCostMtd,
+    dataAvailable: salaryCostMtd > 0 || grnExpenseMtd > 0,
+  };
+}
+
+// ─── 11. Pending actions ─────────────────────────────────────────────────────
 
 export interface PendingAction {
   type: string;
@@ -374,16 +593,26 @@ export interface PendingAction {
   label: string;
 }
 
-export async function fetchPendingActions(branchId: string): Promise<PendingAction[]> {
+export async function fetchPendingActions(
+  branchId: string,
+): Promise<PendingAction[]> {
   const results: PendingAction[] = [];
 
+  // Only HRMS-raised GRNs pending approval
   const [grnRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM grn_request
-      WHERE branch_id = ? AND status IN (${GRN_PENDING_STATUSES.map(() => "?").join(",")})`,
+      WHERE branch_id = ?
+        AND bill_source_id IS NULL
+        AND status IN (${GRN_PENDING_STATUSES.map(() => "?").join(",")})`,
     [branchId, ...GRN_PENDING_STATUSES],
   );
   const pendingGrns = Number((grnRows[0] as any)?.cnt ?? 0);
-  if (pendingGrns > 0) results.push({ type: "grn_pending", count: pendingGrns, label: "GRNs awaiting approval" });
+  if (pendingGrns > 0)
+    results.push({
+      type: "grn_pending",
+      count: pendingGrns,
+      label: "GRNs awaiting approval",
+    });
 
   const [leaveRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt
@@ -393,7 +622,12 @@ export async function fetchPendingActions(branchId: string): Promise<PendingActi
     [branchId],
   );
   const pendingLeaves = Number((leaveRows[0] as any)?.cnt ?? 0);
-  if (pendingLeaves > 0) results.push({ type: "leave_pending", count: pendingLeaves, label: "Leave requests pending" });
+  if (pendingLeaves > 0)
+    results.push({
+      type: "leave_pending",
+      count: pendingLeaves,
+      label: "Leave requests pending",
+    });
 
   const [exitRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt
@@ -403,7 +637,12 @@ export async function fetchPendingActions(branchId: string): Promise<PendingActi
     [branchId],
   );
   const pendingExits = Number((exitRows[0] as any)?.cnt ?? 0);
-  if (pendingExits > 0) results.push({ type: "exit_pending", count: pendingExits, label: "Exit clearances pending" });
+  if (pendingExits > 0)
+    results.push({
+      type: "exit_pending",
+      count: pendingExits,
+      label: "Exit clearances pending",
+    });
 
   return results;
 }
@@ -420,38 +659,106 @@ export interface BranchHealthRawData {
   shrinkage: ShrinkageStats;
   headcount: HeadcountMovement;
   processPerformance: ProcessPerformance[];
+  openHiring: OpenHiringStats;
+  runningPnl: RunningPnlStats;
   pendingActions: PendingAction[];
 }
 
-export async function fetchAllBranchHealthData(branchName: string, today: string): Promise<BranchHealthRawData> {
+export async function fetchAllBranchHealthData(
+  branchName: string,
+  today: string,
+): Promise<BranchHealthRawData> {
   const branchId = await branchIdFor(branchName);
   if (!branchId) {
     return {
       branchId: null,
-      budget: { periodCode: null, totalBudget: 0, consumed: 0, reserved: 0, available: 0, utilizationPct: 0 },
+      budget: {
+        periodCode: null,
+        totalBudget: 0,
+        consumed: 0,
+        reserved: 0,
+        available: 0,
+        utilizationPct: 0,
+      },
       grnStats: { raised: 0, approved: 0, pending: 0, totalRaisedAmount: 0 },
       recentGrns: [],
-      ats: { walkins: 0, tokens: 0, tokensClosed: 0, selected: 0, rejected: 0, noShow: 0, slaBreaches: 0, slaTotal: 0 },
+      ats: {
+        walkins: 0,
+        tokens: 0,
+        tokensClosed: 0,
+        selected: 0,
+        rejected: 0,
+        noShow: 0,
+        slaBreaches: 0,
+        slaTotal: 0,
+      },
       lateStats: { totalLate: 0, processWise: [] },
-      shrinkage: { scheduled: 0, present: 0, absent: 0, onLeave: 0, shrinkagePct: 0 },
-      headcount: { joinedToday: 0, leftToday: 0, joinedNames: [], leftNames: [], totalActive: 0 },
+      shrinkage: {
+        scheduled: 0,
+        present: 0,
+        absent: 0,
+        onLeave: 0,
+        shrinkagePct: 0,
+        rosterBased: false,
+      },
+      headcount: {
+        joinedToday: 0,
+        leftToday: 0,
+        joinedNames: [],
+        leftNames: [],
+        totalActive: 0,
+      },
       processPerformance: [],
+      openHiring: { activePipeline: 0, byStage: [] },
+      runningPnl: {
+        periodCode: today.slice(0, 7),
+        salaryCostMtd: 0,
+        grnExpenseMtd: 0,
+        totalCostMtd: 0,
+        dataAvailable: false,
+      },
       pendingActions: [],
     };
   }
 
-  const [budget, grnStats, recentGrns, ats, lateStats, shrinkage, headcount, processPerformance, pendingActions] =
-    await Promise.all([
-      fetchBudgetSummary(branchId, today),
-      fetchGrnStats(branchId, today),
-      fetchRecentGrns(branchId),
-      fetchAtsStats(branchName, today),
-      fetchLateStats(branchId, today),
-      fetchShrinkage(branchId, today),
-      fetchHeadcountMovement(branchId, today),
-      fetchProcessPerformance(branchId, today),
-      fetchPendingActions(branchId),
-    ]);
+  const [
+    budget,
+    grnStats,
+    recentGrns,
+    ats,
+    lateStats,
+    shrinkage,
+    headcount,
+    processPerformance,
+    openHiring,
+    runningPnl,
+    pendingActions,
+  ] = await Promise.all([
+    fetchBudgetSummary(branchId, today),
+    fetchGrnStats(branchId, today),
+    fetchRecentGrns(branchId),
+    fetchAtsStats(branchName, today),
+    fetchLateStats(branchId, today),
+    fetchShrinkage(branchId, today),
+    fetchHeadcountMovement(branchId, today),
+    fetchProcessPerformance(branchId, today),
+    fetchOpenHiring(branchName),
+    fetchRunningPnl(branchId, today),
+    fetchPendingActions(branchId),
+  ]);
 
-  return { branchId, budget, grnStats, recentGrns, ats, lateStats, shrinkage, headcount, processPerformance, pendingActions };
+  return {
+    branchId,
+    budget,
+    grnStats,
+    recentGrns,
+    ats,
+    lateStats,
+    shrinkage,
+    headcount,
+    processPerformance,
+    openHiring,
+    runningPnl,
+    pendingActions,
+  };
 }
