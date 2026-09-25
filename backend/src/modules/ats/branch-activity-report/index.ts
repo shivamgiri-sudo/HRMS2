@@ -69,6 +69,44 @@ export async function getBranchActivityReportData(
   return buildReport({ facts, reportDate });
 }
 
+const BY_BRANCH_TTL_MS = 5 * 60 * 1000;
+let byBranchCache: {
+  date: string;
+  at: number;
+  value: Promise<Map<string, ReportData>>;
+} | null = null;
+
+/**
+ * Report data for every branch, keyed by lower-cased canonical branch name, built once per date and
+ * shared for a few minutes. The Branch Health Report reads its ATS section from here so both
+ * emails quote the very same token definitions and numbers.
+ */
+export function getBranchActivityByBranch(
+  reportDate: string = getCurrentDateIST(),
+): Promise<Map<string, ReportData>> {
+  const now = Date.now();
+  if (
+    byBranchCache &&
+    byBranchCache.date === reportDate &&
+    now - byBranchCache.at < BY_BRANCH_TTL_MS
+  )
+    return byBranchCache.value;
+  const value = loadFacts(reportDate).then((facts) => {
+    const out = new Map<string, ReportData>();
+    for (const branch of new Set(facts.map((f) => f.branch)))
+      out.set(
+        branch.toLowerCase(),
+        buildReport({ facts: facts.filter((f) => f.branch === branch), reportDate }),
+      );
+    return out;
+  });
+  byBranchCache = { date: reportDate, at: now, value };
+  value.catch(() => {
+    if (byBranchCache?.value === value) byBranchCache = null;
+  });
+  return value;
+}
+
 function escapeCsv(v: string | number | null | undefined): string {
   const s = v == null ? "" : String(v);
   if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;

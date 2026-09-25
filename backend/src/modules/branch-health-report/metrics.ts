@@ -115,13 +115,13 @@ export function classifySignals(raw: BranchHealthRawData): {
   if (slaPct >= T.sla.criticalPct) {
     criticalPoints.push({
       label: "ATS SLA critical",
-      detail: `${slaPct}% of candidates waited >30 min before being called`,
+      detail: `${slaPct}% of tokens waited more than 20 min before being called`,
       severity: "critical",
     });
   } else if (slaPct >= T.sla.warnPct) {
     criticalPoints.push({
       label: "ATS SLA warning",
-      detail: `${slaPct}% of candidates waited >30 min`,
+      detail: `${slaPct}% of tokens waited more than 20 min`,
       severity: "warning",
     });
   }
@@ -259,6 +259,17 @@ export function classifySignals(raw: BranchHealthRawData): {
     criticalPoints.push({
       label: `Attrition ${attritionPct.toFixed(1)}% this month`,
       detail: `${hc.leftMtd} left, ${hc.joinedMtd} joined (net ${hc.joinedMtd - hc.leftMtd}); ${hc.upcomingExits} more exits due in 30 days`,
+      severity: "warning",
+    });
+  }
+
+  if (raw.ats.open > 0) {
+    criticalPoints.push({
+      label: `${raw.ats.open} walk-in token${raw.ats.open > 1 ? "s" : ""} pending closure`,
+      detail:
+        raw.ats.openQueueCompleted > 0
+          ? `${raw.ats.openQueueCompleted} marked completed in the queue with no interview outcome — candidate still waiting`
+          : "No interview outcome recorded yet",
       severity: "warning",
     });
   }

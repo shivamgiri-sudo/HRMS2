@@ -357,7 +357,7 @@ export function renderEmail(
     true,
   );
 
-  // ── 4. ATS ──
+  // ── 4. ATS (same definitions as the Recruitment Activity email) ──
   const slaPct =
     raw.ats.slaTotal > 0
       ? `${Math.round((raw.ats.slaBreaches / raw.ats.slaTotal) * 100)}%`
@@ -366,28 +366,43 @@ export function renderEmail(
     raw.ats.walkins > 0
       ? `${Math.round((raw.ats.selected / raw.ats.walkins) * 100)}%`
       : "—";
-  const atsBody = kpiStrip([
-    { label: "Walk-ins", value: String(raw.ats.walkins), color: C.primary },
-    { label: "Tokens Created", value: String(raw.ats.tokens), color: C.accent },
-    {
-      label: "Tokens Closed",
-      value: String(raw.ats.tokensClosed),
-      color: C.muted,
-    },
-    {
-      label: "Selected",
-      value: String(raw.ats.selected),
-      color: C.success,
-      subtext: selectionPct,
-    },
-    { label: "Rejected", value: String(raw.ats.rejected), color: C.danger },
-    { label: "No Show", value: String(raw.ats.noShow), color: C.muted },
-    {
-      label: "SLA Breach %",
-      value: slaPct,
-      color: raw.ats.slaBreaches > 0 ? C.warn : C.success,
-    },
-  ]);
+  const atsBody =
+    kpiStrip([
+      { label: "Walk-ins", value: String(raw.ats.walkins), color: C.primary },
+      { label: "Tokens", value: String(raw.ats.tokens), color: C.accent },
+      { label: "Closed", value: String(raw.ats.tokensClosed), color: C.muted },
+      {
+        label: "Selected",
+        value: String(raw.ats.selected),
+        color: C.success,
+        subtext: selectionPct,
+      },
+      { label: "Rejected", value: String(raw.ats.rejected), color: C.danger },
+      { label: "No-show", value: String(raw.ats.noShow), color: C.muted },
+      {
+        label: "Client round / Hold",
+        value: `${raw.ats.clientRound} / ${raw.ats.hold}`,
+        color: C.accent,
+      },
+      {
+        label: "Closure pending",
+        value: String(raw.ats.open),
+        color: raw.ats.open > 0 ? C.danger : C.success,
+        subtext:
+          raw.ats.openQueueCompleted > 0
+            ? `${raw.ats.openQueueCompleted} queue-done, no outcome`
+            : undefined,
+      },
+      {
+        label: "SLA-1 breach %",
+        value: slaPct,
+        color: raw.ats.slaBreaches > 0 ? C.warn : C.success,
+        subtext: "call within 20 min",
+      },
+    ]) +
+    note(
+      "Same token definitions as the Recruitment Activity email. A token marked completed in the queue with no interview form while the candidate is still Waiting counts as closure pending, not closed.",
+    );
 
   // ── 5. Attendance: shrinkage + late arrivals, one row per process, shifts grouped in bands ──
   const sh = raw.shrinkage;

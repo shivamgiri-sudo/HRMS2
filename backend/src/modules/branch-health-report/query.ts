@@ -12,6 +12,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getPnlReconciliation } from "../process-pnl/pnl-reconciliation.service.js";
 import { readGrnSpend } from "../process-pnl/pnl-actuals.service.js";
+import { getBranchActivityByBranch } from "../ats/branch-activity-report/index.js";
 import { isShiftDueYet } from "../wfm/shift-due.util.js";
 
 // ─── shared helpers ──────────────────────────────────────────────────────────
@@ -361,67 +362,62 @@ export interface AtsStats {
   selected: number;
   rejected: number;
   noShow: number;
+  /** Cleared internal rounds, waiting for the client's interview. */
+  clientRound: number;
+  hold: number;
+  /** Interview form filed with a status that is none of the named outcomes. */
+  otherClosed: number;
+  /** Tokens with no interview outcome yet (closure pending). */
+  open: number;
+  /** …of which marked completed in the queue but the candidate is still waiting. */
+  openQueueCompleted: number;
   slaBreaches: number;
   slaTotal: number;
 }
 
+const NO_ATS_ACTIVITY: AtsStats = {
+  walkins: 0,
+  tokens: 0,
+  tokensClosed: 0,
+  selected: 0,
+  rejected: 0,
+  noShow: 0,
+  clientRound: 0,
+  hold: 0,
+  otherClosed: 0,
+  open: 0,
+  openQueueCompleted: 0,
+  slaBreaches: 0,
+  slaTotal: 0,
+};
+
+/**
+ * Today's walk-in queue for the branch, from the Recruitment Activity report's own engine (one
+ * definition of walk-in, token, closed, selected, no-show and open for both emails). A token the
+ * queue shows as "completed" with no interview form while the candidate is still Waiting is OPEN,
+ * not closed. SLA is the report's SLA-1: token to interview call within 20 minutes.
+ */
 export async function fetchAtsStats(
   branchName: string,
   today: string,
 ): Promise<AtsStats> {
-  const [tokenRows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       COUNT(*)                                                                                    AS tokens,
-       SUM(qt.queue_status NOT IN ('waiting','calling') OR qt.queue_status IS NULL)              AS closed,
-       SUM(LOWER(COALESCE(s.final_decision, c.final_decision, c.status,''))
-           IN ('selected','offered','joined','offer_extended','offer_accepted'))                  AS selected,
-       SUM(LOWER(COALESCE(s.final_decision, c.final_decision, c.status,''))
-           IN ('rejected','rejected_by_hr','not_suitable','not_selected'))                        AS rejected,
-       SUM(LOWER(COALESCE(s.final_decision, c.final_decision, c.status,''))
-           IN ('no_show','absent','no show','no-show'))                                            AS no_show,
-       SUM(qt.called_at IS NOT NULL AND
-           TIMESTAMPDIFF(MINUTE, qt.arrival_time, qt.called_at) > 30)                             AS sla_breaches,
-       SUM(qt.called_at IS NOT NULL)                                                              AS sla_total
-     FROM ats_queue_token qt
-     JOIN ats_candidate c ON c.id = qt.candidate_id
-     LEFT JOIN ats_interview_submission s ON s.candidate_id = c.id
-       AND s.submitted_at >= DATE_SUB(qt.arrival_time, INTERVAL 1 MINUTE)
-       AND NOT EXISTS (SELECT 1 FROM ats_queue_token nx
-                        WHERE nx.candidate_id = qt.candidate_id
-                          AND nx.arrival_time > qt.arrival_time AND nx.arrival_time <= s.submitted_at)
-    WHERE DATE(qt.arrival_time) = ?
-      AND (
-        LOWER(COALESCE(qt.branch_name,'')) = LOWER(?)
-        OR LOWER(COALESCE(c.branch_display_name,'')) = LOWER(?)
-        OR LOWER(COALESCE(c.applied_for_branch,'')) = LOWER(?)
-      )
-      AND c.record_type = 'candidate'`,
-    [today, branchName, branchName, branchName],
-  );
-
-  const [walkinRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(DISTINCT c.id) AS walkins
-       FROM ats_candidate c
-      WHERE DATE(c.created_date) = ?
-        AND (
-          LOWER(COALESCE(c.branch_display_name,'')) = LOWER(?)
-          OR LOWER(COALESCE(c.applied_for_branch,'')) = LOWER(?)
-        )
-        AND c.record_type = 'candidate'`,
-    [today, branchName, branchName],
-  );
-
-  const t = tokenRows[0] as any;
-  const w = walkinRows[0] as any;
+  const byBranch = await getBranchActivityByBranch(today);
+  const s = byBranch.get(branchName.toLowerCase())?.overall.ftd;
+  if (!s) return NO_ATS_ACTIVITY;
   return {
-    walkins: Math.max(Number(w?.walkins ?? 0), Number(t?.tokens ?? 0)),
-    tokens: Number(t?.tokens ?? 0),
-    tokensClosed: Number(t?.closed ?? 0),
-    selected: Number(t?.selected ?? 0),
-    rejected: Number(t?.rejected ?? 0),
-    noShow: Number(t?.no_show ?? 0),
-    slaBreaches: Number(t?.sla_breaches ?? 0),
-    slaTotal: Number(t?.sla_total ?? 0),
+    walkins: s.walkins,
+    tokens: s.tokens,
+    tokensClosed: s.closed,
+    selected: s.selected,
+    rejected: s.rejected,
+    noShow: s.noShow + s.walkout,
+    clientRound: s.clientRound,
+    hold: s.hold,
+    otherClosed: s.otherClosed,
+    open: s.open,
+    openQueueCompleted: s.openQueueCompleted,
+    slaBreaches: s.sla1.breached,
+    slaTotal: s.sla1.met + s.sla1.breached,
   };
 }
 
@@ -1349,16 +1345,7 @@ export async function fetchAllBranchHealthData(
         },
       },
       recentGrns: [],
-      ats: {
-        walkins: 0,
-        tokens: 0,
-        tokensClosed: 0,
-        selected: 0,
-        rejected: 0,
-        noShow: 0,
-        slaBreaches: 0,
-        slaTotal: 0,
-      },
+      ats: NO_ATS_ACTIVITY,
       lateStats: { totalLate: 0, processWise: [], byManager: [] },
       prevShrinkage: null,
       shrinkage: {
