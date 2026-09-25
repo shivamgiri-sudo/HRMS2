@@ -13,12 +13,18 @@ import { renderEmail, subjectLine } from "./template.js";
 import { resolveRecipients } from "./recipients.js";
 import { ownCompanyBranchSql } from "../../shared/ownCompanyCostCentre.js";
 
+/** Branches that do not get this report (owner instruction 2026-09-25). */
+const BRANCHES_NOT_REPORTED = ["HEAD OFFICE", "Delhi Office"];
+
 async function activeBranchNames(): Promise<string[]> {
   const { db } = await import("../../db/mysql.js");
   const [rows] = await db.execute(
     `SELECT DISTINCT branch_name FROM branch_master WHERE active_status = 1 AND ${ownCompanyBranchSql("")} ORDER BY branch_name`,
   );
-  return (rows as any[]).map((r) => String(r.branch_name)).filter(Boolean);
+  const skipped = new Set(BRANCHES_NOT_REPORTED.map((b) => b.toLowerCase()));
+  return (rows as any[])
+    .map((r) => String(r.branch_name))
+    .filter((name) => name && !skipped.has(name.toLowerCase()));
 }
 
 export interface BranchHealthBuilt {

@@ -2,7 +2,7 @@
  * Branch Health Report — recipient resolution.
  *
  *   TO  branch_head(s) of the branch
- *   CC  COO + CEO
+ *   CC  COO + CEO, plus any per-branch extras (BRANCH_EXTRA_CC)
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -21,6 +21,12 @@ const NEVER_CC = new Set([
   "ashwani.wadhwa@teammas.in",
   "ashish.awasthi@teammas.in",
 ]);
+
+/** Extra CC recipients for one branch's report, on top of the COO / CEO copy. */
+const BRANCH_EXTRA_CC: Record<string, string[]> = {
+  "noida-2": ["dinesh.mehta@teammas.in", "bhavesh.dayal@teammas.in"],
+  noida: ["mis@teammas.in"],
+};
 
 const isEmail = (v: unknown): v is string =>
   typeof v === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
@@ -62,7 +68,11 @@ export async function resolveRecipients(
   const toFellBackToHr = branchHeads.length === 0;
   const to: string[] = toFellBackToHr ? [] : unique(branchHeads);
   const toSet = new Set(to.map((e) => e.toLowerCase()));
-  const cc = unique([...EXEC_FALLBACK_EMAILS, ...execs]).filter(
+  const cc = unique([
+    ...EXEC_FALLBACK_EMAILS,
+    ...execs,
+    ...(BRANCH_EXTRA_CC[branchName.trim().toLowerCase()] ?? []),
+  ]).filter(
     (e) => !toSet.has(e.toLowerCase()) && !NEVER_CC.has(e.toLowerCase()),
   );
   return { to, cc, toFellBackToHr };
