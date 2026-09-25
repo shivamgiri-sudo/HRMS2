@@ -41,6 +41,18 @@ export interface MappingRow {
   verifiedByHr: boolean;
 }
 
+/** listMappings() row — MappingRow plus the matched employee's display name, for the HR review screen. */
+export interface MappingListRow extends MappingRow {
+  employeeName: string | null;
+  employeeCode: string | null;
+}
+
+/** Optional filter for listMappings() — narrows to rows HR still needs to review. */
+export interface ListMappingsFilters {
+  /** true = only unverified rows; false = only verified rows; omitted = all rows. */
+  verified?: boolean;
+}
+
 /** Input to upsertMapping — the fields a match run (or HR review) writes. */
 export interface UpsertMappingInput {
   rawName: string;
@@ -56,4 +68,10 @@ export interface SeedResult {
   ambiguous: number;
   unmatched: number;
   errors: string[];
+}
+
+/** Input to verifyMapping() — the HR reviewer's explicit decision on one row. */
+export interface VerifyMappingInput {
+  employeeId: string | null;
+  verifiedByUserId: string;
 }

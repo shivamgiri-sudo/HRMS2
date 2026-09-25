@@ -17,6 +17,9 @@ const {
   getEmployeeCandidates,
   upsertMapping,
   getMappingByNameAndRole,
+  listMappings,
+  verifyMapping,
+  getMappingRowById,
 } = await import("../onfido-name-mapping.service.js");
 
 beforeEach(() => {
@@ -123,5 +126,117 @@ describe("getMappingByNameAndRole", () => {
     const result = await getMappingByNameAndRole("Nobody Here", "am");
 
     expect(result).toBeNull();
+  });
+});
+
+describe("getMappingRowById", () => {
+  it("returns the mapping row for a given primary-key id, joined with employee name/code", async () => {
+    hrmsExecute.mockResolvedValueOnce([
+      [
+        {
+          id: "map-1",
+          raw_name: "Priya Sharma",
+          raw_role: "tl",
+          employee_id: "emp-1",
+          match_confidence: 1.0,
+          match_method: "exact_name",
+          verified_by_hr: 1,
+          employee_name: "Priya Sharma",
+          employee_code: "MAS001",
+        },
+      ],
+    ]);
+
+    const result = await getMappingRowById("map-1");
+
+    expect(result?.id).toBe("map-1");
+    expect(result?.employeeName).toBe("Priya Sharma");
+    expect(result?.verifiedByHr).toBe(true);
+  });
+
+  it("returns null when no row exists for that id", async () => {
+    hrmsExecute.mockResolvedValueOnce([[]]);
+
+    const result = await getMappingRowById("nonexistent");
+
+    expect(result).toBeNull();
+  });
+});
+
+describe("listMappings", () => {
+  it("returns every mapping row joined with the matched employee's name/code", async () => {
+    hrmsExecute.mockResolvedValueOnce([
+      [
+        {
+          id: "map-1",
+          raw_name: "Priya Sharma",
+          raw_role: "tl",
+          employee_id: "emp-1",
+          match_confidence: 1.0,
+          match_method: "exact_name",
+          verified_by_hr: 0,
+          employee_name: "Priya Sharma",
+          employee_code: "MAS001",
+        },
+      ],
+    ]);
+
+    const result = await listMappings();
+
+    expect(result).toEqual([
+      {
+        id: "map-1",
+        rawName: "Priya Sharma",
+        rawRole: "tl",
+        employeeId: "emp-1",
+        matchConfidence: 1.0,
+        matchMethod: "exact_name",
+        verifiedByHr: false,
+        employeeName: "Priya Sharma",
+        employeeCode: "MAS001",
+      },
+    ]);
+  });
+
+  it("filters to only unverified rows when verified: false is passed", async () => {
+    hrmsExecute.mockResolvedValueOnce([[]]);
+
+    await listMappings({ verified: false });
+
+    const [sql] = hrmsExecute.mock.calls[0];
+    expect(sql).toContain("verified_by_hr = 0");
+  });
+
+  it("filters to only verified rows when verified: true is passed", async () => {
+    hrmsExecute.mockResolvedValueOnce([[]]);
+
+    await listMappings({ verified: true });
+
+    const [sql] = hrmsExecute.mock.calls[0];
+    expect(sql).toContain("verified_by_hr = 1");
+  });
+});
+
+describe("verifyMapping", () => {
+  it("sets employee_id, verified_by_hr = 1, verified_by_user_id and verified_at", async () => {
+    hrmsExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+    await verifyMapping("map-1", { employeeId: "emp-2", verifiedByUserId: "user-9" });
+
+    expect(hrmsExecute).toHaveBeenCalledTimes(1);
+    const [sql, params] = hrmsExecute.mock.calls[0];
+    expect(sql).toContain("verified_by_hr = 1");
+    expect(sql).toContain("verified_by_user_id");
+    expect(sql).toContain("verified_at");
+    expect(params).toEqual(["emp-2", "user-9", "map-1"]);
+  });
+
+  it("allows HR to explicitly clear a match by verifying with employeeId: null", async () => {
+    hrmsExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+    await verifyMapping("map-1", { employeeId: null, verifiedByUserId: "user-9" });
+
+    const [, params] = hrmsExecute.mock.calls[0];
+    expect(params).toEqual([null, "user-9", "map-1"]);
   });
 });

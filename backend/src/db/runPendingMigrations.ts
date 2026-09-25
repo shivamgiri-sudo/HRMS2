@@ -33,8 +33,8 @@ const VERIFY_SCHEMA_TIMEOUT_MS = 10000;
  * contract. Keep the two sets separate.
  */
 const TRANSIENT_MIGRATION_ERROR_CODES = new Set([
-  "ER_LOCK_WAIT_TIMEOUT",      // 1205 â€" someone held the row/metadata lock; retrying usually wins
-  "ER_LOCK_DEADLOCK",          // 1213 â€" InnoDB picked us as the victim
+  "ER_LOCK_WAIT_TIMEOUT", // 1205 â€" someone held the row/metadata lock; retrying usually wins
+  "ER_LOCK_DEADLOCK", // 1213 â€" InnoDB picked us as the victim
   "ETIMEDOUT",
   "ECONNRESET",
   "ECONNREFUSED",
@@ -75,14 +75,16 @@ const MIGRATION_LOCK_WAIT_SECONDS = (() => {
  * per-file DDL connections and the ledger writes â€" so none of them can inherit the
  * server's year-long metadata-lock default.
  */
-async function openMigrationConnection(config: mysql.ConnectionOptions): Promise<mysql.Connection> {
+async function openMigrationConnection(
+  config: mysql.ConnectionOptions,
+): Promise<mysql.Connection> {
   const conn = await mysql.createConnection(config);
   try {
     // Interpolated rather than bound: SET does not accept placeholders for these,
     // and the value is a validated integer from the constant above.
     await conn.query(
       `SET SESSION lock_wait_timeout = ${MIGRATION_LOCK_WAIT_SECONDS}, ` +
-      `SESSION innodb_lock_wait_timeout = ${MIGRATION_LOCK_WAIT_SECONDS}`,
+        `SESSION innodb_lock_wait_timeout = ${MIGRATION_LOCK_WAIT_SECONDS}`,
     );
   } catch (err) {
     // A server that refuses the SET is not a reason to refuse the boot â€" carry on
@@ -98,10 +100,16 @@ async function openMigrationConnection(config: mysql.ConnectionOptions): Promise
 export function isTransientMigrationError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const candidate = error as { code?: unknown; errno?: unknown };
-  if (typeof candidate.code === "string" && TRANSIENT_MIGRATION_ERROR_CODES.has(candidate.code)) {
+  if (
+    typeof candidate.code === "string" &&
+    TRANSIENT_MIGRATION_ERROR_CODES.has(candidate.code)
+  ) {
     return true;
   }
-  return typeof candidate.errno === "number" && TRANSIENT_MIGRATION_ERRNOS.has(candidate.errno);
+  return (
+    typeof candidate.errno === "number" &&
+    TRANSIENT_MIGRATION_ERRNOS.has(candidate.errno)
+  );
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -111,7 +119,9 @@ function resolveSqlDir(): string {
     path.resolve(__dirname, "../../sql"),
     path.resolve(__dirname, "../../../sql"),
   ];
-  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0];
+  return (
+    candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0]
+  );
 }
 
 const SQL_DIR = resolveSqlDir();
@@ -493,30 +503,30 @@ const MIGRATION_MANIFEST: string[] = [
   "504_auth_account_lockout.sql",
   "508_ats_onboarding_bridge_code_columns.sql",
   // â"€â"€ DPDP Privacy Hardening migrations (feature/dpdp-privacy-hardening) â"€â"€â"€â"€â"€â"€
-  "126_ats_candidate_pii_hash_columns.sql",     // PII hash columns on ats_candidate (was missing from manifest)
-  "999_grant_employee_resignation_dpdp.sql",    // Employee role page access to DPDP_WITHDRAWAL (was missing)
+  "126_ats_candidate_pii_hash_columns.sql", // PII hash columns on ats_candidate (was missing from manifest)
+  "999_grant_employee_resignation_dpdp.sql", // Employee role page access to DPDP_WITHDRAWAL (was missing)
   "511_wfm_session_call_id.sql",
   "512_quality_dashboard_page_access.sql",
-  "513_dpdp_withdrawal_consolidation.sql",      // Canonical withdrawal fields, task table, evidence table
-  "514_privacy_data_inventory.sql",             // Privacy data asset/purpose/field-policy/system registry
-  "515_employee_pii_encryption_columns.sql",    // Additive encrypted PAN/Aadhaar columns on employees
-  "516_privacy_retention_worker_tables.sql",    // Retention run/candidate/approval/certificate tables
-  "518_dpdp_feature_flags.sql",                 // DPDP feature flag config keys (all default OFF/dry-run)
-  "519_ats_performance_indexes.sql",            // ATS command center covering indexes
-  "520_missing_page_codes_seed.sql",            // Missing page codes seed
-  "521_security_audit_event_table.sql",         // Security audit event table
-  "522_dpdp_withdrawal_admin_rerun.sql",        // DPDP withdrawal admin rerun
-  "523_job_requisition.sql",                    // Job requisition master + candidate linking tables
-  "524_job_requisition_batch_link.sql",         // Planned batch columns on job_requisition
-  "528_job_requisition_handover.sql",           // Handover workflow columns on job_requisition
-  "530_auth_session_security_hardening.sql",    // Pre-auth challenge table, token family columns, auth invitation
-  "531_document_vault_security_hardening.sql",  // Document vault security hardening
-  "532_migration_governance_hardening.sql",     // Migration governance hardening
-  "533_worker_distributed_safety.sql",          // Worker distributed safety
-  "535_attendance_reconciliation_issue.sql",    // NCOSEC-to-payroll attendance reconciliation issue ledger
+  "513_dpdp_withdrawal_consolidation.sql", // Canonical withdrawal fields, task table, evidence table
+  "514_privacy_data_inventory.sql", // Privacy data asset/purpose/field-policy/system registry
+  "515_employee_pii_encryption_columns.sql", // Additive encrypted PAN/Aadhaar columns on employees
+  "516_privacy_retention_worker_tables.sql", // Retention run/candidate/approval/certificate tables
+  "518_dpdp_feature_flags.sql", // DPDP feature flag config keys (all default OFF/dry-run)
+  "519_ats_performance_indexes.sql", // ATS command center covering indexes
+  "520_missing_page_codes_seed.sql", // Missing page codes seed
+  "521_security_audit_event_table.sql", // Security audit event table
+  "522_dpdp_withdrawal_admin_rerun.sql", // DPDP withdrawal admin rerun
+  "523_job_requisition.sql", // Job requisition master + candidate linking tables
+  "524_job_requisition_batch_link.sql", // Planned batch columns on job_requisition
+  "528_job_requisition_handover.sql", // Handover workflow columns on job_requisition
+  "530_auth_session_security_hardening.sql", // Pre-auth challenge table, token family columns, auth invitation
+  "531_document_vault_security_hardening.sql", // Document vault security hardening
+  "532_migration_governance_hardening.sql", // Migration governance hardening
+  "533_worker_distributed_safety.sql", // Worker distributed safety
+  "535_attendance_reconciliation_issue.sql", // NCOSEC-to-payroll attendance reconciliation issue ledger
   "536_attendance_reconciliation_apr_issue_types.sql", // APR payroll attendance reconciliation issue types
   "537_payroll_attendance_conflict_review.sql", // Payroll attendance control tower review ledger
-  "538_route_page_access_backfill.sql",         // Backfill route-mapped page codes and grants
+  "538_route_page_access_backfill.sql", // Backfill route-mapped page codes and grants
   "542_attendance_reconciliation_source_conflict_issue_type.sql", // Reconciliation issue type for dialler rows without source evidence
   "543_cosec_exclusion_and_inactive_issue_type.sql", // Ignore intentional COSEC identities and separate inactive punch activity
   // 1006/1007 existed on disk but were never registered here â€" confirmed live (2026-08-13)
@@ -525,44 +535,44 @@ const MIGRATION_MANIFEST: string[] = [
   // Both are safe to register now regardless: 1006 uses ADD COLUMN/INDEX IF NOT EXISTS and a
   // guarded unique-key swap, 1007 uses INSERT IGNORE â€" re-running either against a DB that
   // already has them is a verified no-op, not a duplicate-column error.
-  "1006_payroll_process_readiness_extend.sql",  // Extend payroll_branch_readiness: process_id, attendance_data_ready, process_manager_signoff
-  "1007_payroll_process_readiness_page.sql",    // Register PAYROLL_PROCESS_READINESS page catalog entry + role grants
-  "1008_migrate_photo_urls_to_api.sql",         // Migrate employee photo URLs from /uploads/ to /api/files/
+  "1006_payroll_process_readiness_extend.sql", // Extend payroll_branch_readiness: process_id, attendance_data_ready, process_manager_signoff
+  "1007_payroll_process_readiness_page.sql", // Register PAYROLL_PROCESS_READINESS page catalog entry + role grants
+  "1008_migrate_photo_urls_to_api.sql", // Migrate employee photo URLs from /uploads/ to /api/files/
   "1009_ats_hiring_followup_call_feedback.sql", // ATS hiring: follow-up call outcome, date, notes, reschedule columns
   "1021_payroll_signoff_columns_and_ceo_sod.sql", // salary_prep_run sign-off columns (route 500'd without them) + narrow ceo create/delete grants
-  "1022_notification_event_registry.sql",          // notification_event_config is required at startup and by notificationGateway.notify()
-  "1022_page_catalog_path_reconciliation.sql",    // WORKFORCE_COMMAND_CENTER path regression (404 for 8 roles) + retire ADVANCED_REPORTS stub
-  "1023_notification_dispatch_claim.sql",          // notification_dispatch_claim is required by the dispatch worker claim path
-  "1023_discard_approved_records.sql",            // Discard approved leave/regularization/dispute: pre-approval snapshots + discard audit log
+  "1022_notification_event_registry.sql", // notification_event_config is required at startup and by notificationGateway.notify()
+  "1022_page_catalog_path_reconciliation.sql", // WORKFORCE_COMMAND_CENTER path regression (404 for 8 roles) + retire ADVANCED_REPORTS stub
+  "1023_notification_dispatch_claim.sql", // notification_dispatch_claim is required by the dispatch worker claim path
+  "1023_discard_approved_records.sql", // Discard approved leave/regularization/dispute: pre-approval snapshots + discard audit log
   "1024_candidate_onboarding_document_rejected_status.sql", // document_status lacked 'rejected'; every secure-viewer reject hit ERROR 1265
   "1028_salary_certificate_request_collation.sql", // utf8mb4_0900_ai_ci vs employees' utf8mb4_unicode_ci â€" the join 500'd with ERROR 1267
-  "1027_ceo_my_kpi_revoke.sql",                   // CEO is not measured on operational KPIs â€" remove the hollow /my-kpi page from that role only
+  "1027_ceo_my_kpi_revoke.sql", // CEO is not measured on operational KPIs â€" remove the hollow /my-kpi page from that role only
   "1029_ungated_routes_page_catalog.sql", // the ONLY definition anywhere of the page_catalog rows and role_page_access grants for FINANCE_GRN, FINANCE_BRANCH_BUDGET, FINANCE_BUDGET_CONSOLIDATION, FINANCE_PROCESS_PNL, FINANCE_PNL_CONFIG, FINANCE_PNL_LOBS, FINANCE_PNL_PERIOD_CLOSE and FINANCE_VENDOR_PAYMENTS. Never in the manifest, so never run by the runner; production holds 8 catalog rows and 23 grants purely because it was applied out of band. On a rebuilt database every Finance page would render its Gate denial for every role except super_admin - the same failure FINANCE_COST_CENTRES shipped with, which two migrations cited as a cautionary example and 1129 finally fixed. Purely additive: INSERT ... ON DUPLICATE KEY UPDATE only, no ALTER, no DROP, no DELETE, so a replay against production rewrites the same rows with the same values and changes nothing
   "1030_statutory_config_versioning.sql",
-  "1031_statutory_filing_act_2025_forms.sql",   // Income-tax Act 2025 renumbered the quarterly salary TDS statement from Form 24Q to Form 138; the ENUM is widened, never narrowed, so filed rows keep meaning what they meant         // statutory_config keys are UNIQUE, so a Finance Act change overwrote the old rates and a prior month could no longer be recomputed at the rates it was actually deducted under
-  "1032_tds_certificate_part_a.sql",           // Part A of the salary TDS certificate is issued by TRACES and cannot be generated here; this records which document belongs to which employee and year
+  "1031_statutory_filing_act_2025_forms.sql", // Income-tax Act 2025 renumbered the quarterly salary TDS statement from Form 24Q to Form 138; the ENUM is widened, never narrowed, so filed rows keep meaning what they meant         // statutory_config keys are UNIQUE, so a Finance Act change overwrote the old rates and a prior month could no longer be recomputed at the rates it was actually deducted under
+  "1032_tds_certificate_part_a.sql", // Part A of the salary TDS certificate is issued by TRACES and cannot be generated here; this records which document belongs to which employee and year
   "1033_sensitive_action_log_entity_id_width.sql", // entity_id was CHAR(36), so every composite key (employee:date, employee:FY, designation::role) overflowed and the audit row was silently dropped â€" 26 approved regularizations left no ATTENDANCE_RECORD_CORRECTED trail at all
-  "1035_kpi_master_config_designation.sql",     // A process target overrode a designation target instead of combining, so "EXECUTIVE on Onfido" could not be targeted separately; adds designation_id as an optional second dimension
-  "1036_kpi_metric_scoring_type.sql",           // min_threshold was stored on all 291 config rows and never scored; adds an opt-in scoring_type so a floor/ceiling can gate, without moving any existing score
-  "1039_salary_prep_run_kind.sql",               // salary_prep_run could not say what a run *is*, so a legacy import and the operational payroll for 2026-03 looked like duplicates of each other
-  "1042_esign_transaction_poll_state.sql",       // Luckpay's completion callback is unreliable, so eSign completion has to be pulled on a backoff rather than waited for
-  "1046_salary_assignment_package_link.sql",     // nothing recorded WHICH approved package an employee was hired on, so appointment letters printed Bonus 0.00 for packages that grant one
-  "1047_company_signing_certificate.sql",       // the previous "company sign" step was a database flag with no signature at all; this holds the real credential
-  "1048_appointment_letter_issue.sql",          // new table rather than appointment_letter_request, which carries two competing schemas from migrations 267 and 299
-  "1049_joining_document_esign_kit.sql",        // one signing session for all joining documents; the provider takes one file per call, so merging is the only route to a single billed eSign
-  "1047_process_metric_definition.sql",          // all 97 configured processes hold the same 3 metrics with ONE distinct target between them, because metric_code is globally unique and no table let a process name its own; this adds the per-process definition and its display label
+  "1035_kpi_master_config_designation.sql", // A process target overrode a designation target instead of combining, so "EXECUTIVE on Onfido" could not be targeted separately; adds designation_id as an optional second dimension
+  "1036_kpi_metric_scoring_type.sql", // min_threshold was stored on all 291 config rows and never scored; adds an opt-in scoring_type so a floor/ceiling can gate, without moving any existing score
+  "1039_salary_prep_run_kind.sql", // salary_prep_run could not say what a run *is*, so a legacy import and the operational payroll for 2026-03 looked like duplicates of each other
+  "1042_esign_transaction_poll_state.sql", // Luckpay's completion callback is unreliable, so eSign completion has to be pulled on a backoff rather than waited for
+  "1046_salary_assignment_package_link.sql", // nothing recorded WHICH approved package an employee was hired on, so appointment letters printed Bonus 0.00 for packages that grant one
+  "1047_company_signing_certificate.sql", // the previous "company sign" step was a database flag with no signature at all; this holds the real credential
+  "1048_appointment_letter_issue.sql", // new table rather than appointment_letter_request, which carries two competing schemas from migrations 267 and 299
+  "1049_joining_document_esign_kit.sql", // one signing session for all joining documents; the provider takes one file per call, so merging is the only route to a single billed eSign
+  "1047_process_metric_definition.sql", // all 97 configured processes hold the same 3 metrics with ONE distinct target between them, because metric_code is globally unique and no table let a process name its own; this adds the per-process definition and its display label
   "1051_kpi_master_config_effective_dating.sql", // kpi_master_config upserts in place, so editing a target rewrote history â€" a June score reported as measured against an August target; adds effective_from/to and widens the unique key
-  "1052_qa_audit_capture.sql",                   // there is no quality schema in mas_hrms at all â€" QA_EVALUATION and QA_CALIBRATION have been granted since June with no route and no table behind them; manually-audited processes had nowhere to record a score
+  "1052_qa_audit_capture.sql", // there is no quality schema in mas_hrms at all â€" QA_EVALUATION and QA_CALIBRATION have been granted since June with no route and no table behind them; manually-audited processes had nowhere to record a score
   "1048_salary_package_add_lta.sql", // Adds lta (Leave Travel Allowance) DECIMAL(12,2) DEFAULT 0.00 to salary_package_master and salary_package_state_wise. Applied out of band (both columns confirmed live 2026-08-20) but never registered; original ADD COLUMN IF NOT EXISTS is MariaDB-only syntax MySQL 8.0.42 rejects â€" rewritten as information_schema-guarded PREPARE/EXECUTE, matching the rest of this manifest. payroll.routes.ts and payroll-statutory-override.routes.ts read the column live.
-  "1053_qa_evaluation_page_access.sql",          // QA_EVALUATION and QA_CALIBRATION did not exist in production at all â€" no page_catalog row and no grants â€" so /quality/audit-forms was gated on a code that blocks every role
-  "1057_process_quality_target.sql",             // coaching raised nothing for 41 agents because zero QUALITY_SCORE targets exist anywhere; per-process thresholds with approval and history, since measured quality runs 23.7% to 72.7% across clients
+  "1053_qa_evaluation_page_access.sql", // QA_EVALUATION and QA_CALIBRATION did not exist in production at all â€" no page_catalog row and no grants â€" so /quality/audit-forms was gated on a code that blocks every role
+  "1057_process_quality_target.sql", // coaching raised nothing for 41 agents because zero QUALITY_SCORE targets exist anywhere; per-process thresholds with approval and history, since measured quality runs 23.7% to 72.7% across clients
   "1054_branch_head_approval_pending_status.sql", // 138 and 141 both CREATE this table and disagree; production got 141's ENUM('approved','rejected'), so every "send to branch head" INSERT of 'pending' threw and rolled back the stage change with it
-  "1054_alert_worker_governance.sql",          // alert_cooldown + the interview-delay-alert worker_config row; without this line the table is never created and alert-cooldown.ts throttles nothing
+  "1054_alert_worker_governance.sql", // alert_cooldown + the interview-delay-alert worker_config row; without this line the table is never created and alert-cooldown.ts throttles nothing
   "1055_branch_head_approval_missing_columns.sql", // 1054 fixed the enum; probing the real INSERT then showed notified_at/created_at/updated_at missing and branch_head_id NOT NULL, so the same statement still threw
   "1056_branch_head_approval_candidate_id.sql", // 138 and 141 each declare a column the other omits; production (141) has no candidate_id
   "1058_process_quality_target_state_machine.sql", // draft->simulated->pending->approved->active lifecycle; DB enforces the approver is not the author and that one open-ended active exists per process
   "1059_branch_notification_recipient.sql", // recipients were inferred from three tables with no stated intent; this is the intent
-  "1060_salary_verification.sql",            // salary_verification_flag + salary_employee_verification + payroll_branch_readiness verification columns (applied manually before runner registration)
+  "1060_salary_verification.sql", // salary_verification_flag + salary_employee_verification + payroll_branch_readiness verification columns (applied manually before runner registration)
   "1060_netlogin_half_day_floor_config.sql", // the net-login half-day floor was hardcoded at 240 while the biometric one was configurable; they agreed only by coincidence
   "1061_finance_budget_topup_request.sql", // GRN overspend was already hard-blocked, but there was no formal way to ask for more against a specific budget line short of re-running the whole budget through approval again; this is that request entity
   "1062_grn_consumption_reversal.sql", // once a GRN passed finance_head_approved, budget-consumption.consume() had moved its amount into consumed with no way back; adds the 'consumption_reversed' status the reversal action sets
@@ -626,33 +636,33 @@ const MIGRATION_MANIFEST: string[] = [
   // All additive and guarded. 1090 ships its cutover flag OFF, so none of these change
   // behaviour on their own; they only make the new behaviour possible.
   "1085_grn_billing_cycle_and_accounting_period.sql", // OPEN/CLOSED is a business attribute kept OUT of the 12-value workflow status enum; accounting_period is the FY month the GRN books to and the source of MM/YY in the new number (bill_date is vendor-controlled and must not mint a serial in a month whose sequence has moved on)
-  "1086_vendor_master_enrichment.sql",                // first ALTER to vendor_master since 024_erp.sql; adds tally name, structured address, GST-enabled/state-code and TDS terms. gst_number stays canonical â€" no duplicate gstin column. Two backfills, both derivations from data already in the row
-  "1087_branch_master_gst_registration.sql",          // gives "Billing State Code" a source; it has none today. Display/validation only â€" deriving gst_type from it would silently move tax on flows that already reconcile
-  "1088_vendor_expense_mapping.sql",                  // vendor -> head/sub-head restriction, intersected server-side with approved budget lines. Ships disabled (finance_config.vendor_expense_mapping_enforced = 0) because every existing vendor has zero mapping rows
-  "1089_finance_approval_event.sql",                  // the workflow history GRN/top-up/imprest never had. Throws rather than swallowing, unlike audit_action_log/sensitive_action_log â€" a history that can drop a row is not a history (see 1033)
-  "1090_finance_grn_monthly_sequence.sql",            // per-company monthly sequence for {prefix}/MM/YY/SERIAL, keyed (company_code, period_code) because db_bill issues under two live entities â€" CompId 1 `Mas` (68,646) and CompId 2 `IDC` (8,590). New table alongside finance_grn_sequence, which keeps its (branch_id, financial_year) PK and every historical number. No seed: every month starts at 1
-  "1092_vendor_expense_mapping_legacy_import.sql",    // 1,273 of I-Spark's 1,730 vendor->head/sub-head mappings, covering 946 vendors, so Requirement 2 works on day one instead of Finance re-keying them. Static seed because db_bill is a separate MySQL 5.5 server a migration cannot reach; matched on head_code/sub_head_code because the master's UUIDs differ per environment. The 457 not imported are listed in the file, not dropped silently â€" nearly all are legacy's year-versioned capex sub-heads
-  "1093_imprest_manager_and_allocation.sql",           // HRMS2 had no imprest model at all â€" `imprest` existed only as a grn_type value. Modelled on db_bill's imprest_manager (46 rows) and imprest_allotment_master (2,896, still live), but with DECIMAL money instead of int, DATE instead of varchar, effective dating on the manager, and an approval chain the legacy allotment never had
-  "1094_imprest_transaction_ledger.sql",               // append-only ledger the balance derives from, plus the grn_request bridge columns and the two returned_* statuses for Requirement 9. Append-only is a code-and-review invariant, not a DB one: MySQL TRIGGERs are unavailable here, so a source-scan test asserts no UPDATE/DELETE against the table exists
-  "1098_payroll_accounting_ledger_map.sql",            // Payroll -> Tally voucher mapping as CONFIGURATION, not code: which legal entity a salary posts to, and which Tally ledger each component becomes. The entity rule ships EMPTY on purpose â€" an unresolvable entity must refuse to produce a voucher, because defaulting everyone to MAS would put iSpark salaries in MasCallnet's books. The ledger map is seeded from the verified MAS/IDC June-2026 vouchers
-  "1099_grn_period_allocation.sql",                   // Multi-month recognition (Req 5). Child of grn_cost_allocation, NOT of grn_request, so cost-centre/process/LOB attribution survives the split. It is deliberately not extra grn_cost_allocation rows: those ARE the budget-consumption rows, and 12 of them would be 12 consumption events under a rule that consumes the invoice month only. Splits pnl_cost_amount, never amount_with_tax â€" recoverable GST is not an expense, and leaving amount_with_tax whole is what keeps one invoice at one vendor payable
+  "1086_vendor_master_enrichment.sql", // first ALTER to vendor_master since 024_erp.sql; adds tally name, structured address, GST-enabled/state-code and TDS terms. gst_number stays canonical â€" no duplicate gstin column. Two backfills, both derivations from data already in the row
+  "1087_branch_master_gst_registration.sql", // gives "Billing State Code" a source; it has none today. Display/validation only â€" deriving gst_type from it would silently move tax on flows that already reconcile
+  "1088_vendor_expense_mapping.sql", // vendor -> head/sub-head restriction, intersected server-side with approved budget lines. Ships disabled (finance_config.vendor_expense_mapping_enforced = 0) because every existing vendor has zero mapping rows
+  "1089_finance_approval_event.sql", // the workflow history GRN/top-up/imprest never had. Throws rather than swallowing, unlike audit_action_log/sensitive_action_log â€" a history that can drop a row is not a history (see 1033)
+  "1090_finance_grn_monthly_sequence.sql", // per-company monthly sequence for {prefix}/MM/YY/SERIAL, keyed (company_code, period_code) because db_bill issues under two live entities â€" CompId 1 `Mas` (68,646) and CompId 2 `IDC` (8,590). New table alongside finance_grn_sequence, which keeps its (branch_id, financial_year) PK and every historical number. No seed: every month starts at 1
+  "1092_vendor_expense_mapping_legacy_import.sql", // 1,273 of I-Spark's 1,730 vendor->head/sub-head mappings, covering 946 vendors, so Requirement 2 works on day one instead of Finance re-keying them. Static seed because db_bill is a separate MySQL 5.5 server a migration cannot reach; matched on head_code/sub_head_code because the master's UUIDs differ per environment. The 457 not imported are listed in the file, not dropped silently â€" nearly all are legacy's year-versioned capex sub-heads
+  "1093_imprest_manager_and_allocation.sql", // HRMS2 had no imprest model at all â€" `imprest` existed only as a grn_type value. Modelled on db_bill's imprest_manager (46 rows) and imprest_allotment_master (2,896, still live), but with DECIMAL money instead of int, DATE instead of varchar, effective dating on the manager, and an approval chain the legacy allotment never had
+  "1094_imprest_transaction_ledger.sql", // append-only ledger the balance derives from, plus the grn_request bridge columns and the two returned_* statuses for Requirement 9. Append-only is a code-and-review invariant, not a DB one: MySQL TRIGGERs are unavailable here, so a source-scan test asserts no UPDATE/DELETE against the table exists
+  "1098_payroll_accounting_ledger_map.sql", // Payroll -> Tally voucher mapping as CONFIGURATION, not code: which legal entity a salary posts to, and which Tally ledger each component becomes. The entity rule ships EMPTY on purpose â€" an unresolvable entity must refuse to produce a voucher, because defaulting everyone to MAS would put iSpark salaries in MasCallnet's books. The ledger map is seeded from the verified MAS/IDC June-2026 vouchers
+  "1099_grn_period_allocation.sql", // Multi-month recognition (Req 5). Child of grn_cost_allocation, NOT of grn_request, so cost-centre/process/LOB attribution survives the split. It is deliberately not extra grn_cost_allocation rows: those ARE the budget-consumption rows, and 12 of them would be 12 consumption events under a rule that consumes the invoice month only. Splits pnl_cost_amount, never amount_with_tax â€" recoverable GST is not an expense, and leaving amount_with_tax whole is what keeps one invoice at one vendor payable
   // Deliberately NOT added: a 'salary' value on grn_request.grn_type. db_bill shows 39,099
   // historical Salary entries, but the last was 25-May-2021 and every year since 2023-24 has
   // zero â€" the feature was discontinued. HRMS2's payroll path (pnl-running-salary,
   // actual-people-cost) is the live source of people cost, and a second writable source would
   // double-count it in the P&L while still looking plausible. Historical rows remain readable
   // through the db_bill mirror without a writable type here.
-  "1095_uat_feedback_intake.sql",                      // Phase 1 of the UAT governance platform: structured feedback intake, audit spine, attachments, comments, deterministic static-scan records, SLA policy and approver delegation. It seeds the common UAT_FEEDBACK and admin UAT page codes used by the platform routes.
-  "1096_uat_release.sql",                              // Phase 1 part two: approvals, releases, structured retest evidence and rollback. Phase 2 checklist governance builds on these approval/release tables, so this must run before 1103.
+  "1095_uat_feedback_intake.sql", // Phase 1 of the UAT governance platform: structured feedback intake, audit spine, attachments, comments, deterministic static-scan records, SLA policy and approver delegation. It seeds the common UAT_FEEDBACK and admin UAT page codes used by the platform routes.
+  "1096_uat_release.sql", // Phase 1 part two: approvals, releases, structured retest evidence and rollback. Phase 2 checklist governance builds on these approval/release tables, so this must run before 1103.
   "1097_page_code_alias_grant_reconciliation.sql", // 13 role/page grants pointed at "alias" page codes no route gates on â€" active in the matrix, conferring nothing. Grants the real code where the role's job needs it (interviewerâ†'ATS_RECRUITER_QUEUE, branch_headâ†'ATS_DASHBOARD, payroll_hrâ†'PAYROLL_EPF_COMPLIANCE, finance/accounts_headâ†'ATS_JOINING_CONTROL_ROOM) and retires the dead EMPLOYEES alias rather than handing the employee directory to 22 more users as a side effect
-  "1100_uat_notification_events.sql",                  // Registers the twelve UAT lifecycle events. notificationGateway.notify() fails CLOSED, so a call site whose event_code has no row here is silently dead â€" registering the events and wiring the call sites are two halves of one change, and shipping either alone produces a feature that looks present and does nothing. Left in the column-default dispatch mode so delivery is observable before anything reaches a real person; going live is an operational call, not a migration's to take
-  "1101_team_attendance_page_path_fix.sql",            // Team Attendance was unreachable two ways at once: page_catalog.TEAM_ATTENDANCE pointed at '/team/attendance', which is mounted nowhere (so ModuleLauncher 404'd every wfm/manager holding the grant), while the route that does exist gated on TEAM_ATTENDANCE_MONTH, a code no migration ever created (so the gate denied everyone, super_admin included). Repoints the catalog at the real route and the router at the granted code, consolidating two codes onto the one that already carries the grants â€" same reasoning as 1097, which retired an alias rather than blessing it. Issues no new grant
-  "1102_vendor_company_branch_applicability.sql",      // Vendor Master as THREE concepts: identity, legal-entity applicability, branch applicability. Legacy merged identity with branch by duplicating the vendor row - 1,829 rows for 1,552 names, with "Unicel Technologies" existing six times across five branches, each copy carrying its own PAN and GST. Rows are opt-in restrictions: no row means the vendor is available everywhere, so all 1,821 existing vendors keep working unchanged and this cannot break a live flow by omission. Also adds Pikquick as the third legal entity - it owns four cost centres and is company 3 in db_bill, and without it a Pikquick GRN serial could never be issued
-  "1103_payroll_voucher_cohort_and_entity_seed.sql",  // Unblocks the salary voucher. 1098 shipped its entity rule EMPTY because the MAS/IDC key was unknown and it guessed at employment_type; the key is actually the employee_code prefix, so the matcher is added and both rules seeded. Also makes the MAS voucher's two-column split configuration: it is C-suite remuneration (verified - MAS00001 CEO and MAS02477 COO each reproduce their column exactly, and the two branches with no CHIEF employee have a zero column), and the C-suite changes, so it must be a row rather than two employee codes in a service
-  "1104_salary_voucher_page_access.sql",              // Page catalog row + grants for the Salary Voucher screen. A <Route> alone does not make a page usable here - FINANCE_COST_CENTRES shipped with a route and no catalog row and was invisible to everyone but super_admin. Grants match the route roles and the API VOUCHER_ROLES exactly (finance_head, payroll_hr, super_admin): the page renders a whole branch payroll including individual advance recoveries, so it stays narrower than the GRN set. can_export only - the endpoint is read-only
-  "1103_uat_governance_checklist.sql",                 // Phase 2 of the UAT platform: the checklist engine's tables, the LLM call log and effective-dated model pricing. Two things here are deliberate rather than incidental. Evaluations pin rule_version plus the shas of both control-plane JSON files, because "why was this allowed in March" is otherwise unanswerable and the natural wrong answer is to re-run today's rules against yesterday's decision. And pricing is a table, not a constant: a constant silently rewrites the cost of every historical call the next time someone edits it, so a spend report would disagree with itself between deploys. Also carries uat_job, the durable queue the validator runs through: an outbound call that can take a minute and fail halfway must not live inside a submit request, where a restart loses the work and leaves the item in `validating` forever with nobody aware. The seeded checklist rows are mirrors for the admin UI only â€" the engine reaches its floor verdict from uat/*.json, never from a DB row, and merges with worstOf() so a DB row can only make a verdict worse
-  "1104_uat_prompt_governance.sql",                    // Phase 3: change-type governance and the build prompt. Two design choices carry the weight. Every switch in uat_pipeline_config ships OFF and is checked ALONGSIDE its env var with either able to veto - an env var needs a deploy to change and the moment you most want to stop the pipeline is the moment you least want to deploy, while a DB row is instant but absent if never seeded, so requiring both means a missing switch is a stop rather than a start. And the prompt is a stored row with its hash, template version and allowlist, not a string assembled on demand: it is the instruction set a coding agent acts on, so "what was it told to do" has to survive the answer being needed months later. change_type policy is a table too, so adding a signing function is a row and not a deploy, and `unclear` has its own row precisely so the gate points at triage rather than finding no policy and reading that as no approval required
-  "1106_uat_build_run.sql",                            // Phase 4 schema, held behind gates. The tables ship; the feature does not. uat_gate_status carries G1-G8 with `met` defaulting to 0 and the seed supplying only the requirement text, so no gate can arrive attested - and assertDispatchAllowed() refuses while any row is unmet, which makes the hold a property of the running system rather than of everyone remembering the plan. An EMPTY gate table is read as all-unmet, not as no gates, because a migration that failed to seed would otherwise silently unlock the most dangerous feature here. uat_build_callback is keyed on (run, kind, attempt, gates_sha256) so a GitHub retry after a network ambiguity succeeds while a replay cannot record a second result. Note fk_uat_evobj_fb: FK names are database-global in MySQL and fk_uat_ev_fb was already taken by uat_feedback_event in 1095
+  "1100_uat_notification_events.sql", // Registers the twelve UAT lifecycle events. notificationGateway.notify() fails CLOSED, so a call site whose event_code has no row here is silently dead â€" registering the events and wiring the call sites are two halves of one change, and shipping either alone produces a feature that looks present and does nothing. Left in the column-default dispatch mode so delivery is observable before anything reaches a real person; going live is an operational call, not a migration's to take
+  "1101_team_attendance_page_path_fix.sql", // Team Attendance was unreachable two ways at once: page_catalog.TEAM_ATTENDANCE pointed at '/team/attendance', which is mounted nowhere (so ModuleLauncher 404'd every wfm/manager holding the grant), while the route that does exist gated on TEAM_ATTENDANCE_MONTH, a code no migration ever created (so the gate denied everyone, super_admin included). Repoints the catalog at the real route and the router at the granted code, consolidating two codes onto the one that already carries the grants â€" same reasoning as 1097, which retired an alias rather than blessing it. Issues no new grant
+  "1102_vendor_company_branch_applicability.sql", // Vendor Master as THREE concepts: identity, legal-entity applicability, branch applicability. Legacy merged identity with branch by duplicating the vendor row - 1,829 rows for 1,552 names, with "Unicel Technologies" existing six times across five branches, each copy carrying its own PAN and GST. Rows are opt-in restrictions: no row means the vendor is available everywhere, so all 1,821 existing vendors keep working unchanged and this cannot break a live flow by omission. Also adds Pikquick as the third legal entity - it owns four cost centres and is company 3 in db_bill, and without it a Pikquick GRN serial could never be issued
+  "1103_payroll_voucher_cohort_and_entity_seed.sql", // Unblocks the salary voucher. 1098 shipped its entity rule EMPTY because the MAS/IDC key was unknown and it guessed at employment_type; the key is actually the employee_code prefix, so the matcher is added and both rules seeded. Also makes the MAS voucher's two-column split configuration: it is C-suite remuneration (verified - MAS00001 CEO and MAS02477 COO each reproduce their column exactly, and the two branches with no CHIEF employee have a zero column), and the C-suite changes, so it must be a row rather than two employee codes in a service
+  "1104_salary_voucher_page_access.sql", // Page catalog row + grants for the Salary Voucher screen. A <Route> alone does not make a page usable here - FINANCE_COST_CENTRES shipped with a route and no catalog row and was invisible to everyone but super_admin. Grants match the route roles and the API VOUCHER_ROLES exactly (finance_head, payroll_hr, super_admin): the page renders a whole branch payroll including individual advance recoveries, so it stays narrower than the GRN set. can_export only - the endpoint is read-only
+  "1103_uat_governance_checklist.sql", // Phase 2 of the UAT platform: the checklist engine's tables, the LLM call log and effective-dated model pricing. Two things here are deliberate rather than incidental. Evaluations pin rule_version plus the shas of both control-plane JSON files, because "why was this allowed in March" is otherwise unanswerable and the natural wrong answer is to re-run today's rules against yesterday's decision. And pricing is a table, not a constant: a constant silently rewrites the cost of every historical call the next time someone edits it, so a spend report would disagree with itself between deploys. Also carries uat_job, the durable queue the validator runs through: an outbound call that can take a minute and fail halfway must not live inside a submit request, where a restart loses the work and leaves the item in `validating` forever with nobody aware. The seeded checklist rows are mirrors for the admin UI only â€" the engine reaches its floor verdict from uat/*.json, never from a DB row, and merges with worstOf() so a DB row can only make a verdict worse
+  "1104_uat_prompt_governance.sql", // Phase 3: change-type governance and the build prompt. Two design choices carry the weight. Every switch in uat_pipeline_config ships OFF and is checked ALONGSIDE its env var with either able to veto - an env var needs a deploy to change and the moment you most want to stop the pipeline is the moment you least want to deploy, while a DB row is instant but absent if never seeded, so requiring both means a missing switch is a stop rather than a start. And the prompt is a stored row with its hash, template version and allowlist, not a string assembled on demand: it is the instruction set a coding agent acts on, so "what was it told to do" has to survive the answer being needed months later. change_type policy is a table too, so adding a signing function is a row and not a deploy, and `unclear` has its own row precisely so the gate points at triage rather than finding no policy and reading that as no approval required
+  "1106_uat_build_run.sql", // Phase 4 schema, held behind gates. The tables ship; the feature does not. uat_gate_status carries G1-G8 with `met` defaulting to 0 and the seed supplying only the requirement text, so no gate can arrive attested - and assertDispatchAllowed() refuses while any row is unmet, which makes the hold a property of the running system rather than of everyone remembering the plan. An EMPTY gate table is read as all-unmet, not as no gates, because a migration that failed to seed would otherwise silently unlock the most dangerous feature here. uat_build_callback is keyed on (run, kind, attempt, gates_sha256) so a GitHub retry after a network ambiguity succeeds while a replay cannot record a second result. Note fk_uat_evobj_fb: FK names are database-global in MySQL and fk_uat_ev_fb was already taken by uat_feedback_event in 1095
 
   // â"€â"€ Registered late, out of numeric order â€" same reasoning as 1049 above â"€â"€â"€â"€â"€
   // This file has sat in backend/sql since 2026-08-07 and was in NO manifest, so it has
@@ -679,8 +689,8 @@ const MIGRATION_MANIFEST: string[] = [
   "1084_cc_headcount_disambiguate_cost_vs_call_centre.sql",
   "1105_revoke_unusable_alias_corrective_grants.sql", // self-correction to 1097: three of its five corrective grants opened a page whose APIs reject the role â€" interviewer on the recruiter workspace, finance_head/accounts_head on the joining control room. Reverted there; branch_headâ†'ATS_DASHBOARD and payroll_hrâ†'PAYROLL_EPF_COMPLIANCE were verified working and kept. Re-added after 334f16e1 dropped this line
   "1107_retire_duplicate_alias_page_grants.sql", // retires 37 page grants on alias codes no route gates on, only where the role already holds the canonical code for the same page â€" so access is unchanged and only a duplicate/dead launcher tile goes away. The 7 alias-ONLY grants are left alone: those are access questions, and 1097/1105 is the cautionary tale
-  "1112_notification_dispatch_block.sql",        // The emergency stop the dispatchService path never had. notificationEventService -> dispatchService carries the whole 53-event catalogue and read NO enable flag, so halting the 1,863-message eSign storm required `pm2 stop hrms2-workers` â€" all 45 workers. scope='global' or an event_code, effective in <60s, no deploy. Deliberately NOT a notification_event_config row: recipient_spec there is json NOT NULL and the gateway resolves recipients from it, so a row added purely as a switch asserts a recipient policy this path never reads â€" the exact trap the repo already warns about. Seeded UNBLOCKED, and the reader fails OPEN, because a killswitch that silences payroll mail on a DB blip is worse than the storm it prevents
-  "1109_esign_notification_cooldown.sql",        // Durable cooldown for esign-compliance, replacing in-process Maps that every pm2 restart emptied â€" with a cycle running at startup, that put 1,428 emails and SMS onto 10 contacts over 3 days from 3 pending documents, 47 of them to one preboarding candidate. Also seeds the worker_config row the worker now reads, DISABLED, because there was previously no killswitch anywhere: notification_event_config has no row for either event and only the gateway reads that table, while this worker dispatches straight through dispatchService, which consults no flag at all. Turn it on with a single UPDATE once the cooldown table is seen filling
+  "1112_notification_dispatch_block.sql", // The emergency stop the dispatchService path never had. notificationEventService -> dispatchService carries the whole 53-event catalogue and read NO enable flag, so halting the 1,863-message eSign storm required `pm2 stop hrms2-workers` â€" all 45 workers. scope='global' or an event_code, effective in <60s, no deploy. Deliberately NOT a notification_event_config row: recipient_spec there is json NOT NULL and the gateway resolves recipients from it, so a row added purely as a switch asserts a recipient policy this path never reads â€" the exact trap the repo already warns about. Seeded UNBLOCKED, and the reader fails OPEN, because a killswitch that silences payroll mail on a DB blip is worse than the storm it prevents
+  "1109_esign_notification_cooldown.sql", // Durable cooldown for esign-compliance, replacing in-process Maps that every pm2 restart emptied â€" with a cycle running at startup, that put 1,428 emails and SMS onto 10 contacts over 3 days from 3 pending documents, 47 of them to one preboarding candidate. Also seeds the worker_config row the worker now reads, DISABLED, because there was previously no killswitch anywhere: notification_event_config has no row for either event and only the gateway reads that table, while this worker dispatches straight through dispatchService, which consults no flag at all. Turn it on with a single UPDATE once the cooldown table is seen filling
   "1108_retire_alias_only_page_grants.sql", // retires the last 7 grants on alias page codes no route gates on, held by roles that do NOT hold the canonical code. Each was checked against what actually decides access before deciding: interviewer is rejected by every /ats/recruiter/* endpoint; hr_admin and payroll_admin are absent from their target routes' own role lists; branch_payroll/finance_head point at PAYROLL_DASHBOARD whose page_catalog row is inactive. Nobody loses reachable access
   "1113_reactivate_drifted_page_catalog_rows.sql", // re-activates MODULE_LAUNCHER, ORG_CHART, ORG_MASTERS and CUSTOMIZATION_MANAGER, four real routed pages (208-1,947 line components) that nobody in production can open: an inactive page_catalog row is discarded by getUserPageAccess's `COALESCE(pc.active_status,1)=1` filter AND excluded from the super_admin all-active rule, so 10 live can_view grants across 10 roles are silently voided. Drift, not retirement: every deliberate retirement here names its codes (601, 1022, 1025, 1097/1105, 1108) and none names these, while 1067 explicitly created MODULE_LAUNCHER active on 2026-08-03 to fix a failing contract test. ORG_MASTERS is the tell â€" it is in the demo ALL_PAGES, so a demo login opens Org Masters while no real user can. Grants nothing new; only stops existing grants being discarded. Runs once, so it cannot override a later admin decision
   "1111_uat_admin_page_grants.sql", // seeds the two admin role_page_access rows for UAT_TRIAGE_CONSOLE and UAT_RELEASE_BOARD. 1095 seeds page_catalog and rbacPageMatrix.ts lists both under admin, but neither is read at runtime for role grants: getUserPageAccess() resolves from role_page_access plus COMMON_USER_PAGE_CODES, and the live table had 0 rows for any UAT page against admin's 48 others. Without this, super_admin sees all four UAT pages via the all-active rule and every employee sees UAT_FEEDBACK via the common set, but no admin can open the triage console or release board â€" the pages ship unreachable by the population meant to run them. INSERT IGNORE, not ON DUPLICATE KEY UPDATE, so it never resurrects a grant that 1105/1107/1108-style retirement deliberately revoked
@@ -1147,10 +1157,12 @@ const MIGRATION_MANIFEST: string[] = [
   "1862_process_master_auto_deactivation.sql", // Registered 2026-09-24, owner ruling (process goes inactive when all its cost centres close, automatically). New table process_master_auto_deactivation (process_id PK, collation copied from process_master.id) logging each automatic deactivation so only those are auto-reactivated. CREATE TABLE IF NOT EXISTS; additive, idempotent.
   "1863_grn_request_created_at_index.sql", // Registered 2026-09-24. Adds idx_grn_created_at on grn_request(created_at) so the GRN list ORDER BY created_at DESC LIMIT 30 stops filesorting ~83k wide rows. Guarded information_schema check, additive, idempotent.
   "1864_grn_request_covering_indexes.sql", // Registered 2026-09-24. Two covering indexes on grn_request (status cover for the GRN summary/count, bill_date+amount_without_tax for the daily P&L trend). Guarded information_schema checks, additive, idempotent.
+  "migrations/1865_client_invoice_payment_tables.sql", // Registered 2026-09-25. CREATE TABLE IF NOT EXISTS for client_invoice_payment_status and client_invoice_payment_log (already exist in production; migration is no-op on re-run). Additive, idempotent.
+  "migrations/1866_bank_ledger_is_migrated_column.sql", // Registered 2026-09-25. Adds is_migrated TINYINT(1) DEFAULT 0 to bank_account_ledger_entry for tracking db_bill-migrated ledger rows, plus idx_bale_migrated. information_schema-guarded ADD COLUMN + CREATE INDEX; additive, idempotent.
   "1867_appreciate_chat_new_table.sql", // Registered 2026-09-25. Creates db_masmis.appreciate_chat for the new Appreciate Wealth Chat uploader (25 columns from the user-supplied header row). CREATE TABLE IF NOT EXISTS, purely additive. NOTE: the app db user has no CREATE on db_masmis, so this needs a higher-privileged run or manual grant (same as earlier chat tables). Renumbered from 1862 to avoid conflict with main's 1862_process_master_auto_deactivation.sql.
   "1868_appreciate_chat_uploader.sql", // Registered 2026-09-25. Registers the upload_template_master row for AW_CHAT_MASMIS, applied ahead of the table existing -- uploads fail with table-not-found until sql/1867 is run. Renumbered from 1863 to avoid conflict with main's 1863_grn_request_created_at_index.sql.
   "1869_onfido_name_employee_map.sql", // Registered 2026-09-25. Creates mas_hrms.onfido_name_employee_map, the reconciliation table mapping free-text tl_name/am_name strings from the separate onfido_db raw tables (onfido_doc_external_audit_raw, onfido_agent_daily_raw -- no FK, no cross-database JOIN possible) to real employees rows. Populated entirely by application code (backend/scripts/seed-onfido-name-mapping.ts), never by SQL join. CREATE TABLE IF NOT EXISTS via INFORMATION_SCHEMA + PREPARE guard; purely additive, idempotent. Confirmed free against both on-disk files and live schema_migrations at write time; 1865-1868 already taken by concurrent unrelated work registered the same day.
-  ];
+];
 
 export type MigrationHealth = {
   status: "not_started" | "running" | "ok" | "failed";
@@ -1180,7 +1192,8 @@ export function getMigrationHealth(): MigrationHealth {
 }
 
 function isIdempotentMigrationError(error: unknown): boolean {
-  const dbError = error as { code?: string; errno?: number; message?: string } | null | undefined;
+  const dbError = error as
+    { code?: string; errno?: number; message?: string } | null | undefined;
   const code = dbError?.code;
   const errno = Number(dbError?.errno ?? 0);
   const msg = String(dbError?.message ?? "").toLowerCase();
@@ -1191,15 +1204,15 @@ function isIdempotentMigrationError(error: unknown): boolean {
   if (code === "SCHEMA_ASSERTION_FAILED") return false;
   return (
     // Named codes (mysql2 preferred)
-    code === "ER_TABLE_EXISTS_ERROR" ||   // 1050
-    code === "ER_DUP_FIELDNAME" ||        // 1060
-    code === "ER_DUP_KEYNAME" ||          // 1061
-    code === "ER_CANT_DROP_FIELD_OR_KEY" ||// 1091
+    code === "ER_TABLE_EXISTS_ERROR" || // 1050
+    code === "ER_DUP_FIELDNAME" || // 1060
+    code === "ER_DUP_KEYNAME" || // 1061
+    code === "ER_CANT_DROP_FIELD_OR_KEY" || // 1091
     // Numeric codes as fallback (in case mysql2 version differs)
-    errno === 1050 ||  // table already exists
-    errno === 1060 ||  // duplicate column name
-    errno === 1061 ||  // duplicate key name
-    errno === 1091 ||  // can't drop non-existent field/key
+    errno === 1050 || // table already exists
+    errno === 1060 || // duplicate column name
+    errno === 1061 || // duplicate key name
+    errno === 1091 || // can't drop non-existent field/key
     // Message-based fallback
     msg.includes("duplicate column") ||
     msg.includes("already exists") ||
@@ -1225,11 +1238,13 @@ async function acquireMigrationLock(conn: mysql.Connection): Promise<boolean> {
   try {
     const [rows] = await conn.query<RowDataPacket[]>(
       `SELECT GET_LOCK('hrms_migration_lock', ?) AS acquired`,
-      [MIGRATION_LOCK_TIMEOUT_SECONDS]
+      [MIGRATION_LOCK_TIMEOUT_SECONDS],
     );
     const acquired = (rows[0] as { acquired: number | null })?.acquired === 1;
     if (acquired) {
-      console.log(`[migration] advisory lock acquired by ${os.hostname()} (pid: ${process.pid})`);
+      console.log(
+        `[migration] advisory lock acquired by ${os.hostname()} (pid: ${process.pid})`,
+      );
     }
     return acquired;
   } catch (error) {
@@ -1256,12 +1271,12 @@ async function releaseMigrationLock(conn: mysql.Connection): Promise<void> {
  */
 async function getStoredChecksum(
   conn: mysql.Connection,
-  filename: string
+  filename: string,
 ): Promise<string | null> {
   try {
     const [rows] = await conn.query<RowDataPacket[]>(
       `SELECT checksum_sha256 FROM schema_migrations WHERE filename = ?`,
-      [filename]
+      [filename],
     );
     if (rows.length === 0) return null;
     return (rows[0] as { checksum_sha256: string | null }).checksum_sha256;
@@ -1286,7 +1301,7 @@ function normaliseDelimiters(raw: string): string {
       const escaped = delim.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       // Replace all occurrences of the custom delimiter with ;
       return body.replace(new RegExp(escaped, "g"), ";");
-    }
+    },
   );
 }
 
@@ -1387,7 +1402,14 @@ export function splitSql(raw: string): string[] {
       if (word === "END") {
         // Peek past whitespace to find the next word
         let k = j;
-        while (k < len && (raw[k] === " " || raw[k] === "\t" || raw[k] === "\r" || raw[k] === "\n")) k++;
+        while (
+          k < len &&
+          (raw[k] === " " ||
+            raw[k] === "\t" ||
+            raw[k] === "\r" ||
+            raw[k] === "\n")
+        )
+          k++;
         let m = k;
         while (m < len && isWordChar(raw[m])) m++;
         const followWord = raw.slice(k, m).toUpperCase();
@@ -1446,12 +1468,12 @@ async function ensureDatabaseExists(
   port: number,
   user: string,
   password: string,
-  dbName: string
+  dbName: string,
 ): Promise<void> {
   const conn = await mysql.createConnection({ host, port, user, password });
   try {
     await conn.query(
-      `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+      `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
     );
     // ALTER DATABASE acquires a global MDL that blocks ALL concurrent DDL (CREATE TABLE, ALTER
     // TABLE) for the database's full duration â€" including the workers' own ensureTable() calls.
@@ -1460,12 +1482,14 @@ async function ensureDatabaseExists(
     const [charsetRows] = await conn.query<mysql.RowDataPacket[]>(
       `SELECT DEFAULT_CHARACTER_SET_NAME cs, DEFAULT_COLLATION_NAME co
          FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?`,
-      [dbName]
+      [dbName],
     );
-    const already = charsetRows[0]?.cs === "utf8mb4" && charsetRows[0]?.co === "utf8mb4_unicode_ci";
+    const already =
+      charsetRows[0]?.cs === "utf8mb4" &&
+      charsetRows[0]?.co === "utf8mb4_unicode_ci";
     if (!already) {
       await conn.query(
-        `ALTER DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+        `ALTER DATABASE \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
       );
     }
     console.log(`[migration] database '${dbName}' ensured`);
@@ -1485,7 +1509,7 @@ async function ensureDatabaseExists(
  */
 async function runFileOnConnection(
   conn: mysql.Connection,
-  filePath: string
+  filePath: string,
 ): Promise<void> {
   const rawSql = fs.readFileSync(filePath, "utf8");
   const statements = splitSql(rawSql).filter((stmt) => {
@@ -1521,7 +1545,7 @@ async function runFileOnConnection(
       const code = (error as { code?: string }).code ?? "idempotent";
       console.warn(
         `[migration] ${path.basename(filePath)}: statement ${index + 1}/${statements.length} ` +
-        `already applied (${code}); continuing with the rest of the file`
+          `already applied (${code}); continuing with the rest of the file`,
       );
     }
   }
@@ -1563,7 +1587,8 @@ async function runFileOnConnection(
  *   Â· DDL built inside PREPARE string literals, which it cannot see into. Those files are the
  *     well-written ones; they are simply not covered.
  */
-const SCHEMA_ASSERTION_UNSAFE = /\b(DROP\s+(TABLE|COLUMN|INDEX)|RENAME\s+(TABLE|COLUMN)|CHANGE\s+COLUMN)\b/i;
+const SCHEMA_ASSERTION_UNSAFE =
+  /\b(DROP\s+(TABLE|COLUMN|INDEX)|RENAME\s+(TABLE|COLUMN)|CHANGE\s+COLUMN)\b/i;
 
 export interface DeclaredSchema {
   tables: string[];
@@ -1616,20 +1641,27 @@ function stripNoise(sql: string): string {
 
 export function parseDeclaredSchema(rawSql: string): DeclaredSchema {
   const sql = stripNoise(rawSql);
-  if (SCHEMA_ASSERTION_UNSAFE.test(sql)) return { tables: [], columns: [], skipped: true };
+  if (SCHEMA_ASSERTION_UNSAFE.test(sql))
+    return { tables: [], columns: [], skipped: true };
 
   const tables: string[] = [];
-  for (const m of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?(TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?([A-Za-z0-9_]+)`?(\s*\.)?/gi)) {
-    if (m[1]) continue;            // TEMPORARY â€" gone before we could look
-    if (m[3]) continue;            // schema-qualified â€" another database
+  for (const m of sql.matchAll(
+    /CREATE\s+(?:OR\s+REPLACE\s+)?(TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?([A-Za-z0-9_]+)`?(\s*\.)?/gi,
+  )) {
+    if (m[1]) continue; // TEMPORARY â€" gone before we could look
+    if (m[3]) continue; // schema-qualified â€" another database
     tables.push(m[2].toLowerCase());
   }
 
   const columns: Array<{ table: string; column: string }> = [];
-  for (const alter of sql.matchAll(/ALTER\s+TABLE\s+`?([A-Za-z0-9_]+)`?(\s*\.)?([\s\S]*?);/gi)) {
-    if (alter[2]) continue;        // schema-qualified
+  for (const alter of sql.matchAll(
+    /ALTER\s+TABLE\s+`?([A-Za-z0-9_]+)`?(\s*\.)?([\s\S]*?);/gi,
+  )) {
+    if (alter[2]) continue; // schema-qualified
     const table = alter[1].toLowerCase();
-    for (const c of alter[3].matchAll(/ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?`?([A-Za-z0-9_]+)`?/gi)) {
+    for (const c of alter[3].matchAll(
+      /ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?`?([A-Za-z0-9_]+)`?/gi,
+    )) {
       columns.push({ table, column: c[1].toLowerCase() });
     }
   }
@@ -1645,37 +1677,47 @@ export function parseDeclaredSchema(rawSql: string): DeclaredSchema {
  */
 export async function findMissingDeclaredSchema(
   conn: mysql.Connection,
-  declared: DeclaredSchema
+  declared: DeclaredSchema,
 ): Promise<string[]> {
   if (declared.skipped) return [];
   if (declared.tables.length === 0 && declared.columns.length === 0) return [];
 
   const missing: string[] = [];
-  const wantedTables = new Set<string>([...declared.tables, ...declared.columns.map((c) => c.table)]);
+  const wantedTables = new Set<string>([
+    ...declared.tables,
+    ...declared.columns.map((c) => c.table),
+  ]);
 
   const [tableRows] = await conn.query<RowDataPacket[]>(
     `SELECT LOWER(table_name) AS t FROM information_schema.tables
       WHERE table_schema = DATABASE() AND LOWER(table_name) IN (${[...wantedTables].map(() => "?").join(",")})`,
-    [...wantedTables]
+    [...wantedTables],
   );
-  const haveTables = new Set((tableRows as Array<{ t: string }>).map((r) => r.t));
+  const haveTables = new Set(
+    (tableRows as Array<{ t: string }>).map((r) => r.t),
+  );
 
-  for (const t of declared.tables) if (!haveTables.has(t)) missing.push(`table ${t}`);
+  for (const t of declared.tables)
+    if (!haveTables.has(t)) missing.push(`table ${t}`);
 
   const checkable = declared.columns.filter((c) => haveTables.has(c.table));
   for (const c of declared.columns) {
-    if (!haveTables.has(c.table) && !missing.includes(`table ${c.table}`)) missing.push(`table ${c.table}`);
+    if (!haveTables.has(c.table) && !missing.includes(`table ${c.table}`))
+      missing.push(`table ${c.table}`);
   }
   if (checkable.length > 0) {
     const [colRows] = await conn.query<RowDataPacket[]>(
       `SELECT LOWER(table_name) AS t, LOWER(column_name) AS c FROM information_schema.columns
         WHERE table_schema = DATABASE()
           AND LOWER(table_name) IN (${[...new Set(checkable.map((c) => c.table))].map(() => "?").join(",")})`,
-      [...new Set(checkable.map((c) => c.table))]
+      [...new Set(checkable.map((c) => c.table))],
     );
-    const haveCols = new Set((colRows as Array<{ t: string; c: string }>).map((r) => `${r.t}.${r.c}`));
+    const haveCols = new Set(
+      (colRows as Array<{ t: string; c: string }>).map((r) => `${r.t}.${r.c}`),
+    );
     for (const c of checkable) {
-      if (!haveCols.has(`${c.table}.${c.column}`)) missing.push(`column ${c.table}.${c.column}`);
+      if (!haveCols.has(`${c.table}.${c.column}`))
+        missing.push(`column ${c.table}.${c.column}`);
     }
   }
 
@@ -1698,9 +1740,18 @@ export async function findMissingDeclaredSchema(
  * - Runs 043_demo_data.sql only when SEED_DEMO_DATA=true.
  * - Production startup is blocked when any migration fails.
  */
-export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth> {
-  if (process.env.SKIP_MIGRATIONS === 'true') {
-    migrationHealth = { status: "ok", applied: [], skipped: [], failed: [], startedAt: new Date().toISOString(), completedAt: new Date().toISOString() };
+export async function runPendingMigrations(
+  attempt = 1,
+): Promise<MigrationHealth> {
+  if (process.env.SKIP_MIGRATIONS === "true") {
+    migrationHealth = {
+      status: "ok",
+      applied: [],
+      skipped: [],
+      failed: [],
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    };
     return migrationHealth;
   }
 
@@ -1733,7 +1784,7 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
       env.DB_PORT,
       env.DB_USER,
       env.DB_PASSWORD,
-      env.DB_NAME
+      env.DB_NAME,
     );
 
     // Ensure schema_migrations tracking table exists with governance columns
@@ -1756,7 +1807,9 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
           )
         `);
         // Add governance columns if missing (for existing tables)
-        await conn.query(`
+        await conn
+          .query(
+            `
           ALTER TABLE schema_migrations
           ADD COLUMN IF NOT EXISTS checksum_sha256 VARCHAR(64) NULL,
           ADD COLUMN IF NOT EXISTS environment VARCHAR(50) NULL,
@@ -1766,10 +1819,15 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
           ADD COLUMN IF NOT EXISTS executor VARCHAR(255) NULL,
           ADD COLUMN IF NOT EXISTS success TINYINT(1) NOT NULL DEFAULT 1,
           ADD COLUMN IF NOT EXISTS error_message TEXT NULL
-        `).catch(() => {
-          // MariaDB/older MySQL may not support ADD COLUMN IF NOT EXISTS
-        });
-        schemaMigrationsCapabilities = await getSchemaMigrationsCapabilities(conn, env.DB_NAME);
+        `,
+          )
+          .catch(() => {
+            // MariaDB/older MySQL may not support ADD COLUMN IF NOT EXISTS
+          });
+        schemaMigrationsCapabilities = await getSchemaMigrationsCapabilities(
+          conn,
+          env.DB_NAME,
+        );
       } finally {
         await conn.end();
       }
@@ -1792,7 +1850,7 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
       };
       const lockErr = new Error(
         `Could not acquire migration lock within ${MIGRATION_LOCK_TIMEOUT_SECONDS}s. ` +
-        `Another migration may be running. Use SKIP_MIGRATIONS=true to bypass.`
+          `Another migration may be running. Use SKIP_MIGRATIONS=true to bypass.`,
       );
       (lockErr as NodeJS.ErrnoException).code = "ER_LOCK_WAIT_TIMEOUT";
       throw lockErr;
@@ -1804,7 +1862,7 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
       const conn = await openMigrationConnection(connConfig);
       try {
         const [rows] = await conn.query<RowDataPacket[]>(
-          buildSchemaMigrationsAppliedRowsQuery(schemaMigrationsCapabilities!)
+          buildSchemaMigrationsAppliedRowsQuery(schemaMigrationsCapabilities!),
         );
         for (const row of rows as RowDataPacket[]) {
           appliedMap.set(String(row.filename), row.checksum_sha256 ?? null);
@@ -1827,7 +1885,9 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
     for (const file of files) {
       // GOVERNANCE: Stop if we've already hit a failure and STOP_ON_FIRST_FAILURE is enabled
       if (STOP_ON_FIRST_FAILURE && migrationHealth.failed.length > 0) {
-        console.warn(`[migration] stopping due to previous failure (STOP_ON_FIRST_FAILURE=true)`);
+        console.warn(
+          `[migration] stopping due to previous failure (STOP_ON_FIRST_FAILURE=true)`,
+        );
         break;
       }
 
@@ -1854,12 +1914,14 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
         const storedChecksum = appliedMap.get(file);
         if (storedChecksum && storedChecksum !== currentChecksum) {
           if (MIGRATION_STRICT_MODE) {
-            const message = `Checksum mismatch for ${file}: stored=${storedChecksum.slice(0,8)}... current=${currentChecksum.slice(0,8)}... (MIGRATION_STRICT_MODE=true)`;
+            const message = `Checksum mismatch for ${file}: stored=${storedChecksum.slice(0, 8)}... current=${currentChecksum.slice(0, 8)}... (MIGRATION_STRICT_MODE=true)`;
             migrationHealth.failed.push({ filename: file, error: message });
             console.error(`[migration] FATAL: ${message}`);
             break;
           }
-          console.warn(`[migration] checksum mismatch for already-applied ${file} (stored checksum differs from current file)`);
+          console.warn(
+            `[migration] checksum mismatch for already-applied ${file} (stored checksum differs from current file)`,
+          );
         }
         migrationHealth.skipped.push(file);
         continue;
@@ -1880,11 +1942,11 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
           throw Object.assign(
             new Error(
               `SCHEMA_ASSERTION_FAILED: ${file} ran without error but the schema it declares is ` +
-              `not present: ${missing.join(", ")}. Recorded success = 0 so it is retried rather ` +
-              `than remembered as applied. A migration whose DDL MySQL silently would not apply ` +
-              `(e.g. MariaDB's ADD COLUMN IF NOT EXISTS) reaches exactly this state.`
+                `not present: ${missing.join(", ")}. Recorded success = 0 so it is retried rather ` +
+                `than remembered as applied. A migration whose DDL MySQL silently would not apply ` +
+                `(e.g. MariaDB's ADD COLUMN IF NOT EXISTS) reaches exactly this state.`,
             ),
-            { code: "SCHEMA_ASSERTION_FAILED" }
+            { code: "SCHEMA_ASSERTION_FAILED" },
           );
         }
 
@@ -1893,7 +1955,9 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
 
         // Record as applied with governance metadata
         await conn.query(
-          buildSchemaMigrationsInsertStatement(schemaMigrationsCapabilities!, { success: true }),
+          buildSchemaMigrationsInsertStatement(schemaMigrationsCapabilities!, {
+            success: true,
+          }),
           buildSchemaMigrationsInsertParams(
             schemaMigrationsCapabilities!,
             {
@@ -1905,8 +1969,8 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
               durationMs,
               executor,
             },
-            { success: true }
-          )
+            { success: true },
+          ),
         );
         migrationHealth.applied.push(file);
         console.log(`[migration] applied: ${file} (${durationMs}ms)`);
@@ -1917,16 +1981,22 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
         // schema state and explicitly mark as complete if needed.
         if (isIdempotentMigrationError(error)) {
           migrationHealth.skipped.push(file);
-          console.log(`[migration] skipped (idempotent - already exists): ${file}`);
+          console.log(
+            `[migration] skipped (idempotent - already exists): ${file}`,
+          );
         } else {
           const endTime = new Date();
           const durationMs = endTime.getTime() - startTime.getTime();
-          const message = error instanceof Error ? error.message : String(error);
+          const message =
+            error instanceof Error ? error.message : String(error);
           // Record failed migration attempt
           const conn2 = await openMigrationConnection(connConfig);
           try {
             await conn2.query(
-              buildSchemaMigrationsInsertStatement(schemaMigrationsCapabilities!, { success: false }),
+              buildSchemaMigrationsInsertStatement(
+                schemaMigrationsCapabilities!,
+                { success: false },
+              ),
               buildSchemaMigrationsInsertParams(
                 schemaMigrationsCapabilities!,
                 {
@@ -1939,8 +2009,8 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
                   executor,
                   errorMessage: message,
                 },
-                { success: false }
-              )
+                { success: false },
+              ),
             );
           } finally {
             await conn2.end();
@@ -1958,7 +2028,10 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
     // lock contention causes a PM2 restart loop under heavy traffic.
     const errCode = (error as NodeJS.ErrnoException)?.code;
     const errMsg = error instanceof Error ? error.message : String(error);
-    if (errCode === "ER_LOCK_WAIT_TIMEOUT" || /could not acquire migration lock/i.test(errMsg)) {
+    if (
+      errCode === "ER_LOCK_WAIT_TIMEOUT" ||
+      /could not acquire migration lock/i.test(errMsg)
+    ) {
       throw error;
     }
     // A transient DB error is not a schema verdict. Flag it and retry BELOW -- deliberately not
@@ -1983,10 +2056,12 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
   if (transientRetryCause) {
     const delayMs = MIGRATION_RETRY_BASE_MS * attempt;
     const reason =
-      transientRetryCause instanceof Error ? transientRetryCause.message : String(transientRetryCause);
+      transientRetryCause instanceof Error
+        ? transientRetryCause.message
+        : String(transientRetryCause);
     console.warn(
-      `[migration] transient failure on attempt ${attempt}/${MIGRATION_MAX_ATTEMPTS} â€" ${reason}. `
-        + `Retrying in ${delayMs}ms; the advisory lock has been released.`
+      `[migration] transient failure on attempt ${attempt}/${MIGRATION_MAX_ATTEMPTS} â€" ${reason}. ` +
+        `Retrying in ${delayMs}ms; the advisory lock has been released.`,
     );
     await new Promise((resolve) => setTimeout(resolve, delayMs));
     // migrationHealth is reset at the top of every call, so the retry starts from a clean slate
@@ -1998,8 +2073,12 @@ export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth
   migrationHealth.status = migrationHealth.failed.length > 0 ? "failed" : "ok";
 
   if (migrationHealth.failed.length > 0 && env.NODE_ENV === "production") {
-    const names = migrationHealth.failed.map((item) => item.filename).join(", ");
-    throw new Error(`Production startup blocked because migrations failed: ${names}`);
+    const names = migrationHealth.failed
+      .map((item) => item.filename)
+      .join(", ");
+    throw new Error(
+      `Production startup blocked because migrations failed: ${names}`,
+    );
   }
 
   return getMigrationHealth();
@@ -2024,7 +2103,9 @@ const verificationState: SchemaVerificationState = {
   valid: false,
 };
 
-export function buildSchemaMigrationsAppliedQuery(hasSuccessColumn: boolean): string {
+export function buildSchemaMigrationsAppliedQuery(
+  hasSuccessColumn: boolean,
+): string {
   return hasSuccessColumn
     ? "SELECT filename FROM schema_migrations WHERE success = 1 OR success IS NULL"
     : "SELECT filename FROM schema_migrations";
@@ -2043,17 +2124,19 @@ type SchemaMigrationsCapabilities = {
 
 async function getSchemaMigrationsCapabilities(
   conn: mysql.Connection,
-  dbName: string
+  dbName: string,
 ): Promise<SchemaMigrationsCapabilities> {
   const [rows] = await conn.execute<RowDataPacket[]>(
     `SELECT COLUMN_NAME
      FROM INFORMATION_SCHEMA.COLUMNS
      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'schema_migrations'`,
-    [dbName]
+    [dbName],
   );
 
   const columnSet = new Set(
-    (rows as Array<{ COLUMN_NAME?: string | null }>).map((row) => String(row.COLUMN_NAME ?? ""))
+    (rows as Array<{ COLUMN_NAME?: string | null }>).map((row) =>
+      String(row.COLUMN_NAME ?? ""),
+    ),
   );
 
   return {
@@ -2069,7 +2152,10 @@ async function getSchemaMigrationsCapabilities(
 }
 
 export function buildSchemaMigrationsAppliedRowsQuery(
-  capabilities: Pick<SchemaMigrationsCapabilities, "hasChecksumSha256" | "hasSuccess">
+  capabilities: Pick<
+    SchemaMigrationsCapabilities,
+    "hasChecksumSha256" | "hasSuccess"
+  >,
 ): string {
   const checksumSelect = capabilities.hasChecksumSha256
     ? "checksum_sha256"
@@ -2082,7 +2168,7 @@ export function buildSchemaMigrationsAppliedRowsQuery(
 
 export function buildSchemaMigrationsInsertStatement(
   capabilities: SchemaMigrationsCapabilities,
-  options: { success: boolean }
+  options: { success: boolean },
 ): string {
   const columns = ["filename"];
   const values = ["?"];
@@ -2152,13 +2238,18 @@ export function buildSchemaMigrationsInsertStatement(
     if (capabilities.hasSuccess) successUpdates.push("success = 1");
     // Without this the row keeps the old failure's text beside success = 1, which is the kind of
     // contradiction that costs an hour the next time someone reads this table during an incident.
-    if (capabilities.hasErrorMessage) successUpdates.push("error_message = NULL");
-    if (capabilities.hasStartTime) successUpdates.push("start_time = VALUES(start_time)");
-    if (capabilities.hasDurationMs) successUpdates.push("duration_ms = VALUES(duration_ms)");
-    if (capabilities.hasExecutor) successUpdates.push("executor = VALUES(executor)");
+    if (capabilities.hasErrorMessage)
+      successUpdates.push("error_message = NULL");
+    if (capabilities.hasStartTime)
+      successUpdates.push("start_time = VALUES(start_time)");
+    if (capabilities.hasDurationMs)
+      successUpdates.push("duration_ms = VALUES(duration_ms)");
+    if (capabilities.hasExecutor)
+      successUpdates.push("executor = VALUES(executor)");
     // Same guarantee as the failure branch: every entry above is conditional on an optional
     // column, so on a minimal table the clause could otherwise be empty and the statement invalid.
-    const clause = successUpdates.length > 0 ? successUpdates : ["filename = filename"];
+    const clause =
+      successUpdates.length > 0 ? successUpdates : ["filename = filename"];
     return `${sql} ON DUPLICATE KEY UPDATE ${clause.join(", ")}`;
   }
 
@@ -2184,7 +2275,7 @@ function buildSchemaMigrationsInsertParams(
     executor: string;
     errorMessage?: string;
   },
-  options: { success: boolean }
+  options: { success: boolean },
 ): unknown[] {
   const params: unknown[] = [values.filename];
   if (capabilities.hasChecksumSha256) params.push(values.checksumSha256);
@@ -2193,12 +2284,16 @@ function buildSchemaMigrationsInsertParams(
   if (capabilities.hasEndTime) params.push(values.endTime);
   if (capabilities.hasDurationMs) params.push(values.durationMs);
   if (capabilities.hasExecutor) params.push(values.executor);
-  if (!options.success && capabilities.hasErrorMessage) params.push(values.errorMessage ?? null);
+  if (!options.success && capabilities.hasErrorMessage)
+    params.push(values.errorMessage ?? null);
   return params;
 }
 
 export function getSchemaVerificationState(): SchemaVerificationState {
-  return { ...verificationState, pendingFiles: [...verificationState.pendingFiles] };
+  return {
+    ...verificationState,
+    pendingFiles: [...verificationState.pendingFiles],
+  };
 }
 
 export function isSchemaReady(): boolean {
@@ -2238,14 +2333,21 @@ export async function verifySchemaVersion(): Promise<SchemaVerificationState> {
     // longer hang this route indefinitely.
     let inFlightConn: mysql.Connection | null = null;
     const work = (async (): Promise<SchemaVerificationState> => {
-      const conn = await mysql.createConnection({ host, port, user, password, database: dbName, connectTimeout: VERIFY_SCHEMA_TIMEOUT_MS });
+      const conn = await mysql.createConnection({
+        host,
+        port,
+        user,
+        password,
+        database: dbName,
+        connectTimeout: VERIFY_SCHEMA_TIMEOUT_MS,
+      });
       inFlightConn = conn;
       try {
         // Check if schema_migrations table exists
         const [tables] = await conn.execute<RowDataPacket[]>(
           `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
            WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'schema_migrations'`,
-          [dbName]
+          [dbName],
         );
 
         if (!tables.length) {
@@ -2253,19 +2355,25 @@ export async function verifySchemaVersion(): Promise<SchemaVerificationState> {
           verificationState.appliedCount = 0;
           verificationState.pendingCount = MIGRATION_MANIFEST.length;
           verificationState.pendingFiles = MIGRATION_MANIFEST.slice(0, 20);
-          verificationState.state = verificationState.pendingCount > 0 ? "incompatible" : "verified";
+          verificationState.state =
+            verificationState.pendingCount > 0 ? "incompatible" : "verified";
           verificationState.valid = verificationState.pendingCount === 0;
           return getSchemaVerificationState();
         }
 
-        const capabilities = await getSchemaMigrationsCapabilities(conn, dbName);
+        const capabilities = await getSchemaMigrationsCapabilities(
+          conn,
+          dbName,
+        );
 
         // Get applied migrations, tolerating older schema_migrations layouts that
         // do not yet have a success column.
         const [applied] = await conn.execute<RowDataPacket[]>(
-          buildSchemaMigrationsAppliedQuery(capabilities.hasSuccess)
+          buildSchemaMigrationsAppliedQuery(capabilities.hasSuccess),
         );
-        const appliedSet = new Set((applied as Array<{ filename: string }>).map((r) => r.filename));
+        const appliedSet = new Set(
+          (applied as Array<{ filename: string }>).map((r) => r.filename),
+        );
 
         // Calculate pending
         const pending = MIGRATION_MANIFEST.filter((f) => !appliedSet.has(f));
@@ -2273,7 +2381,8 @@ export async function verifySchemaVersion(): Promise<SchemaVerificationState> {
         verificationState.appliedCount = appliedSet.size;
         verificationState.pendingCount = pending.length;
         verificationState.pendingFiles = pending.slice(0, 20);
-        verificationState.state = pending.length === 0 ? "verified" : "incompatible";
+        verificationState.state =
+          pending.length === 0 ? "verified" : "incompatible";
         verificationState.valid = pending.length === 0;
 
         return getSchemaVerificationState();
@@ -2288,7 +2397,11 @@ export async function verifySchemaVersion(): Promise<SchemaVerificationState> {
         // linger past this function returning. work() keeps running to completion in
         // the background either way â€" this only stops it from blocking the caller.
         inFlightConn?.destroy();
-        reject(new Error(`verifySchemaVersion exceeded ${VERIFY_SCHEMA_TIMEOUT_MS}ms`));
+        reject(
+          new Error(
+            `verifySchemaVersion exceeded ${VERIFY_SCHEMA_TIMEOUT_MS}ms`,
+          ),
+        );
       }, VERIFY_SCHEMA_TIMEOUT_MS).unref();
     });
 

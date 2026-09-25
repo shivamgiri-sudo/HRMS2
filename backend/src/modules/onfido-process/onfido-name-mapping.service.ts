@@ -3,12 +3,15 @@ import { getOnfidoPool } from "../../db/onfidoDb.js";
 import { db } from "../../db/mysql.js";
 import type {
   EmployeeCandidate,
+  ListMappingsFilters,
+  MappingListRow,
   MappingRow,
   MatchResult,
   RawNameRole,
   RawOnfidoName,
   SeedResult,
   UpsertMappingInput,
+  VerifyMappingInput,
 } from "./onfido-name-mapping.types.js";
 
 /**
@@ -199,4 +202,89 @@ export async function runNameMappingSeed(): Promise<SeedResult> {
   }
 
   return result;
+}
+
+/**
+ * One mapping row by its own primary key (distinct from getMappingByNameAndRole,
+ * which looks up by the natural key raw_name/raw_role). Used by the PATCH review
+ * route to confirm a row exists before writing, and to return the post-write state.
+ */
+export async function getMappingRowById(id: string): Promise<MappingListRow | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT m.id, m.raw_name, m.raw_role, m.employee_id, m.match_confidence, m.match_method, m.verified_by_hr,
+            e.full_name AS employee_name, e.employee_code AS employee_code
+       FROM onfido_name_employee_map m
+       LEFT JOIN employees e ON e.id = m.employee_id
+       WHERE m.id = ?`,
+    [id],
+  );
+  const row = rows[0];
+  if (!row) return null;
+
+  return {
+    id: row.id as string,
+    rawName: row.raw_name as string,
+    rawRole: row.raw_role as RawNameRole,
+    employeeId: (row.employee_id as string | null) ?? null,
+    matchConfidence: Number(row.match_confidence),
+    matchMethod: row.match_method as MappingRow["matchMethod"],
+    verifiedByHr: Number(row.verified_by_hr) === 1,
+    employeeName: (row.employee_name as string | null) ?? null,
+    employeeCode: (row.employee_code as string | null) ?? null,
+  };
+}
+
+/**
+ * All mapping rows for the HR review screen, joined with the matched employee's
+ * display name/code (a plain LEFT JOIN within mas_hrms — employee_id has no FK,
+ * see migration 1869, but the join itself is a same-database, single-query read
+ * with no cross-database restriction). Optionally narrowed to only rows HR
+ * still needs to review (verified: false) or has already actioned (verified: true).
+ */
+export async function listMappings(filters: ListMappingsFilters = {}): Promise<MappingListRow[]> {
+  const where =
+    filters.verified === true
+      ? "WHERE m.verified_by_hr = 1"
+      : filters.verified === false
+        ? "WHERE m.verified_by_hr = 0"
+        : "";
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT m.id, m.raw_name, m.raw_role, m.employee_id, m.match_confidence, m.match_method, m.verified_by_hr,
+            e.full_name AS employee_name, e.employee_code AS employee_code
+       FROM onfido_name_employee_map m
+       LEFT JOIN employees e ON e.id = m.employee_id
+       ${where}
+       ORDER BY m.raw_role, m.raw_name`,
+  );
+
+  return rows.map((row): MappingListRow => ({
+    id: row.id as string,
+    rawName: row.raw_name as string,
+    rawRole: row.raw_role as RawNameRole,
+    employeeId: (row.employee_id as string | null) ?? null,
+    matchConfidence: Number(row.match_confidence),
+    matchMethod: row.match_method as MappingRow["matchMethod"],
+    verifiedByHr: Number(row.verified_by_hr) === 1,
+    employeeName: (row.employee_name as string | null) ?? null,
+    employeeCode: (row.employee_code as string | null) ?? null,
+  }));
+}
+
+/**
+ * The HR review action: explicitly sets employee_id, marks the row verified_by_hr = 1,
+ * and records who verified it and when. This is the one write path allowed to touch a
+ * row after it becomes HR-verified — upsertMapping() (the automated match run) refuses
+ * to touch it once this has run, per migration 1869's own documented rule.
+ *
+ * employeeId: null is a legitimate HR decision — "no employee matches this name" —
+ * not an error case, so it is accepted and written as-is.
+ */
+export async function verifyMapping(mappingId: string, input: VerifyMappingInput): Promise<void> {
+  await db.execute(
+    `UPDATE onfido_name_employee_map
+        SET employee_id = ?, verified_by_hr = 1, verified_by_user_id = ?, verified_at = NOW()
+      WHERE id = ?`,
+    [input.employeeId, input.verifiedByUserId, mappingId],
+  );
 }
