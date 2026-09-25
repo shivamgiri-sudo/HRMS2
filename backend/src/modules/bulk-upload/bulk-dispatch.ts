@@ -575,6 +575,12 @@ export async function dispatchImport(
     return { success: true, data };
   }
 
+  if (rpc_name === "import_aw_chat_batch" || rpc_name === "import_aw_chat_masmis_batch") {
+    const { importAwChatBatch } = await import("./aw-chat-bulk.service.js");
+    const data = await importAwChatBatch(id, userId);
+    return { success: true, data };
+  }
+
   if (rpc_name === "import_aw_out_batch" || rpc_name === "import_aw_out_masmis_batch") {
     const { importAwOutBatch } = await import("./aw-out-bulk.service.js");
     const data = await importAwOutBatch(id, userId);

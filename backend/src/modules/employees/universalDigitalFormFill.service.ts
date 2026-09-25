@@ -1003,22 +1003,22 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
 
   const attendanceSource = await resolveAttendanceSource(employee);
 
-  // CTC is the contractual monthly remuneration the employee signs against in
-  // the employment-agreement appendix. It must come from exactly one source:
-  // the Payroll Head approved salary package (employee_payroll_head_review
-  // status='approved' AND package_accepted=1). Using any other source risks
-  // printing a figure the Payroll Head never signed off on.
+  // The gross monthly salary (salary_package_master.gross) is what the
+  // employment-agreement appendix prints. It is the take-home before income tax
+  // but after employer statutory contributions are excluded — the figure that
+  // matches the employee's payslip gross.
   //
-  // salary_component_assignments was the previous source but it is NOT
-  // consulted here for amounts: an active assignment row may exist without an
-  // approved review (264 employees measured 2026-09-08), so reading from it
-  // would bypass the approval gate.
+  // Previously this used p.ctc, which overstates the remuneration by the
+  // employer's EPF/ESIC share (~10% on a ₹20k package). The contract text says
+  // "inclusive of all expenses" (reimbursements, not statutory contributions),
+  // so gross is the correct number to print.
   //
-  // The appendix text says "inclusive of all expenses", matching CTC.
-  // gross (take-home + statutory deductions) was previously used but CTC is
-  // what the Payroll Head sets as the total cost of the offer.
+  // Source is exclusively the Payroll Head approved package to avoid printing a
+  // figure nobody signed off on. salary_component_assignments is NOT consulted
+  // for amounts: an active row may exist without an approved review
+  // (264 employees measured 2026-09-08).
   const [[packageRow]] = await db.execute<RowDataPacket[]>(
-    `SELECT p.ctc AS package_gross
+    `SELECT p.gross AS package_gross
        FROM employee_payroll_head_review r
        JOIN salary_package_master p ON p.id = r.salary_package_id
       WHERE r.employee_id = ?

@@ -218,7 +218,7 @@ interface OutRec {
   lrsC: number; lrsA: number; trC: number; trA: number; mfC: number; mfA: number;
   lrsT: number; trT: number; mfT: number; calls: number; connected: number;
 }
-interface CallRec {
+export interface CallRec {
   id: number; source: "inbound" | "cdr"; callId: string; date: string; hour: number | null;
   callType: string; campaign: string; skill: string; status: string; answered: boolean;
   agent: string; agentId: string; disposition: string; talkS: number; holdS: number; wrapS: number; handlingS: number;
@@ -236,7 +236,7 @@ const BILL_COLS = [
   ...AUX_CODES.map((a) => a.key),
 ];
 
-async function loadBilling(from: string, to: string): Promise<{ rows: BillRec[]; raw: number; dropped: number; badDates: number }> {
+export async function loadBilling(from: string, to: string): Promise<{ rows: BillRec[]; raw: number; dropped: number; badDates: number }> {
   const [rs] = await db.execute<Row[]>(
     `SELECT ${BILL_COLS.map((c) => `\`${c}\``).join(",")}, DATE_FORMAT(${DATE_EXPR}, '%Y-%m-%d') AS d
        FROM db_masmis.aw_billing WHERE ${DATE_EXPR} BETWEEN ? AND ?`,
@@ -313,7 +313,7 @@ const CALL_COLS = [
   "id", "call_id", "call_type", "campaign", "skill", "status", "agent", "agent_id", "disposition", "talk_time", "hold_time",
   "wrapup_duration", "handling_time", "time_to_answer", "hangup_by", "caller_no", "start_time", "upload_batch_id", "call_flow",
 ];
-async function loadCalls(source: "inbound" | "cdr", from: string, to: string): Promise<{ rows: CallRec[]; raw: number; dropped: number }> {
+export async function loadCalls(source: "inbound" | "cdr", from: string, to: string): Promise<{ rows: CallRec[]; raw: number; dropped: number }> {
   const table = source === "inbound" ? "aw_inbound" : "aw_new_cdr";
   const extra = source === "inbound" ? ", `queue_time`" : "";
   const [rs] = await db.execute<Row[]>(
