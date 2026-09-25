@@ -8,7 +8,7 @@ import type { NextFunction, RequestHandler, Response, Router } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { expandRoles, normalizeRoleInputs } from "../../platform/policy/index.js";
-import { getAnalystReport } from "./onfido-analyst-report.service.js";
+import { getAnalystReport, getAnalystWeekly } from "./onfido-analyst-report.service.js";
 import { getAonBucketAnalysts, getOverviewReport } from "./onfido-overview-report.service.js";
 import { getUtilizationReport } from "./onfido-utilization.service.js";
 import { validateRange, type Granularity } from "./onfido-overview-report.pure.js";
@@ -65,6 +65,15 @@ export function mountOverviewReportRoutes(router: Router, viewGuard: RequestHand
     const bad = validateRange(f.from, f.to);
     if (bad) return res.status(400).json({ success: false, message: bad });
     res.json({ success: true, data: await getAnalystReport(f) });
+  }));
+
+  router.get("/analyst-report/weekly", ...viewGuard, wrap(async (req, res) => {
+    const f = filters(req);
+    const bad = validateRange(f.from, f.to);
+    if (bad) return res.status(400).json({ success: false, message: bad });
+    const analyst = str((req.query as Record<string, unknown>).analyst);
+    if (!analyst) return res.status(400).json({ success: false, message: "analyst is required." });
+    res.json({ success: true, data: await getAnalystWeekly(analyst, f) });
   }));
 
   router.get("/utilization-report", ...viewGuard, wrap(async (req, res) => {

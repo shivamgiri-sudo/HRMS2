@@ -124,6 +124,7 @@ export default function OnfidoAnalystReport({ initialRange }: { initialRange: Da
                 <th rowSpan={2}>Analyst Name</th><th rowSpan={2} className="oc-right">Doc AHT</th><th rowSpan={2} className="oc-right">POA AHT</th>
                 <th rowSpan={2} className="oc-right">CRE</th><th rowSpan={2} className="oc-right">CRQ</th><th rowSpan={2} className="oc-right">ETM</th>
                 <th rowSpan={2} className="oc-right">Task Skip</th><th rowSpan={2} className="oc-right" title="Unplanned leave days">UL</th>
+                <th rowSpan={2} className="oc-right" title="Internal + external errors / audits">Overall Error %</th>
                 <th colSpan={INTERNAL_COLUMNS.length} className="oc-right">Internal Quality</th>
                 <th colSpan={EXTERNAL_COLUMNS.length} className="oc-right">External Quality</th>
               </tr>
@@ -133,7 +134,7 @@ export default function OnfidoAnalystReport({ initialRange }: { initialRange: Da
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 && <tr className="oc-empty-row"><td colSpan={8 + INTERNAL_COLUMNS.length + EXTERNAL_COLUMNS.length}>No analysts with completed tasks in this period</td></tr>}
+              {rows.length === 0 && <tr className="oc-empty-row"><td colSpan={9 + INTERNAL_COLUMNS.length + EXTERNAL_COLUMNS.length}>No analysts with completed tasks in this period</td></tr>}
               {rows.map((r) => (
                 <tr key={r.analyst} className="oc-row-click" onClick={() => setSelected(r)}>
                   <td>{r.analyst}</td>
@@ -142,6 +143,7 @@ export default function OnfidoAnalystReport({ initialRange }: { initialRange: Da
                   <td className="oc-right">{fmtInt(r.cre)}</td><td className="oc-right">{fmtInt(r.crq)}</td>
                   <td className="oc-right">{fmtInt(r.etm)}</td><td className="oc-right">{fmtInt(r.taskSkip)}</td>
                   <td className="oc-right">{r.unplannedLeaveDays === null ? DASH : fmtNum(r.unplannedLeaveDays, 1)}</td>
+                  <td className="oc-right">{overallErrorPct(r)}</td>
                   {INTERNAL_COLUMNS.map((c) => <td key={`i-${c.key}`} className="oc-right">{cellPct(r.internal[c.key])}</td>)}
                   {EXTERNAL_COLUMNS.map((c) => <td key={`e-${c.key}`} className="oc-right">{cellPct(r.external[c.key])}</td>)}
                 </tr>
@@ -182,12 +184,71 @@ function AnalystDrawer({ row, range, onClose }: { row: AnalystRow | null; range:
                 <tr><td>Unplanned leave / scheduled days</td><td className="oc-right">{row.unplannedLeaveDays === null ? DASH : `${fmtNum(row.unplannedLeaveDays, 1)} / ${fmtInt(row.scheduledDays)}`}</td></tr>
               </tbody></table>
             </div>
+            <AnalystWeeklyTable analyst={row.analyst} tlName={row.tlName} amName={row.amName} range={range} />
             <QualityTable title="Internal quality" cols={INTERNAL_COLUMNS} cells={row.internal} />
             <QualityTable title="External quality" cols={EXTERNAL_COLUMNS} cells={row.external} />
           </div>
         )}
       </SheetContent>
     </Sheet>
+  );
+}
+
+function overallErrorPct(r: AnalystRow): string {
+  const errors = (r.internal.overall?.errors ?? 0) + (r.external.overall?.errors ?? 0);
+  const audits = (r.internal.overall?.audits ?? 0) + (r.external.overall?.audits ?? 0);
+  return audits > 0 ? fmtPct((errors / audits) * 100) : DASH;
+}
+
+interface WeekRow {
+  weekStart: string; weekEnd: string; label: string;
+  docTasks: number; docAht: number | null; poaTasks: number; poaAht: number | null;
+  cre: number; crq: number; etm: number; taskSkip: number;
+  errors: number; audits: number; overallErrorPct: number | null;
+}
+
+/** Week-by-week (WC dd Mon) performance for the selected analyst. */
+function AnalystWeeklyTable({ analyst, tlName, amName, range }: { analyst: string; tlName: string | null; amName: string | null; range: DateRange }) {
+  const weekly = useQuery({
+    queryKey: ["onfido-process", "analyst-weekly", analyst, tlName, amName, range],
+    queryFn: () => {
+      let url = `/api/onfido-process/analyst-report/weekly?analyst=${encodeURIComponent(analyst)}&from=${range.from}&to=${range.to}`;
+      if (tlName) url += `&tlName=${encodeURIComponent(tlName)}`;
+      if (amName) url += `&amName=${encodeURIComponent(amName)}`;
+      return hrmsApi.get<{ data: { weeks: WeekRow[] } }>(url);
+    },
+  });
+  const weeks = weekly.data?.data.weeks ?? [];
+  return (
+    <div>
+      <div className="oc-kv-label">Week-wise performance</div>
+      {weekly.isLoading && <EmptyNote>Loading weeks...</EmptyNote>}
+      {weekly.error instanceof Error && <EmptyNote>Could not load weeks: {weekly.error.message}</EmptyNote>}
+      {weeks.length > 0 && (
+        <table className="oc-table">
+          <thead>
+            <tr>
+              <th>Week</th><th className="oc-right">DOC</th><th className="oc-right">Doc AHT</th><th className="oc-right">POA</th>
+              <th className="oc-right">POA AHT</th><th className="oc-right">ETM</th><th className="oc-right">Skips</th><th className="oc-right">Overall Error %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {weeks.map((w) => (
+              <tr key={w.weekStart} title={`${w.weekStart} to ${w.weekEnd}`}>
+                <td>{w.label}</td>
+                <td className="oc-right">{fmtInt(w.docTasks)}</td>
+                <td className="oc-right">{w.docAht === null ? DASH : `${fmtInt(w.docAht)}s`}</td>
+                <td className="oc-right">{fmtInt(w.poaTasks)}</td>
+                <td className="oc-right">{w.poaAht === null ? DASH : `${fmtInt(w.poaAht)}s`}</td>
+                <td className="oc-right">{fmtInt(w.etm)}</td>
+                <td className="oc-right">{fmtInt(w.taskSkip)}</td>
+                <td className="oc-right">{w.overallErrorPct === null ? DASH : fmtPct(w.overallErrorPct)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
 

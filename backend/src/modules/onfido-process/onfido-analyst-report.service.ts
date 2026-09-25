@@ -140,3 +140,79 @@ export async function getAnalystReport(rawFilters: Filters): Promise<{ from: str
 
   return { from: f.from, to: f.to, rows: [...rows.values()].sort((a, b) => a.analyst.localeCompare(b.analyst)) };
 }
+
+// ── Week-wise view for one analyst ───────────────────────────────────────────
+
+export const ANALYST_WEEKLY_MAX_WEEKS = 8;
+
+export interface AnalystWeekRow {
+  weekStart: string;
+  weekEnd: string;
+  label: string;
+  docTasks: number;
+  docAht: number | null;
+  poaTasks: number;
+  poaAht: number | null;
+  cre: number;
+  crq: number;
+  etm: number;
+  taskSkip: number;
+  errors: number;
+  audits: number;
+  overallErrorPct: number | null;
+}
+
+const MS_PER_DAY = 86_400_000;
+const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function isoDay(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** Monday-start weeks covering [from, to], each clipped to the range. Pure - unit tested. */
+export function splitIntoWeeks(from: string, to: string): { start: string; end: string; label: string }[] {
+  const first = new Date(`${from}T00:00:00Z`);
+  const last = new Date(`${to}T00:00:00Z`);
+  const weeks: { start: string; end: string; label: string }[] = [];
+  let weekMonday = new Date(first.getTime() - ((first.getUTCDay() + 6) % 7) * MS_PER_DAY);
+  while (weekMonday <= last && weeks.length < ANALYST_WEEKLY_MAX_WEEKS) {
+    const weekSunday = new Date(weekMonday.getTime() + 6 * MS_PER_DAY);
+    const start = weekMonday < first ? first : weekMonday;
+    const end = weekSunday > last ? last : weekSunday;
+    weeks.push({
+      start: isoDay(start),
+      end: isoDay(end),
+      label: `WC ${String(weekMonday.getUTCDate()).padStart(2, "0")} ${MONTH_ABBR[weekMonday.getUTCMonth()]}`,
+    });
+    weekMonday = new Date(weekMonday.getTime() + 7 * MS_PER_DAY);
+  }
+  return weeks;
+}
+
+/**
+ * One analyst, week by week (Week-commencing rows). Reuses the per-analyst report for each week
+ * (scoped to the analyst's TL/AM so the query stays small) and picks the analyst's row, so the
+ * numbers always agree with the main table.
+ */
+export async function getAnalystWeekly(
+  analystEmail: string, rawFilters: Filters
+): Promise<{ from: string; to: string; weeks: AnalystWeekRow[] }> {
+  const f = readFilters(rawFilters);
+  const target = analystEmail.trim().toLowerCase();
+  const weeks = splitIntoWeeks(f.from, f.to);
+  const reports = await Promise.all(
+    weeks.map((w) => getAnalystReport({ from: w.start, to: w.end, tlName: rawFilters.tlName, amName: rawFilters.amName }))
+  );
+  const rows = weeks.map((w, i): AnalystWeekRow => {
+    const row = reports[i].rows.find((r) => r.analyst.toLowerCase() === target);
+    const errors = (row?.internal.overall.errors ?? 0) + (row?.external.overall.errors ?? 0);
+    const audits = (row?.internal.overall.audits ?? 0) + (row?.external.overall.audits ?? 0);
+    return {
+      weekStart: w.start, weekEnd: w.end, label: w.label,
+      docTasks: row?.docTasks ?? 0, docAht: row?.docAht ?? null, poaTasks: row?.poaTasks ?? 0, poaAht: row?.poaAht ?? null,
+      cre: row?.cre ?? 0, crq: row?.crq ?? 0, etm: row?.etm ?? 0, taskSkip: row?.taskSkip ?? 0,
+      errors, audits, overallErrorPct: audits > 0 ? Math.round((errors / audits) * 1000) / 10 : null,
+    };
+  });
+  return { from: f.from, to: f.to, weeks: rows };
+}
