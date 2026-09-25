@@ -500,6 +500,13 @@ const KNOWN_IMPORT_RPCS = new Set([
   // See du-apr-daily-bulk.service.ts.
   "import_du_apr_korea_batch",
   "import_du_apr_thailand_batch",
+  // Dalmia Cement's four uploaders (dalmia_daildesk / Outbound / dalmia_apr / after_hour). The first, second and
+  // fourth already had importers + live tables (sql/1731, 1732, 1734) that were only ever run by script; they are
+  // now reachable from Process Performance V2 -> Dalmia -> Uploader. dalmia_apr is new (sql/1781).
+  "import_dalmia_dd_batch",
+  "import_dalmia_outbound_batch",
+  "import_dalmia_after_hour_batch",
+  "import_dalmia_apr_batch",
   // LP's Mascallnet NRGN Call History export, Regional/Non Regional
   // dashboards -- columns read verbatim from real samples; no DB backing
   // exists anywhere. See lp-cdr-cr-report-bulk.service.ts. (The sibling
@@ -1105,6 +1112,26 @@ async function dispatchImport(
     );
     const data = await importLpLeadsNonRegionalBatch(id, userId);
     return { success: true, data };
+  }
+
+  if (rpc_name === "import_dalmia_dd_batch") {
+    const { importDalmiaDdBatch } = await import("../bulk-upload/dalmia-dd-bulk.service.js");
+    return { success: true, data: await importDalmiaDdBatch(id, userId) };
+  }
+
+  if (rpc_name === "import_dalmia_outbound_batch") {
+    const { importDalmiaOutboundBatch } = await import("../bulk-upload/dalmia-outbound-bulk.service.js");
+    return { success: true, data: await importDalmiaOutboundBatch(id, userId) };
+  }
+
+  if (rpc_name === "import_dalmia_after_hour_batch") {
+    const { importDalmiaAfterHourBatch } = await import("../bulk-upload/dalmia-after-hour-bulk.service.js");
+    return { success: true, data: await importDalmiaAfterHourBatch(id, userId) };
+  }
+
+  if (rpc_name === "import_dalmia_apr_batch") {
+    const { importDalmiaAprBatch } = await import("../bulk-upload/dalmia-apr-bulk.service.js");
+    return { success: true, data: await importDalmiaAprBatch(id, userId) };
   }
 
   if (rpc_name === "import_du_apr_korea_batch") {

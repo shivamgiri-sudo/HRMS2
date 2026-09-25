@@ -252,6 +252,7 @@ import { satyaRetailReportRouter } from "./modules/process-performance/satya-ret
 import { neemansCartDashboardRouter } from "./modules/process-performance/neemans-cart-dashboard.routes.js";
 import { neemansPerformanceDashboardRouter } from "./modules/process-performance/neemans-performance-dashboard.routes.js";
 import { bellavitaChatDashboardRouter } from "./modules/process-performance/bellavita-chat-dashboard.routes.js";
+import { dalmiaDashboardRouter } from "./modules/process-performance/dalmia-dashboard.routes.js";
 import { bellavitaCartDashboardRouter } from "./modules/process-performance/bellavita-cart-dashboard.routes.js";
 import { appreciateWealthDashboardRouter } from "./modules/process-performance/appreciate-wealth-dashboard.routes.js";
 import { dashboardExportRouter } from "./modules/process-performance/dashboard-export.routes.js";
@@ -813,6 +814,7 @@ app.use("/api/process-performance", satyaRetailReportRouter);
 app.use("/api/process-performance", neemansCartDashboardRouter);
 app.use("/api/process-performance", neemansPerformanceDashboardRouter);
 app.use("/api/process-performance", bellavitaChatDashboardRouter);
+app.use("/api/process-performance", dalmiaDashboardRouter);
 app.use("/api/process-performance", bellavitaCartDashboardRouter);
 app.use("/api/process-performance", appreciateWealthDashboardRouter);
 app.use("/api/process-performance", dashboardExportRouter);

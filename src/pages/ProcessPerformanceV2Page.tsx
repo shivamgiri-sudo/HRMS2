@@ -13,6 +13,7 @@ import { NeemansPerformanceDashboard } from "@/components/process-performance/Ne
 import { NeemansChatDashboard } from "@/components/process-performance/NeemansChatDashboard";
 import { BellavitaChatDashboard } from "@/components/process-performance/BellavitaChatDashboard";
 import { BellavitaCartDashboard } from "@/components/process-performance/BellavitaCartDashboard";
+import { DalmiaDashboard } from "@/components/process-performance/DalmiaDashboard";
 import { HousingOwnerDashboard } from "@/components/process-performance/HousingOwnerDashboard";
 import { HousingPremiumSaleDashboard } from "@/components/process-performance/HousingPremiumSaleDashboard";
 import { LpFeedbackDashboard } from "@/components/process-performance/LpFeedbackDashboard";
@@ -94,7 +95,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
  * separate mapping. "stub" entries are the pre-existing "nothing built
  * yet" placeholders (Neemans' Sale/Allocation cards) -- unchanged.
  */
-const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" }>>> = {
+const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" }>>> = {
   bellavita: [
     { key: "sale_performance", label: "Overall Dashboard", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
     { key: "chat_performance", label: "Chat Sale Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
@@ -139,6 +140,7 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
     { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%, FCR%", kind: "inbound" },
   ],
   dalmia: [
+    { key: "performance", label: "Inbound & Outbound Performance", description: "Calls, AL/SL, language-wise, outbound, QRC and leads — inbound live from the dialer, DD/Outbound/APR from the uploaders", kind: "dalmia_dashboard" },
     { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%", kind: "inbound" },
   ],
   dubangladesh: [
@@ -252,6 +254,16 @@ const CLOVIA_UPLOADERS = [
   { code: "CL_RECHURN_CALL_MASMIS",  label: "Rechurn Call",  description: "Upload Clovia rechurn call data",    icon: Repeat },
 ];
 
+/** Dalmia Cement's 4 uploaders. Labels are the names the business asked for; the codes are the existing/new
+ * upload_template_master rows (DALMIA_DD_RAW = the dial-desk "DD Raw" sheet, sql/1731; DALMIA_OUTBOUND_RAW, sql/1732;
+ * DALMIA_AFTER_HOUR, sql/1734; DALMIA_APR, sql/1781 -- that migration must be applied before the APR tab can import). */
+const DALMIA_UPLOADERS = [
+  { code: "DALMIA_DD_RAW",       label: "dalmia_daildesk", description: "Upload Dalmia dial-desk call log (DD Raw)",   icon: ClipboardList },
+  { code: "DALMIA_OUTBOUND_RAW", label: "Outbound",        description: "Upload Dalmia outbound enquiry follow-up",    icon: PhoneOutgoing },
+  { code: "DALMIA_APR",          label: "dalmia_apr",      description: "Upload Dalmia agent productivity (APR)",      icon: Activity },
+  { code: "DALMIA_AFTER_HOUR",   label: "after_hour",      description: "Upload Dalmia after-hour call log",           icon: PhoneIncoming },
+];
+
 /** Birlanu's 2 uploaders, writing into brand-new db_masmis tables
  * (birlanu_sale/birlanu_apr, sql/1770). Same status as Clovia before its
  * tables existed -- CREATE TABLE SQL is ready, user runs it themselves. */
@@ -294,6 +306,7 @@ const UPLOADERS_BY_COMPANY: Partial<Record<CompanyKey, UploaderHubItem[]>> = {
   housing_owner: HOUSING_OWNER_UPLOADERS,
   housing_premium: HOUSING_PREMIUM_UPLOADERS,
   clovia: CLOVIA_UPLOADERS,
+  dalmia: DALMIA_UPLOADERS,
   birlanu: BIRLANU_UPLOADERS,
   satya_retail: SATYA_RETAIL_UPLOADERS,
   lp_feedback: LP_FEEDBACK_UPLOADERS,
@@ -520,7 +533,7 @@ export default function ProcessPerformanceV2Page() {
   const [company, setCompany] = useState<CompanyKey | null>(null);
   const [section, setSection] = useState<SectionKey | null>(null);
   const [selectedUploader, setSelectedUploader] = useState<{ code: string; label: string } | null>(null);
-  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" } | null>(null);
+  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" } | null>(null);
   const [stats, setStats] = useState({ totalFilesUploaded: 0, activeUsers: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
 
@@ -681,6 +694,8 @@ export default function ProcessPerformanceV2Page() {
               <NeemansChatDashboard />
             ) : selectedDashboard.kind === "bellavita_chat" ? (
               <BellavitaChatDashboard />
+            ) : selectedDashboard.kind === "dalmia_dashboard" ? (
+              <DalmiaDashboard />
             ) : selectedDashboard.kind === "bellavita_cart" ? (
               <BellavitaCartDashboard />
             ) : selectedDashboard.kind === "housing_owner_sale" ? (
@@ -741,7 +756,7 @@ export default function ProcessPerformanceV2Page() {
             (no uploader requested), and Puresta was added as a placeholder with
             both tabs deliberately blank — stub, same "nothing here yet" state the
             Dashboards section uses elsewhere, so Uploader is never a dead end. */}
-        {(company === "dalmia" || company === "dubangladesh" || company === "viega" || company === "exicom" || company === "puresta") && section === "uploader" && (
+        {(company === "dubangladesh" || company === "viega" || company === "exicom" || company === "puresta") && section === "uploader" && (
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel, "Data Uploader"]} onBack={backToCompany} />
             <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white p-16 text-sm text-slate-400">

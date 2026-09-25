@@ -295,21 +295,17 @@ export async function getBellavitaSaleDashboard(
   const headlineConds = [lob ? "lob = ?" : null, empId ? "emp_id = ?" : null].filter(Boolean).join(" AND ");
   const headlineParams = [...range, ...lobParam, ...empParam];
 
-  const [[headlineRow]] = await db.execute<HeadlineRow[]>(
-    `SELECT
-       SUM(CAST(amount AS DECIMAL(14,2))) AS turnover,
-       COUNT(*) AS sale_count,
-       SUM(CASE WHEN payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
-       SUM(CASE WHEN payment_status = 'cod' THEN 1 ELSE 0 END) AS cod_count,
-       SUM(CASE WHEN final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count,
-       SUM(CASE WHEN final_status != 'RTO' THEN CAST(amount AS DECIMAL(14,2)) ELSE 0 END) AS net_turnover,
-       SUM(CASE WHEN final_status != 'RTO' THEN 1 ELSE 0 END) AS net_sale_count
-     FROM ${deduped}
-     ${headlineConds ? `WHERE ${headlineConds}` : ""}`,
-    headlineParams,
+  // ONE de-duplicated pass over bb_sale (a few seconds on the shared DB), aggregated here. This used to be eight separate
+  // queries that each re-ran the de-dup join over bb_sale (~35s in total, past the browser's 30s timeout, and still ~19s
+  // when run together). The filters and aggregates below are the same ones those queries applied.
+  const saleRowsP = db.execute<RowDataPacket[]>(
+    `SELECT DATE(ds.\`Date\`) AS d, ds.lob AS lob, ds.state AS state, ds.emp_id AS emp_id, ds.emp_name AS emp_name,
+            ds.amount AS amount, ds.payment_status AS payment_status, ds.final_status AS final_status
+       FROM ${deduped}`,
+    range,
   );
 
-  const [[activeAgentsRow]] = await db.execute<ActiveAgentsRow[]>(
+  const activeP = db.execute<ActiveAgentsRow[]>(
     `SELECT COUNT(DISTINCT noiid) AS active_agents
      FROM db_masmis.bb_apr
      WHERE report_date >= ? AND report_date < DATE_ADD(?, INTERVAL 1 DAY)`,
@@ -327,85 +323,77 @@ export async function getBellavitaSaleDashboard(
   rtoCutoffDate.setDate(rtoCutoffDate.getDate() - 7);
   const rtoCutoff = localDateStr(rtoCutoffDate);
   const rtoTo = to < rtoCutoff ? to : rtoCutoff;
-  let rtoSaleCount = 0;
-  let rtoOnlyCount = 0;
-  if (rtoTo >= from) {
-    const [[rtoRow]] = await db.execute<RowDataPacket[]>(
+  const rtoP = rtoTo >= from
+    ? db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS sale_count, SUM(CASE WHEN final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count
        FROM ${deduped}
        ${headlineConds ? `WHERE ${headlineConds}` : ""}`,
       [from, rtoTo, ...lobParam, ...empParam],
-    );
-    rtoSaleCount = num(rtoRow?.sale_count);
-    rtoOnlyCount = num(rtoRow?.rto_count);
-  }
+    )
+    : null;
 
-  const trendConds = [lob ? "ds.lob = ?" : null, empId ? "ds.emp_id = ?" : null].filter(Boolean).join(" AND ");
-  const [trendRows] = await db.execute<TrendRow[]>(
-    `SELECT DATE(ds.\`Date\`) AS d,
-       COUNT(*) AS sale_count,
-       SUM(CAST(ds.amount AS DECIMAL(14,2))) AS turnover,
-       SUM(CASE WHEN ds.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
-       SUM(CASE WHEN ds.payment_status = 'cod' THEN 1 ELSE 0 END) AS cod_count,
-       SUM(CASE WHEN ds.final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count
-     FROM ${deduped}
-     ${trendConds ? `WHERE ${trendConds}` : ""}
-     GROUP BY DATE(ds.\`Date\`)
-     ORDER BY d ASC`,
-    [...range, ...lobParam, ...empParam],
-  );
+  const [[saleRows], [[activeAgentsRow]], rtoRes] = await Promise.all([saleRowsP, activeP, rtoP ?? Promise.resolve(null)]);
+  const rtoRow = rtoRes ? (rtoRes[0] as RowDataPacket[])[0] : undefined;
+  const rtoSaleCount = num(rtoRow?.sale_count);
+  const rtoOnlyCount = num(rtoRow?.rto_count);
 
-  const [lobRows] = await db.execute<LobRow[]>(
-    `SELECT ds.lob AS lob, COUNT(*) AS sale_count, SUM(CAST(ds.amount AS DECIMAL(14,2))) AS turnover,
-       SUM(CASE WHEN ds.payment_status = 'cod' THEN 1 ELSE 0 END) AS cod_count,
-       SUM(CASE WHEN ds.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
-       SUM(CASE WHEN ds.final_status = 'RTO' THEN CAST(ds.amount AS DECIMAL(14,2)) ELSE 0 END) AS rto_amount,
-       SUM(CASE WHEN ds.final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count,
-       SUM(CASE WHEN ds.final_status != 'RTO' THEN 1 ELSE 0 END) AS net_sale_count,
-       SUM(CASE WHEN ds.final_status != 'RTO' THEN CAST(ds.amount AS DECIMAL(14,2)) ELSE 0 END) AS net_turnover
-     FROM ${deduped}
-     WHERE ds.lob IS NOT NULL AND ds.lob != '' ${lob ? "AND ds.lob = ?" : ""}
-     GROUP BY ds.lob
-     ORDER BY turnover DESC`,
-    [...range, ...lobParam],
-  );
+  const amt = (r: RowDataPacket): number => num(r.amount);
+  const isRto = (r: RowDataPacket): boolean => r.final_status === "RTO";
+  const isPaid = (r: RowDataPacket): boolean => r.payment_status === "paid";
+  const isCod = (r: RowDataPacket): boolean => r.payment_status === "cod";
+  const sumBy = (rows: RowDataPacket[], pick: (r: RowDataPacket) => number): number => rows.reduce((n, r) => n + pick(r), 0);
+  const groupBy = (rows: RowDataPacket[], key: (r: RowDataPacket) => string): Map<string, RowDataPacket[]> => {
+    const m = new Map<string, RowDataPacket[]>();
+    for (const r of rows) { const k = key(r); const g = m.get(k); if (g) g.push(r); else m.set(k, [r]); }
+    return m;
+  };
 
-  const [stateRows] = await db.execute<StateRow[]>(
-    `SELECT ds.state AS state, COUNT(*) AS sale_count, SUM(CAST(ds.amount AS DECIMAL(14,2))) AS turnover,
-       SUM(CASE WHEN ds.final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count
-     FROM ${deduped}
-     WHERE ds.state IS NOT NULL AND ds.state != '' ${lob ? "AND ds.lob = ?" : ""}
-     GROUP BY ds.state
-     ORDER BY turnover DESC
-     LIMIT 10`,
-    [...range, ...lobParam],
-  );
+  // headline / trend honour the LOB and agent filters; the LOB/state/performer breakdowns honour the LOB filter only.
+  const headlineRows = saleRows.filter((r) => (!lob || r.lob === lob) && (!empId || r.emp_id === empId));
+  const lobScoped = lob ? saleRows.filter((r) => r.lob === lob) : saleRows;
 
-  const [performerRows] = await db.execute<PerformerRow[]>(
-    `SELECT ds.emp_id AS emp_id, MAX(ds.emp_name) AS emp_name, COUNT(*) AS sale_count,
-       SUM(CAST(ds.amount AS DECIMAL(14,2))) AS turnover,
-       SUM(CASE WHEN ds.final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count,
-       SUM(CASE WHEN ds.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
-       MAX(ds.lob) AS lob
-     FROM ${deduped}
-     WHERE ds.emp_id IS NOT NULL AND ds.emp_id != '' ${lob ? "AND ds.lob = ?" : ""}
-     GROUP BY ds.emp_id
-     ORDER BY turnover DESC
-     LIMIT 5`,
-    [...range, ...lobParam],
-  );
+  const headlineRow: HeadlineRow = {
+    turnover: String(sumBy(headlineRows, amt)),
+    sale_count: headlineRows.length,
+    paid_count: headlineRows.filter(isPaid).length,
+    cod_count: headlineRows.filter(isCod).length,
+    rto_count: headlineRows.filter(isRto).length,
+    net_turnover: String(sumBy(headlineRows.filter((r) => !isRto(r)), amt)),
+    net_sale_count: headlineRows.filter((r) => !isRto(r)).length,
+  } as HeadlineRow;
 
-  const [topRtoStateRows] = await db.execute<StateRow[]>(
-    `SELECT ds.state AS state, COUNT(*) AS sale_count,
-       SUM(CASE WHEN ds.final_status = 'RTO' THEN 1 ELSE 0 END) AS rto_count
-     FROM ${deduped}
-     WHERE ds.state IS NOT NULL AND ds.state != '' ${lob ? "AND ds.lob = ?" : ""}
-     GROUP BY ds.state
-     HAVING COUNT(*) >= 5
-     ORDER BY (SUM(CASE WHEN ds.final_status = 'RTO' THEN 1 ELSE 0 END) / COUNT(*)) DESC
-     LIMIT 5`,
-    [...range, ...lobParam],
-  );
+  const trendRows: TrendRow[] = [...groupBy(headlineRows, (r) => String(r.d).slice(0, 10)).entries()]
+    .sort(([x], [y]) => x.localeCompare(y))
+    .map(([d, g]) => ({
+      d, sale_count: g.length, turnover: String(sumBy(g, amt)), paid_count: g.filter(isPaid).length,
+      cod_count: g.filter(isCod).length, rto_count: g.filter(isRto).length,
+    })) as TrendRow[];
+
+  const lobRows: LobRow[] = [...groupBy(lobScoped.filter((r) => r.lob), (r) => String(r.lob)).entries()]
+    .map(([l, g]) => ({
+      lob: l, sale_count: g.length, turnover: String(sumBy(g, amt)), cod_count: g.filter(isCod).length, paid_count: g.filter(isPaid).length,
+      rto_amount: String(sumBy(g.filter(isRto), amt)), rto_count: g.filter(isRto).length,
+      net_sale_count: g.filter((r) => !isRto(r)).length, net_turnover: String(sumBy(g.filter((r) => !isRto(r)), amt)),
+    }))
+    .sort((x, y) => num(y.turnover) - num(x.turnover)) as LobRow[];
+
+  const stateGroups = [...groupBy(lobScoped.filter((r) => r.state), (r) => String(r.state)).entries()];
+  const stateRows: StateRow[] = stateGroups
+    .map(([st, g]) => ({ state: st, sale_count: g.length, turnover: String(sumBy(g, amt)), rto_count: g.filter(isRto).length }))
+    .sort((x, y) => num(y.turnover) - num(x.turnover)).slice(0, 10) as StateRow[];
+
+  const performerRows: PerformerRow[] = [...groupBy(lobScoped.filter((r) => r.emp_id), (r) => String(r.emp_id)).entries()]
+    .map(([id, g]) => ({
+      emp_id: id, emp_name: g.map((r) => r.emp_name).filter(Boolean).sort().at(-1) ?? null, sale_count: g.length,
+      turnover: String(sumBy(g, amt)), rto_count: g.filter(isRto).length, paid_count: g.filter(isPaid).length,
+      lob: g.map((r) => r.lob).filter(Boolean).sort().at(-1) ?? null,
+    }))
+    .sort((x, y) => num(y.turnover) - num(x.turnover)).slice(0, 5) as PerformerRow[];
+
+  const topRtoStateRows: StateRow[] = stateGroups
+    .filter(([, g]) => g.length >= 5)
+    .map(([st, g]) => ({ state: st, sale_count: g.length, turnover: null, rto_count: g.filter(isRto).length }))
+    .sort((x, y) => y.rto_count / y.sale_count - x.rto_count / x.sale_count).slice(0, 5) as StateRow[];
 
   const turnover = num(headlineRow?.turnover);
   const saleCount = num(headlineRow?.sale_count);
