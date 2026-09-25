@@ -1,6 +1,6 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1208,
+  "tableCount": 1210,
   "columnCount": 18005,
   "tables": {
     "_migrations": [
@@ -20377,6 +20377,25 @@
       "withdrawn_reason",
       "created_at",
       "updated_at"
+    ],
+    "company_policy": [
+      "id",
+      "policy_key",
+      "version",
+      "category",
+      "title",
+      "body",
+      "effective_from",
+      "is_active",
+      "published_by",
+      "published_by_name",
+      "created_at"
+    ],
+    "company_policy_acknowledgement": [
+      "id",
+      "policy_id",
+      "employee_id",
+      "acknowledged_at"
     ],
     "onfido_outlier_action": [
       "id",

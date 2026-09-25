@@ -1169,6 +1169,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1883_salary_start_date_governance.sql", // Registered 2026-09-25. Salary start date governance: creates employee_salary_start_date_audit (one row per date change: old/new date, source, authority, reason, actor) and seeds payroll_config_flags(salary_start_date_gate_enforced=false) so the payroll readiness mismatch check is a WARNING until the existing mismatches are repaired. Does NOT alter employees (an ADD COLUMN there is a 15+ minute COPY rebuild whose final metadata lock timed out on production 2026-09-25). Additive, idempotent.
   "migrations/1890_onfido_outlier_action.sql", // Registered 2026-09-25. Creates onfido_outlier_action, the action and closure log a TL or AM keeps against an analyst who is outside target. CREATE TABLE IF NOT EXISTS, additive.
   "migrations/1891_employee_warning.sql", // Registered 2026-09-25. Creates employee_warning, the disciplinary record kept on the employee; issue and withdrawal also go to employee_journey_log. CREATE TABLE IF NOT EXISTS, additive.
+  "migrations/1892_company_policy.sql", // Registered 2026-09-25. Creates company_policy and company_policy_acknowledgement (versioned policies HR publishes, per-employee acknowledgement). CREATE TABLE IF NOT EXISTS, additive.
 ];
 
 export type MigrationHealth = {
