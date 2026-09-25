@@ -16,6 +16,7 @@ import { discardDraft, getMyDraft, setDraftNote, upsertDraftLines } from "./team
 import { getSubmissionDetail, listApprovals, listMySubmissions } from "./team-roster-query.js";
 import { getTeamAttendance, getTeamAttendanceDetail } from "./team-roster-attendance.js";
 import { getGrid, getMe, listTemplates } from "./team-roster.service.js";
+import { getAutofillSuggestions } from "./team-roster-autofill.js";
 import { managerDecide, wfmDecide } from "./team-roster-workflow.js";
 import { MAX_REMARKS_LENGTH, NEW_ASSIGNMENT_TYPES, TeamRosterError, type Actor } from "./team-roster-types.js";
 
@@ -38,6 +39,7 @@ const schemas = {
     })).max(2000).optional(),
     deletes: z.array(cellRef).max(2000).optional(),
   }),
+  autofill: z.object({ from: ymd, to: ymd, mode: z.enum(["usual", "copy_last_week"]), employeeIds: z.array(z.string().trim().min(1).max(36)).min(1).max(200) }),
   note: z.object({ note: z.string().trim().max(500).nullable() }),
   submit: z.object({ note: z.string().trim().max(500).nullish() }),
   decision: z.object({ remarks: z.string().trim().max(MAX_REMARKS_LENGTH).nullish() }),
@@ -107,6 +109,7 @@ teamRosterRouter.get("/attendance", (req, res, next) => {
   next();
 }, run("query", schemas.attendance, (a, q, req) => getTeamAttendance(a, { ...q, lob: (req as any).lob })));
 teamRosterRouter.get("/attendance/:employeeId", run("query", schemas.attendanceDetail, (a, q, req) => getTeamAttendanceDetail(a, String(req.params.employeeId).slice(0, 36), q.month)));
+teamRosterRouter.post("/autofill", run("body", schemas.autofill, (a, b) => getAutofillSuggestions(a, b)));
 teamRosterRouter.get("/draft", run("none", null, (a) => getMyDraft(a)));
 teamRosterRouter.put("/draft/lines", run("body", schemas.lines, (a, b) => upsertDraftLines(a, {
   upserts: b.upserts?.map((u) => ({ ...u, shiftTemplateId: u.shiftTemplateId ?? null, shiftStart: u.shiftStart ?? null, shiftEnd: u.shiftEnd ?? null, shiftMasterId: u.shiftMasterId ?? null, reason: u.reason ?? null })),
