@@ -10,7 +10,9 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
 };
 
 const REVIEWER_ROLES = ["payroll_head", "admin", "super_admin"] as const;
-const FIXER_ROLES    = ["payroll_hr", "branch_head", "hr", "admin", "super_admin"] as const;
+// "payroll" is what a payroll_hr-only account is resolved to before requireRole runs (payroll_hr is aliased to
+// payroll), so without it Payroll HR -- the primary requester -- was refused on every write.
+const FIXER_ROLES    = ["payroll_hr", "payroll", "branch_head", "hr", "admin", "super_admin"] as const;
 
 router.post("/", requireAuth, requireWriteAccess, requireRole(...FIXER_ROLES), h(async (req, res) => {
   const { employee_id, requested_effective_from, reason } = req.body as Record<string, unknown>;
@@ -24,6 +26,12 @@ router.post("/", requireAuth, requireWriteAccess, requireRole(...FIXER_ROLES), h
     requested_by: String(req.authUser!.id),
     actor_roles: req.authUser!.roles,
   });
+  res.json({ success: true, data });
+}));
+
+// Requesters (HR / Payroll HR / Branch Head) see the requests THEY raised, in every status.
+router.get("/mine", requireAuth, requireRole(...FIXER_ROLES), h(async (req, res) => {
+  const data = await svc.listMyRevisionRequests(String(req.authUser!.id));
   res.json({ success: true, data });
 }));
 

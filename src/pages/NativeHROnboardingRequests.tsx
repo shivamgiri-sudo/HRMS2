@@ -117,6 +117,8 @@ interface OnboardingRequest {
   process_raw?: string;
   offer_id?: string;
   offer_status?: string;
+  offer_date_of_joining?: string | null;
+  offer_date_of_salary?: string | null;
   offered_ctc?: number;
   documents_uploaded?: number;
   bank_verification_status?: string;
@@ -1097,6 +1099,14 @@ export default function NativeHROnboardingRequests() {
     setDetailLoading(true);
     setOpenStep(null);
     resetOffer();
+    // A saved (draft / rejected) offer keeps its dates: reopening it must not show blank pickers.
+    if (row.offer_status && !['submitted', 'bh_approved'].includes(row.offer_status)) {
+      setOffer((p) => ({
+        ...p,
+        date_of_joining: String(row.offer_date_of_joining ?? '').slice(0, 10),
+        date_of_salary: String(row.offer_date_of_salary ?? '').slice(0, 10),
+      }));
+    }
     setBgv(null);
     setPushbackRemarks('');
     setReviewError(null);

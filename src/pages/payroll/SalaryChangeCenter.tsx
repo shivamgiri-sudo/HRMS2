@@ -13,6 +13,7 @@ import {
 import { PackageBuilderDialog } from '@/components/payroll/PackageBuilderDialog';
 import { inr, fmtDate } from './PayrollHeadSalaryReviewQueue';
 import { pfYesNo, esicYesNo } from '@/lib/salaryEligibility';
+import { useDateLockMin } from '@/hooks/useDateLockMin';
 import { earningRows, otherDeductionRows, employerCostRows } from '@/lib/salaryComponentRows';
 
 /**
@@ -190,6 +191,7 @@ export default function SalaryChangeCenter() {
   const [error, setError] = useState<string | null>(null);
 
   const [pkgBuilderOpen, setPkgBuilderOpen] = useState(false);
+  const dateMin = useDateLockMin();
   const [effectiveDate, setEffectiveDate] = useState('');
   const [reason, setReason] = useState('');
   const [requestor, setRequestor] = useState<EmployeeSearchResult | null>(null);
@@ -369,6 +371,7 @@ export default function SalaryChangeCenter() {
                     <Input
                       type="date"
                       value={effectiveDate}
+                      min={dateMin}
                       onChange={(e) => setEffectiveDate(e.target.value)}
                       className="h-10 text-sm rounded-xl"
                     />

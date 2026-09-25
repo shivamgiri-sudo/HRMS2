@@ -1501,7 +1501,7 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
 router.get("/", requireRole("super_admin", "admin", "hr", "manager", "ceo", "branch_head", "process_manager", "wfm", "payroll_head", "payroll_admin", "payroll", "finance_head", "it_head", "tq_head"), h(async (req, res) => {
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
-    ["hr", "manager", "branch_head", "process_manager", "wfm", "payroll_head", "payroll_admin", "payroll", "finance_head", "it_head", "tq_head"],
+    ["hr", "manager", "branch_head", "process_manager", "wfm", "payroll_head", "payroll_admin", "payroll", "payroll_hr", "finance_head", "it_head", "tq_head"],
     {
       branchId: "e.branch_id",
       processId: "e.process_id",

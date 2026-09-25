@@ -731,7 +731,7 @@ export default function SalaryRevisionPage() {
   const myQuery = useQuery({
     queryKey: ['salary-revision-mine'],
     queryFn: () =>
-      hrmsApi.get<{ success: boolean; data: RevisionRequest[] }>(`/api/salary-revision?status=pending`)
+      hrmsApi.get<{ success: boolean; data: RevisionRequest[] }>(`/api/salary-revision/mine`)
         .then((r) => r.data ?? []),
     enabled: isResolved && isFixer && !isReviewer,
   });

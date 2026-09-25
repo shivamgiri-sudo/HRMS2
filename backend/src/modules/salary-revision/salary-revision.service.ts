@@ -88,6 +88,25 @@ export async function listRevisionRequests(filters: { status?: string; employee_
   return rows as RowDataPacket[];
 }
 
+export async function listMyRevisionRequests(userId: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT r.id, r.employee_id, r.current_effective_from, r.requested_effective_from,
+            r.reason, r.status, r.review_remarks, r.created_at, r.reviewed_at,
+            e.full_name, e.employee_code,
+            b.branch_name,
+            COALESCE(au.email, '') AS requested_by_email
+       FROM employee_salary_date_revision_requests r
+       JOIN employees e ON e.id = r.employee_id
+       LEFT JOIN branch_master b ON b.id = e.branch_id
+       LEFT JOIN auth_user au ON au.id = r.requested_by
+      WHERE r.requested_by = ?
+      ORDER BY r.created_at DESC
+      LIMIT 100`,
+    [userId]
+  );
+  return rows as RowDataPacket[];
+}
+
 export async function reviewRevisionRequest(
   id: number,
   action: "approve" | "reject",

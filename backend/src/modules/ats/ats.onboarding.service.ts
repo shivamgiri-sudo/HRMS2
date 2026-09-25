@@ -486,6 +486,7 @@ export async function listOnboardingRequests(scopeFilter: { sql: string; params:
               ELSE NULLIF(TRIM(c.applied_for_process), '')
             END AS process_raw,
             o.id AS offer_id, o.status AS offer_status, o.offered_ctc,
+            o.date_of_joining AS offer_date_of_joining, o.date_of_salary AS offer_date_of_salary,
             ob.employee_id, e.employee_code,
             e.joining_document_status, e.joining_document_completion_pct,
             p.profile_status AS form_step,

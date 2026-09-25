@@ -45,6 +45,7 @@ router.post("/:employeeId", requireAuth, requireWriteAccess, requireRole(...REVI
     requestedByUserId: typeof requested_by_user_id === "string" ? requested_by_user_id : null,
     requestedByName: typeof requested_by_name === "string" ? requested_by_name : null,
     actorUserId: req.authUser!.id,
+    actorRoles: req.authUser!.roles,
   });
   res.json({ success: true, data });
 }));

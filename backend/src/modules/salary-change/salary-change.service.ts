@@ -16,6 +16,7 @@ import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import { getPackageById } from "../payroll-masters/payrollMasters.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { assertNotBeforeToday, canBackdateDates } from "../../utils/dateUtils.js";
 
 function httpError(message: string, statusCode: number, code?: string): Error {
   return Object.assign(new Error(message), { statusCode, code });
@@ -85,12 +86,15 @@ export async function changeSalary(params: {
   requestedByUserId: string | null;
   requestedByName: string | null;
   actorUserId: string;
+  actorRoles?: readonly string[];
 }) {
-  const { employeeId, packageId, effectiveDate, reason, requestedByUserId, requestedByName, actorUserId } = params;
+  const { employeeId, packageId, effectiveDate, reason, requestedByUserId, requestedByName, actorUserId, actorRoles } = params;
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate) || isNaN(Date.parse(effectiveDate))) {
     throw httpError("effective_date must be a valid YYYY-MM-DD date.", 400, "INVALID_DATE");
   }
+  // Date lock: only super_admin / payroll_head may make a salary change effective before today.
+  assertNotBeforeToday(effectiveDate, "Effective date", undefined, canBackdateDates(actorRoles));
   if (!reason || !reason.trim()) {
     throw httpError("A reason is required.", 400, "REASON_REQUIRED");
   }
