@@ -228,7 +228,7 @@ async function fetchGrnBridge(
     earlierBudget,
     noBudgetLine,
     chargedThisMonth,
-        fromEarlierMonths:
+    fromEarlierMonths:
       Math.abs(budgetChargeTotal - chargedThisMonth) < BRIDGE_ROUNDING_TOLERANCE
         ? 0
         : budgetChargeTotal - chargedThisMonth,
@@ -1420,7 +1420,13 @@ export async function fetchAllBranchHealthData(
       pendingActions: [],
       budgetByHead: { top: [], overBudget: [] },
       absence: { total: 0, rows: [] },
-      leaveAging: { pending: 0, oldestDays: 0, over3Days: 0, over7Days: 0, staleOlderThanWindow: 0 },
+      leaveAging: {
+        pending: 0,
+        oldestDays: 0,
+        over3Days: 0,
+        over7Days: 0,
+        staleOlderThanWindow: 0,
+      },
       regularization: {
         pending: 0,
         oldestDays: 0,

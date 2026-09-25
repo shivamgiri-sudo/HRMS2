@@ -50,7 +50,13 @@ export async function buildBranchHealthReports(
     const raw = await fetchAllBranchHealthData(branch, reportDate);
     const report = buildBranchHealthReport(branch, reportDate, raw);
     const html = renderEmail(report, { generatedAt, dashboardUrl });
-    built.push({ branch, reportDate, subject: subjectLine(report), html, report });
+    built.push({
+      branch,
+      reportDate,
+      subject: subjectLine(report),
+      html,
+      report,
+    });
   }
 
   return built;
