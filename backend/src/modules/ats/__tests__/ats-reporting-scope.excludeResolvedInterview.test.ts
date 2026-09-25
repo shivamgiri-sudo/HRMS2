@@ -4,10 +4,17 @@ import { excludeResolvedInterviewCandidatesSql } from "../ats-reporting-scope.js
 describe("excludeResolvedInterviewCandidatesSql", () => {
   const sql = excludeResolvedInterviewCandidatesSql("ats_candidate");
 
-  it("excludes a candidate with any interview submission row", () => {
+  it("excludes a candidate whose interview submission is not older than its last update", () => {
     expect(sql).toMatch(
-      /NOT EXISTS\s*\(\s*SELECT 1 FROM ats_interview_submission ais WHERE ais\.candidate_id = ats_candidate\.id\s*\)/,
+      /NOT EXISTS\s*\(\s*SELECT 1 FROM ats_interview_submission ais\s*WHERE ais\.candidate_id = ats_candidate\.id\s*AND ais\.submitted_at >= DATE_SUB\(ats_candidate\.updated_at, INTERVAL \d+ MINUTE\)\s*\)/,
     );
+  });
+
+  it("does not exclude a candidate re-opened after their submission (updated_at moved past it)", () => {
+    // Live 2026-09-25: PARIKSHIT KAUSHIK was Rejected 09-18, re-opened to Waiting / Round 2 on
+    // 09-25, and stayed hidden from RAKHI's My Candidates because any submission row excluded him.
+    expect(sql).toContain("ais.submitted_at >= DATE_SUB(");
+    expect(sql).not.toMatch(/ais\.candidate_id = ats_candidate\.id\s*\)/);
   });
 
   it("excludes a candidate whose queue token is no-show", () => {

@@ -221,6 +221,7 @@ export interface PendingCandidate {
   status: string;
   recruiterAssignedName?: string | null;
   createdAt: string | null;
+  rewalkinCount?: number;
 }
 
 export async function getMyPendingCandidates(recruiterName?: string): Promise<PendingCandidate[]> {
@@ -238,8 +239,9 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
        applied_for_branch,
        COALESCE(status, current_stage, 'Waiting') AS status,
        recruiter_assigned_name,
-       created_at,
-       TIMESTAMPDIFF(MINUTE, created_at, NOW()) AS pending_minutes
+       CASE WHEN EXISTS (SELECT 1 FROM ats_interview_submission rs WHERE rs.candidate_id = ats_candidate.id) THEN updated_at ELSE created_at END AS created_at,
+       TIMESTAMPDIFF(MINUTE, CASE WHEN EXISTS (SELECT 1 FROM ats_interview_submission rs WHERE rs.candidate_id = ats_candidate.id) THEN updated_at ELSE created_at END, NOW()) AS pending_minutes,
+       (SELECT COUNT(*) FROM ats_candidate_rewalkin rw WHERE rw.candidate_id = ats_candidate.id) AS rewalkin_count
      FROM ats_candidate
      WHERE active_status = 1
        AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}
@@ -261,6 +263,7 @@ export async function getMyPendingCandidates(recruiterName?: string): Promise<Pe
     status: r.status ?? "Waiting",
     recruiterAssignedName: (r as any).recruiter_assigned_name ?? null,
     createdAt: toIST((r as any).created_at),
+    rewalkinCount: Number((r as any).rewalkin_count ?? 0),
   }));
 }
 
@@ -343,8 +346,8 @@ export async function getOtherRecruitersPendingCandidates(
        applied_for_branch,
        status,
        recruiter_assigned_name,
-       created_at,
-       TIMESTAMPDIFF(MINUTE, created_at, NOW()) AS pending_minutes
+       CASE WHEN EXISTS (SELECT 1 FROM ats_interview_submission rs WHERE rs.candidate_id = ats_candidate.id) THEN updated_at ELSE created_at END AS created_at,
+       TIMESTAMPDIFF(MINUTE, CASE WHEN EXISTS (SELECT 1 FROM ats_interview_submission rs WHERE rs.candidate_id = ats_candidate.id) THEN updated_at ELSE created_at END, NOW()) AS pending_minutes
      FROM ats_candidate
      WHERE active_status = 1
        AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}

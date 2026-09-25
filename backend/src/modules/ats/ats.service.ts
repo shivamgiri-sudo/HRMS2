@@ -139,8 +139,15 @@ export const atsService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT c.*,
               scores.assessment_percentage,
-              scores.typing_net_wpm
+              scores.typing_net_wpm,
+              COALESCE(rw.rewalkin_count, 0) AS rewalkin_count,
+              rw.last_walkin_at
        FROM ats_candidate c
+       LEFT JOIN (
+         SELECT candidate_id, COUNT(*) AS rewalkin_count, MAX(walked_in_at) AS last_walkin_at
+         FROM ats_candidate_rewalkin
+         GROUP BY candidate_id
+       ) rw ON rw.candidate_id = c.id
        LEFT JOIN (
          SELECT aca.candidate_id,
                 MAX(aca.percentage) AS assessment_percentage,

@@ -15,6 +15,7 @@ type CandidateRow = {
   status?: string;
   pendingMinutes?: number;
   createdAt?: string | null;
+  rewalkinCount?: number;
   recruiterName?: string;
   recruiterAssignedName?: string | null;
 };
@@ -519,6 +520,7 @@ export default function NativeATSRecruiterWorkspace() {
       recruiterName: c.recruiterName ?? res.recruiter?.name,
       pendingMinutes: c.pendingMinutes ?? 0,
       createdAt: c.createdAt ?? null,
+      rewalkinCount: c.rewalkinCount ?? 0,
       recruiterAssignedName: c.recruiterAssignedName ?? null,
     })));
   };
@@ -537,6 +539,7 @@ export default function NativeATSRecruiterWorkspace() {
         stage: c.status,
         pendingMinutes: c.pendingMinutes ?? 0,
         createdAt: c.createdAt ?? null,
+        rewalkinCount: c.rewalkinCount ?? 0,
         recruiterAssignedName: c.recruiterAssignedName ?? null,
       })));
     } catch {
@@ -1115,7 +1118,7 @@ export default function NativeATSRecruiterWorkspace() {
                     <div className="rw-pending-row" key={c.candidateId}>
                       <div className="rw-seq">{idx + 1}</div>
                       <div style={{ flex: 1, minWidth: 160 }}>
-                        <div style={{ fontWeight: 700, fontSize: 14 }}>{c.fullName || "—"}</div>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{c.fullName || "—"}{(c.rewalkinCount ?? 0) > 0 && (<span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 4, background: "#fef3c7", color: "#b45309" }}>Re-walk-in ×{c.rewalkinCount}</span>)}</div>
                         <div className="rw-muted">{c.mobile || "—"}</div>
                       </div>
                       <div style={{ minWidth: 100 }}>
@@ -1180,7 +1183,7 @@ export default function NativeATSRecruiterWorkspace() {
                           <div className="rw-pending-row" key={c.candidateId} style={{ borderColor: "#e9d5ff", background: "#faf5ff" }}>
                             <div className="rw-seq" style={{ background: "#ede9fe", color: "#7c3aed" }}>S</div>
                             <div style={{ flex: 1, minWidth: 160 }}>
-                              <div style={{ fontWeight: 700, fontSize: 14 }}>{c.fullName || "—"}</div>
+                              <div style={{ fontWeight: 700, fontSize: 14 }}>{c.fullName || "—"}{(c.rewalkinCount ?? 0) > 0 && (<span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 4, background: "#fef3c7", color: "#b45309" }}>Re-walk-in ×{c.rewalkinCount}</span>)}</div>
                               <div className="rw-muted">{c.mobile || "—"}</div>
                             </div>
                             <div style={{ minWidth: 120 }}>

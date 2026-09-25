@@ -24,6 +24,7 @@ import { toStoredNameRequired } from "../../shared/nameFormat.js";
 import { publicRegistrationLimiter } from "../../middleware/rateLimiter.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { readRewalkinPrior, recordRewalkin } from "./rewalkin.service.js";
 
 export const registrationEnhancedRouter = Router();
 
@@ -222,6 +223,10 @@ registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, a
     }
 
     let candidateId: string;
+    // Captured before the UPDATE below overwrites walk_in_date/stage; logged after assignment.
+    const rewalkinPrior = existingCandidate
+      ? await readRewalkinPrior(existingCandidate.id)
+      : null;
     if (existingCandidate) {
       await db.execute(
         // This endpoint is unauthenticated and matches an existing candidate by
@@ -439,6 +444,10 @@ registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, a
       candidateId,
       resolvedRecruiterId
     );
+
+    if (existingCandidate) {
+      await recordRewalkin(candidateId, rewalkinPrior, walkInDate);
+    }
 
     // 5. Generate token if recruiter assigned
     let tokenNumber: string | null = null;

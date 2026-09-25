@@ -192,6 +192,16 @@ atsRouter.get("/candidates", requireRole("admin", "hr", "recruiter", "manager", 
   (req as AuthenticatedRequest & { scopeFilter?: unknown }).scopeFilter = scopeFilter;
   return c.listCandidates.bind(c)(req, res);
 }));
+// Re-walk-in report: how often already-registered candidates filled the walk-in form again.
+// Same scope resolver and audience as GET /candidates above.
+atsRouter.get("/reports/rewalkins", requireRole("admin", "hr", "recruiter", "manager", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { resolveCandidateScope } = await import("./candidate-access.js");
+  const { getRewalkinReport } = await import("./rewalkin.service.js");
+  const scope = await resolveCandidateScope(req.authUser!.id);
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const data = await getRewalkinReport({ from: str(req.query.from), to: str(req.query.to), branch: str(req.query.branch), scope });
+  return res.json({ success: true, data });
+}));
 atsRouter.get("/candidates/:id",                 requireRole("admin", "hr", "recruiter", "manager"), h(c.getCandidate.bind(c)));
 atsRouter.put("/candidates/:id",                 requireWriteAccess, requireRole("admin", "recruiter"), h(c.updateCandidate.bind(c)));
 atsRouter.post("/candidates/:id/move-stage",     requireWriteAccess, requireRole("admin", "recruiter", "manager"), h(c.moveStage.bind(c)));

@@ -44,7 +44,9 @@
  * Both must be 0. That is exactly what the backfill prints as its own verification, and
  * re-running it is idempotent.
  */
-export function excludeEmployeeShapedCandidatesSql(candidateAlias: string): string {
+export function excludeEmployeeShapedCandidatesSql(
+  candidateAlias: string,
+): string {
   return `${candidateAlias}.record_type = 'candidate'`;
 }
 
@@ -91,7 +93,9 @@ export function recordTypeDriftSql(): string {
  * Excluded by default and reported, never silently dropped: the count travels in the payload as
  * `summary.excludedOtherEntity` so the dashboard can state what it left out.
  */
-export function excludeOtherEntityCandidatesSql(candidateAlias: string): string {
+export function excludeOtherEntityCandidatesSql(
+  candidateAlias: string,
+): string {
   return `${candidateAlias}.candidate_code NOT LIKE 'IDC%'`;
 }
 
@@ -99,6 +103,8 @@ export function excludeOtherEntityCandidatesSql(candidateAlias: string): string 
 export function isOtherEntityCandidateCode(code: unknown): boolean {
   return /^IDC/i.test(String(code ?? "").trim());
 }
+
+const SUBMISSION_REOPEN_GRACE_MINUTES = 5;
 
 /**
  * Excludes candidates the recruiter has already disposed of, from a "still pending" queue.
@@ -124,12 +130,22 @@ export function isOtherEntityCandidateCode(code: unknown): boolean {
  * in one week. Owner ruling 2026-09-24: only a submission row or a no-show token ends pendency.
  * This is a read-side rule — it does not change what either write path stores.
  *
+ * A submission only resolves the candidate if it is not older than the candidate's last update.
+ * When a candidate is re-opened after a submission (e.g. Rejected, then moved back to Waiting /
+ * "Round 2- Op's"), ats_candidate.updated_at moves past the submission and the candidate must
+ * reappear. Live 2026-09-25: PARIKSHIT KAUSHIK (RAKHI) was hidden by a 09-18 Rejected submission
+ * after being re-opened; 11 re-opened candidates across 7 recruiters were hidden the same way.
+ *
  * `candidateAlias` must be the ats_candidate alias in the calling query (pass the literal table
  * name, e.g. "ats_candidate", if the query has no alias).
  */
-export function excludeResolvedInterviewCandidatesSql(candidateAlias: string): string {
+export function excludeResolvedInterviewCandidatesSql(
+  candidateAlias: string,
+): string {
   return `NOT EXISTS (
-      SELECT 1 FROM ats_interview_submission ais WHERE ais.candidate_id = ${candidateAlias}.id
+      SELECT 1 FROM ats_interview_submission ais
+       WHERE ais.candidate_id = ${candidateAlias}.id
+         AND ais.submitted_at >= DATE_SUB(${candidateAlias}.updated_at, INTERVAL ${SUBMISSION_REOPEN_GRACE_MINUTES} MINUTE)
     )
     AND NOT EXISTS (
       SELECT 1 FROM ats_queue_token aqt

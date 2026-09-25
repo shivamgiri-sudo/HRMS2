@@ -86,6 +86,8 @@ type LogRow = {
 };
 
 type EnrichedCandidate = Candidate & {
+  rewalkin_count?: number;
+  last_walkin_at?: string | null;
   assignment?: Assignment;
   submission?: Submission;
   logs?: LogRow[];
@@ -933,6 +935,8 @@ export default function NativeATSCandidateMaster() {
     status: c.status ?? c.current_stage ?? "Applied",
     walkin_end_stage: c.walkin_end_stage ?? c.current_stage ?? undefined,
     created_at: c.created_at,
+    rewalkin_count: Number(c.rewalkin_count ?? c.rewalkinCount ?? 0),
+    last_walkin_at: c.last_walkin_at ?? null,
     updated_at: c.updated_at,
     skilltest_typing: c.skilltest_typing ?? null,
     skilltest_ai: c.skilltest_ai ?? null,
@@ -1019,7 +1023,8 @@ export default function NativeATSCandidateMaster() {
     return rows.filter(r => {
       const s = r.status || "Waiting";
       const b = r.branch_name || "";
-      const created = r.created_at ? new Date(toUtc(r.created_at)).getTime() : 0;
+      const shownDate = r.last_walkin_at ?? r.created_at;
+      const created = shownDate ? new Date(toUtc(shownDate)).getTime() : 0;
       const matchText = !q || [r.candidate_code, r.full_name, r.mobile, r.email, r.role_applied, b, r.recruiter_name].join(" ").toLowerCase().includes(q);
       return matchText &&
         (statusFilter === "All" || s === statusFilter) &&
@@ -1168,7 +1173,7 @@ export default function NativeATSCandidateMaster() {
                         className={`border-b border-slate-100 transition-colors ${isActive ? "bg-blue-50/60" : "hover:bg-slate-50/70"}`}
                       >
                         <td className="px-3 py-2">
-                          <div className="font-semibold text-slate-900 text-xs">{r.full_name || "—"}</div>
+                          <div className="font-semibold text-slate-900 text-xs">{r.full_name || "—"}{(r.rewalkin_count ?? 0) > 0 && (<span className="ml-1.5 inline-flex rounded bg-amber-100 px-1 py-0.5 text-[10px] font-bold text-amber-700" title={`Registered again ${r.rewalkin_count} time(s); first registered ${r.created_at ? new Date(toUtc(r.created_at)).toLocaleDateString("en-GB") : "earlier"}`}>Re-walk-in ×{r.rewalkin_count}</span>)}</div>
                           <div className="text-[10px] text-slate-400 font-mono">{r.candidate_code || "—"}</div>
                         </td>
                         <td className="px-3 py-2">
@@ -1215,7 +1220,7 @@ export default function NativeATSCandidateMaster() {
                           })()}
                         </td>
                         <td className="px-3 py-2 text-[10px] text-slate-400 whitespace-nowrap">
-                          {r.created_at ? new Date(toUtc(r.created_at)).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : "—"}
+                          {(r.last_walkin_at ?? r.created_at) ? new Date(toUtc((r.last_walkin_at ?? r.created_at) as string)).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : "—"}
                         </td>
                         <td className="px-3 py-2 text-right">
                           <button
