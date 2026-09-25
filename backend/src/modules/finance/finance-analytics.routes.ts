@@ -50,7 +50,7 @@ function num(v: unknown): number {
 financeAnalyticsRouter.get(
   "/snapshot",
   h(async (_req, res) => {
-    // 1. Total receivables — sum of all approved invoice grand_total
+    // 1. Total receivables — only invoices NOT fully paid
     let totalReceivables = 0;
     let overdueAmount = 0;
     let overdueCount = 0;
@@ -58,11 +58,17 @@ financeAnalyticsRouter.get(
     try {
       const [receivableRows] = await db.query<any[]>(
         `SELECT
-           SUM(grand_total) AS total_receivables,
-           SUM(CASE WHEN DATEDIFF(CURDATE(), invoice_date) > 30 THEN grand_total ELSE 0 END) AS overdue_amount,
-           SUM(CASE WHEN DATEDIFF(CURDATE(), invoice_date) > 30 THEN 1 ELSE 0 END) AS overdue_count
-         FROM client_invoice
-         WHERE invoice_status = 'approved'`,
+           SUM(ci.grand_total) AS total_receivables,
+           SUM(CASE WHEN DATEDIFF(CURDATE(), ci.invoice_date) > 30
+                    AND (cips.payment_status IS NULL OR cips.payment_status != 'paid')
+                    THEN ci.grand_total ELSE 0 END) AS overdue_amount,
+           SUM(CASE WHEN DATEDIFF(CURDATE(), ci.invoice_date) > 30
+                    AND (cips.payment_status IS NULL OR cips.payment_status != 'paid')
+                    THEN 1 ELSE 0 END) AS overdue_count
+         FROM client_invoice ci
+         LEFT JOIN client_invoice_payment_status cips ON cips.invoice_id = ci.id
+         WHERE ci.invoice_status = 'approved'
+           AND (cips.payment_status IS NULL OR cips.payment_status != 'paid')`,
       );
       if (receivableRows.length > 0) {
         totalReceivables = num(receivableRows[0].total_receivables);
@@ -70,15 +76,15 @@ financeAnalyticsRouter.get(
         overdueCount = num(receivableRows[0].overdue_count);
       }
 
-      // DSO = (open AR / last-30-day collected) * 30
+      // DSO = (open AR / avg monthly collected over 12 months) * 30
       const [collectedRows] = await db.query<any[]>(
-        `SELECT SUM(pay_amount) AS collected_30d
+        `SELECT SUM(pay_amount) / 12 AS avg_monthly_collected
          FROM client_bill_collection_run_snapshot
-         WHERE pay_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`,
+         WHERE pay_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)`,
       );
-      const collected30d = num(collectedRows?.[0]?.collected_30d);
-      if (collected30d > 0) {
-        dso = Math.round((totalReceivables / collected30d) * 30 * 10) / 10;
+      const avgMonthly = num(collectedRows?.[0]?.avg_monthly_collected);
+      if (avgMonthly > 0) {
+        dso = Math.round((totalReceivables / avgMonthly) * 30 * 10) / 10;
       }
     } catch {
       // fallback: leave 0s
@@ -168,7 +174,10 @@ financeAnalyticsRouter.get(
            SUM(ci.grand_total) AS total
          FROM client_invoice ci
          LEFT JOIN cost_centre_master ccm ON ci.cost_centre_id = ccm.id
+         LEFT JOIN client_invoice_payment_status cips ON cips.invoice_id = ci.id
          WHERE ci.invoice_status = 'approved'
+           AND ci.invoice_date >= DATE_SUB(CURDATE(), INTERVAL 3 YEAR)
+           AND (cips.payment_status IS NULL OR cips.payment_status != 'paid')
          GROUP BY ci.cost_centre_id, ccm.company_name
          ORDER BY total DESC
          LIMIT 15`,
@@ -231,7 +240,12 @@ financeAnalyticsRouter.get(
         if (existing) {
           existing.invoiced += num(r.invoiced);
         } else {
-          monthMap.set(m, { month: m, invoiced: num(r.invoiced), collected: 0, gap: 0 });
+          monthMap.set(m, {
+            month: m,
+            invoiced: num(r.invoiced),
+            collected: 0,
+            gap: 0,
+          });
         }
       }
     } catch {
@@ -255,7 +269,12 @@ financeAnalyticsRouter.get(
         if (existing) {
           existing.collected += num(r.collected);
         } else {
-          monthMap.set(m, { month: m, invoiced: 0, collected: num(r.collected), gap: 0 });
+          monthMap.set(m, {
+            month: m,
+            invoiced: 0,
+            collected: num(r.collected),
+            gap: 0,
+          });
         }
       }
     } catch {
@@ -312,12 +331,15 @@ financeAnalyticsRouter.get(
     try {
       const [inRows] = await db.query<any[]>(
         `SELECT
-           DATE_ADD(invoice_date, INTERVAL 30 DAY) AS due_date,
-           SUM(grand_total) AS amount
-         FROM client_invoice
-         WHERE invoice_status = 'approved'
-           AND DATE_ADD(invoice_date, INTERVAL 30 DAY) >= ?
-           AND DATE_ADD(invoice_date, INTERVAL 30 DAY) < ?
+           DATE_ADD(ci.invoice_date, INTERVAL 30 DAY) AS due_date,
+           SUM(ci.grand_total) AS amount
+         FROM client_invoice ci
+         LEFT JOIN client_invoice_payment_status cips ON cips.invoice_id = ci.id
+         WHERE ci.invoice_status = 'approved'
+           AND ci.invoice_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+           AND DATE_ADD(ci.invoice_date, INTERVAL 30 DAY) >= ?
+           AND DATE_ADD(ci.invoice_date, INTERVAL 30 DAY) < ?
+           AND (cips.payment_status IS NULL OR cips.payment_status != 'paid')
          GROUP BY due_date`,
         [toISODate(getWeekStart(0)), toISODate(getWeekStart(14))],
       );
@@ -375,5 +397,281 @@ financeAnalyticsRouter.get(
     }
 
     res.json({ success: true, data: { weeks: weekBuckets } });
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/finance/analytics/expense-trends?financialYear=2026-27
+// ---------------------------------------------------------------------------
+financeAnalyticsRouter.get(
+  "/expense-trends",
+  h(async (req, res) => {
+    const fy = (req.query.financialYear as string) || "2026-27";
+    const [yearParts] = fy.split("-");
+    const fyStart = `${yearParts}-04-01`;
+    const fyEnd = `${parseInt(yearParts) + 1}-03-31`;
+
+    let kpis = { total_spend: 0, pending_payments: 0, avg_approval_days: 0 };
+    let monthly: any[] = [];
+    let topVendors: any[] = [];
+
+    try {
+      const [kpiRows] = await db.query<any[]>(
+        `SELECT
+           SUM(gr.total_amount) AS total_spend,
+           SUM(CASE WHEN vpt.payment_status IN ('Payment Pending','Partially Paid') THEN vpt.due_amount ELSE 0 END) AS pending_payments,
+           AVG(DATEDIFF(gr.approved_date, gr.request_date)) AS avg_approval_days
+         FROM grn_request gr
+         LEFT JOIN vendor_payment_tracking vpt ON vpt.grn_request_id = gr.id
+         WHERE gr.status = 'approved'
+           AND gr.bill_date BETWEEN ? AND ?`,
+        [fyStart, fyEnd],
+      );
+      if (kpiRows.length > 0) {
+        kpis = {
+          total_spend: num(kpiRows[0].total_spend),
+          pending_payments: num(kpiRows[0].pending_payments),
+          avg_approval_days:
+            Math.round(num(kpiRows[0].avg_approval_days) * 10) / 10,
+        };
+      }
+    } catch {
+      /* fallback */
+    }
+
+    try {
+      const [monthRows] = await db.query<any[]>(
+        `SELECT
+           DATE_FORMAT(gr.bill_date, '%Y-%m') AS month,
+           gr.expense_head,
+           SUM(gr.total_amount) AS amount
+         FROM grn_request gr
+         WHERE gr.status = 'approved'
+           AND gr.bill_date BETWEEN ? AND ?
+           AND gr.expense_head IS NOT NULL
+         GROUP BY month, gr.expense_head
+         ORDER BY month ASC`,
+        [fyStart, fyEnd],
+      );
+      // Pivot: month -> { month (string), [head]: number }
+      const monthMap = new Map<string, Record<string, number | string>>();
+      const headSet = new Set<string>();
+      for (const r of monthRows) {
+        const m = String(r.month);
+        const h2 = String(r.expense_head);
+        headSet.add(h2);
+        if (!monthMap.has(m)) monthMap.set(m, { month: m });
+        const entry = monthMap.get(m)!;
+        entry[h2] = ((entry[h2] as number) || 0) + num(r.amount);
+      }
+      // Keep only top 6 heads by total
+      const headTotals: Record<string, number> = {};
+      for (const row of monthRows) {
+        const h2 = String(row.expense_head);
+        headTotals[h2] = (headTotals[h2] || 0) + num(row.amount);
+      }
+      const topHeads = Object.entries(headTotals)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([k]) => k);
+      monthly = Array.from(monthMap.values()).sort((a, b) =>
+        String(a.month).localeCompare(String(b.month)),
+      );
+      res.json({
+        success: true,
+        data: { kpis, monthly, topHeads, topVendors },
+      });
+      return;
+    } catch {
+      /* fallback */
+    }
+
+    try {
+      const [vendorRows] = await db.query<any[]>(
+        `SELECT
+           COALESCE(v.vendor_name, gr.vendor_id) AS vendor_name,
+           SUM(gr.total_amount) AS total_spend,
+           COUNT(*) AS grn_count
+         FROM grn_request gr
+         LEFT JOIN vendor_master v ON v.id = gr.vendor_id
+         WHERE gr.status = 'approved'
+           AND gr.bill_date BETWEEN ? AND ?
+         GROUP BY gr.vendor_id, v.vendor_name
+         ORDER BY total_spend DESC
+         LIMIT 15`,
+        [fyStart, fyEnd],
+      );
+      topVendors = vendorRows.map((r) => ({
+        vendor_name: String(r.vendor_name ?? "Unknown"),
+        total_spend: num(r.total_spend),
+        grn_count: num(r.grn_count),
+      }));
+    } catch {
+      /* fallback */
+    }
+
+    res.json({
+      success: true,
+      data: { kpis, monthly: [], topHeads: [], topVendors },
+    });
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/finance/analytics/revenue-collections?months=12
+// ---------------------------------------------------------------------------
+financeAnalyticsRouter.get(
+  "/revenue-collections",
+  h(async (req, res) => {
+    const months = Math.min(
+      24,
+      Math.max(1, parseInt(String(req.query.months || "12"))),
+    );
+
+    let trend: any[] = [];
+    let clientBreakdown: any[] = [];
+    let paymentStatusSummary: any[] = [];
+
+    try {
+      const monthMap = new Map<
+        string,
+        { month: string; invoiced: number; collected: number }
+      >();
+      const [invRows] = await db.query<any[]>(
+        `SELECT DATE_FORMAT(invoice_date, '%Y-%m') AS month, SUM(grand_total) AS invoiced
+         FROM client_invoice
+         WHERE invoice_status = 'approved'
+           AND invoice_date >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
+         GROUP BY month ORDER BY month`,
+        [months],
+      );
+      for (const r of invRows) {
+        const m = String(r.month);
+        monthMap.set(m, { month: m, invoiced: num(r.invoiced), collected: 0 });
+      }
+      const [colRows] = await db.query<any[]>(
+        `SELECT DATE_FORMAT(pay_date, '%Y-%m') AS month, SUM(pay_amount) AS collected
+         FROM client_bill_collection_run_snapshot
+         WHERE pay_date >= DATE_SUB(CURDATE(), INTERVAL ? MONTH)
+         GROUP BY month ORDER BY month`,
+        [months],
+      );
+      for (const r of colRows) {
+        const m = String(r.month);
+        const existing = monthMap.get(m);
+        if (existing) existing.collected = num(r.collected);
+        else
+          monthMap.set(m, {
+            month: m,
+            invoiced: 0,
+            collected: num(r.collected),
+          });
+      }
+      trend = Array.from(monthMap.values()).sort((a, b) =>
+        a.month.localeCompare(b.month),
+      );
+    } catch {
+      /* fallback */
+    }
+
+    try {
+      const [cbRows] = await db.query<any[]>(
+        `SELECT
+           COALESCE(ccm.company_name, ci.cost_centre_id) AS client_name,
+           SUM(ci.grand_total) AS invoiced
+         FROM client_invoice ci
+         LEFT JOIN cost_centre_master ccm ON ci.cost_centre_id = ccm.id
+         WHERE ci.invoice_status = 'approved'
+           AND ci.invoice_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+         GROUP BY ci.cost_centre_id, ccm.company_name
+         ORDER BY invoiced DESC
+         LIMIT 5`,
+      );
+      clientBreakdown = cbRows.map((r) => ({
+        client_name: String(r.client_name ?? "Unknown"),
+        invoiced: num(r.invoiced),
+      }));
+    } catch {
+      /* fallback */
+    }
+
+    try {
+      const [psRows] = await db.query<any[]>(
+        `SELECT payment_status, COUNT(*) AS cnt, SUM(total_amount) AS amount
+         FROM client_invoice_payment_status
+         GROUP BY payment_status`,
+      );
+      paymentStatusSummary = psRows.map((r) => ({
+        status: String(r.payment_status),
+        count: num(r.cnt),
+        amount: num(r.amount),
+      }));
+    } catch {
+      /* fallback */
+    }
+
+    res.json({
+      success: true,
+      data: { trend, clientBreakdown, paymentStatusSummary },
+    });
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/finance/analytics/payables-aging
+// ---------------------------------------------------------------------------
+financeAnalyticsRouter.get(
+  "/payables-aging",
+  h(async (_req, res) => {
+    let buckets = { b0_30: 0, b31_60: 0, b61_90: 0, b90_plus: 0, total: 0 };
+    let topVendors: any[] = [];
+
+    try {
+      const [rows] = await db.query<any[]>(
+        `SELECT
+           SUM(CASE WHEN DATEDIFF(CURDATE(), COALESCE(due_date, created_at)) <= 30 THEN due_amount ELSE 0 END) AS b0_30,
+           SUM(CASE WHEN DATEDIFF(CURDATE(), COALESCE(due_date, created_at)) BETWEEN 31 AND 60 THEN due_amount ELSE 0 END) AS b31_60,
+           SUM(CASE WHEN DATEDIFF(CURDATE(), COALESCE(due_date, created_at)) BETWEEN 61 AND 90 THEN due_amount ELSE 0 END) AS b61_90,
+           SUM(CASE WHEN DATEDIFF(CURDATE(), COALESCE(due_date, created_at)) > 90 THEN due_amount ELSE 0 END) AS b90_plus,
+           SUM(due_amount) AS total
+         FROM vendor_payment_tracking
+         WHERE payment_status IN ('Payment Pending', 'Partially Paid')`,
+      );
+      if (rows.length > 0) {
+        buckets = {
+          b0_30: num(rows[0].b0_30),
+          b31_60: num(rows[0].b31_60),
+          b61_90: num(rows[0].b61_90),
+          b90_plus: num(rows[0].b90_plus),
+          total: num(rows[0].total),
+        };
+      }
+    } catch {
+      /* fallback */
+    }
+
+    try {
+      const [vRows] = await db.query<any[]>(
+        `SELECT
+           COALESCE(vm.vendor_name, vpt.vendor_id) AS vendor_name,
+           SUM(vpt.due_amount) AS pending_amount,
+           MIN(vpt.due_date) AS oldest_due
+         FROM vendor_payment_tracking vpt
+         LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
+         WHERE vpt.payment_status IN ('Payment Pending', 'Partially Paid')
+         GROUP BY vpt.vendor_id, vm.vendor_name
+         ORDER BY pending_amount DESC
+         LIMIT 10`,
+      );
+      topVendors = vRows.map((r) => ({
+        vendor_name: String(r.vendor_name ?? "Unknown"),
+        pending_amount: num(r.pending_amount),
+        oldest_due: r.oldest_due ? String(r.oldest_due).slice(0, 10) : null,
+      }));
+    } catch {
+      /* fallback */
+    }
+
+    res.json({ success: true, data: { buckets, topVendors } });
   }),
 );
