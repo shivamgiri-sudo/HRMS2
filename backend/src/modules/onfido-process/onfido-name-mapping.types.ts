@@ -49,3 +49,11 @@ export interface UpsertMappingInput {
   matchConfidence: number;
   matchMethod: MatchMethod;
 }
+
+/** Summary of one runNameMappingSeed() pass — what the CLI script reports. */
+export interface SeedResult {
+  matched: number;
+  ambiguous: number;
+  unmatched: number;
+  errors: string[];
+}

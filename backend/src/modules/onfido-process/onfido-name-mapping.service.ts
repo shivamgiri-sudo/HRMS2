@@ -7,6 +7,7 @@ import type {
   MatchResult,
   RawNameRole,
   RawOnfidoName,
+  SeedResult,
   UpsertMappingInput,
 } from "./onfido-name-mapping.types.js";
 
@@ -148,4 +149,54 @@ export async function getMappingByNameAndRole(
     matchMethod: row.match_method as MappingRow["matchMethod"],
     verifiedByHr: Number(row.verified_by_hr) === 1,
   };
+}
+
+/**
+ * Full seeding pass: reads every distinct raw TL/AM name from onfido_db, matches
+ * each against the active employee roster, and upserts the result into
+ * onfido_name_employee_map. Safe to re-run any number of times (idempotent):
+ * - unchanged names re-resolve to the same match and upsertMapping's own
+ *   ON DUPLICATE KEY UPDATE is a no-op in effect;
+ * - a row an HR reviewer already verified is never overwritten (see
+ *   upsertMapping's own guard).
+ *
+ * One name's failure (e.g. a transient lock on the write) never aborts the run
+ * for the remaining names — each is caught individually and reported in
+ * result.errors, mirroring seed-question-bank.ts's own
+ * { imported, skipped, errors } pattern for backend/scripts/*.ts orchestration
+ * scripts in this codebase.
+ */
+export async function runNameMappingSeed(): Promise<SeedResult> {
+  const [rawNames, candidates] = await Promise.all([
+    getDistinctOnfidoNames(),
+    getEmployeeCandidates(),
+  ]);
+
+  const result: SeedResult = { matched: 0, ambiguous: 0, unmatched: 0, errors: [] };
+
+  for (const { rawName, rawRole } of rawNames) {
+    const match = matchNameToEmployees(rawName, candidates);
+
+    try {
+      await upsertMapping({
+        rawName,
+        rawRole,
+        employeeId: match.employeeId,
+        matchConfidence: match.confidence,
+        matchMethod: match.method,
+      });
+
+      // Only count a name once its result is actually persisted — a name whose
+      // write failed is reported solely via result.errors, not double-counted
+      // as both a compute result and a failure.
+      if (match.method === "exact_name") result.matched += 1;
+      else if (match.method === "ambiguous") result.ambiguous += 1;
+      else result.unmatched += 1;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      result.errors.push(`${rawName} (${rawRole}): ${message}`);
+    }
+  }
+
+  return result;
 }
