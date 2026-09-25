@@ -480,9 +480,17 @@ export async function savePayrollControlRoomDetails(candidateId: string, input: 
   const offer = offerRows[0];
   const joiningDate = offer?.date_of_joining ? toDateOnly(offer.date_of_joining) : null;
   const originalSalaryDate = offer?.date_of_salary ? toDateOnly(offer.date_of_salary) : joiningDate;
+  // Payroll HR / Payroll Head keep the CURRENT salary start date on the validation row; the offer keeps
+  // the original. Re-saving either one is not a change, so it must neither need a reason nor trip the date lock.
+  const [currentRows] = await db.execute<RowDataPacket[]>(
+    `SELECT salary_start_date FROM ats_payroll_hr_validation WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
+    [candidateId],
+  );
+  const currentSalaryDate = currentRows[0]?.salary_start_date ? toDateOnly(currentRows[0].salary_start_date) : null;
+  const isExistingSalaryDate = (d: string) => d === originalSalaryDate || d === currentSalaryDate;
 
   // Validate salary start date if changed from original
-  if (salaryStartDate && originalSalaryDate && salaryStartDate !== originalSalaryDate && !reason.trim()) {
+  if (salaryStartDate && originalSalaryDate && !isExistingSalaryDate(salaryStartDate) && !reason.trim()) {
     throw Object.assign(new Error("salary_effective_date_reason is required when salary start date differs from offer"), { statusCode: 400 });
   }
 
@@ -495,7 +503,7 @@ export async function savePayrollControlRoomDetails(candidateId: string, input: 
   }
 
   // Date lock: a salary start date cannot be moved to before today (re-saving the offer's own date is fine).
-  assertNotBeforeToday(salaryStartDate, "Salary start date", originalSalaryDate, canBackdateDates(actorRoles));
+  assertNotBeforeToday(salaryStartDate, "Salary start date", isExistingSalaryDate(salaryStartDate) ? salaryStartDate : undefined, canBackdateDates(actorRoles));
 
   // Once Payroll Head has approved the salary the date is theirs: refuse BEFORE writing anything,
   // otherwise this would change only the validation row and leave payroll reading another date.

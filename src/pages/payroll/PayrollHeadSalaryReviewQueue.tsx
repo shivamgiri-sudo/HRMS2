@@ -1140,6 +1140,9 @@ function SectionPopup({
                 className="rounded-xl resize-none text-sm"
               />
             </div>
+            {error && (
+              <p role="alert" className="text-xs text-red-600">{error}</p>
+            )}
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" className="rounded-xl"
@@ -1152,6 +1155,7 @@ function SectionPopup({
               onClick={async () => {
                 if (!confirmDateDialog) return;
                 setConfirmDateBusy(true);
+                setError(null);
                 try {
                   await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/assignment-effective-date`, {
                     effective_date: confirmDateDialog.newDate,
@@ -1645,6 +1649,9 @@ function ReviewDrawer({
                 className="rounded-xl resize-none text-sm"
               />
             </div>
+            {error && (
+              <p role="alert" className="text-xs text-red-600">{error}</p>
+            )}
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" className="rounded-xl"
@@ -1657,6 +1664,7 @@ function ReviewDrawer({
               onClick={async () => {
                 if (!confirmDateDialog) return;
                 setConfirmDateBusy(true);
+                setError(null);
                 try {
                   await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/assignment-effective-date`, {
                     effective_date: confirmDateDialog.newDate,
