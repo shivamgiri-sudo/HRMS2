@@ -23,6 +23,7 @@ import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vic
 import { startMolecularEmailSyncWorker, stopMolecularEmailSyncWorker } from "./molecular-email-sync.worker.js";
 import { startEsignComplianceWorker, stopEsignComplianceWorker } from "./esign-compliance.worker.js";
 import { startEsignReconciliationWorker, stopEsignReconciliationWorker } from "./esign-reconciliation.worker.js";
+import { startDeadKitRedispatchWorker, stopDeadKitRedispatchWorker } from "./esign-dead-kit-redispatch.worker.js";
 import { startMcnmeetCron, stopMcnmeetCron } from "../modules/mcnmeet/mcnmeet.cron.js";
 import { startSocialFeedCron } from "../modules/social-feed/social-feed.cron.js";
 import { startTenureBadgeScheduler, stopTenureBadgeScheduler } from "../modules/engagement/tenure.cron.js";
@@ -345,6 +346,16 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: startEsignReconciliationWorker,
   },
   {
+    // Re-sends a fresh signing link for kits whose eMudhra session has died.
+    // Each redispatch is a billed Luckpay session; self-disables unless
+    // ESIGN_AUTO_REDISPATCH_ENABLED=true.
+    name: "esign-dead-kit-redispatch",
+    start: () => {
+      startDeadKitRedispatchWorker();
+      return Promise.resolve();
+    },
+  },
+  {
     name: "dpdp-breach-sla",
     start: () => { startBreachSlaCron(); return Promise.resolve(); },
   },
@@ -554,6 +565,7 @@ function shutdown(): void {
   // social-feed exports no stop — its timers are unref'd and die with the process.
   stopMcnmeetCron();
   stopEsignReconciliationWorker();
+  stopDeadKitRedispatchWorker();
   stopTenureBadgeScheduler();
   stopCelebrationScheduler();
   stopFestivalGreetingScheduler();

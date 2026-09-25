@@ -974,10 +974,10 @@ async function abandonDeadKit(
  *
  * Real cost: a fresh, separately billed Luckpay session, and a newly
  * assembled document package the employee has to open and sign again from
- * scratch. Never called automatically by any worker — this only ever runs
- * on an explicit request naming the employee, same discipline as
- * dispatchJoiningKit's own non-retry rule protects against accidental
- * double-billing.
+ * scratch. Runs on an explicit HR request naming the employee, or from
+ * esign-dead-kit-redispatch.worker.ts — one kit per tick, and only while
+ * ESIGN_AUTO_REDISPATCH_ENABLED=true (default off), so accidental
+ * double-billing is still guarded against.
  */
 export async function redispatchDeadKit(
   employeeId: string,
