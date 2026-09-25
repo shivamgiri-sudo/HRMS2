@@ -297,16 +297,19 @@ export async function getFeedHealth(allowedProcessIds: Set<string>): Promise<Fee
   // volume matters: a metric that produced twice in its life going quiet is not
   // the same event as one that produced daily for a month and then stopped.
   const [rows] = await retryOnLock(() => db.execute<RowDataPacket[]>(
-    `SELECT a.process_id, p.process_name, a.metric_key,
-            COALESCE(m.metric_name, a.metric_key) metric_name,
-            MAX(a.score_date) latest,
-            SUM(a.score_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)) recent_readings
-       FROM process_metric_actual a
-       JOIN process_master p ON p.id = a.process_id AND p.active_status = 1
-       LEFT JOIN kpi_metric_master m ON m.metric_code = a.metric_key
-      WHERE a.actual_value IS NOT NULL
-      GROUP BY a.process_id, p.process_name, a.metric_key, m.metric_name
-      HAVING MAX(a.score_date) >= DATE_SUB(CURDATE(), INTERVAL 120 DAY)`,
+    `SELECT x.process_id, p.process_name, x.metric_key,
+            COALESCE(m.metric_name, x.metric_key) metric_name,
+            x.latest, x.recent_readings
+       FROM (
+              SELECT process_id, metric_key, MAX(score_date) latest,
+                     SUM(score_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)) recent_readings
+                FROM process_metric_actual
+               WHERE actual_value IS NOT NULL
+               GROUP BY process_id, metric_key
+              HAVING MAX(score_date) >= DATE_SUB(CURDATE(), INTERVAL 120 DAY)
+            ) x
+       JOIN process_master p ON p.id = x.process_id AND p.active_status = 1
+       LEFT JOIN kpi_metric_master m ON m.metric_code = x.metric_key`,
   ));
 
   const feeds: FeedRow[] = [];
