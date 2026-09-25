@@ -150,3 +150,28 @@ export function excludeResolvedInterviewCandidatesSql(
          AND ais.submitted_at >= DATE_SUB(${candidateAlias}.updated_at, INTERVAL ${SUBMISSION_REOPEN_GRACE_MINUTES} MINUTE)
     )`;
 }
+
+/**
+ * Excludes Meta lead-ad candidates who have not registered yet.
+ *
+ * createCandidateFromLead() (meta-campaign.service.ts) inserts an ats_candidate at stage 'Applied'
+ * with status 'Waiting' the moment a lead qualifies — before the person has ever come to a branch.
+ * Owner ruling 2026-09-25: a Meta lead appears in the walk-in queue and on a recruiter's My
+ * Candidates only once they have filled the candidate registration form. Registration is what stamps
+ * profile_status = 'registered' and walk_in_date, and is what issues the queue token; none of those
+ * exist on an unregistered lead (live: 19 Waiting leads, all profile_status NULL, no token, no walk-in
+ * date). Only Social Media candidates are held back — every other source keeps today's behaviour.
+ *
+ * `candidateAlias` must be the ats_candidate alias in the calling query (pass the literal table
+ * name, e.g. "ats_candidate", if the query has no alias).
+ */
+export function excludeUnregisteredLeadCandidatesSql(
+  candidateAlias: string,
+): string {
+  return `NOT (
+      ${candidateAlias}.sourcing_channel = 'Social Media'
+      AND COALESCE(${candidateAlias}.profile_status, '') = ''
+      AND ${candidateAlias}.walk_in_date IS NULL
+      AND NOT EXISTS (SELECT 1 FROM ats_queue_token lqt WHERE lqt.candidate_id = ${candidateAlias}.id)
+    )`;
+}

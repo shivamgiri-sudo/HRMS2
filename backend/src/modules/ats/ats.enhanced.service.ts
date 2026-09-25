@@ -2,6 +2,7 @@ import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'crypto';
 import { getIstDateString } from '../../utils/dateUtils.js';
+import { excludeUnregisteredLeadCandidatesSql } from './ats-reporting-scope.js';
 
 type RecruiterRow = RowDataPacket & {
   employee_id: string;
@@ -305,9 +306,9 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
 }
 
 /**
- * Gives an owner to every still-Waiting candidate that has none (online applications and Meta leads
- * never pass through the walk-in registration, which is where assignment normally happens). Each is
- * assigned to a present recruiter of the candidate's own branch; a branch with nobody present falls
+ * Gives an owner to every still-Waiting REGISTERED candidate that has none. Unregistered Meta leads
+ * are left alone: they get their recruiter when they fill the registration form (owner ruling
+ * 2026-09-25). Each is assigned to a present recruiter of the candidate's own branch; a branch with nobody present falls
  * back to any active recruiter there. Candidates with no branch stay unassigned — nothing to route on.
  */
 export async function assignUnassignedCandidates(
@@ -322,6 +323,7 @@ export async function assignUnassignedCandidates(
         AND (recruiter_assigned_name IS NULL OR recruiter_assigned_name = '')
         AND COALESCE(applied_for_branch, '') <> ''
         AND candidate_code NOT LIKE 'IDC%'
+        AND ${excludeUnregisteredLeadCandidatesSql('ats_candidate')}
         AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
       ORDER BY created_at ASC
       LIMIT ${limit}`,

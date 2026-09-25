@@ -21,7 +21,6 @@
 import { randomUUID } from 'crypto';
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
-import { assignRecruiterToCandidate, assignUnassignedCandidates } from '../ats/ats.enhanced.service.js';
 import {
   fetchLeadDetail,
   fetchCampaignInsights,
@@ -1017,11 +1016,6 @@ export const metaCampaignService = {
     );
 
     await db.execute('UPDATE meta_lead_raw SET ats_candidate_id = ? WHERE id = ?', [candidateId, leadId]);
-    // Give the lead an owner straight away: a present recruiter of the requisition's branch. A miss
-    // (no branch, nobody at the branch) is retried by healUnsyncedLeads, so it never blocks ingest.
-    await assignRecruiterToCandidate(candidateId, null).catch((e: unknown) =>
-      console.warn('[meta] recruiter assignment failed', e instanceof Error ? e.message : e)
-    );
     return candidateId;
   },
 
@@ -1030,7 +1024,7 @@ export const metaCampaignService = {
    * at ingest time leaves the lead qualified with ats_candidate_id NULL and nothing retries it),
    * and re-fetch leads stranded as Graph-fetch stubs. Candidate creation sends no messages.
    */
-  async healUnsyncedLeads(sinceDays = 2, limit = 200): Promise<{ candidatesCreated: number; stubsRetried: number; stubsHealed: number; candidatesAssigned: number }> {
+  async healUnsyncedLeads(sinceDays = 2, limit = 200): Promise<{ candidatesCreated: number; stubsRetried: number; stubsHealed: number }> {
     const [orphans] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM meta_lead_raw
         WHERE screening_result = 'qualified' AND ats_candidate_id IS NULL
@@ -1062,9 +1056,7 @@ export const metaCampaignService = {
       }).catch(() => null);
       if (healed && healed.parsedName) stubsHealed += 1;
     }
-    // Leads whose candidate had no present recruiter at creation time get one now.
-    const reassigned = await assignUnassignedCandidates({ sinceDays: Math.max(sinceDays, 7), limit }).catch(() => null);
-    return { candidatesCreated, stubsRetried: stubs.length, stubsHealed, candidatesAssigned: reassigned?.assigned ?? 0 };
+    return { candidatesCreated, stubsRetried: stubs.length, stubsHealed };
   },
 
   // ─────────────────────── funnel read model ───────────────────────
