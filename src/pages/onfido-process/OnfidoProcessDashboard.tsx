@@ -4,13 +4,14 @@ import { PoaExternalPage, PoaInternalPage, PoaTrailPage, type PoaDrill } from ".
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import {
   AlertTriangle, ArrowLeft, CalendarRange, Database, FileBarChart2, FileSearch, FileText, FlaskConical, Gauge, LayoutGrid, Layers3,
-  MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, Users2,
+  MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, UserCheck, Users2,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import OnfidoOverviewReport from "./OnfidoOverviewReport";
 import OnfidoAnalystReport from "./OnfidoAnalystReport";
+import OnfidoNameMapping from "./OnfidoNameMapping";
 import OnfidoUtilizationReport from "./OnfidoUtilizationReport";
 import { shiftDays } from "./onfidoReportShared";
 import "./onfido-central-theme.css";
@@ -75,7 +76,7 @@ type RawRecord = Record<string, unknown> & { id: string; raw_data: Record<string
 
 type ViewKey =
   | "overview" | "analyst" | "utilization" | "trends" | "alerts" | "attrition" | "etm" | "taskskip" | "quality"
-  | "escalations" | "docraw" | "poa" | "poatrial" | "clientdoc" | "poaexternal" | "gdmcnsla" | "live";
+  | "escalations" | "docraw" | "poa" | "poatrial" | "clientdoc" | "poaexternal" | "gdmcnsla" | "live" | "namemapping";
 type Granularity = "daily" | "weekly" | "monthly";
 
 interface VolumeTrendPoint { bucket: string; doc: number; poa: number }
@@ -780,6 +781,7 @@ const VIEW_TABS: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
   { key: "clientdoc", label: "Client & Document Report", icon: FileBarChart2 },
   { key: "gdmcnsla", label: "GD MCN SLA APS", icon: Gauge },
   { key: "live", label: "Live", icon: Radio },
+  { key: "namemapping", label: "Name Mapping (HR)", icon: UserCheck },
 ];
 
 function TabBar({ view, onChange }: { view: ViewKey; onChange: (v: ViewKey) => void }) {
@@ -4490,7 +4492,7 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
               deliberately always "today" / "this month" and ignores the range
               entirely (see LiveView/getLiveOverview) — showing date pickers
               that have zero effect there would be misleading, not helpful. */}
-          {view !== "live" && view !== "analyst" && view !== "utilization" && (
+          {view !== "live" && view !== "analyst" && view !== "utilization" && view !== "namemapping" && (
           <div className="oc-filterbar">
             <div className="oc-eyebrow" style={{ alignSelf: "center" }}><CalendarRange className="h-3.5 w-3.5" /> Executive Filters</div>
             <div className="oc-field">
@@ -4549,6 +4551,7 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
           {view === "clientdoc" && <ClientDocView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "gdmcnsla" && <GdMcnSlaView range={range} onOpenRecord={openRecord} />}
           {view === "live" && <LiveView />}
+          {view === "namemapping" && <OnfidoNameMapping />}
 
           {view === "overview" && <OnfidoOverviewReport range={range} tlFilter={tlFilter} amFilter={amFilter} />}
         </div>
