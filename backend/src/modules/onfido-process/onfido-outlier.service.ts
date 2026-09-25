@@ -3,6 +3,7 @@ import { db } from "../../db/mysql.js";
 import { getOnfidoPool } from "../../db/onfidoDb.js";
 import {
   DEFAULT_ALERT_THRESHOLDS,
+  aonDisplayLabel,
   listAlerts,
   readFilters,
   tlAmFilter,
@@ -104,6 +105,28 @@ async function loadTargetTiles(
   };
 }
 
+/** Latest tenure (AON) bucket per analyst from the roster feed, looked back 120 days from the range end. */
+async function loadTenure(emails: string[], to: string): Promise<Map<string, string>> {
+  const tenure = new Map<string, string>();
+  if (emails.length === 0) return tenure;
+  const pool = await getOnfidoPool();
+  const unique = [...new Set(emails.map((e) => e.toLowerCase()))];
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT LOWER(analyst_email) AS a,
+            SUBSTRING_INDEX(GROUP_CONCAT(aon_bucket ORDER BY work_date DESC SEPARATOR '|'), '|', 1) AS bucket
+       FROM onfido_agent_daily_raw
+      WHERE work_date BETWEEN DATE_SUB(?, INTERVAL 120 DAY) AND ? AND LOWER(analyst_email) IN (?)
+        AND aon_bucket IS NOT NULL AND TRIM(aon_bucket) <> ''
+      GROUP BY a`,
+    [to, to, unique],
+  );
+  for (const r of rows) {
+    const raw = String(r.bucket ?? '').trim();
+    if (raw) tenure.set(String(r.a), aonDisplayLabel(raw) ?? raw);
+  }
+  return tenure;
+}
+
 export async function getOutlierReport(
   filters: OutlierFilters,
 ): Promise<OutlierReport> {
@@ -122,12 +145,18 @@ export async function getOutlierReport(
     loadActionSummaries(f.from, f.to),
     loadTargetTiles(filters, f.from, f.to),
   ]);
+  const outliers = buildOutlierRows(current, priorAlerts, actions);
+  const tenure = await loadTenure(outliers.map((o) => o.analystEmail), f.to).catch((err: unknown) => {
+    console.error("[onfido] tenure lookup failed:", err);
+    return new Map<string, string>();
+  });
+  for (const row of outliers) row.tenureBucket = tenure.get(row.analystEmail.toLowerCase()) ?? null;
   return {
     from: f.from,
     to: f.to,
     dataAsOf: tiles.dataAsOf,
     targets: tiles.tiles,
-    outliers: buildOutlierRows(current, priorAlerts, actions),
+    outliers,
   };
 }
 

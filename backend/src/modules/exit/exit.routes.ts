@@ -7,6 +7,7 @@ import { ffService } from "./ff.service.js";
 import { computeFfPreview } from "./ff-compute.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { canViewEmployee } from "../../shared/enterpriseScope.js";
+import { isInReportingSpan } from "../../shared/reportingSpan.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { narrowDashboardScope, resolveDashboardScope } from "../../shared/dashboardScope.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -482,7 +483,12 @@ exitRouter.get("/:id", h(async (req: AuthenticatedRequest, res: Response) => {
   if (!isPrivileged) {
     const emp = await getEmployeeForUser(userId);
     if (!emp) return res.status(403).json({ success: false, message: "Forbidden" });
-    (req as any).resolvedEmployeeId = emp.id;
+    // A TL (team) or AM (each TL's team) may read the exit of someone in their span - view only.
+    const [spanRows] = await db.execute<RowDataPacket[]>(`SELECT employee_id FROM exit_request WHERE id = ?`, [req.params.id]);
+    const spanEmployeeId = (spanRows[0] as any)?.employee_id;
+    if (!(spanEmployeeId && (await isInReportingSpan(userId, String(spanEmployeeId))))) {
+      (req as any).resolvedEmployeeId = emp.id;
+    }
   } else {
     // The privileged branch had no row-level scope check at all — unlike GET
     // /:id/clearance and PATCH /:id/clearance/:taskId in this same file (delta-audit
@@ -514,7 +520,7 @@ exitRouter.get(
   // their row-level drill-down (Drill-Down Mandate), and it owns real clearance tasks
   // (roster/client-ID deactivation). "it" added 2026-09-15 alongside migration 1772 (IT
   // access closure retargeted admin -> it). "trainer" removed same day.
-  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm", "it"),
+  requireRole("admin", "hr", "manager", "assistant_manager", "tl", "team_leader", "finance", "payroll", "wfm", "it"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
 
@@ -527,7 +533,7 @@ exitRouter.get(
     );
     const scopeEmployeeId = (scopeRows[0] as any)?.employee_id;
     if (!scopeEmployeeId) return res.status(404).json({ success: false, message: "Exit request not found" });
-    if (!(await canViewEmployee(req.authUser!.id, String(scopeEmployeeId)))) {
+    if (!(await canViewEmployee(req.authUser!.id, String(scopeEmployeeId))) && !(await isInReportingSpan(req.authUser!.id, String(scopeEmployeeId)))) {
       return res.status(403).json({ success: false, message: "This exit request is outside your assigned scope" });
     }
 

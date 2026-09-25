@@ -1170,6 +1170,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1890_onfido_outlier_action.sql", // Registered 2026-09-25. Creates onfido_outlier_action, the action and closure log a TL or AM keeps against an analyst who is outside target. CREATE TABLE IF NOT EXISTS, additive.
   "migrations/1891_employee_warning.sql", // Registered 2026-09-25. Creates employee_warning, the disciplinary record kept on the employee; issue and withdrawal also go to employee_journey_log. CREATE TABLE IF NOT EXISTS, additive.
   "migrations/1892_company_policy.sql", // Registered 2026-09-25. Creates company_policy and company_policy_acknowledgement (versioned policies HR publishes, per-employee acknowledgement). CREATE TABLE IF NOT EXISTS, additive.
+  "migrations/1893_resignation_submitted_cc_skip_level.sql", // Registered 2026-09-25. Adds the skip_level_manager (AM) to the CC of resignation_submitted so the AM is told when a resignation is submitted. UPDATE only, appends when missing.
 ];
 
 export type MigrationHealth = {

@@ -1238,7 +1238,7 @@ const AON_BUCKETS: { match: RegExp; label: string }[] = [
   { match: /^61\s*(-|to)\s*90$/, label: "61 to 90" },
   { match: /^(above\s*(than|then)?\s*90|90\s*\+|>\s*90)$/, label: "Above 90" },
 ];
-function aonDisplayLabel(raw: string): string | null {
+export function aonDisplayLabel(raw: string): string | null {
   const key = raw.trim().toLowerCase().replace(/\s+/g, " ");
   return AON_BUCKETS.find((b) => b.match.test(key))?.label ?? null;
 }

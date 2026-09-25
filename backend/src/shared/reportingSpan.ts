@@ -37,3 +37,11 @@ export async function hasDirectReports(userId: string): Promise<boolean> {
   );
   return rows.length > 0;
 }
+
+/** True when the employee is one of the caller's direct reports or a report of one (TL team / AM skip level). */
+export async function isInReportingSpan(userId: string, employeeId: string): Promise<boolean> {
+  const span = await reportingSpanClause(userId, "e");
+  if (!span) return false;
+  const [rows] = await db.execute<RowDataPacket[]>(`SELECT 1 AS ok FROM employees e WHERE e.id = ? AND ${span.sql} LIMIT 1`, [employeeId, ...span.params]);
+  return rows.length > 0;
+}

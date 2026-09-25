@@ -49,6 +49,8 @@ export interface OutlierRow {
   streak: number;
   repeat: boolean;
   action: ActionSummary | null;
+  /** Tenure (AON) bucket from the latest roster row, so new joiners are not judged like tenured analysts. Null when unknown. */
+  tenureBucket: string | null;
 }
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -164,6 +166,7 @@ export function buildOutlierRows(
       streak,
       repeat: streak >= 2,
       action: actionByKey.get(key) ?? null,
+      tenureBucket: null,
     });
   }
   // Worst first: chronic issues, then the biggest miss.
