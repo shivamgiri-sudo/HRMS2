@@ -234,12 +234,17 @@ export function renderEmail(
             h.head,
             inr(h.budget),
             inr(h.charged),
-            { raw: `<span style="color:${h.pct >= 100 ? C.danger : h.pct >= 80 ? C.warn : C.success};font-weight:700;">${h.pct}%</span>` },
+            {
+              raw: `<span style="color:${h.pct >= 100 ? C.danger : h.pct >= 80 ? C.warn : C.success};font-weight:700;">${h.pct}%</span>`,
+            },
           ]),
           true,
         ) +
         (bh.overBudget.length > 0
-          ? note(`⚠ Over budget: ${bh.overBudget.map((h) => `${esc(h.head)} (${h.pct}%)`).join(", ")}`, true)
+          ? note(
+              `⚠ Over budget: ${bh.overBudget.map((h) => `${esc(h.head)} (${h.pct}%)`).join(", ")}`,
+              true,
+            )
           : "")
       : "";
 
@@ -316,12 +321,28 @@ export function renderEmail(
   const unbudgetedBody =
     ub.count > 0
       ? dataTable(
-          [`Unbudgeted GRNs — ${ub.count} raised without a budget line (${inr(ub.amountExGst)} ex-GST)`, "Head › Sub-head", "Ex-GST", "Status", "Raised"],
-          ub.rows.map((r) => [r.grnNumber ?? "—", r.head, inr(r.amountExGst), { raw: statusBadge(r.status) }, r.raisedOn]),
+          [
+            `Unbudgeted GRNs — ${ub.count} raised without a budget line (${inr(ub.amountExGst)} ex-GST)`,
+            "Head › Sub-head",
+            "Ex-GST",
+            "Status",
+            "Raised",
+          ],
+          ub.rows.map((r) => [
+            r.grnNumber ?? "—",
+            r.head,
+            inr(r.amountExGst),
+            { raw: statusBadge(r.status) },
+            r.raisedOn,
+          ]),
           true,
         ) +
-        note("Allowed by design: a Head/Sub-head with no approved budget line can be raised against the cost centre. Finance Head cannot approve it until a budget line is attached (link-budget step), so it cannot be paid unbudgeted.")
-      : note("✓ No unbudgeted GRNs: every HRMS-raised GRN sits on a budget line.");
+        note(
+          "Allowed by design: a Head/Sub-head with no approved budget line can be raised against the cost centre. Finance Head cannot approve it until a budget line is attached (link-budget step), so it cannot be paid unbudgeted.",
+        )
+      : note(
+          "✓ No unbudgeted GRNs: every HRMS-raised GRN sits on a budget line.",
+        );
 
   // ── 3. Recent GRNs ──
   const grnTableBody = dataTable(
@@ -370,9 +391,22 @@ export function renderEmail(
 
   // ── 5. Attendance: shrinkage + late arrivals, one row per process, shifts grouped in bands ──
   const sh = raw.shrinkage;
-  const shrinkageColor = sh.shrinkagePct >= 20 ? C.danger : sh.shrinkagePct >= 10 ? C.warn : C.success;
-  const lateColor = raw.lateStats.totalLate >= 15 ? C.danger : raw.lateStats.totalLate >= 5 ? C.warn : C.primary;
-  const prev = raw.prevShrinkage && raw.prevShrinkage.scheduled > 0 ? raw.prevShrinkage : null;
+  const shrinkageColor =
+    sh.shrinkagePct >= 20
+      ? C.danger
+      : sh.shrinkagePct >= 10
+        ? C.warn
+        : C.success;
+  const lateColor =
+    raw.lateStats.totalLate >= 15
+      ? C.danger
+      : raw.lateStats.totalLate >= 5
+        ? C.warn
+        : C.primary;
+  const prev =
+    raw.prevShrinkage && raw.prevShrinkage.scheduled > 0
+      ? raw.prevShrinkage
+      : null;
   const BANDS = ["Morning", "Afternoon", "Evening", "Night"] as const;
   const BAND_HINT: Record<(typeof BANDS)[number], string> = {
     Morning: "starts before 12:00",
@@ -383,34 +417,53 @@ export function renderEmail(
   const bandOf = (shift: string): (typeof BANDS)[number] => {
     const hour = Number.parseInt(shift.slice(0, 2), 10);
     if (!Number.isFinite(hour)) return "Morning";
-    return hour < 12 ? "Morning" : hour < 17 ? "Afternoon" : hour < 21 ? "Evening" : "Night";
+    return hour < 12
+      ? "Morning"
+      : hour < 17
+        ? "Afternoon"
+        : hour < 21
+          ? "Evening"
+          : "Night";
   };
   const processNames = [
-    ...new Set([...sh.bySlot.map((x) => x.process), ...raw.lateStats.byManager.map((m) => m.process)]),
+    ...new Set([
+      ...sh.bySlot.map((x) => x.process),
+      ...raw.lateStats.byManager.map((m) => m.process),
+    ]),
   ].sort((a, b) => a.localeCompare(b));
   const bandCell = (slots: typeof sh.bySlot, band: (typeof BANDS)[number]) => {
     const inBand = slots.filter((x) => bandOf(x.shift) === band);
-    if (inBand.length === 0) return { raw: `<span style="color:${C.muted};">—</span>` };
+    if (inBand.length === 0)
+      return { raw: `<span style="color:${C.muted};">—</span>` };
     const planned = inBand.reduce((n, x) => n + x.planned, 0);
     const absent = inBand.reduce((n, x) => n + x.absent, 0);
     const late = inBand.reduce((n, x) => n + x.late, 0);
     const detail = [
-      absent > 0 ? `<span style="color:${C.warn};">${absent} absent</span>` : "",
+      absent > 0
+        ? `<span style="color:${C.warn};">${absent} absent</span>`
+        : "",
       late > 0 ? `<span style="color:${C.danger};">${late} late</span>` : "",
     ]
       .filter(Boolean)
       .join(" · ");
-    return { raw: `<strong>${planned}</strong>${detail ? `<br><span style="font-size:10px;">${detail}</span>` : ""}` };
+    return {
+      raw: `<strong>${planned}</strong>${detail ? `<br><span style="font-size:10px;">${detail}</span>` : ""}`,
+    };
   };
   const attendanceRows = processNames.map((name) => {
     const slots = sh.bySlot.filter((x) => x.process === name);
     const planned = slots.reduce((n, x) => n + x.planned, 0);
     const present = slots.reduce((n, x) => n + x.present, 0);
     const absent = slots.reduce((n, x) => n + x.absent, 0);
-    const late = raw.lateStats.byManager.filter((m) => m.process === name).reduce((n, m) => n + m.count, 0);
+    const late = raw.lateStats.byManager
+      .filter((m) => m.process === name)
+      .reduce((n, m) => n + m.count, 0);
     // Late-marked people who have no planned shift today (no roster row, week-off worked, on leave)
     // still count in the late headline, so they get their own column instead of vanishing.
-    const noRosterLate = Math.max(0, late - slots.reduce((n, x) => n + x.late, 0));
+    const noRosterLate = Math.max(
+      0,
+      late - slots.reduce((n, x) => n + x.late, 0),
+    );
     const managers = raw.lateStats.byManager
       .filter((m) => m.process === name)
       .map((m) => `${esc(m.manager)} (${m.count})`)
@@ -419,58 +472,120 @@ export function renderEmail(
       { raw: `<strong>${esc(name)}</strong>` },
       String(planned),
       String(present),
-      { raw: absent > 0 ? `<span style="color:${C.warn};font-weight:700;">${absent}</span>` : "0" },
+      {
+        raw:
+          absent > 0
+            ? `<span style="color:${C.warn};font-weight:700;">${absent}</span>`
+            : "0",
+      },
       planned > 0 ? `${Math.round((absent / planned) * 100)}%` : "—",
-      { raw: late > 0 ? `<span style="color:${C.danger};font-weight:700;">${late}</span>` : "0" },
+      {
+        raw:
+          late > 0
+            ? `<span style="color:${C.danger};font-weight:700;">${late}</span>`
+            : "0",
+      },
       ...BANDS.map((b) => bandCell(slots, b)),
       {
-        raw: noRosterLate > 0
-          ? `<span style="color:${C.danger};font-size:10px;">${noRosterLate} late</span>`
-          : `<span style="color:${C.muted};">—</span>`,
+        raw:
+          noRosterLate > 0
+            ? `<span style="color:${C.danger};font-size:10px;">${noRosterLate} late</span>`
+            : `<span style="color:${C.muted};">—</span>`,
       },
       { raw: managers || `<span style="color:${C.muted};">—</span>` },
     ];
   });
   // Exact shift timings, all processes together, split into two columns to keep it short.
-  const slotTotals = new Map<string, { planned: number; absent: number; late: number }>();
+  const slotTotals = new Map<
+    string,
+    { planned: number; absent: number; late: number }
+  >();
   for (const x of sh.bySlot) {
     const cur = slotTotals.get(x.shift) ?? { planned: 0, absent: 0, late: 0 };
-    slotTotals.set(x.shift, { planned: cur.planned + x.planned, absent: cur.absent + x.absent, late: cur.late + x.late });
+    slotTotals.set(x.shift, {
+      planned: cur.planned + x.planned,
+      absent: cur.absent + x.absent,
+      late: cur.late + x.late,
+    });
   }
   const slotRows = [...slotTotals.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([shift, v]) => [shift, String(v.planned), String(v.absent), String(v.late)]);
-  const lateOffRoster = Math.max(0, raw.lateStats.totalLate - sh.bySlot.reduce((n, x) => n + x.late, 0));
-  if (lateOffRoster > 0) slotRows.push(["Not on today's roster", "0", "0", String(lateOffRoster)]);
+    .map(([shift, v]) => [
+      shift,
+      String(v.planned),
+      String(v.absent),
+      String(v.late),
+    ]);
+  const lateOffRoster = Math.max(
+    0,
+    raw.lateStats.totalLate - sh.bySlot.reduce((n, x) => n + x.late, 0),
+  );
+  if (lateOffRoster > 0)
+    slotRows.push(["Not on today's roster", "0", "0", String(lateOffRoster)]);
   const half = Math.ceil(slotRows.length / 2);
   const slotHeaders = ["Shift", "Planned", "Absent", "Late"];
   const slotTable =
     slotRows.length > 0
-      ? sideBySide(dataTable(slotHeaders, slotRows.slice(0, half), true), slotRows.length > half ? dataTable(slotHeaders, slotRows.slice(half), true) : "")
+      ? sideBySide(
+          dataTable(slotHeaders, slotRows.slice(0, half), true),
+          slotRows.length > half
+            ? dataTable(slotHeaders, slotRows.slice(half), true)
+            : "",
+        )
       : "";
   const attendanceBody =
     kpiStrip([
       { label: "Scheduled", value: String(sh.scheduled), color: C.primary },
       { label: "Present", value: String(sh.present), color: C.success },
-      { label: "Absent", value: String(sh.absent), color: sh.absent > 0 ? C.warn : C.success },
+      {
+        label: "Absent",
+        value: String(sh.absent),
+        color: sh.absent > 0 ? C.warn : C.success,
+      },
       { label: "On Leave", value: String(sh.onLeave), color: C.muted },
       { label: "Yet to Start", value: String(sh.yetToStart), color: C.muted },
-      { label: "Shrinkage %", value: `${sh.shrinkagePct}%`, color: shrinkageColor, subtext: prev ? `yesterday ${prev.shrinkagePct}%` : undefined },
-      { label: "Late Arrivals", value: String(raw.lateStats.totalLate), color: lateColor },
+      {
+        label: "Shrinkage %",
+        value: `${sh.shrinkagePct}%`,
+        color: shrinkageColor,
+        subtext: prev ? `yesterday ${prev.shrinkagePct}%` : undefined,
+      },
+      {
+        label: "Late Arrivals",
+        value: String(raw.lateStats.totalLate),
+        color: lateColor,
+      },
     ]) +
     (attendanceRows.length
       ? dataTable(
-          ["Process", "Planned", "Present", "Absent", "Shrink", "Late", ...BANDS, "Not on roster", "Late by reporting manager (count)"],
+          [
+            "Process",
+            "Planned",
+            "Present",
+            "Absent",
+            "Shrink",
+            "Late",
+            ...BANDS,
+            "Not on roster",
+            "Late by reporting manager (count)",
+          ],
           attendanceRows,
           true,
         ) +
-        note(`Shift bands (by shift start): ${BANDS.map((b) => `${b} ${BAND_HINT[b]}`).join(" · ")}. Each band shows planned, with absent and late underneath; "Not on roster" counts late-marked people with no planned shift today, so late adds up to the headline.`) +
+        note(
+          `Shift bands (by shift start): ${BANDS.map((b) => `${b} ${BAND_HINT[b]}`).join(" · ")}. Each band shows planned, with absent and late underneath; "Not on roster" counts late-marked people with no planned shift today, so late adds up to the headline.`,
+        ) +
         `<p style="${FONT}font-size:10px;font-weight:700;color:${C.muted};margin:8px 0 3px 0;letter-spacing:1px;">SHIFT-WISE, ALL PROCESSES</p>` +
         slotTable
       : "") +
     (sh.rosterBased
-      ? note("Shrinkage = no punch ÷ planned on today's uploaded roster, counting only shifts already started; week-offs, leave and yet-to-start shifts are excluded. Late = punched in after the shift grace period.")
-      : note("⚠ No roster uploaded for this branch today — shrinkage cannot be calculated.", true));
+      ? note(
+          "Shrinkage = no punch ÷ planned on today's uploaded roster, counting only shifts already started; week-offs, leave and yet-to-start shifts are excluded. Late = punched in after the shift grace period.",
+        )
+      : note(
+          "⚠ No roster uploaded for this branch today — shrinkage cannot be calculated.",
+          true,
+        ));
 
   // ── 6. Headcount (process-wise) | Pending actions with age ──
   const hc = raw.headcount;
@@ -501,7 +616,9 @@ export function renderEmail(
       String(r.joinedMtd),
       String(r.leftToday),
       String(r.leftMtd),
-      { raw: `<span style="color:${r.joinedMtd - r.leftMtd < 0 ? C.danger : C.success};font-weight:700;">${signed(r.joinedMtd - r.leftMtd)}</span>` },
+      {
+        raw: `<span style="color:${r.joinedMtd - r.leftMtd < 0 ? C.danger : C.success};font-weight:700;">${signed(r.joinedMtd - r.leftMtd)}</span>`,
+      },
     ]),
     [
       { raw: "<strong>Total</strong>" },
@@ -510,37 +627,98 @@ export function renderEmail(
       { raw: `<strong>${hcTotals.joinedMtd}</strong>` },
       { raw: `<strong>${hcTotals.leftToday}</strong>` },
       { raw: `<strong>${hcTotals.leftMtd}</strong>` },
-      { raw: `<strong>${signed(hcTotals.joinedMtd - hcTotals.leftMtd)}</strong>` },
+      {
+        raw: `<strong>${signed(hcTotals.joinedMtd - hcTotals.leftMtd)}</strong>`,
+      },
     ],
   ];
   const hcBody =
     kpiStrip([
-      { label: "Active Headcount", value: String(hc.totalActive), color: C.primary },
-      { label: "Joined Today", value: String(hc.joinedToday), color: C.success, subtext: `MTD ${hc.joinedMtd}` },
-      { label: "Left Today", value: String(hc.leftToday), color: hc.leftToday > 0 ? C.warn : C.muted, subtext: `MTD ${hc.leftMtd}` },
-      { label: "Net MTD", value: signed(netMtd), color: netMtd < 0 ? C.danger : C.success },
-      { label: "Exits past LWD, still active", value: String(hc.exitsNotClosed), color: hc.exitsNotClosed > 0 ? C.warn : C.muted, subtext: "record not closed" },
-      { label: "Attrition MTD", value: attritionMtd != null ? `${attritionMtd.toFixed(1)}%` : "—", color: attritionMtd != null && attritionMtd >= 5 ? C.danger : C.primary, subtext: `${hc.upcomingExits} exit${hc.upcomingExits === 1 ? "" : "s"} due in 30d` },
+      {
+        label: "Active Headcount",
+        value: String(hc.totalActive),
+        color: C.primary,
+      },
+      {
+        label: "Joined Today",
+        value: String(hc.joinedToday),
+        color: C.success,
+        subtext: `MTD ${hc.joinedMtd}`,
+      },
+      {
+        label: "Left Today",
+        value: String(hc.leftToday),
+        color: hc.leftToday > 0 ? C.warn : C.muted,
+        subtext: `MTD ${hc.leftMtd}`,
+      },
+      {
+        label: "Net MTD",
+        value: signed(netMtd),
+        color: netMtd < 0 ? C.danger : C.success,
+      },
+      {
+        label: "Exits past LWD, still active",
+        value: String(hc.exitsNotClosed),
+        color: hc.exitsNotClosed > 0 ? C.warn : C.muted,
+        subtext: "record not closed",
+      },
+      {
+        label: "Attrition MTD",
+        value: attritionMtd != null ? `${attritionMtd.toFixed(1)}%` : "—",
+        color: attritionMtd != null && attritionMtd >= 5 ? C.danger : C.primary,
+        subtext: `${hc.upcomingExits} exit${hc.upcomingExits === 1 ? "" : "s"} due in 30d`,
+      },
     ]) +
-    dataTable(["Process", "Active", "Joined today", "Joined MTD", "Left today", "Left MTD", "Net MTD"], hcProcessRows, true) +
+    dataTable(
+      [
+        "Process",
+        "Active",
+        "Joined today",
+        "Joined MTD",
+        "Left today",
+        "Left MTD",
+        "Net MTD",
+      ],
+      hcProcessRows,
+      true,
+    ) +
     namesLine("Joined today:", hc.joinedNames, C.success) +
     namesLine("Left today:", hc.leftNames, C.warn) +
-    note("Joined = date of joining; left = last working day on the employee record or a running exit request. Attrition MTD = left ÷ average of opening and closing headcount.");
+    note(
+      "Joined = date of joining; left = last working day on the employee record or a running exit request. Attrition MTD = left ÷ average of opening and closing headcount.",
+    );
 
-  const ageText = (b: { oldestDays: number; over3Days: number; over7Days: number }) =>
-    b.over7Days > 0 ? `oldest ${b.oldestDays}d · ${b.over7Days} over 7d` : b.over3Days > 0 ? `oldest ${b.oldestDays}d · ${b.over3Days} over 3d` : `oldest ${b.oldestDays}d`;
+  const ageText = (b: {
+    oldestDays: number;
+    over3Days: number;
+    over7Days: number;
+  }) =>
+    b.over7Days > 0
+      ? `oldest ${b.oldestDays}d · ${b.over7Days} over 7d`
+      : b.over3Days > 0
+        ? `oldest ${b.oldestDays}d · ${b.over3Days} over 3d`
+        : `oldest ${b.oldestDays}d`;
   const pendingRows: (string | { raw: string })[][] = [];
   if (raw.grnStats.pending > 0)
-    pendingRows.push(["GRNs awaiting approval", String(raw.grnStats.pending), `oldest ${raw.grnStats.oldestPendingDays}d · ${raw.grnStats.pendingOver3Days} over 3d`]);
+    pendingRows.push([
+      "GRNs awaiting approval",
+      String(raw.grnStats.pending),
+      `oldest ${raw.grnStats.oldestPendingDays}d · ${raw.grnStats.pendingOver3Days} over 3d`,
+    ]);
   if (raw.leaveAging.pending > 0 || raw.leaveAging.staleOlderThanWindow > 0)
-    pendingRows.push(["Leave requests pending", String(raw.leaveAging.pending), `${ageText(raw.leaveAging)}${raw.leaveAging.staleOlderThanWindow > 0 ? ` · +${raw.leaveAging.staleOlderThanWindow} stale (>90d)` : ""}`]);
+    pendingRows.push([
+      "Leave requests pending",
+      String(raw.leaveAging.pending),
+      `${ageText(raw.leaveAging)}${raw.leaveAging.staleOlderThanWindow > 0 ? ` · +${raw.leaveAging.staleOlderThanWindow} stale (>90d)` : ""}`,
+    ]);
   if (raw.regularization.pending > 0)
     pendingRows.push([
       "Attendance regularizations pending",
       String(raw.regularization.pending),
       `${ageText(raw.regularization)}${raw.regularization.escalated > 0 ? ` · ${raw.regularization.escalated} escalated` : ""}`,
     ]);
-  for (const a of raw.pendingActions.filter((x) => x.type === "exit_pending")) pendingRows.push([a.label, String(a.count), "—"]);
+  for (const a of raw.pendingActions.filter((x) => x.type === "exit_pending"))
+    pendingRows.push([a.label, String(a.count), "—"]);
   const actionsBody =
     pendingRows.length > 0
       ? dataTable(["Pending action", "Count", "Age"], pendingRows, true)
@@ -555,21 +733,55 @@ export function renderEmail(
   const abs = raw.absence;
   const followUpBody =
     kpiStrip([
-      { label: "Offers due to join (30d)", value: String(off.offered), color: C.primary },
+      {
+        label: "Offers due to join (30d)",
+        value: String(off.offered),
+        color: C.primary,
+      },
       { label: "Joined", value: String(off.joined), color: C.success },
-      { label: "Not joined", value: String(off.notJoined), color: off.notJoined > 0 ? C.warn : C.muted },
-      { label: "Offer → Join", value: off.conversionPct != null ? `${off.conversionPct}%` : "—", color: off.conversionPct != null && off.conversionPct < 70 ? C.danger : C.success },
-      { label: "Joining next 7 days", value: String(off.joiningNext7Days), color: C.accent },
-      { label: `Absent ${CONSECUTIVE_ABSENCE_DAYS_LABEL}+ days running`, value: String(abs.total), color: abs.total > 0 ? C.danger : C.success },
+      {
+        label: "Not joined",
+        value: String(off.notJoined),
+        color: off.notJoined > 0 ? C.warn : C.muted,
+      },
+      {
+        label: "Offer → Join",
+        value: off.conversionPct != null ? `${off.conversionPct}%` : "—",
+        color:
+          off.conversionPct != null && off.conversionPct < 70
+            ? C.danger
+            : C.success,
+      },
+      {
+        label: "Joining next 7 days",
+        value: String(off.joiningNext7Days),
+        color: C.accent,
+      },
+      {
+        label: `Absent ${CONSECUTIVE_ABSENCE_DAYS_LABEL}+ days running`,
+        value: String(abs.total),
+        color: abs.total > 0 ? C.danger : C.success,
+      },
     ]) +
     (abs.rows.length > 0
       ? dataTable(
           ["Employee", "Process", "Reporting manager"],
-          abs.rows.map((r) => [`${r.name}${r.code ? ` (${r.code})` : ""}`, r.process, r.manager]),
+          abs.rows.map((r) => [
+            `${r.name}${r.code ? ` (${r.code})` : ""}`,
+            r.process,
+            r.manager,
+          ]),
           true,
-        ) + (abs.total > abs.rows.length ? note(`+ ${abs.total - abs.rows.length} more employees not listed.`) : "")
-      : note(`✓ Nobody has been absent for ${CONSECUTIVE_ABSENCE_DAYS_LABEL} rostered working days in a row.`)) +
-    note("Offer → Join: approved offers whose joining date fell in the last 30 days, and how many of those candidates now exist as employees. Absence = rostered working day with no punch and no approved leave, on the last 3 completed days.");
+        ) +
+        (abs.total > abs.rows.length
+          ? note(`+ ${abs.total - abs.rows.length} more employees not listed.`)
+          : "")
+      : note(
+          `✓ Nobody has been absent for ${CONSECUTIVE_ABSENCE_DAYS_LABEL} rostered working days in a row.`,
+        )) +
+    note(
+      "Offer → Join: approved offers whose joining date fell in the last 30 days, and how many of those candidates now exist as employees. Absence = rostered working day with no punch and no approved leave, on the last 3 completed days.",
+    );
 
   // ── 7. Open hiring: batches whose delivery date is still ahead ──
   const hiring = raw.openHiring;
@@ -661,7 +873,7 @@ export function renderEmail(
           label: "GRN Consumed",
           value: inr(pnl.grnConsumed),
           color: C.warn,
-          subtext: "ex-GST",
+          subtext: pnl.legacyDuplicatesRemoved > 0 ? "ex-GST, duplicates removed" : "ex-GST",
         },
         {
           label: "GRN Reserved",
@@ -723,24 +935,74 @@ export function renderEmail(
 
   // ── 8b. Why the P&L GRN differs from the budget ──
   const tie = raw.pnlGrnTieOut;
-  const consumedParts = tie.budgetConsumed + tie.hrmsNoBudgetLine + tie.hrmsOrdinary + tie.legacyBilling;
-  const consumedGap = pnl.grnConsumed - consumedParts;
-  const reservedGap = pnl.grnReserved - (tie.budgetReserved - tie.imprestReservedNoCostCentre);
-  const right = (n: number) => ({ raw: `<div style="text-align:right;">${inr(n)}</div>` });
+  const consumedParts =
+    tie.budgetConsumed +
+    tie.hrmsNoBudgetLine +
+    tie.hrmsOrdinary +
+    tie.legacyBilling;
+  const pageConsumed = pnl.grnConsumed + pnl.legacyDuplicatesRemoved;
+  const consumedGap = pageConsumed - consumedParts;
+  const reservedGap =
+    pnl.grnReserved - (tie.budgetReserved - tie.imprestReservedNoCostCentre);
+  const right = (n: number) => ({
+    raw: `<div style="text-align:right;">${inr(n)}</div>`,
+  });
   const pnlTieBody = pnl.dataAvailable
     ? dataTable(
         ["GRN in the P&L vs the budget (ex-GST)", "Amount"],
         [
-          [{ raw: "<strong>GRN consumed in P&amp;L</strong>" }, { raw: `<div style="text-align:right;"><strong>${inr(pnl.grnConsumed)}</strong></div>` }],
-          ["   HRMS GRNs on a budget line = Consumed in Section 1", right(tie.budgetConsumed)],
-          ["   + HRMS GRNs booked with no budget line (system backfill)", right(tie.hrmsNoBudgetLine)],
+          [
+            { raw: "<strong>GRN consumed on the P&amp;L page</strong>" },
+            {
+              raw: `<div style="text-align:right;"><strong>${inr(pageConsumed)}</strong></div>`,
+            },
+          ],
+          [
+            "   HRMS GRNs on a budget line = Consumed in Section 1",
+            right(tie.budgetConsumed),
+          ],
+          [
+            "   + HRMS GRNs booked with no budget line (system backfill)",
+            right(tie.hrmsNoBudgetLine),
+          ],
           ["   + HRMS GRNs without allocation rows", right(tie.hrmsOrdinary)],
-          ["   + bills held in the legacy billing system (db_bill)", right(tie.legacyBilling)],
-          ...(Math.abs(consumedGap) >= 1 ? [["   + other / rounding", right(consumedGap)]] : []),
-          [{ raw: "<strong>GRN reserved in P&amp;L</strong>" }, { raw: `<div style="text-align:right;"><strong>${inr(pnl.grnReserved)}</strong></div>` }],
+          [
+            "   + bills held in the legacy billing system (db_bill)",
+            right(tie.legacyBilling),
+          ],
+          ...(pnl.legacyDuplicatesRemoved > 0
+            ? [
+                [
+                  {
+                    raw: `<span style="color:${C.warn};">− of which the same invoice is already an HRMS GRN (${tie.legacyDuplicateCount} bills, same amount): counted twice on the P&amp;L page, removed here</span>`,
+                  },
+                  right(-pnl.legacyDuplicatesRemoved),
+                ],
+                [
+                  { raw: "<strong>GRN consumed used in this report</strong>" },
+                  {
+                    raw: `<div style="text-align:right;"><strong>${inr(pnl.grnConsumed)}</strong></div>`,
+                  },
+                ],
+              ]
+            : []),
+          ...(Math.abs(consumedGap) >= 1
+            ? [["   + other / rounding", right(consumedGap)]]
+            : []),
+          [
+            { raw: "<strong>GRN reserved in P&amp;L</strong>" },
+            {
+              raw: `<div style="text-align:right;"><strong>${inr(pnl.grnReserved)}</strong></div>`,
+            },
+          ],
           ["   Reserved in Section 1", right(tie.budgetReserved)],
-          ["   − imprest reservations (no cost centre, so the P&L cannot read them)", right(-tie.imprestReservedNoCostCentre)],
-          ...(Math.abs(reservedGap) >= 1 ? [["   + other / rounding", right(reservedGap)]] : []),
+          [
+            "   − imprest reservations (no cost centre, so the P&L cannot read them)",
+            right(-tie.imprestReservedNoCostCentre),
+          ],
+          ...(Math.abs(reservedGap) >= 1
+            ? [["   + other / rounding", right(reservedGap)]]
+            : []),
         ],
         true,
       )
