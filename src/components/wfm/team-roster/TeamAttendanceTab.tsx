@@ -157,8 +157,7 @@ function AttendanceTable({ data, onOpen }: { data: NonNullable<ReturnType<typeof
             >
               <th scope="row" className="sticky left-0 z-10 border-b border-r bg-white px-3 py-1.5 text-left font-normal">
                 <div className="font-semibold text-slate-800">{row.name}</div>
-                <div className="text-[11px] text-slate-500">{[row.code, row.designation].filter(Boolean).join(" - ")}</div>
-                {row.processName && <div className="text-[11px] font-medium text-slate-600">{row.processName}</div>}
+                <div className="text-[11px] text-slate-500">{[row.code, row.designation, row.processName].filter(Boolean).join(" - ")}</div>
                 <LobBadge name={row.lobName} />
               </th>
               {row.days.map((code, i) => (
