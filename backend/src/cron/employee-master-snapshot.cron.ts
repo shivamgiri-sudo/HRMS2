@@ -20,6 +20,31 @@ const REFRESH_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 let scheduler: NodeJS.Timeout | undefined;
 let refreshInFlight = false;
 
+const SCHEMA_CHANGE_RETRY_MS = 2 * 60 * 1000;
+
+/**
+ * True while a migration is running (the runner holds hrms_migration_lock) or any ALTER is
+ * running / waiting on a metadata lock. This job reads the whole employees table for minutes
+ * and holds a shared metadata lock the whole time, so starting it during a schema change --
+ * or while one is queued -- makes the DDL wait behind it and every other query on employees
+ * wait behind the DDL. On 2026-09-25 that returned 502 for ~20 minutes. Fails open: if the
+ * check itself errors, the refresh must not be blocked forever.
+ */
+export async function schemaChangeInProgress(): Promise<boolean> {
+  try {
+    const [rows] = await db.execute<(RowDataPacket & { migrating: number; ddl: number })[]>(
+      `SELECT IS_USED_LOCK('hrms_migration_lock') IS NOT NULL AS migrating,
+              (SELECT COUNT(*) FROM information_schema.processlist
+                WHERE id <> CONNECTION_ID()
+                  AND (info LIKE 'ALTER TABLE%' OR state LIKE 'Waiting for table metadata lock%')) AS ddl`
+    );
+    return Number(rows[0]?.migrating) === 1 || Number(rows[0]?.ddl) > 0;
+  } catch (error) {
+    console.warn("[CRON] employee-master-snapshot schema-change check failed, proceeding:", error);
+    return false;
+  }
+}
+
 function scheduleNext(delayMs: number): void {
   scheduler = setTimeout(runRefresh, delayMs);
   scheduler.unref();
@@ -32,6 +57,14 @@ async function runRefresh(): Promise<void> {
   if (refreshInFlight) {
     console.warn("[CRON] employee-master-snapshot refresh already in flight, skipping this tick");
     scheduleNext(REFRESH_INTERVAL_MS);
+    return;
+  }
+
+  if (await schemaChangeInProgress()) {
+    console.warn(
+      "[CRON] employee-master-snapshot deferred: a migration or DDL is running or waiting — retrying in 2 minutes"
+    );
+    scheduleNext(SCHEMA_CHANGE_RETRY_MS);
     return;
   }
 
