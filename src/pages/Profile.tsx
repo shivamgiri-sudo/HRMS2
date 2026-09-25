@@ -1,3 +1,4 @@
+import { PolicyAcknowledgementPanel } from "@/components/profile/PolicyAcknowledgementPanel";
 import { useState, useEffect } from "react";
 import { ReportingManagerChangeDialog } from "@/components/profile/ReportingManagerChangeDialog";
 import { ChangePasswordDialog } from "@/components/profile/ChangePasswordDialog";
@@ -21,7 +22,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Loader2, User, Mail, Phone, MapPin, Building2, Calendar,
-    Briefcase, Save, Clock, Wallet, Files, Package, Star,
+    Briefcase, Save, Clock, Wallet, Files, Package, Star, ScrollText,
     Users, Cake, Edit3, X, ChevronRight, GitBranch, Landmark,
     HeartHandshake, ShieldCheck,
 } from "lucide-react";
@@ -383,6 +384,7 @@ const Profile = () => {
                     { value: "reviews",    icon: Star,     label: "Reviews" },
                     { value: "payslips",   icon: Wallet,   label: "Payslips" },
                     { value: "documents",  icon: Files,    label: "Documents" },
+                    { value: "policies",   icon: ScrollText, label: "Policies" },
                     { value: "security",   icon: ShieldCheck, label: "Security" },
                   ].map(({ value, icon: Icon, label }) => (
                     <TabsTrigger
@@ -847,6 +849,10 @@ const Profile = () => {
                   employeeName={`${employee.first_name} ${employee.last_name}`}
                   employeeCode={employee.employee_code}
                 />
+              </TabsContent>
+
+              <TabsContent value="policies" className="space-y-6">
+                <PolicyAcknowledgementPanel />
               </TabsContent>
 
               <TabsContent value="documents" className="space-y-6">
