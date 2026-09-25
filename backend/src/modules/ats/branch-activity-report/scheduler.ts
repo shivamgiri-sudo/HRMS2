@@ -24,51 +24,90 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 let started = false;
 
 /** Milliseconds until the next RUN_HOUR_IST o'clock, computed on the IST wall clock. */
-export function msUntilNextRun(now: number = Date.now(), hour: number = RUN_HOUR_IST): number {
+export function msUntilNextRun(
+  now: number = Date.now(),
+  hour: number = RUN_HOUR_IST,
+): number {
   const ist = new Date(now + IST_OFFSET_MS);
-  const target = Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate(), hour, 0, 0, 0);
+  const target = Date.UTC(
+    ist.getUTCFullYear(),
+    ist.getUTCMonth(),
+    ist.getUTCDate(),
+    hour,
+    0,
+    0,
+    0,
+  );
   const istNow = now + IST_OFFSET_MS;
   return (target > istNow ? target : target + 24 * 60 * 60 * 1000) - istNow;
 }
 
-const csv = (v: string | undefined): string[] => (v ?? "").split(",").map((e) => e.trim()).filter(Boolean);
+const csv = (v: string | undefined): string[] =>
+  (v ?? "")
+    .split(",")
+    .map((e) => e.trim())
+    .filter(Boolean);
 
 async function runOnce(): Promise<void> {
   const dryRun = process.env.ATS_BRANCH_ACTIVITY_REPORT_DRY_RUN !== "false";
   const redirectTo = csv(process.env.ATS_BRANCH_ACTIVITY_REPORT_REDIRECT_TO);
   const results = await sendBranchActivityReports({
     reportDate: getCurrentDateIST(),
-    dashboardUrl: process.env.ATS_BRANCH_ACTIVITY_REPORT_DASHBOARD_URL || undefined,
+    dashboardUrl:
+      process.env.ATS_BRANCH_ACTIVITY_REPORT_DASHBOARD_URL || undefined,
     dryRun,
     redirectTo: redirectTo.length ? redirectTo : undefined,
     // A redirected test send must not consume the real send's slot for the day.
-    shouldSend: redirectTo.length ? undefined : (branch, date) => shouldAlert(WORKER_NAME, `${branch}:${date}`, SENT_COOLDOWN_MS),
-    onSent: redirectTo.length ? undefined : (branch, date) => markAlerted(WORKER_NAME, `${branch}:${date}`),
+    shouldSend: redirectTo.length
+      ? undefined
+      : (branch, date) =>
+          shouldAlert(WORKER_NAME, `${branch}:${date}`, SENT_COOLDOWN_MS),
+    onSent: redirectTo.length
+      ? undefined
+      : (branch, date) => markAlerted(WORKER_NAME, `${branch}:${date}`),
   });
   for (const r of results) {
-    console.log(`[${WORKER_NAME}] ${r.branch}: ${r.status}${r.reason ? ` (${r.reason})` : ""} to=${r.to.length} cc=${r.cc.length}${dryRun ? " [dry-run]" : ""}`);
+    console.log(
+      `[${WORKER_NAME}] ${r.branch}: ${r.status}${r.reason ? ` (${r.reason})` : ""} to=${r.to.length} cc=${r.cc.length}${dryRun ? " [dry-run]" : ""}`,
+    );
   }
 }
 
 function scheduleNext(): void {
   timer = setTimeout(() => {
     runOnce()
-      .catch((e: unknown) => console.error(`[${WORKER_NAME}] run failed:`, e instanceof Error ? e.message : e))
-      .finally(() => { if (started) scheduleNext(); });
+      .catch((e: unknown) =>
+        console.error(
+          `[${WORKER_NAME}] run failed:`,
+          e instanceof Error ? e.message : e,
+        ),
+      )
+      .finally(() => {
+        if (started) scheduleNext();
+      });
   }, msUntilNextRun());
 }
 
 /** No-op unless ATS_BRANCH_ACTIVITY_REPORT_ENABLED=true. */
 export function startBranchActivityReportScheduler(): void {
-  if (started || process.env.ATS_BRANCH_ACTIVITY_REPORT_ENABLED !== "true") return;
+  if (started || process.env.ATS_BRANCH_ACTIVITY_REPORT_ENABLED !== "true")
+    return;
   started = true;
   scheduleNext();
-  const mode = process.env.ATS_BRANCH_ACTIVITY_REPORT_DRY_RUN !== "false" ? "DRY-RUN" : "LIVE";
-  console.log(`[${WORKER_NAME}] scheduled daily at ${RUN_HOUR_IST}:00 IST (${mode})`);
+  const mode =
+    process.env.ATS_BRANCH_ACTIVITY_REPORT_DRY_RUN !== "false"
+      ? "DRY-RUN"
+      : "LIVE";
+  console.log(
+    `[${WORKER_NAME}] scheduled daily at ${RUN_HOUR_IST}:00 IST (${mode})`,
+  );
 }
 
 export function stopBranchActivityReportScheduler(): void {
   started = false;
-  if (timer) { clearTimeout(timer); timer = null; }
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
   console.log(`[${WORKER_NAME}] stopped`);
 }

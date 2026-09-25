@@ -10,7 +10,10 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import { excludeEmployeeShapedCandidatesSql, excludeOtherEntityCandidatesSql } from "../ats-reporting-scope.js";
+import {
+  excludeEmployeeShapedCandidatesSql,
+  excludeOtherEntityCandidatesSql,
+} from "../ats-reporting-scope.js";
 import type { RawTokenRow } from "./metrics.js";
 
 const SCOPE = `${excludeEmployeeShapedCandidatesSql("c")} AND ${excludeOtherEntityCandidatesSql("c")}`;
@@ -45,7 +48,7 @@ async function queueTokens(from: string, to: string): Promise<RawTokenRow[]> {
             DATE_FORMAT(qt.arrival_time,'%H:%i')    AS arrival_hhmm,
             COALESCE(qt.queue_status, IF(qt.status='active','waiting',qt.status)) AS queue_status,
             1 AS has_queue_row, s.id AS sub_id, DATE_FORMAT(s.submitted_at,'%Y-%m-%d') AS form_date,
-            ${DECISION} AS decision_text, c.current_stage,
+            ${DECISION} AS decision_text, c.current_stage, c.status AS cand_status,
             ${timing("qt.arrival_time", A_CALL, A_CLOSE)}
        FROM ats_queue_token qt
        JOIN ats_candidate c ON c.id = qt.candidate_id
@@ -73,7 +76,10 @@ const B_CLOSE = `COALESCE(s.submitted_at, c.hr_form_submission_time)`;
  * otherwise reappear here as a second "token" attached to the same interview form.
  */
 const NO_QUEUE_ROW = `NOT EXISTS (SELECT 1 FROM ats_queue_token q WHERE q.candidate_id = c.id)`;
-async function tokenOnlyRegistrations(from: string, to: string): Promise<RawTokenRow[]> {
+async function tokenOnlyRegistrations(
+  from: string,
+  to: string,
+): Promise<RawTokenRow[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id AS token_id, c.id AS candidate_id, c.q_token AS token_number, c.full_name, ${PROCESS} AS process,
             COALESCE(NULLIF(c.branch_text,''), NULLIF(c.branch_display_name,''), NULLIF(c.applied_for_branch,'')) AS branch_raw,
@@ -81,7 +87,7 @@ async function tokenOnlyRegistrations(from: string, to: string): Promise<RawToke
             DATE_FORMAT(c.created_date,'%Y-%m-%d') AS arrival_date,
             DATE_FORMAT(c.created_time,'%H:%i')    AS arrival_hhmm,
             NULL AS queue_status, 0 AS has_queue_row, s.id AS sub_id, DATE_FORMAT(s.submitted_at,'%Y-%m-%d') AS form_date,
-            ${DECISION} AS decision_text, c.current_stage,
+            ${DECISION} AS decision_text, c.current_stage, c.status AS cand_status,
             ${timing(B_ARRIVAL, B_CALL, B_CLOSE)}
        FROM ats_candidate c
        LEFT JOIN ats_interview_submission s ON s.candidate_id = c.id AND s.q_token = c.q_token
@@ -97,10 +103,15 @@ async function tokenOnlyRegistrations(from: string, to: string): Promise<RawToke
 /** First submission per token wins (the join can fan out when a candidate was submitted more than once). */
 function dedupeByToken(rows: RawTokenRow[]): RawTokenRow[] {
   const seen = new Set<string>();
-  return rows.filter((r) => (seen.has(r.token_id) ? false : (seen.add(r.token_id), true)));
+  return rows.filter((r) =>
+    seen.has(r.token_id) ? false : (seen.add(r.token_id), true),
+  );
 }
 
 export async function fetchRawFacts(from: string, to: string) {
-  const [queue, tokenOnly] = await Promise.all([queueTokens(from, to), tokenOnlyRegistrations(from, to)]);
+  const [queue, tokenOnly] = await Promise.all([
+    queueTokens(from, to),
+    tokenOnlyRegistrations(from, to),
+  ]);
   return { rows: [...dedupeByToken(queue), ...tokenOnly] };
 }
