@@ -56,6 +56,12 @@ export interface OpsControlTowerSummary {
   digilockerPending: CountBlock;
   esignPending: CountBlock;
   appointmentLetter: CountBlock;
+  pennyDropMissing: CountBlock;
+  accountDetailsMissing: CountBlock;
+  bgvPending: CountBlock;
+  itProvisioningPending: CountBlock;
+  adminProvisioningPending: CountBlock;
+  wfmProvisioningPending: CountBlock;
 }
 
 export type DetailBlockKey =
@@ -64,7 +70,13 @@ export type DetailBlockKey =
   | "noc-pending"
   | "digilocker-pending"
   | "esign-pending"
-  | "appointment-letter";
+  | "appointment-letter"
+  | "penny-drop-missing"
+  | "account-details-missing"
+  | "bgv-pending"
+  | "it-provisioning-pending"
+  | "admin-provisioning-pending"
+  | "wfm-provisioning-pending";
 
 export interface AttendanceMismatchDetailRow {
   employeeId: string;

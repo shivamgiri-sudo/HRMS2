@@ -1,5 +1,7 @@
-// Ops Control Tower: branch-wise rollup of 8 operational deliverables the owner previously
-// tracked by hand in Excel (2026-09-22). Each metric reads an existing table — nothing here is a
+// Ops Control Tower: branch-wise rollup of operational deliverables the owner previously
+// tracked by hand in Excel (2026-09-22), plus six onboarding-status checks added later
+// (penny drop, account details, BGV, IT/Admin/WFM provisioning) to close the "employee ID
+// created but X still pending" gap. Each metric reads an existing table — nothing here is a
 // new source of truth, and nothing here writes.
 //
 // Every query is wrapped so a missing table/column degrades that one block to "no data" rather
@@ -12,9 +14,9 @@
 // 2026-09-22 — and the eSign figure independently matches appointmentLetterEligibility.
 // service.ts's own `idCreationSlaBreached: daysSinceIdCreated > 3`, the same employees.created_at
 // clock used there.
-import type { RowDataPacket } from 'mysql2';
-import { db } from '../../db/mysql.js';
-import { logger } from '../../logger.js';
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
+import { logger } from "../../logger.js";
 import {
   APPOINTMENT_LETTER_SLA_DAYS,
   JOINING_DOCUMENT_SLA_DAYS,
@@ -23,7 +25,7 @@ import {
   emptyBucketTally,
   joinBucketFor,
   type JoinBucket,
-} from './ops-control-tower.logic.js';
+} from "./ops-control-tower.logic.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** New-joiner blocks (DigiLocker, eSign, Appointment letter, Joining count) only look at employee
@@ -33,16 +35,28 @@ const NEW_JOINER_WINDOW_DAYS = 30;
 
 function isMissingObject(err: unknown): boolean {
   const e = err as { code?: string; errno?: number };
-  return e?.code === 'ER_NO_SUCH_TABLE' || e?.errno === 1146 || e?.code === 'ER_BAD_FIELD_ERROR' || e?.errno === 1054;
+  return (
+    e?.code === "ER_NO_SUCH_TABLE" ||
+    e?.errno === 1146 ||
+    e?.code === "ER_BAD_FIELD_ERROR" ||
+    e?.errno === 1054
+  );
 }
 
-async function query<T extends RowDataPacket>(label: string, sql: string, params: unknown[] = []): Promise<T[]> {
+async function query<T extends RowDataPacket>(
+  label: string,
+  sql: string,
+  params: unknown[] = [],
+): Promise<T[]> {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(sql, params as never[]);
     return rows as T[];
   } catch (err) {
     if (!isMissingObject(err)) throw err;
-    logger.warn({ err: (err as Error).message, block: label }, '[ops-control-tower] source object missing — block reads as empty');
+    logger.warn(
+      { err: (err as Error).message, block: label },
+      "[ops-control-tower] source object missing — block reads as empty",
+    );
     return [];
   }
 }
@@ -62,27 +76,43 @@ export interface DateBlock {
 }
 
 export interface MismatchBlock {
-  branches: (BranchRef & { count: number; correctionLastDateMs: number | null; stale: boolean })[];
+  branches: (BranchRef & {
+    count: number;
+    correctionLastDateMs: number | null;
+    stale: boolean;
+  })[];
   grandTotal: number;
 }
 
 export interface JoiningBlock {
-  branches: (BranchRef & { total: number; buckets: Record<JoinBucket, number> })[];
+  branches: (BranchRef & {
+    total: number;
+    buckets: Record<JoinBucket, number>;
+  })[];
   grandTotal: number;
   grandBuckets: Record<JoinBucket, number>;
 }
 
 async function allBranches(): Promise<BranchRef[]> {
   const rows = await query<RowDataPacket>(
-    'branches',
+    "branches",
     `SELECT id, branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name`,
   );
-  return rows.map((r) => ({ branchId: String(r.id), branchName: String(r.branch_name) }));
+  return rows.map((r) => ({
+    branchId: String(r.id),
+    branchName: String(r.branch_name),
+  }));
 }
 
 /** Left-joins a per-branch count map onto the full branch list, so an empty branch still shows 0. */
-function rollupCounts(branches: BranchRef[], counts: Map<string, number>): CountBlock {
-  const rows = branches.map((b) => ({ ...b, count: counts.get(b.branchId) ?? 0 }));
+function rollupCounts(
+  branches: BranchRef[],
+  counts: Map<string, number>,
+): CountBlock {
+  const rows = branches.map((b) => ({
+    ...b,
+    count: counts.get(b.branchId) ?? 0,
+  }));
   return { branches: rows, grandTotal: rows.reduce((a, r) => a + r.count, 0) };
 }
 
@@ -93,7 +123,7 @@ function rollupCounts(branches: BranchRef[], counts: Map<string, number>): Count
 export async function getAttendanceMismatchBlock(): Promise<MismatchBlock> {
   const branches = await allBranches();
   const rows = await query<RowDataPacket>(
-    'attendance-mismatch',
+    "attendance-mismatch",
     `SELECT e.branch_id, SUM(ari.resolved_at IS NULL) AS open_count, MAX(ari.resolved_at) AS last_resolved
        FROM attendance_reconciliation_issue ari
        JOIN employees e ON e.id = ari.employee_id
@@ -103,8 +133,18 @@ export async function getAttendanceMismatchBlock(): Promise<MismatchBlock> {
   const out = branches.map((b) => {
     const r = byBranch.get(b.branchId);
     const count = Number(r?.open_count ?? 0);
-    const lastResolved = r?.last_resolved ? new Date(String(r.last_resolved)).getTime() : null;
-    return { ...b, count, correctionLastDateMs: lastResolved, stale: count > 0 && lastResolved !== null && Date.now() - lastResolved > 3 * DAY_MS };
+    const lastResolved = r?.last_resolved
+      ? new Date(String(r.last_resolved)).getTime()
+      : null;
+    return {
+      ...b,
+      count,
+      correctionLastDateMs: lastResolved,
+      stale:
+        count > 0 &&
+        lastResolved !== null &&
+        Date.now() - lastResolved > 3 * DAY_MS,
+    };
   });
   return { branches: out, grandTotal: out.reduce((a, r) => a + r.count, 0) };
 }
@@ -118,9 +158,11 @@ export interface AttendanceMismatchDetailRow {
   daysOpen: number;
 }
 
-export async function getAttendanceMismatchDetail(branchId: string): Promise<AttendanceMismatchDetailRow[]> {
+export async function getAttendanceMismatchDetail(
+  branchId: string,
+): Promise<AttendanceMismatchDetailRow[]> {
   const rows = await query<RowDataPacket>(
-    'attendance-mismatch-detail',
+    "attendance-mismatch-detail",
     `SELECT ari.employee_id, ari.employee_code, e.full_name, ari.issue_date, ari.issue_type,
             DATEDIFF(CURDATE(), ari.issue_date) AS days_open
        FROM attendance_reconciliation_issue ari
@@ -132,8 +174,8 @@ export async function getAttendanceMismatchDetail(branchId: string): Promise<Att
   );
   return rows.map((r) => ({
     employeeId: String(r.employee_id),
-    employeeCode: String(r.employee_code ?? ''),
-    employeeName: String(r.full_name ?? ''),
+    employeeCode: String(r.employee_code ?? ""),
+    employeeName: String(r.full_name ?? ""),
     issueDate: String(r.issue_date),
     issueType: String(r.issue_type),
     daysOpen: Number(r.days_open),
@@ -146,7 +188,7 @@ export async function getAttendanceMismatchDetail(branchId: string): Promise<Att
 export async function getRosterUploadedBlock(): Promise<DateBlock> {
   const branches = await allBranches();
   const rows = await query<RowDataPacket>(
-    'roster-uploaded',
+    "roster-uploaded",
     `SELECT COALESCE(b.branch_id, e.branch_id) AS branch_id, MAX(b.committed_at) AS last_committed
        FROM wfm_roster_import_batch b
        LEFT JOIN wfm_roster_import_row r ON r.batch_id = b.id
@@ -154,10 +196,19 @@ export async function getRosterUploadedBlock(): Promise<DateBlock> {
       WHERE b.status = 'COMMITTED'
       GROUP BY COALESCE(b.branch_id, e.branch_id)`,
   );
-  const byBranch = new Map(rows.map((r) => [String(r.branch_id), r.last_committed ? new Date(String(r.last_committed)).getTime() : null]));
+  const byBranch = new Map(
+    rows.map((r) => [
+      String(r.branch_id),
+      r.last_committed ? new Date(String(r.last_committed)).getTime() : null,
+    ]),
+  );
   const out = branches.map((b) => {
     const lastDateMs = byBranch.get(b.branchId) ?? null;
-    return { ...b, lastDateMs, stale: lastDateMs === null || Date.now() - lastDateMs > 7 * DAY_MS };
+    return {
+      ...b,
+      lastDateMs,
+      stale: lastDateMs === null || Date.now() - lastDateMs > 7 * DAY_MS,
+    };
   });
   return { branches: out };
 }
@@ -169,7 +220,7 @@ export async function getRosterUploadedBlock(): Promise<DateBlock> {
 export async function getJoiningBlock(onDate: string): Promise<JoiningBlock> {
   const branches = await allBranches();
   const rows = await query<RowDataPacket>(
-    'joining-count',
+    "joining-count",
     `SELECT branch_id, DATEDIFF(date_of_joining, created_at) AS lag_days
        FROM employees
       WHERE date_of_joining = ? AND created_at >= DATE_SUB(?, INTERVAL ? DAY)`,
@@ -177,7 +228,7 @@ export async function getJoiningBlock(onDate: string): Promise<JoiningBlock> {
   );
   const perBranch = new Map<string, Record<JoinBucket, number>>();
   for (const r of rows) {
-    const branchId = String(r.branch_id ?? '');
+    const branchId = String(r.branch_id ?? "");
     if (!branchId) continue;
     const tally = perBranch.get(branchId) ?? emptyBucketTally();
     tally[joinBucketFor(Number(r.lag_days))] += 1;
@@ -185,11 +236,23 @@ export async function getJoiningBlock(onDate: string): Promise<JoiningBlock> {
   }
   const out = branches.map((b) => {
     const buckets = perBranch.get(b.branchId) ?? emptyBucketTally();
-    return { ...b, buckets, total: Object.values(buckets).reduce((a, v) => a + v, 0) };
+    return {
+      ...b,
+      buckets,
+      total: Object.values(buckets).reduce((a, v) => a + v, 0),
+    };
   });
   const grandBuckets = emptyBucketTally();
-  out.forEach((r) => JOIN_BUCKETS.forEach((k) => { grandBuckets[k] += r.buckets[k]; }));
-  return { branches: out, grandTotal: out.reduce((a, r) => a + r.total, 0), grandBuckets };
+  out.forEach((r) =>
+    JOIN_BUCKETS.forEach((k) => {
+      grandBuckets[k] += r.buckets[k];
+    }),
+  );
+  return {
+    branches: out,
+    grandTotal: out.reduce((a, r) => a + r.total, 0),
+    grandBuckets,
+  };
 }
 
 // ── 4. F&F pending ───────────────────────────────────────────────────────────────────────────
@@ -198,14 +261,17 @@ export async function getJoiningBlock(onDate: string): Promise<JoiningBlock> {
 export async function getFnfPendingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
   const rows = await query<RowDataPacket>(
-    'fnf-pending',
+    "fnf-pending",
     `SELECT e.branch_id, COUNT(*) AS n
        FROM full_final_calculation ffc
        JOIN employees e ON e.id = ffc.employee_id
       WHERE ffc.status <> 'paid'
       GROUP BY e.branch_id`,
   );
-  return rollupCounts(branches, new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])));
+  return rollupCounts(
+    branches,
+    new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])),
+  );
 }
 
 export interface FnfDetailRow {
@@ -217,9 +283,11 @@ export interface FnfDetailRow {
   netPayable: number;
 }
 
-export async function getFnfPendingDetail(branchId: string): Promise<FnfDetailRow[]> {
+export async function getFnfPendingDetail(
+  branchId: string,
+): Promise<FnfDetailRow[]> {
   const rows = await query<RowDataPacket>(
-    'fnf-pending-detail',
+    "fnf-pending-detail",
     `SELECT e.id AS employee_id, e.employee_code, e.full_name, ffc.status, ffc.net_payable,
             DATEDIFF(CURDATE(), ffc.calculation_date) AS days_open
        FROM full_final_calculation ffc
@@ -231,8 +299,8 @@ export async function getFnfPendingDetail(branchId: string): Promise<FnfDetailRo
   );
   return rows.map((r) => ({
     employeeId: String(r.employee_id),
-    employeeCode: String(r.employee_code ?? ''),
-    employeeName: String(r.full_name ?? ''),
+    employeeCode: String(r.employee_code ?? ""),
+    employeeName: String(r.full_name ?? ""),
     status: String(r.status),
     daysOpen: Number(r.days_open ?? 0),
     netPayable: Number(r.net_payable ?? 0),
@@ -242,16 +310,19 @@ export async function getFnfPendingDetail(branchId: string): Promise<FnfDetailRo
 // ── 5. NOC pending ───────────────────────────────────────────────────────────────────────────
 // noc_case.status is 'invited'/'employee_submitted'/'in_progress' while still open; 'completed',
 // 'cancelled' and 'declined' are terminal. branch_id is carried directly on the case.
-const NOC_OPEN_STATUSES = ['invited', 'employee_submitted', 'in_progress'];
+const NOC_OPEN_STATUSES = ["invited", "employee_submitted", "in_progress"];
 
 export async function getNocPendingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
   const rows = await query<RowDataPacket>(
-    'noc-pending',
-    `SELECT branch_id, COUNT(*) AS n FROM noc_case WHERE status IN (${NOC_OPEN_STATUSES.map(() => '?').join(',')}) GROUP BY branch_id`,
+    "noc-pending",
+    `SELECT branch_id, COUNT(*) AS n FROM noc_case WHERE status IN (${NOC_OPEN_STATUSES.map(() => "?").join(",")}) GROUP BY branch_id`,
     NOC_OPEN_STATUSES,
   );
-  return rollupCounts(branches, new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])));
+  return rollupCounts(
+    branches,
+    new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])),
+  );
 }
 
 export interface NocDetailRow {
@@ -262,20 +333,22 @@ export interface NocDetailRow {
   daysOpen: number;
 }
 
-export async function getNocPendingDetail(branchId: string): Promise<NocDetailRow[]> {
+export async function getNocPendingDetail(
+  branchId: string,
+): Promise<NocDetailRow[]> {
   const rows = await query<RowDataPacket>(
-    'noc-pending-detail',
+    "noc-pending-detail",
     `SELECT employee_id, employee_code, employee_name, status, DATEDIFF(CURDATE(), COALESCE(initiated_at, employee_submitted_at)) AS days_open
        FROM noc_case
-      WHERE branch_id = ? AND status IN (${NOC_OPEN_STATUSES.map(() => '?').join(',')})
+      WHERE branch_id = ? AND status IN (${NOC_OPEN_STATUSES.map(() => "?").join(",")})
       ORDER BY initiated_at ASC
       LIMIT 200`,
     [branchId, ...NOC_OPEN_STATUSES],
   );
   return rows.map((r) => ({
     employeeId: String(r.employee_id),
-    employeeCode: String(r.employee_code ?? ''),
-    employeeName: String(r.employee_name ?? ''),
+    employeeCode: String(r.employee_code ?? ""),
+    employeeName: String(r.employee_name ?? ""),
     status: String(r.status),
     daysOpen: Number(r.days_open ?? 0),
   }));
@@ -286,21 +359,24 @@ export async function getNocPendingDetail(branchId: string): Promise<NocDetailRo
 // back documents ('documents_received') or the session lapses ('expired', still not resolved —
 // counted as pending so it doesn't silently disappear). Bridge rows are keyed by employee_id
 // once the candidate has converted, which is when a branch can be attributed.
-const DIGILOCKER_DONE = ['documents_received'];
+const DIGILOCKER_DONE = ["documents_received"];
 
 export async function getDigilockerPendingBlock(): Promise<CountBlock> {
   const branches = await allBranches();
   const rows = await query<RowDataPacket>(
-    'digilocker-pending',
+    "digilocker-pending",
     `SELECT e.branch_id, COUNT(*) AS n
        FROM ats_onboarding_bridge b
        JOIN employees e ON e.id = b.employee_id
       WHERE e.created_at >= NOW() - INTERVAL ? DAY
-        AND (b.digilocker_status IS NULL OR b.digilocker_status NOT IN (${DIGILOCKER_DONE.map(() => '?').join(',')}))
+        AND (b.digilocker_status IS NULL OR b.digilocker_status NOT IN (${DIGILOCKER_DONE.map(() => "?").join(",")}))
       GROUP BY e.branch_id`,
     [NEW_JOINER_WINDOW_DAYS, ...DIGILOCKER_DONE],
   );
-  return rollupCounts(branches, new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])));
+  return rollupCounts(
+    branches,
+    new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])),
+  );
 }
 
 export interface OnboardingDetailRow {
@@ -311,23 +387,25 @@ export interface OnboardingDetailRow {
   daysOpen: number;
 }
 
-export async function getDigilockerPendingDetail(branchId: string): Promise<OnboardingDetailRow[]> {
+export async function getDigilockerPendingDetail(
+  branchId: string,
+): Promise<OnboardingDetailRow[]> {
   const rows = await query<RowDataPacket>(
-    'digilocker-pending-detail',
+    "digilocker-pending-detail",
     `SELECT e.id AS employee_id, e.employee_code, e.full_name, COALESCE(b.digilocker_status, 'not_started') AS status,
             DATEDIFF(CURDATE(), e.created_at) AS days_open
        FROM ats_onboarding_bridge b
        JOIN employees e ON e.id = b.employee_id
       WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY
-        AND (b.digilocker_status IS NULL OR b.digilocker_status NOT IN (${DIGILOCKER_DONE.map(() => '?').join(',')}))
+        AND (b.digilocker_status IS NULL OR b.digilocker_status NOT IN (${DIGILOCKER_DONE.map(() => "?").join(",")}))
       ORDER BY e.created_at ASC
       LIMIT 200`,
     [branchId, NEW_JOINER_WINDOW_DAYS, ...DIGILOCKER_DONE],
   );
   return rows.map((r) => ({
     employeeId: String(r.employee_id),
-    employeeCode: String(r.employee_code ?? ''),
-    employeeName: String(r.full_name ?? ''),
+    employeeCode: String(r.employee_code ?? ""),
+    employeeName: String(r.full_name ?? ""),
     status: String(r.status),
     daysOpen: Number(r.days_open ?? 0),
   }));
@@ -347,15 +425,25 @@ interface SlaSourceRow extends RowDataPacket {
   done_at: unknown;
 }
 
-async function slaPendingBlock(label: string, sql: string, params: unknown[], slaDays: number, nowMs: number): Promise<CountBlock> {
+async function slaPendingBlock(
+  label: string,
+  sql: string,
+  params: unknown[],
+  slaDays: number,
+  nowMs: number,
+): Promise<CountBlock> {
   const branches = await allBranches();
   const rows = await query<SlaSourceRow>(label, sql, params);
   const counts = new Map<string, number>();
   for (const r of rows) {
-    const branchId = String(r.branch_id ?? '');
+    const branchId = String(r.branch_id ?? "");
     if (!branchId) continue;
     const result = classifyIdCreationSla(
-      { createdAtMs: new Date(String(r.created_at)).getTime(), doneAtMs: r.done_at ? new Date(String(r.done_at)).getTime() : null, nowMs },
+      {
+        createdAtMs: new Date(String(r.created_at)).getTime(),
+        doneAtMs: r.done_at ? new Date(String(r.done_at)).getTime() : null,
+        nowMs,
+      },
       slaDays,
     );
     if (result.pending) counts.set(branchId, (counts.get(branchId) ?? 0) + 1);
@@ -371,19 +459,29 @@ export interface SlaDetailRow {
   daysOverdue: number;
 }
 
-async function slaPendingDetail(label: string, sql: string, params: unknown[], slaDays: number, nowMs: number): Promise<SlaDetailRow[]> {
+async function slaPendingDetail(
+  label: string,
+  sql: string,
+  params: unknown[],
+  slaDays: number,
+  nowMs: number,
+): Promise<SlaDetailRow[]> {
   const rows = await query<SlaSourceRow>(label, sql, params);
   const out: SlaDetailRow[] = [];
   for (const r of rows) {
     const result = classifyIdCreationSla(
-      { createdAtMs: new Date(String(r.created_at)).getTime(), doneAtMs: r.done_at ? new Date(String(r.done_at)).getTime() : null, nowMs },
+      {
+        createdAtMs: new Date(String(r.created_at)).getTime(),
+        doneAtMs: r.done_at ? new Date(String(r.done_at)).getTime() : null,
+        nowMs,
+      },
       slaDays,
     );
     if (!result.pending) continue;
     out.push({
       employeeId: String(r.employee_id),
-      employeeCode: String(r.employee_code ?? ''),
-      employeeName: String(r.full_name ?? ''),
+      employeeCode: String(r.employee_code ?? ""),
+      employeeName: String(r.full_name ?? ""),
       dueDateMs: result.dueAtMs,
       daysOverdue: result.daysOverdue ?? 0,
     });
@@ -400,51 +498,330 @@ async function slaPendingDetail(label: string, sql: string, params: unknown[], s
 // approximated as created_at (i.e. "already done, exact timing unknown") because the bridge
 // table does not record when completion_pct crossed 100 — good enough to decide pending vs not,
 // not to say precisely when it finished.
-const JOINING_DOC_DONE_STATUS_VALUES = ['completed', 'signed', 'all_signed'];
+const JOINING_DOC_DONE_STATUS_VALUES = ["completed", "signed", "all_signed"];
 
 function esignSql(scoped: boolean): string {
-  const doneClause = `LOWER(COALESCE(b.joining_document_status, '')) IN (${JOINING_DOC_DONE_STATUS_VALUES.map(() => '?').join(',')})`;
+  const doneClause = `LOWER(COALESCE(b.joining_document_status, '')) IN (${JOINING_DOC_DONE_STATUS_VALUES.map(() => "?").join(",")})`;
   return `SELECT e.branch_id, e.id AS employee_id, e.employee_code, e.full_name, e.created_at,
                  CASE WHEN COALESCE(b.joining_document_completion_pct, 0) >= 100 OR ${doneClause}
                       THEN e.created_at ELSE NULL END AS done_at
             FROM ats_onboarding_bridge b
             JOIN employees e ON e.id = b.employee_id
-           WHERE ${scoped ? 'e.branch_id = ? AND ' : ''}e.created_at >= NOW() - INTERVAL ? DAY`;
+           WHERE ${scoped ? "e.branch_id = ? AND " : ""}e.created_at >= NOW() - INTERVAL ? DAY`;
 }
 
-export async function getEsignPendingBlock(nowMs = Date.now()): Promise<CountBlock> {
-  return slaPendingBlock('esign-pending', esignSql(false), [...JOINING_DOC_DONE_STATUS_VALUES, NEW_JOINER_WINDOW_DAYS], JOINING_DOCUMENT_SLA_DAYS, nowMs);
+export async function getEsignPendingBlock(
+  nowMs = Date.now(),
+): Promise<CountBlock> {
+  return slaPendingBlock(
+    "esign-pending",
+    esignSql(false),
+    [...JOINING_DOC_DONE_STATUS_VALUES, NEW_JOINER_WINDOW_DAYS],
+    JOINING_DOCUMENT_SLA_DAYS,
+    nowMs,
+  );
 }
 
-export async function getEsignPendingDetail(branchId: string, nowMs = Date.now()): Promise<SlaDetailRow[]> {
+export async function getEsignPendingDetail(
+  branchId: string,
+  nowMs = Date.now(),
+): Promise<SlaDetailRow[]> {
   // Param order follows the ? placeholders left to right: the CASE/done clause is in the SELECT
   // list, ahead of the WHERE branch filter, so DONE_STATUS_VALUES comes before branchId.
-  return slaPendingDetail('esign-pending-detail', esignSql(true), [...JOINING_DOC_DONE_STATUS_VALUES, branchId, NEW_JOINER_WINDOW_DAYS], JOINING_DOCUMENT_SLA_DAYS, nowMs);
+  return slaPendingDetail(
+    "esign-pending-detail",
+    esignSql(true),
+    [...JOINING_DOC_DONE_STATUS_VALUES, branchId, NEW_JOINER_WINDOW_DAYS],
+    JOINING_DOCUMENT_SLA_DAYS,
+    nowMs,
+  );
 }
 
 // ── 8. Appointment letter — eSigned before Day 7 ────────────────────────────────────────────
 // appointment_letter_issue.employee_esign_status defaults 'not_sent'; this session could not
 // confirm the live value used for "signed" (SSH unreachable) — DONE_VALUES below is a best
 // guess from the migration's own naming and should be checked against real data.
-const APPOINTMENT_ESIGN_DONE_VALUES = ['signed', 'esigned', 'completed'];
+const APPOINTMENT_ESIGN_DONE_VALUES = ["signed", "esigned", "completed"];
 
 function appointmentLetterSql(scoped: boolean): string {
-  const doneClause = `LOWER(COALESCE(al.employee_esign_status, '')) IN (${APPOINTMENT_ESIGN_DONE_VALUES.map(() => '?').join(',')})`;
+  const doneClause = `LOWER(COALESCE(al.employee_esign_status, '')) IN (${APPOINTMENT_ESIGN_DONE_VALUES.map(() => "?").join(",")})`;
   return `SELECT e.branch_id, e.id AS employee_id, e.employee_code, e.full_name, e.created_at,
                  CASE WHEN ${doneClause} THEN al.employee_esign_at ELSE NULL END AS done_at
             FROM employees e
             LEFT JOIN appointment_letter_issue al ON al.employee_id = e.id
-           WHERE ${scoped ? 'e.branch_id = ? AND ' : ''}e.created_at >= NOW() - INTERVAL ? DAY`;
+           WHERE ${scoped ? "e.branch_id = ? AND " : ""}e.created_at >= NOW() - INTERVAL ? DAY`;
 }
 
-export async function getAppointmentLetterBlock(nowMs = Date.now()): Promise<CountBlock> {
-  return slaPendingBlock('appointment-letter', appointmentLetterSql(false), [...APPOINTMENT_ESIGN_DONE_VALUES, NEW_JOINER_WINDOW_DAYS], APPOINTMENT_LETTER_SLA_DAYS, nowMs);
+export async function getAppointmentLetterBlock(
+  nowMs = Date.now(),
+): Promise<CountBlock> {
+  return slaPendingBlock(
+    "appointment-letter",
+    appointmentLetterSql(false),
+    [...APPOINTMENT_ESIGN_DONE_VALUES, NEW_JOINER_WINDOW_DAYS],
+    APPOINTMENT_LETTER_SLA_DAYS,
+    nowMs,
+  );
 }
 
-export async function getAppointmentLetterDetail(branchId: string, nowMs = Date.now()): Promise<SlaDetailRow[]> {
+export async function getAppointmentLetterDetail(
+  branchId: string,
+  nowMs = Date.now(),
+): Promise<SlaDetailRow[]> {
   // Same left-to-right placeholder order as esignSql: the done clause precedes the branch filter.
-  return slaPendingDetail('appointment-letter-detail', appointmentLetterSql(true), [...APPOINTMENT_ESIGN_DONE_VALUES, branchId, NEW_JOINER_WINDOW_DAYS], APPOINTMENT_LETTER_SLA_DAYS, nowMs);
+  return slaPendingDetail(
+    "appointment-letter-detail",
+    appointmentLetterSql(true),
+    [...APPOINTMENT_ESIGN_DONE_VALUES, branchId, NEW_JOINER_WINDOW_DAYS],
+    APPOINTMENT_LETTER_SLA_DAYS,
+    nowMs,
+  );
 }
+
+// ── 9. Penny drop missing ───────────────────────────────────────────────────────────────────
+// bank_penny_drop_log has no "current status" column of its own — a bank-detail change can be
+// retried, so a row can go initiated -> failed -> (new row) success. Pending = the latest attempt
+// per employee (by initiated_at) is not a closed state, or there's no attempt at all yet.
+// 'skipped' counts as done/closed, matching this codebase's own convention for that value
+// (NativeHROnboardingRequests.tsx classifies skipped/waived/override/not_applicable as the
+// closed "info" bucket, distinct from in-progress "warn" and failed "bad") — a penny-drop check
+// deliberately bypassed (e.g. cash-only employee) is not an open item. Confirmed against live
+// data (2026-09-25): only 'initiated' and 'skipped' rows exist so far, no 'success'/'failed' yet.
+const PENNY_DROP_DONE = ["success", "skipped"];
+
+export async function getPennyDropMissingBlock(): Promise<CountBlock> {
+  const branches = await allBranches();
+  const rows = await query<RowDataPacket>(
+    "penny-drop-missing",
+    `SELECT e.branch_id, COUNT(*) AS n
+       FROM employees e
+       LEFT JOIN (
+         SELECT bpdl1.employee_id, bpdl1.penny_drop_status
+           FROM bank_penny_drop_log bpdl1
+          WHERE bpdl1.initiated_at = (
+                  SELECT MAX(bpdl2.initiated_at) FROM bank_penny_drop_log bpdl2 WHERE bpdl2.employee_id = bpdl1.employee_id
+                )
+       ) latest ON latest.employee_id = e.id
+      WHERE e.created_at >= NOW() - INTERVAL ? DAY
+        AND (latest.penny_drop_status IS NULL OR latest.penny_drop_status NOT IN (${PENNY_DROP_DONE.map(() => "?").join(",")}))
+      GROUP BY e.branch_id`,
+    [NEW_JOINER_WINDOW_DAYS, ...PENNY_DROP_DONE],
+  );
+  return rollupCounts(
+    branches,
+    new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])),
+  );
+}
+
+export async function getPennyDropMissingDetail(
+  branchId: string,
+): Promise<OnboardingDetailRow[]> {
+  const rows = await query<RowDataPacket>(
+    "penny-drop-missing-detail",
+    `SELECT e.id AS employee_id, e.employee_code, e.full_name, COALESCE(latest.penny_drop_status, 'not_started') AS status,
+            DATEDIFF(CURDATE(), e.created_at) AS days_open
+       FROM employees e
+       LEFT JOIN (
+         SELECT bpdl1.employee_id, bpdl1.penny_drop_status
+           FROM bank_penny_drop_log bpdl1
+          WHERE bpdl1.initiated_at = (
+                  SELECT MAX(bpdl2.initiated_at) FROM bank_penny_drop_log bpdl2 WHERE bpdl2.employee_id = bpdl1.employee_id
+                )
+       ) latest ON latest.employee_id = e.id
+      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY
+        AND (latest.penny_drop_status IS NULL OR latest.penny_drop_status NOT IN (${PENNY_DROP_DONE.map(() => "?").join(",")}))
+      ORDER BY e.created_at ASC
+      LIMIT 200`,
+    [branchId, NEW_JOINER_WINDOW_DAYS, ...PENNY_DROP_DONE],
+  );
+  return rows.map((r) => ({
+    employeeId: String(r.employee_id),
+    employeeCode: String(r.employee_code ?? ""),
+    employeeName: String(r.full_name ?? ""),
+    status: String(r.status),
+    daysOpen: Number(r.days_open ?? 0),
+  }));
+}
+
+// ── 10. Account details missing ─────────────────────────────────────────────────────────────
+// employee_bank_detail has no status column — the row's mere existence is the signal. Pending =
+// no bank-detail row for the employee at all (NOT the `verified` flag, which is a separate,
+// later step — this block only answers "has HRMS captured account details yet").
+export async function getAccountDetailsMissingBlock(): Promise<CountBlock> {
+  const branches = await allBranches();
+  const rows = await query<RowDataPacket>(
+    "account-details-missing",
+    `SELECT e.branch_id, COUNT(*) AS n
+       FROM employees e
+       LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id
+      WHERE e.created_at >= NOW() - INTERVAL ? DAY AND ebd.id IS NULL
+      GROUP BY e.branch_id`,
+    [NEW_JOINER_WINDOW_DAYS],
+  );
+  return rollupCounts(
+    branches,
+    new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])),
+  );
+}
+
+export async function getAccountDetailsMissingDetail(
+  branchId: string,
+): Promise<OnboardingDetailRow[]> {
+  const rows = await query<RowDataPacket>(
+    "account-details-missing-detail",
+    `SELECT e.id AS employee_id, e.employee_code, e.full_name, 'no_bank_details' AS status,
+            DATEDIFF(CURDATE(), e.created_at) AS days_open
+       FROM employees e
+       LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id
+      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY AND ebd.id IS NULL
+      ORDER BY e.created_at ASC
+      LIMIT 200`,
+    [branchId, NEW_JOINER_WINDOW_DAYS],
+  );
+  return rows.map((r) => ({
+    employeeId: String(r.employee_id),
+    employeeCode: String(r.employee_code ?? ""),
+    employeeName: String(r.full_name ?? ""),
+    status: String(r.status),
+    daysOpen: Number(r.days_open ?? 0),
+  }));
+}
+
+// ── 11. BGV pending ──────────────────────────────────────────────────────────────────────────
+// candidate_bgv_report keys off candidate_id, not employee_id — ats_onboarding_bridge (already
+// used by the DigiLocker block) is the join path from employee back to candidate. Done = the
+// report exists and overall_status = 'clear'; anything else (pending/in_progress/refer/negative,
+// or no report row yet) counts as pending.
+const BGV_DONE = ["clear"];
+
+export async function getBgvPendingBlock(): Promise<CountBlock> {
+  const branches = await allBranches();
+  const rows = await query<RowDataPacket>(
+    "bgv-pending",
+    `SELECT e.branch_id, COUNT(*) AS n
+       FROM ats_onboarding_bridge b
+       JOIN employees e ON e.id = b.employee_id
+       LEFT JOIN candidate_bgv_report r ON r.candidate_id = b.candidate_id
+      WHERE e.created_at >= NOW() - INTERVAL ? DAY
+        AND (r.overall_status IS NULL OR r.overall_status NOT IN (${BGV_DONE.map(() => "?").join(",")}))
+      GROUP BY e.branch_id`,
+    [NEW_JOINER_WINDOW_DAYS, ...BGV_DONE],
+  );
+  return rollupCounts(
+    branches,
+    new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])),
+  );
+}
+
+export async function getBgvPendingDetail(
+  branchId: string,
+): Promise<OnboardingDetailRow[]> {
+  const rows = await query<RowDataPacket>(
+    "bgv-pending-detail",
+    `SELECT e.id AS employee_id, e.employee_code, e.full_name, COALESCE(r.overall_status, 'pending') AS status,
+            DATEDIFF(CURDATE(), e.created_at) AS days_open
+       FROM ats_onboarding_bridge b
+       JOIN employees e ON e.id = b.employee_id
+       LEFT JOIN candidate_bgv_report r ON r.candidate_id = b.candidate_id
+      WHERE e.branch_id = ? AND e.created_at >= NOW() - INTERVAL ? DAY
+        AND (r.overall_status IS NULL OR r.overall_status NOT IN (${BGV_DONE.map(() => "?").join(",")}))
+      ORDER BY e.created_at ASC
+      LIMIT 200`,
+    [branchId, NEW_JOINER_WINDOW_DAYS, ...BGV_DONE],
+  );
+  return rows.map((r) => ({
+    employeeId: String(r.employee_id),
+    employeeCode: String(r.employee_code ?? ""),
+    employeeName: String(r.full_name ?? ""),
+    status: String(r.status),
+    daysOpen: Number(r.days_open ?? 0),
+  }));
+}
+
+// ── 12-14. IT / Admin / WFM Provisioning pending ────────────────────────────────────────────
+// it_provisioning_request.assigned_role distinguishes the three onboarding provisioning owners
+// sharing one table shape. request_type='join' scopes to onboarding (vs 'exit'). Live data
+// (checked 2026-09-25 against mas_hrms) showed the role values actually written are 'it' (IT
+// team) and 'admin' — with 'branch_it' and 'branch_admin' each appearing on only 1 legacy row,
+// carried here as fallback aliases so they aren't silently dropped. 'wfm' matched as expected.
+// Pending statuses are 'pending' AND 'pending_unassigned' (7 rows/role in live data — a task
+// nobody has been assigned yet is still an open pending item, not a non-existent one);
+// 'actioned'/'confirmed'/'waived' are the only closed states.
+const PROVISIONING_PENDING_STATUSES = ["pending", "pending_unassigned"];
+const PROVISIONING_ROLE_ALIASES: Record<string, string[]> = {
+  it: ["it", "branch_it"],
+  admin: ["admin", "branch_admin"],
+  wfm: ["wfm"],
+};
+
+async function provisioningPendingBlock(
+  roleKey: keyof typeof PROVISIONING_ROLE_ALIASES,
+): Promise<CountBlock> {
+  const branches = await allBranches();
+  const roles = PROVISIONING_ROLE_ALIASES[roleKey];
+  const rows = await query<RowDataPacket>(
+    `provisioning-pending-${roleKey}`,
+    `SELECT e.branch_id, COUNT(*) AS n
+       FROM it_provisioning_request ipr
+       JOIN employees e ON e.id = ipr.employee_id
+      WHERE ipr.request_type = 'join'
+        AND ipr.assigned_role IN (${roles.map(() => "?").join(",")})
+        AND ipr.status IN (${PROVISIONING_PENDING_STATUSES.map(() => "?").join(",")})
+        AND e.created_at >= NOW() - INTERVAL ? DAY
+      GROUP BY e.branch_id`,
+    [...roles, ...PROVISIONING_PENDING_STATUSES, NEW_JOINER_WINDOW_DAYS],
+  );
+  return rollupCounts(
+    branches,
+    new Map(rows.map((r) => [String(r.branch_id), Number(r.n)])),
+  );
+}
+
+async function provisioningPendingDetail(
+  roleKey: keyof typeof PROVISIONING_ROLE_ALIASES,
+  branchId: string,
+): Promise<OnboardingDetailRow[]> {
+  const roles = PROVISIONING_ROLE_ALIASES[roleKey];
+  const rows = await query<RowDataPacket>(
+    `provisioning-pending-${roleKey}-detail`,
+    `SELECT e.id AS employee_id, e.employee_code, e.full_name, ipr.task_code AS status,
+            DATEDIFF(CURDATE(), e.created_at) AS days_open
+       FROM it_provisioning_request ipr
+       JOIN employees e ON e.id = ipr.employee_id
+      WHERE e.branch_id = ? AND ipr.request_type = 'join'
+        AND ipr.assigned_role IN (${roles.map(() => "?").join(",")})
+        AND ipr.status IN (${PROVISIONING_PENDING_STATUSES.map(() => "?").join(",")})
+        AND e.created_at >= NOW() - INTERVAL ? DAY
+      ORDER BY e.created_at ASC
+      LIMIT 200`,
+    [
+      branchId,
+      ...roles,
+      ...PROVISIONING_PENDING_STATUSES,
+      NEW_JOINER_WINDOW_DAYS,
+    ],
+  );
+  return rows.map((r) => ({
+    employeeId: String(r.employee_id),
+    employeeCode: String(r.employee_code ?? ""),
+    employeeName: String(r.full_name ?? ""),
+    status: String(r.status),
+    daysOpen: Number(r.days_open ?? 0),
+  }));
+}
+
+export const getItProvisioningPendingBlock = () =>
+  provisioningPendingBlock("it");
+export const getItProvisioningPendingDetail = (branchId: string) =>
+  provisioningPendingDetail("it", branchId);
+export const getAdminProvisioningPendingBlock = () =>
+  provisioningPendingBlock("admin");
+export const getAdminProvisioningPendingDetail = (branchId: string) =>
+  provisioningPendingDetail("admin", branchId);
+export const getWfmProvisioningPendingBlock = () =>
+  provisioningPendingBlock("wfm");
+export const getWfmProvisioningPendingDetail = (branchId: string) =>
+  provisioningPendingDetail("wfm", branchId);
 
 export interface OpsControlTowerSummary {
   nowMs: number;
@@ -458,20 +835,49 @@ export interface OpsControlTowerSummary {
   digilockerPending: CountBlock;
   esignPending: CountBlock;
   appointmentLetter: CountBlock;
+  pennyDropMissing: CountBlock;
+  accountDetailsMissing: CountBlock;
+  bgvPending: CountBlock;
+  itProvisioningPending: CountBlock;
+  adminProvisioningPending: CountBlock;
+  wfmProvisioningPending: CountBlock;
 }
 
-export async function getOpsControlTowerSummary(onDate: string, nowMs = Date.now()): Promise<OpsControlTowerSummary> {
-  const [attendanceMismatch, rosterUploaded, joining, fnfPending, nocPending, digilockerPending, esignPending, appointmentLetter] =
-    await Promise.all([
-      getAttendanceMismatchBlock(),
-      getRosterUploadedBlock(),
-      getJoiningBlock(onDate),
-      getFnfPendingBlock(),
-      getNocPendingBlock(),
-      getDigilockerPendingBlock(),
-      getEsignPendingBlock(nowMs),
-      getAppointmentLetterBlock(nowMs),
-    ]);
+export async function getOpsControlTowerSummary(
+  onDate: string,
+  nowMs = Date.now(),
+): Promise<OpsControlTowerSummary> {
+  const [
+    attendanceMismatch,
+    rosterUploaded,
+    joining,
+    fnfPending,
+    nocPending,
+    digilockerPending,
+    esignPending,
+    appointmentLetter,
+    pennyDropMissing,
+    accountDetailsMissing,
+    bgvPending,
+    itProvisioningPending,
+    adminProvisioningPending,
+    wfmProvisioningPending,
+  ] = await Promise.all([
+    getAttendanceMismatchBlock(),
+    getRosterUploadedBlock(),
+    getJoiningBlock(onDate),
+    getFnfPendingBlock(),
+    getNocPendingBlock(),
+    getDigilockerPendingBlock(),
+    getEsignPendingBlock(nowMs),
+    getAppointmentLetterBlock(nowMs),
+    getPennyDropMissingBlock(),
+    getAccountDetailsMissingBlock(),
+    getBgvPendingBlock(),
+    getItProvisioningPendingBlock(),
+    getAdminProvisioningPendingBlock(),
+    getWfmProvisioningPendingBlock(),
+  ]);
   return {
     nowMs,
     esignSlaDays: JOINING_DOCUMENT_SLA_DAYS,
@@ -484,5 +890,11 @@ export async function getOpsControlTowerSummary(onDate: string, nowMs = Date.now
     digilockerPending,
     esignPending,
     appointmentLetter,
+    pennyDropMissing,
+    accountDetailsMissing,
+    bgvPending,
+    itProvisioningPending,
+    adminProvisioningPending,
+    wfmProvisioningPending,
   };
 }

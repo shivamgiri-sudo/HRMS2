@@ -1,7 +1,9 @@
 /**
- * Ops Control Tower — branch-wise rollup of 8 operational deliverables previously tracked by
+ * Ops Control Tower — branch-wise rollup of operational deliverables previously tracked by
  * hand in Excel (owner, 2026-09-22): attendance mismatch, roster upload, joining count, F&F
- * pending, NOC pending, DigiLocker pending, eSign pending, appointment letter (Day-7 SLA).
+ * pending, NOC pending, DigiLocker pending, eSign pending, appointment letter (Day-7 SLA),
+ * penny drop missing, account details missing, BGV pending, and IT/Admin/WFM provisioning
+ * pending — the last six added to close the "employee ID created but X still pending" gap.
  * Data: GET /api/ops-control-tower (backend/src/modules/ops-control-tower/ops-control-tower.service.ts).
  */
 import { useState } from "react";
@@ -257,7 +259,27 @@ export default function OpsControlTowerPage() {
     { id: "digilocker", title: "DigiLocker documents pending", meaning: "New joiners (last 30 days) whose Aadhaar/PAN pull via DigiLocker has not completed.", source: "ats_onboarding_bridge.digilocker_status", block: "digilocker-pending", mediumAt: 5, highAt: 15 },
     { id: "esign", title: "eSign overdue — joining kit (Day 3)", meaning: "Joining-kit documents not e-signed within 3 days of the employee code being created.", source: "ats_onboarding_bridge vs created_at + 3d", block: "esign-pending", mediumAt: 5, highAt: 15 },
     { id: "appt", title: "Appointment letter eSigned before Day 7", meaning: "Employees whose appointment letter should have been e-signed within 7 days of their code being created, and has not.", source: "appointment_letter_issue vs created_at + 7d", block: "appointment-letter", mediumAt: 2, highAt: 6 },
+    { id: "penny-drop", title: "Employee ID created but Penny Drop is missing", meaning: "New joiners (last 30 days) whose bank account has not been penny-drop verified successfully.", source: "bank_penny_drop_log.penny_drop_status", block: "penny-drop-missing", mediumAt: 5, highAt: 15 },
+    { id: "account-details", title: "Employee ID created — no Account details in HRMS yet", meaning: "New joiners with no bank account details captured in HRMS at all.", source: "employee_bank_detail (row missing)", block: "account-details-missing", mediumAt: 5, highAt: 15 },
+    { id: "bgv", title: "Employee ID created — BGV is pending", meaning: "New joiners whose background verification report is not yet marked clear.", source: "candidate_bgv_report.overall_status", block: "bgv-pending", mediumAt: 5, highAt: 15 },
+    { id: "it-prov", title: "Employee ID created — IT Provisioning is pending", meaning: "New joiners with an open IT provisioning task (domain/email/biometric) at joining.", source: "it_provisioning_request (assigned_role = branch_it)", block: "it-provisioning-pending", mediumAt: 3, highAt: 10 },
+    { id: "admin-prov", title: "Employee ID created — Admin Provisioning is pending", meaning: "New joiners with an open Admin provisioning task (biometric/ID card etc.) at joining.", source: "it_provisioning_request (assigned_role = admin)", block: "admin-provisioning-pending", mediumAt: 3, highAt: 10 },
+    { id: "wfm-prov", title: "Employee ID created — WFM Provisioning is pending", meaning: "New joiners with an open WFM provisioning task at joining.", source: "it_provisioning_request (assigned_role = wfm)", block: "wfm-provisioning-pending", mediumAt: 3, highAt: 10 },
   ];
+
+  const BLOCK_DATA: Record<string, CountBlock | undefined> = data ? {
+    "fnf-pending": data.fnfPending,
+    "noc-pending": data.nocPending,
+    "digilocker-pending": data.digilockerPending,
+    "esign-pending": data.esignPending,
+    "appointment-letter": data.appointmentLetter,
+    "penny-drop-missing": data.pennyDropMissing,
+    "account-details-missing": data.accountDetailsMissing,
+    "bgv-pending": data.bgvPending,
+    "it-provisioning-pending": data.itProvisioningPending,
+    "admin-provisioning-pending": data.adminProvisioningPending,
+    "wfm-provisioning-pending": data.wfmProvisioningPending,
+  } : {};
 
   return (
     <DashboardLayout>
@@ -266,7 +288,7 @@ export default function OpsControlTowerPage() {
           <div>
             <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-slate-500">Operations</p>
             <h1 className="text-2xl font-bold text-slate-900">Ops Control Tower</h1>
-            <p className="text-sm text-slate-600">The eight deliverables, branch-wise. Click any number for the real records behind it.</p>
+            <p className="text-sm text-slate-600">Every onboarding and operational deliverable, branch-wise. Click any number for the real records behind it.</p>
           </div>
           {data && <span className="whitespace-nowrap rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 font-mono text-xs text-amber-700">As of {formatDateTime(data.nowMs)}</span>}
         </div>
@@ -293,7 +315,7 @@ export default function OpsControlTowerPage() {
 
         {data && (
           <>
-            <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4 lg:grid-cols-5">
               <SummaryTile label="Attendance mismatched" n={data.attendanceMismatch.grandTotal} sub={`${data.attendanceMismatch.branches.filter((b) => b.count > 0).length} branches`} onClick={() => document.getElementById("mismatch")?.scrollIntoView({ behavior: "smooth" })} />
               <SummaryTile label="Joined this date" n={data.joining.grandTotal} sub={`${data.joining.grandBuckets["Same day"]} same day`} onClick={() => document.getElementById("joining")?.scrollIntoView({ behavior: "smooth" })} />
               <SummaryTile label="F&F pending" n={data.fnfPending.grandTotal} sub="not yet paid" onClick={() => document.getElementById("fnf")?.scrollIntoView({ behavior: "smooth" })} />
@@ -302,25 +324,21 @@ export default function OpsControlTowerPage() {
               <SummaryTile label="eSign overdue" n={data.esignPending.grandTotal} sub={`past Day ${data.esignSlaDays}`} onClick={() => document.getElementById("esign")?.scrollIntoView({ behavior: "smooth" })} />
               <SummaryTile label="Appointment letter overdue" n={data.appointmentLetter.grandTotal} sub={`past Day ${data.appointmentLetterSlaDays}`} onClick={() => document.getElementById("appt")?.scrollIntoView({ behavior: "smooth" })} />
               <SummaryTile label="Roster not current" n={data.rosterUploaded.branches.filter((b) => b.stale).length} sub="branches overdue" onClick={() => document.getElementById("roster")?.scrollIntoView({ behavior: "smooth" })} />
+              <SummaryTile label="Penny drop missing" n={data.pennyDropMissing.grandTotal} sub="new joiners" onClick={() => document.getElementById("penny-drop")?.scrollIntoView({ behavior: "smooth" })} />
+              <SummaryTile label="Account details missing" n={data.accountDetailsMissing.grandTotal} sub="no bank details yet" onClick={() => document.getElementById("account-details")?.scrollIntoView({ behavior: "smooth" })} />
+              <SummaryTile label="BGV pending" n={data.bgvPending.grandTotal} sub="not yet clear" onClick={() => document.getElementById("bgv")?.scrollIntoView({ behavior: "smooth" })} />
+              <SummaryTile label="IT provisioning pending" n={data.itProvisioningPending.grandTotal} sub="new joiners" onClick={() => document.getElementById("it-prov")?.scrollIntoView({ behavior: "smooth" })} />
+              <SummaryTile label="Admin provisioning pending" n={data.adminProvisioningPending.grandTotal} sub="new joiners" onClick={() => document.getElementById("admin-prov")?.scrollIntoView({ behavior: "smooth" })} />
+              <SummaryTile label="WFM provisioning pending" n={data.wfmProvisioningPending.grandTotal} sub="new joiners" onClick={() => document.getElementById("wfm-prov")?.scrollIntoView({ behavior: "smooth" })} />
             </div>
 
             <MismatchSection block={data.attendanceMismatch} onOpen={openMismatch} />
             <RosterDateSection block={data.rosterUploaded} />
             <JoiningSection block={data.joining} />
-            {SIMPLE_DEFS.map((def) => (
-              <SimpleCountSection
-                key={def.id}
-                def={def}
-                block={
-                  def.block === "fnf-pending" ? data.fnfPending :
-                  def.block === "noc-pending" ? data.nocPending :
-                  def.block === "digilocker-pending" ? data.digilockerPending :
-                  def.block === "esign-pending" ? data.esignPending :
-                  data.appointmentLetter
-                }
-                onOpen={openSimple}
-              />
-            ))}
+            {SIMPLE_DEFS.map((def) => {
+              const block = BLOCK_DATA[def.block];
+              return block ? <SimpleCountSection key={def.id} def={def} block={block} onOpen={openSimple} /> : null;
+            })}
           </>
         )}
       </div>
