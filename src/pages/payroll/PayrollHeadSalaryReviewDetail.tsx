@@ -167,6 +167,12 @@ export default function PayrollHeadSalaryReviewDetail() {
   const [confirmDateReason, setConfirmDateReason] = useState('');
   const [confirmDateBusy, setConfirmDateBusy] = useState(false);
 
+  // Date is auto-filled only when empty; reset per employee so a previous employee's date isn't saved onto this one.
+  useEffect(() => {
+    setEffectiveDate('');
+    setLoadedSalaryStartDate('');
+  }, [employeeId]);
+
   useEffect(() => {
     if (effectiveDate) return;
     const preferred = journey?.payroll_hr_validation?.salary_start_date

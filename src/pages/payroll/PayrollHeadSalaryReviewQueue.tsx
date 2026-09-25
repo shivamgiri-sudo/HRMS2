@@ -825,6 +825,8 @@ function SectionPopup({
   useEffect(() => {
     if (open && employeeId) {
       setJourney(null); setError(null); setNotice(null);
+      // Date is auto-filled only when empty; reset so the previous employee's date isn't saved onto this one.
+      setEffectiveDate(''); setLoadedSalaryStartDate('');
       setRejectOpen(false); setRejectCategory(section ? SECTION_META[section].category : '');
       setRejectCode(''); setRejectRemarks('');
       void loadJourney();
@@ -1198,6 +1200,8 @@ function ReviewDrawer({
   useEffect(() => {
     if (open && employeeId) {
       setJourney(null); setError(null); setNotice(null);
+      // Date is auto-filled only when empty; reset so the previous employee's date isn't saved onto this one.
+      setEffectiveDate(''); setLoadedSalaryStartDate('');
       void loadJourney();
     }
   }, [open, employeeId]);
