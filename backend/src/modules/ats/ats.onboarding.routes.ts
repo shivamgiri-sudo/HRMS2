@@ -295,7 +295,7 @@ router.post(
       res.status(400).json({ ok: false, error: 'Cost Centre is required to submit an offer' });
       return;
     }
-    const result = await saveOffer(req.params!.id, offerData, req.authUser!.id, Boolean(submit));
+    const result = await saveOffer(req.params!.id, offerData, req.authUser!.id, Boolean(submit), req.authUser!.roles);
     res.json({ ok: true, ...result });
   }),
 );
@@ -305,7 +305,7 @@ router.patch(
   requireAuth,
   requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
   h(async (req: AuthenticatedRequest, res) => {
-    const result = await saveOffer(req.params!.id, req.body, req.authUser!.id, false);
+    const result = await saveOffer(req.params!.id, req.body, req.authUser!.id, false, req.authUser!.roles);
     res.json({ ok: true, ...result });
   }),
 );

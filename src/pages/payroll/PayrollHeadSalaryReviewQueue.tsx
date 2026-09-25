@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { useWorkforceAccess } from '@/hooks/useUserRole';
+import { useDateLockMin } from '@/hooks/useDateLockMin';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -156,6 +157,7 @@ export function OfferedSalarySection({
   onApprove: () => void; payrollHrValidation?: any; onEffectiveDateBlur?: (date: string) => Promise<void>;
   exceptionProposal?: any;
 }) {
+  const dateMin = useDateLockMin();
   if (!os) return <p className="text-xs text-slate-400 py-1">No offer on file for this candidate.</p>;
   return (
     <div className="rounded-xl border border-amber-200 overflow-hidden bg-amber-50/50">
@@ -267,7 +269,7 @@ export function OfferedSalarySection({
                 <Input
                   type="date"
                   value={effectiveDate}
-                  min={new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10)}
+                  min={dateMin}
                   onChange={(e) => setEffectiveDate(e.target.value)}
                   onBlur={onEffectiveDateBlur ? async (e) => { await onEffectiveDateBlur(e.target.value); } : undefined}
                   className="w-[140px] h-8 text-xs rounded-lg border-amber-200"
@@ -305,6 +307,7 @@ export function FinalSalarySection({
   assignExisting: () => void; acceptPackage: () => void; onBuildPackage: () => void;
   onEffectiveDateBlur?: (date: string) => Promise<void>; salaryStartDateHint?: string;
 }) {
+  const dateMin = useDateLockMin();
   return (
     <div className="rounded-xl border border-slate-100 overflow-hidden">
       <div className="bg-gradient-to-r from-purple-600 to-violet-600 px-4 py-2.5 flex items-center gap-2">
@@ -384,7 +387,7 @@ export function FinalSalarySection({
                   <Input
                     type="date"
                     value={effectiveDate}
-                  min={new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10)}
+                  min={dateMin}
                     onChange={(e) => setEffectiveDate(e.target.value)}
                     onBlur={onEffectiveDateBlur ? async (e) => { await onEffectiveDateBlur(e.target.value); } : undefined}
                     className="w-[140px] h-8 text-xs rounded-lg"

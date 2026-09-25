@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { assertNotBeforeToday } from '../dateUtils.js';
+import { assertNotBeforeToday, canBackdateDates } from '../dateUtils.js';
 
 describe('assertNotBeforeToday', () => {
   afterEach(() => vi.useRealTimers());
@@ -30,5 +30,20 @@ describe('assertNotBeforeToday', () => {
   it('ignores empty values', () => {
     expect(() => assertNotBeforeToday('', 'x')).not.toThrow();
     expect(() => assertNotBeforeToday(null, 'x')).not.toThrow();
+  });
+
+  it('lets super_admin / payroll_head override via allowPast', () => {
+    vi.useFakeTimers().setSystemTime(new Date('2026-09-25T06:00:00Z'));
+    expect(() => assertNotBeforeToday('2026-09-01', 'x', undefined, true)).not.toThrow();
+  });
+});
+
+describe('canBackdateDates', () => {
+  it('is true only for super_admin and payroll_head', () => {
+    expect(canBackdateDates(['super_admin'])).toBe(true);
+    expect(canBackdateDates(['hr', 'payroll_head'])).toBe(true);
+    expect(canBackdateDates(['admin'])).toBe(false);
+    expect(canBackdateDates(['payroll_hr', 'branch_head'])).toBe(false);
+    expect(canBackdateDates(undefined)).toBe(false);
   });
 });

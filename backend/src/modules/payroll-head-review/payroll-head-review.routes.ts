@@ -55,7 +55,7 @@ router.post("/:employeeId/package/assign", requireAuth, requireWriteAccess, requ
   if (!package_id || !effective_date) {
     return res.status(400).json({ success: false, message: "package_id and effective_date are required." });
   }
-  const data = await svc.assignPackage(req.params.employeeId, String(package_id), String(effective_date), req.authUser!.id);
+  const data = await svc.assignPackage(req.params.employeeId, String(package_id), String(effective_date), req.authUser!.id, req.authUser!.roles);
   res.json({ success: true, data });
 }));
 
@@ -64,7 +64,7 @@ router.post("/:employeeId/package/create-and-assign", requireAuth, requireWriteA
   if (!effective_date) {
     return res.status(400).json({ success: false, message: "effective_date is required." });
   }
-  const data = await svc.createAndAssignPackage(req.params.employeeId, packageData, String(effective_date), req.authUser!.id);
+  const data = await svc.createAndAssignPackage(req.params.employeeId, packageData, String(effective_date), req.authUser!.id, req.authUser!.roles);
   res.json({ success: true, data });
 }));
 
@@ -84,7 +84,7 @@ router.post("/:employeeId/package/approve-offered", requireAuth, requireWriteAcc
   if (!effective_date) {
     return res.status(400).json({ success: false, message: "effective_date is required." });
   }
-  const data = await svc.approveOfferedPackage(req.params.employeeId, String(effective_date), req.authUser!.id);
+  const data = await svc.approveOfferedPackage(req.params.employeeId, String(effective_date), req.authUser!.id, req.authUser!.roles);
   res.json({ success: true, data });
 }));
 
@@ -129,7 +129,7 @@ router.patch("/:employeeId/salary-start-date", requireAuth, requireWriteAccess, 
   if (!salary_start_date || typeof salary_start_date !== "string") {
     return res.status(400).json({ success: false, message: "salary_start_date (YYYY-MM-DD) is required." });
   }
-  const data = await svc.updateSalaryStartDate(req.params.employeeId, salary_start_date, req.authUser!.id);
+  const data = await svc.updateSalaryStartDate(req.params.employeeId, salary_start_date, req.authUser!.id, req.authUser!.roles);
   res.json({ success: true, data });
 }));
 
@@ -142,7 +142,8 @@ router.patch("/:employeeId/assignment-effective-date", requireAuth, requireWrite
     req.params.employeeId,
     String(effective_date),
     String(req.authUser!.id),
-    String(reason)
+    String(reason),
+    req.authUser!.roles
   );
   res.json({ success: true, data });
 }));

@@ -1,3 +1,4 @@
+import { useDateLockMin } from '@/hooks/useDateLockMin';
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
@@ -138,6 +139,7 @@ export default function PayrollHeadSalaryReviewDetail() {
   const { hasAnyRole } = useWorkforceAccess();
   const isReviewer = hasAnyRole(...REVIEWER_ROLES);
   const isFixer    = hasAnyRole(...FIXER_ROLES);
+  const dateMin = useDateLockMin();
 
   const [journey, setJourney] = useState<any>(null);
   const [loading, setLoading]   = useState(true);
@@ -568,7 +570,7 @@ export default function PayrollHeadSalaryReviewDetail() {
                     <Input
                       type="date"
                       value={effectiveDate}
-                  min={new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10)}
+                  min={dateMin}
                       onChange={(e) => setEffectiveDate(e.target.value)}
                       onBlur={async (e) => {
                         const newDate = e.target.value;

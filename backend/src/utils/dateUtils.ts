@@ -43,12 +43,15 @@ const DATE_ONLY = /^\d{4}-\d{2}-\d{2}/;
  * `unchangedFrom` is the value already stored -- re-saving that same value is allowed so
  * records that are already in the past can still be approved/edited on other fields;
  * only *setting or moving* a date into the past is refused.
+ * `allowPast` is the exception for super_admin / payroll_head (see canBackdateDates).
  */
 export function assertNotBeforeToday(
   value: unknown,
   label: string,
   unchangedFrom?: unknown,
+  allowPast = false,
 ): void {
+  if (allowPast) return;
   const v = DATE_ONLY.test(String(value ?? '')) ? String(value).slice(0, 10) : '';
   if (!v) return;
   const prev = DATE_ONLY.test(String(unchangedFrom ?? '')) ? String(unchangedFrom).slice(0, 10) : '';
@@ -60,4 +63,9 @@ export function assertNotBeforeToday(
       { statusCode: 400, code: 'DATE_BEFORE_TODAY' },
     );
   }
+}
+
+/** Only super_admin and payroll_head may set these dates before today (exception handling). */
+export function canBackdateDates(roles?: readonly string[] | null): boolean {
+  return !!roles?.some((r) => r === 'super_admin' || r === 'payroll_head');
 }

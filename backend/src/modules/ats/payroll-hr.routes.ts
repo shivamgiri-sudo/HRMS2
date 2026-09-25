@@ -154,6 +154,7 @@ payrollHRRouter.post('/validate', requireWriteAccess, h(async (req: Authenticate
     const result = await validateAndAssignSalary({
       ...input,
       payroll_hr_id: payrollHrId,
+      actor_roles: req.authUser!.roles,
     });
 
     return res.json(result);
@@ -209,7 +210,7 @@ payrollHRRouter.post('/submit-offer', h(async (req: AuthenticatedRequest, res: R
   try {
     const input = salaryValidationSchema.parse(req.body) as SalaryValidationInput;
     const payrollHrId = await resolveEmployeeIdForAuthUser(req.authUser!.id);
-    const result = await validateAndAssignSalary({ ...input, payroll_hr_id: payrollHrId });
+    const result = await validateAndAssignSalary({ ...input, payroll_hr_id: payrollHrId, actor_roles: req.authUser!.roles });
     return res.json(result);
   } catch (error: unknown) {
     if (error instanceof z.ZodError) return res.status(400).json({ success: false, message: 'Validation failed', errors: error.errors });

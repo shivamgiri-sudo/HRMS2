@@ -31,7 +31,7 @@
  */
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { assertNotBeforeToday } from "../../utils/dateUtils.js";
+import { assertNotBeforeToday, canBackdateDates } from "../../utils/dateUtils.js";
 import { getEmployeeBgvStatus } from "../employees/employee-bgv.service.js";
 import { buildBankReadinessReport } from "../payroll/bank-payment-readiness.service.js";
 import { createPackage, getPackageById } from "../payroll-masters/payrollMasters.service.js";
@@ -550,7 +550,8 @@ export async function getEmployeeJourney(employeeId: string) {
 export async function updateSalaryStartDate(
   employeeId: string,
   newDate: string,
-  actorUserId: string
+  actorUserId: string,
+  actorRoles?: readonly string[]
 ): Promise<{ salary_start_date: string }> {
   const review = await getReviewRow(employeeId);
   if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
@@ -570,7 +571,7 @@ export async function updateSalaryStartDate(
   if (doj && new Date(newDate) < new Date(doj)) {
     throw httpError("Salary start date cannot be before date of joining.", 400, "INVALID_DATE");
   }
-  await assertSalaryDateLock(employeeId, newDate);
+  await assertSalaryDateLock(employeeId, newDate, actorRoles);
 
   const [latestRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, salary_start_date FROM ats_payroll_hr_validation
@@ -657,7 +658,8 @@ export async function updateAssignmentEffectiveDate(
   employeeId: string,
   newDate: string,
   actorUserId: string,
-  reason: string
+  reason: string,
+  actorRoles?: readonly string[]
 ): Promise<{ effective_from: string }> {
   if (!reason || reason.trim().length < 5) {
     throw httpError("Reason is required (min 5 characters).", 400, "REASON_REQUIRED");
@@ -666,7 +668,7 @@ export async function updateAssignmentEffectiveDate(
     throw httpError("effective_date must be a valid YYYY-MM-DD date.", 400, "INVALID_DATE");
   }
 
-  await assertSalaryDateLock(employeeId, newDate);
+  await assertSalaryDateLock(employeeId, newDate, actorRoles);
   const review = await getReviewRow(employeeId);
   if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
 
@@ -815,8 +817,9 @@ async function syncOfferRecordFromPackage(
  * a NEW date may not be before today (IST) nor before the date of joining. Re-using a
  * date the employee already carries (Payroll HR's date, the employee record, or the live
  * assignment) is allowed, so already-past pending reviews can still be approved as-is.
+ * super_admin / payroll_head are exempt from the not-before-today rule (exception handling).
  */
-async function assertSalaryDateLock(employeeId: string, newDate: string): Promise<void> {
+async function assertSalaryDateLock(employeeId: string, newDate: string, actorRoles?: readonly string[]): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.date_of_joining, e.salary_start_date,
             (SELECT v.salary_start_date FROM ats_payroll_hr_validation v
@@ -835,7 +838,7 @@ async function assertSalaryDateLock(employeeId: string, newDate: string): Promis
   if (doj && nd && nd < doj) {
     throw httpError(`Salary date (${nd}) cannot be before date of joining (${doj}).`, 400, "SALARY_START_BEFORE_JOINING");
   }
-  assertNotBeforeToday(nd, "Salary date");
+  assertNotBeforeToday(nd, "Salary date", undefined, canBackdateDates(actorRoles));
 }
 
 async function writeComponentAssignment(
@@ -911,9 +914,9 @@ async function writeComponentAssignment(
 }
 
 export async function assignPackage(
-  employeeId: string, packageId: string, effectiveDate: string, actorUserId: string
+  employeeId: string, packageId: string, effectiveDate: string, actorUserId: string, actorRoles?: readonly string[]
 ) {
-  await assertSalaryDateLock(employeeId, effectiveDate);
+  await assertSalaryDateLock(employeeId, effectiveDate, actorRoles);
   const review = await getReviewRow(employeeId);
   if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
   if (review.status !== "pending_review") {
@@ -927,9 +930,9 @@ export async function assignPackage(
 }
 
 export async function createAndAssignPackage(
-  employeeId: string, packageData: Record<string, unknown>, effectiveDate: string, actorUserId: string
+  employeeId: string, packageData: Record<string, unknown>, effectiveDate: string, actorUserId: string, actorRoles?: readonly string[]
 ) {
-  await assertSalaryDateLock(employeeId, effectiveDate);
+  await assertSalaryDateLock(employeeId, effectiveDate, actorRoles);
   const review = await getReviewRow(employeeId);
   if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
   if (review.status !== "pending_review") {
@@ -968,8 +971,8 @@ export async function acceptPackage(employeeId: string, actorUserId: string) {
  * to salary_component_assignments without creating a new package in the catalog.
  * This is the fast-path when Payroll Head accepts the Branch HR's suggested package as-is.
  */
-export async function approveOfferedPackage(employeeId: string, effectiveDate: string, actorUserId: string) {
-  await assertSalaryDateLock(employeeId, effectiveDate);
+export async function approveOfferedPackage(employeeId: string, effectiveDate: string, actorUserId: string, actorRoles?: readonly string[]) {
+  await assertSalaryDateLock(employeeId, effectiveDate, actorRoles);
   const review = await getReviewRow(employeeId);
   if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
   if (review.status !== "pending_review") {

@@ -1,7 +1,7 @@
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'crypto';
-import { assertNotBeforeToday } from '../../utils/dateUtils.js';
+import { assertNotBeforeToday, canBackdateDates } from '../../utils/dateUtils.js';
 import { sendBranchHeadApprovalEmail } from './ats.email.service.js';
 import { triggerOfferApprovalPending } from '../work-inbox/work-inbox.triggers.js';
 
@@ -50,6 +50,7 @@ export interface SalaryValidationInput {
   joining_date: string; // YYYY-MM-DD format
   salary_start_date?: string; // YYYY-MM-DD format (optional, defaults to joining_date)
   shift_id?: string;
+  actor_roles?: string[]; // set by the route from the session, never from the request body
   remarks?: string;
   payroll_hr_id: string;
   /** Payroll HR's decision at offer creation — not the candidate's. See payroll-hr.routes.ts. */
@@ -241,8 +242,9 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
       [input.candidate_id]
     );
     const prevVal = (prevRaw as RowDataPacket[])[0];
-    assertNotBeforeToday(input.joining_date, 'joining_date', prevVal?.joining_date);
-    assertNotBeforeToday(salaryStartDate, 'salary_start_date', prevVal?.salary_start_date);
+    const allowPast = canBackdateDates(input.actor_roles);
+    assertNotBeforeToday(input.joining_date, 'joining_date', prevVal?.joining_date, allowPast);
+    assertNotBeforeToday(salaryStartDate, 'salary_start_date', prevVal?.salary_start_date, allowPast);
 
     const [slabRowsRaw] = await connection.execute(
       `SELECT id, range_from, range_to, active_status FROM salary_slab_master WHERE id = ? LIMIT 1`,

@@ -5,7 +5,7 @@ import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { convertCandidateToEmployee } from "./ats.convert.service.js";
 import { classifyEsignState } from "./esignState.js";
 import { syncEsignStatus } from "../integrations/luckpay/luckpay-status.service.js";
-import { assertNotBeforeToday } from "../../utils/dateUtils.js";
+import { assertNotBeforeToday, canBackdateDates } from "../../utils/dateUtils.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -462,7 +462,7 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
   };
 }
 
-export async function savePayrollControlRoomDetails(candidateId: string, input: JsonRecord, actorId: string) {
+export async function savePayrollControlRoomDetails(candidateId: string, input: JsonRecord, actorId: string, actorRoles?: readonly string[]) {
   // JCR only updates effective dates and remarks — salary is set in onboarding-requests offer form
   const salaryStartDate = String(input.salary_start_date || "");
   const attendanceEffective = String(input.attendance_effective_from || salaryStartDate);
@@ -494,7 +494,7 @@ export async function savePayrollControlRoomDetails(candidateId: string, input: 
   }
 
   // Date lock: a salary start date cannot be moved to before today (re-saving the offer's own date is fine).
-  assertNotBeforeToday(salaryStartDate, "Salary start date", originalSalaryDate);
+  assertNotBeforeToday(salaryStartDate, "Salary start date", originalSalaryDate, canBackdateDates(actorRoles));
 
   // Check if ats_payroll_hr_validation row exists; if not, seed minimal record from offer
   const [existingRows] = await db.execute<RowDataPacket[]>(

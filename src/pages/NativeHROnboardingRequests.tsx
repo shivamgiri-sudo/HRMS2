@@ -5,6 +5,7 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { parseCtcInput, formatCtcPreview } from '@/lib/ctcParser';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDateLockMin } from '@/hooks/useDateLockMin';
 import { useWorkforceAccess } from '@/hooks/useUserRole';
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { FraudComparisonPanel } from "@/components/ats/FraudComparisonPanel";
@@ -449,6 +450,7 @@ function SectionCard({ n, label, complete, children }: { n: number; label: strin
 
 export default function NativeHROnboardingRequests() {
   const { user } = useAuth();
+  const dateMin = useDateLockMin();
   const { roleKeys, isLoading: roleLoading } = useWorkforceAccess();
   const role = String((user as any)?.role ?? '').toLowerCase();
   const allowed = roleKeys.some(k => ['admin', 'super_admin', 'hr', 'manager', 'payroll_hr', 'payroll_head', 'payroll'].includes(k));
@@ -2944,14 +2946,14 @@ export default function NativeHROnboardingRequests() {
                   {/* Core fields */}
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                     <Field label="Date of Joining" required error={formFieldErrors.date_of_joining}>
-                      <input type="date" className={SEL} value={offer.date_of_joining} min={new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10)} onChange={(e) => setF('date_of_joining', e.target.value)} />
+                      <input type="date" className={SEL} value={offer.date_of_joining} min={dateMin} onChange={(e) => setF('date_of_joining', e.target.value)} />
                     </Field>
                     <Field label="Salary Start Date" error={formFieldErrors.date_of_salary}>
                       <input
                         type="date"
                         className={`${SEL}${offer.date_of_salary && offer.date_of_joining && offer.date_of_salary < offer.date_of_joining ? ' border-red-500 bg-red-50' : ''}`}
                         value={offer.date_of_salary}
-                        min={[offer.date_of_joining, new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10)].filter(Boolean).sort().pop()}
+                        min={[offer.date_of_joining, dateMin].filter(Boolean).sort().pop()}
                         onChange={(e) => setF('date_of_salary', e.target.value)}
                       />
                     </Field>

@@ -18,7 +18,7 @@ import {
   sendRejectedEmail,
 } from './ats.email.service.js';
 import { createTemporaryPasswordCredential } from '../auth/tempPassword.service.js';
-import { getIstDateString, assertNotBeforeToday } from '../../utils/dateUtils.js';
+import { getIstDateString, assertNotBeforeToday, canBackdateDates } from '../../utils/dateUtils.js';
 import { providerFactory } from '../communication/providers/provider.factory.js';
 import { buildSMS } from '../communication/smartping-dlt-registry.js';
 import { hasLiveSelfieDocument } from './onboarding-full.service.js';
@@ -907,6 +907,7 @@ export async function saveOffer(
   offerData: Record<string, unknown>,
   createdBy: string,
   submit: boolean,
+  actorRoles?: readonly string[],
 ) {
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT id, date_of_joining, date_of_salary FROM ats_employment_offer WHERE onboarding_request_id = ?`,
@@ -1039,8 +1040,9 @@ export async function saveOffer(
 
   // Date lock: joining / salary dates cannot be set (or moved) to before today.
   const _prev = (existing as RowDataPacket[])[0];
-  assertNotBeforeToday(_doj, 'Date of joining', _prev?.date_of_joining);
-  assertNotBeforeToday(_dos, 'Salary start date', _prev?.date_of_salary);
+  const _allowPast = canBackdateDates(actorRoles);
+  assertNotBeforeToday(_doj, 'Date of joining', _prev?.date_of_joining, _allowPast);
+  assertNotBeforeToday(_dos, 'Salary start date', _prev?.date_of_salary, _allowPast);
 
   const status = submit ? 'submitted' : 'draft';
   const submittedAt = submit ? new Date() : null;
