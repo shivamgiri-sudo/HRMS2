@@ -12,6 +12,8 @@ type RecruiterRow = RowDataPacket & {
   email: string | null;
   branch_name: string;
   id?: string;
+  /** 1 when the recruiter has punched in / is marked present today. */
+  present_today?: number | string;
 };
 type RosterRow = RowDataPacket & { id: string; employee_id: string };
 type QueueCountRow = RowDataPacket & { count: number | string | null };
@@ -173,6 +175,30 @@ export async function isRecruiterAvailableToday(recruiterId: string): Promise<bo
   return empRows.length > 0;
 }
 
+/**
+ * Least-loaded recruiter for a branch, preferring recruiters who are present today (punched in or
+ * marked present). Only when nobody at the branch is present does it fall back to the rest of the
+ * branch's active recruiters, so a candidate is never left without an owner.
+ */
+async function pickLeastLoadedRecruiter(
+  available: RecruiterRow[],
+): Promise<{ recruiterId: string | null; presentOnly: boolean }> {
+  const present = available.filter((r) => Number(r.present_today) === 1);
+  const pool = present.length > 0 ? present : available;
+  const loads = await Promise.all(
+    pool.map(async (rec) => {
+      const [queueRows] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) as count FROM ats_queue_token
+         WHERE recruiter_id = ? AND queue_status IN ('waiting','called','in_interview')`,
+        [rec.id]
+      );
+      return { recruiterId: rec.id ?? null, queueCount: Number(queueRows[0].count) };
+    })
+  );
+  loads.sort((x, y) => x.queueCount - y.queueCount);
+  return { recruiterId: loads[0]?.recruiterId ?? null, presentOnly: present.length > 0 };
+}
+
 export async function assignRecruiterToCandidate(candidateId: string, preferredRecruiterId: string | null) {
   let assignedRecruiterId = preferredRecruiterId;
   let assignmentReason = 'Candidate selected recruiter';
@@ -193,21 +219,12 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
       const availableRecruiters = await getAvailableRecruiters(branchName);
 
       if (availableRecruiters.length > 0) {
-        // Fair assignment: lowest active queue count
-        const recruiterLoads = await Promise.all(
-          availableRecruiters.map(async (rec: RecruiterRow) => {
-            const [queueRows] = await db.execute<RowDataPacket[]>(
-              `SELECT COUNT(*) as count FROM ats_queue_token
-               WHERE recruiter_id = ? AND queue_status IN ('waiting','called','in_interview')`,
-              [rec.id]
-            );
-            return { recruiterId: rec.id, queueCount: queueRows[0].count };
-          })
-        );
-
-        recruiterLoads.sort((a, b) => a.queueCount - b.queueCount);
-        assignedRecruiterId = recruiterLoads[0]?.recruiterId ?? null;
-        assignmentReason = 'Preferred recruiter unavailable, reassigned to available recruiter';
+        // Fair assignment: lowest active queue count, present recruiters first
+        const picked = await pickLeastLoadedRecruiter(availableRecruiters);
+        assignedRecruiterId = picked.recruiterId;
+        assignmentReason = picked.presentOnly
+          ? 'Preferred recruiter unavailable, reassigned to a present recruiter'
+          : 'Preferred recruiter unavailable, reassigned to an available recruiter';
       } else {
         assignedRecruiterId = null;
         assignmentReason = 'No recruiter available today';
@@ -226,20 +243,11 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
     const availableRecruiters = await getAvailableRecruiters(branchName);
 
     if (availableRecruiters.length > 0) {
-      const recruiterLoads = await Promise.all(
-        availableRecruiters.map(async (rec: RecruiterRow) => {
-          const [queueRows] = await db.execute<RowDataPacket[]>(
-            `SELECT COUNT(*) as count FROM ats_queue_token
-             WHERE recruiter_id = ? AND queue_status IN ('waiting','called','in_interview')`,
-            [rec.id]
-          );
-          return { recruiterId: rec.id, queueCount: queueRows[0].count };
-        })
-      );
-
-      recruiterLoads.sort((a, b) => a.queueCount - b.queueCount);
-      assignedRecruiterId = recruiterLoads[0]?.recruiterId ?? null;
-      assignmentReason = 'Auto-assigned to available recruiter';
+      const picked = await pickLeastLoadedRecruiter(availableRecruiters);
+      assignedRecruiterId = picked.recruiterId;
+      assignmentReason = picked.presentOnly
+        ? 'Auto-assigned to a present recruiter'
+        : 'Auto-assigned to an available recruiter (none present today)';
     } else {
       assignedRecruiterId = null;
       assignmentReason = 'No recruiter available today';
@@ -294,6 +302,41 @@ export async function assignRecruiterToCandidate(candidateId: string, preferredR
     preferredRecruiterId,
     assignmentReason
   };
+}
+
+/**
+ * Gives an owner to every still-Waiting candidate that has none (online applications and Meta leads
+ * never pass through the walk-in registration, which is where assignment normally happens). Each is
+ * assigned to a present recruiter of the candidate's own branch; a branch with nobody present falls
+ * back to any active recruiter there. Candidates with no branch stay unassigned — nothing to route on.
+ */
+export async function assignUnassignedCandidates(
+  opts: { sinceDays?: number; limit?: number } = {}
+): Promise<{ assigned: number; noRecruiter: number; details: { candidateId: string; recruiterId: string | null }[] }> {
+  const sinceDays = opts.sinceDays ?? 30;
+  const limit = Math.max(1, Math.min(500, opts.limit ?? 200));
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM ats_candidate
+      WHERE active_status = 1
+        AND status = 'Waiting'
+        AND (recruiter_assigned_name IS NULL OR recruiter_assigned_name = '')
+        AND COALESCE(applied_for_branch, '') <> ''
+        AND candidate_code NOT LIKE 'IDC%'
+        AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+      ORDER BY created_at ASC
+      LIMIT ${limit}`,
+    [sinceDays]
+  );
+  const details: { candidateId: string; recruiterId: string | null }[] = [];
+  let assigned = 0;
+  for (const row of rows as RowDataPacket[]) {
+    const candidateId = String(row.id);
+    const result = await assignRecruiterToCandidate(candidateId, null).catch(() => null);
+    const recruiterId = result?.assignedRecruiterId ?? null;
+    details.push({ candidateId, recruiterId });
+    if (recruiterId) assigned += 1;
+  }
+  return { assigned, noRecruiter: details.length - assigned, details };
 }
 
 // ── Token Generation ───────────────────────────────────────────────────────────
