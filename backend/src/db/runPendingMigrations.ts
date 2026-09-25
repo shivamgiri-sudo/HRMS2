@@ -1168,6 +1168,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1880_payroll_head_review_history_action_enum_reapply.sql", // Registered 2026-09-25. Re-applies 1609: it was bulk-marked applied without running, so the employee_payroll_head_review_history.action ENUM in production lacks the salary-date audit values and every Payroll Head salary date change / revision approval 500s ("Data truncated for column action"). Idempotent ENUM append.
   "1883_salary_start_date_governance.sql", // Registered 2026-09-25. Salary start date governance: creates employee_salary_start_date_audit (one row per date change: old/new date, source, authority, reason, actor) and seeds payroll_config_flags(salary_start_date_gate_enforced=false) so the payroll readiness mismatch check is a WARNING until the existing mismatches are repaired. Does NOT alter employees (an ADD COLUMN there is a 15+ minute COPY rebuild whose final metadata lock timed out on production 2026-09-25). Additive, idempotent.
   "migrations/1890_onfido_outlier_action.sql", // Registered 2026-09-25. Creates onfido_outlier_action, the action and closure log a TL or AM keeps against an analyst who is outside target. CREATE TABLE IF NOT EXISTS, additive.
+  "migrations/1891_employee_warning.sql", // Registered 2026-09-25. Creates employee_warning, the disciplinary record kept on the employee; issue and withdrawal also go to employee_journey_log. CREATE TABLE IF NOT EXISTS, additive.
 ];
 
 export type MigrationHealth = {
