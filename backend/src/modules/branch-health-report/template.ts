@@ -148,16 +148,6 @@ function dataTable(
   return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">${th}${body}</table>`;
 }
 
-function processBadge(status: "healthy" | "watch" | "critical"): string {
-  const map = {
-    healthy: `background:#dcfce7;color:#166534`,
-    watch: `background:#fef9c3;color:#854d0e`,
-    critical: `background:#fee2e2;color:#991b1b`,
-  };
-  const labels = { healthy: "Healthy", watch: "Watch", critical: "Critical" };
-  return `<span style="display:inline-block;padding:2px 8px;border-radius:4px;${FONT}font-size:11px;font-weight:600;${map[status]}">${labels[status]}</span>`;
-}
-
 export function renderEmail(
   report: BranchHealthReport,
   opts: { generatedAt: string; dashboardUrl?: string },
@@ -304,9 +294,10 @@ export function renderEmail(
       : raw.lateStats.totalLate >= 5
         ? C.warn
         : C.primary;
-  const lateProcessRows = raw.lateStats.processWise.map((p) => [
-    p.process,
-    String(p.count),
+  const lateRows = raw.lateStats.byManager.map((r) => [
+    r.process,
+    r.manager,
+    String(r.count),
   ]);
   const lateBody = `
     <table width="100%" cellpadding="0" cellspacing="0">
@@ -317,8 +308,12 @@ export function renderEmail(
         </td>
         <td valign="top">
           ${
-            lateProcessRows.length
-              ? dataTable(["Process", "Late Count"], lateProcessRows, true)
+            lateRows.length
+              ? dataTable(
+                  ["Process", "Reporting Manager", "Late Count"],
+                  lateRows,
+                  true,
+                )
               : `<p style="${FONT}font-size:13px;color:${C.success};margin:0;">No late arrivals today</p>`
           }
         </td>
@@ -368,63 +363,74 @@ export function renderEmail(
         color: shrinkageColor,
       },
     ]) +
-    (raw.shrinkage.byShift.length
+    (raw.shrinkage.bySlot.length
       ? dataTable(
-          ["Shift", "Planned", "Present", "Absent"],
-          raw.shrinkage.byShift.map((b) => [
+          ["Process", "Shift Slot", "Planned", "Present", "Absent", "Late"],
+          raw.shrinkage.bySlot.map((b) => [
+            b.process,
             b.shift,
             String(b.planned),
             String(b.present),
             String(b.absent),
+            String(b.late),
           ]),
+          true,
         )
       : "") +
     shrinkageSourceNote;
 
-  // ── 7. Open Hiring Pipeline ──
+  // ── Open hiring (Job Requisition page) ──
+  const hiring = raw.openHiring;
+  const priorityColor = (p: string) =>
+    p === "urgent" ? C.danger : p === "high" ? C.warn : C.muted;
   const hiringBody =
-    raw.openHiring.activePipeline > 0
+    hiring.openRequisitions > 0
       ? kpiStrip([
-          {
-            label: "Active Pipeline",
-            value: String(raw.openHiring.activePipeline),
-            color: C.accent,
-          },
-          ...raw.openHiring.byStage.slice(0, 5).map((s) => ({
-            label: s.stage,
-            value: String(s.count),
-            color: C.primary,
-          })),
-        ])
-      : `<p style="${FONT}font-size:13px;color:${C.muted};margin:0;">No open hiring pipeline for this branch</p>`;
+          { label: "Open Requisitions", value: String(hiring.openRequisitions), color: C.primary },
+          { label: "Open Positions", value: String(hiring.openPositions), color: C.warn, subtext: `${hiring.fulfilled} of ${hiring.requested} filled` },
+          { label: "In Pipeline", value: String(hiring.inPipeline), color: C.accent },
+          { label: "Selected", value: String(hiring.selected), color: C.success },
+          { label: "Past Fill-by Date", value: String(hiring.overdue), color: hiring.overdue > 0 ? C.danger : C.muted },
+        ]) +
+        dataTable(
+          ["Requisition", "Designation", "Process", "Priority", "Req.", "Filled", "Open", "Pipeline", "Selected", "Fill-by"],
+          hiring.rows.map((r) => [
+            r.code,
+            r.designation,
+            r.process,
+            { raw: `<span style="color:${priorityColor(r.priority)};font-weight:700;">${esc(r.priority)}</span>` },
+            String(r.requested),
+            String(r.fulfilled),
+            String(r.openPositions),
+            String(r.inPipeline),
+            String(r.selected),
+            { raw: `<span style="color:${r.overdue ? C.danger : C.primary};">${esc(r.deadline ?? "—")}${r.overdue ? " ⚠" : ""}</span>` },
+          ]),
+          true,
+        ) +
+        `<p style="${FONT}font-size:10px;color:${C.muted};margin:6px 0 0 0;">Source: Job Requisition page — approved requisitions still short of the requested headcount (${hiring.pendingApproval} more awaiting approval). Open = requested − filled; pipeline / selected from the requisition's linked candidates.</p>`
+      : `<p style="${FONT}font-size:13px;color:${C.muted};margin:0;">No approved open requisitions for this branch${hiring.pendingApproval ? ` (${hiring.pendingApproval} awaiting approval)` : ""}</p>`;
 
   // ── 8. Running P&L Snapshot ──
   const pnl = raw.runningPnl;
   const opColor = pnl.operatingProfit < 0 ? C.danger : C.success;
-  const estimateWarn = pnl.revenueIsEstimate
-    ? `<p style="${FONT}font-size:10px;color:${C.warn};margin:6px 0 0 0;">⚠ Month still open: revenue is the full-month ${esc(pnl.revenueBasis)} estimate, salary cost is accrued only to ${esc(pnl.costAsOf ?? "the last refresh")} — OP % is indicative, not final.</p>`
-    : "";
   const coverageWarn =
     pnl.peopleCostCoveragePct != null && pnl.peopleCostCoveragePct < 99.5
-      ? `<p style="${FONT}font-size:10px;color:${C.warn};margin:6px 0 0 0;">⚠ Salary cost covers ${pnl.peopleCostCoveragePct}% of active headcount — operating profit is overstated by the uncovered staff.</p>`
+      ? `<p style="${FONT}font-size:10px;color:${C.warn};margin:6px 0 0 0;">⚠ Salary snapshot covers ${pnl.peopleCostCoveragePct}% of active headcount — operating profit is overstated by the uncovered staff.</p>`
       : "";
   const pnlBody = pnl.dataAvailable
     ? kpiStrip([
-        { label: "Recognised Revenue", value: inr(pnl.revenueRecognized), color: C.primary, subtext: pnl.periodCode },
-        { label: "Invoiced", value: inr(pnl.revenueInvoiced), color: C.accent },
-        { label: "Projected (Contracted)", value: inr(pnl.revenueProjected), color: C.muted },
+        { label: "Running Revenue", value: inr(pnl.revenueRunning), color: C.primary, subtext: `${pnl.elapsedDays}/${pnl.daysInMonth} days of ${inr(pnl.revenueMonth)}` },
+        { label: "Running Salary", value: inr(pnl.salaryRunning), color: C.accent, subtext: pnl.asOfDate ? `as of ${pnl.asOfDate}` : "no snapshot" },
+        { label: "GRN Consumed", value: inr(pnl.grnConsumed), color: C.warn, subtext: "ex-GST" },
+        { label: "GRN Reserved", value: inr(pnl.grnReserved), color: C.muted, subtext: "ex-GST, in approval" },
       ]) +
       kpiStrip([
-        { label: "Salary (Direct Cost)", value: inr(pnl.directCost), color: C.primary },
-        { label: "IDC (GRN Spend)", value: inr(pnl.indirectCost), color: C.accent },
-        { label: "Total Cost", value: inr(pnl.totalCost), color: C.warn },
-      ]) +
-      kpiStrip([
-        { label: "Operating Profit", value: inr(pnl.operatingProfit), color: opColor },
+        { label: "Total Running Cost", value: inr(pnl.totalCostRunning), color: C.warn },
+        { label: "Running Operating Profit", value: inr(pnl.operatingProfit), color: opColor },
         { label: "OP %", value: pnl.opPct != null ? `${pnl.opPct.toFixed(1)}%` : "—", color: opColor },
       ]) +
-      `<p style="${FONT}font-size:10px;color:${C.muted};margin:6px 0 0 0;">Source: HRMS P&amp;L statement (branch view) — same engine as the P&amp;L page; revenue basis: ${esc(pnl.revenueBasis || "n/a")}.</p>` +
-      estimateWarn +
+      `<p style="${FONT}font-size:10px;color:${C.muted};margin:6px 0 0 0;">OP = running revenue − running salary − GRN (consumed + reserved, ex-GST). Revenue is the P&amp;L statement's ${esc(pnl.revenueBasis || "recognised")} revenue for the month, spread evenly over the days covered by the salary snapshot.</p>` +
       coverageWarn
     : `<p style="${FONT}font-size:13px;color:${C.muted};margin:0;">No P&amp;L data available for ${pnl.periodCode || reportDate.slice(0, 7)}</p>`;
 
@@ -453,42 +459,18 @@ export function renderEmail(
           }
         </td>
       </tr>
-    </table>`;
-
-  // ── 8. Process performance ──
-  const MAX_KPIS_PER_PROCESS = 6;
-  const attainColor = (pct: number) =>
-    pct >= 90 ? C.success : pct >= 70 ? C.warn : C.danger;
-  const kpiValue = (n: number, unit: string) =>
-    `${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}${unit.toLowerCase().startsWith("percent") ? "%" : ""}`;
-  const perfBody = raw.processPerformance.length
-    ? dataTable(
-        ["Process / KPI", "Actual", "Target", "Attainment", "Status"],
-        raw.processPerformance.flatMap((p) => [
-          [
-            { raw: `<strong>${esc(p.process)}</strong>` },
-            "",
-            "",
-            {
-              raw: `<strong>${[p.opsScore, p.qualityScore]
-                .filter((v): v is number => v != null)
-                .map((v) => `${v}%`)
-                .join(" / ")}</strong>`,
-            },
-            { raw: processBadge(p.status) },
-          ],
-          ...p.metrics.slice(0, MAX_KPIS_PER_PROCESS).map((m) => [
-            { raw: `<span style="padding-left:12px;color:${C.muted};">${esc(m.name)}${m.lowerIsBetter ? " ↓" : ""}</span>` },
-            kpiValue(m.actual, m.unit),
-            kpiValue(m.target, m.unit),
-            { raw: `<span style="color:${attainColor(m.attainmentPct)};font-weight:700;">${m.attainmentPct}%</span>` },
-            "",
+    </table>` +
+    (raw.headcount.byProcess.length
+      ? dataTable(
+          ["Process", "Joined", "Left"],
+          raw.headcount.byProcess.map((p) => [
+            p.process,
+            String(p.joined),
+            String(p.left),
           ]),
-        ]),
-        true,
-      ) +
-      `<p style="${FONT}font-size:10px;color:${C.muted};margin:6px 0 0 0;">Source: KPI module daily actuals, last 14 days average vs process target. Attainment capped at 120%; ↓ = lower is better. Showing the ${MAX_KPIS_PER_PROCESS} weakest KPIs per process.</p>`
-    : `<p style="${FONT}font-size:13px;color:${C.muted};margin:0;">No KPI actuals with a configured target in the last 14 days for this branch</p>`;
+          true,
+        )
+      : "");
 
   // ── 9. Pending actions ──
   const actionsBody = raw.pendingActions.length
@@ -545,29 +527,26 @@ export function renderEmail(
     sectionHeader("4. ATS — Today's Recruitment Activity"),
     `<tr><td>${card(atsBody)}</td></tr>`,
     // Attendance
-    sectionHeader("5. Late Arrivals — Today"),
+    sectionHeader("5. Late Arrivals — Today (by Reporting Manager)"),
     `<tr><td>${card(lateBody)}</td></tr>`,
     sectionHeader("6. Shrinkage — Today"),
     `<tr><td>${card(shrinkageBody)}</td></tr>`,
     // Headcount
     sectionHeader("7. Headcount Movement — Today"),
     `<tr><td>${card(hcBody)}</td></tr>`,
-    // Performance
-    sectionHeader("8. Process-wise Performance (KPI, Last 14 Days)"),
-    `<tr><td>${card(perfBody)}</td></tr>`,
     // Pending actions
-    sectionHeader("9. Pending Actions"),
+    sectionHeader("8. Pending Actions"),
     `<tr><td>${card(actionsBody)}</td></tr>`,
     // Open Hiring
-    sectionHeader("10. Open Hiring Pipeline — Active Candidates"),
+    sectionHeader("9. Open Hiring — Job Requisitions"),
     `<tr><td>${card(hiringBody)}</td></tr>`,
     // Running P&L
-    sectionHeader("11. P&L Snapshot — Month-to-Date"),
+    sectionHeader("10. Running P&L — Month-to-Date"),
     `<tr><td>${card(pnlBody)}</td></tr>`,
     // Signals
-    sectionHeader("12. Critical Intervention Points"),
+    sectionHeader("11. Critical Intervention Points"),
     `<tr><td><table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${C.border};border-radius:8px;overflow:hidden;">${criticalHtml}</table></td></tr>`,
-    sectionHeader("13. Positive Achievements"),
+    sectionHeader("12. Positive Achievements"),
     `<tr><td style="padding-bottom:8px;"><table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${C.border};border-radius:8px;overflow:hidden;">${positiveHtml}</table></td></tr>`,
   ].join("\n");
 

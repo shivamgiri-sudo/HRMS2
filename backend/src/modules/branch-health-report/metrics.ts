@@ -151,54 +151,36 @@ export function classifySignals(raw: BranchHealthRawData): {
     });
   }
 
-  // Open Hiring Pipeline
-  if (raw.openHiring.activePipeline > 0) {
-    const topStages = raw.openHiring.byStage
-      .slice(0, 3)
-      .map((s) => `${s.stage}: ${s.count}`)
-      .join(" · ");
+  // Open hiring (Job Requisition page)
+  if (raw.openHiring.overdue > 0) {
+    criticalPoints.push({
+      label: `${raw.openHiring.overdue} requisition${raw.openHiring.overdue > 1 ? "s" : ""} past the fill-by date`,
+      detail: `${raw.openHiring.openPositions} positions still open across ${raw.openHiring.openRequisitions} requisitions`,
+      severity: "warning",
+    });
+  }
+  if (raw.openHiring.inPipeline > 0) {
     positiveAchievements.push({
-      label: `${raw.openHiring.activePipeline} candidate${raw.openHiring.activePipeline > 1 ? "s" : ""} in hiring pipeline`,
-      detail: topStages,
+      label: `${raw.openHiring.inPipeline} candidate${raw.openHiring.inPipeline > 1 ? "s" : ""} in the hiring pipeline`,
+      detail: `${raw.openHiring.selected} selected · ${raw.openHiring.openPositions} positions open`,
     });
   }
 
   // Running P&L snapshot
   const pnl = raw.runningPnl;
   if (pnl.dataAvailable && pnl.opPct != null) {
-    if (pnl.opPct < 0 && !pnl.revenueIsEstimate) {
+    if (pnl.opPct < 0) {
       criticalPoints.push({
-        label: `Operating loss MTD: ${pnl.opPct.toFixed(1)}% OP`,
-        detail: `Revenue ₹${fmt(pnl.revenueRecognized)} vs cost ₹${fmt(pnl.totalCost)}`,
-        severity: "critical",
+        label: `Running operating loss: ${pnl.opPct.toFixed(1)}% OP`,
+        detail: `Revenue ₹${fmt(pnl.revenueRunning)} vs cost ₹${fmt(pnl.totalCostRunning)} (salary + GRN) to date`,
+        severity: "warning",
       });
-    } else if (!pnl.revenueIsEstimate) {
+    } else {
       positiveAchievements.push({
-        label: `Operating profit MTD: ${pnl.opPct.toFixed(1)}% OP`,
-        detail: `Revenue ₹${fmt(pnl.revenueRecognized)} · Cost ₹${fmt(pnl.totalCost)}`,
+        label: `Running operating profit: ${pnl.opPct.toFixed(1)}% OP`,
+        detail: `Revenue ₹${fmt(pnl.revenueRunning)} · Cost ₹${fmt(pnl.totalCostRunning)} to date`,
       });
     }
-  }
-
-  // Process performance
-  const criticalProcesses = raw.processPerformance.filter(
-    (p) => p.status === "critical",
-  );
-  const healthyProcesses = raw.processPerformance.filter(
-    (p) => p.status === "healthy",
-  );
-  if (criticalProcesses.length) {
-    criticalPoints.push({
-      label: "Process performance below threshold",
-      detail: criticalProcesses.map((p) => p.process).join(", "),
-      severity: "critical",
-    });
-  }
-  if (healthyProcesses.length && criticalProcesses.length === 0) {
-    positiveAchievements.push({
-      label: "All processes performing well",
-      detail: `${healthyProcesses.length} process${healthyProcesses.length > 1 ? "es" : ""} above 80% score`,
-    });
   }
 
   const hasCritical = criticalPoints.some((p) => p.severity === "critical");

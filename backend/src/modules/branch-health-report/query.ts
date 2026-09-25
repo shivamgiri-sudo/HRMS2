@@ -10,7 +10,6 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getStatement } from "../process-pnl/pnl-statement.service.js";
-import { notDialDeskProcessSql } from "../../shared/ownCompanyCostCentre.js";
 import { isShiftDueYet } from "../wfm/shift-due.util.js";
 
 // ─── shared helpers ──────────────────────────────────────────────────────────
@@ -261,6 +260,8 @@ export async function fetchAtsStats(
 export interface LateStats {
   totalLate: number;
   processWise: { process: string; count: number }[];
+  /** Late arrivals per process and reporting manager, so the manager can be followed up. */
+  byManager: { process: string; manager: string; count: number }[];
 }
 
 export async function fetchLateStats(
@@ -268,38 +269,42 @@ export async function fetchLateStats(
   today: string,
 ): Promise<LateStats> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(pm.process_name, 'Unassigned') AS process, COUNT(*) AS cnt
+    `SELECT COALESCE(pm.process_name, 'Unassigned')               AS process,
+            COALESCE(NULLIF(TRIM(m.full_name), ''), 'Not mapped') AS manager,
+            COUNT(*)                                               AS cnt
        FROM attendance_daily_record adr
        JOIN employees e ON e.id = adr.employee_id
        LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN employees m ON m.id = e.reporting_manager_id
       WHERE adr.record_date = ?
         AND e.branch_id = ?
         AND adr.late_mark = 1
         AND e.active_status = 1
-      GROUP BY pm.process_name
-      ORDER BY cnt DESC`,
+      GROUP BY process, manager
+      ORDER BY process, cnt DESC`,
     [today, branchId],
   );
-  const processWise = (rows as any[]).map((r) => ({
+  const byManager = (rows as any[]).map((r) => ({
     process: String(r.process),
+    manager: String(r.manager),
     count: Number(r.cnt),
   }));
+  const perProcess = new Map<string, number>();
+  for (const r of byManager)
+    perProcess.set(r.process, (perProcess.get(r.process) ?? 0) + r.count);
+  const processWise = [...perProcess.entries()]
+    .map(([process, count]) => ({ process, count }))
+    .sort((a, b) => b.count - a.count);
   return {
-    totalLate: processWise.reduce((s, r) => s + r.count, 0),
+    totalLate: byManager.reduce((sum, r) => sum + r.count, 0),
     processWise,
+    byManager,
   };
 }
 
-// ─── 6. Shrinkage — roster-based with attendance fallback ────────────────────
+// ─── 6. Shrinkage — uploaded roster shift timings vs first punch ─────────────
 //
-// PRIMARY: employees on a published wfm_roster_assignment for today (non-week-off)
-//   scheduled = roster entries where is_week_off = 0
-//   absent    = scheduled with no attendance record OR status IN ('absent','unreconciled')
-//   on_leave  = scheduled with status IN ('approved_leave','half_day_leave','leave','wfh')
-//   shrinkage = absent / scheduled * 100
-//
-// FALLBACK: when no published roster exists for the branch today, count from
-//   attendance_daily_record (previous behaviour).
+// See fetchShrinkage below for the exact rule (mirrors the WFM branch dashboard).
 
 export interface ShrinkageStats {
   scheduled: number;
@@ -312,39 +317,74 @@ export interface ShrinkageStats {
   yetToStart: number;
   /** Rostered week-off but punched in anyway — informational, not in the shrinkage maths. */
   weekOffWorked: number;
-  byShift: { shift: string; planned: number; present: number; absent: number }[];
+  bySlot: {
+    process: string;
+    shift: string;
+    planned: number;
+    present: number;
+    absent: number;
+    late: number;
+  }[];
+}
+
+export interface OpenRequisitionRow {
+  code: string;
+  designation: string;
+  process: string;
+  priority: string;
+  requested: number;
+  fulfilled: number;
+  openPositions: number;
+  inPipeline: number;
+  selected: number;
+  /** requisition_validity (YYYY-MM-DD) — the date by which the requisition should be filled. */
+  deadline: string | null;
+  overdue: boolean;
+  agingDays: number;
 }
 
 export interface OpenHiringStats {
-  activePipeline: number;
-  byStage: { stage: string; count: number }[];
+  openRequisitions: number;
+  pendingApproval: number;
+  requested: number;
+  fulfilled: number;
+  openPositions: number;
+  inPipeline: number;
+  selected: number;
+  overdue: number;
+  rows: OpenRequisitionRow[];
 }
 
 export interface RunningPnlStats {
   periodCode: string;
-  /** Recognised revenue as the P&L statement books it (system revenue, before manual adjustments). */
-  revenueRecognized: number;
-  revenueInvoiced: number;
-  /** Contracted (planned-seat) revenue for the period — the projection the branch is working to. */
-  revenueProjected: number;
-  /** Direct cost: agent + DSC + BMC salaries. */
-  directCost: number;
-  /** Indirect cost: consumed + committed GRN spend allocated to the branch. */
-  indirectCost: number;
-  totalCost: number;
+  daysInMonth: number;
+  /** Days of the month the running figures cover (up to the salary snapshot's as-of date). */
+  elapsedDays: number;
+  asOfDate: string | null;
+  /** Full-month recognised revenue as the P&L statement books it. */
+  revenueMonth: number;
+  /** Revenue earned to date: month revenue spread straight-line over the elapsed days. */
+  revenueRunning: number;
+  /** Earned-till-date salary from the running salary snapshot. */
+  salaryRunning: number;
+  /** GRN spend against budget lines, ex-GST: consumed (approved) + reserved (in approval). */
+  grnConsumed: number;
+  grnReserved: number;
+  totalCostRunning: number;
   operatingProfit: number;
   opPct: number | null;
-  /** Share of active headcount whose salary is in the cost — below 100 the profit is overstated. */
+  /** Share of active headcount whose salary is in the snapshot — below 100 profit is overstated. */
   peopleCostCoveragePct: number | null;
   revenueBasis: string;
-  /** Month still open and revenue not yet invoiced: revenue is a full-month estimate while cost accrues to costAsOf. */
-  revenueIsEstimate: boolean;
-  /** Date (YYYY-MM-DD) up to which salary cost has been accrued. */
-  costAsOf: string | null;
   dataAvailable: boolean;
 }
 
-const LEAVE_STATUSES = new Set(["leave_approved", "approved_leave", "half_day_leave", "leave"]);
+const LEAVE_STATUSES = new Set([
+  "leave_approved",
+  "approved_leave",
+  "half_day_leave",
+  "leave",
+]);
 const NON_WORKING_ASSIGNMENTS = new Set(["WEEK_OFF", "LEAVE", "HOLIDAY"]);
 
 const hhmm = (t: unknown): string => String(t ?? "").slice(0, 5);
@@ -358,6 +398,7 @@ const hhmm = (t: unknown): string => String(t ?? "").slice(0, 5);
  *  - a shift that has not reached start + grace is "yet to start", excluded until it is due;
  *  - approved leave (attendance side) is excluded from the plan like roster leave.
  * Shift timing comes from the roster row, falling back to the shift template.
+ * Broken down by process and shift slot, with the late count of those who did punch in.
  */
 export async function fetchShrinkage(
   branchId: string,
@@ -367,9 +408,11 @@ export async function fetchShrinkage(
     `SELECT ra.assignment_type, ra.is_week_off,
             COALESCE(ra.shift_start_time, st.start_time) AS shift_start,
             COALESCE(ra.shift_end_time, st.end_time)     AS shift_end,
-            adr.clock_in_time, adr.attendance_status
+            adr.clock_in_time, adr.attendance_status, adr.late_mark,
+            COALESCE(pm.process_name, 'Unassigned')      AS process_name
        FROM wfm_roster_assignment ra
        JOIN employees e ON e.id = ra.employee_id AND e.branch_id = ? AND e.active_status = 1
+       LEFT JOIN process_master pm ON pm.id = e.process_id
        LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id
        LEFT JOIN attendance_daily_record adr
               ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
@@ -383,7 +426,17 @@ export async function fetchShrinkage(
   let onLeave = 0;
   let yetToStart = 0;
   let weekOffWorked = 0;
-  const shifts = new Map<string, { planned: number; present: number; absent: number }>();
+  const slots = new Map<
+    string,
+    {
+      process: string;
+      shift: string;
+      planned: number;
+      present: number;
+      absent: number;
+      late: number;
+    }
+  >();
 
   for (const r of rows as any[]) {
     const type = String(r.assignment_type ?? "").toUpperCase();
@@ -397,30 +450,44 @@ export async function fetchShrinkage(
       onLeave += 1;
       continue;
     }
-    if (!punched && !isShiftDueYet(r.shift_start ? String(r.shift_start) : null, today)) {
+    if (
+      !punched &&
+      !isShiftDueYet(r.shift_start ? String(r.shift_start) : null, today)
+    ) {
       yetToStart += 1;
       continue;
     }
     scheduled += 1;
-    const key =
+    const shift =
       r.shift_start || r.shift_end
         ? `${hhmm(r.shift_start)}–${hhmm(r.shift_end)}`
         : "No shift time on roster";
-    const bucket = shifts.get(key) ?? { planned: 0, present: 0, absent: 0 };
+    const process = String(r.process_name);
+    const key = `${process}|${shift}`;
+    const bucket = slots.get(key) ?? {
+      process,
+      shift,
+      planned: 0,
+      present: 0,
+      absent: 0,
+      late: 0,
+    };
     bucket.planned += 1;
     if (punched) {
       present += 1;
       bucket.present += 1;
+      if (Number(r.late_mark) === 1) bucket.late += 1;
     } else {
       absent += 1;
       bucket.absent += 1;
     }
-    shifts.set(key, bucket);
+    slots.set(key, bucket);
   }
 
-  const byShift = [...shifts.entries()]
-    .map(([shift, v]) => ({ shift, ...v }))
-    .sort((a, b) => a.shift.localeCompare(b.shift));
+  const bySlot = [...slots.values()].sort(
+    (a, b) =>
+      a.process.localeCompare(b.process) || a.shift.localeCompare(b.shift),
+  );
 
   return {
     scheduled,
@@ -431,7 +498,7 @@ export async function fetchShrinkage(
     rosterBased: (rows as any[]).length > 0,
     yetToStart,
     weekOffWorked,
-    byShift,
+    bySlot,
   };
 }
 
@@ -442,6 +509,7 @@ export interface HeadcountMovement {
   leftToday: number;
   joinedNames: string[];
   leftNames: string[];
+  byProcess: { process: string; joined: number; left: number }[];
   totalActive: number;
 }
 
@@ -450,19 +518,29 @@ export async function fetchHeadcountMovement(
   today: string,
 ): Promise<HeadcountMovement> {
   const [joinRows] = await db.execute<RowDataPacket[]>(
-    `SELECT CONCAT(first_name, ' ', COALESCE(last_name, '')) AS name
-       FROM employees
-      WHERE branch_id = ? AND date_of_joining = ? AND active_status = 1`,
+    `SELECT COALESCE(NULLIF(TRIM(e.full_name), ''), e.first_name) AS name,
+            COALESCE(pm.process_name, 'Unassigned')               AS process
+       FROM employees e
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+      WHERE e.branch_id = ? AND e.date_of_joining = ?`,
     [branchId, today],
   );
 
+  // A leaver is anyone whose last working day is today — from the employee record
+  // (date_of_leaving / date_of_exit) or an exit request. They are inactive by now, so no
+  // active_status filter.
   const [exitRows] = await db.execute<RowDataPacket[]>(
-    `SELECT CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS name
-       FROM exit_request er
-       JOIN employees e ON e.id = er.employee_id
+    `SELECT DISTINCT e.id,
+            COALESCE(NULLIF(TRIM(e.full_name), ''), e.first_name) AS name,
+            COALESCE(pm.process_name, 'Unassigned')               AS process
+       FROM employees e
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN exit_request er ON er.employee_id = e.id
       WHERE e.branch_id = ?
-        AND COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) = ?`,
-    [branchId, today],
+        AND (e.date_of_leaving = ?
+             OR e.date_of_exit = ?
+             OR COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) = ?)`,
+    [branchId, today, today, today],
   );
 
   const [countRows] = await db.execute<RowDataPacket[]>(
@@ -470,169 +548,105 @@ export async function fetchHeadcountMovement(
     [branchId],
   );
 
-  const joinedNames = (joinRows as any[]).map((r) => String(r.name).trim());
-  const leftNames = (exitRows as any[]).map((r) => String(r.name).trim());
+  const joined = joinRows as any[];
+  const left = exitRows as any[];
+  const perProcess = new Map<string, { joined: number; left: number }>();
+  for (const r of joined) {
+    const b = perProcess.get(r.process) ?? { joined: 0, left: 0 };
+    b.joined += 1;
+    perProcess.set(r.process, b);
+  }
+  for (const r of left) {
+    const b = perProcess.get(r.process) ?? { joined: 0, left: 0 };
+    b.left += 1;
+    perProcess.set(r.process, b);
+  }
   return {
-    joinedToday: joinedNames.length,
-    leftToday: leftNames.length,
-    joinedNames,
-    leftNames,
+    joinedToday: joined.length,
+    leftToday: left.length,
+    joinedNames: joined.map((r) => String(r.name).trim()),
+    leftNames: left.map((r) => String(r.name).trim()),
+    byProcess: [...perProcess.entries()]
+      .map(([process, v]) => ({ process, ...v }))
+      .sort((a, b) => b.joined + b.left - (a.joined + a.left)),
     totalActive: Number((countRows[0] as any)?.cnt ?? 0),
   };
 }
 
-// ─── 8. Process performance (ops + quality from kpi_entry) ───────────────────
+// ─── 9. Open Hiring — from the Job Requisition page ──────────────────────────
 
-export interface ProcessKpiMetric {
-  name: string;
-  unit: string;
-  actual: number;
-  target: number;
-  lowerIsBetter: boolean;
-  attainmentPct: number;
-}
-
-export interface ProcessPerformance {
-  process: string;
-  metrics: ProcessKpiMetric[];
-  opsScore: number | null;
-  qualityScore: number | null;
-  status: "healthy" | "watch" | "critical";
-}
-
-const KPI_LOOKBACK_DAYS = 14;
-const KPI_HEALTHY_PCT = 90;
-const KPI_WATCH_PCT = 70;
-
-/** Attainment % of an average actual against its target, capped at 120 like the KPI module. */
-function kpiAttainmentPct(
-  actual: number,
-  target: number,
-  lowerIsBetter: boolean,
-): number | null {
-  if (!Number.isFinite(actual) || !Number.isFinite(target) || target <= 0)
-    return null;
-  if (lowerIsBetter && actual <= 0) return 120;
-  const pct = lowerIsBetter ? (target / actual) * 100 : (actual / target) * 100;
-  return Math.min(120, Math.max(0, pct));
-}
-
-function meanRounded(values: number[]): number | null {
-  return values.length
-    ? Math.round(values.reduce((a, b) => a + b, 0) / values.length)
-    : null;
-}
+const MAX_REQUISITION_ROWS = 15;
 
 /**
- * Process performance comes straight from the KPI module: kpi_daily_actual (per-employee
- * daily actuals) against the process target in kpi_process_config. Per process and metric the
- * last KPI_LOOKBACK_DAYS of actuals are averaged and compared with the latest effective target.
- * "Quality" = quality-family metrics; "KPI attainment" = every other targeted metric.
+ * Same population as the Job Requisition page's "active" requisitions
+ * (job-requisition.service getOpenRequisitionsForBranch): approved, still short of the requested
+ * headcount, not deleted. Open positions = requested - fulfilled. Candidates come from
+ * job_requisition_candidate: outcome 'in_progress' is the live pipeline, 'selected' is offered.
+ * Requisitions awaiting approval are only counted, not treated as open demand.
  */
-export async function fetchProcessPerformance(
-  branchId: string,
-  today: string,
-): Promise<ProcessPerformance[]> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT pm.process_name AS process,
-            mm.metric_name,
-            mm.unit,
-            mm.direction,
-            mm.family,
-            mm.category,
-            AVG(d.actual_value) AS avg_actual,
-            (SELECT c.target_value FROM kpi_process_config c
-              WHERE c.process_id = d.process_id_at_event AND c.metric_id = d.metric_id
-                AND c.effective_from <= ?
-              ORDER BY c.effective_from DESC LIMIT 1) AS target
-       FROM kpi_daily_actual d
-       JOIN kpi_metric_master mm ON mm.id = d.metric_id
-       JOIN process_master pm ON pm.id = d.process_id_at_event
-       LEFT JOIN branch_master bm ON bm.id = pm.branch_id
-      WHERE d.branch_id_at_event = ?
-        AND ${notDialDeskProcessSql("pm", "bm")}
-        AND d.score_date BETWEEN DATE_SUB(?, INTERVAL ${KPI_LOOKBACK_DAYS} DAY) AND ?
-        AND d.actual_value IS NOT NULL
-      GROUP BY pm.process_name, d.process_id_at_event, d.metric_id,
-               mm.metric_name, mm.unit, mm.direction, mm.family, mm.category
-      ORDER BY pm.process_name`,
-    [today, branchId, today, today],
-  );
-
-  const byProcess = new Map<
-    string,
-    { ops: number[]; quality: number[]; metrics: ProcessKpiMetric[] }
-  >();
-  for (const r of rows as any[]) {
-    if (r.target == null) continue;
-    const pct = kpiAttainmentPct(
-      Number(r.avg_actual),
-      Number(r.target),
-      r.direction === "lower_is_better",
-    );
-    if (pct == null) continue;
-    const name = String(r.process);
-    const bucket = byProcess.get(name) ?? { ops: [], quality: [], metrics: [] };
-    const isQuality =
-      String(r.family).toLowerCase() === "quality" ||
-      String(r.category).toLowerCase() === "quality";
-    (isQuality ? bucket.quality : bucket.ops).push(pct);
-    bucket.metrics.push({
-      name: String(r.metric_name),
-      unit: String(r.unit ?? ""),
-      actual: Number(r.avg_actual),
-      target: Number(r.target),
-      lowerIsBetter: r.direction === "lower_is_better",
-      attainmentPct: Math.round(pct),
-    });
-    byProcess.set(name, bucket);
-  }
-
-  return [...byProcess.entries()].map(([process, b]) => {
-    const opsScore = meanRounded(b.ops);
-    const qualityScore = meanRounded(b.quality);
-    const scores = [opsScore, qualityScore].filter(
-      (x): x is number => x != null,
-    );
-    const worst = scores.length ? Math.min(...scores) : null;
-    const status: ProcessPerformance["status"] =
-      worst == null || worst < KPI_WATCH_PCT
-        ? worst == null
-          ? "watch"
-          : "critical"
-        : worst >= KPI_HEALTHY_PCT
-          ? "healthy"
-          : "watch";
-    const metrics = [...b.metrics].sort((x, y) => x.attainmentPct - y.attainmentPct);
-    return { process, metrics, opsScore, qualityScore, status };
-  });
-}
-
-// ─── 9. Open Hiring Pipeline ──────────────────────────────────────────────────
-
 export async function fetchOpenHiring(
   branchName: string,
+  today: string,
 ): Promise<OpenHiringStats> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       COALESCE(NULLIF(TRIM(current_status), ''), 'Unknown') AS stage,
-       COUNT(*)                                               AS cnt
-     FROM ats_recruiter_hiring_activity
-    WHERE LOWER(branch_name) = LOWER(?)
-      AND activity_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-      AND NULLIF(TRIM(current_status), '') IS NOT NULL
-      AND current_status NOT IN ('Joined','Rejected','Walk-in Completed')
-    GROUP BY stage
-    ORDER BY cnt DESC`,
+    `SELECT jr.requisition_code, jr.designation_name, jr.process_name, jr.priority,
+            jr.requested_headcount, jr.fulfilled_headcount,
+            DATE_FORMAT(jr.requisition_validity, '%Y-%m-%d') AS deadline,
+            DATEDIFF(?, DATE(jr.created_at))                 AS aging_days,
+            COALESCE(c.in_pipeline, 0)                       AS in_pipeline,
+            COALESCE(c.selected, 0)                          AS selected
+       FROM job_requisition jr
+       LEFT JOIN (
+         SELECT requisition_id,
+                SUM(outcome = 'in_progress') AS in_pipeline,
+                SUM(outcome = 'selected')    AS selected
+           FROM job_requisition_candidate
+          GROUP BY requisition_id
+       ) c ON c.requisition_id = jr.id
+      WHERE jr.branch_name = ?
+        AND jr.active_status = 1
+        AND jr.approval_status = 'approved'
+        AND jr.fulfilled_headcount < jr.requested_headcount
+      ORDER BY FIELD(jr.priority, 'urgent', 'high', 'normal', 'low'), jr.created_at`,
+    [today, branchName],
+  );
+  const [pendingRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM job_requisition
+      WHERE branch_name = ? AND active_status = 1 AND approval_status = 'pending_approval'`,
     [branchName],
   );
-  const byStage = (rows as any[]).map((r) => ({
-    stage: String(r.stage),
-    count: Number(r.cnt),
-  }));
+
+  const all: OpenRequisitionRow[] = (rows as any[]).map((r) => {
+    const requested = Number(r.requested_headcount ?? 0);
+    const fulfilled = Number(r.fulfilled_headcount ?? 0);
+    const deadline = r.deadline ? String(r.deadline) : null;
+    return {
+      code: String(r.requisition_code),
+      designation: String(r.designation_name ?? ""),
+      process: String(r.process_name ?? "—"),
+      priority: String(r.priority ?? ""),
+      requested,
+      fulfilled,
+      openPositions: requested - fulfilled,
+      inPipeline: Number(r.in_pipeline ?? 0),
+      selected: Number(r.selected ?? 0),
+      deadline,
+      overdue: deadline != null && deadline < today,
+      agingDays: Number(r.aging_days ?? 0),
+    };
+  });
+  const sum = (pick: (r: OpenRequisitionRow) => number) =>
+    all.reduce((total, r) => total + pick(r), 0);
   return {
-    activePipeline: byStage.reduce((s, r) => s + r.count, 0),
-    byStage,
+    openRequisitions: all.length,
+    pendingApproval: Number((pendingRows[0] as any)?.cnt ?? 0),
+    requested: sum((r) => r.requested),
+    fulfilled: sum((r) => r.fulfilled),
+    openPositions: sum((r) => r.openPositions),
+    inPipeline: sum((r) => r.inPipeline),
+    selected: sum((r) => r.selected),
+    overdue: all.filter((r) => r.overdue).length,
+    rows: all.slice(0, MAX_REQUISITION_ROWS),
   };
 }
 
@@ -642,54 +656,79 @@ export async function fetchOpenHiring(
  * Branch P&L for the month, taken from the same statement engine the P&L page renders
  * (getStatement, viewBy=branch) so the email and the app can never quote different numbers.
  */
+/**
+ * Running operating profit for the month = running revenue - running salary - running GRN.
+ *  - revenue: the P&L statement's recognised revenue for the branch (same engine as the P&L
+ *    page), spread straight-line across the month and cut at the salary snapshot's as-of date so
+ *    revenue and salary cover the same days (the app's own daily trend spreads seat revenue the
+ *    same way);
+ *  - salary: pnl_running_salary_snapshot.earned_salary_till_date;
+ *  - GRN: finance_budget_line reserved + consumed, the budget engine's ex-GST (P&L cost) basis.
+ * A closed month is not spread: its revenue is taken whole.
+ */
 export async function fetchRunningPnl(
   branchId: string,
   today: string,
 ): Promise<RunningPnlStats> {
   const period = today.slice(0, 7); // YYYY-MM
-  const empty: RunningPnlStats = {
-    periodCode: period,
-    revenueRecognized: 0,
-    revenueInvoiced: 0,
-    revenueProjected: 0,
-    directCost: 0,
-    indirectCost: 0,
-    totalCost: 0,
-    operatingProfit: 0,
-    opPct: null,
-    peopleCostCoveragePct: null,
-    revenueBasis: "",
-    revenueIsEstimate: false,
-    costAsOf: null,
-    dataAvailable: false,
-  };
+  const [year, month] = period.split("-").map(Number);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+
+  const [salRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(earned_salary_till_date), 0)     AS salary,
+            DATE_FORMAT(MAX(as_of_date), '%Y-%m-%d')       AS as_of
+       FROM pnl_running_salary_snapshot
+      WHERE branch_id = ? AND period_code = ?`,
+    [branchId, period],
+  );
+  const [grnRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(l.consumed_amount), 0) AS consumed,
+            COALESCE(SUM(l.reserved_amount), 0) AS reserved
+       FROM finance_budget_line l
+       JOIN finance_budget_header h ON h.id = l.budget_id
+      WHERE h.branch_id = ? AND h.period_code = ? AND h.status NOT IN ('draft')`,
+    [branchId, period],
+  );
   const statement: any = await getStatement({ period, branchId }, "branch");
   const column = statement.columns?.[0];
-  if (!column) return empty;
-  const value = (key: string): number => {
-    const row = statement.rows.find((r: any) => r.componentKey === key);
-    return Number(row?.values?.[column.id] ?? 0) || 0;
-  };
-  const revenueRecognized = value("recognized_revenue");
-  const totalCost = value("total_cost");
+  const revenueMonth = column
+    ? Number(
+        statement.rows.find((r: any) => r.componentKey === "recognized_revenue")
+          ?.values?.[column.id] ?? 0,
+      ) || 0
+    : 0;
+
+  const salaryRunning = Number((salRows[0] as any)?.salary ?? 0);
+  const asOfDate: string | null = (salRows[0] as any)?.as_of ?? null;
+  const grnConsumed = Number((grnRows[0] as any)?.consumed ?? 0);
+  const grnReserved = Number((grnRows[0] as any)?.reserved ?? 0);
+
+  const periodOpen = Boolean(statement.periodOpen);
+  const coverageDay = Number((asOfDate ?? today).slice(8, 10));
+  const elapsedDays = periodOpen
+    ? Math.min(coverageDay, daysInMonth)
+    : daysInMonth;
+  const revenueRunning = (revenueMonth * elapsedDays) / daysInMonth;
+  const totalCostRunning = salaryRunning + grnConsumed + grnReserved;
+  const operatingProfit = revenueRunning - totalCostRunning;
+
   return {
     periodCode: period,
-    revenueRecognized,
-    revenueInvoiced: value("invoiced_revenue"),
-    revenueProjected: value("planned_revenue"),
-    directCost: value("dc_total"),
-    indirectCost: value("total_idc"),
-    totalCost,
-    operatingProfit: value("operating_profit"),
-    opPct: revenueRecognized > 0 ? value("operating_profit_pct") : null,
-    peopleCostCoveragePct: column.peopleCostCoveragePct ?? null,
+    daysInMonth,
+    elapsedDays,
+    asOfDate,
+    revenueMonth,
+    revenueRunning,
+    salaryRunning,
+    grnConsumed,
+    grnReserved,
+    totalCostRunning,
+    operatingProfit,
+    opPct: revenueRunning > 0 ? (operatingProfit / revenueRunning) * 100 : null,
+    peopleCostCoveragePct: column?.peopleCostCoveragePct ?? null,
     revenueBasis: String(statement.revenueBasis ?? ""),
-    revenueIsEstimate:
-      Boolean(statement.periodOpen) && statement.revenueBasis !== "invoiced",
-    costAsOf: statement.peopleCostAsOf
-      ? new Date(statement.peopleCostAsOf).toISOString().slice(0, 10)
-      : null,
-    dataAvailable: revenueRecognized > 0 || totalCost > 0,
+    dataAvailable:
+      revenueMonth > 0 || salaryRunning > 0 || grnConsumed + grnReserved > 0,
   };
 }
 
@@ -758,7 +797,6 @@ export interface BranchHealthRawData {
   lateStats: LateStats;
   shrinkage: ShrinkageStats;
   headcount: HeadcountMovement;
-  processPerformance: ProcessPerformance[];
   openHiring: OpenHiringStats;
   runningPnl: RunningPnlStats;
   pendingActions: PendingAction[];
@@ -792,7 +830,7 @@ export async function fetchAllBranchHealthData(
         slaBreaches: 0,
         slaTotal: 0,
       },
-      lateStats: { totalLate: 0, processWise: [] },
+      lateStats: { totalLate: 0, processWise: [], byManager: [] },
       shrinkage: {
         scheduled: 0,
         present: 0,
@@ -802,31 +840,42 @@ export async function fetchAllBranchHealthData(
         rosterBased: false,
         yetToStart: 0,
         weekOffWorked: 0,
-        byShift: [],
+        bySlot: [],
       },
       headcount: {
         joinedToday: 0,
         leftToday: 0,
         joinedNames: [],
         leftNames: [],
+        byProcess: [],
         totalActive: 0,
       },
-      processPerformance: [],
-      openHiring: { activePipeline: 0, byStage: [] },
+      openHiring: {
+        openRequisitions: 0,
+        pendingApproval: 0,
+        requested: 0,
+        fulfilled: 0,
+        openPositions: 0,
+        inPipeline: 0,
+        selected: 0,
+        overdue: 0,
+        rows: [],
+      },
       runningPnl: {
         periodCode: today.slice(0, 7),
-        revenueRecognized: 0,
-        revenueInvoiced: 0,
-        revenueProjected: 0,
-        directCost: 0,
-        indirectCost: 0,
-        totalCost: 0,
+        daysInMonth: 30,
+        elapsedDays: 0,
+        asOfDate: null,
+        revenueMonth: 0,
+        revenueRunning: 0,
+        salaryRunning: 0,
+        grnConsumed: 0,
+        grnReserved: 0,
+        totalCostRunning: 0,
         operatingProfit: 0,
         opPct: null,
         peopleCostCoveragePct: null,
         revenueBasis: "",
-        revenueIsEstimate: false,
-        costAsOf: null,
         dataAvailable: false,
       },
       pendingActions: [],
@@ -841,7 +890,6 @@ export async function fetchAllBranchHealthData(
     lateStats,
     shrinkage,
     headcount,
-    processPerformance,
     openHiring,
     runningPnl,
     pendingActions,
@@ -853,8 +901,7 @@ export async function fetchAllBranchHealthData(
     fetchLateStats(branchId, today),
     fetchShrinkage(branchId, today),
     fetchHeadcountMovement(branchId, today),
-    fetchProcessPerformance(branchId, today),
-    fetchOpenHiring(branchName),
+    fetchOpenHiring(branchName, today),
     fetchRunningPnl(branchId, today),
     fetchPendingActions(branchId),
   ]);
@@ -868,7 +915,6 @@ export async function fetchAllBranchHealthData(
     lateStats,
     shrinkage,
     headcount,
-    processPerformance,
     openHiring,
     runningPnl,
     pendingActions,
