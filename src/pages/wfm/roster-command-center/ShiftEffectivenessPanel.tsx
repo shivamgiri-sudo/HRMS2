@@ -22,6 +22,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { HEAVY_QUERY_OPTIONS, HEAVY_QUERY_TIMEOUT_MS, UpdatedStamp, useRefreshFlags } from "./heavyQuery";
 import { useRosterConsoleFilters } from "./RosterConsoleFilterContext";
 import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
 import { KpiTile, toKpiTone } from "@/components/wfm/console/KpiTile";
@@ -352,29 +353,56 @@ export default function ShiftEffectivenessPanel() {
   // Merge-plan Phase B bug #14
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
 
-  const { data: shiftsData, isLoading: shiftsLoading } = useQuery({
+  const { mark, consume } = useRefreshFlags();
+  const withRefresh = (params: URLSearchParams, key: string) => {
+    if (consume(key)) params.set("refresh", "1");
+    return params;
+  };
+
+  // Shift effectiveness is the slow query (~10s cold): it goes first; break compliance and the
+  // (also slow) recommendations start once it has settled so at most two run together.
+  const shiftsQuery = useQuery({
     queryKey: ["shift-effectiveness", "shifts", branchFilter, processFilter, lobId],
-    queryFn: () => {
-      const params = scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId });
-      return hrmsApi.get<{ shifts: ShiftEffectiveness[] }>(`/api/roster-analytics/shift-effectiveness?${params}`);
+    queryFn: ({ signal }) => {
+      const params = withRefresh(scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId }), "shifts");
+      return hrmsApi.get<{ shifts: ShiftEffectiveness[] }>(`/api/roster-analytics/shift-effectiveness?${params}`, HEAVY_QUERY_TIMEOUT_MS, signal);
     },
+    ...HEAVY_QUERY_OPTIONS,
   });
+  const { data: shiftsData, isPending: shiftsLoading } = shiftsQuery;
+  const shiftsSettled = shiftsQuery.fetchStatus === "idle";
 
-  const { data: breakData, isLoading: breakLoading } = useQuery({
+  const breaksQuery = useQuery({
     queryKey: ["shift-effectiveness", "breaks", branchFilter, processFilter, lobId],
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       const params = scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId });
-      return hrmsApi.get<BreakCompliance>(`/api/roster-analytics/break-compliance?${params}`);
+      return hrmsApi.get<BreakCompliance>(`/api/roster-analytics/break-compliance?${params}`, HEAVY_QUERY_TIMEOUT_MS, signal);
     },
+    enabled: shiftsSettled,
+    ...HEAVY_QUERY_OPTIONS,
   });
+  const { data: breakData, isPending: breakLoading } = breaksQuery;
 
-  const { data: recsData } = useQuery({
+  const recsQuery = useQuery({
     queryKey: ["shift-effectiveness", "recommendations", branchFilter, processFilter, lobId],
-    queryFn: () => {
-      const params = scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId });
-      return hrmsApi.get<{ recommendations: ShiftRecommendation[] }>(`/api/roster-analytics/shift-recommendations?${params}`);
+    queryFn: ({ signal }) => {
+      const params = withRefresh(scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId }), "recs");
+      return hrmsApi.get<{ recommendations: ShiftRecommendation[] }>(`/api/roster-analytics/shift-recommendations?${params}`, HEAVY_QUERY_TIMEOUT_MS, signal);
     },
+    enabled: shiftsSettled,
+    ...HEAVY_QUERY_OPTIONS,
   });
+  const { data: recsData } = recsQuery;
+
+  const refreshAll = async () => {
+    mark("shifts", "recs");
+    try {
+      await shiftsQuery.refetch();
+    } finally {
+      void breaksQuery.refetch();
+      void recsQuery.refetch();
+    }
+  };
 
   // Merge-plan Phase B bug #14: dedicated per-employee detail fetch for the drawer.
   const { data: employeeProfile, isLoading: employeeProfileLoading } = useQuery({
@@ -403,6 +431,18 @@ export default function ShiftEffectivenessPanel() {
           icon={BarChart3}
           title="Shift Effectiveness"
           description="Analyze shift performance, break compliance, and optimize assignments"
+          actions={
+            <div className="flex items-center gap-3">
+              <UpdatedStamp
+                updatedAt={shiftsQuery.dataUpdatedAt}
+                fetching={shiftsQuery.isFetching || breaksQuery.isFetching || recsQuery.isFetching}
+              />
+              <Button variant="outline" size="sm" onClick={() => void refreshAll()} className="cursor-pointer" aria-label="Refresh shift effectiveness data">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Refresh
+              </Button>
+            </div>
+          }
         />
 
         {/* KPI Row */}

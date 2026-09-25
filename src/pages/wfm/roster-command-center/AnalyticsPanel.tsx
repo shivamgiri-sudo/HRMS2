@@ -27,6 +27,8 @@ import { KpiTile, toKpiTone } from "@/components/wfm/console/KpiTile";
 import { PanelHeader } from "@/components/wfm/console/PanelHeader";
 import { FilterNote } from "@/components/wfm/console/FilterNote";
 import { scopeParams } from "./filterState";
+import { HEAVY_QUERY_OPTIONS, HEAVY_QUERY_TIMEOUT_MS, UpdatedStamp, useRefreshFlags } from "./heavyQuery";
+import { Button } from "@/components/ui/button";
 import {
   TrendingDown,
   TrendingUp,
@@ -42,6 +44,7 @@ import {
   Clock,
   Zap,
   LineChart,
+  RefreshCw,
 } from "lucide-react";
 
 const ALL = "__all__";
@@ -253,21 +256,42 @@ export default function AnalyticsPanel() {
     enabled: branchId !== ALL,
   });
 
-  const { data: qualityData, isLoading: qualityLoading } = useQuery({
-    queryKey: ["roster-analytics", "quality", branchId, processId, lobId, period],
-    queryFn: () => {
-      const params = scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId }, { period });
-      return hrmsApi.get<QualityCorrelation>(`/api/roster-analytics/quality-correlation?${params}`);
-    },
-  });
+  const { mark, consume } = useRefreshFlags();
+  const withRefresh = (params: URLSearchParams, key: string) => {
+    if (consume(key)) params.set("refresh", "1");
+    return params;
+  };
 
-  const { data: costData, isLoading: costLoading } = useQuery({
-    queryKey: ["roster-analytics", "cost", branchId, processId, lobId, period],
-    queryFn: () => {
-      const params = scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId }, { period });
-      return hrmsApi.get<CostImpact>(`/api/roster-analytics/cost-impact?${params}`);
+  // Quality correlation goes first; cost impact only starts once it has settled (never both at once).
+  const qualityQuery = useQuery({
+    queryKey: ["roster-analytics", "quality", branchId, processId, lobId, period],
+    queryFn: ({ signal }) => {
+      const params = withRefresh(scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId }, { period }), "quality");
+      return hrmsApi.get<QualityCorrelation>(`/api/roster-analytics/quality-correlation?${params}`, HEAVY_QUERY_TIMEOUT_MS, signal);
     },
+    ...HEAVY_QUERY_OPTIONS,
   });
+  const { data: qualityData, isPending: qualityLoading } = qualityQuery;
+
+  const costQuery = useQuery({
+    queryKey: ["roster-analytics", "cost", branchId, processId, lobId, period],
+    queryFn: ({ signal }) => {
+      const params = withRefresh(scopeParams({ branchId: filters.branchId, processId: filters.processId, lobId }, { period }), "cost");
+      return hrmsApi.get<CostImpact>(`/api/roster-analytics/cost-impact?${params}`, HEAVY_QUERY_TIMEOUT_MS, signal);
+    },
+    enabled: qualityQuery.fetchStatus === "idle",
+    ...HEAVY_QUERY_OPTIONS,
+  });
+  const { data: costData, isPending: costLoading } = costQuery;
+
+  const refreshAll = async () => {
+    mark("quality", "cost");
+    try {
+      await qualityQuery.refetch();
+    } finally {
+      void costQuery.refetch();
+    }
+  };
 
   const { data: forecastData, isLoading: forecastLoading } = useQuery({
     queryKey: ["roster-analytics", "forecast", branchId],
@@ -281,6 +305,18 @@ export default function AnalyticsPanel() {
           icon={BarChart3}
           title="Roster Analytics"
           description="Shrinkage patterns, quality correlation, cost impact, and forecasting"
+          actions={
+            <div className="flex items-center gap-3">
+              <UpdatedStamp
+                updatedAt={Math.max(qualityQuery.dataUpdatedAt, costQuery.dataUpdatedAt)}
+                fetching={qualityQuery.isFetching || costQuery.isFetching}
+              />
+              <Button variant="outline" size="sm" onClick={() => void refreshAll()} className="cursor-pointer" aria-label="Refresh analytics data">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Refresh
+              </Button>
+            </div>
+          }
         />
 
         <Tabs defaultValue="shrinkage" className="space-y-4">

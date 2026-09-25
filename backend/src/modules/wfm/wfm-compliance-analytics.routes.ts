@@ -12,6 +12,7 @@ import {
   getEmployeeWfmCompliance,
   getBranchWfmCompliance,
 } from "./wfm-compliance-analytics.service.js";
+import { analyticsCache } from "../../shared/analyticsCache.js";
 
 const router = Router();
 
@@ -146,6 +147,7 @@ router.get(
 router.get(
   "/summary",
   requireRole("hr", "wfm", "admin", "super_admin", "operations_manager", "ceo"),
+  analyticsCache("wfm-compliance-summary"),
   async (req, res, next) => {
     try {
       const branchId = req.query.branchId as string | undefined;
@@ -161,24 +163,9 @@ router.get(
       const whereClause = `ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}${scope.sql ? ` ${scope.sql}` : ''}`;
       const params: (string | number)[] = [periodStart, periodEnd, ...scope.params];
 
-      // Overall compliance score (attendance-based)
-      const [compRows] = await db.execute<RowDataPacket[]>(
-        `SELECT
-           COUNT(DISTINCT ra.employee_id) AS total_employees,
-           SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS compliant,
-           SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 1 ELSE 0 END) AS violations,
-           SUM(CASE WHEN ra.is_week_off = 0 THEN 1 ELSE 0 END) AS total_shifts
-         FROM wfm_roster_assignment ra
-         JOIN employees e ON ra.employee_id = e.id
-         LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
-         WHERE ${whereClause}`,
-        params
-      );
-
-      const compliancePct = compRows[0]?.total_shifts > 0
-        ? Math.round((compRows[0].compliant / compRows[0].total_shifts) * 100)
-        : 100;
-
+      // Two chains run concurrently (max 2 statements in flight on the shared pool):
+      // A = the five rule queries, sequential; B = overall score, then branch ranking.
+      const rulesChain = (async () => {
       // Count by violation type (simulated WFM rules)
       // Rule 1: Minimum rest (< 11 hours between shifts)
       const [restRows] = await db.execute<RowDataPacket[]>(
@@ -277,6 +264,63 @@ router.get(
         [periodStart, periodEnd, ...scope.params]
       );
 
+        return { restRows, consecRows, weekoffRows, hoursRows, nightRows };
+      })();
+      const scoreChain = (async () => {
+      // Overall compliance score (attendance-based)
+      const [compRows] = await db.execute<RowDataPacket[]>(
+        `SELECT
+           COUNT(DISTINCT ra.employee_id) AS total_employees,
+           SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS compliant,
+           SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 1 ELSE 0 END) AS violations,
+           SUM(CASE WHEN ra.is_week_off = 0 THEN 1 ELSE 0 END) AS total_shifts
+         FROM wfm_roster_assignment ra
+         JOIN employees e ON ra.employee_id = e.id
+         LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
+         WHERE ${whereClause}`,
+        params
+      );
+
+      let byBranch: Array<{ branchId: string; branchName: string; score: number; violations: number; trend: number }> = [];
+      if (!branchId) {
+        // Branch ranking: the branch dimension is what's being ranked, so only process/LOB narrow it.
+        const branchScope = buildEmployeeScope({ processId, lob });
+        const [branchRows] = await db.execute<RowDataPacket[]>(
+          `SELECT
+             e.branch_id AS branch_id,
+             b.branch_name AS branch_name,
+             SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS compliant,
+             SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 1 ELSE 0 END) AS violations,
+             SUM(CASE WHEN ra.is_week_off = 0 THEN 1 ELSE 0 END) AS total_shifts
+           FROM wfm_roster_assignment ra
+           JOIN employees e ON ra.employee_id = e.id
+           JOIN branch_master b ON e.branch_id = b.id
+           LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
+           WHERE ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}
+             ${branchScope.sql}
+           GROUP BY e.branch_id, b.branch_name
+           HAVING total_shifts > 0
+           ORDER BY compliant / total_shifts ASC`,
+          [periodStart, periodEnd, ...branchScope.params]
+        );
+        byBranch = branchRows.map((r: RowDataPacket) => ({
+          branchId: String(r.branch_id),
+          branchName: String(r.branch_name),
+          score: Math.round((Number(r.compliant) / Number(r.total_shifts)) * 100),
+          violations: Number(r.violations),
+          // No historical per-branch baseline exists yet to compare against (same reason
+          // the top-level `trend` above is hardcoded 0) — left at 0 rather than fabricated.
+          trend: 0,
+        }));
+      }
+
+        return { compRows, byBranch };
+      })();
+      const [{ restRows, consecRows, weekoffRows, hoursRows, nightRows }, { compRows, byBranch }] = await Promise.all([rulesChain, scoreChain]);
+      const compliancePct = compRows[0]?.total_shifts > 0
+        ? Math.round((compRows[0].compliant / compRows[0].total_shifts) * 100)
+        : 100;
+
       const rules = [
         {
           ruleId: 'MIN_REST',
@@ -330,39 +374,6 @@ router.get(
       // not), just grouped by branch instead of collapsed across all of them — not a
       // re-run of the 5 more expensive rule-violation queries per branch, which would be a
       // real perf cost for a number this page doesn't ask to see per-branch anyway.
-      let byBranch: Array<{ branchId: string; branchName: string; score: number; violations: number; trend: number }> = [];
-      if (!branchId) {
-        // Branch ranking: the branch dimension is what's being ranked, so only process/LOB narrow it.
-        const branchScope = buildEmployeeScope({ processId, lob });
-        const [branchRows] = await db.execute<RowDataPacket[]>(
-          `SELECT
-             e.branch_id AS branch_id,
-             b.branch_name AS branch_name,
-             SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS compliant,
-             SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 1 ELSE 0 END) AS violations,
-             SUM(CASE WHEN ra.is_week_off = 0 THEN 1 ELSE 0 END) AS total_shifts
-           FROM wfm_roster_assignment ra
-           JOIN employees e ON ra.employee_id = e.id
-           JOIN branch_master b ON e.branch_id = b.id
-           LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
-           WHERE ra.roster_date BETWEEN ? AND ? AND ${realRoster('ra')}
-             ${branchScope.sql}
-           GROUP BY e.branch_id, b.branch_name
-           HAVING total_shifts > 0
-           ORDER BY compliant / total_shifts ASC`,
-          [periodStart, periodEnd, ...branchScope.params]
-        );
-        byBranch = branchRows.map((r: RowDataPacket) => ({
-          branchId: String(r.branch_id),
-          branchName: String(r.branch_name),
-          score: Math.round((Number(r.compliant) / Number(r.total_shifts)) * 100),
-          violations: Number(r.violations),
-          // No historical per-branch baseline exists yet to compare against (same reason
-          // the top-level `trend` above is hardcoded 0) — left at 0 rather than fabricated.
-          trend: 0,
-        }));
-      }
-
       res.json({
         period,
         compliancePct,
@@ -385,6 +396,7 @@ router.get(
 router.get(
   "/violations",
   requireRole("hr", "wfm", "admin", "super_admin", "operations_manager"),
+  analyticsCache("wfm-compliance-violations"),
   async (req, res, next) => {
     try {
       const branchId = req.query.branchId as string | undefined;
@@ -482,6 +494,7 @@ router.get(
 router.get(
   "/trend",
   requireRole("hr", "wfm", "admin", "super_admin", "ceo"),
+  analyticsCache("wfm-compliance-trend"),
   async (req, res, next) => {
     try {
       const branchId = req.query.branchId as string | undefined;

@@ -15,6 +15,7 @@ import {
 import { getProcessTeamRosterView } from './process-team-roster.service.js';
 import { todayLocalDateStr } from './shift-due.util.js';
 import { lobAnd, readLobFilter } from '../../shared/lobFilter.js';
+import { analyticsCache } from '../../shared/analyticsCache.js';
 
 const router = Router();
 
@@ -75,7 +76,7 @@ router.get('/shrinkage-intelligence/:branchId', requireRole(...ANALYTICS_ROLES),
  * GET /api/roster-analytics/quality-correlation
  * Correlation between attendance and quality scores
  */
-router.get('/quality-correlation', requireRole(...ANALYTICS_ROLES), async (req, res) => {
+router.get('/quality-correlation', requireRole(...ANALYTICS_ROLES), analyticsCache('roster-analytics-quality-correlation'), async (req, res) => {
   try {
     const lob = readLobFilter(req, res);
     if (!lob) return;
@@ -103,7 +104,7 @@ router.get('/quality-correlation', requireRole(...ANALYTICS_ROLES), async (req, 
  * GET /api/roster-analytics/cost-impact
  * Cost of non-adherence with breakdown and projections
  */
-router.get('/cost-impact', requireRole(...ANALYTICS_ROLES), async (req, res) => {
+router.get('/cost-impact', requireRole(...ANALYTICS_ROLES), analyticsCache('roster-analytics-cost-impact'), async (req, res) => {
   try {
     const lob = readLobFilter(req, res);
     if (!lob) return;
@@ -451,7 +452,7 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
  * GET /api/roster-analytics/shift-effectiveness
  * Shift-wise adherence comparison with break compliance
  */
-router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), async (req, res) => {
+router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), analyticsCache('roster-analytics-shift-effectiveness'), async (req, res) => {
   try {
     const lob = readLobFilter(req, res);
     if (!lob) return;
@@ -735,7 +736,7 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
  * employee's own adherence and the target shift's cohort average, and
  * `confidence` is derived from the employee's own sample size (scheduled days).
  */
-router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), async (req, res) => {
+router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), analyticsCache('roster-analytics-shift-recommendations'), async (req, res) => {
   try {
     const lob = readLobFilter(req, res);
     if (!lob) return;
@@ -758,7 +759,8 @@ router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), async (req
     params.push(...lobSql.params);
 
     // Per-shift cohort adherence (same shape as /shift-effectiveness, minimal fields).
-    const [shiftRows] = await db.execute<any[]>(
+    // Both queries are independent (same filters), so they run concurrently: 2 in flight max.
+    const shiftRowsPromise = db.execute<any[]>(
       `SELECT
          sm.id AS shift_id,
          sm.shift_name,
@@ -774,19 +776,8 @@ router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), async (req
       params
     );
 
-    const eligibleShifts = shiftRows.filter((r: any) => Number(r.total_employees) >= 5);
-    if (eligibleShifts.length < 2) {
-      // Can't meaningfully recommend a move without at least 2 real cohorts to compare.
-      res.json({ recommendations: [] });
-      return;
-    }
-
-    const bestShift = eligibleShifts.reduce((best: any, r: any) =>
-      Number(r.adherence_pct) > Number(best.adherence_pct) ? r : best
-    );
-
     // Per-employee personal adherence + current shift, same 30-day window/filters.
-    const [empRows] = await db.execute<any[]>(
+    const empRowsPromise = db.execute<any[]>(
       `SELECT
          ra.employee_id,
          e.employee_code,
@@ -804,6 +795,18 @@ router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), async (req
        GROUP BY ra.employee_id, e.employee_code, e.full_name, sm.id, sm.shift_name, sm.start_time, sm.end_time
        HAVING scheduled_days >= 5`,
       params
+    );
+    const [[shiftRows], [empRows]] = await Promise.all([shiftRowsPromise, empRowsPromise]);
+
+    const eligibleShifts = shiftRows.filter((r: any) => Number(r.total_employees) >= 5);
+    if (eligibleShifts.length < 2) {
+      // Can't meaningfully recommend a move without at least 2 real cohorts to compare.
+      res.json({ recommendations: [] });
+      return;
+    }
+
+    const bestShift = eligibleShifts.reduce((best: any, r: any) =>
+      Number(r.adherence_pct) > Number(best.adherence_pct) ? r : best
     );
 
     const recommendations = empRows

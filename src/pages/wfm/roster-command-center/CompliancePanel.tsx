@@ -27,6 +27,7 @@ import { ConsoleCard } from "@/components/wfm/console/ConsoleCard";
 import { KpiTile, toKpiTone } from "@/components/wfm/console/KpiTile";
 import { PanelHeader } from "@/components/wfm/console/PanelHeader";
 import { scopeParams } from "./filterState";
+import { HEAVY_QUERY_OPTIONS, HEAVY_QUERY_TIMEOUT_MS, SectionSkeleton, UpdatedStamp, useRefreshFlags } from "./heavyQuery";
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -483,19 +484,30 @@ export default function CompliancePanel() {
   const { processId, lobId } = filters;
   const [ruleFilter, setRuleFilter] = useState(ALL);
 
-  const { data: summaryData, isLoading: summaryLoading, isError: summaryError } = useQuery({
+  const { mark, consume } = useRefreshFlags();
+  const withRefresh = (params: URLSearchParams, key: string) => {
+    if (consume(key)) params.set("refresh", "1");
+    return params;
+  };
+
+  // Summary is the slow one (cold ~48s): it goes first; violations/trend only start once it has settled
+  // so the three requests never hit the shared DB pool at the same time.
+  const summaryQuery = useQuery({
     queryKey: ["compliance", "summary", branchFilter, processId, lobId],
-    queryFn: async () => {
-      const params = scopeParams({ branchId: filters.branchId, processId, lobId });
-      const raw = await hrmsApi.get<ComplianceApiSummary>(`/api/wfm/compliance/summary?${params}`);
+    queryFn: async ({ signal }) => {
+      const params = withRefresh(scopeParams({ branchId: filters.branchId, processId, lobId }), "summary");
+      const raw = await hrmsApi.get<ComplianceApiSummary>(`/api/wfm/compliance/summary?${params}`, HEAVY_QUERY_TIMEOUT_MS, signal);
       return adaptSummary(raw);
     },
+    ...HEAVY_QUERY_OPTIONS,
   });
+  const { data: summaryData, isError: summaryError } = summaryQuery;
+  const summarySettled = summaryQuery.fetchStatus === "idle";
 
-  const { data: violationsData, isLoading: violationsLoading, refetch } = useQuery({
+  const violationsQuery = useQuery({
     queryKey: ["compliance", "violations", branchFilter, processId, lobId, ruleFilter],
-    queryFn: async () => {
-      const params = scopeParams({ branchId: filters.branchId, processId, lobId });
+    queryFn: async ({ signal }) => {
+      const params = withRefresh(scopeParams({ branchId: filters.branchId, processId, lobId }), "violations");
       // Merge-plan Phase B bug #9: ruleFilter's options are now EXCEPTION_TYPE_CONFIG's real
       // ids (ABSENT_NO_CALL/LATE_ARRIVAL/ADHERENCE), which the API's ruleId param actually
       // matches — previously this sent one of the 5 roster-rule ids, which never matched
@@ -503,17 +515,23 @@ export default function CompliancePanel() {
       if (ruleFilter !== ALL) params.set("ruleId", ruleFilter);
       const raw = await hrmsApi.get<{ violations: ApiViolation[]; totalCount: number }>(
         `/api/wfm/compliance/violations?${params}`,
+        HEAVY_QUERY_TIMEOUT_MS,
+        signal,
       );
       const violations = (raw?.violations ?? []).map(adaptViolation);
       return { violations, total: raw?.totalCount ?? violations.length };
     },
+    enabled: summarySettled,
+    ...HEAVY_QUERY_OPTIONS,
   });
+  const { data: violationsData } = violationsQuery;
+  const violationsLoading = violationsQuery.isPending;
 
-  const { data: trendData } = useQuery({
+  const trendQuery = useQuery({
     queryKey: ["compliance", "trend", branchFilter, processId, lobId],
-    queryFn: async () => {
-      const params = scopeParams({ branchId: filters.branchId, processId, lobId });
-      const raw = await hrmsApi.get<{ trend: ApiTrendPoint[] }>(`/api/wfm/compliance/trend?${params}`);
+    queryFn: async ({ signal }) => {
+      const params = withRefresh(scopeParams({ branchId: filters.branchId, processId, lobId }), "trend");
+      const raw = await hrmsApi.get<{ trend: ApiTrendPoint[] }>(`/api/wfm/compliance/trend?${params}`, HEAVY_QUERY_TIMEOUT_MS, signal);
       return {
         trend: (raw?.trend ?? []).map((t) => ({
           week: t.month,
@@ -522,7 +540,22 @@ export default function CompliancePanel() {
         })),
       };
     },
+    enabled: summarySettled,
+    ...HEAVY_QUERY_OPTIONS,
   });
+  const { data: trendData } = trendQuery;
+
+  /** Refresh: bypass the server cache, summary first, then the other two once it settles. */
+  const refetch = async () => {
+    mark("summary", "violations", "trend");
+    try {
+      await summaryQuery.refetch();
+    } finally {
+      void violationsQuery.refetch();
+      void trendQuery.refetch();
+    }
+  };
+  const anyFetching = summaryQuery.isFetching || violationsQuery.isFetching || trendQuery.isFetching;
 
   const summary = summaryData ?? {
     overallScore: 0,
@@ -557,10 +590,13 @@ export default function CompliancePanel() {
           title="Roster Compliance"
           description="Track WFM rule violations and compliance scores"
           actions={
-            <Button variant="outline" size="sm" onClick={() => refetch()} className="cursor-pointer" aria-label="Refresh compliance data">
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Refresh
-            </Button>
+            <div className="flex items-center gap-3">
+              <UpdatedStamp updatedAt={summaryQuery.dataUpdatedAt} fetching={anyFetching} />
+              <Button variant="outline" size="sm" onClick={() => void refetch()} className="cursor-pointer" aria-label="Refresh compliance data">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Refresh
+              </Button>
+            </div>
           }
         />
 
@@ -582,7 +618,7 @@ export default function CompliancePanel() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => refetch()}
+              onClick={() => void refetch()}
               className="mt-3 border-red-300 bg-white text-red-800 hover:bg-red-100"
             >
               Retry
@@ -590,8 +626,9 @@ export default function CompliancePanel() {
           </div>
         )}
 
-        {/* KPI Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
+        {/* KPI Row — skeleton while the (slow) summary has no data yet, so a loading state never reads as 100% */}
+        {summaryQuery.isPending && <div className="mb-6"><SectionSkeleton lines={2} label="Loading compliance summary" /></div>}
+        <div className={`grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6${summaryQuery.isPending ? " hidden" : ""}`}>
           <MetricTile
             label="Compliance Score"
             value={`${summary.overallScore}%`}
@@ -743,7 +780,7 @@ export default function CompliancePanel() {
             {/* Violations List */}
             <ConsoleCard>
               {violationsLoading ? (
-                <div className="py-12 text-center text-slate-400">Loading violations...</div>
+                <SectionSkeleton lines={5} label="Loading violations" />
               ) : violations.length === 0 ? (
                 <div className="py-12 text-center">
                   <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-green-400" />

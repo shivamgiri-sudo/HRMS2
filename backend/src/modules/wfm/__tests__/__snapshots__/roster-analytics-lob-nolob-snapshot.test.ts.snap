@@ -121,6 +121,13 @@ exports[`roster-analytics unfiltered SQL is unchanged > shift-rec 1`] = `
     ],
     "sql": "SELECT sm.id AS shift_id, sm.shift_name, CONCAT(TIME_FORMAT(sm.start_time, '%H:%i'), ' - ', TIME_FORMAT(sm.end_time, '%H:%i')) AS shift_time, COUNT(DISTINCT ra.employee_id) AS total_employees, AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND e.branch_id = ? AND e.process_id = ? GROUP BY sm.id, sm.shift_name, sm.start_time, sm.end_time",
   },
+  {
+    "params": [
+      "b1",
+      "p1",
+    ],
+    "sql": "SELECT ra.employee_id, e.employee_code, e.full_name, sm.id AS shift_id, sm.shift_name, CONCAT(TIME_FORMAT(sm.start_time, '%H:%i'), ' - ', TIME_FORMAT(sm.end_time, '%H:%i')) AS shift_time, COUNT(*) AS scheduled_days, SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS present_days FROM wfm_roster_assignment ra JOIN employees e ON ra.employee_id = e.id JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL) AND e.branch_id = ? AND e.process_id = ? GROUP BY ra.employee_id, e.employee_code, e.full_name, sm.id, sm.shift_name, sm.start_time, sm.end_time HAVING scheduled_days >= 5",
+  },
 ]
 `;
 

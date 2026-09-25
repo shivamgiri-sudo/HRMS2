@@ -164,10 +164,20 @@ export function getHrmsApiErrorCode(error: unknown): string | null {
   return typeof code === "string" ? code : null;
 }
 
-async function fetchOnce(normalizedPath: string, method: string, body: unknown, timeoutMs: number): Promise<Response> {
+async function fetchOnce(
+  normalizedPath: string,
+  method: string,
+  body: unknown,
+  timeoutMs: number,
+  externalSignal?: AbortSignal,
+): Promise<Response> {
   const headers = getAuthHeader();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // Caller-supplied cancellation (e.g. react-query's signal on a filter change) aborts the same fetch.
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
   try {
     return await fetch(`${HRMS_API_URL}${normalizedPath}`, {
       method,
@@ -178,24 +188,26 @@ async function fetchOnce(normalizedPath: string, method: string, body: unknown, 
     });
   } catch (err: unknown) {
     if (err instanceof DOMException && err.name === "AbortError") {
+      if (externalSignal?.aborted) throw err; // cancelled by the caller, not a timeout
       throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s. The server is still processing — please refresh to check the result.`);
     }
     throw err;
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", onExternalAbort);
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown, timeoutMs = 30000): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, timeoutMs = 30000, signal?: AbortSignal): Promise<T> {
   const normalizedPath = normalizeRequestPath(path);
 
-  let res = await fetchOnce(normalizedPath, method, body, timeoutMs);
+  let res = await fetchOnce(normalizedPath, method, body, timeoutMs, signal);
 
   // On 401, try a silent token refresh once and retry the original request
   if (res.status === 401 && !path.includes("/api/auth/")) {
     const refreshed = await refreshAccessToken();
     if (refreshed) {
-      res = await fetchOnce(normalizedPath, method, body, timeoutMs);
+      res = await fetchOnce(normalizedPath, method, body, timeoutMs, signal);
     }
   }
 
@@ -429,7 +441,8 @@ export interface HrmsEnvelope<T = any> {
 }
 
 export const hrmsApi = {
-  get: <T = HrmsEnvelope>(path: string, timeoutMs?: number) => request<T>("GET", path, undefined, timeoutMs),
+  get: <T = HrmsEnvelope>(path: string, timeoutMs?: number, signal?: AbortSignal) =>
+    request<T>("GET", path, undefined, timeoutMs, signal),
   post: <T = HrmsEnvelope>(path: string, body?: unknown, timeoutMs?: number) => request<T>("POST", path, body, timeoutMs),
   put: <T = HrmsEnvelope>(path: string, body?: unknown) => request<T>("PUT", path, body),
   patch: <T = HrmsEnvelope>(path: string, body?: unknown) => request<T>("PATCH", path, body),
