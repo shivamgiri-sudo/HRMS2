@@ -23,3 +23,29 @@ export interface MatchResult {
   confidence: number; // 0.000 to 1.000
   method: MatchMethod;
 }
+
+/** A raw TL/AM name pulled from onfido_db, tagged with which role column it came from. */
+export interface RawOnfidoName {
+  rawName: string;
+  rawRole: RawNameRole;
+}
+
+/** A row from onfido_name_employee_map (mas_hrms), as read back by the application. */
+export interface MappingRow {
+  id: string;
+  rawName: string;
+  rawRole: RawNameRole;
+  employeeId: string | null;
+  matchConfidence: number;
+  matchMethod: MatchMethod;
+  verifiedByHr: boolean;
+}
+
+/** Input to upsertMapping — the fields a match run (or HR review) writes. */
+export interface UpsertMappingInput {
+  rawName: string;
+  rawRole: RawNameRole;
+  employeeId: string | null;
+  matchConfidence: number;
+  matchMethod: MatchMethod;
+}
