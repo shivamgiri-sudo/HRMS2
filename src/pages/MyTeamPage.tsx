@@ -12,6 +12,7 @@ import TeamQualityTab from "@/components/my-team/TeamQualityTab";
 import TeamHygieneTab from "@/components/my-team/TeamHygieneTab";
 import TeamRetentionTab from "@/components/my-team/TeamRetentionTab";
 import TeamActionsTab from "@/components/my-team/TeamActionsTab";
+import TeamNoticeTab from "@/components/my-team/TeamNoticeTab";
 import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -43,6 +44,7 @@ const TABS = [
   { value: "performance", label: "Performance", icon: BarChart2 },
   { value: "quality",     label: "Quality",     icon: Star },
   { value: "hygiene",     label: "Hygiene",     icon: BadgeCheck },
+  { value: "notice",      label: "Notice",      icon: UserMinus },
   { value: "retention",   label: "Retention",   icon: UserMinus },
   { value: "actions",     label: "Actions",     icon: Inbox },
 ] as const;
@@ -192,6 +194,9 @@ export default function MyTeamPage() {
               </div>
               <div hidden={activeTab !== "hygiene"}>
                 {mounted.current.has("hygiene") && <TeamHygieneTab />}
+              </div>
+              <div hidden={activeTab !== "notice"}>
+                {mounted.current.has("notice") && <TeamNoticeTab />}
               </div>
               <div hidden={activeTab !== "retention"}>
                 {mounted.current.has("retention") && <TeamRetentionTab />}
