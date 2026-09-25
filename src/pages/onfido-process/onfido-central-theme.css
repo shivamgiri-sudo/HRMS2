@@ -401,3 +401,194 @@
   padding: 8px 10px;
 }
 .onfido-central-theme .oc-kv-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+
+/* ══════════════════════════════════════════════════════════════════════
+ * 2026-09-25 visual upgrade (phase 1) — aligned with Process Performance V2.
+ *
+ * CSS only: every class name above is unchanged and still applies; this block
+ * layers refinements on top (later rules win at equal specificity), so no tab,
+ * KPI, slicer, table or drill-down is removed or re-wired. Delete this block to
+ * return to the previous look.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+.onfido-central-theme {
+  --ring: 0 0 0 3px rgba(27, 106, 181, 0.18);
+  --row-alt: rgba(27, 106, 181, 0.028);
+  --row-hover: rgba(27, 106, 181, 0.075);
+  --lift: 0 14px 34px rgba(15, 23, 42, 0.11);
+  scrollbar-width: thin;
+  scrollbar-color: #c3cfdf transparent;
+}
+.onfido-central-theme *::-webkit-scrollbar { width: 8px; height: 8px; }
+.onfido-central-theme *::-webkit-scrollbar-thumb { background: #c3cfdf; border-radius: 8px; }
+.onfido-central-theme *::-webkit-scrollbar-thumb:hover { background: #a9b9cf; }
+
+/* Cards: softer radius, a hairline accent at the top edge, lift on hover. */
+.onfido-central-theme .oc-card {
+  border-radius: 18px;
+  border-color: rgba(203, 214, 229, 0.9);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+}
+.onfido-central-theme .oc-card::after {
+  content: "";
+  position: absolute;
+  inset: 0 22px auto 22px;
+  height: 2px;
+  border-radius: 0 0 4px 4px;
+  background: linear-gradient(90deg, var(--hc, var(--blue)), transparent 70%);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.onfido-central-theme .oc-card:hover {
+  box-shadow: var(--lift);
+  border-color: rgba(27, 106, 181, 0.3);
+}
+.onfido-central-theme .oc-card h2,
+.onfido-central-theme .oc-card h3 {
+  font-size: 12px;
+  letter-spacing: 0.07em;
+}
+.onfido-central-theme .oc-card h2::before,
+.onfido-central-theme .oc-card h3::before {
+  width: 7px;
+  height: 7px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--hc, var(--blue)) 18%, transparent);
+}
+
+/* KPI tiles: a tinted wash from each tile's own accent colour, larger value. */
+.onfido-central-theme .kr { gap: 12px; }
+.onfido-central-theme .kpi {
+  border-radius: 14px;
+  padding: 12px 14px 13px;
+  border-top-width: 3px;
+  background: var(--card);
+  background: linear-gradient(165deg, color-mix(in srgb, var(--kc, var(--blue)) 9%, #ffffff) 0%, #ffffff 62%);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.onfido-central-theme .kpi::before { box-shadow: none; opacity: 0.55; height: 2px; }
+.onfido-central-theme .kpi::after { opacity: 0.1; }
+.onfido-central-theme .kpi:hover,
+.onfido-central-theme .kpi:focus-visible {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--kc, var(--blue)) 45%, #dbe3ee);
+  box-shadow: var(--lift);
+}
+.onfido-central-theme .kpi:focus-visible { box-shadow: var(--ring), var(--lift); }
+.onfido-central-theme .kpi label { font-size: 9.5px; letter-spacing: 0.08em; }
+.onfido-central-theme .kpi .kv { font-size: 24px; margin: 8px 0 2px; }
+.onfido-central-theme .kpi .ks { font-size: 10px; }
+
+/* Filter bar: stays in view while scrolling long tabs. */
+.onfido-central-theme .oc-filterbar {
+  position: sticky;
+  top: 8px;
+  z-index: 25;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-color: rgba(203, 214, 229, 0.9);
+}
+.onfido-central-theme .oc-input,
+.onfido-central-theme .oc-select {
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 7px 11px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.onfido-central-theme .oc-input:hover,
+.onfido-central-theme .oc-select:hover { border-color: #b9c8dc; }
+.onfido-central-theme .oc-input:focus,
+.onfido-central-theme .oc-select:focus { border-color: var(--blue); box-shadow: var(--ring); }
+
+/* View tabs: one segmented rail instead of loose buttons. */
+.onfido-central-theme .oc-tabbar {
+  gap: 3px;
+  padding: 5px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(203, 214, 229, 0.9);
+  border-radius: 16px;
+  box-shadow: var(--softshadow);
+}
+.onfido-central-theme .oc-tab {
+  padding: 8px 13px;
+  border-radius: 11px;
+  letter-spacing: 0.035em;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+.onfido-central-theme .oc-tab:focus-visible { outline: none; box-shadow: var(--ring); }
+.onfido-central-theme .oc-tab.active {
+  background: linear-gradient(135deg, #1b6ab5 0%, #2f86d6 60%, #3b9be8 100%);
+  box-shadow: 0 6px 16px rgba(27, 106, 181, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+/* Tables: zebra rows, a tinted sticky header, clearer hover and click affordance. */
+.onfido-central-theme table.oc-table { border-collapse: separate; border-spacing: 0; }
+.onfido-central-theme table.oc-table th {
+  z-index: 2;
+  background: linear-gradient(180deg, #f3f7fc, #eaf0f8);
+  color: var(--muted-strong);
+  border-bottom: 1px solid #cfdae9;
+  white-space: nowrap;
+}
+.onfido-central-theme table.oc-table th:first-child { border-top-left-radius: 10px; }
+.onfido-central-theme table.oc-table th:last-child { border-top-right-radius: 10px; }
+.onfido-central-theme table.oc-table tbody tr:nth-child(even) td { background: var(--row-alt); }
+.onfido-central-theme table.oc-table tbody tr { transition: background 0.12s; }
+.onfido-central-theme table.oc-table tbody tr:hover td { background: var(--row-hover); }
+.onfido-central-theme table.oc-table tr.oc-row-click:hover { background: transparent; }
+.onfido-central-theme table.oc-table tr.oc-row-click:hover td:first-child { box-shadow: inset 3px 0 0 var(--blue); }
+.onfido-central-theme table.oc-table tr.oc-row-self td { background: rgba(27, 106, 181, 0.1); }
+.onfido-central-theme table.oc-table td { border-bottom-color: rgba(51, 65, 92, 0.07); }
+
+/* Pills, badges, buttons. */
+.onfido-central-theme .oc-pill-btn { padding: 5px 13px; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); }
+.onfido-central-theme .oc-pill-btn:focus-visible { outline: none; box-shadow: var(--ring); }
+.onfido-central-theme .oc-pill-btn.active { background: linear-gradient(135deg, #1b6ab5, #2f86d6); box-shadow: 0 4px 12px rgba(27, 106, 181, 0.28); }
+.onfido-central-theme .oc-badge { box-shadow: 0 1px 2px rgba(27, 106, 181, 0.08); }
+.onfido-central-theme .oc-btn-ghost:focus-visible { outline: none; box-shadow: var(--ring); }
+.onfido-central-theme .oc-severity-low { color: #166534; background: rgba(22, 163, 74, 0.1); border: 1px solid rgba(22, 163, 74, 0.32); }
+
+/* Section heading above KPI rows: a soft divider so groups read as groups. */
+.onfido-central-theme .oc-section-head {
+  padding-bottom: 8px;
+  border-bottom: 1px dashed rgba(91, 107, 132, 0.22);
+}
+
+/* Drawer content. */
+.onfido-central-theme .oc-field-box { border-radius: 12px; background: #f6f9fd; }
+
+/* New building blocks for the upcoming table/chart components (unused until used). */
+.onfido-central-theme .oc-skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #e8eef7;
+}
+.onfido-central-theme .oc-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.75), transparent);
+  animation: oc-shimmer 1.4s infinite;
+}
+@keyframes oc-shimmer { 100% { transform: translateX(100%); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .onfido-central-theme *,
+  .onfido-central-theme *::before,
+  .onfido-central-theme *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+  .onfido-central-theme .kpi:hover,
+  .onfido-central-theme .oc-card:hover { transform: none; }
+}
+
+@media (max-width: 640px) {
+  .onfido-central-theme { padding: 12px; border-radius: 14px; }
+  .onfido-central-theme .oc-filterbar { position: static; }
+  .onfido-central-theme .kpi .kv { font-size: 21px; }
+}
