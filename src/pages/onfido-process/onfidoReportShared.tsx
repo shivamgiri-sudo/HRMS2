@@ -123,6 +123,31 @@ export function presetRange(till: string, granularity: Granularity): DateRange {
   return { from: start.toISOString().slice(0, 10), to: till };
 }
 
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function shortDate(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  return `${String(d.getUTCDate()).padStart(2, "0")} ${MONTHS[d.getUTCMonth()]}`;
+}
+
+/** Chart x-axis label that says WHICH week/day a bucket is (a bare ISO date does not). */
+export function formatBucketTick(bucket: string, granularity: Granularity): string {
+  if (granularity === "monthly" || !/^\d{4}-\d{2}-\d{2}$/.test(bucket)) return bucket;
+  if (granularity === "weekly") return `WC ${shortDate(bucket)}`;
+  return `${shortDate(bucket)} (${WEEKDAYS[new Date(`${bucket}T00:00:00Z`).getUTCDay()]})`;
+}
+
+/** Human label for the period a from/to range covers, shown above range-based tables. */
+export function describePeriod(range: DateRange, granularity: Granularity): string {
+  if (!range.from || !range.to) return "";
+  const year = range.to.slice(0, 4);
+  if (range.from === range.to) return `Day: ${shortDate(range.from)} ${year} (${WEEKDAYS[new Date(`${range.from}T00:00:00Z`).getUTCDay()]})`;
+  const span = `${shortDate(range.from)} ${range.from.slice(0, 4)} to ${shortDate(range.to)} ${year}`;
+  if (granularity === "weekly") return `Week commencing ${shortDate(range.from)} ${range.from.slice(0, 4)} (${span})`;
+  if (granularity === "monthly") return `${MONTHS[new Date(`${range.to}T00:00:00Z`).getUTCMonth()]} ${year} (${span})`;
+  return span;
+}
+
 // ── UI pieces ────────────────────────────────────────────────────────────────
 
 export function GranularityPills({ value, onChange }: { value: Granularity; onChange: (g: Granularity) => void }) {

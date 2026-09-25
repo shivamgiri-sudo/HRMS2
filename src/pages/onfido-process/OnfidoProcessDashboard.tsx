@@ -7,13 +7,14 @@ import {
   MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, UserCheck, Users2,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useHierarchyFilters } from "./useHierarchyFilters";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import OnfidoOverviewReport from "./OnfidoOverviewReport";
 import OnfidoAnalystReport from "./OnfidoAnalystReport";
 import OnfidoNameMapping from "./OnfidoNameMapping";
 import OnfidoUtilizationReport from "./OnfidoUtilizationReport";
-import { shiftDays } from "./onfidoReportShared";
+import { formatBucketTick, shiftDays } from "./onfidoReportShared";
 import "./onfido-central-theme.css";
 
 /**
@@ -103,6 +104,7 @@ interface AnalystPerformance {
 interface AlertRow {
   analystEmail: string;
   tlName: string | null;
+  amName: string | null;
   metric: string;
   value: number;
   threshold: number;
@@ -575,7 +577,7 @@ function EscalationCountChart({ points }: { points: EscalationTrendPoint[] }) {
 
 /** Single AHT line (seconds) over daily/weekly/monthly buckets — the Trends
  *  page's "DOC AHT Trend" card (2026-09-17 feedback). */
-function AhtLineChart({ points }: { points: { bucket: string; avgAht: number | null }[] }) {
+function AhtLineChart({ points, granularity = "monthly" }: { points: { bucket: string; avgAht: number | null }[]; granularity?: Granularity }) {
   if (points.length === 0) {
     return <div style={{ padding: "40px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>;
   }
@@ -584,7 +586,7 @@ function AhtLineChart({ points }: { points: { bucket: string; avgAht: number | n
     <ResponsiveContainer width="100%" height={260}>
       <LineChart data={data} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
         <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
-        <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+        <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: string) => formatBucketTick(v, granularity)} />
         <YAxis tickLine={false} axisLine={false} width={48} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v}s`} />
         <RTooltip content={<DarkTooltip />} />
         <Line type="monotone" dataKey="avgAht" name="Avg AHT" stroke="var(--teal)" strokeWidth={2} dot={{ r: 3 }} connectNulls>
@@ -722,7 +724,7 @@ function MetricTrendTable({ title, columns, rows, hc }: {
  * Smooth filled area-line chart for the quality trend — mirrors the reference's
  * multi-series line chart with 20% fill, tension 0.35, point markers.
  */
-function QualityAreaChart({ points, title, hc }: { points: { bucket: string; taskCount: number; errorRate: number | null }[]; title: string; hc?: string }) {
+function QualityAreaChart({ points, title, hc, granularity = "monthly" }: { points: { bucket: string; taskCount: number; errorRate: number | null }[]; title: string; hc?: string; granularity?: Granularity }) {
   if (points.length === 0) {
     return null;
   }
@@ -738,7 +740,7 @@ function QualityAreaChart({ points, title, hc }: { points: { bucket: string; tas
               <stop offset="100%" stopColor="var(--red)" stopOpacity={0.02} />
             </linearGradient>
           </defs>
-          <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+          <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: string) => formatBucketTick(v, granularity)} />
           <YAxis tickLine={false} axisLine={false} width={44} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
           <RTooltip content={<DarkTooltip />} />
           <Area
@@ -761,7 +763,7 @@ function QualityAreaChart({ points, title, hc }: { points: { bucket: string; tas
  *  search box) don't take one, so the Executive Filters TL/AM dropdowns hide there
  *  rather than silently doing nothing when changed. */
 const FILTERABLE_VIEWS = new Set<ViewKey>([
-  "overview", "attrition", "quality", "etm", "taskskip", "escalations", "docraw", "poa", "poatrial", "clientdoc", "poaexternal",
+  "overview", "trends", "alerts", "attrition", "quality", "etm", "taskskip", "escalations", "docraw", "poa", "poatrial", "clientdoc", "poaexternal",
 ]);
 
 const VIEW_TABS: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
@@ -809,13 +811,14 @@ function TabBar({ view, onChange }: { view: ViewKey; onChange: (v: ViewKey) => v
  * toggle, mirroring Central Dashboard's Trends tab. Real re-aggregation of the
  * same DOC/POA tables the Overview KPIs read, at the API's `/volume-trend` route.
  */
-function TrendsView({ range }: { range: { from: string; to: string } }) {
+function TrendsView({ range, tlFilter, amFilter }: { range: { from: string; to: string }; tlFilter: string; amFilter: string }) {
   const [granularity, setGranularity] = useState<Granularity>("monthly");
+  const qs = tlAmQS(tlFilter, amFilter);
   const query = useQuery({
-    queryKey: ["onfido-process", "volume-trend", range, granularity],
+    queryKey: ["onfido-process", "volume-trend", range, granularity, qs],
     queryFn: () =>
       hrmsApi.get<{ data: VolumeTrendPoint[] }>(
-        `/api/onfido-process/volume-trend?from=${range.from}&to=${range.to}&granularity=${granularity}`
+        `/api/onfido-process/volume-trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`
       ),
   });
   const points = query.data?.data ?? [];
@@ -825,16 +828,16 @@ function TrendsView({ range }: { range: { from: string; to: string } }) {
   // has 4 (Tasks/AHT/Overall Err%/POA Err%) since FAR%/FRR% are excluded per
   // explicit instruction not to add FAR/FRR/Manual FAR/Manual FRR anywhere.
   const docAhtQuery = useQuery({
-    queryKey: ["onfido-process", "doc-raw-trend", range, granularity],
-    queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/doc-raw/trend?from=${range.from}&to=${range.to}&granularity=${granularity}`),
+    queryKey: ["onfido-process", "doc-raw-trend", range, granularity, qs],
+    queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/doc-raw/trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`),
   });
   const overallErrQuery = useQuery({
-    queryKey: ["onfido-process", "quality-trend", range, granularity],
-    queryFn: () => hrmsApi.get<{ data: QualityTrendPoint[] }>(`/api/onfido-process/quality/trend?from=${range.from}&to=${range.to}&granularity=${granularity}`),
+    queryKey: ["onfido-process", "quality-trend", range, granularity, qs],
+    queryFn: () => hrmsApi.get<{ data: QualityTrendPoint[] }>(`/api/onfido-process/quality/trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`),
   });
   const poaErrQuery = useQuery({
-    queryKey: ["onfido-process", "poa-quality-trend", range, granularity],
-    queryFn: () => hrmsApi.get<{ data: QualityTrendPoint[] }>(`/api/onfido-process/poa/quality-trend?from=${range.from}&to=${range.to}&granularity=${granularity}`),
+    queryKey: ["onfido-process", "poa-quality-trend", range, granularity, qs],
+    queryFn: () => hrmsApi.get<{ data: QualityTrendPoint[] }>(`/api/onfido-process/poa/quality-trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`),
   });
   const docAhtPoints = docAhtQuery.data?.data ?? [];
   const overallErrPoints = overallErrQuery.data?.data ?? [];
@@ -860,7 +863,7 @@ function TrendsView({ range }: { range: { from: string; to: string } }) {
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={4} barCategoryGap={points.length <= 3 ? "35%" : "20%"}>
                 <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
-                <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickMargin={8} />
+                <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickMargin={8} tickFormatter={(v: string) => formatBucketTick(v, granularity)} />
                 <YAxis tickLine={false} axisLine={false} width={44} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
                 <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
                 <Bar dataKey="doc" name="DOC" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40}>
@@ -878,10 +881,10 @@ function TrendsView({ range }: { range: { from: string; to: string } }) {
 
       <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
         <h3>DOC AHT Trend</h3>
-        <AhtLineChart points={docAhtPoints} />
+        <AhtLineChart points={docAhtPoints} granularity={granularity} />
       </div>
-      <QualityAreaChart points={overallErrPoints} title="DOC Overall Error % Trend" hc="var(--red)" />
-      <QualityAreaChart points={poaErrPoints} title="POA Error % Trend" hc="var(--purple)" />
+      <QualityAreaChart points={overallErrPoints} title="DOC Overall Error % Trend" hc="var(--red)" granularity={granularity} />
+      <QualityAreaChart points={poaErrPoints} title="POA Error % Trend" hc="var(--purple)" granularity={granularity} />
     </div>
   );
 }
@@ -892,10 +895,11 @@ function TrendsView({ range }: { range: { from: string; to: string } }) {
  * onfido_doc_external_audit_raw / onfido_poa_quality_raw tables the rest of
  * this dashboard reads.
  */
-function AlertsView({ range }: { range: { from: string; to: string } }) {
+function AlertsView({ range, tlFilter, amFilter }: { range: { from: string; to: string }; tlFilter: string; amFilter: string }) {
+  const qs = tlAmQS(tlFilter, amFilter);
   const query = useQuery({
-    queryKey: ["onfido-process", "alerts", range],
-    queryFn: () => hrmsApi.get<{ data: AlertRow[] }>(`/api/onfido-process/alerts?from=${range.from}&to=${range.to}`),
+    queryKey: ["onfido-process", "alerts", range, qs],
+    queryFn: () => hrmsApi.get<{ data: AlertRow[] }>(`/api/onfido-process/alerts?from=${range.from}&to=${range.to}${qs}`),
   });
   const alerts = query.data?.data ?? [];
   const high = alerts.filter((a) => a.severity === "high").length;
@@ -921,14 +925,15 @@ function AlertsView({ range }: { range: { from: string; to: string } }) {
         <div style={{ overflowX: "auto" }}>
           <table className="oc-table">
             <thead>
-              <tr><th>Analyst</th><th>TL</th><th>Metric</th><th className="oc-right">Value</th><th className="oc-right">Threshold</th><th className="oc-right">Severity</th></tr>
+              <tr><th>Analyst</th><th>TL</th><th>AM</th><th>Metric</th><th className="oc-right">Value</th><th className="oc-right">Threshold</th><th className="oc-right">Severity</th></tr>
             </thead>
             <tbody>
-              {alerts.length === 0 && <tr className="oc-empty-row"><td colSpan={6}>No alerts in this range</td></tr>}
+              {alerts.length === 0 && <tr className="oc-empty-row"><td colSpan={7}>No alerts in this range</td></tr>}
               {alerts.slice(0, 200).map((a, i) => (
                 <tr key={`${a.analystEmail}-${a.metric}-${i}`}>
                   <td>{a.analystEmail}</td>
                   <td>{a.tlName ?? "-"}</td>
+                  <td>{a.amName ?? "-"}</td>
                   <td>{a.metric}</td>
                   <td className="oc-right">{a.value}%</td>
                   <td className="oc-right" style={{ color: "var(--muted)" }}>{a.threshold}%</td>
@@ -4451,20 +4456,12 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
   const Shell = embedded ? Fragment : DashboardLayout;
   const [view, setView] = useState<ViewKey>("overview");
   const [range, setRange] = useState(defaultRange());
-  const [tlFilter, setTlFilter] = useState<string>("");
-  const [amFilter, setAmFilter] = useState<string>("");
+  const { tlFilter, setTlFilter, amFilter, setAmFilter, tlOptions, amOptions, clear: clearHierarchy } = useHierarchyFilters(range);
   const [activeTable, setActiveTable] = useState<string>("ONFIDO_DOC_RAW");
   const [drawerRecord, setDrawerRecord] = useState<RawRecord | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTableName, setDrawerTableName] = useState<string>("");
   const [metricDrilldown, setMetricDrilldown] = useState<KpiValue | null>(null);
-
-  const filterOptionsQuery = useQuery({
-    queryKey: ["onfido-process", "filter-options"],
-    queryFn: () => hrmsApi.get<{ data: { tlNames: string[]; amNames: string[] } }>("/api/onfido-process/filter-options"),
-    staleTime: 5 * 60 * 1000,
-  });
-  const filterOptions = filterOptionsQuery.data?.data ?? { tlNames: [], amNames: [] };
 
   function openRecord(record: RawRecord, tableName?: string) {
     setDrawerRecord(record);
@@ -4508,7 +4505,7 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
                 <label>TL</label>
                 <select className="oc-select" style={{ width: 200 }} value={tlFilter} onChange={(e) => setTlFilter(e.target.value)}>
                   <option value="">All TLs</option>
-                  {filterOptions.tlNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                  {tlOptions.map((n) => <option key={n} value={n}>{n}</option>)}
                 </select>
               </div>
             )}
@@ -4517,21 +4514,21 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
                 <label>AM</label>
                 <select className="oc-select" style={{ width: 200 }} value={amFilter} onChange={(e) => setAmFilter(e.target.value)}>
                   <option value="">All AMs</option>
-                  {filterOptions.amNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                  {amOptions.map((n) => <option key={n} value={n}>{n}</option>)}
                 </select>
               </div>
             )}
             {FILTERABLE_VIEWS.has(view) && (tlFilter || amFilter) && (
               <span className="oc-badge">
                 <Users2 className="h-3 w-3" /> {[tlFilter, amFilter].filter(Boolean).join(" · ")}
-                <button onClick={() => { setTlFilter(""); setAmFilter(""); }} aria-label="Clear filters">×</button>
+                <button onClick={clearHierarchy} aria-label="Clear filters">×</button>
               </span>
             )}
           </div>
           )}
 
-          {view === "trends" && <TrendsView range={range} />}
-          {view === "alerts" && <AlertsView range={range} />}
+          {view === "trends" && <TrendsView range={range} tlFilter={tlFilter} amFilter={amFilter} />}
+          {view === "alerts" && <AlertsView range={range} tlFilter={tlFilter} amFilter={amFilter} />}
           {view === "analyst" && <OnfidoAnalystReport initialRange={{ from: shiftDays(range.to, -29), to: range.to }} />}
           {view === "utilization" && <OnfidoUtilizationReport />}
           {view === "attrition" && <AttritionView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}

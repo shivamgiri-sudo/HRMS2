@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useHierarchyFilters } from "./useHierarchyFilters";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
-  DASH, EmptyNote, GranularityPills, SectionCard, fmtInt, fmtNum, fmtPct, presetRange, type DateRange, type Granularity,
+  DASH, EmptyNote, GranularityPills, SectionCard, describePeriod, fmtInt, fmtNum, fmtPct, presetRange, type DateRange, type Granularity,
 } from "./onfidoReportShared";
 
 /**
@@ -44,18 +45,7 @@ export default function OnfidoAnalystReport({ initialRange }: { initialRange: Da
   const [range, setRange] = useState<DateRange>(initialRange);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<AnalystRow | null>(null);
-  const [tlFilter, setTlFilter] = useState("");
-  const [amFilter, setAmFilter] = useState("");
-
-  const filterOptionsQuery = useQuery({
-    queryKey: ["onfido-process", "filter-options"],
-    queryFn: () => hrmsApi.get<{ data: { tlNames: string[]; amNames: string[]; tlAmMapping?: Record<string, string[]> } }>("/api/onfido-process/filter-options"),
-    staleTime: 5 * 60 * 1000,
-  });
-  const filterOptions = filterOptionsQuery.data?.data ?? { tlNames: [], amNames: [] };
-  const filteredTlNames = amFilter && filterOptions.tlAmMapping
-    ? (filterOptions.tlAmMapping[amFilter] ?? [])
-    : filterOptions.tlNames;
+  const { tlFilter, setTlFilter, amFilter, setAmFilter, tlOptions: filteredTlNames, amOptions } = useHierarchyFilters(range);
 
   const report = useQuery({
     queryKey: ["onfido-process", "analyst-report", range, tlFilter, amFilter],
@@ -96,10 +86,10 @@ export default function OnfidoAnalystReport({ initialRange }: { initialRange: Da
             id="ar-am"
             className="oc-select"
             value={amFilter}
-            onChange={(e) => { setAmFilter(e.target.value); setTlFilter(""); }}
+            onChange={(e) => setAmFilter(e.target.value)}
           >
             <option value="">All AMs</option>
-            {filterOptions.amNames.map((n) => <option key={n} value={n}>{n}</option>)}
+            {amOptions.map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
         </div>
         <div className="oc-field">
@@ -120,6 +110,9 @@ export default function OnfidoAnalystReport({ initialRange }: { initialRange: Da
         </div>
       </div>
 
+      {!rangeInvalid && (
+        <div style={{ marginBottom: 8, fontSize: 12, color: "var(--muted)" }} data-testid="ar-period">Showing: {describePeriod(range, granularity)}</div>
+      )}
       {rangeInvalid && <EmptyNote>From must not be after Till.</EmptyNote>}
       {!rangeInvalid && report.isLoading && <EmptyNote>Loading...</EmptyNote>}
       {!rangeInvalid && report.error instanceof Error && <EmptyNote>Could not load analysts: {report.error.message}</EmptyNote>}

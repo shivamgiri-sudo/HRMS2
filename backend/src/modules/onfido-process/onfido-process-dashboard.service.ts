@@ -681,19 +681,20 @@ export function bucketLabel(d: unknown, granularity: TrendGranularity): string {
 /** Same DOC+POA volume rollup as getMonthlyTrend, generalised to daily/weekly buckets
  *  for the Trends view's granularity toggle — this is a re-aggregation of the same
  *  two real tables, not a new data source. */
-export async function getVolumeTrend(rawFilters: { from?: string; to?: string }, granularity: TrendGranularity) {
+export async function getVolumeTrend(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity) {
   const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
   const pool = await getOnfidoPool();
 
   const [docRows] = await pool.query<RowDataPacket[]>(
     `SELECT ${bucketExpr("report_date", granularity)} AS bucket, COUNT(*) AS n
-       FROM onfido_doc_raw WHERE report_date BETWEEN ? AND ? GROUP BY bucket ORDER BY bucket`,
-    [f.from, f.to]
+       FROM onfido_doc_raw WHERE report_date BETWEEN ? AND ? ${clause} GROUP BY bucket ORDER BY bucket`,
+    [f.from, f.to, ...params]
   );
   const [poaRows] = await pool.query<RowDataPacket[]>(
     `SELECT ${bucketExpr("report_completed_date", granularity)} AS bucket, COUNT(*) AS n
-       FROM onfido_poa_raw WHERE report_completed_date BETWEEN ? AND ? GROUP BY bucket ORDER BY bucket`,
-    [f.from, f.to]
+       FROM onfido_poa_raw WHERE report_completed_date BETWEEN ? AND ? ${clause} GROUP BY bucket ORDER BY bucket`,
+    [f.from, f.to, ...params]
   );
 
   const fmt = (d: unknown) => bucketLabel(d, granularity);
@@ -1014,6 +1015,7 @@ export const DEFAULT_ALERT_THRESHOLDS: AlertThresholds = {
 export interface AlertRow {
   analystEmail: string;
   tlName: string | null;
+  amName: string | null;
   metric: "Overall Error %" | "Manual FAR %" | "Manual FRR %" | "POA Error %";
   value: number;
   threshold: number;
@@ -1025,27 +1027,28 @@ function severityFor(value: number, threshold: number): "high" | "medium" {
 }
 
 /** Every analyst currently over a quality threshold, for the selected range. */
-export async function listAlerts(rawFilters: { from?: string; to?: string }, thresholds: AlertThresholds = DEFAULT_ALERT_THRESHOLDS): Promise<AlertRow[]> {
+export async function listAlerts(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, thresholds: AlertThresholds = DEFAULT_ALERT_THRESHOLDS): Promise<AlertRow[]> {
   const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
   const pool = await getOnfidoPool();
 
   const [auditRows] = await pool.query<RowDataPacket[]>(
-    `SELECT analyst_email, COALESCE(NULLIF(TRIM(tl_name), ''), '(unassigned)') AS tl_name,
+    `SELECT analyst_email, COALESCE(NULLIF(TRIM(tl_name), ''), '(unassigned)') AS tl_name, MAX(am_name) AS am_name,
             COUNT(*) AS total, SUM(has_error) AS errors,
             SUM(manual_far_flag) AS farN, SUM(manual_frr_flag) AS frrN,
             COALESCE(SUM(manual_far_total), 0) AS farTotal, COALESCE(SUM(manual_frr_total), 0) AS frrTotal
        FROM onfido_doc_external_audit_raw
-      WHERE report_date BETWEEN ? AND ? AND analyst_email IS NOT NULL AND analyst_email <> ''
+      WHERE report_date BETWEEN ? AND ? ${clause} AND analyst_email IS NOT NULL AND analyst_email <> ''
       GROUP BY analyst_email, tl_name`,
-    [f.from, f.to]
+    [f.from, f.to, ...params]
   );
   const [poaRows] = await pool.query<RowDataPacket[]>(
-    `SELECT analyst_email, COALESCE(NULLIF(TRIM(tl_name), ''), '(unassigned)') AS tl_name,
+    `SELECT analyst_email, COALESCE(NULLIF(TRIM(tl_name), ''), '(unassigned)') AS tl_name, MAX(am_name) AS am_name,
             COALESCE(SUM(error_count),0) AS errors, COALESCE(SUM(no_error_count),0) AS noErrors
        FROM onfido_poa_quality_raw
-      WHERE report_completed_date BETWEEN ? AND ? AND analyst_email IS NOT NULL AND analyst_email <> ''
+      WHERE report_completed_date BETWEEN ? AND ? ${clause} AND analyst_email IS NOT NULL AND analyst_email <> ''
       GROUP BY analyst_email, tl_name`,
-    [f.from, f.to]
+    [f.from, f.to, ...params]
   );
 
   const alerts: AlertRow[] = [];
@@ -1060,13 +1063,13 @@ export async function listAlerts(rawFilters: { from?: string; to?: string }, thr
     const farPct = farTotal > 0 ? round1((Number(r.farN ?? 0) / farTotal) * 100) : 0;
     const frrPct = frrTotal > 0 ? round1((Number(r.frrN ?? 0) / frrTotal) * 100) : 0;
     if (overallPct > thresholds.overallErrorPct) {
-      alerts.push({ analystEmail: r.analyst_email, tlName: r.tl_name, metric: "Overall Error %", value: overallPct, threshold: thresholds.overallErrorPct, severity: severityFor(overallPct, thresholds.overallErrorPct) });
+      alerts.push({ analystEmail: r.analyst_email, tlName: r.tl_name, amName: r.am_name ?? null, metric: "Overall Error %", value: overallPct, threshold: thresholds.overallErrorPct, severity: severityFor(overallPct, thresholds.overallErrorPct) });
     }
     if (farPct > thresholds.farPct) {
-      alerts.push({ analystEmail: r.analyst_email, tlName: r.tl_name, metric: "Manual FAR %", value: farPct, threshold: thresholds.farPct, severity: severityFor(farPct, thresholds.farPct) });
+      alerts.push({ analystEmail: r.analyst_email, tlName: r.tl_name, amName: r.am_name ?? null, metric: "Manual FAR %", value: farPct, threshold: thresholds.farPct, severity: severityFor(farPct, thresholds.farPct) });
     }
     if (frrPct > thresholds.frrPct) {
-      alerts.push({ analystEmail: r.analyst_email, tlName: r.tl_name, metric: "Manual FRR %", value: frrPct, threshold: thresholds.frrPct, severity: severityFor(frrPct, thresholds.frrPct) });
+      alerts.push({ analystEmail: r.analyst_email, tlName: r.tl_name, amName: r.am_name ?? null, metric: "Manual FRR %", value: frrPct, threshold: thresholds.frrPct, severity: severityFor(frrPct, thresholds.frrPct) });
     }
   }
   for (const r of poaRows) {
@@ -1074,7 +1077,7 @@ export async function listAlerts(rawFilters: { from?: string; to?: string }, thr
     if (total === 0) continue;
     const poaPct = round1((Number(r.errors ?? 0) / total) * 100);
     if (poaPct > thresholds.poaErrorPct) {
-      alerts.push({ analystEmail: r.analyst_email, tlName: r.tl_name, metric: "POA Error %", value: poaPct, threshold: thresholds.poaErrorPct, severity: severityFor(poaPct, thresholds.poaErrorPct) });
+      alerts.push({ analystEmail: r.analyst_email, tlName: r.tl_name, amName: r.am_name ?? null, metric: "POA Error %", value: poaPct, threshold: thresholds.poaErrorPct, severity: severityFor(poaPct, thresholds.poaErrorPct) });
     }
   }
 
@@ -1095,7 +1098,7 @@ export function listAvailableTables() {
  * unioned with onfido_agent_daily_raw (the HR roster) so a TL/AM who only
  * shows up in one of the two sources still appears.
  */
-export async function getFilterOptions(): Promise<{ tlNames: string[]; amNames: string[] }> {
+export async function getFilterOptions(range: { from?: string; to?: string } = {}): Promise<{ tlNames: string[]; amNames: string[]; tlAmMapping: Record<string, string[]> }> {
   const pool = await getOnfidoPool();
   const [tlRows] = await pool.query<RowDataPacket[]>(
     `SELECT DISTINCT tl_name AS name FROM onfido_doc_external_audit_raw WHERE tl_name IS NOT NULL AND TRIM(tl_name) <> ''
@@ -1109,7 +1112,43 @@ export async function getFilterOptions(): Promise<{ tlNames: string[]; amNames: 
      SELECT DISTINCT am_name AS name FROM onfido_agent_daily_raw WHERE am_name IS NOT NULL AND TRIM(am_name) <> ''
      ORDER BY name`
   );
-  return { tlNames: tlRows.map((r) => r.name as string), amNames: amRows.map((r) => r.name as string) };
+  // The AM->TL cascade is an enhancement: if it cannot be built the dropdowns
+  // still work (uncascaded) rather than the whole dashboard losing its filters.
+  const tlAmMapping = await getTlAmMapping(pool, range).catch((err: unknown) => {
+    console.error("[onfido] tlAmMapping failed, serving uncascaded filters:", err);
+    return {} as Record<string, string[]>;
+  });
+  return { tlNames: tlRows.map((r) => r.name as string), amNames: amRows.map((r) => r.name as string), tlAmMapping };
+}
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * AM -> aligned TL names, so the TL dropdown can be restricted to the selected
+ * AM. When a valid from/to is supplied only pairs seen in that window count
+ * (the TL an AM manages changes month to month); with no range it is all-time.
+ * Pairs come from both raw tables, same union as the dropdown lists above.
+ */
+async function getTlAmMapping(
+  pool: Awaited<ReturnType<typeof getOnfidoPool>>, range: { from?: string; to?: string }
+): Promise<Record<string, string[]>> {
+  const ranged = !!range.from && !!range.to && ISO_DATE.test(range.from) && ISO_DATE.test(range.to);
+  const agentWhere = ranged ? "AND work_date BETWEEN ? AND ?" : "";
+  const auditWhere = ranged ? "AND report_date BETWEEN ? AND ?" : "";
+  const params = ranged ? [range.from, range.to, range.from, range.to] : [];
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT DISTINCT am_name AS am, tl_name AS tl FROM onfido_agent_daily_raw
+       WHERE am_name IS NOT NULL AND TRIM(am_name) <> '' AND tl_name IS NOT NULL AND TRIM(tl_name) <> '' ${agentWhere}
+     UNION
+     SELECT DISTINCT am_name AS am, tl_name AS tl FROM onfido_doc_external_audit_raw
+       WHERE am_name IS NOT NULL AND TRIM(am_name) <> '' AND tl_name IS NOT NULL AND TRIM(tl_name) <> '' ${auditWhere}`,
+    params
+  );
+  const mapping: Record<string, Set<string>> = {};
+  for (const r of rows) {
+    (mapping[r.am as string] ??= new Set()).add(r.tl as string);
+  }
+  return Object.fromEntries(Object.entries(mapping).map(([am, tls]) => [am, [...tls].sort()]));
 }
 
 // ── Attrition & Shrinkage — onfido_agent_daily_raw (Agent Wise sheet) ───────

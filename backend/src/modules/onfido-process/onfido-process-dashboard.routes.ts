@@ -88,8 +88,9 @@ router.get("/overview", requireAuth, requireRole(...VIEWER_ROLES), h(async (req,
   res.json({ success: true, data });
 }));
 
-router.get("/filter-options", requireAuth, requireRole(...VIEWER_ROLES), h(async (_req, res) => {
-  const data = await svc.getFilterOptions();
+router.get("/filter-options", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const { from, to } = readQueryFilters(req);
+  const data = await svc.getFilterOptions({ from, to });
   res.json({ success: true, data });
 }));
 
