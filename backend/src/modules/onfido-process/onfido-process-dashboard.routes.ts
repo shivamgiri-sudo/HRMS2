@@ -76,7 +76,7 @@ router.use(onfidoResponseCache);
 
 function readQueryFilters(req: AuthenticatedRequest) {
   const q = req.query as Record<string, string | undefined>;
-  return { from: q.from, to: q.to, tlName: q.tlName, amName: q.amName };
+  return { from: q.from, to: q.to, tlName: q.tlName, amName: q.amName, analystEmail: q.analystEmail };
 }
 
 function readGranularity(req: AuthenticatedRequest): "daily" | "weekly" | "monthly" {
@@ -169,7 +169,7 @@ mountOverviewReportRoutes(router, [requireAuth, requireRole(...VIEWER_ROLES)]);
 router.get("/records/:table", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const q = req.query as Record<string, string | undefined>;
   const data = await svc.listRecords(req.params.table, {
-    from: q.from, to: q.to, tlName: q.tlName, amName: q.amName, search: q.search,
+    from: q.from, to: q.to, tlName: q.tlName, amName: q.amName, analystEmail: q.analystEmail, search: q.search,
     filterColumn: q.filterColumn, filterValue: q.filterValue,
     limit: q.limit ? Number(q.limit) : undefined,
     cursor: q.cursor ? Number(q.cursor) : undefined,
@@ -181,7 +181,7 @@ router.get("/records/:table", requireAuth, requireRole(...VIEWER_ROLES), h(async
 router.get("/records/:table/export.csv", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const q = req.query as Record<string, string | undefined>;
   await streamRecordsCsv(res, req.params.table, {
-    from: q.from, to: q.to, tlName: q.tlName, amName: q.amName, search: q.search,
+    from: q.from, to: q.to, tlName: q.tlName, amName: q.amName, analystEmail: q.analystEmail, search: q.search,
     filterColumn: q.filterColumn, filterValue: q.filterValue,
   });
 }));

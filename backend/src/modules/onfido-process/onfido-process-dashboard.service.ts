@@ -120,7 +120,7 @@ async function scalar<T extends RowDataPacket>(sql: string, params: unknown[]): 
  * Charter's per-queue AHT benchmarks) and blending them would hide which queue an
  * issue actually belongs to.
  */
-export async function getOverview(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }) {
+export async function getOverview(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }) {
   const f = readFilters(rawFilters);
   const amName = rawFilters.amName || null;
   const tlClause = f.tlName ? "AND tl_name = ?" : "";
@@ -570,7 +570,7 @@ const FILTER_COLUMN_JSON_OVERRIDE: Record<string, Record<string, string>> = {
 };
 
 export interface RecordListFilters {
-  from?: string; to?: string; tlName?: string; amName?: string; search?: string;
+  from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string; search?: string;
   limit?: number; cursor?: number;
   /** Drill-down from a breakdown row: e.g. { filterColumn: "am_name", filterValue: "Kamal Negi" }. */
   filterColumn?: string; filterValue?: string;
@@ -598,6 +598,10 @@ export async function buildRecordFilter(
   if (dateCol && filters.to) { where.push(`${dateCol} <= ?`); params.push(filters.to); }
   if (filters.tlName) { where.push("tl_name = ?"); params.push(filters.tlName); }
   if (filters.amName) { where.push("am_name = ?"); params.push(filters.amName); }
+  if (filters.analystEmail) {
+    where.push(`${table === "onfido_task_skip_raw" ? "unassigned_from_email" : "analyst_email"} = ?`);
+    params.push(filters.analystEmail);
+  }
   if (filters.filterColumn && filters.filterValue !== undefined) {
     if (!ALLOWED_FILTER_COLUMNS.has(filters.filterColumn)) {
       throw Object.assign(new Error(`Unknown filter column '${filters.filterColumn}'`), { statusCode: 400 });
@@ -687,9 +691,9 @@ export function bucketLabel(d: unknown, granularity: TrendGranularity): string {
 /** Same DOC+POA volume rollup as getMonthlyTrend, generalised to daily/weekly buckets
  *  for the Trends view's granularity toggle — this is a re-aggregation of the same
  *  two real tables, not a new data source. */
-export async function getVolumeTrend(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity) {
+export async function getVolumeTrend(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, granularity: TrendGranularity) {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
 
   const [docRows] = await pool.query<RowDataPacket[]>(
@@ -723,10 +727,10 @@ export interface EtmGranularTrendPoint { bucket: string; doc: number; poa: numbe
 /** ETM tab's trend chart, daily/weekly/monthly — real per-task escalation counts,
  *  same re-aggregation approach as getVolumeTrend. */
 export async function getEtmTrend(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, granularity: TrendGranularity
 ): Promise<EtmGranularTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const expr = bucketExpr("report_date", granularity);
   const [docRows] = await pool.query<RowDataPacket[]>(
@@ -752,10 +756,10 @@ export interface TaskSkipGranularTrendPoint { bucket: string; count: number }
 
 /** Task Skip tab's trend chart, daily/weekly/monthly. */
 export async function getTaskSkipTrend(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, granularity: TrendGranularity
 ): Promise<TaskSkipGranularTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail, "unassigned_from_email");
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT ${bucketExpr("skip_date", granularity)} AS bucket, COUNT(*) AS n
@@ -773,10 +777,10 @@ export interface QualityGranularTrendPoint { bucket: string; taskCount: number; 
  *  for the numerator" failure mode — see getAttritionMonthlyDetail's own note
  *  on why that metric stays month-only). */
 export async function getQualityTrend(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, granularity: TrendGranularity
 ): Promise<QualityGranularTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT ${bucketExpr("report_date", granularity)} AS bucket, COUNT(*) AS total, SUM(has_error) AS errors
@@ -794,10 +798,10 @@ export async function getQualityTrend(
  *  the DOC queue's own internal audit export, for the Overview page's
  *  "Month-wise Internal Quality score" card (2026-09-17 dashboard feedback). */
 export async function getDocInternalQualityTrend(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, granularity: TrendGranularity
 ): Promise<QualityGranularTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT ${bucketExpr("task_complete_date", granularity)} AS bucket,
@@ -819,10 +823,10 @@ export interface DocInternalQualityOverview { taskCount: KpiValue; overallErrorR
  *  raw-extraction sub-breakdown columns), so this is the one metric available
  *  on the internal side, same limitation getDocInternalQualityTrend has. */
 export async function getDocInternalQualityOverview(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }
 ): Promise<DocInternalQualityOverview> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const agg = await scalar<RowDataPacket & { total: number; errors: number }>(
     `SELECT COALESCE(SUM(total_audits),0) AS total, COALESCE(SUM(total_error),0) AS errors
        FROM onfido_doc_quality_raw WHERE task_complete_date BETWEEN ? AND ? ${clause}`,
@@ -846,10 +850,10 @@ export interface AttritionGranularTrendPoint { bucket: string; attritionCount: n
  *  count here, never a %, to avoid resurrecting the same noisy-denominator
  *  problem that produced 3000%+ rates before that fix. */
 export async function getAttritionTrend(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, granularity: TrendGranularity
 ): Promise<AttritionGranularTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT ${bucketExpr("work_date", granularity)} AS bucket, COALESCE(SUM(attrition_flag),0) AS n
@@ -1033,9 +1037,9 @@ function severityFor(value: number, threshold: number): "high" | "medium" {
 }
 
 /** Every analyst currently over a quality threshold, for the selected range. */
-export async function listAlerts(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, thresholds: AlertThresholds = DEFAULT_ALERT_THRESHOLDS): Promise<AlertRow[]> {
+export async function listAlerts(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, thresholds: AlertThresholds = DEFAULT_ALERT_THRESHOLDS): Promise<AlertRow[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
 
   const [auditRows] = await pool.query<RowDataPacket[]>(
@@ -1104,7 +1108,7 @@ export function listAvailableTables() {
  * unioned with onfido_agent_daily_raw (the HR roster) so a TL/AM who only
  * shows up in one of the two sources still appears.
  */
-export async function getFilterOptions(range: { from?: string; to?: string } = {}): Promise<{ tlNames: string[]; amNames: string[]; tlAmMapping: Record<string, string[]> }> {
+export async function getFilterOptions(range: { from?: string; to?: string } = {}): Promise<{ tlNames: string[]; amNames: string[]; tlAmMapping: Record<string, string[]>; analysts: FilterAnalyst[] }> {
   const pool = await getOnfidoPool();
   const [tlRows] = await pool.query<RowDataPacket[]>(
     `SELECT DISTINCT tl_name AS name FROM onfido_doc_external_audit_raw WHERE tl_name IS NOT NULL AND TRIM(tl_name) <> ''
@@ -1124,7 +1128,30 @@ export async function getFilterOptions(range: { from?: string; to?: string } = {
     console.error("[onfido] tlAmMapping failed, serving uncascaded filters:", err);
     return {} as Record<string, string[]>;
   });
-  return { tlNames: tlRows.map((r) => r.name as string), amNames: amRows.map((r) => r.name as string), tlAmMapping };
+  const analysts = await getFilterAnalysts(pool, range).catch((err: unknown) => {
+    console.error("[onfido] analyst filter list failed:", err);
+    return [] as FilterAnalyst[];
+  });
+  return { tlNames: tlRows.map((r) => r.name as string), amNames: amRows.map((r) => r.name as string), tlAmMapping, analysts };
+}
+
+export interface FilterAnalyst { email: string; name: string | null; tlName: string | null; amName: string | null }
+
+/** Analysts on the HR roster in the window, with the TL/AM they sat under, for the dependent Analyst dropdown. */
+async function getFilterAnalysts(
+  pool: Awaited<ReturnType<typeof getOnfidoPool>>, range: { from?: string; to?: string }
+): Promise<FilterAnalyst[]> {
+  if (!range.from || !range.to || !ISO_DATE.test(range.from) || !ISO_DATE.test(range.to)) return [];
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT DISTINCT analyst_email, emp_name, tl_name, am_name FROM onfido_agent_daily_raw
+      WHERE work_date BETWEEN ? AND ? AND analyst_email IS NOT NULL AND TRIM(analyst_email) <> ''
+      ORDER BY emp_name, analyst_email LIMIT 5000`,
+    [range.from, range.to]
+  );
+  return rows.map((r) => ({
+    email: String(r.analyst_email), name: (r.emp_name as string | null) ?? null,
+    tlName: (r.tl_name as string | null) ?? null, amName: (r.am_name as string | null) ?? null,
+  }));
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -1223,11 +1250,14 @@ function aonDisplayLabel(raw: string): string | null {
  * just the Overview tab. Every one of these tables really does carry both
  * tl_name and am_name columns, so this is safe to reuse unconditionally.
  */
-export function tlAmFilter(tlName?: string, amName?: string): { clause: string; params: string[] } {
+export function tlAmFilter(
+  tlName?: string, amName?: string, analystEmail?: string, analystColumn: "analyst_email" | "unassigned_from_email" = "analyst_email"
+): { clause: string; params: string[] } {
   const parts: string[] = [];
   const params: string[] = [];
   if (tlName) { parts.push("tl_name = ?"); params.push(tlName); }
   if (amName) { parts.push("am_name = ?"); params.push(amName); }
+  if (analystEmail) { parts.push(`${analystColumn} = ?`); params.push(analystEmail); }
   return { clause: parts.length > 0 ? `AND ${parts.join(" AND ")}` : "", params };
 }
 
@@ -1251,9 +1281,9 @@ export function tlAmFilter(tlName?: string, amName?: string): { clause: string; 
  * (getAttritionBreakdown) exactly as the reference does, rather than by
  * changing the formula here.
  */
-export async function getAttritionMonthlyDetail(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }): Promise<AttritionMonthRow[]> {
+export async function getAttritionMonthlyDetail(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }): Promise<AttritionMonthRow[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
 
   // HC and attrition count: Onfloor rows only (matches reference benchmark SUMIFS…State="Onfloor").
@@ -1314,7 +1344,7 @@ export interface AttritionOverview {
   actualShrinkageRate: KpiValue;
 }
 
-export async function getAttritionOverview(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }): Promise<AttritionOverview> {
+export async function getAttritionOverview(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }): Promise<AttritionOverview> {
   const months = await getAttritionMonthlyDetail(rawFilters);
   const m = months[months.length - 1];
   const kpi = (key: string, label: string, value: number | null, unit: KpiValue["unit"], note?: string): KpiValue => ({
@@ -1363,7 +1393,7 @@ export interface AttritionBreakdownRow {
 
 /** Same per-month scoping as getAttritionOverview, grouped by AM/TL/AON/Location. */
 export async function getAttritionBreakdown(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, dimension: AttritionDimension
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, dimension: AttritionDimension
 ): Promise<AttritionBreakdownRow[]> {
   const months = await getAttritionMonthlyDetail(rawFilters);
   const targetMonth = months[months.length - 1]?.month;
@@ -1371,7 +1401,7 @@ export async function getAttritionBreakdown(
 
   const pool = await getOnfidoPool();
   const col = dimension;
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const { start, end } = monthBounds(targetMonth);
 
   // Opening/closing are every group's on-floor HC on the MONTH's first and last
@@ -1446,10 +1476,10 @@ export interface AttritionAonMonthRow { month: string; buckets: Record<string, n
  * two-point Avg HC, exactly as getAttritionMonthlyDetail does for the total.
  */
 export async function getAttritionAonMonthly(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }
 ): Promise<AttritionAonMonthRow[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT DATE_FORMAT(work_date, '%Y-%m-%d') AS day, TRIM(aon_bucket) AS aon,
@@ -1513,10 +1543,10 @@ export interface AttritionReasonMonthly {
  * "Unspecified", rather than dropped — otherwise the grand total stops matching.
  */
 export async function getAttritionReasonMonthly(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }
 ): Promise<AttritionReasonMonthly> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT DATE_FORMAT(work_date, '%Y-%m') AS ym, TRIM(attrition_type) AS type, TRIM(attrition_reason) AS reason,
@@ -1576,9 +1606,9 @@ export interface AttritionExitRow {
 /** Every real exit row in range — the record-level drill-down behind the count.
  *  Carries `id` so the frontend can open the same full-record drawer every
  *  other table's rows do (GET /records/ONFIDO_AGENT_DAILY/:id). */
-export async function listAttritionExits(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }): Promise<AttritionExitRow[]> {
+export async function listAttritionExits(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }): Promise<AttritionExitRow[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT id, emp_id, emp_name, analyst_email, tl_name, am_name, work_date, attrition_reason, attrition_type
@@ -1650,11 +1680,11 @@ export interface DayPivot { days: string[]; rows: DayPivotRow[]; dayTotals: Reco
  *  sorted by value instead, matching the reference's hour-ordered rows. */
 async function dayWisePivot(
   table: string, dateCol: string, groupCol: string,
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string },
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string },
   opts: { limit?: number; numeric?: boolean } = {}
 ): Promise<DayPivot> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail, table === "onfido_task_skip_raw" ? "unassigned_from_email" : "analyst_email");
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT DATE_FORMAT(${dateCol}, '%Y-%m-%d') AS day,
@@ -1701,9 +1731,9 @@ async function dayWisePivot(
 export interface EtmQueueKpis { selected: KpiValue; latestDay: KpiValue; ytd: KpiValue }
 export interface EtmOverview { doc: EtmQueueKpis; poa: EtmQueueKpis }
 
-export async function getEtmOverview(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }): Promise<EtmOverview> {
+export async function getEtmOverview(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }): Promise<EtmOverview> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const doc = await threeCardKpis("onfido_doc_etm_raw", "report_date", f.from, f.to, clause, params, "etm_doc", "DOC ETM");
   const poa = await threeCardKpis("onfido_poa_etm_raw", "report_date", f.from, f.to, clause, params, "etm_poa", "POA ETM");
   return { doc, poa };
@@ -1711,9 +1741,9 @@ export async function getEtmOverview(rawFilters: { from?: string; to?: string; t
 
 export interface EtmTrendPoint { month: string; doc: number; poa: number }
 
-export async function getEtmMonthlyTrend(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }): Promise<EtmTrendPoint[]> {
+export async function getEtmMonthlyTrend(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }): Promise<EtmTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const [docRows] = await pool.query<RowDataPacket[]>(
     `SELECT DATE_FORMAT(report_date, '%Y-%m') AS ym, COUNT(*) AS n
@@ -1741,10 +1771,10 @@ export type EtmDimension = "tl_name" | "am_name" | "escalated_by_email" | "aon_b
 export interface EtmBreakdownRow { label: string; count: number }
 
 export async function getEtmBreakdown(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, queue: EtmQueue, dimension: EtmDimension
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, queue: EtmQueue, dimension: EtmDimension
 ): Promise<EtmBreakdownRow[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const table = queue === "doc" ? "onfido_doc_etm_raw" : "onfido_poa_etm_raw";
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
@@ -1759,10 +1789,10 @@ export async function getEtmBreakdown(
 /** Same breakdown, scoped to the single most recent day in range instead of
  *  the whole window — the reference dashboard's "Latest Day" distribution. */
 export async function getEtmLatestDayBreakdown(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, queue: EtmQueue, dimension: EtmDimension
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, queue: EtmQueue, dimension: EtmDimension
 ): Promise<{ date: string | null; rows: EtmBreakdownRow[] }> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const table = queue === "doc" ? "onfido_doc_etm_raw" : "onfido_poa_etm_raw";
   const date = await latestDateOnOrBefore(table, "report_date", f.to, clause, params);
   if (!date) return { date: null, rows: [] };
@@ -1783,7 +1813,7 @@ export type EtmPivotDimension = "analyst" | "slot" | "client" | "document_type";
  *  document-type field in the source export), so that combination returns an
  *  empty pivot rather than a SQL error. */
 export async function getEtmDayPivot(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, queue: EtmQueue, by: EtmPivotDimension
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, queue: EtmQueue, by: EtmPivotDimension
 ): Promise<DayPivot> {
   if (by === "document_type" && queue === "poa") return { days: [], rows: [], dayTotals: {} };
   const table = queue === "doc" ? "onfido_doc_etm_raw" : "onfido_poa_etm_raw";
@@ -1795,17 +1825,17 @@ export async function getEtmDayPivot(
 
 export interface TaskSkipOverview { selected: KpiValue; latestDay: KpiValue; ytd: KpiValue }
 
-export async function getTaskSkipOverview(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }): Promise<TaskSkipOverview> {
+export async function getTaskSkipOverview(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }): Promise<TaskSkipOverview> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail, "unassigned_from_email");
   return threeCardKpis("onfido_task_skip_raw", "skip_date", f.from, f.to, clause, params, "taskskip", "Task Skip");
 }
 
 export interface TaskSkipTrendPoint { month: string; count: number }
 
-export async function getTaskSkipMonthlyTrend(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }): Promise<TaskSkipTrendPoint[]> {
+export async function getTaskSkipMonthlyTrend(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }): Promise<TaskSkipTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail, "unassigned_from_email");
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT DATE_FORMAT(skip_date, '%Y-%m') AS ym, COUNT(*) AS n
@@ -1820,10 +1850,10 @@ export type TaskSkipDimension = "tl_name" | "am_name" | "unassigned_from_email" 
 export interface TaskSkipBreakdownRow { label: string; count: number }
 
 export async function getTaskSkipBreakdown(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, dimension: TaskSkipDimension
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, dimension: TaskSkipDimension
 ): Promise<TaskSkipBreakdownRow[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail, "unassigned_from_email");
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(${dimension}), ''), '(unassigned)') AS label, COUNT(*) AS n
@@ -1837,10 +1867,10 @@ export async function getTaskSkipBreakdown(
 /** Same breakdown, scoped to the single most recent day in range — the
  *  reference dashboard's "Latest Day" distribution. */
 export async function getTaskSkipLatestDayBreakdown(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, dimension: TaskSkipDimension
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, dimension: TaskSkipDimension
 ): Promise<{ date: string | null; rows: TaskSkipBreakdownRow[] }> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail, "unassigned_from_email");
   const date = await latestDateOnOrBefore("onfido_task_skip_raw", "skip_date", f.to, clause, params);
   if (!date) return { date: null, rows: [] };
   const pool = await getOnfidoPool();
@@ -1857,7 +1887,7 @@ export type TaskSkipPivotDimension = "analyst" | "slot" | "client" | "task_type"
 
 /** "Analyst/Client/Task Type Day-wise Trend" + "Day and Slot-wise Trend" panels. */
 export async function getTaskSkipDayPivot(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, by: TaskSkipPivotDimension
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, by: TaskSkipPivotDimension
 ): Promise<DayPivot> {
   const col = by === "analyst" ? "unassigned_from_email" : by === "slot" ? "slot" : by === "client" ? "ims_client_name" : "task_type";
   return dayWisePivot("onfido_task_skip_raw", "skip_date", col, rawFilters, { limit: by === "slot" ? undefined : 15, numeric: by === "slot" });
@@ -1884,9 +1914,9 @@ export interface QualityOverview {
   rawExtractionErrorRate: KpiValue;
 }
 
-export async function getQualityOverview(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }): Promise<QualityOverview> {
+export async function getQualityOverview(rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }): Promise<QualityOverview> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const agg = await scalar<RowDataPacket & {
     total: number; errors: number; farN: number; frrN: number;
     classN: number; extN: number; addExtN: number; rawExtN: number;
@@ -1921,10 +1951,10 @@ export interface QualityBreakdownRow {
 }
 
 export async function getQualityBreakdown(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, dimension: QualityDimension
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, dimension: QualityDimension
 ): Promise<QualityBreakdownRow[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(${dimension}), ''), '(unassigned)') AS label,
@@ -1959,10 +1989,10 @@ export interface QualityMetricTrendPoint {
  *  "Classification Error% = SUM(Classification Error) / Total Audit" formula
  *  getOverview's docExtQuality block already uses — not COUNT(*). */
 export async function getQualityMetricTrend(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, granularity: TrendGranularity
 ): Promise<QualityMetricTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT ${bucketExpr("report_date", granularity)} AS bucket,
@@ -2020,10 +2050,10 @@ export interface EscalationOverview {
 }
 
 export async function getEscalationOverview(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }
 ): Promise<EscalationOverview> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const cre = await scalar<RowDataPacket & { n: number; reports: number }>(
     `SELECT COUNT(*) AS n, COUNT(DISTINCT ims_report_url) AS reports
        FROM ${escCre} WHERE qc_updated_date BETWEEN ? AND ? ${clause}`,
@@ -2050,10 +2080,10 @@ export async function getEscalationOverview(
 export interface EscalationTrendPoint { bucket: string; count: number; creCount: number; crqCount: number; }
 
 export async function getEscalationTrend(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, granularity: TrendGranularity
 ): Promise<EscalationTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const expr = bucketExpr("qc_updated_date", granularity);
   const [creRows] = await pool.query<RowDataPacket[]>(
@@ -2088,11 +2118,11 @@ export interface EscalationBreakdownRow { label: string; count: number; }
 export type EscalationSource = "CRE" | "CRQ";
 
 export async function getEscalationBreakdown(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, dimension: EscalationDimension,
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, dimension: EscalationDimension,
   source?: EscalationSource
 ): Promise<EscalationBreakdownRow[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const side = (table: string) =>
     `SELECT COALESCE(NULLIF(TRIM(${dimension}), ''), '(unassigned)') AS label, COUNT(*) AS cnt
@@ -2118,14 +2148,14 @@ export async function getEscalationBreakdown(
 export interface EscalationRecordRow extends RowDataPacket { escalation_source: "CRE" | "CRQ"; }
 
 export async function getEscalationRecords(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string },
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string },
   dimension: EscalationDimension,
   value: string,
   limit = 50,
   source?: EscalationSource
 ): Promise<{ rows: EscalationRecordRow[]; total: number }> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const dimCond = value === "(unassigned)" ? `(${dimension} IS NULL OR TRIM(${dimension}) = '')` : `${dimension} = ?`;
   const valParams = value === "(unassigned)" ? [] : [value];
@@ -2197,10 +2227,10 @@ export interface ClientDocOverview {
 }
 
 export async function getClientDocOverview(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; documentName?: string }
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string; documentName?: string }
 ): Promise<ClientDocOverview> {
   const f = readFilters(rawFilters);
-  const { clause: tlClause, params: tlParams } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause: tlClause, params: tlParams } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const { clause: docClause, params: docParams } = documentNameFilter(rawFilters.documentName);
   const doc = await scalar<RowDataPacket & { n: number; aht: number | null; clients: number }>(
     `SELECT COUNT(*) AS n, ${DOC_AHT_AVG} AS aht, COUNT(DISTINCT ims_client_name) AS clients
@@ -2235,11 +2265,11 @@ export interface ClientDocTrendPoint { bucket: string; doc: number; poa: number 
 /** Month-wise / week-wise trend only — the client asked for exactly these two,
  *  not the daily granularity the rest of the dashboard supports elsewhere. */
 export async function getClientDocTrend(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; documentName?: string },
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string; documentName?: string },
   granularity: "monthly" | "weekly"
 ): Promise<ClientDocTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause: tlClause, params: tlParams } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause: tlClause, params: tlParams } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const { clause: docClause, params: docParams } = documentNameFilter(rawFilters.documentName);
   const pool = await getOnfidoPool();
   const [docRows] = await pool.query<RowDataPacket[]>(
@@ -2268,10 +2298,10 @@ export interface ClientDocBreakdownRow { clientName: string; task: "DOC" | "POA"
 
 /** The client's requested table shape: Client Name / Task / AHT. */
 export async function getClientDocBreakdown(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; documentName?: string }
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string; documentName?: string }
 ): Promise<ClientDocBreakdownRow[]> {
   const f = readFilters(rawFilters);
-  const { clause: tlClause, params: tlParams } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause: tlClause, params: tlParams } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const { clause: docClause, params: docParams } = documentNameFilter(rawFilters.documentName);
   const pool = await getOnfidoPool();
   const [docRows] = await pool.query<RowDataPacket[]>(
@@ -2320,14 +2350,14 @@ export interface ClientDocRecordRow extends RowDataPacket { source_table: "ONFID
  *  form), so the frontend can pass it straight through to the existing
  *  generic /records/:table/:id detail route with no extra mapping step. */
 export async function getClientDocRecords(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; documentName?: string },
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string; documentName?: string },
   clientName: string | undefined,
   task: "DOC" | "POA",
   limit = 50,
   taskType?: string
 ): Promise<{ rows: ClientDocRecordRow[]; total: number }> {
   const f = readFilters(rawFilters);
-  const { clause: tlClause, params: tlParams } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause: tlClause, params: tlParams } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const { clause: docClause, params: docParams } = documentNameFilter(rawFilters.documentName);
   const pool = await getOnfidoPool();
   // clientName omitted = every client (the Document-wise ranking drills into a document, not a client).
@@ -2374,10 +2404,10 @@ export interface PoaExternalOverview {
 }
 
 export async function getPoaExternalOverview(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }
 ): Promise<PoaExternalOverview> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const agg = await scalar<RowDataPacket & { n: number; aht: number | null; errors: number; clients: number }>(
     `SELECT COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht,
             COALESCE(SUM(error_flag),0) AS errors, COUNT(DISTINCT ims_client_name) AS clients
@@ -2401,10 +2431,10 @@ export async function getPoaExternalOverview(
 export interface PoaExternalTrendPoint { bucket: string; taskCount: number; errorCount: number }
 
 export async function getPoaExternalTrend(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, granularity: TrendGranularity
 ): Promise<PoaExternalTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const expr = bucketExpr("report_completed_date", granularity);
   const [rows] = await pool.query<RowDataPacket[]>(
@@ -2422,10 +2452,10 @@ export type PoaExternalDimension = "ims_client_name" | "tl_name" | "am_name" | "
 export interface PoaExternalBreakdownRow { label: string; taskCount: number; avgAht: number | null; errorRate: number | null }
 
 export async function getPoaExternalBreakdown(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, dimension: PoaExternalDimension
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, dimension: PoaExternalDimension
 ): Promise<PoaExternalBreakdownRow[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(${dimension}), ''), '(unassigned)') AS label,
@@ -2611,10 +2641,10 @@ export interface DocRawOverview {
 }
 
 export async function getDocRawOverview(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }
 ): Promise<DocRawOverview> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const agg = await scalar<RowDataPacket & { n: number; aht: number | null; queue: number | null; esc: number }>(
     `SELECT COUNT(*) AS n, ${DOC_AHT_AVG} AS aht, AVG(queue_time_secs) AS queue, SUM(is_escalated) AS esc
        FROM onfido_doc_raw WHERE report_date BETWEEN ? AND ? ${clause}`,
@@ -2635,10 +2665,10 @@ export async function getDocRawOverview(
 export interface DocRawTrendPoint { bucket: string; taskCount: number; avgAht: number | null }
 
 export async function getDocRawTrend(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, granularity: TrendGranularity
 ): Promise<DocRawTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT ${bucketExpr("report_date", granularity)} AS bucket, COUNT(*) AS n, ${DOC_AHT_AVG} AS aht
@@ -2668,10 +2698,10 @@ const DOC_RAW_DIMENSION_EXPR: Record<DocRawDimension, string> = {
 };
 
 export async function getDocRawBreakdown(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, dimension: DocRawDimension
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, dimension: DocRawDimension
 ): Promise<DocRawBreakdownRow[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const expr = DOC_RAW_DIMENSION_EXPR[dimension];
   const unassignedLabel = dimension === "task_type" ? "Standard Review (untagged)" : "(unassigned)";
@@ -2701,10 +2731,10 @@ export interface DocTaskTypeTrendPoint {
  *  feedback items #2/#3) — one query, pivoted by bucket so the frontend can
  *  read either metric per task type across the same set of buckets. */
 export async function getDocTaskTypeTrend(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, granularity: TrendGranularity
 ): Promise<DocTaskTypeTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const bucket = bucketExpr("report_date", granularity);
   const taskTypeExpr = DOC_RAW_DIMENSION_EXPR.task_type;
@@ -2747,10 +2777,10 @@ export interface PoaOverview {
 }
 
 export async function getPoaOverview(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }
 ): Promise<PoaOverview> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const raw = await scalar<RowDataPacket & { n: number; aht: number | null }>(
     `SELECT COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht
        FROM onfido_poa_raw WHERE report_completed_date BETWEEN ? AND ? ${clause}`,
@@ -2798,10 +2828,10 @@ export async function getPoaOverview(
  *  (2026-09-17 feedback), which the reference dashboard's rTrend() renders as
  *  its 5th trend line from a plain POA_Error_Pct field. */
 export async function getPoaQualityTrend(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, granularity: TrendGranularity
 ): Promise<QualityGranularTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT ${bucketExpr("report_completed_date", granularity)} AS bucket,
@@ -2821,10 +2851,10 @@ export interface PoaTrendPoint { bucket: string; taskCount: number }
  *  reasoning as every other trend in this file: AHT/error-rate belong in the
  *  overview tiles and breakdown table, not blended into one bucketed line. */
 export async function getPoaTrend(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, granularity: TrendGranularity
 ): Promise<PoaTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const expr = bucketExpr("report_completed_date", granularity);
   const [rawRows] = await pool.query<RowDataPacket[]>(
@@ -2850,10 +2880,10 @@ export type PoaDimension = "tl_name" | "am_name";
 export interface PoaBreakdownRow { label: string; taskCount: number; avgAht: number | null; errorRate: number | null }
 
 export async function getPoaBreakdown(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, dimension: PoaDimension
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, dimension: PoaDimension
 ): Promise<PoaBreakdownRow[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const label = `COALESCE(NULLIF(TRIM(${dimension}), ''), '(unassigned)')`;
 
@@ -3011,10 +3041,10 @@ export interface PoaDayRow {
 /** Day-wise POA detail table (9 columns, 2026-09-17 feedback) — same four-table
  *  merge as getPoaEntityMonthlyGrid, grouped by calendar day instead of entity. */
 export async function getPoaDayWiseDetail(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }
 ): Promise<PoaDayRow[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const dayExpr = bucketExpr("report_completed_date", "daily");
 
@@ -3097,10 +3127,10 @@ export interface PoaTrialOverview {
 }
 
 export async function getPoaTrialOverview(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }
 ): Promise<PoaTrialOverview> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const agg = await scalar<RowDataPacket & { n: number; aht: number | null; considerN: number }>(
     `SELECT COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht,
             SUM(CASE WHEN overall_result = 'Consider' THEN 1 ELSE 0 END) AS considerN
@@ -3123,10 +3153,10 @@ export async function getPoaTrialOverview(
 export interface PoaTrialTrendPoint { bucket: string; taskCount: number }
 
 export async function getPoaTrialTrend(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, granularity: TrendGranularity
 ): Promise<PoaTrialTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const expr = bucketExpr("report_completed_date", granularity);
   const [rows] = await pool.query<RowDataPacket[]>(
@@ -3147,10 +3177,10 @@ export interface PoaCombinedTrendPoint { bucket: string; taskCount: number; avgA
  *  table's average counting equally regardless of volume). Powers the
  *  Overview page's "Month-wise POA Performance Task & AHT process" card. */
 export async function getPoaCombinedTrend(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, granularity: TrendGranularity
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, granularity: TrendGranularity
 ): Promise<PoaCombinedTrendPoint[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const expr = bucketExpr("report_completed_date", granularity);
   const [rawRows] = await pool.query<RowDataPacket[]>(
@@ -3184,10 +3214,10 @@ export type PoaTrialDimension = "tl_name" | "am_name";
 export interface PoaTrialBreakdownRow { label: string; taskCount: number; avgAht: number | null; considerRate: number | null }
 
 export async function getPoaTrialBreakdown(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }, dimension: PoaTrialDimension
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }, dimension: PoaTrialDimension
 ): Promise<PoaTrialBreakdownRow[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
   const label = `COALESCE(NULLIF(TRIM(${dimension}), ''), '(unassigned)')`;
   const [rows] = await pool.query<RowDataPacket[]>(
@@ -3296,10 +3326,10 @@ export interface PoaSlaMetrics {
 }
 
 export async function getPoaSlaMetrics(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }
 ): Promise<PoaSlaMetrics> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
 
   const [agg] = await pool.query<RowDataPacket[]>(
@@ -3398,10 +3428,10 @@ export interface AnalystQualityRow {
 }
 
 export async function getAnalystQualityRanking(
-  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string }
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; analystEmail?: string }
 ): Promise<AnalystQualityRow[]> {
   const f = readFilters(rawFilters);
-  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, rawFilters.analystEmail);
   const pool = await getOnfidoPool();
 
   const [intRows] = await pool.query<RowDataPacket[]>(

@@ -812,9 +812,9 @@ function TabBar({ view, onChange }: { view: ViewKey; onChange: (v: ViewKey) => v
  * toggle, mirroring Central Dashboard's Trends tab. Real re-aggregation of the
  * same DOC/POA tables the Overview KPIs read, at the API's `/volume-trend` route.
  */
-function TrendsView({ range, tlFilter, amFilter }: { range: { from: string; to: string }; tlFilter: string; amFilter: string }) {
+function TrendsView({ range, tlFilter, amFilter, analystFilter = "" }: { range: { from: string; to: string }; tlFilter: string; amFilter: string; analystFilter?: string }) {
   const [granularity, setGranularity] = useState<Granularity>("monthly");
-  const qs = tlAmQS(tlFilter, amFilter);
+  const qs = tlAmQS(tlFilter, amFilter, analystFilter);
   const query = useQuery({
     queryKey: ["onfido-process", "volume-trend", range, granularity, qs],
     queryFn: () =>
@@ -896,8 +896,8 @@ function TrendsView({ range, tlFilter, amFilter }: { range: { from: string; to: 
  * onfido_doc_external_audit_raw / onfido_poa_quality_raw tables the rest of
  * this dashboard reads.
  */
-function AlertsView({ range, tlFilter, amFilter }: { range: { from: string; to: string }; tlFilter: string; amFilter: string }) {
-  const qs = tlAmQS(tlFilter, amFilter);
+function AlertsView({ range, tlFilter, amFilter, analystFilter = "" }: { range: { from: string; to: string }; tlFilter: string; amFilter: string; analystFilter?: string }) {
+  const qs = tlAmQS(tlFilter, amFilter, analystFilter);
   const query = useQuery({
     queryKey: ["onfido-process", "alerts", range, qs],
     queryFn: () => hrmsApi.get<{ data: AlertRow[] }>(`/api/onfido-process/alerts?from=${range.from}&to=${range.to}${qs}`),
@@ -1255,9 +1255,13 @@ function PillGroup<T extends string>({ options, value, onChange }: { options: { 
  */
 /** Shared TL/AM query-string suffix — every filterable view's endpoints accept
  *  the same two optional params, appended the same way. */
-function tlAmQS(tlFilter: string, amFilter: string): string {
-  return (tlFilter ? `&tlName=${encodeURIComponent(tlFilter)}` : "") + (amFilter ? `&amName=${encodeURIComponent(amFilter)}` : "");
+function tlAmQS(tlFilter: string, amFilter: string, analystFilter = ""): string {
+  return (tlFilter ? `&tlName=${encodeURIComponent(tlFilter)}` : "") + (amFilter ? `&amName=${encodeURIComponent(amFilter)}` : "")
+    + (analystFilter ? `&analystEmail=${encodeURIComponent(analystFilter)}` : "");
 }
+
+/** Tabs whose queries can be narrowed to one analyst (every table behind them carries the analyst's email). */
+const ANALYST_FILTER_VIEWS = new Set<ViewKey>(["trends", "alerts", "attrition", "quality", "etm", "taskskip", "escalations", "docraw"]);
 
 function lastDayOfMonth(ym: string): string {
   const [y, m] = ym.split("-").map(Number);
@@ -1573,11 +1577,11 @@ const breakdownToCombo = (rows: AttritionBreakdownRow[]) =>
   rows.map((r) => ({ label: r.label, count: r.attritionCount, attrPct: r.attritionRate, ulPct: r.ulShrinkageRate }));
 
 function AttritionView({
-  range, tlFilter, amFilter, onOpenRecord,
-}: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
+  range, tlFilter, amFilter, analystFilter = "", onOpenRecord,
+}: { range: { from: string; to: string }; tlFilter: string; amFilter: string; analystFilter?: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
   const [granularity, setGranularity] = useState<Granularity>("monthly");
   const [drilldown, setDrilldown] = useState<{ dimension: AttritionDimension; label: string; rawLabel: string; month: string } | null>(null);
-  const qs = tlAmQS(tlFilter, amFilter);
+  const qs = tlAmQS(tlFilter, amFilter, analystFilter);
   const url = (path: string) => `/api/onfido-process/attrition/${path}?from=${range.from}&to=${range.to}${qs}`;
   const key = (k: string) => ["onfido-process", `attrition-${k}`, range, tlFilter, amFilter];
 
@@ -1890,13 +1894,13 @@ function DayPivotTable({ title, pivot, dimensionLabel }: { title: string; pivot:
 }
 
 function EtmView({
-  range, tlFilter, amFilter, onOpenRecord,
-}: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
+  range, tlFilter, amFilter, analystFilter = "", onOpenRecord,
+}: { range: { from: string; to: string }; tlFilter: string; amFilter: string; analystFilter?: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
   const [queue, setQueue] = useState<EtmQueue>("doc");
   const [dimension, setDimension] = useState<EtmDimension>("tl_name");
   const [granularity, setGranularity] = useState<Granularity>("monthly");
   const [drilldown, setDrilldown] = useState<{ label: string; dimension: EtmDimension } | null>(null);
-  const qs = tlAmQS(tlFilter, amFilter);
+  const qs = tlAmQS(tlFilter, amFilter, analystFilter);
   const qKey = [range, tlFilter, amFilter, queue] as const;
   const dimLabel = (d: EtmDimension) => (d === "escalated_by_email" ? "Escalated By" : d === "aon_bucket" ? "AON" : d === "tl_name" ? "TL" : "AM");
 
@@ -2088,12 +2092,12 @@ function EtmView({
  * by an analyst before completion.
  */
 function TaskSkipView({
-  range, tlFilter, amFilter, onOpenRecord,
-}: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
+  range, tlFilter, amFilter, analystFilter = "", onOpenRecord,
+}: { range: { from: string; to: string }; tlFilter: string; amFilter: string; analystFilter?: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
   const [dimension, setDimension] = useState<TaskSkipDimension>("tl_name");
   const [granularity, setGranularity] = useState<Granularity>("monthly");
   const [drilldown, setDrilldown] = useState<{ label: string; dimension: TaskSkipDimension } | null>(null);
-  const qs = tlAmQS(tlFilter, amFilter);
+  const qs = tlAmQS(tlFilter, amFilter, analystFilter);
   const qKey = [range, tlFilter, amFilter] as const;
   const dimLabelOf = (d: TaskSkipDimension) => ({ tl_name: "TL", am_name: "AM", unassigned_from_email: "Analyst", ims_client_name: "Client", task_type: "Task Type" })[d];
 
@@ -2277,13 +2281,13 @@ type QualityScope = "all" | "internal" | "external";
  * this dashboard has, previously only feeding Analyst Performance and Alerts.
  */
 function QualityView({
-  range, tlFilter, amFilter, onOpenRecord,
-}: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
+  range, tlFilter, amFilter, analystFilter = "", onOpenRecord,
+}: { range: { from: string; to: string }; tlFilter: string; amFilter: string; analystFilter?: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
   const [dimension, setDimension] = useState<QualityDimension>("ims_client_name");
   const [granularity, setGranularity] = useState<Granularity>("monthly");
   const [scope, setScope] = useState<QualityScope>("all");
   const [drilldown, setDrilldown] = useState<{ label: string } | null>(null);
-  const qs = tlAmQS(tlFilter, amFilter);
+  const qs = tlAmQS(tlFilter, amFilter, analystFilter);
   const showInternal = scope !== "external";
   const showExternal = scope !== "internal";
 
@@ -2658,13 +2662,13 @@ type EscalationSourceSlicer = "ALL" | "CRE" | "CRQ";
  * escalation count is never split across two tabs.
  */
 function EscalationsView({
-  range, tlFilter, amFilter, onOpenRecord,
-}: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
+  range, tlFilter, amFilter, analystFilter = "", onOpenRecord,
+}: { range: { from: string; to: string }; tlFilter: string; amFilter: string; analystFilter?: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
   const [dimension, setDimension] = useState<EscalationDimension>("ims_client_name");
   const [granularity, setGranularity] = useState<Granularity>("monthly");
   const [source, setSource] = useState<EscalationSourceSlicer>("ALL");
   const [drilldown, setDrilldown] = useState<{ label: string } | null>(null);
-  const qs = tlAmQS(tlFilter, amFilter);
+  const qs = tlAmQS(tlFilter, amFilter, analystFilter);
   const sourceQS = source === "ALL" ? "" : `&source=${source}`;
 
   const overviewQuery = useQuery({
@@ -2868,12 +2872,12 @@ function EscalationDrilldownSheet({
  * source, same as the old dashboard's own "DOC Raw" sheet.
  */
 function DocRawView({
-  range, tlFilter, amFilter, onOpenRecord,
-}: { range: { from: string; to: string }; tlFilter: string; amFilter: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
+  range, tlFilter, amFilter, analystFilter = "", onOpenRecord,
+}: { range: { from: string; to: string }; tlFilter: string; amFilter: string; analystFilter?: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
   const [dimension, setDimension] = useState<DocRawDimension>("ims_client_name");
   const [granularity, setGranularity] = useState<Granularity>("monthly");
   const [drilldown, setDrilldown] = useState<{ label: string } | null>(null);
-  const qs = tlAmQS(tlFilter, amFilter);
+  const qs = tlAmQS(tlFilter, amFilter, analystFilter);
 
   const overviewQuery = useQuery({
     queryKey: ["onfido-process", "doc-raw-overview", range, tlFilter, amFilter],
@@ -4473,7 +4477,7 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
   const Shell = embedded ? Fragment : DashboardLayout;
   const [view, setView] = useState<ViewKey>("overview");
   const [range, setRange] = useState(defaultRange());
-  const { tlFilter, setTlFilter, amFilter, setAmFilter, tlOptions, amOptions, clear: clearHierarchy } = useHierarchyFilters(range);
+  const { tlFilter, setTlFilter, amFilter, setAmFilter, analystFilter, setAnalystFilter, tlOptions, amOptions, analystOptions, clear: clearHierarchy } = useHierarchyFilters(range);
   const [activeTable, setActiveTable] = useState<string>("ONFIDO_DOC_RAW");
   const [drawerRecord, setDrawerRecord] = useState<RawRecord | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -4535,25 +4539,34 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
                 </select>
               </div>
             )}
-            {FILTERABLE_VIEWS.has(view) && (tlFilter || amFilter) && (
+            {ANALYST_FILTER_VIEWS.has(view) && (
+              <div className="oc-field">
+                <label>Analyst</label>
+                <select className="oc-select" style={{ width: 220 }} value={analystFilter} onChange={(e) => setAnalystFilter(e.target.value)}>
+                  <option value="">All analysts</option>
+                  {analystOptions.map((a) => <option key={a.email} value={a.email}>{a.name ? `${a.name} (${a.email})` : a.email}</option>)}
+                </select>
+              </div>
+            )}
+            {FILTERABLE_VIEWS.has(view) && (tlFilter || amFilter || analystFilter) && (
               <span className="oc-badge">
-                <Users2 className="h-3 w-3" /> {[tlFilter, amFilter].filter(Boolean).join(" · ")}
+                <Users2 className="h-3 w-3" /> {[tlFilter, amFilter, analystFilter].filter(Boolean).join(" · ")}
                 <button onClick={clearHierarchy} aria-label="Clear filters">×</button>
               </span>
             )}
           </div>
           )}
 
-          {view === "trends" && <TrendsView range={range} tlFilter={tlFilter} amFilter={amFilter} />}
-          {view === "alerts" && <AlertsView range={range} tlFilter={tlFilter} amFilter={amFilter} />}
+          {view === "trends" && <TrendsView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}
+          {view === "alerts" && <AlertsView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}
           {view === "analyst" && <OnfidoAnalystReport initialRange={{ from: shiftDays(range.to, -29), to: range.to }} />}
           {view === "utilization" && <OnfidoUtilizationReport />}
-          {view === "attrition" && <AttritionView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
-          {view === "quality" && <QualityView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
-          {view === "etm" && <EtmView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
-          {view === "taskskip" && <TaskSkipView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
-          {view === "escalations" && <EscalationsView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
-          {view === "docraw" && <DocRawView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
+          {view === "attrition" && <AttritionView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} onOpenRecord={openRecord} />}
+          {view === "quality" && <QualityView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} onOpenRecord={openRecord} />}
+          {view === "etm" && <EtmView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} onOpenRecord={openRecord} />}
+          {view === "taskskip" && <TaskSkipView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} onOpenRecord={openRecord} />}
+          {view === "escalations" && <EscalationsView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} onOpenRecord={openRecord} />}
+          {view === "docraw" && <DocRawView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} onOpenRecord={openRecord} />}
           {view === "poa" && <PoaCombinedView range={range} tlFilter={tlFilter} amFilter={amFilter} onOpenRecord={openRecord} />}
           {view === "poatrial" && (
             <PoaFormatPage
