@@ -555,7 +555,7 @@ export function resolveTable(tableKey: string): string {
 const ALLOWED_FILTER_COLUMNS = new Set([
   "tl_name", "am_name", "aon_bucket", "location", "escalated_by_email",
   "unassigned_from_email", "ims_client_name", "task_type", "analyst_email",
-  "docupedia_document_name", "error_category",
+  "docupedia_document_name", "error_category", "error_breakdown",
   // has_error powers the "errors only" raw-table view (a real, standalone table
   // of just the failed audits, not a grouped breakdown) — same generic
   // filterColumn/filterValue mechanism, just a boolean flag instead of a label.
@@ -2110,7 +2110,7 @@ export async function getEscalationTrend(
     .map(([bucket, { creCount, crqCount }]) => ({ bucket, creCount, crqCount, count: creCount + crqCount }));
 }
 
-export type EscalationDimension = "ims_client_name" | "error_category" | "tl_name" | "am_name";
+export type EscalationDimension = "ims_client_name" | "error_category" | "error_breakdown" | "analyst_email" | "tl_name" | "am_name";
 
 export interface EscalationBreakdownRow { label: string; count: number; }
 

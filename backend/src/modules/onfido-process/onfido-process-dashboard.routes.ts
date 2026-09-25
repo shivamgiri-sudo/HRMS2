@@ -330,7 +330,7 @@ function readEscalationSource(req: AuthenticatedRequest): svc.EscalationSource |
   const v = String((req.query as Record<string, unknown>).source ?? "").toUpperCase();
   return v === "CRE" || v === "CRQ" ? v : undefined;
 }
-const ESCALATION_DIMENSIONS = new Set(["ims_client_name", "error_category", "tl_name", "am_name"]);
+const ESCALATION_DIMENSIONS = new Set(["ims_client_name", "error_category", "error_breakdown", "analyst_email", "tl_name", "am_name"]);
 router.get("/escalations/breakdown/:dimension", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const dim = req.params.dimension;
   if (!ESCALATION_DIMENSIONS.has(dim)) return res.status(400).json({ success: false, message: "Unknown dimension" });

@@ -187,7 +187,7 @@ interface EscalationOverview {
   totalLines: KpiValue; creLines: KpiValue; crqLines: KpiValue; distinctReports: KpiValue;
 }
 interface EscalationTrendPoint { bucket: string; count: number; creCount: number; crqCount: number }
-type EscalationDimension = "ims_client_name" | "error_category" | "tl_name" | "am_name";
+type EscalationDimension = "ims_client_name" | "error_category" | "error_breakdown" | "analyst_email" | "tl_name" | "am_name";
 interface EscalationBreakdownRow { label: string; count: number }
 
 interface DocRawOverview {
@@ -2753,7 +2753,7 @@ function EscalationsView({
   const ov = overviewQuery.data?.data;
   const points = trendQuery.data?.data ?? [];
   const breakdown = breakdownQuery.data?.data ?? [];
-  const dimLabel = { ims_client_name: "Client", error_category: "Error Category", tl_name: "TL", am_name: "AM" }[dimension];
+  const dimLabel = { ims_client_name: "Client", error_category: "Error Category", error_breakdown: "Error Type", analyst_email: "Analyst", tl_name: "TL", am_name: "AM" }[dimension];
 
   return (
     <div className="space-y-4">
@@ -2823,6 +2823,7 @@ function EscalationsView({
             onChange={setDimension}
             options={[
               { key: "ims_client_name", label: "Client Wise" }, { key: "error_category", label: "Error Category" },
+              { key: "error_breakdown", label: "Error Type" }, { key: "analyst_email", label: "Analyst Wise" },
               { key: "tl_name", label: "TL Wise" }, { key: "am_name", label: "AM Wise" },
             ]}
           />

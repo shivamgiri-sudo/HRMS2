@@ -16,8 +16,8 @@ import type { NextFunction, Request, Response } from "express";
  * - /live/* is excluded: it is a today-so-far view that is polled every minute.
  */
 
-const TTL_MS = 5 * 60_000;
-const MAX_ENTRIES = 400;
+const TTL_MS = 30 * 60_000;
+const MAX_ENTRIES = 800;
 
 interface CacheEntry { body: unknown; expiresAt: number }
 
