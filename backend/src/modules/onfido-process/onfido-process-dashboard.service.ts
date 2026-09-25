@@ -542,7 +542,7 @@ const VALID_TABLE_NAMES = new Set(ONFIDO_REPORT_CONFIGS.map((c) => c.table));
  * listMetricRecords returns as its `table` for a metric drill-down's level-4 detail call)
  * — the record-detail route (GET /records/:table/:id) is shared by both drill-down paths.
  */
-function resolveTable(tableKey: string): string {
+export function resolveTable(tableKey: string): string {
   if (VALID_TABLE_NAMES.has(tableKey)) return tableKey;
   const table = TABLE_BY_KEY.get(tableKey.toUpperCase());
   if (!table) throw Object.assign(new Error(`Unknown Onfido table key '${tableKey}'`), { statusCode: 400 });
@@ -582,11 +582,9 @@ export interface RecordListFilters {
  * table and which extra WHERE condition (if any) narrows it to what one metric counts.
  * `extraCondition` is always a fixed string from METRIC_DEFS, never user input.
  */
-async function queryTableRecords(table: string, extraCondition: string | null, filters: RecordListFilters) {
-  const pool = await getOnfidoPool();
-  const limit = Math.min(200, Math.max(1, filters.limit ?? 50));
-  const offset = Math.max(0, filters.cursor ?? 0);
-
+export async function buildRecordFilter(
+  pool: Awaited<ReturnType<typeof getOnfidoPool>>, table: string, extraCondition: string | null, filters: RecordListFilters
+): Promise<{ whereSql: string; params: unknown[] }> {
   const where: string[] = [];
   const params: unknown[] = [];
   if (extraCondition) where.push(extraCondition);
@@ -616,6 +614,14 @@ async function queryTableRecords(table: string, extraCondition: string | null, f
     params.push(`%${filters.search}%`, `%${filters.search}%`);
   }
   const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  return { whereSql, params };
+}
+
+async function queryTableRecords(table: string, extraCondition: string | null, filters: RecordListFilters) {
+  const pool = await getOnfidoPool();
+  const limit = Math.min(200, Math.max(1, filters.limit ?? 50));
+  const offset = Math.max(0, filters.cursor ?? 0);
+  const { whereSql, params } = await buildRecordFilter(pool, table, extraCondition, filters);
 
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT * FROM ${table} ${whereSql} ORDER BY uploaded_at DESC, id DESC LIMIT ? OFFSET ?`,

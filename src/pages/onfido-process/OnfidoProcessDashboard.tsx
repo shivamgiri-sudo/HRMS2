@@ -7,6 +7,7 @@ import {
   MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, UserCheck, Users2,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { OnfidoDownloadButton } from "./OnfidoDownloadButton";
 import { useHierarchyFilters } from "./useHierarchyFilters";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
@@ -1625,6 +1626,9 @@ function AttritionView({
 
   return (
     <div className="space-y-4">
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
+        <OnfidoDownloadButton path="/api/onfido-process/attrition/exits/export.csv" params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename="onfido_attrition_analyst_wise.csv" label="Download analyst-wise attrition (CSV)" />
+      </div>
       {/* 1 · Current-month status */}
       <div className="kr k6">
         <AttrKpi label="Attrition Count" value={kv(ov?.attritionCount) === null ? "—" : fmtNum(kv(ov?.attritionCount)!)} sub={`${cur || "Latest month"} · Onfloor`} accent={AC.orange} />
@@ -1963,6 +1967,9 @@ function EtmView({
 
   return (
     <div className="space-y-4">
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
+        <OnfidoDownloadButton path={`/api/onfido-process/records/${queue === "poa" ? "ONFIDO_POA_ETM" : "ONFIDO_DOC_ETM"}/export.csv`} params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename={`onfido_${queue}_etm.csv`} />
+      </div>
       <PillGroup value={queue} onChange={setQueue} options={[{ key: "doc", label: "DOC ETM" }, { key: "poa", label: "POA ETM" }]} />
 
       {q && (
@@ -2153,6 +2160,9 @@ function TaskSkipView({
 
   return (
     <div className="space-y-4">
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
+        <OnfidoDownloadButton path="/api/onfido-process/records/ONFIDO_TASK_SKIP/export.csv" params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename="onfido_task_skip.csv" />
+      </div>
       {ov && (
         <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
           <KpiPlain kpi={ov.selected} kc="var(--orange)" />
@@ -2677,6 +2687,10 @@ function EscalationsView({
 
   return (
     <div className="space-y-4">
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
+        <OnfidoDownloadButton path="/api/onfido-process/records/ONFIDO_DOC_ESCALATION_CRE/export.csv" params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename="onfido_cre.csv" label="Download CRE (CSV)" />
+        <OnfidoDownloadButton path="/api/onfido-process/records/ONFIDO_DOC_ESCALATION_CRQ/export.csv" params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename="onfido_crq.csv" label="Download CRQ (CSV)" />
+      </div>
       <div className="flex flex-wrap items-center gap-3">
         <span className="oc-eyebrow">Queue</span>
         <PillGroup
@@ -2881,6 +2895,9 @@ function DocRawView({
 
   return (
     <div className="space-y-4">
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
+        <OnfidoDownloadButton path="/api/onfido-process/records/ONFIDO_DOC_RAW/export.csv" params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename="onfido_doc_raw.csv" label="Download RAW file (CSV)" />
+      </div>
       {ov && (
         <div className="kr" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
           <KpiPlain kpi={ov.taskCount} kc="var(--blue)" />

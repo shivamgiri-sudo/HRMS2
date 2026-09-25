@@ -5,6 +5,7 @@ import * as svc from "./onfido-process-dashboard.service.js";
 import * as clientDocSeries from "./onfido-client-doc-series.service.js";
 import { ensureDocTaskTypeColumn } from "./onfido-doc-task-type-column.js";
 import { onfidoResponseCache } from "./onfido-response-cache.js";
+import { streamAttritionExitsCsv, streamRecordsCsv } from "./onfido-export.service.js";
 import { mountPoaPageRoutes } from "./onfido-poa-pages.routes.js";
 import { mountOverviewReportRoutes } from "./onfido-overview-report.routes.js";
 import type { RowDataPacket } from "mysql2";
@@ -174,6 +175,19 @@ router.get("/records/:table", requireAuth, requireRole(...VIEWER_ROLES), h(async
     cursor: q.cursor ? Number(q.cursor) : undefined,
   });
   res.json({ success: true, data });
+}));
+
+// CSV downloads. Declared before /records/:table/:id so "export.csv" is never read as a record id.
+router.get("/records/:table/export.csv", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const q = req.query as Record<string, string | undefined>;
+  await streamRecordsCsv(res, req.params.table, {
+    from: q.from, to: q.to, tlName: q.tlName, amName: q.amName, search: q.search,
+    filterColumn: q.filterColumn, filterValue: q.filterValue,
+  });
+}));
+
+router.get("/attrition/exits/export.csv", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  await streamAttritionExitsCsv(res, readQueryFilters(req));
 }));
 
 router.get("/records/:table/:id", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
