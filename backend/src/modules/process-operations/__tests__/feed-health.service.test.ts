@@ -19,11 +19,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-const { getNeverReported } = await import("../feed-health.service.js");
+const { getNeverReported, resetExistingRowsCacheForTests } = await import("../feed-health.service.js");
 
 describe("getNeverReported", () => {
   beforeEach(() => {
     execute.mockReset();
+    resetExistingRowsCacheForTests();
   });
 
   it("returns nothing for a caller with no readable processes, without querying", async () => {

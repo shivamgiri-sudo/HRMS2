@@ -3,6 +3,21 @@ import type { RowDataPacket } from "mysql2";
 import { assertSafeIdentifier } from "../integration-hub/adapters/databaseAdapter.js";
 
 /**
+ * Row counts behind the "raw rows already exist" hint. Counting a source table is
+ * the slow part of /feeds (36 sequential COUNT(*)s, ~6s on production data, one
+ * of them a 3s join to employees), and the answer barely moves -- it only tells a
+ * reader whether a never-reported metric's source table is empty or already holds
+ * data. Cached per source+filter for 10 minutes; a failed count is never cached.
+ */
+const EXISTING_ROWS_TTL_MS = 10 * 60 * 1000;
+const EXISTENCE_CONCURRENCY = 6;
+const existingRowsCache = new Map<string, { at: number; value: number }>();
+
+export function resetExistingRowsCacheForTests(): void {
+  existingRowsCache.clear();
+}
+
+/**
  * Feed health — which measurements have quietly stopped moving.
  *
  * Every metric on this platform is computed per day from an upstream feed, and a
@@ -237,41 +252,62 @@ export async function getNeverReported(allowedProcessIds: Set<string>): Promise<
   // it's the one place the answer changes what a reader is told to do. Each
   // check is its own try/catch — a source whose config doesn't resolve
   // safely just reports "unknown" rather than blocking the whole banner.
-  for (const g of groups.values()) {
-    if (!g.uploadTypeName) continue;
+  // Run with bounded parallelism and a short cache (see EXISTING_ROWS_TTL_MS).
+  const resolveExistingSourceRows = async (g: Accum): Promise<void> => {
     try {
       const table = assertSafeIdentifier(g._sourceObject, "source table");
       const quotedTable = table.split(".").map((p) => `\`${p}\``).join(".");
+      let cacheKey: string;
+      let run: () => Promise<RowDataPacket[]>;
       if (g._kind === "employee" && g._employeeKeyColumn && g._processIds.size) {
         const employeeCol = assertSafeIdentifier(g._employeeKeyColumn, "employee key column");
         const employeeSide = g._employeeKeyKind === "employee_id" ? "id" : "employee_code";
-        const ids = [...g._processIds];
-        const [cnt] = await retryOnLock(() => db.execute<RowDataPacket[]>(
+        const ids = [...g._processIds].sort();
+        cacheKey = `employee|${table}|${employeeCol}|${employeeSide}|${ids.join(",")}`;
+        run = async () => (await retryOnLock(() => db.execute<RowDataPacket[]>(
           `SELECT COUNT(*) AS n FROM ${quotedTable} s
              JOIN employees e ON e.\`${employeeSide}\` = s.\`${employeeCol}\`
             WHERE e.process_id IN (${ids.map(() => "?").join(",")})`,
           ids,
-        ));
-        g.existingSourceRows = Number((cnt as any[])[0]?.n ?? 0);
+        )))[0];
       } else if (g._kind === "column" && g._keyColumn && g._keyValues.size) {
         const keyCol = assertSafeIdentifier(g._keyColumn, "process key column");
-        const values = [...g._keyValues];
-        const [cnt] = await retryOnLock(() => db.execute<RowDataPacket[]>(
+        const values = [...g._keyValues].sort();
+        cacheKey = `column|${table}|${keyCol}|${values.join(",")}`;
+        run = async () => (await retryOnLock(() => db.execute<RowDataPacket[]>(
           `SELECT COUNT(*) AS n FROM ${quotedTable} WHERE \`${keyCol}\` IN (${values.map(() => "?").join(",")})`,
           values,
-        ));
-        g.existingSourceRows = Number((cnt as any[])[0]?.n ?? 0);
+        )))[0];
       } else if (g._kind === "constant") {
         // The whole table already belongs to one process — no extra filter needed.
-        const [cnt] = await retryOnLock(() => db.execute<RowDataPacket[]>(
+        cacheKey = `constant|${table}`;
+        run = async () => (await retryOnLock(() => db.execute<RowDataPacket[]>(
           `SELECT COUNT(*) AS n FROM ${quotedTable}`,
-        ));
-        g.existingSourceRows = Number((cnt as any[])[0]?.n ?? 0);
+        )))[0];
+      } else {
+        return;
       }
+      const hit = existingRowsCache.get(cacheKey);
+      if (hit && Date.now() - hit.at < EXISTING_ROWS_TTL_MS) {
+        g.existingSourceRows = hit.value;
+        return;
+      }
+      const cnt = await run();
+      const value = Number((cnt as any[])[0]?.n ?? 0);
+      existingRowsCache.set(cacheKey, { at: Date.now(), value });
+      g.existingSourceRows = value;
     } catch {
       // Leave existingSourceRows null — an unresolved config says "unknown", not "empty".
     }
-  }
+  };
+  const pending = [...groups.values()].filter((g) => g.uploadTypeName);
+  await Promise.all(
+    Array.from({ length: Math.min(EXISTENCE_CONCURRENCY, pending.length) }, async () => {
+      for (let g = pending.shift(); g; g = pending.shift()) {
+        await resolveExistingSourceRows(g);
+      }
+    }),
+  );
 
   return [...groups.values()]
     .sort((a, b) => b.processCount - a.processCount)
