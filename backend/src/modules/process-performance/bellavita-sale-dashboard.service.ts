@@ -343,8 +343,15 @@ export async function getBellavitaSaleDashboard(
   const isCod = (r: RowDataPacket): boolean => r.payment_status === "cod";
   const sumBy = (rows: RowDataPacket[], pick: (r: RowDataPacket) => number): number => rows.reduce((n, r) => n + pick(r), 0);
   const groupBy = (rows: RowDataPacket[], key: (r: RowDataPacket) => string): Map<string, RowDataPacket[]> => {
+    // MySQL's GROUP BY is case-insensitive and ignores trailing spaces (the column collation), so "MAS57105" and "mas57105 "
+    // were one agent in the SQL version; group the same way, and show the first spelling seen.
     const m = new Map<string, RowDataPacket[]>();
-    for (const r of rows) { const k = key(r); const g = m.get(k); if (g) g.push(r); else m.set(k, [r]); }
+    const shown = new Map<string, string>();
+    for (const r of rows) {
+      const raw = key(r); const norm = raw.trimEnd().toLowerCase();
+      if (!shown.has(norm)) shown.set(norm, raw);
+      const g = m.get(shown.get(norm) as string); if (g) g.push(r); else m.set(shown.get(norm) as string, [r]);
+    }
     return m;
   };
 
