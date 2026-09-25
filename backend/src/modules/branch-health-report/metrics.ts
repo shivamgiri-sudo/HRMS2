@@ -25,6 +25,8 @@ export interface BranchHealthReport {
 
 // ─── thresholds ───────────────────────────────────────────────────────────────
 
+const DELIVERY_SOON_DAYS = 7;
+
 const T = {
   budget: { warnPct: 80, criticalPct: 95 },
   shrinkage: { warnPct: 10, criticalPct: 20 },
@@ -122,6 +124,15 @@ export function classifySignals(raw: BranchHealthRawData): {
     });
   }
 
+  // Stale pending GRNs
+  if (raw.grnStats.pendingOver3Days > 0) {
+    criticalPoints.push({
+      label: `${raw.grnStats.pendingOver3Days} GRN${raw.grnStats.pendingOver3Days > 1 ? "s" : ""} pending more than 3 days`,
+      detail: `Oldest open GRN is ${raw.grnStats.oldestPendingDays} days old`,
+      severity: "warning",
+    });
+  }
+
   // Pending GRNs
   if (raw.grnStats.pending >= T.grn.manyPending) {
     criticalPoints.push({
@@ -151,18 +162,22 @@ export function classifySignals(raw: BranchHealthRawData): {
     });
   }
 
-  // Open hiring (Job Requisition page)
-  if (raw.openHiring.overdue > 0) {
+  // Open hiring (Job Requisition page): batches due soon that are still short
+  const dueSoon = raw.openHiring.rows.filter(
+    (r) => r.daysToDelivery <= DELIVERY_SOON_DAYS,
+  );
+  if (dueSoon.length > 0) {
+    const short = dueSoon.reduce((n, r) => n + r.openPositions, 0);
     criticalPoints.push({
-      label: `${raw.openHiring.overdue} requisition${raw.openHiring.overdue > 1 ? "s" : ""} past the fill-by date`,
-      detail: `${raw.openHiring.openPositions} positions still open across ${raw.openHiring.openRequisitions} requisitions`,
+      label: `${dueSoon.length} batch${dueSoon.length > 1 ? "es" : ""} due within ${DELIVERY_SOON_DAYS} days, ${short} positions still open`,
+      detail: dueSoon.map((r) => `${r.code} (${r.openPositions} open, ${r.inPipeline} in pipeline)`).join(" · "),
       severity: "warning",
     });
   }
   if (raw.openHiring.inPipeline > 0) {
     positiveAchievements.push({
       label: `${raw.openHiring.inPipeline} candidate${raw.openHiring.inPipeline > 1 ? "s" : ""} in the hiring pipeline`,
-      detail: `${raw.openHiring.selected} selected · ${raw.openHiring.openPositions} positions open`,
+      detail: `${raw.openHiring.selected} selected · ${raw.openHiring.openPositions} positions open across ${raw.openHiring.upcomingRequisitions} upcoming batches`,
     });
   }
 

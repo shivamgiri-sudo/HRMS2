@@ -9,7 +9,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { getStatement } from "../process-pnl/pnl-statement.service.js";
+import { getPnlReconciliation } from "../process-pnl/pnl-reconciliation.service.js";
 import { isShiftDueYet } from "../wfm/shift-due.util.js";
 
 // ─── shared helpers ──────────────────────────────────────────────────────────
@@ -79,11 +79,38 @@ export async function fetchBudgetSummary(
 
 // ─── 2. GRN Stats (HRMS-raised only — bill_source_id IS NULL) ────────────────
 
+/**
+ * Ex-GST tie-out between this month's GRN activity and the budget in section 1, so the two
+ * sections reconcile line by line instead of quoting unrelated totals.
+ */
+export interface GrnBridge {
+  /** GRNs raised this month (not draft / cancelled / rejected), ex-GST cost. */
+  raisedExGst: number;
+  /** Submitted or returned — no budget reservation exists yet. */
+  awaitingApproval: number;
+  /** Approved but charged to an earlier month's budget line. */
+  earlierBudget: number;
+  /** Approved with no budget line (e.g. paid reimbursements). */
+  noBudgetLine: number;
+  /** Raised this month AND charged to this month's budget (consumed + reserved). */
+  chargedThisMonth: number;
+  /** Raised in earlier months but charged to this month's budget. */
+  fromEarlierMonths: number;
+  /** Section 1: consumed + reserved on this month's budget lines. */
+  budgetChargeTotal: number;
+}
+
 export interface GrnStats {
   raised: number;
   approved: number;
+  /** Open GRNs awaiting approval, all-time. */
   pending: number;
+  /** Oldest open GRN, in days since it was raised. */
+  oldestPendingDays: number;
+  pendingOver3Days: number;
+  /** Gross value incl. GST of the GRNs raised this month. */
   totalRaisedAmount: number;
+  bridge: GrnBridge;
 }
 
 const GRN_APPROVED_STATUSES = [
@@ -115,6 +142,77 @@ export async function countPendingGrns(branchId: string): Promise<number> {
   return Number((rows[0] as any)?.cnt ?? 0);
 }
 
+const GRN_AWAITING_STATUSES = [
+  "submitted",
+  "returned_to_branch_head",
+  "returned_to_raiser",
+];
+const GRN_NOT_RAISED_STATUSES = ["draft", "cancelled", "rejected"];
+const PENDING_STALE_DAYS = 3;
+
+async function fetchGrnBridge(
+  branchId: string,
+  today: string,
+): Promise<GrnBridge> {
+  const period = today.slice(0, 7);
+  const monthStart = period + "-01";
+  // Cost is the budget engine's basis: P&L cost where set, else the ex-GST amount.
+  const cost = `COALESCE(NULLIF(g.pnl_cost_amount, 0), g.amount_without_tax, 0)`;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT CASE
+              WHEN g.status IN (${GRN_AWAITING_STATUSES.map(() => "?").join(",")}) THEN 'awaiting'
+              WHEN l.id IS NULL THEN 'no_line'
+              WHEN h.period_code = ? THEN 'this_month'
+              ELSE 'earlier_budget'
+            END AS bucket,
+            COALESCE(SUM(${cost}), 0) AS amount
+       FROM grn_request g
+       LEFT JOIN finance_budget_line l ON l.id = g.budget_line_id
+       LEFT JOIN finance_budget_header h ON h.id = l.budget_id
+      WHERE g.branch_id = ?
+        AND g.bill_source_id IS NULL
+        AND DATE(g.created_at) >= ?
+        AND g.status NOT IN (${GRN_NOT_RAISED_STATUSES.map(() => "?").join(",")})
+      GROUP BY bucket`,
+    [
+      ...GRN_AWAITING_STATUSES,
+      period,
+      branchId,
+      monthStart,
+      ...GRN_NOT_RAISED_STATUSES,
+    ],
+  );
+  const by = new Map<string, number>(
+    (rows as any[]).map((r) => [String(r.bucket), Number(r.amount)]),
+  );
+  const [budgetRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(l.consumed_amount + l.reserved_amount), 0) AS charge
+       FROM finance_budget_line l
+       JOIN finance_budget_header h ON h.id = l.budget_id
+      WHERE h.branch_id = ? AND h.period_code = ? AND h.status NOT IN ('draft')`,
+    [branchId, period],
+  );
+  const budgetChargeTotal = Number((budgetRows[0] as any)?.charge ?? 0);
+  const chargedThisMonth = by.get("this_month") ?? 0;
+  const awaitingApproval = by.get("awaiting") ?? 0;
+  const earlierBudget = by.get("earlier_budget") ?? 0;
+  const noBudgetLine = by.get("no_line") ?? 0;
+  return {
+    raisedExGst:
+      chargedThisMonth + awaitingApproval + earlierBudget + noBudgetLine,
+    awaitingApproval,
+    earlierBudget,
+    noBudgetLine,
+    chargedThisMonth,
+    // Sub-rupee differences are rounding between GRN and budget-line cost, not a real gap.
+    fromEarlierMonths:
+      Math.abs(budgetChargeTotal - chargedThisMonth) < 1
+        ? 0
+        : budgetChargeTotal - chargedThisMonth,
+    budgetChargeTotal,
+  };
+}
+
 export async function fetchGrnStats(
   branchId: string,
   today: string,
@@ -128,16 +226,35 @@ export async function fetchGrnStats(
      FROM grn_request
     WHERE branch_id = ?
       AND bill_source_id IS NULL
-      AND status <> 'draft'
+      AND status NOT IN (${GRN_NOT_RAISED_STATUSES.map(() => "?").join(",")})
       AND DATE(created_at) >= ?`,
-    [...GRN_APPROVED_STATUSES, branchId, monthStart],
+    [
+      ...GRN_APPROVED_STATUSES,
+      branchId,
+      ...GRN_NOT_RAISED_STATUSES,
+      monthStart,
+    ],
+  );
+  const [agingRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt,
+            COALESCE(MAX(DATEDIFF(?, DATE(created_at))), 0) AS oldest,
+            COALESCE(SUM(DATEDIFF(?, DATE(created_at)) > ${PENDING_STALE_DAYS}), 0) AS stale
+       FROM grn_request
+      WHERE branch_id = ?
+        AND bill_source_id IS NULL
+        AND status IN (${GRN_PENDING_STATUSES.map(() => "?").join(",")})`,
+    [today, today, branchId, ...GRN_PENDING_STATUSES],
   );
   const r = rows[0] as any;
+  const a = agingRows[0] as any;
   return {
     raised: Number(r?.raised ?? 0),
     approved: Number(r?.approved ?? 0),
-    pending: await countPendingGrns(branchId),
+    pending: Number(a?.cnt ?? 0),
+    oldestPendingDays: Number(a?.oldest ?? 0),
+    pendingOver3Days: Number(a?.stale ?? 0),
     totalRaisedAmount: Number(r?.total_amount ?? 0),
+    bridge: await fetchGrnBridge(branchId, today),
   };
 }
 
@@ -337,45 +454,53 @@ export interface OpenRequisitionRow {
   openPositions: number;
   inPipeline: number;
   selected: number;
-  /** requisition_validity (YYYY-MM-DD) — the date by which the requisition should be filled. */
-  deadline: string | null;
-  overdue: boolean;
-  agingDays: number;
+  /** target_joining_date (YYYY-MM-DD) — the date the batch is due to be delivered / join. */
+  deliveryDate: string;
+  daysToDelivery: number;
+  plannedBatch: string | null;
 }
 
 export interface OpenHiringStats {
-  openRequisitions: number;
+  /** Approved requisitions whose delivery date is still ahead. */
+  upcomingRequisitions: number;
   pendingApproval: number;
   requested: number;
   fulfilled: number;
   openPositions: number;
   inPipeline: number;
   selected: number;
-  overdue: number;
+  /** Older approved requisitions past their delivery date and still short — counted, not listed. */
+  pastDeliveryRequisitions: number;
+  pastDeliveryOpenPositions: number;
   rows: OpenRequisitionRow[];
 }
 
 export interface RunningPnlStats {
   periodCode: string;
   daysInMonth: number;
-  /** Days of the month the running figures cover (up to the salary snapshot's as-of date). */
-  elapsedDays: number;
-  asOfDate: string | null;
-  /** Full-month recognised revenue as the P&L statement books it. */
-  revenueMonth: number;
-  /** Revenue earned to date: month revenue spread straight-line over the elapsed days. */
+  daysElapsed: number;
+  /** LIVE_MTD while the month is open, FINAL once closed. */
+  mode: string;
+  revenueInvoice: number;
+  revenueAccrual: number;
+  /** Seat rate x seats to date, used only for cost centres with no invoice or accrual. */
+  revenueEstimated: number;
+  creditNote: number;
+  /** Recognised revenue to date = invoice + accrual + estimate - credit notes. */
   revenueRunning: number;
-  /** Earned-till-date salary from the running salary snapshot. */
+  /** Payroll cost to date from the P&L payroll source. */
   salaryRunning: number;
-  /** GRN spend against budget lines, ex-GST: consumed (approved) + reserved (in approval). */
+  /** GRN consumed, ex-GST, by accounting period (P&L basis — includes legacy-system bills). */
   grnConsumed: number;
+  /** GRN approved and reserved but not yet consumed, ex-GST. */
   grnReserved: number;
   totalCostRunning: number;
   operatingProfit: number;
   opPct: number | null;
-  /** Share of active headcount whose salary is in the snapshot — below 100 profit is overstated. */
-  peopleCostCoveragePct: number | null;
-  revenueBasis: string;
+  /** Staff whose salary is in the payroll figure. */
+  staffPaid: number;
+  estimatedCostCentres: number;
+  costCentres: number;
   dataAvailable: boolean;
 }
 
@@ -510,6 +635,8 @@ export interface HeadcountMovement {
   joinedNames: string[];
   leftNames: string[];
   byProcess: { process: string; joined: number; left: number }[];
+  joinedMtd: number;
+  leftMtd: number;
   totalActive: number;
 }
 
@@ -547,6 +674,13 @@ export async function fetchHeadcountMovement(
     `SELECT COUNT(*) AS cnt FROM employees WHERE branch_id = ? AND active_status = 1`,
     [branchId],
   );
+  const monthStart = today.slice(0, 7) + "-01";
+  const [mtdRows] = await db.execute<RowDataPacket[]>(
+    `SELECT SUM(date_of_joining BETWEEN ? AND ?)                        AS joined_mtd,
+            SUM(COALESCE(date_of_leaving, date_of_exit) BETWEEN ? AND ?) AS left_mtd
+       FROM employees WHERE branch_id = ?`,
+    [monthStart, today, monthStart, today, branchId],
+  );
 
   const joined = joinRows as any[];
   const left = exitRows as any[];
@@ -569,6 +703,8 @@ export async function fetchHeadcountMovement(
     byProcess: [...perProcess.entries()]
       .map(([process, v]) => ({ process, ...v }))
       .sort((a, b) => b.joined + b.left - (a.joined + a.left)),
+    joinedMtd: Number((mtdRows[0] as any)?.joined_mtd ?? 0),
+    leftMtd: Number((mtdRows[0] as any)?.left_mtd ?? 0),
     totalActive: Number((countRows[0] as any)?.cnt ?? 0),
   };
 }
@@ -578,11 +714,12 @@ export async function fetchHeadcountMovement(
 const MAX_REQUISITION_ROWS = 15;
 
 /**
- * Same population as the Job Requisition page's "active" requisitions
- * (job-requisition.service getOpenRequisitionsForBranch): approved, still short of the requested
- * headcount, not deleted. Open positions = requested - fulfilled. Candidates come from
- * job_requisition_candidate: outcome 'in_progress' is the live pipeline, 'selected' is offered.
- * Requisitions awaiting approval are only counted, not treated as open demand.
+ * Batches coming up, from the Job Requisition page: approved requisitions still short of the
+ * requested headcount whose delivery date (target_joining_date) has not passed
+ * (job-requisition.service getOpenRequisitionsForBranch is the same base population). Open
+ * positions = requested - fulfilled; candidates come from job_requisition_candidate — outcome
+ * 'in_progress' is the live pipeline, 'selected' is offered. Requisitions already past their
+ * delivery date are only counted, and requisitions awaiting approval only counted too.
  */
 export async function fetchOpenHiring(
   branchName: string,
@@ -590,11 +727,11 @@ export async function fetchOpenHiring(
 ): Promise<OpenHiringStats> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT jr.requisition_code, jr.designation_name, jr.process_name, jr.priority,
-            jr.requested_headcount, jr.fulfilled_headcount,
-            DATE_FORMAT(jr.requisition_validity, '%Y-%m-%d') AS deadline,
-            DATEDIFF(?, DATE(jr.created_at))                 AS aging_days,
-            COALESCE(c.in_pipeline, 0)                       AS in_pipeline,
-            COALESCE(c.selected, 0)                          AS selected
+            jr.requested_headcount, jr.fulfilled_headcount, jr.planned_batch_no,
+            DATE_FORMAT(jr.target_joining_date, '%Y-%m-%d')   AS delivery_date,
+            DATEDIFF(jr.target_joining_date, ?)               AS days_to_delivery,
+            COALESCE(c.in_pipeline, 0)                        AS in_pipeline,
+            COALESCE(c.selected, 0)                           AS selected
        FROM job_requisition jr
        LEFT JOIN (
          SELECT requisition_id,
@@ -607,8 +744,18 @@ export async function fetchOpenHiring(
         AND jr.active_status = 1
         AND jr.approval_status = 'approved'
         AND jr.fulfilled_headcount < jr.requested_headcount
-      ORDER BY FIELD(jr.priority, 'urgent', 'high', 'normal', 'low'), jr.created_at`,
-    [today, branchName],
+        AND jr.target_joining_date >= ?
+      ORDER BY jr.target_joining_date, FIELD(jr.priority, 'urgent', 'high', 'normal', 'low')`,
+    [today, branchName, today],
+  );
+  const [pastRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt,
+            COALESCE(SUM(requested_headcount - fulfilled_headcount), 0) AS open_positions
+       FROM job_requisition
+      WHERE branch_name = ? AND active_status = 1 AND approval_status = 'approved'
+        AND fulfilled_headcount < requested_headcount
+        AND (target_joining_date IS NULL OR target_joining_date < ?)`,
+    [branchName, today],
   );
   const [pendingRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM job_requisition
@@ -619,7 +766,6 @@ export async function fetchOpenHiring(
   const all: OpenRequisitionRow[] = (rows as any[]).map((r) => {
     const requested = Number(r.requested_headcount ?? 0);
     const fulfilled = Number(r.fulfilled_headcount ?? 0);
-    const deadline = r.deadline ? String(r.deadline) : null;
     return {
       code: String(r.requisition_code),
       designation: String(r.designation_name ?? ""),
@@ -630,22 +776,25 @@ export async function fetchOpenHiring(
       openPositions: requested - fulfilled,
       inPipeline: Number(r.in_pipeline ?? 0),
       selected: Number(r.selected ?? 0),
-      deadline,
-      overdue: deadline != null && deadline < today,
-      agingDays: Number(r.aging_days ?? 0),
+      deliveryDate: String(r.delivery_date),
+      daysToDelivery: Number(r.days_to_delivery ?? 0),
+      plannedBatch: r.planned_batch_no ? String(r.planned_batch_no) : null,
     };
   });
   const sum = (pick: (r: OpenRequisitionRow) => number) =>
     all.reduce((total, r) => total + pick(r), 0);
   return {
-    openRequisitions: all.length,
+    upcomingRequisitions: all.length,
     pendingApproval: Number((pendingRows[0] as any)?.cnt ?? 0),
     requested: sum((r) => r.requested),
     fulfilled: sum((r) => r.fulfilled),
     openPositions: sum((r) => r.openPositions),
     inPipeline: sum((r) => r.inPipeline),
     selected: sum((r) => r.selected),
-    overdue: all.filter((r) => r.overdue).length,
+    pastDeliveryRequisitions: Number((pastRows[0] as any)?.cnt ?? 0),
+    pastDeliveryOpenPositions: Number(
+      (pastRows[0] as any)?.open_positions ?? 0,
+    ),
     rows: all.slice(0, MAX_REQUISITION_ROWS),
   };
 }
@@ -657,78 +806,51 @@ export async function fetchOpenHiring(
  * (getStatement, viewBy=branch) so the email and the app can never quote different numbers.
  */
 /**
- * Running operating profit for the month = running revenue - running salary - running GRN.
- *  - revenue: the P&L statement's recognised revenue for the branch (same engine as the P&L
- *    page), spread straight-line across the month and cut at the salary snapshot's as-of date so
- *    revenue and salary cover the same days (the app's own daily trend spreads seat revenue the
- *    same way);
- *  - salary: pnl_running_salary_snapshot.earned_salary_till_date;
- *  - GRN: finance_budget_line reserved + consumed, the budget engine's ex-GST (P&L cost) basis.
- * A closed month is not spread: its revenue is taken whole.
+ * Running operating profit for the month, taken from the Live P&L (getPnlReconciliation, the
+ * engine behind the P&L page's Live tab) so this email quotes the same number the app does:
+ *   OP = recognised revenue to date - payroll to date - GRN (consumed + reserved, ex-GST).
+ * Revenue is invoice + accrual, or a seat-rate x seats estimate to date for cost centres that
+ * have neither yet; the estimate is only used while the month is open.
  */
 export async function fetchRunningPnl(
   branchId: string,
   today: string,
 ): Promise<RunningPnlStats> {
   const period = today.slice(0, 7); // YYYY-MM
-  const [year, month] = period.split("-").map(Number);
-  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
-
-  const [salRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(earned_salary_till_date), 0)     AS salary,
-            DATE_FORMAT(MAX(as_of_date), '%Y-%m-%d')       AS as_of
-       FROM pnl_running_salary_snapshot
-      WHERE branch_id = ? AND period_code = ?`,
-    [branchId, period],
-  );
-  const [grnRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(l.consumed_amount), 0) AS consumed,
-            COALESCE(SUM(l.reserved_amount), 0) AS reserved
-       FROM finance_budget_line l
-       JOIN finance_budget_header h ON h.id = l.budget_id
-      WHERE h.branch_id = ? AND h.period_code = ? AND h.status NOT IN ('draft')`,
-    [branchId, period],
-  );
-  const statement: any = await getStatement({ period, branchId }, "branch");
-  const column = statement.columns?.[0];
-  const revenueMonth = column
-    ? Number(
-        statement.rows.find((r: any) => r.componentKey === "recognized_revenue")
-          ?.values?.[column.id] ?? 0,
-      ) || 0
-    : 0;
-
-  const salaryRunning = Number((salRows[0] as any)?.salary ?? 0);
-  const asOfDate: string | null = (salRows[0] as any)?.as_of ?? null;
-  const grnConsumed = Number((grnRows[0] as any)?.consumed ?? 0);
-  const grnReserved = Number((grnRows[0] as any)?.reserved ?? 0);
-
-  const periodOpen = Boolean(statement.periodOpen);
-  const coverageDay = Number((asOfDate ?? today).slice(8, 10));
-  const elapsedDays = periodOpen
-    ? Math.min(coverageDay, daysInMonth)
-    : daysInMonth;
-  const revenueRunning = (revenueMonth * elapsedDays) / daysInMonth;
-  const totalCostRunning = salaryRunning + grnConsumed + grnReserved;
-  const operatingProfit = revenueRunning - totalCostRunning;
-
+  const rec = await getPnlReconciliation(period, {
+    branchIds: [branchId],
+    asOfDate: today,
+  });
+  const branch = rec.branches.find((b) => b.branchId === branchId);
+  const rows = rec.rows.filter((r) => r.branchId === branchId);
+  const sum = (pick: (r: (typeof rows)[number]) => number) =>
+    rows.reduce((total, r) => total + pick(r), 0);
+  const revenueRunning = branch?.revenue ?? 0;
+  const salaryRunning = branch?.payrollCost ?? 0;
+  const grnConsumed = branch?.grnActual ?? 0;
+  const grnReserved = branch?.grnEstimated ?? 0;
   return {
     periodCode: period,
-    daysInMonth,
-    elapsedDays,
-    asOfDate,
-    revenueMonth,
+    daysInMonth: rec.estimate.daysInMonth,
+    daysElapsed: rec.estimate.daysElapsed,
+    mode: rec.mode,
+    revenueInvoice: sum((r) => r.revenueInvoice),
+    revenueAccrual: sum((r) => r.revenueAccrual),
+    revenueEstimated: sum((r) => r.revenueEstimated),
+    creditNote: sum((r) => r.creditNote),
     revenueRunning,
     salaryRunning,
     grnConsumed,
     grnReserved,
-    totalCostRunning,
-    operatingProfit,
-    opPct: revenueRunning > 0 ? (operatingProfit / revenueRunning) * 100 : null,
-    peopleCostCoveragePct: column?.peopleCostCoveragePct ?? null,
-    revenueBasis: String(statement.revenueBasis ?? ""),
+    totalCostRunning: salaryRunning + grnConsumed + grnReserved,
+    operatingProfit: branch?.operatingProfit ?? 0,
+    opPct: branch?.marginPct ?? null,
+    staffPaid: branch?.staffPaid ?? 0,
+    estimatedCostCentres: rows.filter((r) => r.revenueBasis === "ESTIMATED")
+      .length,
+    costCentres: rows.length,
     dataAvailable:
-      revenueMonth > 0 || salaryRunning > 0 || grnConsumed + grnReserved > 0,
+      revenueRunning > 0 || salaryRunning > 0 || grnConsumed + grnReserved > 0,
   };
 }
 
@@ -796,11 +918,19 @@ export interface BranchHealthRawData {
   ats: AtsStats;
   lateStats: LateStats;
   shrinkage: ShrinkageStats;
+  /** Same calculation for the previous day, for the day-on-day comparison. */
+  prevShrinkage: ShrinkageStats | null;
   headcount: HeadcountMovement;
   openHiring: OpenHiringStats;
   runningPnl: RunningPnlStats;
   pendingActions: PendingAction[];
 }
+
+const previousDay = (date: string): string => {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+};
 
 export async function fetchAllBranchHealthData(
   branchName: string,
@@ -818,7 +948,23 @@ export async function fetchAllBranchHealthData(
         available: 0,
         utilizationPct: 0,
       },
-      grnStats: { raised: 0, approved: 0, pending: 0, totalRaisedAmount: 0 },
+      grnStats: {
+        raised: 0,
+        approved: 0,
+        pending: 0,
+        oldestPendingDays: 0,
+        pendingOver3Days: 0,
+        totalRaisedAmount: 0,
+        bridge: {
+          raisedExGst: 0,
+          awaitingApproval: 0,
+          earlierBudget: 0,
+          noBudgetLine: 0,
+          chargedThisMonth: 0,
+          fromEarlierMonths: 0,
+          budgetChargeTotal: 0,
+        },
+      },
       recentGrns: [],
       ats: {
         walkins: 0,
@@ -831,6 +977,7 @@ export async function fetchAllBranchHealthData(
         slaTotal: 0,
       },
       lateStats: { totalLate: 0, processWise: [], byManager: [] },
+      prevShrinkage: null,
       shrinkage: {
         scheduled: 0,
         present: 0,
@@ -848,25 +995,31 @@ export async function fetchAllBranchHealthData(
         joinedNames: [],
         leftNames: [],
         byProcess: [],
+        joinedMtd: 0,
+        leftMtd: 0,
         totalActive: 0,
       },
       openHiring: {
-        openRequisitions: 0,
+        upcomingRequisitions: 0,
         pendingApproval: 0,
         requested: 0,
         fulfilled: 0,
         openPositions: 0,
         inPipeline: 0,
         selected: 0,
-        overdue: 0,
+        pastDeliveryRequisitions: 0,
+        pastDeliveryOpenPositions: 0,
         rows: [],
       },
       runningPnl: {
         periodCode: today.slice(0, 7),
         daysInMonth: 30,
-        elapsedDays: 0,
-        asOfDate: null,
-        revenueMonth: 0,
+        daysElapsed: 0,
+        mode: "",
+        revenueInvoice: 0,
+        revenueAccrual: 0,
+        revenueEstimated: 0,
+        creditNote: 0,
         revenueRunning: 0,
         salaryRunning: 0,
         grnConsumed: 0,
@@ -874,8 +1027,9 @@ export async function fetchAllBranchHealthData(
         totalCostRunning: 0,
         operatingProfit: 0,
         opPct: null,
-        peopleCostCoveragePct: null,
-        revenueBasis: "",
+        staffPaid: 0,
+        estimatedCostCentres: 0,
+        costCentres: 0,
         dataAvailable: false,
       },
       pendingActions: [],
@@ -889,6 +1043,7 @@ export async function fetchAllBranchHealthData(
     ats,
     lateStats,
     shrinkage,
+    prevShrinkage,
     headcount,
     openHiring,
     runningPnl,
@@ -900,6 +1055,7 @@ export async function fetchAllBranchHealthData(
     fetchAtsStats(branchName, today),
     fetchLateStats(branchId, today),
     fetchShrinkage(branchId, today),
+    fetchShrinkage(branchId, previousDay(today)).catch(() => null),
     fetchHeadcountMovement(branchId, today),
     fetchOpenHiring(branchName, today),
     fetchRunningPnl(branchId, today),
@@ -914,6 +1070,7 @@ export async function fetchAllBranchHealthData(
     ats,
     lateStats,
     shrinkage,
+    prevShrinkage,
     headcount,
     openHiring,
     runningPnl,
