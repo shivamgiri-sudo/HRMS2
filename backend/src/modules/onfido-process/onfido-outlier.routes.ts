@@ -2,6 +2,7 @@
  * Routes for the Outliers & Actions tab. Mounted from onfido-process-dashboard.routes.ts via
  * mountOutlierRoutes(router, guard), so they inherit the router's auth + Onfido scope and the caller's role guard.
  */
+import { getDataFreshness } from "./onfido-freshness.service.js";
 import type {
   NextFunction,
   Request,
@@ -63,6 +64,10 @@ export function mountOutlierRoutes(
   router: Router,
   guard: RequestHandler[],
 ): void {
+  router.get("/data-freshness", ...guard, wrap(async (_req, res) => {
+    res.json({ success: true, data: await getDataFreshness() });
+  }));
+
   router.get(
     "/outliers",
     ...guard,

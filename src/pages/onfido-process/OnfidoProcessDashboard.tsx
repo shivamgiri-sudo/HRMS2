@@ -9,6 +9,7 @@ import {
 import { hrmsApi } from "@/lib/hrmsApi";
 import { OnfidoDownloadButton } from "./OnfidoDownloadButton";
 import OnfidoOutliersView from "./OnfidoOutliersView";
+import OnfidoFreshnessStrip from "./OnfidoFreshnessStrip";
 import { useHierarchyFilters } from "./useHierarchyFilters";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
@@ -1682,7 +1683,7 @@ function AttritionView({
       )}
 
       {/* 2 · Month-wise count, Attrition %, UL Shrinkage % */}
-      <AttrSection
+      {showAttrition && (<AttrSection
         title={granularity === "monthly" ? "Month Wise · Attrition Count · Attrition % · UL Shrinkage %" : `${granularity === "daily" ? "Day" : "Week"} Wise · Attrition Count`}
         color={AC.orange}
         right={<PillGroup value={granularity} onChange={setGranularity} options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]} />}
@@ -1704,7 +1705,7 @@ function AttritionView({
                 </BarChart>
               </ResponsiveContainer>
             ))}
-      </AttrSection>
+      </AttrSection>)}
 
       {/* 3 · AON month-wise Attrition % */}
       {mode === "shrinkage" && (
@@ -4626,6 +4627,7 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
           </div>
           )}
 
+          <OnfidoFreshnessStrip />
           {view === "trends" && <TrendsView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}
           {view === "outliers" && <OnfidoOutliersView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}
           {view === "alerts" && <AlertsView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}

@@ -10,7 +10,7 @@ import {
 import {
   buildOutlierRows,
   buildTargetTile,
-  previousPeriods,
+  recentWeeks,
   type ActionStatus,
   type ActionSummary,
   type OutlierRow,
@@ -113,11 +113,11 @@ export async function getOutlierReport(
     amName: filters.amName,
     analystEmail: filters.analystEmail,
   };
-  const priors = previousPeriods(f.from, f.to);
+  const weeks = recentWeeks(f.to);
   const [current, priorAlerts, actions, tiles] = await Promise.all([
     listAlerts({ from: f.from, to: f.to, ...scope }),
     Promise.all(
-      priors.map((p) => listAlerts({ from: p.from, to: p.to, ...scope })),
+      weeks.map((p) => listAlerts({ from: p.from, to: p.to, ...scope })),
     ),
     loadActionSummaries(f.from, f.to),
     loadTargetTiles(filters, f.from, f.to),

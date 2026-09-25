@@ -49,7 +49,8 @@ interface OutlierRow {
   target: number;
   variance: number;
   severity: "high" | "medium";
-  priorPeriodsFlagged: number;
+  flaggedWeeks: number;
+  pattern: "repeat" | "intermittent" | "new" | "recovering";
   streak: number;
   repeat: boolean;
   action: ActionSummary | null;
@@ -140,6 +141,7 @@ function TargetTiles({ tiles }: { tiles: TargetTile[] }) {
           >
             <label>{t.label}</label>
             <div className="kv">{pct(t.achievement)}</div>
+            {t.achievement === null && <div className="ks">No audit data in this range</div>}
             <div className="ks">
               Target{" "}
               {t.target === null
@@ -179,6 +181,24 @@ function StatusPill({
     <span className={`oc-badge-pill ${cls}`}>
       {STATUS_LABEL[status]}
       {overdue ? " · overdue" : ""}
+    </span>
+  );
+}
+
+const PATTERN_LABEL: Record<OutlierRow["pattern"], string> = {
+  repeat: "Repeat",
+  intermittent: "On and off",
+  new: "New",
+  recovering: "Recovering",
+};
+
+function PatternBadge({ row }: { row: OutlierRow }) {
+  const cls = row.pattern === "repeat" ? "oc-severity-high" : "oc-severity-medium";
+  const detail = `Outside target in ${row.flaggedWeeks} of the last 4 weeks; ${row.streak} in a row up to the end date`;
+  return (
+    <span className={`oc-badge-pill ${cls}`} title={detail}>
+      {PATTERN_LABEL[row.pattern]}
+      {row.pattern === "repeat" ? ` x${row.streak}` : ""}
     </span>
   );
 }
@@ -492,7 +512,7 @@ export default function OnfidoOutliersView({
       <SectionCard
         title="Outliers"
         accent="var(--red)"
-        subtitle={`Analysts outside target in the selected period. Repeat = also outside target in the period(s) just before (${repeats} of ${outliers.length} here).`}
+        subtitle={`Analysts outside target in the selected period. Pattern looks at the last 4 weeks up to the end date: Repeat = outside target in the latest 2+ weeks running (${repeats} of ${outliers.length} here).`}
       >
         {query.isLoading && <EmptyNote>Loading...</EmptyNote>}
         {query.error instanceof Error && (
@@ -533,18 +553,7 @@ export default function OnfidoOutliersView({
                     +{o.variance} pts
                   </td>
                   <td>
-                    {o.repeat ? (
-                      <span
-                        className="oc-badge-pill oc-severity-high"
-                        title={`Outside target for ${o.streak} periods in a row`}
-                      >
-                        Repeat x{o.streak}
-                      </span>
-                    ) : (
-                      <span className="oc-badge-pill oc-severity-medium">
-                        New
-                      </span>
-                    )}
+                    <PatternBadge row={o} />
                   </td>
                   <td>
                     {o.action ? (

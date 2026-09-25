@@ -170,10 +170,10 @@ function isoDay(d: Date): string {
 }
 
 /** Monday-start weeks covering [from, to], each clipped to the range. Pure - unit tested. */
-export function splitIntoWeeks(from: string, to: string): { start: string; end: string; label: string }[] {
+export function splitIntoWeeks(from: string, to: string): { start: string; end: string; label: string; monday: string }[] {
   const first = new Date(`${from}T00:00:00Z`);
   const last = new Date(`${to}T00:00:00Z`);
-  const weeks: { start: string; end: string; label: string }[] = [];
+  const weeks: { start: string; end: string; label: string; monday: string }[] = [];
   let weekMonday = new Date(first.getTime() - ((first.getUTCDay() + 6) % 7) * MS_PER_DAY);
   while (weekMonday <= last && weeks.length < ANALYST_WEEKLY_MAX_WEEKS) {
     const weekSunday = new Date(weekMonday.getTime() + 6 * MS_PER_DAY);
@@ -183,6 +183,7 @@ export function splitIntoWeeks(from: string, to: string): { start: string; end: 
       start: isoDay(start),
       end: isoDay(end),
       label: `WC ${String(weekMonday.getUTCDate()).padStart(2, "0")} ${MONTH_ABBR[weekMonday.getUTCMonth()]}`,
+      monday: isoDay(weekMonday),
     });
     weekMonday = new Date(weekMonday.getTime() + 7 * MS_PER_DAY);
   }
@@ -190,27 +191,57 @@ export function splitIntoWeeks(from: string, to: string): { start: string; end: 
 }
 
 /**
- * One analyst, week by week (Week-commencing rows). Reuses the per-analyst report for each week
- * (scoped to the analyst's TL/AM so the query stays small) and picks the analyst's row, so the
- * numbers always agree with the main table.
+ * One analyst, week by week (Week-commencing rows). One grouped query per source over the whole
+ * range (not one full analyst report per week), so the cost is one pass over each table. The
+ * error % combines internal + external audits, the same definition as the main table's "Overall".
  */
 export async function getAnalystWeekly(
   analystEmail: string, rawFilters: Filters
 ): Promise<{ from: string; to: string; weeks: AnalystWeekRow[] }> {
   const f = readFilters(rawFilters);
-  const target = analystEmail.trim().toLowerCase();
+  const pool = await getOnfidoPool();
   const weeks = splitIntoWeeks(f.from, f.to);
-  const reports = await Promise.all(
-    weeks.map((w) => getAnalystReport({ from: w.start, to: w.end, tlName: rawFilters.tlName, amName: rawFilters.amName }))
-  );
-  const rows = weeks.map((w, i): AnalystWeekRow => {
-    const row = reports[i].rows.find((r) => r.analyst.toLowerCase() === target);
-    const errors = (row?.internal.overall.errors ?? 0) + (row?.external.overall.errors ?? 0);
-    const audits = (row?.internal.overall.audits ?? 0) + (row?.external.overall.audits ?? 0);
+  const email = analystEmail.trim();
+  const args = [email, f.from, f.to];
+  const bucket = (col: string) => `DATE_FORMAT(DATE_SUB(${col}, INTERVAL WEEKDAY(${col}) DAY), '%Y-%m-%d')`;
+  const run = async (sql: string): Promise<RowDataPacket[]> => (await pool.query<RowDataPacket[]>(sql, args))[0];
+  const count = (table: string, dateCol: string, emailCol = "analyst_email") =>
+    run(`SELECT ${bucket(dateCol)} AS w, COUNT(*) AS n FROM ${table}
+          WHERE ${emailCol} = ? AND ${dateCol} BETWEEN ? AND ? GROUP BY w`);
+
+  const [doc, poa, cre, crq, etmDoc, etmPoa, skip, internal, external] = await Promise.all([
+    run(`SELECT ${bucket("report_date")} AS w, COUNT(*) AS n, ${DOC_AHT_AVG} AS aht FROM onfido_doc_raw
+          WHERE analyst_email = ? AND report_date BETWEEN ? AND ? GROUP BY w`),
+    run(`SELECT ${bucket("report_completed_date")} AS w, COUNT(*) AS n, AVG(manual_processing_time_secs) AS aht FROM onfido_poa_raw
+          WHERE analyst_email = ? AND report_completed_date BETWEEN ? AND ? GROUP BY w`),
+    count(CRE_TABLE, "qc_updated_date"),
+    count(CRQ_TABLE, "qc_updated_date"),
+    count("onfido_doc_etm_raw", "report_date"),
+    count("onfido_poa_etm_raw", "report_date"),
+    count("onfido_task_skip_raw", "skip_date", "unassigned_from_email"),
+    run(`SELECT ${bucket("task_complete_date")} AS w, COALESCE(SUM(total_audits), 0) AS audits, COALESCE(SUM(total_error), 0) AS errors
+          FROM onfido_doc_quality_raw WHERE analyst_email = ? AND task_complete_date BETWEEN ? AND ? GROUP BY w`),
+    run(`SELECT ${bucket("report_date")} AS w, COUNT(*) AS audits, COALESCE(SUM(has_error), 0) AS errors
+          FROM onfido_doc_external_audit_raw WHERE analyst_email = ? AND report_date BETWEEN ? AND ? GROUP BY w`),
+  ]);
+
+  const byWeek = (rows: RowDataPacket[]): Map<string, RowDataPacket> => new Map(rows.map((r) => [String(r.w), r]));
+  const [docBy, poaBy, creBy, crqBy, etmDocBy, etmPoaBy, skipBy, intBy, extBy] =
+    [doc, poa, cre, crq, etmDoc, etmPoa, skip, internal, external].map(byWeek);
+
+  const rows = weeks.map((w): AnalystWeekRow => {
+    const monday = w.monday;
+    const d = docBy.get(monday);
+    const p = poaBy.get(monday);
+    const errors = num(intBy.get(monday)?.errors) + num(extBy.get(monday)?.errors);
+    const audits = num(intBy.get(monday)?.audits) + num(extBy.get(monday)?.audits);
     return {
       weekStart: w.start, weekEnd: w.end, label: w.label,
-      docTasks: row?.docTasks ?? 0, docAht: row?.docAht ?? null, poaTasks: row?.poaTasks ?? 0, poaAht: row?.poaAht ?? null,
-      cre: row?.cre ?? 0, crq: row?.crq ?? 0, etm: row?.etm ?? 0, taskSkip: row?.taskSkip ?? 0,
+      docTasks: num(d?.n), docAht: d?.aht === null || d?.aht === undefined ? null : Math.round(Number(d.aht)),
+      poaTasks: num(p?.n), poaAht: p?.aht === null || p?.aht === undefined ? null : Math.round(Number(p.aht)),
+      cre: num(creBy.get(monday)?.n), crq: num(crqBy.get(monday)?.n),
+      etm: num(etmDocBy.get(monday)?.n) + num(etmPoaBy.get(monday)?.n),
+      taskSkip: num(skipBy.get(monday)?.n),
       errors, audits, overallErrorPct: audits > 0 ? Math.round((errors / audits) * 1000) / 10 : null,
     };
   });

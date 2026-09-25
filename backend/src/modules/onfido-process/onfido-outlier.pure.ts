@@ -42,9 +42,10 @@ export interface OutlierRow {
   /** value - target, in the metric's own unit (percentage points). Positive = worse than target. */
   variance: number;
   severity: "high" | "medium";
-  /** Earlier periods (out of REPEAT_LOOKBACK_PERIODS) in which the analyst was also over target. */
-  priorPeriodsFlagged: number;
-  /** Unbroken run of flagged periods counting back from the selected one (1 = this period only). */
+  /** Of the latest WEEKLY_LOOKBACK weekly windows ending at the range end, how many the analyst was over target in. */
+  flaggedWeeks: number;
+  pattern: OutlierPattern;
+  /** Unbroken run of flagged weekly windows counting back from the latest one (0 = latest week was fine). */
   streak: number;
   repeat: boolean;
   action: ActionSummary | null;
@@ -75,6 +76,29 @@ export function previousPeriods(
     periodEnd = periodStart - MS_PER_DAY;
   }
   return periods;
+}
+
+/** Number of rolling 7-day windows (ending at the range end) used to judge whether an outlier is chronic. */
+export const WEEKLY_LOOKBACK = 4;
+
+/** The latest `count` rolling 7-day windows ending at `to`, newest first. Independent of the range length. */
+export function recentWeeks(to: string, count: number = WEEKLY_LOOKBACK): { from: string; to: string }[] {
+  if (!ISO_DAY.test(to)) return [];
+  const weeks: { from: string; to: string }[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const end = toUtc(to) - i * 7 * MS_PER_DAY;
+    weeks.push({ from: toYmd(end - 6 * MS_PER_DAY), to: toYmd(end) });
+  }
+  return weeks;
+}
+
+export type OutlierPattern = "repeat" | "intermittent" | "new" | "recovering";
+
+/** repeat = over target in the latest 2+ weeks running; recovering = over target earlier but fine in the latest week. */
+export function patternOf(streak: number, flaggedWeeks: number): OutlierPattern {
+  if (streak >= 2) return "repeat";
+  if (streak === 0) return "recovering";
+  return flaggedWeeks > 1 ? "intermittent" : "new";
 }
 
 /** Unbroken run of `true` from the start of the list (nearest period first). */
@@ -124,8 +148,8 @@ export function buildOutlierRows(
     if (!isOutlierMetric(alert.metric)) continue;
     const key = keyOf(alert.analystEmail, alert.metric);
     const flags = flaggedByPeriod.map((set) => set.has(key));
-    const priorPeriodsFlagged = flags.filter(Boolean).length;
-    const streak = 1 + leadingRun(flags);
+    const flaggedWeeks = flags.filter(Boolean).length;
+    const streak = leadingRun(flags);
     rows.push({
       analystEmail: alert.analystEmail,
       tlName: alert.tlName,
@@ -135,7 +159,8 @@ export function buildOutlierRows(
       target: alert.threshold,
       variance: Math.round((alert.value - alert.threshold) * 10) / 10,
       severity: alert.severity,
-      priorPeriodsFlagged,
+      flaggedWeeks,
+      pattern: patternOf(streak, flaggedWeeks),
       streak,
       repeat: streak >= 2,
       action: actionByKey.get(key) ?? null,
