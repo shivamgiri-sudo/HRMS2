@@ -169,6 +169,13 @@ export function useSaveDraftLines() {
   });
 }
 
+export function useAutofillSuggestions() {
+  return useMutation({
+    mutationFn: async (body: { from: string; to: string; mode: "usual" | "copy_last_week"; employeeIds: string[] }) =>
+      unwrap<{ suggestions: Array<{ employeeId: string; date: string; type: CellType; shiftStart: string | null; shiftEnd: string | null }>; employeesWithoutHistory: number }>(await hrmsApi.post(`${BASE}/autofill`, body)),
+  });
+}
+
 export function useDiscardDraft() {
   const qc = useQueryClient();
   return useMutation({

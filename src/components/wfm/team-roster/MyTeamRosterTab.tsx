@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Loader2, Search } from "lucide-react";
+import { CalendarCheck, Copy, Loader2, Search, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useDebounce } from "@/hooks/useDebounce";
 import {
-  useDiscardDraft, useSaveDraftLines, useSubmitDraft, useTeamRosterDraft, useTeamRosterGrid, useTeamRosterTemplates,
+  useAutofillSuggestions, useDiscardDraft, useSaveDraftLines, useSubmitDraft, useTeamRosterDraft, useTeamRosterGrid, useTeamRosterTemplates,
   type GridRow, type TeamRosterMe,
 } from "@/hooks/useTeamRoster";
 import { LobSelect } from "@/components/wfm/LobSelect";
@@ -16,6 +16,7 @@ import ChangeDialog, { type ChangeTarget } from "./ChangeDialog";
 import RosterQuickFill from "./RosterQuickFill";
 import { computeBulkFill, describeSkipped, pageShiftOptions, type BulkEdit } from "./rosterBulkFill";
 import SubmitProblemsDialog from "./SubmitProblemsDialog";
+import { planAutofill } from "./autofillPlan";
 import TeamRosterGrid, { shiftOptionsFor, stagedKey, type StagedEdit } from "./TeamRosterGrid";
 import {
   RANGE_PRESETS, formatDmy, presetRange, shiftKeyOf, spanDays, splitShiftKey, storedLabel, unpackError,
@@ -60,6 +61,7 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
   const save = useSaveDraftLines();
   const submit = useSubmitDraft();
   const discard = useDiscardDraft();
+  const autofill = useAutofillSuggestions();
 
   const rowByEmployee = useMemo(() => new Map((grid.data?.rows ?? []).map((r) => [r.employeeId, r])), [grid.data]);
   const names = useMemo(() => Object.fromEntries((grid.data?.rows ?? []).map((r) => [r.employeeId, r.name])), [grid.data]);
@@ -119,6 +121,24 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
     }
   };
 
+  const runAutofill = async (mode: "usual" | "copy_last_week") => {
+    const rows = grid.data?.rows ?? [];
+    if (!rows.length || rangeError) return;
+    try {
+      const res = await autofill.mutateAsync({ from, to, mode, employeeIds: rows.map((r) => r.employeeId) });
+      const plan = planAutofill(rows, res.suggestions, staged, templates.data?.processes ?? [], me.today);
+      plan.edits.forEach((e) => stage(e.row, e.date, e.choice));
+      const people = new Set(plan.edits.map((e) => e.row.employeeId)).size;
+      const notes = [
+        plan.skippedNoShiftOption ? `${plan.skippedNoShiftOption} skipped (shift not offered for that process)` : "",
+        res.employeesWithoutHistory ? `${res.employeesWithoutHistory} ${res.employeesWithoutHistory === 1 ? "person has" : "people have"} no history to copy` : "",
+      ].filter(Boolean).join("; ");
+      if (plan.edits.length === 0) toast.info(`Nothing to fill.${notes ? ` ${notes}.` : " Blank dates already have a roster, a draft or leave."}`);
+      else toast.success(`Filled ${plan.edits.length} blank ${plan.edits.length === 1 ? "cell" : "cells"} for ${people} ${people === 1 ? "person" : "people"}. Review, then Save draft.${notes ? ` ${notes}.` : ""}`);
+    } catch (e) {
+      toast.error(unpackError(e).message);
+    }
+  };
   const onSave = async () => { if (await flush()) toast.success("Draft saved."); };
   const onSubmit = async () => {
     if (!(await flush())) { setConfirming(false); return; }
@@ -202,6 +222,18 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
         Blank dates can be filled directly. A date that already has a roster is read-only; use the pencil to propose a change with a reason.
         Nothing reaches the roster until it is approved{me.hasReportingManager ? " by your reporting manager and then by WFM" : " by WFM (you have no reporting manager on record)"}.
       </p>
+
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Fill blank dates">
+        <Button type="button" variant="outline" size="sm" className="min-h-[36px]" disabled={!grid.data?.rows.length || !!rangeError || autofill.isPending || busy} onClick={() => void runAutofill("usual")} title="Fills only blank dates with each person's usual shift and weekly off from the last 4 weeks">
+          {autofill.isPending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden /> : <Wand2 className="mr-1.5 h-4 w-4" aria-hidden />}
+          Auto-fill blanks
+        </Button>
+        <Button type="button" variant="outline" size="sm" className="min-h-[36px]" disabled={!grid.data?.rows.length || !!rangeError || autofill.isPending || busy} onClick={() => void runAutofill("copy_last_week")} title="Repeats the roster from exactly 7 days earlier onto blank dates, including one-off changes">
+          <Copy className="mr-1.5 h-4 w-4" aria-hidden />
+          Copy last week
+        </Button>
+        <span className="inline-flex items-center gap-1 text-xs text-slate-500"><CalendarCheck className="h-3.5 w-3.5" aria-hidden />Only blank dates on this page are filled. You can change any cell before saving.</span>
+      </div>
 
       {grid.isLoading && !rangeError && <div className="py-10 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-slate-400" aria-label="Loading" /></div>}
       {grid.isError && <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">Could not load the roster grid. {unpackError(grid.error).message}</p>}
