@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
+import { hasDirectReports, reportingSpanClause } from "../../shared/reportingSpan.js";
 import { buildScopeWhereClause, hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
 import { exitService } from "./exit.service.js";
 
@@ -128,9 +129,18 @@ async function exitListScope(userId: string) {
     },
     { allowAdminBypass: true, allowCeoAllRead: true },
   );
-  if (scoped.sql !== "1=0") return scoped;
+  // A TL sees the team and an AM sees each TL's team, from the day a resignation is submitted (UAT
+  // 2026-09-25). View only: canActOnExit below still requires the direct manager.
+  const span = await reportingSpanClause(userId);
+  if (scoped.sql !== "1=0") {
+    return span ? { sql: `(${scoped.sql}) OR ${span.sql}`, params: [...scoped.params, ...span.params] as unknown[] } : scoped;
+  }
   const emp = await getEmployeeForUser(userId);
-  if (emp?.id) return { sql: "e.id = ?", params: [emp.id] as unknown[] };
+  if (emp?.id) {
+    return span
+      ? { sql: `e.id = ? OR ${span.sql}`, params: [emp.id, ...span.params] as unknown[] }
+      : { sql: "e.id = ?", params: [emp.id] as unknown[] };
+  }
   return { sql: "1=0", params: [] as unknown[] };
 }
 
@@ -190,7 +200,7 @@ exitSecureRouter.get("/stats", h(async (req: any, res: any) => {
 
 exitSecureRouter.get("/", h(async (req: any, res: any) => {
   const privileged = await hasAnyRole(req.authUser!.id, "admin", "super_admin", "hr", "finance", "payroll", "ceo", ...EXIT_SCOPE_ROLES);
-  if (!privileged) {
+  if (!privileged && !(await hasDirectReports(req.authUser!.id))) {
     const emp = await getEmployeeForUser(req.authUser!.id);
     if (!emp || !req.query.employeeId || String(req.query.employeeId) !== emp.id) {
       return res.status(403).json({ success: false, message: "Forbidden: employee collection access is not allowed" });
@@ -203,6 +213,11 @@ exitSecureRouter.get("/", h(async (req: any, res: any) => {
   const conds: string[] = [`(${scope.sql})`];
   const params: unknown[] = [...scope.params];
   if (req.query.status) { conds.push("er.status = ?"); params.push(String(req.query.status === "exit_confirmed" ? "exited" : req.query.status)); }
+  if (req.query.statuses) {
+    // Comma list, e.g. the notice-period view: every status in which the person is still working out notice.
+    const statuses = String(req.query.statuses).split(",").map((v) => normalizeExitStatus(v)).filter((v) => /^[a-z_]{3,30}$/.test(v));
+    if (statuses.length > 0) { conds.push(`er.status IN (${statuses.map(() => "?").join(",")})`); params.push(...statuses); }
+  }
   if (req.query.employeeId) { conds.push("er.employee_id = ?"); params.push(String(req.query.employeeId)); }
   if (req.query.branchId) { conds.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
   if (req.query.processId) { conds.push("e.process_id = ?"); params.push(String(req.query.processId)); }

@@ -72,6 +72,10 @@ function Avatar({ name }: { name: string }) {
 // ── Main ─────────────────────────────────────────────────────
 export default function TeamLeaveTab() {
   const [showHistory, setShowHistory] = useState(false);
+  // History can be narrowed to a span: everyone whose leave overlaps it, whatever its status.
+  const [spanFrom, setSpanFrom] = useState("");
+  const [spanTo, setSpanTo] = useState("");
+  const spanActive = showHistory && spanFrom !== "" && spanTo !== "" && spanFrom <= spanTo;
   // Dialog is only for rejection — approval fires directly without any dialog
   const [reviewTarget, setReviewTarget] = useState<{
     id: string; name: string; escalated: boolean;
@@ -85,13 +89,16 @@ export default function TeamLeaveTab() {
   // reached this fetch at all — the query was hardcoded to plain "pending" — so a
   // Branch Head using this page (the one page whose role-gate is built for them,
   // see MyTeamPage.tsx) never saw an escalated request to act on. (2026-08-21 audit)
-  const statusFilter = showHistory
-    ? "approved,rejected,branch_head_approved,branch_head_rejected"
-    : "pending,pending_branch_head";
+  const statusFilter = spanActive
+    ? "pending,pending_branch_head,approved,rejected,branch_head_approved,branch_head_rejected"
+    : showHistory
+      ? "approved,rejected,branch_head_approved,branch_head_rejected"
+      : "pending,pending_branch_head";
+  const spanQuery = spanActive ? `&overlapFrom=${spanFrom}&overlapTo=${spanTo}` : "";
 
   const { data, isLoading } = useQuery({
-    queryKey: ["team-leaves", statusFilter],
-    queryFn: () => hrmsApi.get<any>(`/api/leave/requests?status=${statusFilter}&limit=200`),
+    queryKey: ["team-leaves", statusFilter, spanQuery],
+    queryFn: () => hrmsApi.get<any>(`/api/leave/requests?status=${statusFilter}${spanQuery}&limit=200`),
     staleTime: 30_000,
   });
 
@@ -143,7 +150,7 @@ export default function TeamLeaveTab() {
         <div className="flex items-center gap-2">
           <ClipboardList className="h-4 w-4 text-slate-500" />
           <h3 className="text-sm font-semibold text-slate-700">
-            {showHistory ? "Leave History" : "Pending Approvals"}
+            {spanActive ? "Leave applied in this period" : showHistory ? "Leave History" : "Pending Approvals"}
           </h3>
           {pendingCount > 0 && (
             <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-100 px-1.5 text-xs font-bold text-amber-700">
@@ -151,10 +158,18 @@ export default function TeamLeaveTab() {
             </span>
           )}
         </div>
+        {showHistory && (
+          <div className="ml-auto flex items-center gap-2 text-xs text-slate-600">
+            <label htmlFor="tl-span-from">Leave overlapping</label>
+            <input id="tl-span-from" type="date" value={spanFrom} onChange={(e) => setSpanFrom(e.target.value)} className="h-8 rounded-md border border-slate-200 px-2" />
+            <label htmlFor="tl-span-to">to</label>
+            <input id="tl-span-to" type="date" value={spanTo} min={spanFrom || undefined} onChange={(e) => setSpanTo(e.target.value)} className="h-8 rounded-md border border-slate-200 px-2" />
+          </div>
+        )}
         <Button
           variant="ghost"
           size="sm"
-          className="ml-auto gap-1.5 text-xs rounded-xl"
+          className={`${showHistory ? "" : "ml-auto "}gap-1.5 text-xs rounded-xl`}
           onClick={() => setShowHistory((p) => !p)}
         >
           <History className="h-3.5 w-3.5" />

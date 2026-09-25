@@ -1,3 +1,4 @@
+import { reportingSpanClause } from "../../shared/reportingSpan.js";
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
@@ -32,9 +33,18 @@ async function leaveListScope(userId: string): Promise<{ sql: string; params: un
   // have been permanently empty for them). Payroll signs off every branch's salary.
   if (await hasAnyRole(userId, "super_admin", "payroll_head")) return { sql: "1=1", params: [] };
   const scoped = await buildScopeWhereClause(userId, LEAVE_VIEW_SCOPE_ROLES, { branchId: "e.branch_id", processId: "e.process_id", departmentId: "e.department_id", managerEmployeeId: "e.reporting_manager_id", employeeId: "e.id" }, { allowAdminBypass: false, allowCeoAllRead: false });
-  if (scoped.sql !== "1=0") return scoped;
+  // View-only skip level: an AM also sees the leave of the people under each TL (UAT 2026-09-25).
+  // canReviewLeave below is untouched, so approval stays with the effective approver.
+  const span = await reportingSpanClause(userId);
+  if (scoped.sql !== "1=0") {
+    return span ? { sql: `(${scoped.sql}) OR ${span.sql}`, params: [...scoped.params, ...span.params] } : scoped;
+  }
   const callerEmp = await getEmployeeForUser(userId);
-  if (callerEmp?.id) return { sql: "e.id = ?", params: [callerEmp.id] };
+  if (callerEmp?.id) {
+    return span
+      ? { sql: `e.id = ? OR ${span.sql}`, params: [callerEmp.id, ...span.params] }
+      : { sql: "e.id = ?", params: [callerEmp.id] };
+  }
   return { sql: "1=0", params: [] };
 }
 
@@ -92,6 +102,12 @@ leaveSecureRouter.get("/requests", h(async (req: any, res: any) => {
   }
   if (req.query.fromDate) { conds.push("lr.from_date >= ?"); params.push(String(req.query.fromDate)); }
   if (req.query.toDate) { conds.push("lr.to_date <= ?"); params.push(String(req.query.toDate)); }
+  // Overlap, not containment: a leave that starts before or ends after the span still counts as "applied for" it.
+  if (req.query.overlapFrom && req.query.overlapTo) {
+    conds.push("lr.from_date <= ?");
+    conds.push("lr.to_date >= ?");
+    params.push(String(req.query.overlapTo), String(req.query.overlapFrom));
+  }
   if (req.query.activeOn) { conds.push("lr.from_date <= ?"); conds.push("lr.to_date >= ?"); params.push(String(req.query.activeOn), String(req.query.activeOn)); }
   if (req.query.year) { conds.push("YEAR(lr.from_date) = ?"); params.push(Number(req.query.year)); }
   const where = `WHERE ${conds.join(" AND ")}`;
