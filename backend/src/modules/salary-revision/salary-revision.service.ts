@@ -10,8 +10,10 @@ import {
 } from "../payroll/salary-start-date.service.js";
 
 function httpError(msg: string, status: number, code: string) {
-  const e = new Error(msg) as Error & { status: number; code: string };
-  e.status = status; e.code = code; return e;
+  const e = new Error(msg) as Error & { status: number; statusCode: number; code: string };
+  // The global error handler reads statusCode; with only `status` every refusal here (duplicate pending
+  // request, reason too short, date before joining, ...) came back as a masked 500 with no message.
+  e.status = status; e.statusCode = status; e.code = code; return e;
 }
 
 export interface CreateRevisionInput {
