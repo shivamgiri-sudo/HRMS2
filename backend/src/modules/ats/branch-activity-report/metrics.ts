@@ -28,6 +28,8 @@
  *  token was issued — recruiters who close yesterday's tokens today get credit today.
  */
 
+import type { DemandRow } from "./query.js";
+
 export const SLA = {
   /** Same 20-minute wait alert the walk-in queue already uses (ats.queue.service WAIT_ALERT_MINUTES). */
   waitToCallMin: 20,
@@ -40,6 +42,44 @@ export const SLA = {
   /** Below this share of tokens carrying the timestamps an SLA needs, the % is shown as n/a, not as a verdict. */
   minCoveragePct: 50,
 } as const;
+
+export type PipelineStage =
+  "selected" | "offer_approved" | "profile_submitted" | "joined";
+
+const SOURCE_LABELS: Record<string, string> = {
+  walkin: "Walk-in",
+  recruiter: "Recruiter sourced",
+  reference: "Reference",
+};
+
+function normaliseSource(v: unknown): string {
+  const raw = String(v ?? "").trim();
+  if (!raw) return "Not recorded";
+  return SOURCE_LABELS[raw.toLowerCase().replace(/[^a-z0-9]/g, "")] ?? raw;
+}
+
+function weekdayOf(iso: string): number {
+  const d = new Date(`${iso}T00:00:00Z`).getUTCDay(); // 0 = Sunday
+  return (d + 6) % 7;
+}
+
+function pipelineStageOf(
+  outcome: Outcome,
+  joined: boolean,
+  candStatus: string,
+  stage: string,
+): PipelineStage | null {
+  if (outcome !== "selected") return null;
+  if (joined) return "joined";
+  if (candStatus.includes("profile_submitted")) return "profile_submitted";
+  if (
+    stage.includes("offer_approved") ||
+    candStatus.includes("hr_approved") ||
+    candStatus.includes("offer_approved")
+  )
+    return "offer_approved";
+  return "selected";
+}
 
 export type Outcome =
   | "selected"
@@ -68,7 +108,11 @@ export interface RawTokenRow {
   form_date: string | null; // YYYY-MM-DD the interview form was submitted
   decision_text: string | null;
   /** ats_candidate.status as stored — where post-selection states such as profile_submitted live. */
-  cand_status?: string | null; // submission.final_decision ▸ candidate.final_decision ▸ status ▸ stage
+  cand_status?: string | null;
+  /** ats_candidate.sourcing_channel as stored (Recruiter / WALKIN / Walk-In / Reference …). */
+  source_channel?: string | null;
+  /** 1 when an employee record exists for this candidate (they actually joined). */
+  is_employee?: number | null; // submission.final_decision ▸ candidate.final_decision ▸ status ▸ stage
   current_stage: string | null;
   wait_min: number | null; // arrival → call
   handle_min: number | null; // call → closure
@@ -99,6 +143,14 @@ export interface TokenFact {
   queueCompletedNoOutcome: boolean;
   /** Selected candidate who has already submitted the online onboarding profile. */
   profileSubmitted: boolean;
+  /** Normalised sourcing channel. */
+  source: string;
+  /** 0 = Monday … 6 = Sunday, from the arrival date. */
+  weekday: number;
+  /** Where a Selected candidate is in the post-selection pipeline; null for any other outcome. */
+  pipelineStage: PipelineStage | null;
+  /** Interview form filed AND a real interview time (more than a minute between call and closure). */
+  wellRecorded: boolean;
   waitMin: number | null;
   handleMin: number | null;
   negativeDuration: boolean;
@@ -194,6 +246,79 @@ export interface ProcessRow {
   mtd: Summary;
 }
 
+export interface DayCompare {
+  label: string;
+  date: string;
+  walkins: number;
+  tokens: number;
+  selected: number;
+  noShow: number;
+  open: number;
+  closurePct: number;
+}
+
+export interface RecruiterQuality {
+  recruiter: string;
+  interviewed: number;
+  selectionPct: number;
+  avgHandleMin: number | null;
+  instantClosures: number;
+  noShow: number;
+  noShowPct: number;
+  queueCompletedNoOutcome: number;
+  openNow: number;
+}
+
+export interface SourceRow {
+  source: string;
+  walkins: number;
+  selected: number;
+  selectionPct: number;
+  noShow: number;
+  noShowPct: number;
+}
+
+export interface PipelineCounts {
+  selected: number;
+  offerApproved: number;
+  profileSubmitted: number;
+  joined: number;
+}
+
+export interface NoShowSlice {
+  label: string;
+  tokens: number;
+  noShow: number;
+  pct: number;
+}
+
+export interface RecallCandidate {
+  date: string;
+  token: string;
+  name: string;
+  process: string;
+  recruiter: string;
+}
+
+export interface BranchInsights {
+  compare: DayCompare[];
+  recruiterQuality: RecruiterQuality[];
+  sources: SourceRow[];
+  pipeline: PipelineCounts;
+  noShowByWeekday: NoShowSlice[];
+  noShowByProcess: NoShowSlice[];
+  recall: RecallCandidate[];
+  /** Share of month-to-date closed tokens with a filed form and a real (>1 min) interview time. */
+  recordingQualityPct: number | null;
+}
+
+export interface BranchDemand {
+  rows: DemandRow[];
+  openPositions: number;
+  requested: number;
+  fulfilled: number;
+}
+
 export interface BranchBlock {
   branch: string;
   ftd: Summary;
@@ -202,6 +327,8 @@ export interface BranchBlock {
   recruiters: RecruiterRow[];
   processes: ProcessRow[];
   escalations: Escalation[];
+  insights: BranchInsights;
+  demand: BranchDemand | null;
 }
 
 export interface DataQuality {
@@ -368,6 +495,16 @@ export function toFact(
     joined: stage === "joined" || stage === "onboarded",
     inInterview: qs === "in_interview",
     queueCompletedNoOutcome: qs === "completed" && !closed,
+    source: normaliseSource(row.source_channel),
+    weekday: weekdayOf(row.arrival_date),
+    pipelineStage: pipelineStageOf(
+      outcome,
+      stage === "joined" || stage === "onboarded" || Number(row.is_employee) === 1,
+      String(row.cand_status ?? "").toLowerCase(),
+      stage,
+    ),
+    wellRecorded:
+      closed && !!row.sub_id && row.handle_min != null && row.handle_min > 1,
     profileSubmitted:
       outcome === "selected" &&
       `${row.cand_status ?? ""} ${row.decision_text ?? ""}`
@@ -472,7 +609,8 @@ export function summarize(facts: TokenFact[]): Summary {
     open: c("open"),
     otherClosed: c("other_closed"),
     profileSubmitted: facts.filter((f) => f.profileSubmitted).length,
-    openWaiting: open.filter((f) => !f.called && !f.queueCompletedNoOutcome).length,
+    openWaiting: open.filter((f) => !f.called && !f.queueCompletedNoOutcome)
+      .length,
     openCalled: open.filter(
       (f) => f.called && !f.inInterview && !f.queueCompletedNoOutcome,
     ).length,
@@ -500,8 +638,8 @@ export function escalationFor(
     : f.queueCompletedNoOutcome
       ? "Queue-completed — no interview outcome"
       : f.called
-      ? "Called — interview pending"
-      : "Waiting for call";
+        ? "Called — interview pending"
+        : "Waiting for call";
   const running = f.called
     ? (f.sinceCallMin ?? f.sinceArrivalMin)
     : f.sinceArrivalMin;
@@ -568,9 +706,15 @@ function splitPeriods(
 export interface BuildInput {
   facts: TokenFact[];
   reportDate: string;
+  /** Open hiring demand keyed by branch (Job Requisition page). */
+  demand?: Record<string, DemandRow[]>;
 }
 
-export function buildReport({ facts, reportDate }: BuildInput): ReportData {
+export function buildReport({
+  facts,
+  reportDate,
+  demand,
+}: BuildInput): ReportData {
   const weekStart = weekStartOf(reportDate);
   const monthStart = monthStartOf(reportDate);
   const live = facts.filter((f) => f.arrivalDate <= reportDate);
@@ -650,6 +794,8 @@ export function buildReport({ facts, reportDate }: BuildInput): ReportData {
         recruiters,
         processes,
         escalations: allEsc.filter((e) => e.branch === branch).sort(byWorst),
+        insights: buildInsights(rows, reportDate, monthStart, isStale),
+        demand: demandFor(demand?.[branch]),
       };
     })
     .sort(
@@ -686,5 +832,170 @@ export function buildReport({ facts, reportDate }: BuildInput): ReportData {
       completedWithoutOutcome: mtdFacts.filter((f) => f.queueCompletedNoOutcome)
         .length,
     },
+  };
+}
+
+// ── Insights (pure) ──────────────────────────────────────────────────────────────────────
+
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const RECALL_DAYS = 3;
+const MAX_RECALL = 12;
+const MAX_NOSHOW_PROCESSES = 6;
+const pctOf = (a: number, b: number): number =>
+  b > 0 ? Math.round((a / b) * 100) : 0;
+
+function demandFor(rows: DemandRow[] | undefined): BranchDemand | null {
+  if (!rows || rows.length === 0) return null;
+  const requested = rows.reduce((t, r) => t + r.requested, 0);
+  const fulfilled = rows.reduce((t, r) => t + r.fulfilled, 0);
+  return { rows, requested, fulfilled, openPositions: requested - fulfilled };
+}
+
+function dayCompare(
+  label: string,
+  date: string,
+  facts: TokenFact[],
+): DayCompare {
+  const day = facts.filter((f) => f.arrivalDate === date);
+  const s = summarize(day);
+  return {
+    label,
+    date,
+    walkins: s.walkins,
+    tokens: s.tokens,
+    selected: s.selected,
+    noShow: s.noShow,
+    open: s.open,
+    closurePct: s.closurePct,
+  };
+}
+
+function buildInsights(
+  rows: TokenFact[],
+  reportDate: string,
+  monthStart: string,
+  isStale: (f: TokenFact) => boolean,
+): BranchInsights {
+  const mtd = rows.filter(
+    (f) => f.arrivalDate >= monthStart && f.arrivalDate <= reportDate,
+  );
+
+  const compare = [
+    dayCompare("Today", reportDate, rows),
+    dayCompare("Yesterday", addDays(reportDate, -1), rows),
+    dayCompare("Same day last week", addDays(reportDate, -7), rows),
+  ];
+
+  const recruiterQuality: RecruiterQuality[] = [
+    ...new Set(mtd.map((f) => f.recruiterKey)),
+  ]
+    .map((key) => {
+      const rr = mtd.filter((f) => f.recruiterKey === key);
+      const s = summarize(rr);
+      const handles = rr
+        .filter((f) => f.outcome !== "no_show" && f.handleMin != null)
+        .map((f) => f.handleMin as number);
+      return {
+        recruiter: rr[0].recruiter,
+        interviewed: s.interviewed,
+        selectionPct: s.selectionPct,
+        avgHandleMin: handles.length
+          ? Math.round(handles.reduce((t, v) => t + v, 0) / handles.length)
+          : null,
+        instantClosures: handles.filter((v) => v <= 1).length,
+        noShow: s.noShow,
+        noShowPct: pctOf(s.noShow, s.tokens),
+        queueCompletedNoOutcome: s.openQueueCompleted,
+        openNow: rr.filter((f) => !f.closed && !isStale(f)).length,
+      };
+    })
+    .sort((a, b) => b.interviewed - a.interviewed);
+
+  const sources: SourceRow[] = [...new Set(mtd.map((f) => f.source))]
+    .map((source) => {
+      const s = summarize(mtd.filter((f) => f.source === source));
+      return {
+        source,
+        walkins: s.walkins,
+        selected: s.selected,
+        selectionPct: s.selectionPct,
+        noShow: s.noShow,
+        noShowPct: pctOf(s.noShow, s.tokens),
+      };
+    })
+    .sort((a, b) => b.walkins - a.walkins);
+
+  // Cumulative: everyone at a later step has also passed the earlier ones.
+  const at = (stages: PipelineStage[]) =>
+    mtd.filter((f) => f.pipelineStage && stages.includes(f.pipelineStage))
+      .length;
+  const pipeline: PipelineCounts = {
+    selected: at(["selected", "offer_approved", "profile_submitted", "joined"]),
+    offerApproved: at(["offer_approved", "profile_submitted", "joined"]),
+    profileSubmitted: at(["profile_submitted", "joined"]),
+    joined: at(["joined"]),
+  };
+
+  const slice = (label: string, part: TokenFact[]): NoShowSlice => {
+    const noShow = part.filter((f) => f.outcome === "no_show").length;
+    return {
+      label,
+      tokens: part.length,
+      noShow,
+      pct: pctOf(noShow, part.length),
+    };
+  };
+  const noShowByWeekday = WEEKDAYS.map((label, i) =>
+    slice(
+      label,
+      mtd.filter((f) => f.weekday === i),
+    ),
+  ).filter((s) => s.tokens > 0);
+  const noShowByProcess = [...new Set(mtd.map((f) => f.process))]
+    .map((p) =>
+      slice(
+        p,
+        mtd.filter((f) => f.process === p),
+      ),
+    )
+    .filter((s) => s.noShow > 0)
+    .sort((a, b) => b.noShow - a.noShow)
+    .slice(0, MAX_NOSHOW_PROCESSES);
+
+  const recallFrom = addDays(reportDate, -(RECALL_DAYS - 1));
+  const recall: RecallCandidate[] = rows
+    .filter(
+      (f) =>
+        f.outcome === "no_show" &&
+        f.arrivalDate >= recallFrom &&
+        f.arrivalDate <= reportDate,
+    )
+    .sort((a, b) => b.arrivalDate.localeCompare(a.arrivalDate))
+    .slice(0, MAX_RECALL)
+    .map((f) => ({
+      date: f.arrivalDate,
+      token: f.tokenNumber,
+      name: f.candidateName,
+      process: f.process,
+      recruiter: f.recruiter,
+    }));
+
+  const closedReal = mtd.filter(
+    (f) => f.closed && f.outcome !== "no_show" && f.outcome !== "walkout",
+  );
+  return {
+    compare,
+    recruiterQuality,
+    sources,
+    pipeline,
+    noShowByWeekday,
+    noShowByProcess,
+    recall,
+    recordingQualityPct: closedReal.length
+      ? pctOf(
+          closedReal.filter((f) => f.wellRecorded).length,
+          closedReal.length,
+        )
+      : null,
   };
 }

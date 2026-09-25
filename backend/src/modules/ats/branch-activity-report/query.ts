@@ -48,7 +48,7 @@ async function queueTokens(from: string, to: string): Promise<RawTokenRow[]> {
             DATE_FORMAT(qt.arrival_time,'%H:%i')    AS arrival_hhmm,
             COALESCE(qt.queue_status, IF(qt.status='active','waiting',qt.status)) AS queue_status,
             1 AS has_queue_row, s.id AS sub_id, DATE_FORMAT(s.submitted_at,'%Y-%m-%d') AS form_date,
-            ${DECISION} AS decision_text, c.current_stage, c.status AS cand_status,
+            ${DECISION} AS decision_text, c.current_stage, c.status AS cand_status, c.sourcing_channel AS source_channel, EXISTS (SELECT 1 FROM employees emp WHERE emp.candidate_id = c.id) AS is_employee,
             ${timing("qt.arrival_time", A_CALL, A_CLOSE)}
        FROM ats_queue_token qt
        JOIN ats_candidate c ON c.id = qt.candidate_id
@@ -87,7 +87,7 @@ async function tokenOnlyRegistrations(
             DATE_FORMAT(c.created_date,'%Y-%m-%d') AS arrival_date,
             DATE_FORMAT(c.created_time,'%H:%i')    AS arrival_hhmm,
             NULL AS queue_status, 0 AS has_queue_row, s.id AS sub_id, DATE_FORMAT(s.submitted_at,'%Y-%m-%d') AS form_date,
-            ${DECISION} AS decision_text, c.current_stage, c.status AS cand_status,
+            ${DECISION} AS decision_text, c.current_stage, c.status AS cand_status, c.sourcing_channel AS source_channel, EXISTS (SELECT 1 FROM employees emp WHERE emp.candidate_id = c.id) AS is_employee,
             ${timing(B_ARRIVAL, B_CALL, B_CLOSE)}
        FROM ats_candidate c
        LEFT JOIN ats_interview_submission s ON s.candidate_id = c.id AND s.q_token = c.q_token
@@ -114,4 +114,52 @@ export async function fetchRawFacts(from: string, to: string) {
     tokenOnlyRegistrations(from, to),
   ]);
   return { rows: [...dedupeByToken(queue), ...tokenOnly] };
+}
+
+export interface DemandRow {
+  code: string;
+  designation: string;
+  process: string;
+  priority: string;
+  requested: number;
+  fulfilled: number;
+  deliveryDate: string;
+  daysToDelivery: number;
+}
+
+/**
+ * Open hiring demand per branch from the Job Requisition page: approved requisitions still short of
+ * the requested headcount whose delivery (target joining) date is ahead. Keyed by requisition
+ * branch_name, which is what `branchNames` must be.
+ */
+export async function fetchDemand(
+  branchNames: string[],
+  today: string,
+): Promise<Record<string, DemandRow[]>> {
+  const out: Record<string, DemandRow[]> = {};
+  for (const branch of branchNames) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT requisition_code, designation_name, process_name, priority,
+              requested_headcount, fulfilled_headcount,
+              DATE_FORMAT(target_joining_date, '%Y-%m-%d') AS delivery_date,
+              DATEDIFF(target_joining_date, ?)             AS days_to_delivery
+         FROM job_requisition
+        WHERE branch_name = ? AND active_status = 1 AND approval_status = 'approved'
+          AND fulfilled_headcount < requested_headcount AND target_joining_date >= ?
+        ORDER BY target_joining_date, FIELD(priority, 'urgent', 'high', 'normal', 'low')
+        LIMIT 12`,
+      [today, branch, today],
+    );
+    out[branch] = (rows as any[]).map((r) => ({
+      code: String(r.requisition_code),
+      designation: String(r.designation_name ?? ""),
+      process: String(r.process_name ?? "—"),
+      priority: String(r.priority ?? ""),
+      requested: Number(r.requested_headcount ?? 0),
+      fulfilled: Number(r.fulfilled_headcount ?? 0),
+      deliveryDate: String(r.delivery_date),
+      daysToDelivery: Number(r.days_to_delivery ?? 0),
+    }));
+  }
+  return out;
 }

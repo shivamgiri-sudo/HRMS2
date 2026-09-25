@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  addDays,
   buildReport,
   classifyOutcome,
   escalationFor,
@@ -405,5 +406,68 @@ describe("post-selection statuses count as Selected", () => {
     expect(
       s.selected + s.rejected + s.noShow + s.walkout + s.clientRound + s.hold + s.otherClosed + s.open,
     ).toBe(s.tokens);
+  });
+});
+
+describe("report insights", () => {
+  const sel = (id: string, o: Partial<RawTokenRow>) =>
+    fact({
+      token_id: id,
+      candidate_id: id,
+      queue_status: "completed",
+      sub_id: "s",
+      decision_text: "Selected",
+      has_call: 1,
+      handle_min: 30,
+      arrival_date: RD,
+      ...o,
+    });
+
+  it("counts the post-selection pipeline cumulatively", () => {
+    const facts = [
+      sel("a", {}),
+      sel("b", { cand_status: "hr_approved", current_stage: "offer_approved" }),
+      sel("c", { cand_status: "profile_submitted", current_stage: "offer_approved" }),
+      sel("d", { current_stage: "joined" }),
+    ];
+    const p = buildReport({ facts, reportDate: RD }).branches[0].insights.pipeline;
+    expect(p).toEqual({ selected: 4, offerApproved: 3, profileSubmitted: 2, joined: 1 });
+  });
+
+  it("normalises the sourcing channel spellings into one bucket", () => {
+    const facts = [
+      sel("a", { source_channel: "WALKIN" }),
+      sel("b", { source_channel: "Walk-In" }),
+      sel("c", { source_channel: "Reference" }),
+      sel("d", { source_channel: null }),
+    ];
+    const rows = buildReport({ facts, reportDate: RD }).branches[0].insights.sources;
+    expect(rows.find((r) => r.source === "Walk-in")?.walkins).toBe(2);
+    expect(rows.find((r) => r.source === "Reference")?.walkins).toBe(1);
+    expect(rows.find((r) => r.source === "Not recorded")?.walkins).toBe(1);
+  });
+
+  it("compares today with yesterday and the same day last week, and lists recent no-shows to re-call", () => {
+    const facts = [
+      sel("t", {}),
+      sel("y", { arrival_date: addDays(RD, -1) }),
+      sel("w", { arrival_date: addDays(RD, -7) }),
+      fact({ token_id: "n", candidate_id: "n", queue_status: "no_show", decision_text: "No Show", arrival_date: addDays(RD, -1) }),
+    ];
+    const i = buildReport({ facts, reportDate: RD }).branches[0].insights;
+    expect(i.compare.map((c) => [c.label, c.selected, c.noShow])).toEqual([
+      ["Today", 1, 0],
+      ["Yesterday", 1, 1],
+      ["Same day last week", 1, 0],
+    ]);
+    expect(i.recall).toHaveLength(1);
+    expect(i.recall[0].token).toBeDefined();
+  });
+
+  it("flags closures within a minute as not well recorded", () => {
+    const facts = [sel("a", { handle_min: 0 }), sel("b", { handle_min: 45 })];
+    const i = buildReport({ facts, reportDate: RD }).branches[0].insights;
+    expect(i.recordingQualityPct).toBe(50);
+    expect(i.recruiterQuality[0].instantClosures).toBe(1);
   });
 });

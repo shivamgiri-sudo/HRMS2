@@ -10,6 +10,8 @@ import {
   SLA,
   fmtMin,
   type BranchBlock,
+  type DayCompare,
+  type NoShowSlice,
   type Escalation,
   type RecruiterRow,
   type ReportData,
@@ -558,6 +560,171 @@ function branchSections(d: ReportData, single: boolean): string {
   );
 }
 
+// ── Insights: comparison, recruiter quality, source, pipeline, no-show, demand ───────────────
+
+const noteLine = (text: string) =>
+  `<div style="font-size:10.5px;color:${C.muted};margin-top:6px;line-height:1.5">${esc(text)}</div>`;
+
+/** Signed change vs a reference day; `goodWhenUp` decides which direction is green. */
+function delta(now: number, ref: number, goodWhenUp: boolean, suffix = ""): string {
+  const d = now - ref;
+  if (d === 0) return `<span style="color:${C.muted}">±0</span>`;
+  const good = goodWhenUp ? d > 0 : d < 0;
+  return `<span style="color:${good ? C.green : C.red};font-weight:700">${d > 0 ? "+" : ""}${n(d)}${suffix}</span>`;
+}
+
+function compareTable(b: BranchBlock): string {
+  const [today, yesterday, lastWeek] = b.insights.compare;
+  const lines: { label: string; get: (c: DayCompare) => number; goodWhenUp: boolean; suffix?: string }[] = [
+    { label: "Walk-ins", get: (c) => c.walkins, goodWhenUp: true },
+    { label: "Tokens", get: (c) => c.tokens, goodWhenUp: true },
+    { label: "Selected", get: (c) => c.selected, goodWhenUp: true },
+    { label: "No-show", get: (c) => c.noShow, goodWhenUp: false },
+    { label: "Closure pending (open)", get: (c) => c.open, goodWhenUp: false },
+    { label: "Token closure %", get: (c) => c.closurePct, goodWhenUp: true, suffix: "%" },
+  ];
+  const rows = lines
+    .map(
+      (l, i) => `<tr>
+    ${td(l.label, { align: "left", bg: zebra(i) })}
+    ${td(`${n(l.get(today))}${l.suffix ?? ""}`, { bold: true, bg: zebra(i) })}
+    ${td(`${n(l.get(yesterday))}${l.suffix ?? ""}`, { bg: zebra(i) })}
+    ${td(delta(l.get(today), l.get(yesterday), l.goodWhenUp, l.suffix), { raw: true, bg: zebra(i) })}
+    ${td(`${n(l.get(lastWeek))}${l.suffix ?? ""}`, { bg: zebra(i) })}
+    ${td(delta(l.get(today), l.get(lastWeek), l.goodWhenUp, l.suffix), { raw: true, bg: zebra(i) })}</tr>`,
+    )
+    .join("");
+  return `${dataTable(`<tr>${th("Metric", "left")}${th(`Today ${today.date.slice(5)}`)}${th(`Yesterday ${yesterday.date.slice(5)}`)}${th("Change")}${th(`Last week ${lastWeek.date.slice(5)}`)}${th("Change")}</tr>${rows}`)}`;
+}
+
+function recruiterQualityTable(b: BranchBlock): string {
+  const rows = b.insights.recruiterQuality;
+  if (!rows.length) return noteLine("No recruiter activity this month.");
+  const body = rows
+    .map(
+      (r, i) => `<tr>
+    ${td(r.recruiter, { align: "left", bold: true, bg: zebra(i) })}
+    ${td(n(r.interviewed), { bg: zebra(i) })}
+    ${td(pct(r.selectionPct), { bg: zebra(i) })}
+    ${td(r.avgHandleMin == null ? "—" : fmtMin(r.avgHandleMin), { bg: zebra(i) })}
+    ${td(n(r.instantClosures), { bold: r.instantClosures > 0, color: r.instantClosures > 0 ? C.red : C.ink, bg: zebra(i) })}
+    ${td(`${n(r.noShow)} (${r.noShowPct}%)`, { bg: zebra(i) })}
+    ${td(n(r.queueCompletedNoOutcome), { bold: r.queueCompletedNoOutcome > 0, color: r.queueCompletedNoOutcome > 0 ? C.red : C.ink, bg: zebra(i) })}
+    ${td(n(r.openNow), { bg: zebra(i) })}</tr>`,
+    )
+    .join("");
+  return `${dataTable(`<tr>${th("Recruiter", "left")}${["Interviewed", "Selection %", "Avg interview", "Closed in ≤1 min", "No-show (% of tokens)", "Queue-done, no outcome", "Open now"].map((h) => th(h)).join("")}</tr>${body}`)}
+  ${noteLine("Month to date. Interviewed = closed tokens that were not no-show or walk-out. Avg interview = call → closure. Closed in ≤1 min = closure stamped within a minute of the call, usually a queue click-through rather than an interview. Queue-done, no outcome = marked completed in the queue with no interview form while the candidate is still waiting.")}`;
+}
+
+function sourceTable(b: BranchBlock): string {
+  const rows = b.insights.sources;
+  if (!rows.length) return noteLine("No walk-ins this month.");
+  const body = rows
+    .map(
+      (r, i) => `<tr>
+    ${td(r.source, { align: "left", bold: true, bg: zebra(i) })}
+    ${td(n(r.walkins), { bg: zebra(i) })}
+    ${td(n(r.selected), { color: C.green, bold: true, bg: zebra(i) })}
+    ${td(pct(r.selectionPct), { bg: zebra(i) })}
+    ${td(n(r.noShow), { bg: zebra(i) })}
+    ${td(`${r.noShowPct}%`, { color: r.noShowPct >= 50 ? C.red : C.ink, bg: zebra(i) })}</tr>`,
+    )
+    .join("");
+  return `${dataTable(`<tr>${th("Sourcing channel", "left")}${["Walk-ins", "Selected", "Selection %", "No-show", "No-show %"].map((h) => th(h)).join("")}</tr>${body}`)}
+  ${noteLine("Month to date, by the candidate's recorded sourcing channel. Selection % = selected ÷ interviewed; No-show % = no-show ÷ tokens.")}`;
+}
+
+function pipelineTable(b: BranchBlock): string {
+  const p = b.insights.pipeline;
+  const steps: [string, number][] = [
+    ["Selected", p.selected],
+    ["Offer approved", p.offerApproved],
+    ["Onboarding profile submitted", p.profileSubmitted],
+    ["Joined", p.joined],
+  ];
+  const body = steps
+    .map(([label, count], i) => {
+      const prev = i === 0 ? null : steps[i - 1][1];
+      return `<tr>
+    ${td(label, { align: "left", bold: i === 0 || i === 3, bg: zebra(i) })}
+    ${td(n(count), { bold: true, bg: zebra(i) })}
+    ${td(pct(p.selected > 0 ? Math.round((count / p.selected) * 100) : null), { bg: zebra(i) })}
+    ${td(prev == null ? "—" : `−${n(prev - count)}`, { color: prev != null && prev - count > 0 ? C.amber : C.muted, bg: zebra(i) })}</tr>`;
+    })
+    .join("");
+  return `${dataTable(`<tr>${th("Step", "left")}${["Candidates", "% of selected", "Dropped at this step"].map((h) => th(h)).join("")}</tr>${body}`)}
+  ${noteLine("Month to date, cumulative: a candidate at a later step is also counted in the earlier ones. Offer approved = HR / offer approval done; onboarding profile = the selected candidate has filled the online profile (personal, bank, documents).")}`;
+}
+
+function noShowSlices(title: string, slices: NoShowSlice[]): string {
+  if (!slices.length) return "";
+  const body = slices
+    .map(
+      (s, i) => `<tr>
+    ${td(s.label, { align: "left", bg: zebra(i) })}
+    ${td(n(s.tokens), { bg: zebra(i) })}
+    ${td(n(s.noShow), { bold: true, bg: zebra(i) })}
+    ${td(`${s.pct}%`, { color: s.pct >= 50 ? C.red : C.ink, bg: zebra(i) })}</tr>`,
+    )
+    .join("");
+  return dataTable(`<tr>${th(title, "left")}${["Tokens", "No-show", "%"].map((h) => th(h)).join("")}</tr>${body}`);
+}
+
+function noShowSection(b: BranchBlock): string {
+  const i = b.insights;
+  const recall = i.recall.length
+    ? dataTable(
+        `<tr>${th("Date", "left")}${th("Token", "left")}${th("Candidate", "left")}${th("Process", "left")}${th("Recruiter", "left")}</tr>${i.recall
+          .map(
+            (r, k) => `<tr>${td(r.date.slice(5), { align: "left", bg: zebra(k) })}${td(r.token, { align: "left", bg: zebra(k) })}${td(r.name, { align: "left", bg: zebra(k) })}${td(r.process, { align: "left", bg: zebra(k) })}${td(r.recruiter, { align: "left", bg: zebra(k) })}</tr>`,
+          )
+          .join("")}`,
+      )
+    : noteLine("No no-shows in the last 3 days.");
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+    <td width="50%" valign="top" style="padding-right:6px">${noShowSlices("By weekday", i.noShowByWeekday)}</td>
+    <td width="50%" valign="top" style="padding-left:6px">${noShowSlices("By process (top)", i.noShowByProcess)}</td></tr></table>
+  <div style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:${C.muted};font-weight:700;margin:14px 0 6px">Candidates to re-call — no-shows in the last 3 days</div>${recall}
+  ${noteLine("Month to date for the weekday and process splits (by token arrival date). Names only: contact details stay in the ATS.")}`;
+}
+
+function demandSection(b: BranchBlock): string {
+  const dm = b.demand;
+  if (!dm) return noteLine("No approved requisition with an upcoming delivery date for this branch.");
+  const prio = (p: string) => `<span style="color:${p === "urgent" ? C.red : p === "high" ? C.amber : C.muted};font-weight:700">${esc(p)}</span>`;
+  const body = dm.rows
+    .map(
+      (r, k) => `<tr>${td(r.code, { align: "left", bg: zebra(k) })}${td(`${r.designation} · ${r.process}`, { align: "left", bg: zebra(k) })}${td(prio(r.priority), { raw: true, align: "left", bg: zebra(k) })}${td(n(r.requested), { bg: zebra(k) })}${td(n(r.fulfilled), { bg: zebra(k) })}${td(n(r.requested - r.fulfilled), { bold: true, bg: zebra(k) })}${td(`${r.deliveryDate} (${r.daysToDelivery === 0 ? "today" : `in ${r.daysToDelivery}d`})`, { color: r.daysToDelivery <= 3 ? C.red : C.ink, bg: zebra(k) })}</tr>`,
+    )
+    .join("");
+  const covered = dm.openPositions > 0 ? Math.round((b.mtd.selected / dm.openPositions) * 100) : 0;
+  return `${dataTable(`<tr>${th("Requisition", "left")}${th("Designation · process", "left")}${th("Priority", "left")}${["Requested", "Filled", "Open", "Delivery date"].map((h) => th(h)).join("")}</tr>${body}`)}
+  ${noteLine(`Open positions across these upcoming batches: ${n(dm.openPositions)} (${n(dm.fulfilled)} of ${n(dm.requested)} filled). Candidates selected this month: ${n(b.mtd.selected)}, about ${covered}% of the open positions.`)}`;
+}
+
+function insightsSections(d: ReportData): string {
+  return d.branches
+    .map((b) => {
+      const q = b.insights.recordingQualityPct;
+      const quality =
+        q == null
+          ? ""
+          : noteLine(
+              `Recording quality this month: ${q}% of closed interviews have a filed form and a real interview time (more than a minute from call to closure).`,
+            );
+      return [
+        section("Today against yesterday and last week", "Same measures, same token definitions", compareTable(b), C.navy2),
+        section("Recruiter quality", "Month to date — who is really interviewing, and who is click-through closing", recruiterQualityTable(b) + quality, C.navy2),
+        section("Source mix", "Where the walk-ins come from and how each channel converts", sourceTable(b), C.navy2),
+        section("After selection", "Selected → offer approved → onboarding profile → joined", pipelineTable(b), C.green),
+        section("No-show analysis", "When and where candidates fail to turn up, and who to call back", noShowSection(b), C.orange),
+        section("Hiring demand", "Job Requisition page — batches still to be delivered for this branch", demandSection(b), C.teal),
+      ].join("");
+    })
+    .join("");
+}
+
 export function renderEmail(d: ReportData, meta: RenderMeta): string {
   const { ftd, wtd, mtd } = d.overall;
   const single = !!meta.branchLabel;
@@ -576,6 +743,7 @@ export function renderEmail(d: ReportData, meta: RenderMeta): string {
   ${section("Recruitment funnel", "Walk-in to joining · bar = share of walk-ins · % = share of its parent step (Called and Closed are shares of tokens)", funnel)}
   ${slaSection(d)}
   ${branchSections(d, single)}
+  ${single ? insightsSections(d) : ""}
   ${notesFooter(d)}
   <tr><td align="center" style="padding:14px 24px 22px 24px;font-size:11px;color:${C.muted}">
     ${meta.dashboardUrl ? `<a href="${esc(meta.dashboardUrl)}" style="color:${C.blue};text-decoration:none;font-weight:700">Open ATS Command Centre →</a><br>` : ""}

@@ -13,7 +13,7 @@ import {
   getGeneratedAtIST,
 } from "../../../shared/istDate.js";
 import { canonicalBranch, recruiterKey } from "../ats-vocabulary.js";
-import { fetchRawFacts } from "./query.js";
+import { fetchDemand, fetchRawFacts } from "./query.js";
 import {
   addDays,
   buildReport,
@@ -170,11 +170,13 @@ export async function buildBranchActivityReports(
   const facts = await loadFacts(reportDate);
   const generatedAt = getGeneratedAtIST();
   const branches = [...new Set(facts.map((f) => f.branch))].sort();
+  const demand = await fetchDemand(branches, reportDate);
 
   return branches.map((branch) => {
     const data = buildReport({
       facts: facts.filter((f) => f.branch === branch),
       reportDate,
+      demand,
     });
     const html = renderEmail(data, {
       generatedAt,
