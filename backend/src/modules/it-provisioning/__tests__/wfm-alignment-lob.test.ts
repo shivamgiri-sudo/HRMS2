@@ -27,7 +27,11 @@ beforeEach(() => {
   lobMapped.mockReset();
   Object.values(conn).forEach((f) => typeof f === "function" && (f as any).mockClear?.());
   poolExecute.mockResolvedValue([[{ id: "t1", employee_id: "e1", task_code: "WFM_PROCESS_ALIGNMENT", assigned_role: "wfm", status: "pending", date_of_joining: null }]]);
-  connExecute.mockResolvedValue([[]]);
+  connExecute.mockImplementation(async (sql: string) =>
+    /FROM process_master pm/.test(String(sql))
+      ? [[{ process_branch_id: "b1", employee_branch_id: "b1" }]]
+      : [[]],
+  );
 });
 
 describe("completeWfmAlignmentTask LOB handling", () => {
@@ -53,5 +57,23 @@ describe("completeWfmAlignmentTask LOB handling", () => {
     expect(conn.rollback).toHaveBeenCalled();
     expect(conn.commit).not.toHaveBeenCalled();
     expect(employeeUpdates()).toHaveLength(0);
+  });
+
+  it("rejects a process from another branch", async () => {
+    connExecute.mockImplementation(async (sql: string) =>
+      /FROM process_master pm/.test(String(sql))
+        ? [[{ process_branch_id: "b2", employee_branch_id: "b1" }]]
+        : [[]],
+    );
+    await expect(completeWfmAlignmentTask("t1", base, "u1")).rejects.toThrow(
+      /branch/,
+    );
+  });
+
+  it("rejects an unknown or inactive process", async () => {
+    connExecute.mockResolvedValue([[]]);
+    await expect(completeWfmAlignmentTask("t1", base, "u1")).rejects.toThrow(
+      /does not exist/,
+    );
   });
 });

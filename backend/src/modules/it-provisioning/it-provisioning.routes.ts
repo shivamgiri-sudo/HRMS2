@@ -254,6 +254,25 @@ async function changeAppointmentStatus(
   }
 }
 
+// ── GET /api/it-provisioning/wfm-shift-options ────────────────────────────────
+// Active shift templates for the WFM alignment dropdown (branch-specific + org-wide).
+router.get(
+  "/wfm-shift-options",
+  requireRole(...PROVISIONING_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const branchId = req.query.branch_id ? String(req.query.branch_id) : null;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, shift_code, shift_name, start_time, end_time
+         FROM wfm_shift_template
+        WHERE active_status = 1 AND (? IS NULL OR branch_id IS NULL OR branch_id = ?)
+        ORDER BY shift_name, shift_code
+        LIMIT 500`,
+      [branchId, branchId],
+    );
+    res.json({ data: rows });
+  }),
+);
+
 // ── GET /api/it-provisioning/requests ─────────────────────────────────────────
 // Functional teams default to their own queue; admin/hr/super_admin can inspect all.
 router.get('/stats', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {

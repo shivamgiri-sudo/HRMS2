@@ -36,6 +36,8 @@ import {
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { WfmLobField } from "@/components/wfm/WfmLobField";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { useProcesses } from "@/hooks/useOrgMasters";
 import { ExitClearanceQueue } from "@/components/exit/ExitClearanceQueue";
 import { NoticePeriodDrawer } from "@/components/exit/NoticePeriodDrawer";
 import type { ClearanceOwnerRole } from "@/lib/exitClearance";
@@ -48,6 +50,7 @@ interface ProvisioningRequest {
   employee_name: string;
   employee_code: string;
   branch_name: string | null;
+  branch_id?: string | null;
   request_type: "join" | "exit";
   task_code: string;
   assigned_role: string;
@@ -571,25 +574,65 @@ function AdminTaskForm({ form, setForm, disabled, photoMissing }: {
   );
 }
 
-function WfmTaskForm({ form, setForm, disabled }: {
+interface WfmShiftOption {
+  id: string;
+  shift_code: string;
+  shift_name: string;
+  start_time: string | null;
+  end_time: string | null;
+}
+
+function WfmTaskForm({ form, setForm, disabled, branchId }: {
   form: WfmForm;
   setForm: React.Dispatch<React.SetStateAction<WfmForm>>;
   disabled: boolean;
+  branchId?: string | null;
 }) {
+  const processesQuery = useProcesses(branchId ?? undefined);
+  const processOptions = (processesQuery.data ?? [])
+    .filter((p) => !branchId || !p.branch_id || p.branch_id === branchId)
+    .map((p) => ({
+      value: p.id,
+      label: p.process_name ?? p.name ?? p.id,
+      hint: p.process_code,
+    }));
+  const shiftsQuery = useQuery({
+    queryKey: ["it-provisioning", "wfm-shift-options", branchId ?? null],
+    queryFn: async () => {
+      const qs = branchId ? `?branch_id=${encodeURIComponent(branchId)}` : "";
+      const res = await hrmsApi.get<{ data: WfmShiftOption[] }>(
+        `/api/it-provisioning/wfm-shift-options${qs}`,
+      );
+      return res.data ?? [];
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const shiftOptions = (shiftsQuery.data ?? []).map((s) => ({
+    value: s.id,
+    label: s.shift_name,
+    hint: s.start_time && s.end_time
+      ? `${s.shift_code} · ${s.start_time.slice(0, 5)}-${s.end_time.slice(0, 5)}`
+      : s.shift_code,
+  }));
   return (
     <div className="space-y-3">
       <p className="text-sm text-slate-600">Enter WFM alignment details:</p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
-          <Label htmlFor="wfm-process-id">Process ID <span className="text-red-500">*</span></Label>
-          <Input
-            id="wfm-process-id"
-            value={form.processId}
-            onChange={e => setForm(f => ({ ...f, processId: e.target.value, lobId: "" }))}
-            placeholder="Process UUID or code"
-            disabled={disabled}
-            className="mt-1"
-          />
+          <Label htmlFor="wfm-process-id">Process <span className="text-red-500">*</span></Label>
+          <div className="mt-1">
+            <SearchableSelect
+              id="wfm-process-id"
+              options={processOptions}
+              value={form.processId}
+              onChange={(processId) => setForm(f => ({ ...f, processId, lobId: "" }))}
+              placeholder="Select process"
+              searchPlaceholder="Search process name or code"
+              emptyText="No process found for this branch"
+              disabled={disabled}
+              loading={processesQuery.isFetching}
+            />
+          </div>
         </div>
         <WfmLobField
           processId={form.processId}
@@ -598,15 +641,20 @@ function WfmTaskForm({ form, setForm, disabled }: {
           disabled={disabled}
         />
         <div>
-          <Label htmlFor="wfm-shift-id">Shift ID <span className="text-slate-400 font-normal">(optional)</span></Label>
-          <Input
-            id="wfm-shift-id"
-            value={form.shiftId}
-            onChange={e => setForm(f => ({ ...f, shiftId: e.target.value }))}
-            placeholder="Shift UUID"
-            disabled={disabled}
-            className="mt-1"
-          />
+          <Label htmlFor="wfm-shift-id">Shift <span className="text-slate-400 font-normal">(optional)</span></Label>
+          <div className="mt-1">
+            <SearchableSelect
+              id="wfm-shift-id"
+              options={shiftOptions}
+              value={form.shiftId}
+              onChange={(shiftId) => setForm(f => ({ ...f, shiftId }))}
+              placeholder="Select shift"
+              searchPlaceholder="Search shift"
+              emptyText="No shift found"
+              disabled={disabled}
+              loading={shiftsQuery.isFetching}
+            />
+          </div>
         </div>
         <div>
           <Label htmlFor="wfm-roster-date">Roster Effective Date <span className="text-red-500">*</span></Label>
@@ -1638,7 +1686,7 @@ export default function NativeITProvisioningTracker() {
                   <AdminTaskForm form={adminForm} setForm={setAdminForm} disabled={actionMutation.isPending} photoMissing={!statCardPhotoUrl} />
                 </>
               ) : isWfmTask ? (
-                <WfmTaskForm form={wfmForm} setForm={setWfmForm} disabled={actionMutation.isPending} />
+                <WfmTaskForm form={wfmForm} setForm={setWfmForm} disabled={actionMutation.isPending} branchId={actionDialog.request?.branch_id} />
               ) : isAppointmentLetterTask ? (
                 <div className="space-y-4">
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">

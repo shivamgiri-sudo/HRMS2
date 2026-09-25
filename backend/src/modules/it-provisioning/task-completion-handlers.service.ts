@@ -540,6 +540,44 @@ export async function completeWfmAlignmentTask(
   try {
     await conn.beginTransaction();
 
+    // 0. The process must be a real, active process of the employee's branch, and a chosen
+    // shift must be a real active shift template. Free text used to be written unchecked.
+    const [procRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT pm.branch_id AS process_branch_id, e.branch_id AS employee_branch_id
+         FROM process_master pm
+         JOIN employees e ON e.id = ?
+        WHERE pm.id = ? AND COALESCE(pm.active_status, 1) <> 0
+        LIMIT 1`,
+      [task.employee_id, input.process_id],
+    );
+    const procRow = (procRows as any[])[0];
+    if (!procRow) {
+      throw Object.assign(new Error("Selected process does not exist or is inactive"), {
+        statusCode: 400,
+      });
+    }
+    if (
+      procRow.process_branch_id &&
+      procRow.employee_branch_id &&
+      procRow.process_branch_id !== procRow.employee_branch_id
+    ) {
+      throw Object.assign(
+        new Error("Selected process does not belong to the employee's branch"),
+        { statusCode: 400 },
+      );
+    }
+    if (input.shift_id) {
+      const [shiftRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT id FROM wfm_shift_template WHERE id = ? AND active_status = 1 LIMIT 1`,
+        [input.shift_id],
+      );
+      if (!(shiftRows as any[]).length) {
+        throw Object.assign(new Error("Selected shift does not exist or is inactive"), {
+          statusCode: 400,
+        });
+      }
+    }
+
     // 1. Update employee process_id
     await conn.execute(
       `UPDATE employees SET process_id = ?, updated_at = NOW() WHERE id = ?`,
