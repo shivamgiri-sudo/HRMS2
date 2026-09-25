@@ -13,6 +13,8 @@ import {
 } from "@/hooks/useTeamRoster";
 import { LobSelect } from "@/components/wfm/LobSelect";
 import ChangeDialog, { type ChangeTarget } from "./ChangeDialog";
+import RosterQuickFill from "./RosterQuickFill";
+import { computeBulkFill, describeSkipped, pageShiftOptions, type BulkEdit } from "./rosterBulkFill";
 import SubmitProblemsDialog from "./SubmitProblemsDialog";
 import TeamRosterGrid, { shiftOptionsFor, stagedKey, type StagedEdit } from "./TeamRosterGrid";
 import {
@@ -40,6 +42,7 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
   const [pageSize, setPageSize] = useState<number>(50);
   const [offset, setOffset] = useState(0);
   const [lobId, setLobId] = useState("");
+  const [processId, setProcessId] = useState("");
   const [staged, setStaged] = useState<Record<string, StagedEdit>>({});
   const [change, setChange] = useState<{ row: GridRow; date: string } | null>(null);
   const [failure, setFailure] = useState<ApiFailure | null>(null);
@@ -51,7 +54,7 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
   const rangeError = !from || !to ? "Choose both dates." : to < from ? "The end date must not be before the start date."
     : spanDays(from, to) > me.maxRangeDays ? `A range can span at most ${me.maxRangeDays} days.` : null;
 
-  const grid = useTeamRosterGrid({ from, to, search: debounced.trim(), offset, limit: pageSize, lobId: lobId || undefined }, !rangeError);
+  const grid = useTeamRosterGrid({ from, to, search: debounced.trim(), offset, limit: pageSize, lobId: lobId || undefined, processId: processId || undefined }, !rangeError);
   const templates = useTeamRosterTemplates(true);
   const draft = useTeamRosterDraft(true);
   const save = useSaveDraftLines();
@@ -67,6 +70,26 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
 
   const stage = (row: GridRow, date: string, choice: CellChoice | null, reason: string | null = null) =>
     setStaged((s) => ({ ...s, [stagedKey(row.employeeId, date)]: { choice, reason } }));
+
+  const stagedChoice = (employeeId: string, date: string) => {
+    const edit = staged[stagedKey(employeeId, date)];
+    return edit === undefined ? undefined : edit.choice;
+  };
+  const applyEdits = (edits: BulkEdit[]) =>
+    setStaged((s) => {
+      const next = { ...s };
+      for (const e of edits) next[stagedKey(e.employeeId, e.date)] = { choice: e.choice, reason: null };
+      return next;
+    });
+  const gridRows = grid.data?.rows ?? [];
+  const gridDates = grid.data?.dates ?? [];
+  const fillSubset = (rows: GridRow[], dates: string[], choice: CellChoice) => {
+    const result = computeBulkFill({
+      rows, dates, today: me.today, templates: templates.data?.processes ?? [], staged: stagedChoice, choice, weekdays: [], onlyBlank: true,
+    });
+    if (result.edits.length === 0) { toast.info(`Nothing to fill. ${describeSkipped(result.skipped)}`.trim()); return; }
+    applyEdits(result.edits);
+  };
 
   const flush = async (): Promise<boolean> => {
     if (!dirty) return true;
@@ -156,8 +179,15 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
           <Input aria-label="Search team" placeholder="Search name or employee code" value={search} onChange={(e) => { setSearch(e.target.value); setOffset(0); }} className="h-9 pl-8" />
         </div>
         <div className="space-y-1">
+          <Label htmlFor="tr-process">Process</Label>
+          <select id="tr-process" className="h-9 w-48 rounded-md border border-slate-200 bg-white px-2 text-sm" value={processId} onChange={(e) => { setProcessId(e.target.value); setLobId(""); setOffset(0); }}>
+            <option value="">All processes</option>
+            {(templates.data?.processes ?? []).map((p) => <option key={p.processId} value={p.processId}>{p.processName ?? p.processId}</option>)}
+          </select>
+        </div>
+        <div className="space-y-1">
           <Label>LOB</Label>
-          <LobSelect processId="" value={lobId} onChange={(v) => { setLobId(v); setOffset(0); }} includeUnassigned className="h-9 w-44" />
+          <LobSelect processId={processId} value={lobId} onChange={(v) => { setLobId(v); setOffset(0); }} includeUnassigned className="h-9 w-44" />
         </div>
         <div className="space-y-1">
           <Label htmlFor="tr-page-size">Rows</Label>
@@ -177,8 +207,15 @@ export default function MyTeamRosterTab({ me, onSubmitted }: Props) {
       {grid.isError && <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">Could not load the roster grid. {unpackError(grid.error).message}</p>}
       {grid.data && !rangeError && (
         <>
+          <RosterQuickFill
+            rows={gridRows} dates={gridDates} today={me.today} templates={templates.data?.processes ?? []}
+            staged={stagedChoice} onApply={applyEdits}
+          />
           <TeamRosterGrid
             data={grid.data} today={me.today} templates={templates.data?.processes ?? []} staged={staged}
+            dayFillOptions={pageShiftOptions(gridRows, templates.data?.processes ?? [])}
+            onFillRow={(row, choice) => fillSubset([row], gridDates, choice)}
+            onFillDay={(date, choice) => fillSubset(gridRows, [date], choice)}
             onChoose={(row, date, choice) => stage(row, date, choice)}
             onProposeChange={(row, date) => setChange({ row, date })}
           />
