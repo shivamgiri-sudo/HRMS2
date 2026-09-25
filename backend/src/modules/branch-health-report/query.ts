@@ -335,6 +335,7 @@ export async function fetchRecentGrns(branchId: string): Promise<GrnRow[]> {
        FROM grn_request g
       WHERE g.branch_id = ?
         AND g.bill_source_id IS NULL AND COALESCE(g.created_by, '') NOT LIKE '00000000-%'
+        AND g.status NOT IN ('draft', 'cancelled', 'rejected')
       ORDER BY g.created_at DESC
       LIMIT 15`,
     [branchId],

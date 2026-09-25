@@ -408,6 +408,9 @@ export function renderEmail(
     const present = slots.reduce((n, x) => n + x.present, 0);
     const absent = slots.reduce((n, x) => n + x.absent, 0);
     const late = raw.lateStats.byManager.filter((m) => m.process === name).reduce((n, m) => n + m.count, 0);
+    // Late-marked people who have no planned shift today (no roster row, week-off worked, on leave)
+    // still count in the late headline, so they get their own column instead of vanishing.
+    const noRosterLate = Math.max(0, late - slots.reduce((n, x) => n + x.late, 0));
     const managers = raw.lateStats.byManager
       .filter((m) => m.process === name)
       .map((m) => `${esc(m.manager)} (${m.count})`)
@@ -420,6 +423,11 @@ export function renderEmail(
       planned > 0 ? `${Math.round((absent / planned) * 100)}%` : "—",
       { raw: late > 0 ? `<span style="color:${C.danger};font-weight:700;">${late}</span>` : "0" },
       ...BANDS.map((b) => bandCell(slots, b)),
+      {
+        raw: noRosterLate > 0
+          ? `<span style="color:${C.danger};font-size:10px;">${noRosterLate} late</span>`
+          : `<span style="color:${C.muted};">—</span>`,
+      },
       { raw: managers || `<span style="color:${C.muted};">—</span>` },
     ];
   });
@@ -432,6 +440,8 @@ export function renderEmail(
   const slotRows = [...slotTotals.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([shift, v]) => [shift, String(v.planned), String(v.absent), String(v.late)]);
+  const lateOffRoster = Math.max(0, raw.lateStats.totalLate - sh.bySlot.reduce((n, x) => n + x.late, 0));
+  if (lateOffRoster > 0) slotRows.push(["Not on today's roster", "0", "0", String(lateOffRoster)]);
   const half = Math.ceil(slotRows.length / 2);
   const slotHeaders = ["Shift", "Planned", "Absent", "Late"];
   const slotTable =
@@ -450,11 +460,11 @@ export function renderEmail(
     ]) +
     (attendanceRows.length
       ? dataTable(
-          ["Process", "Planned", "Present", "Absent", "Shrink", "Late", ...BANDS, "Late by reporting manager (count)"],
+          ["Process", "Planned", "Present", "Absent", "Shrink", "Late", ...BANDS, "Not on roster", "Late by reporting manager (count)"],
           attendanceRows,
           true,
         ) +
-        note(`Shift bands (by shift start): ${BANDS.map((b) => `${b} ${BAND_HINT[b]}`).join(" · ")}. Each band shows planned, with absent and late underneath.`) +
+        note(`Shift bands (by shift start): ${BANDS.map((b) => `${b} ${BAND_HINT[b]}`).join(" · ")}. Each band shows planned, with absent and late underneath; "Not on roster" counts late-marked people with no planned shift today, so late adds up to the headline.`) +
         `<p style="${FONT}font-size:10px;font-weight:700;color:${C.muted};margin:8px 0 3px 0;letter-spacing:1px;">SHIFT-WISE, ALL PROCESSES</p>` +
         slotTable
       : "") +
@@ -522,7 +532,7 @@ export function renderEmail(
   const pendingRows: (string | { raw: string })[][] = [];
   if (raw.grnStats.pending > 0)
     pendingRows.push(["GRNs awaiting approval", String(raw.grnStats.pending), `oldest ${raw.grnStats.oldestPendingDays}d · ${raw.grnStats.pendingOver3Days} over 3d`]);
-  if (raw.leaveAging.pending > 0)
+  if (raw.leaveAging.pending > 0 || raw.leaveAging.staleOlderThanWindow > 0)
     pendingRows.push(["Leave requests pending", String(raw.leaveAging.pending), `${ageText(raw.leaveAging)}${raw.leaveAging.staleOlderThanWindow > 0 ? ` · +${raw.leaveAging.staleOlderThanWindow} stale (>90d)` : ""}`]);
   if (raw.regularization.pending > 0)
     pendingRows.push([
@@ -783,7 +793,7 @@ export function renderEmail(
     `<tr><td>${card(budgetBody + budgetHeadBody)}</td></tr>`,
     sectionHeader("2. GRN Summary — Month-to-Date, tied to the budget"),
     `<tr><td>${card(grnStatsBody + unbudgetedBody)}</td></tr>`,
-    sectionHeader("3. Recent GRNs (Latest 15)"),
+    sectionHeader("3. Recent GRNs (Latest 15, excluding drafts)"),
     `<tr><td>${card(grnTableBody)}</td></tr>`,
     sectionHeader("4. ATS — Today's Recruitment Activity"),
     `<tr><td>${card(atsBody)}</td></tr>`,
