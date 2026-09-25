@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { PWAInstallBanner } from "@/components/layout/PWAInstallBanner";
 import { MandatoryTrainingPopup } from "@/components/quality-learning/MandatoryTrainingPopup";
+import { RequisitionExpiryDecisionDialog } from "@/components/requisition/RequisitionExpiryDecisionDialog";
 import { TopBar } from "@/components/layout/TopBar";
 import { SidebarNav } from "@/components/layout/SidebarNav";
 import { navGroups } from "@/components/layout/navConfig";
@@ -267,6 +268,7 @@ function DashboardLayoutShell({ children, subheader }: Props) {
     <div className="min-h-dvh" style={{ background: "var(--surface-page)" }}>
       <PWAInstallBanner />
       <MandatoryTrainingPopup />
+      <RequisitionExpiryDecisionDialog />
 
       {/* Mobile overlay — glass blur backdrop */}
       {sidebarOpen && (

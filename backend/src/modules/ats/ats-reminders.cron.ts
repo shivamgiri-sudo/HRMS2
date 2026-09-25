@@ -22,6 +22,7 @@ import { env } from "../../config/env.js";
 import { triggerOnboardingStuck, triggerJoiningDocsIncomplete } from "../work-inbox/work-inbox.triggers.js";
 import { canonicalBranch } from "./ats-vocabulary.js";
 import { getCurrentDateIST } from "../../shared/istDate.js";
+import { runRequisitionDeadlineSweep } from "../job-requisition/job-requisition-deadline.service.js";
 
 /** On-demand sends may only go to a company mailbox. */
 const COMPANY_ADDRESS = /^[^\s@]+@teammas\.(in|co\.in)$/i;
@@ -389,6 +390,7 @@ export function startAtsRemindersScheduler(): void {
     Promise.all([
       runJoiningDateReminders(),
       runRequisitionApprovalNudge(),
+      runRequisitionDeadlineSweep(),
     ]).catch((e: unknown) => console.error('[ats-reminders] morning job error:', e));
     setTimeout(runMorning, 24 * HOUR_MS);
   };

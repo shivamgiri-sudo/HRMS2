@@ -299,6 +299,7 @@ import { salaryChangeRouter } from "./modules/salary-change/salary-change.routes
 import { employeeCodeGateRouter } from "./modules/ats/employee-code-gate.routes.js";
 import { employeeCodeReconciliationRouter } from "./modules/ats/employee-code-reconciliation.routes.js";
 import { payrollHRRouter } from "./modules/ats/payroll-hr.routes.js";
+import { jobRequisitionExpiryRouter } from "./modules/job-requisition/job-requisition-expiry.routes.js";
 import { branchHeadApprovalRouter } from "./modules/ats/branch-head-approval.routes.js";
 import { commandCentreRouter } from "./modules/ats/command-centre.routes.js";
 import { branchActivityReportRouter } from "./modules/ats/branch-activity-report/branch-activity-report.routes.js";
@@ -992,6 +993,7 @@ app.use("/api/salary-change", salaryChangeRouter);
 app.use("/api/ats/employee-code", employeeCodeGateRouter);
 app.use("/api/ats/employee-code", employeeCodeReconciliationRouter);
 app.use("/api/ats/payroll-hr", payrollHRRouter);
+app.use("/api/job-requisition-expiry", jobRequisitionExpiryRouter);
 app.use("/api/ats/branch-head-approval", branchHeadApprovalRouter);
 app.use("/api/ats/command-centre", commandCentreRouter);
 app.use("/api/ats/branch-activity-report", branchActivityReportRouter);
