@@ -912,7 +912,6 @@
     "1871_process_metric_actual_covering_indexes.sql",
     "1880_payroll_head_review_history_action_enum_reapply.sql",
     "1883_salary_start_date_governance.sql",
-    "1884_employees_salary_start_check_v2.sql",
     "migrations/1890_onfido_outlier_action.sql"
   ],
   "approvedDeletions": [
@@ -935,6 +934,10 @@
       "filename": "1788_gnc_sale_order_id_unique.sql",
       "reason": "Removed from manifest because it targets db_masmis.gnc_sale (not mas_hrms). shivam_user has no ALTER/INDEX privilege on db_masmis — confirmed live via SHOW GRANTS. The ALTER TABLE must be run manually by a db_masmis schema-privilege user. Duplicate rows were already deduplicated live (2,572→2,029 rows) before this was authored. File kept on disk and moved to knownUnlisted so it cannot be accidentally re-scheduled through the standard runner.",
       "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
+      "filename": "1884_employees_salary_start_check_v2.sql",
+      "reason": "Removed from the manifest on 2026-09-25 before it was ever applied: its ALTER TABLE employees DROP CHECK needs an exclusive metadata lock on employees, which an idle session held, so it blocked production startup. The check is dropped later, off the startup path, when the table is quiet. Approved by Shivam Giri (deploy owner) in session."
     }
   ],
   "knownDangling": [
@@ -1084,6 +1087,7 @@
     "1788_gnc_sale_order_id_unique.sql",
     "1831_meta_lead_interview_slot.sql",
     "1853_employee_lob_mapping_upload_template.sql",
+    "1884_employees_salary_start_check_v2.sql",
     "204_personal_contact_fields.sql",
     "205_branch_alias_examples.sql",
     "206_ats_recruiter_contact_details.sql",
