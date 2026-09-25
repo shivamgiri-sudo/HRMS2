@@ -91,6 +91,7 @@ import { kpiRouter } from "./modules/kpi/kpi.routes.js";
 import { kpiProcessRoleRouter } from "./modules/kpi/kpi.process-role.routes.js";
 import { portalRouter } from "./modules/portal/portal.routes.js";
 import { atsRouter, atsPublicRouter } from "./modules/ats/ats.routes.js";
+import { employeeReferralRouter } from "./modules/ats/employee-referral.routes.js";
 import { atsFormConfigRouter } from "./modules/ats/ats-form-config.routes.js";
 import { registrationEnhancedRouter } from "./modules/ats/registration.enhanced.routes.js";
 import testDailyReportRouter from "./modules/ats/test-daily-report.routes.js";
@@ -663,6 +664,7 @@ app.use("/api/bgv/address-verification", bgvAddressVerifRouter); // public submi
 app.use("/api/ats", atsPublicRouter); // PUBLIC: candidate file uploads (no auth, 1-hour window)
 app.use("/api/visitor/public", visitorPublicRouter); // PUBLIC: token-scoped visitor registration and status only
 app.use("/api/ats", atsRouter);
+app.use("/api/employee-referrals", employeeReferralRouter); // employee-facing referral form -> existing ATS candidate
 app.use("/api/ats/queue", queueRouter);
 app.use("/api/business-command", businessCommandRouter);
 app.use("/api/business-actions", businessActionsRouter);
