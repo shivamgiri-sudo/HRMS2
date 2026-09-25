@@ -49,7 +49,9 @@ describe("GRN actual spend is not double-counted across the app and the db_bill 
   function expectDedupGuard(body: string, outerGrnAlias: string) {
     expect(body).toContain("NOT EXISTS (");
     expect(body).toContain("FROM grn_request gr2");
-    expect(body).toContain("JOIN grn_cost_allocation a2 ON a2.grn_request_id = gr2.id");
+    expect(body).toContain(
+      "JOIN grn_cost_allocation a2 ON a2.grn_request_id = gr2.id",
+    );
     expect(body).toContain(`WHERE gr2.grn_number = ${outerGrnAlias}.grn_no`);
     expect(body).toContain("AND a2.lifecycle_status = 'consumed'");
   }
@@ -57,9 +59,26 @@ describe("GRN actual spend is not double-counted across the app and the db_bill 
   /** The one shared reader (2026-09-23): every surface below must route through it. */
   function readerBody() {
     const service = read("src/modules/process-pnl/pnl-actuals.service.ts");
-    const fn = service.slice(service.indexOf("export async function readGrnSpend("));
+    const fn = service.slice(
+      service.indexOf("export async function readGrnSpend("),
+    );
     return fn.slice(0, fn.indexOf("\n}\n"));
   }
+
+  it("legacy lines are also dropped when an HRMS GRN of the same branch, period and total is already counted (two systems, two numbers)", () => {
+    const service = read("src/modules/process-pnl/pnl-actuals.service.ts");
+    const body = readerBody();
+    // Only ever the mirror leg: the twin guard must sit on grn_entry_line_snapshot rows.
+    expect(body).toContain("gr3.accounting_period = ge.period_code");
+    expect(body).toContain("gr3.branch_id = ccm.branch_id");
+    expect(body).toContain("a3.lifecycle_status IN ('consumed', 'reserved')");
+    // Both the ex-GST and the GST-inclusive total are compared, summed over the GRN's allocations.
+    expect(body).toContain("SELECT SUM(${grnAllocationExGstSql(\"a3\")})");
+    expect(body).toContain("SUM(COALESCE(a4.amount_with_tax, 0))");
+    // Small round amounts collide between unrelated bills, so they are exempt.
+    expect(body).toContain("l.amount >= ${LEGACY_TWIN_MIN_AMOUNT}");
+    expect(service).toMatch(/const LEGACY_TWIN_MIN_AMOUNT = \d+;/);
+  });
 
   it("pnl-actuals.service.ts readGrnSpend is app-side-first, mirror fills gaps only, company-filtered on every leg", () => {
     const body = readerBody();
@@ -80,9 +99,11 @@ describe("GRN actual spend is not double-counted across the app and the db_bill 
 
   it("the P&L Statement (getIndirectCostActuals) reads the shared reader", () => {
     const service = read("src/modules/process-pnl/pnl-actuals.service.ts");
-    const fn = service.slice(service.indexOf("export async function getIndirectCostActuals("));
+    const fn = service.slice(
+      service.indexOf("export async function getIndirectCostActuals("),
+    );
     const body = fn.slice(0, fn.indexOf("\n}\n"));
-    expect(body).toContain("readGrnSpend(periodCode, \"consumed\"");
+    expect(body).toContain('readGrnSpend(periodCode, "consumed"');
     expect(body).not.toContain("FROM grn_cost_allocation");
   });
 
@@ -90,8 +111,8 @@ describe("GRN actual spend is not double-counted across the app and the db_bill 
     const service = read("src/modules/process-pnl/ceo-overview.service.ts");
     const fn = service.slice(service.indexOf("async function spendByBranch("));
     const body = fn.slice(0, fn.indexOf("\n}\n"));
-    expect(body).toContain("readGrnSpend(period, \"consumed\", scope)");
-    expect(body).toContain("readGrnSpend(period, \"reserved\", scope)");
+    expect(body).toContain('readGrnSpend(period, "consumed", scope)');
+    expect(body).toContain('readGrnSpend(period, "reserved", scope)');
     // Owner rule 2026-09-24: reserved is counted for EVERY period — no estimate-window gate.
     expect(body).not.toContain("isEstimateWindow(");
     expect(body).not.toContain("FROM grn_cost_allocation");
@@ -106,9 +127,11 @@ describe("GRN actual spend is not double-counted across the app and the db_bill 
   });
 
   it("pnl-reconciliation.service.ts Live P&L readGrn/readGrnCommitted read the shared reader", () => {
-    const service = read("src/modules/process-pnl/pnl-reconciliation.service.ts");
-    expect(service).toContain("readGrnSpend(period, \"consumed\")");
-    expect(service).toContain("readGrnSpend(period, \"reserved\")");
+    const service = read(
+      "src/modules/process-pnl/pnl-reconciliation.service.ts",
+    );
+    expect(service).toContain('readGrnSpend(period, "consumed")');
+    expect(service).toContain('readGrnSpend(period, "reserved")');
     // Owner rule 2026-09-24: grnEstimated (reserved) is not gated by the revenue estimate window.
     expect(service).not.toMatch(/grnEstimated = estimateApplies/);
     expect(service).not.toContain("estimateApplies && (grnCommitted");
