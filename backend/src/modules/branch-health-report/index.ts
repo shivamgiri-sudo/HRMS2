@@ -37,14 +37,15 @@ export async function buildBranchHealthReports(
   const dashboardUrl =
     process.env.BRANCH_HEALTH_REPORT_DASHBOARD_URL || undefined;
 
-  const built = await Promise.all(
-    branches.map(async (branch) => {
-      const raw = await fetchAllBranchHealthData(branch, reportDate);
-      const report = buildBranchHealthReport(branch, reportDate, raw);
-      const html = renderEmail(report, { generatedAt, dashboardUrl });
-      return { branch, reportDate, subject: subjectLine(report), html, report };
-    }),
-  );
+  // One branch at a time: each branch already fans out ~20 queries, and the pool is shared with
+  // every worker, so building all branches at once overflows its connection queue.
+  const built: BranchHealthBuilt[] = [];
+  for (const branch of branches) {
+    const raw = await fetchAllBranchHealthData(branch, reportDate);
+    const report = buildBranchHealthReport(branch, reportDate, raw);
+    const html = renderEmail(report, { generatedAt, dashboardUrl });
+    built.push({ branch, reportDate, subject: subjectLine(report), html, report });
+  }
 
   return built;
 }

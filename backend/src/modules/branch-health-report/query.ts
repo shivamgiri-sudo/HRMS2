@@ -4,12 +4,14 @@
  * Each function is scoped to a single branch by branch_id (looked up via branch_name once and
  * passed through). All amounts in ₹. Dates are IST strings (the db session timezone is IST).
  *
- * GRN queries filter to bill_source_id IS NULL — HRMS-raised GRNs only, no db_bill migration data.
+ * GRN queries are scoped to HRMS-raised GRNs: no db_bill source id and not a system-user backfill
+ * row (created_by 00000000-…, e.g. the "db_bill backfill 2026-27" load) — no legacy or migrated data.
  * Shrinkage is roster-based (wfm_roster_assignment shift timings vs attendance_daily_record).
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getPnlReconciliation } from "../process-pnl/pnl-reconciliation.service.js";
+import { readGrnSpend } from "../process-pnl/pnl-actuals.service.js";
 import { isShiftDueYet } from "../wfm/shift-due.util.js";
 
 // ─── shared helpers ──────────────────────────────────────────────────────────
@@ -77,7 +79,7 @@ export async function fetchBudgetSummary(
   };
 }
 
-// ─── 2. GRN Stats (HRMS-raised only — bill_source_id IS NULL) ────────────────
+// ─── 2. GRN Stats (HRMS-raised only) ──────────────────────────────────────────
 
 /**
  * Ex-GST tie-out between this month's GRN activity and the budget in section 1, so the two
@@ -90,7 +92,7 @@ export interface GrnBridge {
   awaitingApproval: number;
   /** Approved but charged to an earlier month's budget line. */
   earlierBudget: number;
-  /** Approved with no budget line (e.g. paid reimbursements). */
+  /** Raised without a budget line (unbudgeted): Finance Head has to attach one before approving. */
   noBudgetLine: number;
   /** Raised this month AND charged to this month's budget (consumed + reserved). */
   chargedThisMonth: number;
@@ -111,6 +113,25 @@ export interface GrnStats {
   /** Gross value incl. GST of the GRNs raised this month. */
   totalRaisedAmount: number;
   bridge: GrnBridge;
+  unbudgeted: UnbudgetedGrns;
+}
+
+/**
+ * HRMS-raised GRNs with a cost-centre split that has no budget line. The system allows raising
+ * these by design (Head/Sub-head with no approved budget line; the split falls back to the
+ * cost centre) and blocks Finance Head approval until a real budget line is attached
+ * (grn-smart.service review / link-budget). This is the live list of that exposure.
+ */
+export interface UnbudgetedGrns {
+  count: number;
+  amountExGst: number;
+  rows: {
+    grnNumber: string | null;
+    head: string;
+    amountExGst: number;
+    status: string;
+    raisedOn: string;
+  }[];
 }
 
 const GRN_APPROVED_STATUSES = [
@@ -135,7 +156,7 @@ export async function countPendingGrns(branchId: string): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt FROM grn_request
       WHERE branch_id = ?
-        AND bill_source_id IS NULL
+        AND bill_source_id IS NULL AND COALESCE(created_by, '') NOT LIKE '00000000-%'
         AND status IN (${GRN_PENDING_STATUSES.map(() => "?").join(",")})`,
     [branchId, ...GRN_PENDING_STATUSES],
   );
@@ -149,6 +170,9 @@ const GRN_AWAITING_STATUSES = [
 ];
 const GRN_NOT_RAISED_STATUSES = ["draft", "cancelled", "rejected"];
 const PENDING_STALE_DAYS = 3;
+
+// Paise rounding between GRN cost and budget-line cost, summed over many rows.
+const BRIDGE_ROUNDING_TOLERANCE = 10;
 
 async function fetchGrnBridge(
   branchId: string,
@@ -170,7 +194,7 @@ async function fetchGrnBridge(
        LEFT JOIN finance_budget_line l ON l.id = g.budget_line_id
        LEFT JOIN finance_budget_header h ON h.id = l.budget_id
       WHERE g.branch_id = ?
-        AND g.bill_source_id IS NULL
+        AND g.bill_source_id IS NULL AND COALESCE(g.created_by, '') NOT LIKE '00000000-%'
         AND DATE(g.created_at) >= ?
         AND g.status NOT IN (${GRN_NOT_RAISED_STATUSES.map(() => "?").join(",")})
       GROUP BY bucket`,
@@ -204,12 +228,39 @@ async function fetchGrnBridge(
     earlierBudget,
     noBudgetLine,
     chargedThisMonth,
-    // Sub-rupee differences are rounding between GRN and budget-line cost, not a real gap.
-    fromEarlierMonths:
-      Math.abs(budgetChargeTotal - chargedThisMonth) < 1
+        fromEarlierMonths:
+      Math.abs(budgetChargeTotal - chargedThisMonth) < BRIDGE_ROUNDING_TOLERANCE
         ? 0
         : budgetChargeTotal - chargedThisMonth,
     budgetChargeTotal,
+  };
+}
+
+async function fetchUnbudgeted(branchId: string): Promise<UnbudgetedGrns> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT g.grn_number, g.head, g.sub_head, g.status,
+            DATE_FORMAT(g.created_at, '%d/%m/%Y') AS raised_on,
+            COALESCE(SUM(a.amount_without_tax), 0) AS amount
+       FROM grn_request g
+       JOIN grn_cost_allocation a ON a.grn_request_id = g.id AND a.budget_line_id IS NULL
+      WHERE g.branch_id = ?
+        AND g.bill_source_id IS NULL AND COALESCE(g.created_by, '') NOT LIKE '00000000-%'
+        AND g.status NOT IN (${GRN_NOT_RAISED_STATUSES.map(() => "?").join(",")})
+      GROUP BY g.id, g.grn_number, g.head, g.sub_head, g.status, g.created_at
+      ORDER BY g.created_at DESC`,
+    [branchId, ...GRN_NOT_RAISED_STATUSES],
+  );
+  const all = rows as any[];
+  return {
+    count: all.length,
+    amountExGst: all.reduce((sum, r) => sum + Number(r.amount), 0),
+    rows: all.slice(0, 5).map((r) => ({
+      grnNumber: r.grn_number ?? null,
+      head: [r.head, r.sub_head].filter(Boolean).join(" › ") || "—",
+      amountExGst: Number(r.amount),
+      status: String(r.status),
+      raisedOn: String(r.raised_on),
+    })),
   };
 }
 
@@ -225,7 +276,7 @@ export async function fetchGrnStats(
        COALESCE(SUM(amount_with_tax), 0)                                  AS total_amount
      FROM grn_request
     WHERE branch_id = ?
-      AND bill_source_id IS NULL
+      AND bill_source_id IS NULL AND COALESCE(created_by, '') NOT LIKE '00000000-%'
       AND status NOT IN (${GRN_NOT_RAISED_STATUSES.map(() => "?").join(",")})
       AND DATE(created_at) >= ?`,
     [
@@ -241,7 +292,7 @@ export async function fetchGrnStats(
             COALESCE(SUM(DATEDIFF(?, DATE(created_at)) > ${PENDING_STALE_DAYS}), 0) AS stale
        FROM grn_request
       WHERE branch_id = ?
-        AND bill_source_id IS NULL
+        AND bill_source_id IS NULL AND COALESCE(created_by, '') NOT LIKE '00000000-%'
         AND status IN (${GRN_PENDING_STATUSES.map(() => "?").join(",")})`,
     [today, today, branchId, ...GRN_PENDING_STATUSES],
   );
@@ -255,6 +306,7 @@ export async function fetchGrnStats(
     pendingOver3Days: Number(a?.stale ?? 0),
     totalRaisedAmount: Number(r?.total_amount ?? 0),
     bridge: await fetchGrnBridge(branchId, today),
+    unbudgeted: await fetchUnbudgeted(branchId),
   };
 }
 
@@ -282,7 +334,7 @@ export async function fetchRecentGrns(branchId: string): Promise<GrnRow[]> {
             DATE_FORMAT(g.created_at, '%d/%m/%Y')    AS raised_on
        FROM grn_request g
       WHERE g.branch_id = ?
-        AND g.bill_source_id IS NULL
+        AND g.bill_source_id IS NULL AND COALESCE(g.created_by, '') NOT LIKE '00000000-%'
       ORDER BY g.created_at DESC
       LIMIT 15`,
     [branchId],
@@ -629,83 +681,141 @@ export async function fetchShrinkage(
 
 // ─── 7. Headcount movements ───────────────────────────────────────────────────
 
+export interface HeadcountProcessRow {
+  process: string;
+  active: number;
+  joinedToday: number;
+  joinedMtd: number;
+  leftToday: number;
+  leftMtd: number;
+}
+
 export interface HeadcountMovement {
   joinedToday: number;
   leftToday: number;
   joinedNames: string[];
   leftNames: string[];
-  byProcess: { process: string; joined: number; left: number }[];
+  byProcess: HeadcountProcessRow[];
   joinedMtd: number;
   leftMtd: number;
+  /** Leavers with a last working day in the next 30 days (exit requests still running). */
+  upcomingExits: number;
+  /** Exit requests whose last working day has passed but the employee is still active. */
+  exitsNotClosed: number;
   totalActive: number;
 }
 
+/**
+ * Headcount by process with today's and the month's movement.
+ *  - joined = date_of_joining;
+ *  - left   = date_of_leaving or date_of_exit on the employee record, or a running exit
+ *    request's last working day (confirmed, else proposed). Only inactive employees count as left;
+ *    a running exit whose last working day has passed but who is still active is reported
+ *    separately as exitsNotClosed;
+ *  - active = active_status 1 today.
+ */
 export async function fetchHeadcountMovement(
   branchId: string,
   today: string,
 ): Promise<HeadcountMovement> {
+  const monthStart = today.slice(0, 7) + "-01";
+  const lastDay = `COALESCE(e.date_of_leaving, e.date_of_exit, er.lwd)`;
+  const leaverBase = `FROM employees e
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN (SELECT employee_id,
+                         MAX(COALESCE(last_working_day_confirmed, last_working_day_proposed)) AS lwd
+                    FROM exit_request
+                   WHERE status NOT IN ('revoked', 'rejected', 'cancelled')
+                   GROUP BY employee_id) er ON er.employee_id = e.id
+      WHERE e.branch_id = ?`;
+  const [activeRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(pm.process_name, 'Unassigned') AS process, COUNT(*) AS cnt
+       FROM employees e LEFT JOIN process_master pm ON pm.id = e.process_id
+      WHERE e.branch_id = ? AND e.active_status = 1
+      GROUP BY process`,
+    [branchId],
+  );
   const [joinRows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(e.full_name), ''), e.first_name) AS name,
-            COALESCE(pm.process_name, 'Unassigned')               AS process
-       FROM employees e
-       LEFT JOIN process_master pm ON pm.id = e.process_id
-      WHERE e.branch_id = ? AND e.date_of_joining = ?`,
+            COALESCE(pm.process_name, 'Unassigned')               AS process,
+            e.date_of_joining = ?                                 AS is_today
+       FROM employees e LEFT JOIN process_master pm ON pm.id = e.process_id
+      WHERE e.branch_id = ? AND e.date_of_joining BETWEEN ? AND ?`,
+    [today, branchId, monthStart, today],
+  );
+  const [leaveRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT e.id,
+            COALESCE(NULLIF(TRIM(e.full_name), ''), e.first_name) AS name,
+            COALESCE(pm.process_name, 'Unassigned')               AS process,
+            ${lastDay} = ?                                         AS is_today
+       ${leaverBase}
+        AND e.active_status = 0
+        AND ${lastDay} BETWEEN ? AND ?`,
+    [today, branchId, monthStart, today],
+  );
+  const [upcomingRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(DISTINCT e.id) AS cnt
+       ${leaverBase}
+        AND e.active_status = 1
+        AND ${lastDay} > ? AND ${lastDay} <= DATE_ADD(?, INTERVAL 30 DAY)`,
+    [branchId, today, today],
+  );
+
+  const [notClosedRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(DISTINCT e.id) AS cnt
+       ${leaverBase}
+        AND e.active_status = 1
+        AND er.lwd < ?`,
     [branchId, today],
   );
 
-  // A leaver is anyone whose last working day is today — from the employee record
-  // (date_of_leaving / date_of_exit) or an exit request. They are inactive by now, so no
-  // active_status filter.
-  const [exitRows] = await db.execute<RowDataPacket[]>(
-    `SELECT DISTINCT e.id,
-            COALESCE(NULLIF(TRIM(e.full_name), ''), e.first_name) AS name,
-            COALESCE(pm.process_name, 'Unassigned')               AS process
-       FROM employees e
-       LEFT JOIN process_master pm ON pm.id = e.process_id
-       LEFT JOIN exit_request er ON er.employee_id = e.id
-      WHERE e.branch_id = ?
-        AND (e.date_of_leaving = ?
-             OR e.date_of_exit = ?
-             OR COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed) = ?)`,
-    [branchId, today, today, today],
-  );
-
-  const [countRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS cnt FROM employees WHERE branch_id = ? AND active_status = 1`,
-    [branchId],
-  );
-  const monthStart = today.slice(0, 7) + "-01";
-  const [mtdRows] = await db.execute<RowDataPacket[]>(
-    `SELECT SUM(date_of_joining BETWEEN ? AND ?)                        AS joined_mtd,
-            SUM(COALESCE(date_of_leaving, date_of_exit) BETWEEN ? AND ?) AS left_mtd
-       FROM employees WHERE branch_id = ?`,
-    [monthStart, today, monthStart, today, branchId],
-  );
-
+  const perProcess = new Map<string, HeadcountProcessRow>();
+  const row = (process: string): HeadcountProcessRow => {
+    const found = perProcess.get(process);
+    if (found) return found;
+    const fresh = {
+      process,
+      active: 0,
+      joinedToday: 0,
+      joinedMtd: 0,
+      leftToday: 0,
+      leftMtd: 0,
+    };
+    perProcess.set(process, fresh);
+    return fresh;
+  };
+  let totalActive = 0;
+  for (const r of activeRows as any[]) {
+    row(String(r.process)).active = Number(r.cnt);
+    totalActive += Number(r.cnt);
+  }
   const joined = joinRows as any[];
-  const left = exitRows as any[];
-  const perProcess = new Map<string, { joined: number; left: number }>();
+  const left = leaveRows as any[];
   for (const r of joined) {
-    const b = perProcess.get(r.process) ?? { joined: 0, left: 0 };
-    b.joined += 1;
-    perProcess.set(r.process, b);
+    const b = row(String(r.process));
+    b.joinedMtd += 1;
+    if (Number(r.is_today) === 1) b.joinedToday += 1;
   }
   for (const r of left) {
-    const b = perProcess.get(r.process) ?? { joined: 0, left: 0 };
-    b.left += 1;
-    perProcess.set(r.process, b);
+    const b = row(String(r.process));
+    b.leftMtd += 1;
+    if (Number(r.is_today) === 1) b.leftToday += 1;
   }
+  const todayOnly = (list: any[]) =>
+    list
+      .filter((r) => Number(r.is_today) === 1)
+      .map((r) => String(r.name).trim());
   return {
-    joinedToday: joined.length,
-    leftToday: left.length,
-    joinedNames: joined.map((r) => String(r.name).trim()),
-    leftNames: left.map((r) => String(r.name).trim()),
-    byProcess: [...perProcess.entries()]
-      .map(([process, v]) => ({ process, ...v }))
-      .sort((a, b) => b.joined + b.left - (a.joined + a.left)),
-    joinedMtd: Number((mtdRows[0] as any)?.joined_mtd ?? 0),
-    leftMtd: Number((mtdRows[0] as any)?.left_mtd ?? 0),
-    totalActive: Number((countRows[0] as any)?.cnt ?? 0),
+    joinedToday: todayOnly(joined).length,
+    leftToday: todayOnly(left).length,
+    joinedNames: todayOnly(joined),
+    leftNames: todayOnly(left),
+    byProcess: [...perProcess.values()].sort((a, b) => b.active - a.active),
+    joinedMtd: joined.length,
+    leftMtd: left.length,
+    upcomingExits: Number((upcomingRows[0] as any)?.cnt ?? 0),
+    exitsNotClosed: Number((notClosedRows[0] as any)?.cnt ?? 0),
+    totalActive,
   };
 }
 
@@ -854,6 +964,270 @@ export async function fetchRunningPnl(
   };
 }
 
+// ─── 12. Budget by head ──────────────────────────────────────────────────────
+
+export interface BudgetHeadRow {
+  head: string;
+  budget: number;
+  charged: number;
+  pct: number;
+}
+
+const TOP_HEADS = 3;
+
+/** Heads ranked by spend (consumed + reserved) against their approved budget, P&L cost basis. */
+export async function fetchBudgetByHead(
+  branchId: string,
+  today: string,
+): Promise<{ top: BudgetHeadRow[]; overBudget: BudgetHeadRow[] }> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(TRIM(l.head), ''), 'Unspecified')       AS head,
+            COALESCE(SUM(l.pnl_cost_amount), 0)                       AS budget,
+            COALESCE(SUM(l.consumed_amount + l.reserved_amount), 0)   AS charged
+       FROM finance_budget_line l
+       JOIN finance_budget_header h ON h.id = l.budget_id
+      WHERE h.branch_id = ? AND h.period_code = ? AND h.status NOT IN ('draft')
+      GROUP BY head
+      HAVING charged > 0
+      ORDER BY charged DESC`,
+    [branchId, today.slice(0, 7)],
+  );
+  const all: BudgetHeadRow[] = (rows as any[]).map((r) => {
+    const budget = Number(r.budget);
+    const charged = Number(r.charged);
+    return {
+      head: String(r.head),
+      budget,
+      charged,
+      pct: budget > 0 ? Math.round((charged / budget) * 100) : 0,
+    };
+  });
+  return {
+    top: all.slice(0, TOP_HEADS),
+    overBudget: all.filter((r) => r.budget > 0 && r.charged > r.budget),
+  };
+}
+
+// ─── 13. Consecutive absence ─────────────────────────────────────────────────
+
+export interface AbsenceFlag {
+  name: string;
+  code: string;
+  process: string;
+  manager: string;
+}
+
+/** Rostered working days with no punch in a row, ending yesterday, that earn a flag. */
+export const CONSECUTIVE_ABSENCE_DAYS = 3;
+const MAX_ABSENCE_ROWS = 10;
+
+export async function fetchConsecutiveAbsence(
+  branchId: string,
+  today: string,
+): Promise<{ total: number; rows: AbsenceFlag[] }> {
+  const dayBefore = (n: number) => {
+    const d = new Date(`${today}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - n);
+    return d.toISOString().slice(0, 10);
+  };
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code, COALESCE(NULLIF(TRIM(e.full_name), ''), e.first_name) AS name,
+            COALESCE(pm.process_name, 'Unassigned')                               AS process,
+            COALESCE(NULLIF(TRIM(m.full_name), ''), 'Not mapped')                 AS manager
+       FROM wfm_roster_assignment ra
+       JOIN employees e ON e.id = ra.employee_id AND e.branch_id = ? AND e.active_status = 1
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN employees m ON m.id = e.reporting_manager_id
+       LEFT JOIN attendance_daily_record a
+              ON a.employee_id = ra.employee_id AND a.record_date = ra.roster_date
+      WHERE ra.roster_date BETWEEN ? AND ?
+        AND ra.is_week_off = 0
+        AND UPPER(COALESCE(ra.assignment_type, '')) NOT IN ('WEEK_OFF', 'LEAVE', 'HOLIDAY')
+        AND a.clock_in_time IS NULL
+        AND COALESCE(a.attendance_status, '') NOT IN ('leave_approved', 'approved_leave', 'half_day_leave', 'leave')
+      GROUP BY e.id, e.employee_code, e.full_name, e.first_name, pm.process_name, m.full_name
+     HAVING COUNT(*) = ?
+      ORDER BY process, name`,
+    [
+      branchId,
+      dayBefore(CONSECUTIVE_ABSENCE_DAYS),
+      dayBefore(1),
+      CONSECUTIVE_ABSENCE_DAYS,
+    ],
+  );
+  const all = (rows as any[]).map((r) => ({
+    name: String(r.name),
+    code: String(r.employee_code ?? ""),
+    process: String(r.process),
+    manager: String(r.manager),
+  }));
+  return { total: all.length, rows: all.slice(0, MAX_ABSENCE_ROWS) };
+}
+
+// ─── 14. Pending leave and regularization, by age ───────────────────────────
+
+export interface AgedBacklog {
+  pending: number;
+  oldestDays: number;
+  over3Days: number;
+  over7Days: number;
+}
+
+const emptyBacklog = (r: any): AgedBacklog => ({
+  pending: Number(r?.cnt ?? 0),
+  oldestDays: Number(r?.oldest ?? 0),
+  over3Days: Number(r?.over3 ?? 0),
+  over7Days: Number(r?.over7 ?? 0),
+});
+
+/** Pending leave older than this is stale legacy data, counted apart instead of skewing the age. */
+const LEAVE_WINDOW_DAYS = 90;
+
+export interface LeaveAgingStats extends AgedBacklog {
+  staleOlderThanWindow: number;
+}
+
+export async function fetchLeaveAging(
+  branchId: string,
+  today: string,
+): Promise<LeaveAgingStats> {
+  const applied = "DATE(COALESCE(lr.applied_at, lr.created_at))";
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(${applied} >= DATE_SUB(?, INTERVAL ${LEAVE_WINDOW_DAYS} DAY)), 0) AS cnt,
+            COALESCE(MAX(CASE WHEN ${applied} >= DATE_SUB(?, INTERVAL ${LEAVE_WINDOW_DAYS} DAY) THEN DATEDIFF(?, ${applied}) END), 0) AS oldest,
+            COALESCE(SUM(${applied} >= DATE_SUB(?, INTERVAL ${LEAVE_WINDOW_DAYS} DAY) AND DATEDIFF(?, ${applied}) > 3), 0) AS over3,
+            COALESCE(SUM(${applied} >= DATE_SUB(?, INTERVAL ${LEAVE_WINDOW_DAYS} DAY) AND DATEDIFF(?, ${applied}) > 7), 0) AS over7,
+            COALESCE(SUM(${applied} < DATE_SUB(?, INTERVAL ${LEAVE_WINDOW_DAYS} DAY)), 0) AS stale
+       FROM leave_request lr
+       JOIN employees e ON e.id = lr.employee_id
+      WHERE e.branch_id = ? AND lr.status = 'pending'`,
+    [today, today, today, today, today, today, today, today, branchId],
+  );
+  return {
+    ...emptyBacklog(rows[0]),
+    staleOlderThanWindow: Number((rows[0] as any)?.stale ?? 0),
+  };
+}
+
+/** Regularization requests still awaiting a decision at any stage (pending, manager-approved, escalated). */
+export async function fetchRegularizationBacklog(
+  branchId: string,
+  today: string,
+): Promise<AgedBacklog & { escalated: number }> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt,
+            COALESCE(MAX(DATEDIFF(?, DATE(created_at))), 0) AS oldest,
+            COALESCE(SUM(DATEDIFF(?, DATE(created_at)) > 3), 0) AS over3,
+            COALESCE(SUM(DATEDIFF(?, DATE(created_at)) > 7), 0) AS over7,
+            COALESCE(SUM(status = 'escalated'), 0) AS escalated
+       FROM attendance_regularization
+      WHERE branch_id = ? AND status IN ('pending', 'manager_approved', 'escalated')`,
+    [today, today, today, branchId],
+  );
+  return {
+    ...emptyBacklog(rows[0]),
+    escalated: Number((rows[0] as any)?.escalated ?? 0),
+  };
+}
+
+// ─── 15. Offer to join ───────────────────────────────────────────────────────
+
+export interface OfferConversion {
+  /** Approved offers whose joining date fell in the last OFFER_WINDOW_DAYS. */
+  offered: number;
+  joined: number;
+  notJoined: number;
+  conversionPct: number | null;
+  /** Approved offers with a joining date in the next 7 days. */
+  joiningNext7Days: number;
+}
+
+const OFFER_WINDOW_DAYS = 30;
+
+export async function fetchOfferConversion(
+  branchId: string,
+  today: string,
+): Promise<OfferConversion> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(o.date_of_joining BETWEEN DATE_SUB(?, INTERVAL ${OFFER_WINDOW_DAYS} DAY) AND ?), 0) AS offered,
+            COALESCE(SUM(o.date_of_joining BETWEEN DATE_SUB(?, INTERVAL ${OFFER_WINDOW_DAYS} DAY) AND ?
+                         AND EXISTS (SELECT 1 FROM employees e WHERE e.candidate_id = o.candidate_id)), 0) AS joined,
+            COALESCE(SUM(o.date_of_joining > ? AND o.date_of_joining <= DATE_ADD(?, INTERVAL 7 DAY)), 0) AS next7
+       FROM ats_employment_offer o
+       JOIN ats_onboarding_request r ON r.id = o.onboarding_request_id
+      WHERE r.branch_id = ? AND o.status = 'bh_approved'`,
+    [today, today, today, today, today, today, branchId],
+  );
+  const r = rows[0] as any;
+  const offered = Number(r?.offered ?? 0);
+  const joined = Number(r?.joined ?? 0);
+  return {
+    offered,
+    joined,
+    notJoined: offered - joined,
+    conversionPct: offered > 0 ? Math.round((joined / offered) * 100) : null,
+    joiningNext7Days: Number(r?.next7 ?? 0),
+  };
+}
+
+// ─── 10b. Why the P&L's GRN differs from the budget's ────────────────────────
+
+export interface PnlGrnTieOut {
+  budgetConsumed: number;
+  budgetReserved: number;
+  /** P&L consumed booked from HRMS allocations that are not on a budget line (system backfill). */
+  hrmsNoBudgetLine: number;
+  /** P&L consumed from HRMS GRNs that carry no allocation rows. */
+  hrmsOrdinary: number;
+  /** P&L consumed from bills held in the legacy billing system (db_bill mirror). */
+  legacyBilling: number;
+  /** Budget reservations the P&L cannot read: imprest allocations carry no cost centre. */
+  imprestReservedNoCostCentre: number;
+}
+
+/**
+ * The Live P&L reads GRN spend by cost centre and accounting period (readGrnSpend, in three
+ * legs) while the budget counts money against budget lines. This splits the P&L's consumed by
+ * leg and finds the reserved amount it cannot see, so every difference is named.
+ */
+export async function fetchPnlGrnTieOut(
+  branchId: string,
+  today: string,
+): Promise<PnlGrnTieOut> {
+  const period = today.slice(0, 7);
+  const [spend, budgetRows, imprestRows] = await Promise.all([
+    readGrnSpend(period, "consumed", { withDetail: true }),
+    db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(l.consumed_amount), 0) AS consumed, COALESCE(SUM(l.reserved_amount), 0) AS reserved
+         FROM finance_budget_line l JOIN finance_budget_header h ON h.id = l.budget_id
+        WHERE h.branch_id = ? AND h.period_code = ? AND h.status NOT IN ('draft')`,
+      [branchId, period],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(a.amount_without_tax), 0) AS amt
+         FROM grn_cost_allocation a JOIN grn_request g ON g.id = a.grn_request_id
+        WHERE g.branch_id = ? AND g.accounting_period = ? AND a.lifecycle_status = 'reserved'
+          AND a.cost_centre_id IS NULL`,
+      [branchId, period],
+    ),
+  ]);
+  const mine = spend.filter((r) => r.branchId === branchId);
+  const bySource = (source: string) =>
+    mine
+      .filter((r) => r.source === source)
+      .reduce((sum, r) => sum + r.amount, 0);
+  const budgetConsumed = Number((budgetRows[0][0] as any)?.consumed ?? 0);
+  const allocation = bySource("app_allocation");
+  return {
+    budgetConsumed,
+    budgetReserved: Number((budgetRows[0][0] as any)?.reserved ?? 0),
+    hrmsNoBudgetLine: allocation - budgetConsumed,
+    hrmsOrdinary: bySource("app_grn"),
+    legacyBilling: bySource("db_bill_mirror"),
+    imprestReservedNoCostCentre: Number((imprestRows[0][0] as any)?.amt ?? 0),
+  };
+}
+
 // ─── 11. Pending actions ─────────────────────────────────────────────────────
 
 export interface PendingAction {
@@ -879,7 +1253,8 @@ export async function fetchPendingActions(
     `SELECT COUNT(*) AS cnt
        FROM leave_request lr
        JOIN employees e ON e.id = lr.employee_id
-      WHERE e.branch_id = ? AND lr.status = 'pending'`,
+      WHERE e.branch_id = ? AND lr.status = 'pending'
+        AND DATE(COALESCE(lr.applied_at, lr.created_at)) >= DATE_SUB(CURDATE(), INTERVAL ${LEAVE_WINDOW_DAYS} DAY)`,
     [branchId],
   );
   const pendingLeaves = Number((leaveRows[0] as any)?.cnt ?? 0);
@@ -924,6 +1299,12 @@ export interface BranchHealthRawData {
   openHiring: OpenHiringStats;
   runningPnl: RunningPnlStats;
   pendingActions: PendingAction[];
+  budgetByHead: Awaited<ReturnType<typeof fetchBudgetByHead>>;
+  absence: Awaited<ReturnType<typeof fetchConsecutiveAbsence>>;
+  leaveAging: LeaveAgingStats;
+  regularization: Awaited<ReturnType<typeof fetchRegularizationBacklog>>;
+  offers: OfferConversion;
+  pnlGrnTieOut: PnlGrnTieOut;
 }
 
 const previousDay = (date: string): string => {
@@ -955,6 +1336,7 @@ export async function fetchAllBranchHealthData(
         oldestPendingDays: 0,
         pendingOver3Days: 0,
         totalRaisedAmount: 0,
+        unbudgeted: { count: 0, amountExGst: 0, rows: [] },
         bridge: {
           raisedExGst: 0,
           awaitingApproval: 0,
@@ -997,6 +1379,8 @@ export async function fetchAllBranchHealthData(
         byProcess: [],
         joinedMtd: 0,
         leftMtd: 0,
+        upcomingExits: 0,
+        exitsNotClosed: 0,
         totalActive: 0,
       },
       openHiring: {
@@ -1033,6 +1417,31 @@ export async function fetchAllBranchHealthData(
         dataAvailable: false,
       },
       pendingActions: [],
+      budgetByHead: { top: [], overBudget: [] },
+      absence: { total: 0, rows: [] },
+      leaveAging: { pending: 0, oldestDays: 0, over3Days: 0, over7Days: 0, staleOlderThanWindow: 0 },
+      regularization: {
+        pending: 0,
+        oldestDays: 0,
+        over3Days: 0,
+        over7Days: 0,
+        escalated: 0,
+      },
+      offers: {
+        offered: 0,
+        joined: 0,
+        notJoined: 0,
+        conversionPct: null,
+        joiningNext7Days: 0,
+      },
+      pnlGrnTieOut: {
+        budgetConsumed: 0,
+        budgetReserved: 0,
+        hrmsNoBudgetLine: 0,
+        hrmsOrdinary: 0,
+        legacyBilling: 0,
+        imprestReservedNoCostCentre: 0,
+      },
     };
   }
 
@@ -1048,6 +1457,12 @@ export async function fetchAllBranchHealthData(
     openHiring,
     runningPnl,
     pendingActions,
+    budgetByHead,
+    absence,
+    leaveAging,
+    regularization,
+    offers,
+    pnlGrnTieOut,
   ] = await Promise.all([
     fetchBudgetSummary(branchId, today),
     fetchGrnStats(branchId, today),
@@ -1060,6 +1475,12 @@ export async function fetchAllBranchHealthData(
     fetchOpenHiring(branchName, today),
     fetchRunningPnl(branchId, today),
     fetchPendingActions(branchId),
+    fetchBudgetByHead(branchId, today),
+    fetchConsecutiveAbsence(branchId, today),
+    fetchLeaveAging(branchId, today),
+    fetchRegularizationBacklog(branchId, today),
+    fetchOfferConversion(branchId, today),
+    fetchPnlGrnTieOut(branchId, today),
   ]);
 
   return {
@@ -1075,5 +1496,11 @@ export async function fetchAllBranchHealthData(
     openHiring,
     runningPnl,
     pendingActions,
+    budgetByHead,
+    absence,
+    leaveAging,
+    regularization,
+    offers,
+    pnlGrnTieOut,
   };
 }

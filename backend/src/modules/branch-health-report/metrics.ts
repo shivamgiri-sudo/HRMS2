@@ -1,7 +1,7 @@
 /**
  * Branch Health Report — thresholds, signal classification and report-data model.
  */
-import type { BranchHealthRawData } from "./query.js";
+import { CONSECUTIVE_ABSENCE_DAYS, type BranchHealthRawData } from "./query.js";
 
 export interface CriticalPoint {
   label: string;
@@ -26,6 +26,8 @@ export interface BranchHealthReport {
 // ─── thresholds ───────────────────────────────────────────────────────────────
 
 const DELIVERY_SOON_DAYS = 7;
+const OFFER_JOIN_WARN_PCT = 70;
+const ATTRITION_WARN_PCT = 5;
 
 const T = {
   budget: { warnPct: 80, criticalPct: 95 },
@@ -170,7 +172,12 @@ export function classifySignals(raw: BranchHealthRawData): {
     const short = dueSoon.reduce((n, r) => n + r.openPositions, 0);
     criticalPoints.push({
       label: `${dueSoon.length} batch${dueSoon.length > 1 ? "es" : ""} due within ${DELIVERY_SOON_DAYS} days, ${short} positions still open`,
-      detail: dueSoon.map((r) => `${r.code} (${r.openPositions} open, ${r.inPipeline} in pipeline)`).join(" · "),
+      detail: dueSoon
+        .map(
+          (r) =>
+            `${r.code} (${r.openPositions} open, ${r.inPipeline} in pipeline)`,
+        )
+        .join(" · "),
       severity: "warning",
     });
   }
@@ -196,6 +203,54 @@ export function classifySignals(raw: BranchHealthRawData): {
         detail: `Revenue ₹${fmt(pnl.revenueRunning)} · Cost ₹${fmt(pnl.totalCostRunning)} to date`,
       });
     }
+  }
+
+  // Unbudgeted spend, backlogs, absence, conversion, attrition
+  const unbudgeted = raw.grnStats.unbudgeted;
+  if (unbudgeted.count > 0) {
+    criticalPoints.push({
+      label: `${unbudgeted.count} unbudgeted GRN${unbudgeted.count > 1 ? "s" : ""} (₹${fmt(unbudgeted.amountExGst)} ex-GST)`,
+      detail: "Raised without a budget line — Finance Head must attach one before approval",
+      severity: "warning",
+    });
+  }
+  if (raw.budgetByHead.overBudget.length > 0) {
+    criticalPoints.push({
+      label: `${raw.budgetByHead.overBudget.length} head${raw.budgetByHead.overBudget.length > 1 ? "s" : ""} over budget`,
+      detail: raw.budgetByHead.overBudget.map((h) => `${h.head} (${h.pct}%)`).join(" · "),
+      severity: "critical",
+    });
+  }
+  if (raw.absence.total > 0) {
+    criticalPoints.push({
+      label: `${raw.absence.total} employee${raw.absence.total > 1 ? "s" : ""} absent ${CONSECUTIVE_ABSENCE_DAYS}+ days running`,
+      detail: raw.absence.rows.slice(0, 5).map((r) => `${r.name} (${r.manager})`).join(" · "),
+      severity: "warning",
+    });
+  }
+  if (raw.leaveAging.over7Days > 0 || raw.regularization.over7Days > 0) {
+    criticalPoints.push({
+      label: "Approvals pending more than 7 days",
+      detail: `${raw.leaveAging.over7Days} leave · ${raw.regularization.over7Days} regularization`,
+      severity: "warning",
+    });
+  }
+  if (raw.offers.conversionPct != null && raw.offers.conversionPct < OFFER_JOIN_WARN_PCT) {
+    criticalPoints.push({
+      label: `Offer-to-join only ${raw.offers.conversionPct}%`,
+      detail: `${raw.offers.joined} of ${raw.offers.offered} offered candidates joined in the last 30 days`,
+      severity: "warning",
+    });
+  }
+  const hc = raw.headcount;
+  const avgHc = (hc.totalActive + hc.leftMtd - hc.joinedMtd + hc.totalActive) / 2;
+  const attritionPct = avgHc > 0 ? (hc.leftMtd / avgHc) * 100 : 0;
+  if (attritionPct >= ATTRITION_WARN_PCT) {
+    criticalPoints.push({
+      label: `Attrition ${attritionPct.toFixed(1)}% this month`,
+      detail: `${hc.leftMtd} left, ${hc.joinedMtd} joined (net ${hc.joinedMtd - hc.leftMtd}); ${hc.upcomingExits} more exits due in 30 days`,
+      severity: "warning",
+    });
   }
 
   const hasCritical = criticalPoints.some((p) => p.severity === "critical");
