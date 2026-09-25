@@ -2932,14 +2932,14 @@ export default function NativeHROnboardingRequests() {
                   {/* Core fields */}
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                     <Field label="Date of Joining" required error={formFieldErrors.date_of_joining}>
-                      <input type="date" className={SEL} value={offer.date_of_joining} onChange={(e) => setF('date_of_joining', e.target.value)} />
+                      <input type="date" className={SEL} value={offer.date_of_joining} min={new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10)} onChange={(e) => setF('date_of_joining', e.target.value)} />
                     </Field>
                     <Field label="Salary Start Date" error={formFieldErrors.date_of_salary}>
                       <input
                         type="date"
                         className={`${SEL}${offer.date_of_salary && offer.date_of_joining && offer.date_of_salary < offer.date_of_joining ? ' border-red-500 bg-red-50' : ''}`}
                         value={offer.date_of_salary}
-                        min={offer.date_of_joining || undefined}
+                        min={[offer.date_of_joining, new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10)].filter(Boolean).sort().pop()}
                         onChange={(e) => setF('date_of_salary', e.target.value)}
                       />
                     </Field>

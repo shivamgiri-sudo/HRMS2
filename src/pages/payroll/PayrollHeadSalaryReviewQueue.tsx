@@ -267,6 +267,7 @@ export function OfferedSalarySection({
                 <Input
                   type="date"
                   value={effectiveDate}
+                  min={new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10)}
                   onChange={(e) => setEffectiveDate(e.target.value)}
                   onBlur={onEffectiveDateBlur ? async (e) => { await onEffectiveDateBlur(e.target.value); } : undefined}
                   className="w-[140px] h-8 text-xs rounded-lg border-amber-200"
@@ -383,6 +384,7 @@ export function FinalSalarySection({
                   <Input
                     type="date"
                     value={effectiveDate}
+                  min={new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10)}
                     onChange={(e) => setEffectiveDate(e.target.value)}
                     onBlur={onEffectiveDateBlur ? async (e) => { await onEffectiveDateBlur(e.target.value); } : undefined}
                     className="w-[140px] h-8 text-xs rounded-lg"

@@ -568,6 +568,7 @@ export default function PayrollHeadSalaryReviewDetail() {
                     <Input
                       type="date"
                       value={effectiveDate}
+                  min={new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10)}
                       onChange={(e) => setEffectiveDate(e.target.value)}
                       onBlur={async (e) => {
                         const newDate = e.target.value;

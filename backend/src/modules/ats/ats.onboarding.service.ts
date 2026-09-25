@@ -18,7 +18,7 @@ import {
   sendRejectedEmail,
 } from './ats.email.service.js';
 import { createTemporaryPasswordCredential } from '../auth/tempPassword.service.js';
-import { getIstDateString } from '../../utils/dateUtils.js';
+import { getIstDateString, assertNotBeforeToday } from '../../utils/dateUtils.js';
 import { providerFactory } from '../communication/providers/provider.factory.js';
 import { buildSMS } from '../communication/smartping-dlt-registry.js';
 import { hasLiveSelfieDocument } from './onboarding-full.service.js';
@@ -909,7 +909,7 @@ export async function saveOffer(
   submit: boolean,
 ) {
   const [existing] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM ats_employment_offer WHERE onboarding_request_id = ?`,
+    `SELECT id, date_of_joining, date_of_salary FROM ats_employment_offer WHERE onboarding_request_id = ?`,
     [requestId],
   );
 
@@ -1036,6 +1036,11 @@ export async function saveOffer(
       { statusCode: 400, code: 'SALARY_START_BEFORE_JOINING' }
     );
   }
+
+  // Date lock: joining / salary dates cannot be set (or moved) to before today.
+  const _prev = (existing as RowDataPacket[])[0];
+  assertNotBeforeToday(_doj, 'Date of joining', _prev?.date_of_joining);
+  assertNotBeforeToday(_dos, 'Salary start date', _prev?.date_of_salary);
 
   const status = submit ? 'submitted' : 'draft';
   const submittedAt = submit ? new Date() : null;

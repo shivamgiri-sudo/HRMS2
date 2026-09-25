@@ -5,6 +5,7 @@ import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { convertCandidateToEmployee } from "./ats.convert.service.js";
 import { classifyEsignState } from "./esignState.js";
 import { syncEsignStatus } from "../integrations/luckpay/luckpay-status.service.js";
+import { assertNotBeforeToday } from "../../utils/dateUtils.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -491,6 +492,9 @@ export async function savePayrollControlRoomDetails(candidateId: string, input: 
       { statusCode: 400, code: 'SALARY_START_BEFORE_JOINING' },
     );
   }
+
+  // Date lock: a salary start date cannot be moved to before today (re-saving the offer's own date is fine).
+  assertNotBeforeToday(salaryStartDate, "Salary start date", originalSalaryDate);
 
   // Check if ats_payroll_hr_validation row exists; if not, seed minimal record from offer
   const [existingRows] = await db.execute<RowDataPacket[]>(

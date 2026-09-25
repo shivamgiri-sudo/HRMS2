@@ -31,6 +31,7 @@
  */
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { assertNotBeforeToday } from "../../utils/dateUtils.js";
 import { getEmployeeBgvStatus } from "../employees/employee-bgv.service.js";
 import { buildBankReadinessReport } from "../payroll/bank-payment-readiness.service.js";
 import { createPackage, getPackageById } from "../payroll-masters/payrollMasters.service.js";
@@ -569,6 +570,7 @@ export async function updateSalaryStartDate(
   if (doj && new Date(newDate) < new Date(doj)) {
     throw httpError("Salary start date cannot be before date of joining.", 400, "INVALID_DATE");
   }
+  await assertSalaryDateLock(employeeId, newDate);
 
   const [latestRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, salary_start_date FROM ats_payroll_hr_validation
@@ -664,6 +666,7 @@ export async function updateAssignmentEffectiveDate(
     throw httpError("effective_date must be a valid YYYY-MM-DD date.", 400, "INVALID_DATE");
   }
 
+  await assertSalaryDateLock(employeeId, newDate);
   const review = await getReviewRow(employeeId);
   if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
 
@@ -807,6 +810,34 @@ async function syncOfferRecordFromPackage(
   ).catch(() => {}); // non-fatal
 }
 
+/**
+ * Date lock for every Payroll Head action that sets a salary start / effective date:
+ * a NEW date may not be before today (IST) nor before the date of joining. Re-using a
+ * date the employee already carries (Payroll HR's date, the employee record, or the live
+ * assignment) is allowed, so already-past pending reviews can still be approved as-is.
+ */
+async function assertSalaryDateLock(employeeId: string, newDate: string): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.date_of_joining, e.salary_start_date,
+            (SELECT v.salary_start_date FROM ats_payroll_hr_validation v
+              WHERE v.candidate_id = e.candidate_id ORDER BY v.created_at DESC LIMIT 1) AS hr_date,
+            (SELECT a.effective_from FROM employee_salary_assignment a
+              WHERE a.employee_id = e.id AND a.active_status = 1
+              ORDER BY a.effective_from DESC LIMIT 1) AS assign_date
+       FROM employees e WHERE e.id = ? LIMIT 1`,
+    [employeeId]
+  );
+  const r = rows[0];
+  const day = (v: unknown) => (v ? String(v).slice(0, 10) : "");
+  const nd = day(newDate);
+  if (r && [r.salary_start_date, r.hr_date, r.assign_date].some((d) => day(d) === nd)) return;
+  const doj = day(r?.date_of_joining);
+  if (doj && nd && nd < doj) {
+    throw httpError(`Salary date (${nd}) cannot be before date of joining (${doj}).`, 400, "SALARY_START_BEFORE_JOINING");
+  }
+  assertNotBeforeToday(nd, "Salary date");
+}
+
 async function writeComponentAssignment(
   employeeId: string,
   pkg: RowDataPacket,
@@ -882,6 +913,7 @@ async function writeComponentAssignment(
 export async function assignPackage(
   employeeId: string, packageId: string, effectiveDate: string, actorUserId: string
 ) {
+  await assertSalaryDateLock(employeeId, effectiveDate);
   const review = await getReviewRow(employeeId);
   if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
   if (review.status !== "pending_review") {
@@ -897,6 +929,7 @@ export async function assignPackage(
 export async function createAndAssignPackage(
   employeeId: string, packageData: Record<string, unknown>, effectiveDate: string, actorUserId: string
 ) {
+  await assertSalaryDateLock(employeeId, effectiveDate);
   const review = await getReviewRow(employeeId);
   if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
   if (review.status !== "pending_review") {
@@ -936,6 +969,7 @@ export async function acceptPackage(employeeId: string, actorUserId: string) {
  * This is the fast-path when Payroll Head accepts the Branch HR's suggested package as-is.
  */
 export async function approveOfferedPackage(employeeId: string, effectiveDate: string, actorUserId: string) {
+  await assertSalaryDateLock(employeeId, effectiveDate);
   const review = await getReviewRow(employeeId);
   if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
   if (review.status !== "pending_review") {

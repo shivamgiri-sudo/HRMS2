@@ -35,3 +35,29 @@ export const IST_DATE_EXPR = "DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))";
  * MySQL expression for IST CURDATE() replacement — same as IST_DATE_EXPR.
  */
 export const IST_CURDATE = IST_DATE_EXPR;
+
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}/;
+
+/**
+ * Lock: a joining date / salary start date may not be set to a day before today (IST).
+ * `unchangedFrom` is the value already stored -- re-saving that same value is allowed so
+ * records that are already in the past can still be approved/edited on other fields;
+ * only *setting or moving* a date into the past is refused.
+ */
+export function assertNotBeforeToday(
+  value: unknown,
+  label: string,
+  unchangedFrom?: unknown,
+): void {
+  const v = DATE_ONLY.test(String(value ?? '')) ? String(value).slice(0, 10) : '';
+  if (!v) return;
+  const prev = DATE_ONLY.test(String(unchangedFrom ?? '')) ? String(unchangedFrom).slice(0, 10) : '';
+  if (prev && v === prev) return;
+  const today = getIstDateString();
+  if (v < today) {
+    throw Object.assign(
+      new Error(`${label} (${v}) cannot be set before today (${today}).`),
+      { statusCode: 400, code: 'DATE_BEFORE_TODAY' },
+    );
+  }
+}
