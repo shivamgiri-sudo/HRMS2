@@ -17,6 +17,40 @@ export function resetExistingRowsCacheForTests(): void {
   existingRowsCache.clear();
 }
 
+// Refresh a minute before the cache entries expire, so a page load never pays for the counts.
+const WARM_INTERVAL_MS = EXISTING_ROWS_TTL_MS - 60_000;
+let warmTimer: ReturnType<typeof setInterval> | undefined;
+
+/**
+ * Fills the existence-count cache for every active process (the unscoped view that
+ * admins and the CEO see). A caller scoped to fewer processes builds different cache
+ * keys for the employee/column-keyed sources, so those still count on first load;
+ * the constant-keyed sources are shared by everyone.
+ */
+export async function warmFeedHealthCache(): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT id FROM process_master WHERE active_status = 1",
+  );
+  await getNeverReported(new Set((rows as RowDataPacket[]).map((r) => String(r.id))));
+}
+
+export function startFeedHealthCacheWarmer(): void {
+  if (warmTimer) return;
+  const run = (): void => {
+    warmFeedHealthCache().catch((err: unknown) => {
+      console.warn("[feed-health] cache warm failed:", err instanceof Error ? err.message : err);
+    });
+  };
+  run();
+  warmTimer = setInterval(run, WARM_INTERVAL_MS);
+  warmTimer.unref();
+}
+
+export function stopFeedHealthCacheWarmer(): void {
+  if (warmTimer) clearInterval(warmTimer);
+  warmTimer = undefined;
+}
+
 /**
  * Feed health — which measurements have quietly stopped moving.
  *

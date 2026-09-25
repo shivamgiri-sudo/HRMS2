@@ -172,6 +172,8 @@ function startServer() {
     httpServer!.setTimeout(0);
     // The P&L Trend reads years of payroll; fill its cache once the boot-time migrations and jobs have settled.
     setTimeout(() => { void import("./modules/process-pnl/pnl-trend.service.js").then((m) => m.warmPnlTrendCache()); }, 180_000).unref();
+    // Process Operations /feeds counts ~36 source tables; keep those counts warm so the page never waits on them.
+    setTimeout(() => { void import("./modules/process-operations/feed-health.service.js").then((m) => m.startFeedHealthCacheWarmer()); }, 200_000).unref();
     // Keep connections alive slightly longer than nginx's keepalive_timeout (60s) to
     // avoid the race where nginx sends a request on a reused connection at the exact
     // moment Node is closing it (produces a spurious 502).
