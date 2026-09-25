@@ -5,6 +5,7 @@ import { ProjectDetailView } from "@/pages/NativeInboundDashboard";
 import { BellavitaSaleDashboard } from "@/components/process-performance/BellavitaSaleDashboard";
 import { GncSaleDashboard } from "@/components/process-performance/GncSaleDashboard";
 import { GncChatDashboard } from "@/components/process-performance/GncChatDashboard";
+import { GncTargetsDashboard } from "@/components/process-performance/GncTargetsDashboard";
 import { GncAbandonCartDashboard } from "@/components/process-performance/GncAbandonCartDashboard";
 import { InboundInsightsDashboard, type InboundInsightProject } from "@/components/process-performance/InboundInsightsDashboard";
 import { NeemansCartDashboard } from "@/components/process-performance/NeemansCartDashboard";
@@ -93,7 +94,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
  * separate mapping. "stub" entries are the pre-existing "nothing built
  * yet" placeholders (Neemans' Sale/Allocation cards) -- unchanged.
  */
-const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" }>>> = {
+const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" }>>> = {
   bellavita: [
     { key: "sale_performance", label: "Overall Dashboard", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
     { key: "chat_performance", label: "Chat Sale Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
@@ -118,6 +119,7 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
   gnc: [
     { key: "sale_performance", label: "Overall Dashboard", description: "Gross revenue, prepaid%, allocation, top performers — live from uploaded sale data", kind: "gnc_sale" },
     { key: "abandon_cart", label: "Abandon Cart Dashboard", description: "Cart-recovery funnel, conversion, weekly comparison & top products — live from uploaded allocation/sale data", kind: "gnc_abandon_cart" },
+    { key: "targets", label: "Targets", description: "Monthly revenue target per LOB (Inbound, Chat, Abandon Cart) — editable, and used by every GNC dashboard incl. agent-wise", kind: "gnc_targets" },
     { key: "chat_performance", label: "Chat Performance", description: "Tickets, unique/repeat, FRT/resolution TAT, QRC & agent-wise, with Sale (Chat) linkage — live from uploaded chat data", kind: "gnc_chat" },
     { key: "inbound", label: "Inbound", description: "Live call performance — Overview, agent-wise & date-wise breakdowns", kind: "inbound" },
   ],
@@ -203,6 +205,7 @@ const APPRECIATE_HEALTH_UPLOADERS = [
   { code: "AW_MANDATE_MASMIS", label: "Mandate",   description: "Upload Appreciate Wealth billing mandate", icon: ClipboardList },
   { code: "AW_NEW_CDR_MASMIS", label: "New CDR",   description: "Upload Appreciate Wealth new CDR data",   icon: Activity },
   { code: "AW_OUT_MASMIS",     label: "Outbound",  description: "Upload Appreciate Wealth outbound data",  icon: PhoneOutgoing },
+  { code: "AW_CHAT_MASMIS",    label: "Chat",      description: "Upload Appreciate Wealth chat data",      icon: MessageSquare },
 ];
 
 /** Housing Owner's 3 uploaders, writing into brand-new db_masmis tables
@@ -517,7 +520,7 @@ export default function ProcessPerformanceV2Page() {
   const [company, setCompany] = useState<CompanyKey | null>(null);
   const [section, setSection] = useState<SectionKey | null>(null);
   const [selectedUploader, setSelectedUploader] = useState<{ code: string; label: string } | null>(null);
-  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" } | null>(null);
+  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" } | null>(null);
   const [stats, setStats] = useState({ totalFilesUploaded: 0, activeUsers: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
 
@@ -656,9 +659,16 @@ export default function ProcessPerformanceV2Page() {
                 ? <InboundInsightsDashboard projectKey={company as InboundInsightProject} />
                 : <InboundDashboardTab projectKey={company} />
             ) : selectedDashboard.kind === "bellavita_sale" ? (
-              <BellavitaSaleDashboard />
+              <BellavitaSaleDashboard
+                onOpenDashboard={(key) => {
+                  const target = DASHBOARDS_BY_COMPANY.bellavita?.find((d) => d.key === key);
+                  if (target) setSelectedDashboard({ key: target.key, label: target.label, kind: target.kind });
+                }}
+              />
             ) : selectedDashboard.kind === "gnc_sale" ? (
               <GncSaleDashboard />
+            ) : selectedDashboard.kind === "gnc_targets" ? (
+              <GncTargetsDashboard />
             ) : selectedDashboard.kind === "gnc_abandon_cart" ? (
               <GncAbandonCartDashboard />
             ) : selectedDashboard.kind === "gnc_chat" ? (

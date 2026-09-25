@@ -4,7 +4,7 @@ import {
 } from "recharts";
 import {
   MessageSquare, Gauge, Clock3, Repeat, Users, ShoppingCart, IndianRupee,
-  Wallet, Layers, ClipboardList, Eye, Timer,
+  Wallet, Layers, ClipboardList, Eye, Timer, Target,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
@@ -51,8 +51,10 @@ interface DashboardData {
   csatBreakdown: Array<{ rating: number; count: number }>;
   tagBreakdown: Array<{ tag: string; count: number }>;
   agents: AgentRow[];
+  /** Chat LOB revenue target for the range (Targets page) -- absent/unconfigured until one is set. */
+  target?: { tableAvailable: boolean; configured: boolean; monthlyTarget: number | null; rangeTarget: number | null; perAgentMonthlyTarget: number | null; agentCount: number | null; uncoveredMonths: string[]; revenue: number; achPct: number | null };
   saleLinkage: {
-    matched: Array<{ agent: string; saleCount: number; revenue: number }>;
+    matched: Array<{ agent: string; saleCount: number; revenue: number; target?: number | null; achPct?: number | null }>;
     unmatchedSaleNames: Array<{ name: string; saleCount: number; revenue: number }>;
   };
 }
@@ -245,8 +247,8 @@ export function GncChatDashboard() {
       tables: [
         {
           title: "Matched to a chat agent",
-          columns: ["Agent", "Sale Count", "Revenue"],
-          rows: data.saleLinkage.matched.map((r) => [r.agent, r.saleCount, formatINR(r.revenue)]),
+          columns: ["Agent", "Sale Count", "Revenue", "Target", "Achi %"],
+          rows: data.saleLinkage.matched.map((r) => [r.agent, r.saleCount, formatINR(r.revenue), r.target != null ? formatINR(r.target) : "—", r.achPct != null ? `${r.achPct}%` : "—"]),
         },
         {
           title: "Unmatched sale names (no corresponding chat agent name)",
@@ -394,6 +396,12 @@ export function GncChatDashboard() {
                     <KpiCard icon={Wallet} label="COD Amt Net" value={formatINR(headline.codNet)} tone="amber" />
                     <KpiCard icon={Wallet} label="Prepaid Amt Net" value={formatINR(headline.paidNet)} tone="emerald" />
                     <KpiCard icon={IndianRupee} label="Revenue Net" value={formatINR(headline.netRevenue)} tone="cyan" />
+                    {data.target?.configured && data.target.rangeTarget !== null && (
+                      <>
+                        <KpiCard icon={Target} label="Chat Target" value={formatINR(data.target.rangeTarget)} sub={data.target.monthlyTarget !== null ? `${formatINR(data.target.monthlyTarget)} / month` : undefined} tone="sky" />
+                        <KpiCard icon={Gauge} label="Target Achi %" value={data.target.achPct === null ? "—" : `${data.target.achPct}%`} sub="gross revenue ÷ target" tone={(data.target.achPct ?? 0) >= 100 ? "emerald" : (data.target.achPct ?? 0) >= 60 ? "amber" : "rose"} />
+                      </>
+                    )}
                   </div>
                 </SectionCard>
                 <SectionCard
@@ -547,7 +555,7 @@ export function GncChatDashboard() {
             <div className="space-y-4">
               <SectionCard
                 icon={IndianRupee} title="Matched to a Chat Agent" tone="emerald"
-                footnote="Linked by name only (gnc_chat has no employee-code column) -- case/spacing/trailing-dot normalized, but never forced across a different surname."
+                footnote="Linked by name only (gnc_chat has no employee-code column) -- case/spacing/trailing-dot normalized, but never forced across a different surname. Target = the Chat per-agent monthly target from the GNC Targets page (pro-rated for a part-month range); Achi % = gross revenue ÷ target."
               >
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs">
@@ -555,7 +563,9 @@ export function GncChatDashboard() {
                       <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
                         <th className="py-2 pr-3 font-semibold">Agent</th>
                         <th className="py-2 pr-3 text-right font-semibold">Sale Count</th>
-                        <th className="py-2 pr-0 text-right font-semibold">Revenue</th>
+                        <th className="py-2 pr-3 text-right font-semibold">Revenue</th>
+                        <th className="py-2 pr-3 text-right font-semibold">Target</th>
+                        <th className="py-2 pr-0 text-right font-semibold">Achi %</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -563,11 +573,13 @@ export function GncChatDashboard() {
                         <tr key={r.agent} className="border-b border-slate-50 last:border-0">
                           <td className="py-2.5 pr-3 font-medium text-slate-700">{r.agent}</td>
                           <td className="py-2.5 pr-3 text-right text-slate-600">{fmtNum(r.saleCount)}</td>
-                          <td className="py-2.5 pr-0 text-right font-semibold text-emerald-600">{formatINR(r.revenue)}</td>
+                          <td className="py-2.5 pr-3 text-right font-semibold text-emerald-600">{formatINR(r.revenue)}</td>
+                          <td className="py-2.5 pr-3 text-right text-slate-600">{r.target != null ? formatINR(r.target) : "—"}</td>
+                          <td className={`py-2.5 pr-0 text-right font-bold ${r.achPct == null ? "text-slate-400" : r.achPct >= 100 ? "text-emerald-600" : r.achPct >= 60 ? "text-amber-600" : "text-rose-600"}`}>{r.achPct != null ? `${r.achPct}%` : "—"}</td>
                         </tr>
                       ))}
                       {data.saleLinkage.matched.length === 0 && (
-                        <tr><td colSpan={3} className="py-6 text-center text-slate-400">No matches for this period.</td></tr>
+                        <tr><td colSpan={5} className="py-6 text-center text-slate-400">No matches for this period.</td></tr>
                       )}
                     </tbody>
                   </table>

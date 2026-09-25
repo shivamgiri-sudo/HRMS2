@@ -12,13 +12,14 @@ import {
   formatINR, currentMonthRange,
 } from "./DashboardKit";
 import { HousingPremiumAgentDrawer } from "./HousingPremiumAgentDrawer";
+import { HousingPremiumOutboundDashboard } from "./HousingPremiumOutboundDashboard";
 import { useSortableRows } from "./useSortableRows";
 import { SortTh } from "./SortTh";
 import {
-  type HPOverviewData, type HPDayWiseData, type HPAgentWiseData, type HPSlotWiseData,
+  type HPOverviewData, type HPDayWiseData, type HPAgentWiseData,
   type HPTqMqBqAgentsData, type HPTqMqBqTlData, type HPTeamDetailsData, type HPValidation, type HPStage,
-  HP_API, STAGE_COLORS, STAGE_LABEL, fmtN, fmtPct, fmtDate, fmtShortDay, fmtMdy, hourLabel,
-  secToHms, secToShort, heatStyle,
+  HP_API, STAGE_COLORS, STAGE_LABEL, fmtN, fmtPct, fmtDate, fmtShortDay, fmtMdy,
+  secToHms, secToShort,
 } from "./housingPremiumShared";
 
 /**
@@ -36,12 +37,12 @@ const TOOLTIP_PROPS = {
   labelStyle: { color: "#f1f5f9", fontWeight: 600, marginBottom: 4 },
 } as const;
 
-type TabKey = "overview" | "daywise" | "agentwise" | "slotwise" | "tqmqbq" | "tlTarget" | "team";
+type TabKey = "dashboard" | "overview" | "daywise" | "agentwise" | "tqmqbq" | "tlTarget" | "team";
 const TABS: Array<{ key: TabKey; label: string }> = [
-  { key: "overview", label: "Overview" },
+  { key: "dashboard", label: "Dashboard" },
+  { key: "overview", label: "Metric Matrix" },
   { key: "daywise", label: "Day Wise" },
   { key: "agentwise", label: "Agent Wise" },
-  { key: "slotwise", label: "Slot Wise" },
   { key: "tqmqbq", label: "Target Achievement" },
   { key: "tlTarget", label: "TL Target" },
   { key: "team", label: "Team Details" },
@@ -61,17 +62,6 @@ function StageBadge({ stage }: { stage: HPStage }) {
     </span>
   );
 }
-function MiniBar({ pct, color }: { pct: number; color: string }) {
-  return (
-    <div className="ml-auto flex w-28 items-center justify-end gap-2">
-      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-100">
-        <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, pct))}%`, backgroundColor: color }} />
-      </div>
-      <span className="w-12 text-right font-semibold text-slate-800">{Math.round(pct * 10) / 10}%</span>
-    </div>
-  );
-}
-
 /** Shown at the top of Overview and Team Details -- the actual cross-checks
  * between the three uploaded files, computed live (not the workbook's own
  * self-consistent formulas, since our roster achievement is a separately
@@ -154,6 +144,7 @@ function OverviewTab({ from, to }: { from: string; to: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [scope, setScope] = useState<string>("__overall__");
+  const [tlMetric, setTlMetric] = useState<string>("revenue");
 
   useEffect(() => {
     let cancelled = false;
@@ -275,6 +266,45 @@ function OverviewTab({ from, to }: { from: string; to: string }) {
             </tbody>
           </table>
         </div>
+      </SectionCard>
+
+      <SectionCard
+        icon={Users} title="TL Wise — Date Wise Performance" tone="violet"
+        footnote="One row per TL plus Overall, one column per week and day of the selected range. Click a TL row to open that TL's full metric matrix above."
+        action={
+          <select value={tlMetric} onChange={(e) => setTlMetric(e.target.value)} aria-label="Metric" className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm focus:border-indigo-400 focus:outline-none">
+            {OVERVIEW_ROWS.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
+          </select>
+        }
+      >
+        {(() => {
+          const row = OVERVIEW_ROWS.find((r) => r.key === tlMetric) ?? OVERVIEW_ROWS[0];
+          const lines = [{ name: "Overall", scopeKey: "__overall__", values: data.overall }, ...data.byTl.map((t) => ({ name: t.tlName, scopeKey: t.tlName, values: t.values }))];
+          return (
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="border-collapse text-center text-[13px] tabular-nums">
+                <thead>
+                  <tr>
+                    <th className="sticky left-0 z-10 min-w-[160px] border-b border-[#0f1a44] bg-[#1c2a5e] px-4 py-3 text-left text-sm font-bold text-white">TL — {row.label}</th>
+                    {data.columns.map((c) => <th key={c.key} className="min-w-[86px] border-b border-l border-[#0f1a44] bg-[#1c2a5e] px-3 py-3 text-sm font-bold text-white">{c.label}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((l) => (
+                    <tr key={l.scopeKey} role="button" tabIndex={0} onClick={() => { setScope(l.scopeKey); window.scrollTo({ top: 0, behavior: "smooth" }); }} onKeyDown={(e) => { if (e.key === "Enter") setScope(l.scopeKey); }} className="cursor-pointer hover:brightness-95">
+                      <td className="sticky left-0 z-10 border-b border-[#e7d6ad] bg-[#fff2cc] px-4 py-2.5 text-left font-semibold text-slate-800">{l.name}</td>
+                      {data.columns.map((c) => (
+                        <td key={c.key} className={`border-b border-l border-[#e7d6ad] px-3 py-2.5 ${c.kind === "mtd" ? "bg-[#f4b183] font-bold text-slate-900" : "bg-[#f8cbad]/60 text-slate-800"}`}>
+                          {formatVal((l.values[c.key] as HPOverviewData["overall"][string] | undefined)?.[row.key], row.fmt)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
       </SectionCard>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -533,91 +563,6 @@ function AgentWiseTab({ from, to, onOpen }: { from: string; to: string; onOpen: 
                 </tr>
               ))}
               {rows.length === 0 && <tr><td colSpan={13} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
-    </div>
-  );
-}
-
-/* ================================ SLOT WISE TAB ================================ */
-
-function SlotWiseTab({ from, to, agents }: { from: string; to: string; agents: string[] }) {
-  const [agent, setAgent] = useState("Overall");
-  const [data, setData] = useState<HPSlotWiseData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true); setError("");
-    hrmsApi.get<{ success: boolean; data: HPSlotWiseData }>(`${HP_API}/slot-wise?from=${from}&to=${to}&agent=${encodeURIComponent(agent)}`)
-      .then((res) => { if (!cancelled) setData(res.data); })
-      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Unable to load Slot Wise Performance."); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [from, to, agent]);
-
-  if (loading && !data) return <Spinner tone="blue" />;
-  if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
-  if (!data) return null;
-
-  const maxCalls = Math.max(1, ...data.slots.map((s) => s.totalCalls));
-  const nonZero = data.slots.some((s) => s.totalCalls > 0);
-
-  return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-semibold text-slate-500">Agent:</span>
-        <select value={agent} onChange={(e) => setAgent(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm focus:border-indigo-400 focus:outline-none">
-          <option value="Overall">Overall</option>
-          {agents.map((a) => <option key={a} value={a}>{a}</option>)}
-        </select>
-      </div>
-
-      <p className="flex items-start gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-500">
-        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />{data.saleByHourNote}
-      </p>
-
-      {!nonZero ? (
-        <div className="flex items-center gap-2 rounded-xl border border-dashed border-slate-200 bg-white p-6 text-sm text-slate-400"><Inbox className="h-5 w-5" /> No call records with a valid hour in this range yet.</div>
-      ) : (
-        <SectionCard icon={Clock} title="Calls and connect rate by hour" tone="emerald">
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-6 lg:grid-cols-12">
-            {data.slots.map((s) => (
-              <div key={s.hour} style={heatStyle(s.connectedPct, 100)} className="rounded-xl border border-emerald-100 p-2.5 text-center transition-transform hover:-translate-y-0.5" title={`${s.totalCalls} calls, ${s.connected} connected`}>
-                <p className="text-[11px] font-semibold text-slate-700">{hourLabel(s.hour)}</p>
-                <p className="text-base font-bold text-emerald-900">{s.totalCalls > 0 ? `${Math.round(s.connectedPct)}%` : "—"}</p>
-                <p className="text-[10px] text-slate-600">{s.totalCalls} calls</p>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
-      )}
-
-      <SectionCard icon={Clock} title="Slot Wise Performance" tone="blue">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
-                <th className="py-2 pr-3 font-semibold">Hour</th><th className="py-2 pr-3 text-right font-semibold">Total Calls</th>
-                <th className="py-2 pr-3 text-right font-semibold">Connected</th><th className="py-2 pr-3 text-right font-semibold">Not Connected</th>
-                <th className="py-2 pr-0 text-right font-semibold">Cont%</th><th className="py-2 pr-0 text-right font-semibold">Avg Talk</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.slots.filter((s) => s.totalCalls > 0).map((s) => (
-                <tr key={s.hour} className="border-b border-slate-50 last:border-0 hover:bg-indigo-50/40">
-                  <td className="py-2 pr-3 font-medium text-slate-700">{hourLabel(s.hour)}</td>
-                  <td className="py-2 pr-3"><MiniBar pct={(s.totalCalls / maxCalls) * 100} color="#6366f1" /></td>
-                  <td className="py-2 pr-3 text-right text-slate-600">{fmtN(s.connected)}</td>
-                  <td className="py-2 pr-3 text-right text-slate-600">{fmtN(s.notConnected)}</td>
-                  <td className="py-2 pr-0 text-right font-semibold text-slate-800">{fmtPct(s.connectedPct)}</td>
-                  <td className="py-2 pr-0 text-right text-slate-600">{s.avgTalkTimeSec ? secToHms(s.avgTalkTimeSec) : "—"}</td>
-                </tr>
-              ))}
-              {!nonZero && <tr><td colSpan={6} className="py-6 text-center text-slate-400">No data for this period.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -898,9 +843,10 @@ export function HousingPremiumSaleDashboard() {
   const defaultRange = currentMonthRange();
   const [from, setFrom] = useState(defaultRange.from);
   const [to, setTo] = useState(defaultRange.to);
-  const [tab, setTab] = useState<TabKey>("overview");
+  const [tab, setTab] = useState<TabKey>("dashboard");
   const [drawerAgent, setDrawerAgent] = useState<string | null>(null);
   const [agentNames, setAgentNames] = useState<string[]>([]);
+  const [filterSlot, setFilterSlot] = useState<HTMLElement | null>(null);
 
   const fetchAgentNames = useCallback(() => {
     hrmsApi.get<{ success: boolean; data: HPAgentWiseData }>(`${HP_API}/agent-wise?from=${from}&to=${to}`)
@@ -922,17 +868,23 @@ export function HousingPremiumSaleDashboard() {
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-[11px] text-slate-400">Rebuilt from the reference Housing Premium MIS Excel workbook — every metric and formula is documented in the backend service.</span>
-        <DateRangeToolbar
-          from={from} to={to} onFrom={setFrom} onTo={setTo}
-          onReset={() => { const r = currentMonthRange(); setFrom(r.from); setTo(r.to); }}
-          accentFocus="focus:border-indigo-400"
-        />
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          {/* The Outbound dashboard portals its TL / Agent / Week / Refresh controls in here, so they share this row with the date range. */}
+          <div ref={setFilterSlot} className="flex flex-wrap items-center gap-2" />
+          <DateRangeToolbar
+            from={from} to={to} onFrom={setFrom} onTo={setTo}
+            onReset={() => { const r = currentMonthRange(); setFrom(r.from); setTo(r.to); }}
+            accentFocus="focus:border-indigo-400"
+          />
+        </div>
       </div>
 
+      {tab === "dashboard" && (
+        <HousingPremiumOutboundDashboard from={from} to={to} agents={agentNames} onOpenAgent={setDrawerAgent} onNavigate={setTab} toolbarSlot={filterSlot} />
+      )}
       {tab === "overview" && <OverviewTab from={from} to={to} />}
       {tab === "daywise" && <DayWiseTab from={from} to={to} agents={agentNames} />}
       {tab === "agentwise" && <AgentWiseTab from={from} to={to} onOpen={setDrawerAgent} />}
-      {tab === "slotwise" && <SlotWiseTab from={from} to={to} agents={agentNames} />}
       {tab === "tqmqbq" && <TqMqBqAgentsTab month={month} onOpen={setDrawerAgent} />}
       {tab === "tlTarget" && <TlTargetTab month={month} />}
       {tab === "team" && <TeamDetailsTab onOpen={setDrawerAgent} />}

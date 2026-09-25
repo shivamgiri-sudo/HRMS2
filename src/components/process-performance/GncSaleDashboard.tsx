@@ -6,7 +6,7 @@ import {
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   IndianRupee, ShoppingBag, CreditCard, Wallet, TrendingUp, Users, CalendarDays,
-  Search, Sparkles, Layers, Trophy, ListFilter,
+  Search, Sparkles, Layers, Trophy, ListFilter, Target, Gauge,
 } from "lucide-react";
 import {
   Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
@@ -33,6 +33,8 @@ interface DashboardData {
   campaignRevenue: Array<{
     campaign: string; saleCount: number; codCount: number; paidCount: number;
     codPct: number; paidPct: number; turnover: number; conversionPct: number | null;
+    /** Revenue target for the range (Targets page) and achievement % against it; null when no target applies. */
+    target?: number | null; achPct?: number | null;
   }>;
   tlRevenue: Array<{ tl: string; saleCount: number; turnover: number }>;
   topPerformers: Array<{ empId: string; empName: string; tl: string; campaign: string; saleCount: number; turnover: number; prepaidPct: number }>;
@@ -51,7 +53,9 @@ interface DashboardData {
     empId: string; empName: string; doj: string | null; tenureDays: number | null; bucket: string;
     tl: string; lob: string; saleCount: number; codCount: number; paidCount: number;
     codPct: number; paidPct: number; revenue: number; attendanceDays: number;
+    target?: number | null; achPct?: number | null;
   }>;
+  targets?: { tableAvailable: boolean; coveredLobs: string[]; total: { target: number; revenue: number; achPct: number | null } | null };
 }
 
 const CAMPAIGN_COLORS = ["#059669", "#0ea5e9", "#f59e0b", "#8b5cf6", "#e11d48"];
@@ -124,6 +128,8 @@ export function GncSaleDashboard() {
       case "codPct": return a.codPct;
       case "paidPct": return a.paidPct;
       case "revenue": return a.revenue;
+      case "target": return a.target ?? null;
+      case "achPct": return a.achPct ?? null;
       case "attendanceDays": return a.attendanceDays;
       default: return null;
     }
@@ -139,6 +145,8 @@ export function GncSaleDashboard() {
       case "paidPct": return c.paidPct;
       case "conversionPct": return c.conversionPct;
       case "turnover": return c.turnover;
+      case "target": return c.target ?? null;
+      case "achPct": return c.achPct ?? null;
       default: return null;
     }
   });
@@ -174,8 +182,8 @@ export function GncSaleDashboard() {
       tables: [
         {
           title: "LOB-wise Summary",
-          columns: ["LOB", "Sale Count", "COD", "Paid", "COD %", "Paid %", "Conversion %", "Revenue"],
-          rows: data.campaignRevenue.map((c) => [c.campaign, c.saleCount, c.codCount, c.paidCount, `${c.codPct}%`, `${c.paidPct}%`, c.conversionPct === null ? "—" : `${c.conversionPct}%`, formatINR(c.turnover)]),
+          columns: ["LOB", "Sale Count", "COD", "Paid", "COD %", "Paid %", "Conversion %", "Revenue", "Target", "Target Achi %"],
+          rows: data.campaignRevenue.map((c) => [c.campaign, c.saleCount, c.codCount, c.paidCount, `${c.codPct}%`, `${c.paidPct}%`, c.conversionPct === null ? "—" : `${c.conversionPct}%`, formatINR(c.turnover), c.target != null ? formatINR(c.target) : "—", c.achPct != null ? `${c.achPct}%` : "—"]),
         },
         {
           title: "TL-wise Revenue",
@@ -202,10 +210,10 @@ export function GncSaleDashboard() {
       title: "Agent-wise Performance",
       tables: [{
         title: "Agent-wise Performance",
-        columns: ["Emp Id", "Agent Name", "DOJ", "Tenure", "Bucket", "TL Name", "LOB", "Sale Made", "COD", "Paid", "COD %", "Paid %", "Revenue", "Attendance"],
+        columns: ["Emp Id", "Agent Name", "DOJ", "Tenure", "Bucket", "TL Name", "LOB", "Sale Made", "COD", "Paid", "COD %", "Paid %", "Revenue", "Target", "Achi %", "Attendance"],
         rows: data.agentPerformance.map((a) => [
           a.empId, a.empName, formatDDMMYYYY(a.doj), a.tenureDays ?? "—", a.bucket, a.tl, a.lob,
-          a.saleCount, a.codCount, a.paidCount, `${a.codPct}%`, `${a.paidPct}%`, formatINR(a.revenue), a.attendanceDays,
+          a.saleCount, a.codCount, a.paidCount, `${a.codPct}%`, `${a.paidPct}%`, formatINR(a.revenue), a.target != null ? formatINR(a.target) : "—", a.achPct != null ? `${a.achPct}%` : "—", a.attendanceDays,
         ]),
       }],
     };
@@ -261,6 +269,12 @@ export function GncSaleDashboard() {
         <KpiCard icon={Wallet} label="COD %" value={`${headline.codPct}%`} tone="amber" />
         <KpiCard icon={TrendingUp} label="AOV" value={formatINR(headline.aov)} tone="violet" />
         <KpiCard icon={Users} label="Active" value={String(headline.activeAgents)} sub="agents in range" tone="indigo" />
+        {data.targets?.total && (
+          <>
+            <KpiCard icon={Target} label="Target (till date)" value={formatINR(data.targets.total.target)} sub={data.targets.coveredLobs.join(" + ")} tone="sky" />
+            <KpiCard icon={Gauge} label="Achievement %" value={data.targets.total.achPct === null ? "—" : `${data.targets.total.achPct}%`} sub="revenue of those LOBs ÷ target" tone={(data.targets.total.achPct ?? 0) >= 100 ? "emerald" : (data.targets.total.achPct ?? 0) >= 60 ? "amber" : "rose"} />
+          </>
+        )}
       </div>
 
       {/* Date-wise trend + Campaign revenue */}
@@ -395,7 +409,7 @@ export function GncSaleDashboard() {
       {/* LOB-wise summary */}
       <SectionCard
         icon={Layers} title="LOB-wise Summary" tone="teal"
-        footnote="Conversion % (Achi%) = Sale Count ÷ addressable contacts. Abandon Cart: ÷ Total Allocation (Connected + Not Connected) from gnc_allocation. Chat: ÷ Total chat tickets from gnc_chat. Inbound has no allocation/ticket source in this app, so it shows “—” rather than a guessed figure. Mandate/Target columns from the reference sheet still aren't shown — no real GNC target/mandate data source exists in this app."
+        footnote="Conversion % (Achi%) = Sale Count ÷ addressable contacts. Abandon Cart: ÷ Total Allocation (Connected + Not Connected) from gnc_allocation. Chat: ÷ Total chat tickets from gnc_chat. Inbound has no allocation/ticket source in this app, so it shows “—” rather than a guessed figure. Target = the LOB's monthly revenue target from the GNC Targets page (pro-rated for a part-month range); Target Achi % = revenue ÷ that target. LOBs without a configured target show “—”, and the Grand Total compares only the LOBs that have one."
       >
         <div className="overflow-x-auto rounded-xl border border-slate-200">
           <table className="w-full border-collapse text-center text-xs">
@@ -409,6 +423,8 @@ export function GncSaleDashboard() {
                 <SortTh label="Paid %" sortKey="paidPct" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
                 <SortTh label="Conversion % (Achi%)" sortKey="conversionPct" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
                 <SortTh label="Revenue" sortKey="turnover" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
+                <SortTh label="Target" sortKey="target" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
+                <SortTh label="Target Achi %" sortKey="achPct" activeKey={lobSummarySort.sortKey} dir={lobSummarySort.sortDir} onSort={lobSummarySort.toggleSort} className="py-2.5 px-3 font-bold text-white" />
               </tr>
             </thead>
             <tbody>
@@ -429,6 +445,8 @@ export function GncSaleDashboard() {
                       : <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 font-bold text-indigo-700">{c.conversionPct}%</span>}
                   </td>
                   <td className="py-2.5 px-3 font-bold text-teal-700">{formatINR(c.turnover)}</td>
+                  <td className="py-2.5 px-3 text-slate-600">{c.target != null ? formatINR(c.target) : <span className="text-slate-400">—</span>}</td>
+                  <td className="py-2.5 px-3">{c.achPct != null ? <span className={`rounded-full px-2.5 py-0.5 font-bold ${c.achPct >= 100 ? "bg-emerald-100 text-emerald-700" : c.achPct >= 60 ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>{c.achPct}%</span> : <span className="text-slate-400">—</span>}</td>
                 </tr>
               ))}
               {data.campaignRevenue.length > 0 && (() => {
@@ -454,11 +472,13 @@ export function GncSaleDashboard() {
                     <td className="py-2.5 px-3 text-emerald-300">{totalSale > 0 ? `${Math.round((totalPaid / totalSale) * 10000) / 100}%` : "0%"}</td>
                     <td className="py-2.5 px-3 text-indigo-300">{grandConversionPct !== null ? `${grandConversionPct}%` : "—"}</td>
                     <td className="py-2.5 px-3 text-teal-300">{formatINR(data.campaignRevenue.reduce((s, c) => s + c.turnover, 0))}</td>
+                    <td className="py-2.5 px-3 text-sky-300">{data.targets?.total ? formatINR(data.targets.total.target) : "—"}</td>
+                    <td className="py-2.5 px-3 text-sky-300" title={data.targets?.total ? `Revenue of ${data.targets.coveredLobs.join(" + ")} against their target` : undefined}>{data.targets?.total?.achPct != null ? `${data.targets.total.achPct}%` : "—"}</td>
                   </tr>
                 );
               })()}
               {data.campaignRevenue.length === 0 && (
-                <tr><td colSpan={8} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
+                <tr><td colSpan={10} className="py-6 text-center text-slate-400">No data for this period.</td></tr>
               )}
             </tbody>
           </table>
@@ -594,7 +614,7 @@ export function GncSaleDashboard() {
         </div>
 
         <SectionCard icon={Users} title="Agent-wise Performance" tone="indigo"
-          footnote="Click a row to see that agent's date-wise performance. Target/Achv%/TQ-MQ-BQ and every RTO column from the reference sheet are not shown — no real GNC target/mandate source exists, and db_masmis.gnc_sale has no RTO/return-status column."
+          footnote="Click a row to see that agent's date-wise performance. Target = the per-agent monthly target of the agent's LOB from the GNC Targets page (pro-rated for a part-month range; Abandon Cart shows one only when its agent count is set); Achi % = revenue ÷ target. TQ-MQ-BQ and RTO columns are not shown — db_masmis.gnc_sale has no RTO/return-status column."
         >
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
@@ -613,6 +633,8 @@ export function GncSaleDashboard() {
                   <SortTh label="COD %" sortKey="codPct" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
                   <SortTh label="Paid %" sortKey="paidPct" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
                   <SortTh label="Revenue" sortKey="revenue" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
+                  <SortTh label="Target" sortKey="target" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
+                  <SortTh label="Achi %" sortKey="achPct" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-3 text-right font-semibold" />
                   <SortTh label="Attendance" sortKey="attendanceDays" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2 pr-0 text-right font-semibold" />
                 </tr>
               </thead>
@@ -645,11 +667,13 @@ export function GncSaleDashboard() {
                     <td className="py-2.5 pr-3 text-right text-slate-600">{a.codPct}%</td>
                     <td className="py-2.5 pr-3 text-right text-slate-600">{a.paidPct}%</td>
                     <td className="py-2.5 pr-3 text-right font-semibold text-slate-800">{formatINR(a.revenue)}</td>
+                    <td className="py-2.5 pr-3 text-right text-slate-600">{a.target != null ? formatINR(a.target) : "—"}</td>
+                    <td className={`py-2.5 pr-3 text-right font-bold ${a.achPct == null ? "text-slate-400" : a.achPct >= 100 ? "text-emerald-600" : a.achPct >= 60 ? "text-amber-600" : "text-rose-600"}`}>{a.achPct != null ? `${a.achPct}%` : "—"}</td>
                     <td className="py-2.5 pr-0 text-right text-slate-600">{a.attendanceDays}</td>
                   </tr>
                 ))}
                 {filteredAgents.length === 0 && (
-                  <tr><td colSpan={14} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
+                  <tr><td colSpan={16} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
                 )}
               </tbody>
             </table>

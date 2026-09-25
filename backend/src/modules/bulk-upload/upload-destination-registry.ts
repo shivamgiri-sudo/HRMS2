@@ -50,6 +50,7 @@ export const UPLOAD_DESTINATION_REGISTRY: Record<string, UploadDestination> = {
   AW_MANDATE_MASMIS: { table: "db_masmis.aw_mandate", batchIdColumn: "upload_batch_id" },
   AW_NEW_CDR_MASMIS: { table: "db_masmis.aw_new_cdr", batchIdColumn: "upload_batch_id" },
   AW_OUT_MASMIS: { table: "db_masmis.aw_out", batchIdColumn: "upload_batch_id" },
+  AW_CHAT_MASMIS: { table: "db_masmis.appreciate_chat", batchIdColumn: "upload_batch_id" },
 
   BB_APR_MASMIS: { table: "db_masmis.bb_apr", batchIdColumn: "upload_batch_id" },
   BB_CART_MASMIS: { table: "db_masmis.bb_cart", batchIdColumn: "upload_batch_id" },

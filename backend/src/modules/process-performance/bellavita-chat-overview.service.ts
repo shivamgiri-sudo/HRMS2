@@ -16,7 +16,9 @@ import { db } from "../../db/mysql.js";
  *   - Repeat 24/48/72hrs  = repeat_status_on_assign_time 'Within 24hrs' /
  *     'Within 48hrs' / 'Within 72hrs'; "More then 72hrs" = any 'More%'
  *   - FRT%                = frt_tat = 'IN TAT' / overall
- *   - Without Agent FRT   = frt IS NULL
+ *   - Without Agent FRT   = no measured first response: frt_2 (the HH:MM:SS FRT) is NULL/blank/0:00:00.
+ *                           frt (decimal) is never NULL and reads 0.00 for ~half the rows (incl. real 11s FRTs), so
+ *                           `frt IS NULL` was always 0 and is not used.
  * - Sales: db_masmis.bb_sale WHERE campaign = 'Chat' AND calling_status =
  *   'Sale Made'. bb_sale has one row per order LINE ITEM, so an order repeats
  *   (live: 837 rows for 308 orders) and each row carries the whole order's
@@ -159,7 +161,8 @@ export interface OrderIntegrity {
 export interface DayNightSplit { overall: number; unique: number; frtPct: number }
 export interface RosterSummary { roster: number; present: number; ul: number; ulPct: number }
 export interface TopAgentRow {
-  agent: string; empId: string; overall: number; unique: number;
+  /** Every LOB (Chat / Kenaz / Bevzilla) this agent handled chats in within the range, e.g. "Chat, Kenaz". */
+  agent: string; empId: string; lobs: string; overall: number; unique: number;
   saleCount: number | null; revenue: number | null; conversionPct: number | null; frtPct: number;
 }
 
@@ -174,6 +177,8 @@ export interface BellavitaChatOverviewData {
     withoutAgentFrt: number; repeat24: number; repeat48: number; repeat72: number; repeatMore72: number;
     saleMade: number | null; revenue: number | null; plannedCapacity: number | null;
     rtoCount: number | null; prepaidCount: number | null;
+    /** Real payment_status split of the same deduped Sale Made orders ('cod' / 'paid'). */
+    codCount: number | null; paidCount: number | null;
   }>;
   salesAvailable: boolean;
   salesNote: string | null;
@@ -213,8 +218,8 @@ export interface BellavitaChatOverviewData {
 
 interface Agg { overall: number; unique: number; r24: number; r48: number; r72: number; rmore: number; inTat: number; noFrt: number }
 const emptyAgg = (): Agg => ({ overall: 0, unique: 0, r24: 0, r48: 0, r72: 0, rmore: 0, inTat: 0, noFrt: 0 });
-interface SaleAgg { orders: number; revenue: number; rows: number; gross: number; rtoOrders: number }
-const emptySale = (): SaleAgg => ({ orders: 0, revenue: 0, rows: 0, gross: 0, rtoOrders: 0 });
+interface SaleAgg { orders: number; revenue: number; rows: number; gross: number; rtoOrders: number; codOrders: number; paidOrders: number }
+const emptySale = (): SaleAgg => ({ orders: 0, revenue: 0, rows: 0, gross: 0, rtoOrders: 0, codOrders: 0, paidOrders: 0 });
 
 const typesFor = (t: OverviewUserType): ChatUserType[] => (t === "Overall" ? [...CHAT_USER_TYPES] : [t]);
 /** bb_sale's campaign column only ever holds a single combined 'Chat' value
@@ -236,7 +241,7 @@ async function loadChatDaily(from: string, to: string, types: ChatUserType[]): P
        SUM(repeat_status_on_assign_time = 'Within 72hrs') AS r72,
        SUM(repeat_status_on_assign_time LIKE 'More%') AS rmore,
        SUM(frt_tat = 'IN TAT') AS in_tat,
-       SUM(frt IS NULL) AS no_frt
+       SUM(frt_2 IS NULL OR TRIM(frt_2) = '' OR TRIM(frt_2) IN ('0:00:00', '00:00:00')) AS no_frt
      FROM db_masmis.new_bb_chat
      WHERE chat_date BETWEEN ? AND ? AND user_type IN (${types.map(() => "?").join(",")})
      GROUP BY chat_date`,
@@ -302,10 +307,11 @@ const SALE_WHERE = "campaign = 'Chat' AND calling_status = 'Sale Made'";
 async function loadSalesDaily(from: string, to: string): Promise<{ daily: Map<string, SaleAgg>; blankRows: number }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DATE_FORMAT(d, '%Y-%m-%d') AS d, COUNT(*) AS orders, SUM(a) AS revenue, SUM(n) AS row_cnt, SUM(gross) AS gross,
-       SUM(is_rto) AS rto_orders
+       SUM(is_rto) AS rto_orders, SUM(pay = 'cod') AS cod_orders, SUM(pay = 'paid') AS paid_orders
      FROM (
        SELECT MIN(\`Date\`) AS d, MAX(amount) AS a, COUNT(*) AS n, SUM(amount) AS gross,
-         MAX(final_status = 'RTO') AS is_rto
+         MAX(final_status = 'RTO') AS is_rto,
+         SUBSTRING_INDEX(GROUP_CONCAT(LOWER(TRIM(payment_status)) ORDER BY id DESC SEPARATOR ','), ',', 1) AS pay
        FROM db_masmis.bb_sale
        WHERE ${SALE_WHERE} AND \`Date\` BETWEEN ? AND ?
          AND bella_vita_order_id IS NOT NULL AND bella_vita_order_id <> ''
@@ -316,7 +322,7 @@ async function loadSalesDaily(from: string, to: string): Promise<{ daily: Map<st
   );
   const daily = new Map<string, SaleAgg>();
   for (const r of rows) {
-    daily.set(String(r.d), { orders: num(r.orders), revenue: num(r.revenue), rows: num(r.row_cnt), gross: num(r.gross), rtoOrders: num(r.rto_orders) });
+    daily.set(String(r.d), { orders: num(r.orders), revenue: num(r.revenue), rows: num(r.row_cnt), gross: num(r.gross), rtoOrders: num(r.rto_orders), codOrders: num(r.cod_orders), paidOrders: num(r.paid_orders) });
   }
   const [[blank]] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS n FROM db_masmis.bb_sale
@@ -428,7 +434,8 @@ async function loadFraudCount(from: string, to: string, types: ChatUserType[]): 
 async function loadTopAgents(from: string, to: string, types: ChatUserType[], withSales: boolean): Promise<TopAgentRow[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(current_agent, ''), 'Unassigned') AS agent, MAX(emp_id) AS emp_id,
-       COUNT(*) AS overall, SUM(repeat_status = 'Unique') AS uniq, SUM(frt_tat = 'IN TAT') AS in_tat
+       COUNT(*) AS overall, SUM(repeat_status = 'Unique') AS uniq, SUM(frt_tat = 'IN TAT') AS in_tat,
+       GROUP_CONCAT(DISTINCT user_type ORDER BY user_type SEPARATOR ', ') AS lobs
      FROM db_masmis.new_bb_chat
      WHERE chat_date BETWEEN ? AND ? AND user_type IN (${types.map(() => "?").join(",")})
      GROUP BY agent ORDER BY overall DESC LIMIT 10`,
@@ -440,7 +447,7 @@ async function loadTopAgents(from: string, to: string, types: ChatUserType[], wi
     const sale = empId ? salesByAgent.get(empId.toUpperCase()) : undefined;
     const overall = num(r.overall);
     return {
-      agent: String(r.agent), empId,
+      agent: String(r.agent), empId, lobs: String(r.lobs ?? ""),
       overall, unique: num(r.uniq), frtPct: pct(num(r.in_tat), overall),
       saleCount: sale ? sale.orders : null,
       revenue: sale ? round2(sale.revenue) : null,
@@ -741,6 +748,8 @@ export async function getBellavitaChatOverview(
         revenue: sales ? round2(sd?.revenue ?? 0) : null,
         rtoCount: sales ? (sd?.rtoOrders ?? 0) : null,
         prepaidCount: sales ? Math.max(0, orders - (sd?.rtoOrders ?? 0)) : null,
+        codCount: sales ? (sd?.codOrders ?? 0) : null,
+        paidCount: sales ? (sd?.paidOrders ?? 0) : null,
         plannedCapacity: dayCap !== null ? Math.round(dayCap / daysInMonth(d.slice(0, 7))) : null,
       };
     }),

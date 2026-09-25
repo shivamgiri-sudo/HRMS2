@@ -1,6 +1,7 @@
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import { loadMonthlyTargets, setMonthlyTarget, type MonthlyTargetChange } from "./dashboard-monthly-target.shared.js";
+import { setMonthlyTarget, type MonthlyTargetChange } from "./dashboard-monthly-target.shared.js";
+import { MONTHLY_LOB_TARGETS, getAutoLobDailyTargets, sumTargets, type DailyTarget } from "./bellavita-auto-targets.shared.js";
 
 const SALE_DASHBOARD_CODE = "bellavita_sale";
 
@@ -72,12 +73,9 @@ function targetKeyFor(lob: string): { dashboardCode: string; metricCode: string 
  * "Inbound" -- note the LOB column drops "customer"/"Customer" from the
  * campaign name, e.g. bb_sale.lob="Repeat" while the target photo's row
  * label is "Repeat Customer LOB"). */
-export const LOB_TARGETS: Record<string, { target: number; note?: string }> = {
-  Repeat: { target: 4_200_000 },
-  Chat: { target: 5_400_000 },
-  "Abandon Cart": { target: 1_026_564, note: "Target figure as supplied: \"this target for only 14\" (14 days or 14 agents -- not clarified)." },
-  Inbound: { target: 239_400 },
-};
+export const LOB_TARGETS: Record<string, { target: number; note?: string }> = Object.fromEntries(
+  Object.entries(MONTHLY_LOB_TARGETS).map(([lob, target]) => [lob, { target }]),
+);
 
 export interface BellavitaSaleDashboardData {
   headline: {
@@ -111,6 +109,9 @@ export interface BellavitaSaleDashboardData {
    * -- always the month of `to` (same convention as Bellavita Cart / Chat's
    * planned capacity). */
   targetMonth: string;
+  /** Automatic per-LOB daily revenue targets for the selected days up to today (only LOBs present
+   * in this view) -- what the charts/drill-downs use for date-wise Target vs Achi%. */
+  dailyTargets: Record<string, DailyTarget[]>;
   lobRevenue: Array<{
     lob: string;
     saleCount: number;
@@ -118,10 +119,11 @@ export interface BellavitaSaleDashboardData {
     target: number | null;
     achievementPct: number | null;
     targetNote?: string;
-    /** "manual" = an admin set this month's target via the UI; "default" =
-     * falling back to the hardcoded LOB_TARGETS figure below; "none" = no
-     * target at all for this LOB. */
-    targetSource: "manual" | "default" | "none";
+    /** "auto" = computed by the automatic target rules (bellavita-auto-targets.shared.ts):
+     * fixed monthly / days-in-month summed over the selected days up to today, or Abandon
+     * Cart's date-wise Revenue Target; "none" = no target rule for this LOB. ("manual" /
+     * "default" are legacy values the older editors used and are no longer produced.) */
+    targetSource: "auto" | "manual" | "default" | "none";
     codCount: number;
     paidCount: number;
     codPct: number;
@@ -410,28 +412,10 @@ export async function getBellavitaSaleDashboard(
   const paidCount = num(headlineRow?.paid_count);
   const codCount = num(headlineRow?.cod_count);
 
-  // Admin-set monthly targets take priority over the hardcoded LOB_TARGETS
-  // fallback below, for every LOB actually present this period plus every
-  // LOB the hardcoded map already knows about (so a target can be set for a
-  // LOB even before it has any sales this range). Each LOB's key may live
-  // under bellavita_sale OR bellavita_cart (see targetKeyFor) -- grouped by
-  // dashboard_code so this is still just one query per code, not one per LOB.
+  // Targets are automatic (bellavita-auto-targets.shared.ts): nothing is stored or edited. Each LOB's
+  // target is the sum of its daily targets over the selected days up to today ("MTD till today").
   const targetMonth = to.slice(0, 7);
-  const lobKeys = new Set<string>([...lobRows.map((r) => r.lob || "Unknown"), ...Object.keys(LOB_TARGETS)]);
-  const keyByLob = new Map<string, { dashboardCode: string; metricCode: string }>([...lobKeys].map((lob) => [lob, targetKeyFor(lob)]));
-  const codesByDashboard = new Map<string, string[]>();
-  for (const { dashboardCode, metricCode } of keyByLob.values()) {
-    codesByDashboard.set(dashboardCode, [...(codesByDashboard.get(dashboardCode) ?? []), metricCode]);
-  }
-  const targetsByDashboard = new Map<string, Map<string, number>>();
-  for (const [dashboardCode, codes] of codesByDashboard) {
-    const loaded = await loadMonthlyTargets(dashboardCode, codes, [targetMonth]);
-    targetsByDashboard.set(dashboardCode, loaded.get(targetMonth) ?? new Map<string, number>());
-  }
-  const manualTargetFor = (lob: string): number | null => {
-    const key = keyByLob.get(lob) ?? targetKeyFor(lob);
-    return targetsByDashboard.get(key.dashboardCode)?.get(key.metricCode) ?? null;
-  };
+  const dailyTargets = await getAutoLobDailyTargets(lobRows.map((r) => r.lob || "Unknown"), from, to);
 
   const lobRevenue = lobRows.map((r) => {
     const lob = r.lob || "Unknown";
@@ -440,10 +424,9 @@ export async function getBellavitaSaleDashboard(
     const codCountVal = num(r.cod_count);
     const paidCountVal = num(r.paid_count);
     const rtoCountVal = num(r.rto_count);
-    const targetInfo = LOB_TARGETS[lob];
-    const manualTarget = manualTargetFor(lob);
-    const target = manualTarget ?? targetInfo?.target ?? null;
-    const targetSource: "manual" | "default" | "none" = manualTarget !== null ? "manual" : targetInfo ? "default" : "none";
+    const hasRule = dailyTargets[lob] !== undefined;
+    const target = hasRule ? sumTargets(dailyTargets[lob]) : null;
+    const targetSource: "auto" | "none" = hasRule ? "auto" : "none";
     return {
       lob,
       saleCount: saleCountVal,
@@ -451,10 +434,7 @@ export async function getBellavitaSaleDashboard(
       target,
       targetSource,
       achievementPct: target ? pct(turnoverVal, target) : null,
-      // The hardcoded figure's caveat only still applies while that figure is
-      // the one actually in effect -- once an admin sets a real monthly value
-      // it's dropped, since it no longer describes what's shown.
-      targetNote: targetSource === "default" ? targetInfo?.note : undefined,
+      targetNote: undefined,
       codCount: codCountVal,
       paidCount: paidCountVal,
       codPct: pct(codCountVal, paidCountVal + codCountVal),
@@ -515,6 +495,7 @@ export async function getBellavitaSaleDashboard(
     from,
     to,
     targetMonth,
+    dailyTargets,
     dateWiseTrend: trendRows.map((r) => ({
       date: String(r.d),
       saleCount: num(r.sale_count),

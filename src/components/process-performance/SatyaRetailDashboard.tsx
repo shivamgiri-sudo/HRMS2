@@ -246,6 +246,11 @@ export function SatyaRetailDashboard() {
 
   const S = (key: string, label: string, fmt: DrawerSeries["fmt"], color: string): DrawerSeries => ({ key, label, fmt, color });
   const open = (title: string, series: DrawerSeries[]) => setMetric({ title, series });
+  // Top-8 outcomes by count -- the exact set the "Top outcomes" bars show -- as day/week series; shared by both outcome panels.
+  const openOutcomes = (title: string) => setMetric({
+    title, outcomes: true,
+    series: outcomeNames.slice(0, 8).map((n, i) => ({ key: n, label: n, fmt: "int" as const, color: OUTCOME_COLORS[i % OUTCOME_COLORS.length] })),
+  });
   const kpi = (icon: typeof Store, label: string, value: string, tone: KpiTone, series: DrawerSeries[], sub?: string) => (
     <KpiCard icon={icon} label={label} value={value} sub={sub} tone={tone} onClick={() => open(label, series)} />
   );
@@ -401,7 +406,7 @@ export function SatyaRetailDashboard() {
             <SectionCard
               icon={ListChecks} title="Outcomes on connected calls" tone="violet"
               footnote="The Excel's outcome list (Stock Available, Not Interested, Order Placed, Call Back, ...) -- the sub-disposition of connected calls."
-              action={<ViewDetailsBtn onClick={() => setMetric({ title: "Outcomes on connected calls", outcomes: true, series: outcomeNames.slice(0, 8).map((n, i) => ({ key: n, label: n, fmt: "int" as const, color: OUTCOME_COLORS[i % OUTCOME_COLORS.length] })) })} />}
+              action={<ViewDetailsBtn onClick={() => openOutcomes("Outcomes on connected calls")} />}
             >
               <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-100">
                 <table className="w-full text-xs">
@@ -426,7 +431,10 @@ export function SatyaRetailDashboard() {
               </div>
             </SectionCard>
 
-            <SectionCard icon={ListChecks} title="Top outcomes" tone="amber" footnote="Top 8 outcomes by count; the full list is in the table.">
+            <SectionCard
+              icon={ListChecks} title="Top outcomes" tone="amber" footnote="Top 8 outcomes by count; the full list is in the table."
+              action={<ViewDetailsBtn onClick={() => openOutcomes("Top outcomes")} />}
+            >
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={outcomeTotals.slice(0, 8).map((o) => ({ name: outcomeLabel(o.name), count: o.count }))} layout="vertical" margin={{ top: 4, right: 12, left: 8, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />

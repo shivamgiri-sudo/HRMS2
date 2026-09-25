@@ -57,7 +57,7 @@ router.get("/templates", requireRole("admin", "hr", "super_admin", "wfm", "wfm_a
  * their own branch/process, not the whole company's.
  */
 const PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES = [
-  "AW_BILLING_MASMIS", "AW_INBOUND_MASMIS", "AW_MANDATE_MASMIS", "AW_NEW_CDR_MASMIS", "AW_OUT_MASMIS",
+  "AW_BILLING_MASMIS", "AW_INBOUND_MASMIS", "AW_MANDATE_MASMIS", "AW_NEW_CDR_MASMIS", "AW_OUT_MASMIS", "AW_CHAT_MASMIS",
   "BB_APR_MASMIS", "BB_CART_MASMIS", "BB_CHAT_MASMIS", "BB_SALE_MASMIS",
   "BIRLANU_APR_MASMIS", "BIRLANU_SALE_MASMIS",
   "CL_APR_MASMIS", "CL_CHAT_MASMIS", "CL_DISPO_MASMIS", "CL_EMAIL_RAW_MASMIS", "CL_FEEDBACK_MASMIS",
@@ -584,6 +584,7 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_aw_mandate_batch",
   "import_aw_new_cdr_batch",
   "import_aw_out_batch",
+  "import_aw_chat_batch",
   "import_owner_sale_batch",
   "import_owner_cdr_batch",
   "import_owner_agent_details_batch",
@@ -1378,6 +1379,12 @@ async function dispatchImport(
   if (rpc_name === "import_aw_new_cdr_batch") {
     const { importAwNewCdrBatch } = await import("../bulk-upload/aw-new-cdr-bulk.service.js");
     const data = await importAwNewCdrBatch(id, userId);
+    return { success: true, data };
+  }
+
+  if (rpc_name === "import_aw_chat_batch") {
+    const { importAwChatBatch } = await import("../bulk-upload/aw-chat-bulk.service.js");
+    const data = await importAwChatBatch(id, userId);
     return { success: true, data };
   }
 

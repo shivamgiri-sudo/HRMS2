@@ -13,6 +13,10 @@ import {
 } from "./DashboardKit";
 import { PALETTE, TOOLTIP_PROPS, fmtDate, fmtN, fmtShortDay } from "./lpCallShared";
 import { AppreciateWealthDrawer, type DrawerTarget } from "./AppreciateWealthDrawer";
+import { AppreciateWealthControlCenter } from "./AppreciateWealthControlCenter";
+import { AppreciateWealthInboundCenter } from "./AppreciateWealthInboundCenter";
+import { AppreciateWealthOutboundCenter } from "./AppreciateWealthOutboundCenter";
+import { AppreciateWealthCdrCenter } from "./AppreciateWealthCdrCenter";
 import {
   ALL, DEFAULT_FILTERS, DataTable, Note, fmtCell, fmtHrs, fmtInr, fmtNum, fmtPct, fmtSecs, fmtStamp, hms,
   type Col, type DashboardData, type Filters, type Grid,
@@ -25,14 +29,16 @@ import {
  * are deliberately NOT shown. Read-only.
  */
 
-type TabKey = "overview" | "datewise" | "billing" | "mandate" | "inbound" | "dialer" | "sales" | "agents" | "health";
+type TabKey = "overview" | "datewise" | "billing" | "mandate" | "inbound" | "outbound" | "dialer" | "cdr" | "sales" | "agents" | "health";
 const TABS: Array<{ key: TabKey; label: string; slide: string }> = [
   { key: "overview", label: "Overview", slide: "Overview" },
   { key: "datewise", label: "Date-wise", slide: "Overview" },
   { key: "billing", label: "Billing", slide: "Billing" },
   { key: "mandate", label: "Mandate", slide: "Mandate" },
   { key: "inbound", label: "Inbound", slide: "Inbound" },
+  { key: "outbound", label: "Outbound", slide: "Outbound Sales" },
   { key: "dialer", label: "Outbound Dialer", slide: "Outbound Dialer" },
+  { key: "cdr", label: "CDR Report", slide: "Outbound Dialer" },
   { key: "sales", label: "Outbound Sales", slide: "Outbound Sales" },
   { key: "agents", label: "Agent-wise", slide: "Agent-wise" },
   { key: "health", label: "Data Health", slide: "Data Health" },
@@ -265,10 +271,22 @@ export function AppreciateWealthDashboard() {
       )}
       {tab === "billing" && <BillingTab data={data} setDrawer={setDrawer} openDay={openDay} />}
       {tab === "mandate" && <MandateTab data={data} setDrawer={setDrawer} />}
-      {tab === "inbound" && <InboundTab data={data} setDrawer={setDrawer} openDay={openDay} />}
+      {tab === "inbound" && (
+        <div className="space-y-5">
+          <AppreciateWealthInboundCenter from={from} to={to} onOpen={setDrawer} />
+          <InboundTab data={data} setDrawer={setDrawer} openDay={openDay} />
+        </div>
+      )}
+      {tab === "outbound" && <AppreciateWealthOutboundCenter from={from} to={to} onOpen={setDrawer} />}
+      {tab === "cdr" && <AppreciateWealthCdrCenter from={from} to={to} onOpen={setDrawer} />}
       {tab === "dialer" && <DialerTab data={data} setDrawer={setDrawer} openDay={openDay} />}
       {tab === "sales" && <SalesTab data={data} setDrawer={setDrawer} openDay={openDay} />}
-      {tab === "agents" && <AgentsTab data={data} setDrawer={setDrawer} />}
+      {tab === "agents" && (
+        <div className="space-y-5">
+          <AppreciateWealthControlCenter from={from} to={to} onOpen={setDrawer} />
+          <AgentsTab data={data} setDrawer={setDrawer} />
+        </div>
+      )}
       {tab === "health" && <HealthTab data={data} setDrawer={setDrawer} openDay={openDay} />}
 
       <AppreciateWealthDrawer target={drawer} from={data.from} to={data.to} onClose={() => setDrawer(null)} onOpen={setDrawer} />
