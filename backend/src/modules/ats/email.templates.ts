@@ -118,6 +118,8 @@ interface RecruiterNotificationEmailData {
   tokenNumber: string;
   branchDisplayName: string;
   roleApplied: string;
+  /** True when this candidate arrived through a META Lead Gen ad and has now registered at the branch. */
+  metaLead?: boolean;
 }
 
 export function recruiterNotificationEmail(data: RecruiterNotificationEmailData): string {
@@ -138,11 +140,11 @@ export function recruiterNotificationEmail(data: RecruiterNotificationEmailData)
     </div>
 
     <div class="content">
-      <h2 class="title">New Candidate Assigned</h2>
+      <h2 class="title">${data.metaLead ? 'META Lead Registered' : 'New Candidate Assigned'}</h2>
 
       <p class="text">Hi <strong>${data.recruiterName}</strong>,</p>
 
-      <p class="text">A new candidate has been assigned to you for interview at <strong>${data.branchDisplayName}</strong>.</p>
+      <p class="text">${data.metaLead ? 'A candidate from a <strong>META lead ad</strong> has come to the branch and filled the registration form. They are now in your walk-in queue and on My Candidates' : 'A new candidate has been assigned to you for interview'} at <strong>${data.branchDisplayName}</strong>.</p>
 
       <div class="success-badge">Token: ${data.tokenNumber}</div>
 

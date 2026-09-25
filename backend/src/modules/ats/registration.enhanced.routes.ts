@@ -251,6 +251,11 @@ registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, a
         // old label in place silently hid genuine candidates from
         // excludeEmployeeShapedCandidatesSql()'s callers, including the recruiter's
         // own "My Candidates" queue (see ats-reporting-scope.ts).
+        //
+        // sourcing_channel is first-touch for a Meta lead: a candidate created from a Meta Lead Gen ad
+        // keeps 'Social Media' when they later fill this form, otherwise every walk-in overwrote it with
+        // 'Recruiter' / 'Walk-In' and Meta lost its conversions in every source report (50 of 89 live).
+        // The form's own answer still drives auto-assignment above; it just no longer rewrites the source.
         `UPDATE ats_candidate
          SET full_name = COALESCE(NULLIF(TRIM(full_name), ''), ?),
              email = COALESCE(NULLIF(TRIM(email), ''), ?),
@@ -260,7 +265,7 @@ registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, a
              role_applied = ?,
              applied_for_branch = ?,
              branch_display_name = ?,
-             sourcing_channel = ?,
+             sourcing_channel = CASE WHEN sourcing_channel = 'Social Media' THEN sourcing_channel ELSE ? END,
              referred_by = ?,
              walk_in_date = ?,
              address = ?,
@@ -427,7 +432,8 @@ registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, a
 
     await db.execute(
       `UPDATE ats_candidate
-       SET branch_display_name = ?, preferred_recruiter_id = ?, recruiter_name = ?, referred_by = ?, sourcing_channel = ?
+       SET branch_display_name = ?, preferred_recruiter_id = ?, recruiter_name = ?, referred_by = ?,
+           sourcing_channel = CASE WHEN sourcing_channel = 'Social Media' THEN sourcing_channel ELSE ? END
        WHERE id = ?`,
       [
         input.branchDisplayName,
@@ -554,6 +560,14 @@ registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, a
       }
     }
 
+    // A candidate created from a META Lead Gen ad is only queued once they fill this form — tell
+    // their recruiter so the lead is not missed (owner ruling 2026-09-25).
+    const [metaLeadRows] = await db.execute<RowDataPacket[]>(
+      'SELECT 1 FROM meta_lead_raw WHERE ats_candidate_id = ? LIMIT 1',
+      [candidateId]
+    );
+    const isMetaLead = metaLeadRows.length > 0;
+
     // 7. Send emails (async, don't wait)
     const recruiterEmail = recruiterDetails?.email ?? null;
     const recruiterName = recruiterDetails?.name ?? "Recruiter";
@@ -576,20 +590,21 @@ registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, a
         recruiterMobile,
         registrationDate,
       }).catch((err) => console.error('Failed to send candidate email:', err));
+    }
 
-      // Send recruiter notification
-      if (recruiterEmail) {
-        sendRecruiterNotificationEmail({
-          candidateId,
-          to: recruiterEmail,
-          recruiterName,
-          candidateName: input.name,
-          candidateMobile: input.mobile,
-          tokenNumber: tokenNumber || 'Pending',
-          branchDisplayName: input.branchDisplayName,
-          roleApplied: input.roleApplied || 'Not specified',
-        }).catch((err) => console.error('Failed to send recruiter email:', err));
-      }
+    // Recruiter notification: as before when the candidate gave an email, and always for a META lead.
+    if (recruiterEmail && recruiterDetails && (input.email || isMetaLead)) {
+      sendRecruiterNotificationEmail({
+        candidateId,
+        to: recruiterEmail,
+        recruiterName,
+        candidateName: input.name,
+        candidateMobile: input.mobile,
+        tokenNumber: tokenNumber || 'Pending',
+        branchDisplayName: input.branchDisplayName,
+        roleApplied: input.roleApplied || 'Not specified',
+        metaLead: isMetaLead,
+      }).catch((err) => console.error('Failed to send recruiter email:', err));
     }
 
     // 8. Auto-link to requisition if recruiter set an active drive (fire-and-forget, safe)

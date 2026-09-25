@@ -310,6 +310,7 @@ export async function sendRecruiterNotificationEmail(params: {
   tokenNumber: string;
   branchDisplayName: string;
   roleApplied: string;
+  metaLead?: boolean;
 }): Promise<SendResult> {
   const html = recruiterNotificationEmail({
     recruiterName: params.recruiterName,
@@ -318,11 +319,14 @@ export async function sendRecruiterNotificationEmail(params: {
     tokenNumber: params.tokenNumber,
     branchDisplayName: params.branchDisplayName,
     roleApplied: params.roleApplied,
+    metaLead: params.metaLead,
   });
 
   return send(
     params.to,
-    'New Candidate Assigned - MAS Callnet',
+    params.metaLead
+      ? 'META Lead Registered - New Candidate Assigned - MAS Callnet'
+      : 'New Candidate Assigned - MAS Callnet',
     html,
     params.candidateId,
     'recruiter_notification',
