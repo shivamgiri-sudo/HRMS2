@@ -27,7 +27,8 @@ export function detectLiveDashboard(processName: string, processCode?: string | 
   if (n.includes('bla bli') || n.includes('bla_bli') || n.includes('blabli') || n.includes('b-3') || n.includes('b3 ') || n.includes('b3_')) return 'inbound';
   if (n.includes('reginald') && n.includes('email')) return 'reginald-email';
   if (n.includes('molecular')) return 'molecular-email';
-  if (n.includes('reginald')) return 'reginald-cart';
+  // Reginald is part of BTM Ventures: BTM Ventures-scoped users open its dashboard.
+  if (n.includes('reginald') || n.includes('btm ventures')) return 'reginald-cart';
   if (n.includes('finnable')) return 'finnable';
   if (n.includes('billing')) return 'billing';
   if (n.includes('gs1')) return 'gs1';

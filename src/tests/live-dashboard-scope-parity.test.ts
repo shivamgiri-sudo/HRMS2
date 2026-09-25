@@ -11,7 +11,7 @@ import { detectLiveDashboard } from "../../backend/src/modules/process-live-dash
 
 // Active process_master names, 2026-09-15, plus names that must NOT match.
 const NAMES = [
-  "Bla Bli Blu", "Bluevine Technologies", "INBOUND CUSTOMER SERVICES", "Reginald",
+  "Bla Bli Blu", "Bluevine Technologies", "INBOUND CUSTOMER SERVICES", "Reginald", "BTM Ventures",
   "Reginald Email", "Molecular Email", "Finnable", "GS1", "GNC", "Bella-Vita Organic",
   "Clovia", "Neemans Private Limited", "Viega", "Exicom", "DU Digital", "Onfido",
   "Dalmia Cement", "Housing Owner", "Domestic Billing", "B-3 IB", "Appriciate Wealth",

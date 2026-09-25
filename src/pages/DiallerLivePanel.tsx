@@ -74,7 +74,9 @@ export function detectDiallerProcess(processName: string): DiallerProcess {
   // Molecular Email
   if (n.includes("molecular")) return "molecular-email";
   // Reginald (alone or with cart/abandon/abc/men) → cart dashboard which now includes email APR
-  if (n.includes("reginald")) return "reginald-cart";
+  // Reginald is part of BTM Ventures: BTM Ventures-scoped users open this dashboard.
+  if (n.includes("reginald") || n.includes("btm ventures"))
+    return "reginald-cart";
   // Finnable — APR dashboard (vicidial_agent_log_10_25, campaign FINNABLE)
   if (n.includes("finnable")) return "finnable";
   // Domestic Billing
