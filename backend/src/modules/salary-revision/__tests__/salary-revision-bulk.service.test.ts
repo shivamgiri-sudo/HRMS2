@@ -23,6 +23,7 @@ describe("bulkValidate()", () => {
     const result = await bulkValidate({
       employee_codes: ["EMP001"],
       requested_effective_from: VALID_DATE,
+      actor_roles: ["payroll_head"],
     });
 
     expect(result).toHaveLength(1);
@@ -42,6 +43,7 @@ describe("bulkValidate()", () => {
     const result = await bulkValidate({
       employee_codes: ["BADCODE"],
       requested_effective_from: VALID_DATE,
+      actor_roles: ["payroll_head"],
     });
 
     expect(result).toHaveLength(1);
@@ -60,6 +62,7 @@ describe("bulkValidate()", () => {
     const result = await bulkValidate({
       employee_codes: ["EMP002"],
       requested_effective_from: "2024-01-01", // before 2025-01-01
+      actor_roles: ["payroll_head"],
     });
 
     expect(result).toHaveLength(1);
@@ -82,6 +85,7 @@ describe("bulkValidate()", () => {
     const result = await bulkValidate({
       employee_codes: ["EMP003"],
       requested_effective_from: VALID_DATE,
+      actor_roles: ["payroll_head"],
     });
 
     expect(result).toHaveLength(1);
@@ -106,6 +110,7 @@ describe("bulkValidate()", () => {
     const result = await bulkValidate({
       employee_codes: ["EMP004"],
       requested_effective_from: VALID_DATE,
+      actor_roles: ["payroll_head"],
     });
 
     expect(result).toHaveLength(1);
@@ -130,6 +135,7 @@ describe("bulkValidate()", () => {
     const result = await bulkValidate({
       employee_codes: ["EMP001", " EMP001 "],
       requested_effective_from: VALID_DATE,
+      actor_roles: ["payroll_head"],
     });
 
     expect(result).toHaveLength(1);
@@ -143,6 +149,7 @@ describe("bulkValidate()", () => {
       bulkValidate({
         employee_codes: ["EMP001"],
         requested_effective_from: "not-a-date",
+        actor_roles: ["payroll_head"],
       })
     ).rejects.toMatchObject({
       status: 400,
@@ -163,6 +170,7 @@ describe("bulkValidate()", () => {
     const result = await bulkValidate({
       employee_codes: ["EMP001", "EMP002"],
       requested_effective_from: "2026-09-01",
+      actor_roles: ["payroll_head"],
     });
 
     expect(result).toHaveLength(2);
@@ -188,6 +196,7 @@ describe("bulkCreate()", () => {
     const result = await bulkCreate({
       employee_ids: ["e1", "e2"],
       requested_effective_from: "2024-06-01",
+      actor_roles: ["payroll_head"],
       reason: "Annual salary revision for employees",
       requested_by: "admin-1",
     });
@@ -216,6 +225,7 @@ describe("bulkCreate()", () => {
     const result = await bulkCreate({
       employee_ids: ["e1", "e2"],
       requested_effective_from: "2024-06-01",
+      actor_roles: ["payroll_head"],
       reason: "Annual salary revision for employees",
       requested_by: "admin-1",
     });

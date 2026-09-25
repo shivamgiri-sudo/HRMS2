@@ -146,6 +146,29 @@ export async function reviewRevisionRequest(
         ]
       );
 
+      // One salary start date, not three: payroll reads employees.salary_start_date
+      // (COALESCE with date_of_joining), and the review screen reads
+      // ats_payroll_hr_validation.salary_start_date. Approving a revision used to move
+      // only the assignment above, so payroll kept using the OLD date. Same
+      // propagation as payroll-head-review's syncSalaryStartDateEverywhere. The
+      // employees update is inside this transaction on purpose -- it is the date
+      // payroll uses, so it must succeed or the whole approval must roll back.
+      await connection.execute(
+        `UPDATE employees SET salary_start_date = ? WHERE id = ?`,
+        [req.requested_effective_from, req.employee_id]
+      );
+      await connection.execute(
+        `UPDATE ats_payroll_hr_validation SET salary_start_date = ?
+          WHERE id = (
+            SELECT id FROM (
+              SELECT v.id FROM ats_payroll_hr_validation v
+                JOIN employees e ON e.candidate_id = v.candidate_id
+               WHERE e.id = ? ORDER BY v.created_at DESC LIMIT 1
+            ) latest
+          )`,
+        [req.requested_effective_from, req.employee_id]
+      );
+
       // Audit — non-fatal if no review row exists for this employee
       await connection.execute(
         `INSERT INTO employee_payroll_head_review_history
