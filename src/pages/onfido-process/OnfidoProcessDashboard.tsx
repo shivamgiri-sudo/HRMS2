@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { OnfidoDownloadButton } from "./OnfidoDownloadButton";
+import OnfidoOutliersView from "./OnfidoOutliersView";
 import { useHierarchyFilters } from "./useHierarchyFilters";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
@@ -77,7 +78,7 @@ interface TableInfo { key: string; table: string; name: string; description: str
 type RawRecord = Record<string, unknown> & { id: string; raw_data: Record<string, unknown> };
 
 type ViewKey =
-  | "overview" | "analyst" | "utilization" | "trends" | "alerts" | "attrition" | "etm" | "taskskip" | "quality"
+  | "overview" | "analyst" | "utilization" | "trends" | "alerts" | "outliers" | "attrition" | "etm" | "taskskip" | "quality"
   | "escalations" | "docraw" | "poa" | "poatrial" | "clientdoc" | "poaexternal" | "gdmcnsla" | "live" | "namemapping";
 type Granularity = "daily" | "weekly" | "monthly";
 
@@ -764,7 +765,7 @@ function QualityAreaChart({ points, title, hc, granularity = "monthly" }: { poin
  *  search box) don't take one, so the Executive Filters TL/AM dropdowns hide there
  *  rather than silently doing nothing when changed. */
 const FILTERABLE_VIEWS = new Set<ViewKey>([
-  "overview", "trends", "alerts", "attrition", "quality", "etm", "taskskip", "escalations", "docraw", "poa", "poatrial", "clientdoc", "poaexternal",
+  "overview", "trends", "alerts", "outliers", "attrition", "quality", "etm", "taskskip", "escalations", "docraw", "poa", "poatrial", "clientdoc", "poaexternal",
 ]);
 
 const VIEW_TABS: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
@@ -773,6 +774,7 @@ const VIEW_TABS: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
   { key: "utilization", label: "Utilization", icon: Gauge },
   { key: "trends", label: "Trends", icon: TrendingUp },
   { key: "alerts", label: "Alerts", icon: AlertTriangle },
+  { key: "outliers", label: "Outliers & Actions", icon: UserCheck },
   { key: "attrition", label: "Attrition & Shrinkage", icon: TrendingDown },
   { key: "quality", label: "Quality", icon: ShieldAlert },
   { key: "etm", label: "ETM", icon: FileSearch },
@@ -1261,7 +1263,7 @@ function tlAmQS(tlFilter: string, amFilter: string, analystFilter = ""): string 
 }
 
 /** Tabs whose queries can be narrowed to one analyst (every table behind them carries the analyst's email). */
-const ANALYST_FILTER_VIEWS = new Set<ViewKey>(["trends", "alerts", "attrition", "quality", "etm", "taskskip", "escalations", "docraw"]);
+const ANALYST_FILTER_VIEWS = new Set<ViewKey>(["trends", "alerts", "outliers", "attrition", "quality", "etm", "taskskip", "escalations", "docraw"]);
 
 function lastDayOfMonth(ym: string): string {
   const [y, m] = ym.split("-").map(Number);
@@ -4625,6 +4627,7 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
           )}
 
           {view === "trends" && <TrendsView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}
+          {view === "outliers" && <OnfidoOutliersView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}
           {view === "alerts" && <AlertsView range={range} tlFilter={tlFilter} amFilter={amFilter} analystFilter={analystFilter} />}
           {view === "analyst" && <OnfidoAnalystReport initialRange={{ from: shiftDays(range.to, -29), to: range.to }} />}
           {view === "utilization" && <OnfidoUtilizationReport />}
