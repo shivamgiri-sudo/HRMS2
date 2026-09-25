@@ -17,10 +17,12 @@ describe("excludeResolvedInterviewCandidatesSql", () => {
     expect(sql).not.toMatch(/ais\.candidate_id = ats_candidate\.id\s*\)/);
   });
 
-  it("excludes a candidate whose queue token is no-show", () => {
-    expect(sql).toMatch(
-      /NOT EXISTS\s*\(\s*SELECT 1 FROM ats_queue_token aqt\s*WHERE aqt\.candidate_id = ats_candidate\.id AND aqt\.queue_status = 'no_show'\s*\)/,
-    );
+  it("does not exclude on a no-show queue token — the candidate stays until their status is closed", () => {
+    // Live 2026-09-25: ~25 candidates still Waiting had a queue token marked no_show (button or auto
+    // sweep, which never touches ats_candidate) and disappeared from five recruiters' My Candidates.
+    // Owner: they must stay until the status is closed — Selected, Rejected, Hold, No Show, anything.
+    expect(sql).not.toMatch(/no_show/);
+    expect(sql).not.toContain("ats_queue_token");
   });
 
   it("does not exclude on a completed queue token — the desk closes it before the recruiter's form is filled", () => {
@@ -37,7 +39,6 @@ describe("excludeResolvedInterviewCandidatesSql", () => {
   it("uses whatever alias the caller passes, not a hardcoded table name", () => {
     const aliased = excludeResolvedInterviewCandidatesSql("c");
     expect(aliased).toContain("ais.candidate_id = c.id");
-    expect(aliased).toContain("aqt.candidate_id = c.id");
     expect(aliased).not.toContain("ats_candidate.id");
   });
 });

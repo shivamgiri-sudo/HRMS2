@@ -110,24 +110,26 @@ const SUBMISSION_REOPEN_GRACE_MINUTES = 5;
  * Excludes candidates the recruiter has already disposed of, from a "still pending" queue.
  *
  * `getMyPendingCandidates`/`getOtherRecruitersPendingCandidates` (recruiterInterview.service.ts)
- * decide "pending" purely from `ats_candidate.status`/`current_stage` staying in an open value
- * (Waiting/New/Applied/Screening/Registered). Two write paths close out a candidate without ever
- * touching those columns, so a genuinely-actioned candidate can sit in the pending queue forever:
+ * decide "pending" from `ats_candidate.status`/`current_stage` staying in an open value
+ * (Waiting/New/Applied/Screening/Registered). A candidate stays in the queue until their STATUS is
+ * closed — Selected, Rejected, Client Round, Hold, No Show, anything — however many days ago they
+ * walked in.
  *
- *   1. `ats_interview_submission` — the recruiter's own interview-outcome form DOES set
- *      ats_candidate.status via submitInterviewUpdate(), but a submission row can exist from a
- *      prior attempt while a later data fix or retry left status behind. Any submission row for
- *      the candidate is proof the recruiter's form has been filled in.
- *   2. `ats_queue_token.queue_status = 'no_show'` — the walk-in queue's own "Mark No-Show"
- *      button (queue.enhanced.service.ts markNoShow(), called from NativeWalkinQueueEnhanced.tsx)
- *      closes the token WITHOUT updating ats_candidate at all.
+ * The one thing that closes a candidate without touching those columns is the recruiter's own
+ * interview-outcome form:
+ *   `ats_interview_submission` — submitInterviewUpdate() normally sets ats_candidate.status too,
+ *   but a submission row can exist from a prior attempt while a later data fix or retry left status
+ *   behind. Any submission row for the candidate is proof the recruiter's form has been filled in.
  *
- * A 'completed' token is deliberately NOT a resolution signal. The walk-in desk marks the token
- * Completed once the candidate has been seen at the desk — before the recruiter fills the
- * interview form (walkin-sla.cron.ts treats exactly that state as "feedback pending"). Excluding
- * it (as the 2026-09-22 version did) emptied recruiters' queues: live 2026-09-24, MEHAR and
- * KHUSHI MISHRA saw no candidates, and 32 un-actioned candidates across 7 recruiters were hidden
- * in one week. Owner ruling 2026-09-24: only a submission row or a no-show token ends pendency.
+ * Queue-token states are deliberately NOT resolution signals:
+ *   - 'completed': the walk-in desk marks the token Completed once the candidate has been seen at the
+ *     desk — before the recruiter fills the interview form (walkin-sla.cron.ts treats exactly that
+ *     state as "feedback pending"). Excluding it emptied recruiters' queues (live 2026-09-24).
+ *   - 'no_show': the queue's Mark No-Show button (or its auto sweep) closes the TOKEN without
+ *     updating ats_candidate at all. Excluding on it made ~25 still-Waiting candidates vanish from
+ *     five recruiters' pages (live 2026-09-25) with nobody having recorded a decision. Owner ruling
+ *     2026-09-25 (supersedes 2026-09-24): pendency ends only when the candidate's status is closed,
+ *     including a recorded No Show.
  * This is a read-side rule — it does not change what either write path stores.
  *
  * A submission only resolves the candidate if it is not older than the candidate's last update.
@@ -146,9 +148,5 @@ export function excludeResolvedInterviewCandidatesSql(
       SELECT 1 FROM ats_interview_submission ais
        WHERE ais.candidate_id = ${candidateAlias}.id
          AND ais.submitted_at >= DATE_SUB(${candidateAlias}.updated_at, INTERVAL ${SUBMISSION_REOPEN_GRACE_MINUTES} MINUTE)
-    )
-    AND NOT EXISTS (
-      SELECT 1 FROM ats_queue_token aqt
-       WHERE aqt.candidate_id = ${candidateAlias}.id AND aqt.queue_status = 'no_show'
     )`;
 }
