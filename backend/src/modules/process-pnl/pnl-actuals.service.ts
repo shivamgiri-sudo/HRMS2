@@ -35,19 +35,33 @@ export interface ActualsByKey {
 }
 
 const emptyActuals = (): ActualsByKey => ({
-  byBranch: new Map(), byProcess: new Map(), byCostCentre: new Map(),
+  byBranch: new Map(),
+  byProcess: new Map(),
+  byCostCentre: new Map(),
 });
 
-function accumulate(rows: RowDataPacket[], into: ActualsByKey = emptyActuals()): ActualsByKey {
+function accumulate(
+  rows: RowDataPacket[],
+  into: ActualsByKey = emptyActuals(),
+): ActualsByKey {
   for (const row of rows) {
     const amount = Number(row.amount ?? 0);
     if (!Number.isFinite(amount) || amount === 0) continue;
     const branchId = row.branch_id ? String(row.branch_id) : null;
     const processId = row.process_id ? String(row.process_id) : null;
     const costCentreId = row.cost_centre_id ? String(row.cost_centre_id) : null;
-    if (branchId) into.byBranch.set(branchId, (into.byBranch.get(branchId) ?? 0) + amount);
-    if (processId) into.byProcess.set(processId, (into.byProcess.get(processId) ?? 0) + amount);
-    if (costCentreId) into.byCostCentre.set(costCentreId, (into.byCostCentre.get(costCentreId) ?? 0) + amount);
+    if (branchId)
+      into.byBranch.set(branchId, (into.byBranch.get(branchId) ?? 0) + amount);
+    if (processId)
+      into.byProcess.set(
+        processId,
+        (into.byProcess.get(processId) ?? 0) + amount,
+      );
+    if (costCentreId)
+      into.byCostCentre.set(
+        costCentreId,
+        (into.byCostCentre.get(costCentreId) ?? 0) + amount,
+      );
   }
   return into;
 }
@@ -101,13 +115,15 @@ export const PROCESS_BY_COST_CENTRE = `
  * two callers, so both can import it without a circular import.
  */
 export async function getApprovedCostCentreSplits(
-  period: string
+  period: string,
 ): Promise<Map<string, { processId: string; pct: number }[]>> {
   const splits = new Map<string, { processId: string; pct: number }[]>();
   if (!(await tableExists("employee_cost_centre_allocation"))) return splits;
   const [year, month] = period.split("-").map(Number);
   if (!year || !month) return splits;
-  const periodEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+  const periodEnd = new Date(Date.UTC(year, month, 0))
+    .toISOString()
+    .slice(0, 10);
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT a.employee_id, a.allocation_pct, pc.process_id
@@ -115,13 +131,16 @@ export async function getApprovedCostCentreSplits(
        LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = a.cost_centre_id
       WHERE a.status = 'approved'
         AND a.effective_from <= ? AND (a.effective_to IS NULL OR a.effective_to >= ?)`,
-    [periodEnd, periodEnd]
+    [periodEnd, periodEnd],
   );
   for (const row of rows) {
     if (!row.process_id) continue;
     const key = String(row.employee_id);
     const list = splits.get(key) ?? [];
-    list.push({ processId: String(row.process_id), pct: Number(row.allocation_pct) || 0 });
+    list.push({
+      processId: String(row.process_id),
+      pct: Number(row.allocation_pct) || 0,
+    });
     splits.set(key, list);
   }
   return splits;
@@ -148,8 +167,7 @@ export async function getApprovedCostCentreSplits(
  * Ltd", "Mas Callnet India Pvt. Ltd.", "Mas Callnet India Pvt Ltd", "MAS CALLNET INDIA PVT LTD.").
  * `ccm` must be the alias of cost_centre_master in the query using it.
  */
-export const OWN_COMPANY_SQL =
-  `REPLACE(REPLACE(REPLACE(LOWER(COALESCE(ccm.company_name, '')), '.', ''), ' ', ''), ',', '') LIKE '%mascallnet%'`;
+export const OWN_COMPANY_SQL = `REPLACE(REPLACE(REPLACE(LOWER(COALESCE(ccm.company_name, '')), '.', ''), ' ', ''), ',', '') LIKE '%mascallnet%'`;
 
 /* ------------------------------------------------------------------------------------------------
  * THE ONE GRN READER (2026-09-23).
@@ -233,6 +251,20 @@ function grnScope(opts: GrnSpendOptions): { sql: string; params: unknown[] } {
   return { sql: parts.join(" AND "), params };
 }
 
+/**
+ * 2026-09-25: the same invoice keyed into BOTH the legacy billing system and HRMS. The two number
+ * it differently (db_bill "Mas/9/26/127" vs HRMS "MAS/09/26/0009"), so the grn_number guard above
+ * never fires and the P&L booked the invoice twice — measured live on NOIDA-2 Sep-26: 22 legacy
+ * bills, Rs 9.14 L, each with an HRMS GRN of the same amount the P&L already counted.
+ *
+ * Second guard, keyed on amount: a legacy line is dropped when an HRMS GRN of the same branch and
+ * period, already consumed or reserved, carries the same TOTAL (all its allocation rows summed, ex-GST or GST-inclusive, within
+ * a rupee). Lines under LEGACY_TWIN_MIN_AMOUNT are exempt: small round amounts (Rs 100, Rs 500)
+ * collide between unrelated bills far too often. Known limit: it is not one-to-one in SQL, so
+ * two legacy bills of an identical amount would both go if a single HRMS GRN carries it.
+ */
+const LEGACY_TWIN_MIN_AMOUNT = 1000;
+
 export async function readGrnSpend(
   periodCode: string,
   kind: GrnSpendKind,
@@ -244,20 +276,32 @@ export async function readGrnSpend(
   const lifecycle = kind === "reserved" ? "reserved" : "consumed";
   const scope = grnScope(opts);
   const withProcess = opts.withProcess === true;
-  const processJoin = (alias: string) => (withProcess ? `LEFT JOIN ${PROCESS_BY_COST_CENTRE} ${alias} ON ${alias}.cost_centre_id = ccm.id` : "");
+  const processJoin = (alias: string) =>
+    withProcess
+      ? `LEFT JOIN ${PROCESS_BY_COST_CENTRE} ${alias} ON ${alias}.cost_centre_id = ccm.id`
+      : "";
   const processCol = (first: string | null, alias: string) =>
-    withProcess ? `COALESCE(${first ? `${first}, ` : ""}${alias}.process_id, ccm.process_id)` : "NULL";
+    withProcess
+      ? `COALESCE(${first ? `${first}, ` : ""}${alias}.process_id, ccm.process_id)`
+      : "NULL";
   // Detail columns are normalised to one collation so the UNION of an app table and a mirror
   // table can never raise "Illegal mix of collations"; NULL when detail is not asked for, which
   // leaves the grouping exactly as it was.
   const withDetail = opts.withDetail === true;
-  const str = (expr: string) => `CONVERT(${expr} USING utf8mb4) COLLATE utf8mb4_unicode_ci`;
-  const detailCols = (source: string, ref: string, label: string, billDate: string) =>
+  const str = (expr: string) =>
+    `CONVERT(${expr} USING utf8mb4) COLLATE utf8mb4_unicode_ci`;
+  const detailCols = (
+    source: string,
+    ref: string,
+    label: string,
+    billDate: string,
+  ) =>
     withDetail
       ? `${str(`'${source}'`)} AS source, ${str(ref)} AS grn_ref, ${str(label)} AS label,
          DATE_FORMAT(${billDate}, '%Y-%m-%d') AS bill_date`
       : "NULL AS source, NULL AS grn_ref, NULL AS label, NULL AS bill_date";
-  const appLabel = "CONCAT_WS(' — ', NULLIF(TRIM(gr.vendor_name), ''), NULLIF(TRIM(gr.head), ''), NULLIF(TRIM(gr.sub_head), ''))";
+  const appLabel =
+    "CONCAT_WS(' — ', NULLIF(TRIM(gr.vendor_name), ''), NULLIF(TRIM(gr.head), ''), NULLIF(TRIM(gr.sub_head), ''))";
 
   const legs: string[] = [];
   const params: unknown[] = [];
@@ -319,6 +363,21 @@ export async function readGrnSpend(
                     JOIN grn_cost_allocation a2 ON a2.grn_request_id = gr2.id
                    WHERE gr2.grn_number = ge.grn_no
                      AND a2.lifecycle_status = 'consumed'
+                )
+            AND NOT EXISTS (
+                  SELECT 1
+                    FROM grn_request gr3
+                   WHERE gr3.accounting_period = ge.period_code
+                     AND gr3.branch_id = ccm.branch_id
+                     AND l.amount >= ${LEGACY_TWIN_MIN_AMOUNT}
+                     AND (ABS((SELECT SUM(${grnAllocationExGstSql("a3")})
+                                 FROM grn_cost_allocation a3
+                                WHERE a3.grn_request_id = gr3.id
+                                  AND a3.lifecycle_status IN ('consumed', 'reserved')) - l.amount) <= 1
+                          OR ABS((SELECT SUM(COALESCE(a4.amount_with_tax, 0))
+                                    FROM grn_cost_allocation a4
+                                   WHERE a4.grn_request_id = gr3.id
+                                     AND a4.lifecycle_status IN ('consumed', 'reserved')) - l.amount) <= 1)
                 )`,
       );
       params.push(periodCode, ...scope.params);
@@ -331,7 +390,8 @@ export async function readGrnSpend(
       GROUP BY branch_id, cost_centre_id, process_id, source, grn_ref, label, bill_date`,
     params,
   );
-  const text = (v: unknown) => (v === null || v === undefined || v === "" ? null : String(v));
+  const text = (v: unknown) =>
+    v === null || v === undefined || v === "" ? null : String(v);
   return rows
     .map((row) => ({
       branchId: row.branch_id ? String(row.branch_id) : null,
@@ -350,18 +410,27 @@ export async function readGrnSpend(
     .filter((row) => Number.isFinite(row.amount) && row.amount !== 0);
 }
 
-export async function getIndirectCostActuals(periodCode: string): Promise<ActualsByKey> {
+export async function getIndirectCostActuals(
+  periodCode: string,
+): Promise<ActualsByKey> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptyActuals();
   // 2026-09-23: now a thin grouping over readGrnSpend() — the single GRN reader shared with CEO
   // Overview and Live P&L (see its banner). The history below is kept because it explains why the
   // shared reader looks the way it does.
-  const spend = await readGrnSpend(periodCode, "consumed", { withProcess: true });
-  return accumulate(spend.map((row) => ({
-    branch_id: row.branchId,
-    cost_centre_id: row.costCentreId,
-    process_id: row.processId,
-    amount: row.amount,
-  }) as unknown as RowDataPacket));
+  const spend = await readGrnSpend(periodCode, "consumed", {
+    withProcess: true,
+  });
+  return accumulate(
+    spend.map(
+      (row) =>
+        ({
+          branch_id: row.branchId,
+          cost_centre_id: row.costCentreId,
+          process_id: row.processId,
+          amount: row.amount,
+        }) as unknown as RowDataPacket,
+    ),
+  );
 }
 
 /**
@@ -371,15 +440,24 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
  * its own "GRN Committed (reserved)" line under Indirect Cost and adds it into Total Indirect Cost,
  * for EVERY period. 'draft' allocations are never read (readGrnSpend reads 'reserved' only).
  */
-export async function getCommittedIndirectCostActuals(periodCode: string): Promise<ActualsByKey> {
+export async function getCommittedIndirectCostActuals(
+  periodCode: string,
+): Promise<ActualsByKey> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptyActuals();
-  const spend = await readGrnSpend(periodCode, "reserved", { withProcess: true });
-  return accumulate(spend.map((row) => ({
-    branch_id: row.branchId,
-    cost_centre_id: row.costCentreId,
-    process_id: row.processId,
-    amount: row.amount,
-  }) as unknown as RowDataPacket));
+  const spend = await readGrnSpend(periodCode, "reserved", {
+    withProcess: true,
+  });
+  return accumulate(
+    spend.map(
+      (row) =>
+        ({
+          branch_id: row.branchId,
+          cost_centre_id: row.costCentreId,
+          process_id: row.processId,
+          amount: row.amount,
+        }) as unknown as RowDataPacket,
+    ),
+  );
 }
 
 /*
@@ -420,7 +498,9 @@ export async function getCommittedIndirectCostActuals(periodCode: string): Promi
  * per-cost-centre figure from elsewhere (e.g. Live P&L's seat-rate estimate) lands on the same
  * process column as that cost centre's invoices.
  */
-export async function getCostCentreProcessIds(costCentreIds: string[]): Promise<Map<string, string>> {
+export async function getCostCentreProcessIds(
+  costCentreIds: string[],
+): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   if (costCentreIds.length === 0) return out;
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -430,12 +510,16 @@ export async function getCostCentreProcessIds(costCentreIds: string[]): Promise<
       WHERE ccm.id IN (${inMarks(costCentreIds)})`,
     costCentreIds,
   );
-  for (const row of rows) if (row.process_id) out.set(String(row.cost_centre_id), String(row.process_id));
+  for (const row of rows)
+    if (row.process_id)
+      out.set(String(row.cost_centre_id), String(row.process_id));
   return out;
 }
 
 /** Recognised revenue for a period, from the budget's own monthly drivers. */
-export async function getDriverRevenueActuals(periodCode: string): Promise<ActualsByKey> {
+export async function getDriverRevenueActuals(
+  periodCode: string,
+): Promise<ActualsByKey> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptyActuals();
   const [rows] = await db.execute<RowDataPacket[]>(
     // Process via the precomputed PROCESS_BY_COST_CENTRE join (once per cost centre) rather than
@@ -451,7 +535,7 @@ export async function getDriverRevenueActuals(periodCode: string): Promise<Actua
         WHERE d.period_code = ?
      ) t
       GROUP BY branch_id, process_id`,
-    [periodCode]
+    [periodCode],
   );
   return accumulate(rows);
 }
@@ -470,9 +554,12 @@ export async function getDriverRevenueActuals(periodCode: string): Promise<Actua
  * Callers should present both and show the gap: contracted-vs-earned is the seat shortfall
  * the P&L exists to surface.
  */
-export async function getInvoicedRevenueActuals(periodCode: string): Promise<ActualsByKey> {
+export async function getInvoicedRevenueActuals(
+  periodCode: string,
+): Promise<ActualsByKey> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptyActuals();
-  if (!(await tableExists("billing_invoice_particular_snapshot"))) return emptyActuals();
+  if (!(await tableExists("billing_invoice_particular_snapshot")))
+    return emptyActuals();
 
   // Revenue has two complementary sources that must both contribute:
   //
@@ -506,7 +593,9 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
   const hasProvision = await tableExists("billing_provision_snapshot");
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `${hasProvision ? `
+    `${
+      hasProvision
+        ? `
      WITH invoice_actual AS (
        SELECT p.cost_centre_code COLLATE utf8mb4_unicode_ci AS cost_centre_code,
               ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
@@ -568,7 +657,8 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
           LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
          WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}
      ) netted
-      GROUP BY branch_id, cost_centre_id, process_id` : `
+      GROUP BY branch_id, cost_centre_id, process_id`
+        : `
      SELECT branch_id, cost_centre_id, process_id, SUM(amount) AS amount FROM (
         SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
                COALESCE(pc.process_id, ccm.process_id) AS process_id, p.amount AS amount
@@ -587,8 +677,11 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
           LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
          WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}
      ) netted
-      GROUP BY branch_id, cost_centre_id, process_id`}`,
-    hasProvision ? [periodCode, periodCode, periodCode] : [periodCode, periodCode]
+      GROUP BY branch_id, cost_centre_id, process_id`
+    }`,
+    hasProvision
+      ? [periodCode, periodCode, periodCode]
+      : [periodCode, periodCode],
   );
   return accumulate(rows);
 }
@@ -703,9 +796,15 @@ const SEAT_RATE_OVERRIDE_RANKED = `(
      AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?)
 )`;
 
-export async function getSeatRevenueActuals(periodCode: string): Promise<SeatRevenueActuals> {
+export async function getSeatRevenueActuals(
+  periodCode: string,
+): Promise<SeatRevenueActuals> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptySeatRevenue();
-  for (const table of ["cost_centre_seat_rate", "salary_prep_line", "pnl_running_salary_snapshot"]) {
+  for (const table of [
+    "cost_centre_seat_rate",
+    "salary_prep_line",
+    "pnl_running_salary_snapshot",
+  ]) {
     if (!(await tableExists(table))) return emptySeatRevenue();
   }
   // Rates are resolved as of the last day of the period, so a rate signed mid-month applies to
@@ -719,7 +818,9 @@ export async function getSeatRevenueActuals(periodCode: string): Promise<SeatRev
   // (billing_invoice_particular_snapshot.rate on is_seat_line = 1, a taxable value) before
   // treating these as ex-GST.
   const [year, month] = periodCode.split("-").map(Number);
-  const periodEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+  const periodEnd = new Date(Date.UTC(year, month, 0))
+    .toISOString()
+    .slice(0, 10);
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.branch_id AS branch_id, e.process_id AS process_id, e.cost_centre_id AS cost_centre_id,
@@ -751,24 +852,47 @@ export async function getSeatRevenueActuals(periodCode: string): Promise<SeatRev
              AND drv.revenue_rate_per_head > 0
        LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
       WHERE ${OWN_COMPANY_SQL}`,
-    [periodCode, periodCode, periodEnd, periodEnd, periodEnd, periodEnd,
-     periodEnd, periodEnd, periodEnd, periodEnd, periodCode]
+    [
+      periodCode,
+      periodCode,
+      periodEnd,
+      periodEnd,
+      periodEnd,
+      periodEnd,
+      periodEnd,
+      periodEnd,
+      periodEnd,
+      periodEnd,
+      periodCode,
+    ],
   );
 
   const out = emptySeatRevenue();
   const earned: RowDataPacket[] = [];
   for (const row of rows) {
-    if (row.is_billable === null || row.is_billable === undefined) { out.unresolvedEmployees++; continue; }
+    if (row.is_billable === null || row.is_billable === undefined) {
+      out.unresolvedEmployees++;
+      continue;
+    }
     if (Number(row.is_billable) !== 1) continue;
-    if (row.billing_model === "not_seat_billed") { out.notSeatBilledEmployees++; continue; }
+    if (row.billing_model === "not_seat_billed") {
+      out.notSeatBilledEmployees++;
+      continue;
+    }
     const rate = Number(row.rate ?? 0);
     if (!(rate > 0)) {
       out.rateMissingEmployees++;
-      accumulate([{ ...row, amount: 1 } as RowDataPacket], out.rateMissingByKey);
+      accumulate(
+        [{ ...row, amount: 1 } as RowDataPacket],
+        out.rateMissingByKey,
+      );
       continue;
     }
     out.billableEmployees++;
-    earned.push({ ...row, amount: rate * Number(row.proration ?? 0) } as RowDataPacket);
+    earned.push({
+      ...row,
+      amount: rate * Number(row.proration ?? 0),
+    } as RowDataPacket);
   }
   accumulate(earned, out);
   return out;
@@ -779,7 +903,9 @@ export async function getSeatRevenueActuals(periodCode: string): Promise<SeatRev
  * Approved rewards add positive revenue; approved penalties subtract from revenue.
  * Only `approved` entries are counted — drafts and rejections are excluded.
  */
-export async function getRewardPenaltyActuals(periodCode: string): Promise<ActualsByKey> {
+export async function getRewardPenaltyActuals(
+  periodCode: string,
+): Promise<ActualsByKey> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptyActuals();
   if (!(await tableExists("cost_centre_reward_penalty"))) return emptyActuals();
 
@@ -795,7 +921,7 @@ export async function getRewardPenaltyActuals(periodCode: string): Promise<Actua
       WHERE rp.period_code = ? AND rp.approval_status = 'approved'
         AND ${OWN_COMPANY_SQL}
       GROUP BY ccm.branch_id, rp.cost_centre_id, COALESCE(pc.process_id, ccm.process_id)`,
-    [periodCode]
+    [periodCode],
   );
   return accumulate(rows);
 }
