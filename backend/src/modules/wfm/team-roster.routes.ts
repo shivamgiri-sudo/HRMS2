@@ -26,7 +26,7 @@ const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "expected YYYY-MM-DD");
 const int = z.coerce.number().int().min(0).optional();
 const cellRef = z.object({ employeeId: z.string().trim().min(1).max(36), date: ymd });
 const schemas = {
-  grid: z.object({ from: ymd, to: ymd, search: z.string().trim().max(100).optional(), offset: int, limit: int }),
+  grid: z.object({ from: ymd, to: ymd, search: z.string().trim().max(100).optional(), processId: z.string().trim().max(36).optional(), offset: int, limit: int }),
   lines: z.object({
     upserts: z.array(cellRef.extend({
       type: z.enum(NEW_ASSIGNMENT_TYPES),
@@ -43,7 +43,7 @@ const schemas = {
   decision: z.object({ remarks: z.string().trim().max(MAX_REMARKS_LENGTH).nullish() }),
   mine: z.object({ status: z.string().trim().max(30).optional(), offset: int, limit: int }),
   approvals: z.object({ step: z.enum(["manager", "wfm"]), offset: int, limit: int }),
-  attendance: z.object({ month: z.string().regex(/^\d{4}-\d{2}$/, "expected YYYY-MM"), search: z.string().trim().max(100).optional(), offset: int, limit: int }),
+  attendance: z.object({ month: z.string().regex(/^\d{4}-\d{2}$/, "expected YYYY-MM"), search: z.string().trim().max(100).optional(), processId: z.string().trim().max(36).optional(), offset: int, limit: int }),
   attendanceDetail: z.object({ month: z.string().regex(/^\d{4}-\d{2}$/, "expected YYYY-MM") }),
 };
 
