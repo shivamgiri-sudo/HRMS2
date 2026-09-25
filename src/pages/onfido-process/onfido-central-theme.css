@@ -592,3 +592,63 @@
   .onfido-central-theme .oc-filterbar { position: static; }
   .onfido-central-theme .kpi .kv { font-size: 21px; }
 }
+
+/* OcDataTable toolbar and sortable headers (2026-09-25 phase 2). */
+.onfido-central-theme .oc-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.onfido-central-theme .oc-tools-search {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 1;
+  min-width: 180px;
+  max-width: 320px;
+}
+.onfido-central-theme .oc-tools-search svg {
+  position: absolute;
+  left: 10px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.onfido-central-theme .oc-tools-search .oc-input {
+  width: 100%;
+  padding-left: 30px;
+}
+.onfido-central-theme .oc-tools-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.onfido-central-theme .oc-tools .oc-btn-ghost:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.onfido-central-theme .oc-table-scroll {
+  overflow-x: auto;
+  border-radius: 12px;
+}
+.onfido-central-theme .oc-sortbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.onfido-central-theme .oc-sortbtn:hover { color: var(--blue); }
+.onfido-central-theme .oc-sortbtn:focus-visible { outline: none; box-shadow: var(--ring); border-radius: 4px; }
+.onfido-central-theme .oc-sort-idle { opacity: 0.35; }
+.onfido-central-theme th[aria-sort="ascending"],
+.onfido-central-theme th[aria-sort="descending"] { color: var(--blue); }
+.onfido-central-theme th.oc-right .oc-sortbtn { flex-direction: row-reverse; }

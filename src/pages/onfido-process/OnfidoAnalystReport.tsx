@@ -6,6 +6,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import {
   DASH, EmptyNote, GranularityPills, SectionCard, describePeriod, fmtInt, fmtNum, fmtPct, presetRange, type DateRange, type Granularity,
 } from "./onfidoReportShared";
+import { OcDataTable, type OcColumn } from "./OcDataTable";
 
 /**
  * Analyst Performance tab in the 23-Sep-26 format ("Analyst Performance.xlsx"), replacing the
@@ -207,6 +208,17 @@ interface WeekRow {
   errors: number; audits: number; overallErrorPct: number | null;
 }
 
+const WEEK_COLUMNS: OcColumn<WeekRow>[] = [
+  { key: "week", header: "Week", headerText: "Week starting", accessor: (w) => w.weekStart, render: (w) => w.label },
+  { key: "doc", header: "DOC", headerText: "DOC tasks", align: "right", accessor: (w) => w.docTasks, render: (w) => fmtInt(w.docTasks) },
+  { key: "docAht", header: "Doc AHT", headerText: "Doc AHT (s)", align: "right", accessor: (w) => w.docAht, render: (w) => (w.docAht === null ? DASH : `${fmtInt(w.docAht)}s`) },
+  { key: "poa", header: "POA", headerText: "POA tasks", align: "right", accessor: (w) => w.poaTasks, render: (w) => fmtInt(w.poaTasks) },
+  { key: "poaAht", header: "POA AHT", headerText: "POA AHT (s)", align: "right", accessor: (w) => w.poaAht, render: (w) => (w.poaAht === null ? DASH : `${fmtInt(w.poaAht)}s`) },
+  { key: "etm", header: "ETM", headerText: "ETM", align: "right", accessor: (w) => w.etm, render: (w) => fmtInt(w.etm) },
+  { key: "skips", header: "Skips", headerText: "Task skips", align: "right", accessor: (w) => w.taskSkip, render: (w) => fmtInt(w.taskSkip) },
+  { key: "err", header: "Overall Error %", headerText: "Overall error %", align: "right", accessor: (w) => w.overallErrorPct, render: (w) => (w.overallErrorPct === null ? DASH : fmtPct(w.overallErrorPct)) },
+];
+
 /** Week-by-week (WC dd Mon) performance for the selected analyst. */
 function AnalystWeeklyTable({ analyst, tlName, amName, range }: { analyst: string; tlName: string | null; amName: string | null; range: DateRange }) {
   const weekly = useQuery({
@@ -225,28 +237,13 @@ function AnalystWeeklyTable({ analyst, tlName, amName, range }: { analyst: strin
       {weekly.isLoading && <EmptyNote>Loading weeks...</EmptyNote>}
       {weekly.error instanceof Error && <EmptyNote>Could not load weeks: {weekly.error.message}</EmptyNote>}
       {weeks.length > 0 && (
-        <table className="oc-table">
-          <thead>
-            <tr>
-              <th>Week</th><th className="oc-right">DOC</th><th className="oc-right">Doc AHT</th><th className="oc-right">POA</th>
-              <th className="oc-right">POA AHT</th><th className="oc-right">ETM</th><th className="oc-right">Skips</th><th className="oc-right">Overall Error %</th>
-            </tr>
-          </thead>
-          <tbody>
-            {weeks.map((w) => (
-              <tr key={w.weekStart} title={`${w.weekStart} to ${w.weekEnd}`}>
-                <td>{w.label}</td>
-                <td className="oc-right">{fmtInt(w.docTasks)}</td>
-                <td className="oc-right">{w.docAht === null ? DASH : `${fmtInt(w.docAht)}s`}</td>
-                <td className="oc-right">{fmtInt(w.poaTasks)}</td>
-                <td className="oc-right">{w.poaAht === null ? DASH : `${fmtInt(w.poaAht)}s`}</td>
-                <td className="oc-right">{fmtInt(w.etm)}</td>
-                <td className="oc-right">{fmtInt(w.taskSkip)}</td>
-                <td className="oc-right">{w.overallErrorPct === null ? DASH : fmtPct(w.overallErrorPct)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <OcDataTable
+          rows={weeks}
+          columns={WEEK_COLUMNS}
+          rowKey={(w) => w.weekStart}
+          rowTitle={(w) => `${w.weekStart} to ${w.weekEnd}`}
+          csvName={`analyst-weekly-${analyst.replace(/[^A-Za-z0-9]+/g, "-")}`}
+        />
       )}
     </div>
   );
