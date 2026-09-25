@@ -28,6 +28,13 @@ vi.mock("../../payroll/bank-payment-readiness.service.js", () => ({ buildBankRea
 vi.mock("../../payroll-masters/payrollMasters.service.js", () => ({ createPackage: vi.fn(), getPackageById: vi.fn() }));
 vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: { createItem } }));
 vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole, buildScopeWhereClause }));
+// approve() now refuses a review whose salary start date differs across the employee's records.
+// These tests are about notification / kit dispatch, so the dates are stipulated consistent here;
+// the gate itself is covered in salaryStartDateGate.test.ts.
+vi.mock("../../payroll/salary-start-date.service.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../payroll/salary-start-date.service.js")>()),
+  getSalaryStartDateConsistency: vi.fn().mockResolvedValue({ consistent: true, expected: null, problems: [] }),
+}));
 
 import { getQueue, approve } from "../payroll-head-review.service.js";
 

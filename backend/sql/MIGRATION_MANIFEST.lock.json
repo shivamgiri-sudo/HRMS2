@@ -884,13 +884,35 @@
     "1843_it_provisioning_bgv_result_column.sql",
     "1845_onfido_wfm_manual_inputs.sql",
     "1846_provisioning_hr_bgv_page_access.sql",
+    "1847_process_lob_map.sql",
+    "1848_process_lob_map_page_access.sql",
+    "1849_roster_assignment_process_lob.sql",
+    "1850_roster_offday_policy.sql",
+    "1851_roster_offday_policy_page_access.sql",
     "1852_pnl_grn_allocation_view_ex_gst.sql",
     "1853_meta_lead_messages_delivery_status.sql",
     "1854_employee_lob_mapping_upload_template.sql",
     "1855_bulk_upload_lob_only_page_access.sql",
     "1856_fix_salary_start_date_before_doj.sql",
     "1857_employees_salary_start_check_constraint.sql",
-    "1858_appointment_letter_accept_flow.sql"
+    "1858_appointment_letter_accept_flow.sql",
+    "1859_roster_team_submission.sql",
+    "1860_team_roster_page_access.sql",
+    "1861_roster_team_line_shift_times.sql",
+    "1862_process_master_auto_deactivation.sql",
+    "1863_grn_request_created_at_index.sql",
+    "1864_grn_request_covering_indexes.sql",
+    "migrations/1865_client_invoice_payment_tables.sql",
+    "migrations/1866_bank_ledger_is_migrated_column.sql",
+    "1867_appreciate_chat_new_table.sql",
+    "1868_appreciate_chat_uploader.sql",
+    "migrations/1867_ats_candidate_rewalkin.sql",
+    "migrations/1870_job_requisition_deadline_automation.sql",
+    "1869_onfido_name_employee_map.sql",
+    "1871_process_metric_actual_covering_indexes.sql",
+    "1880_payroll_head_review_history_action_enum_reapply.sql",
+    "1883_salary_start_date_governance.sql",
+    "1884_employees_salary_start_check_v2.sql"
   ],
   "approvedDeletions": [
     {
@@ -941,7 +963,11 @@
     "migrations/1612_fix_festival_calendar_2026_rakhi_bhaidooj.sql",
     "migrations/1613_add_missing_festival_calendar_2026_entries.sql",
     "migrations/440_salary_date_revision_requests.sql",
-    "migrations/0060_portal_admin_impersonation_log.sql"
+    "migrations/0060_portal_admin_impersonation_log.sql",
+    "migrations/1865_client_invoice_payment_tables.sql",
+    "migrations/1866_bank_ledger_is_migrated_column.sql",
+    "migrations/1867_ats_candidate_rewalkin.sql",
+    "migrations/1870_job_requisition_deadline_automation.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
@@ -1055,6 +1081,7 @@
     "1767_onfido_external_audit_add_total_columns.sql",
     "1788_gnc_sale_order_id_unique.sql",
     "1831_meta_lead_interview_slot.sql",
+    "1853_employee_lob_mapping_upload_template.sql",
     "204_personal_contact_fields.sql",
     "205_branch_alias_examples.sql",
     "206_ats_recruiter_contact_details.sql",
@@ -1132,8 +1159,6 @@
     "review_only_cleanup_test_demo_hrms2.sql",
     "revoke_salary_revision_employee_grant.sql",
     "setup-dialer-kpi-metrics.sql",
-    "verify_ats_fix.sql",
-    "1844_pf_wage_ceiling_25000_documentation.sql",
-    "1853_employee_lob_mapping_upload_template.sql"
+    "verify_ats_fix.sql"
   ]
 }

@@ -1,6 +1,13 @@
 import { db } from "../../db/mysql.js";
 import { assertNotBeforeToday, canBackdateDates } from "../../utils/dateUtils.js";
 import type { RowDataPacket } from "mysql2";
+import {
+  actorAuthority,
+  commitSalaryStartDate,
+  dayOf,
+  normaliseSalaryDate,
+  prepareSalaryStartDate,
+} from "../payroll/salary-start-date.service.js";
 
 function httpError(msg: string, status: number, code: string) {
   const e = new Error(msg) as Error & { status: number; code: string };
@@ -21,9 +28,7 @@ export async function createRevisionRequest(input: CreateRevisionInput): Promise
   }
 
   // Validate date format
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.requested_effective_from) || isNaN(Date.parse(input.requested_effective_from))) {
-    throw httpError("requested_effective_from must be a valid YYYY-MM-DD date.", 400, "INVALID_DATE");
-  }
+  normaliseSalaryDate(input.requested_effective_from, "requested_effective_from");
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT date_of_joining FROM employees WHERE id = ? LIMIT 1`,
@@ -111,6 +116,20 @@ export async function reviewRevisionRequest(
     await connection.beginTransaction();
 
     if (action === "approve") {
+      // Approval is Payroll Head's act (route gate: payroll_head / admin / super_admin). Decide first -
+      // date locks, closed payroll months, mandatory reason - and only then write; the same
+      // transaction then carries the date to employees, the HR validation row and the package date,
+      // which this path used to leave on the OLD date (payroll kept reading it).
+      const prepared = await prepareSalaryStartDate(connection, {
+        employeeId: String(req.employee_id),
+        newDate: dayOf(req.requested_effective_from),
+        actorUserId: reviewedBy,
+        ...actorAuthority(reviewerRoles),
+        source: "revision_request_approved",
+        reason: String(req.reason ?? ""),
+        assignmentAlreadyWritten: true,
+      });
+
       await connection.execute(
         `UPDATE employee_salary_assignment
             SET active_status = 0,
@@ -146,28 +165,7 @@ export async function reviewRevisionRequest(
         ]
       );
 
-      // One salary start date, not three: payroll reads employees.salary_start_date
-      // (COALESCE with date_of_joining), and the review screen reads
-      // ats_payroll_hr_validation.salary_start_date. Approving a revision used to move
-      // only the assignment above, so payroll kept using the OLD date. Same
-      // propagation as payroll-head-review's syncSalaryStartDateEverywhere. The
-      // employees update is inside this transaction on purpose -- it is the date
-      // payroll uses, so it must succeed or the whole approval must roll back.
-      await connection.execute(
-        `UPDATE employees SET salary_start_date = ? WHERE id = ?`,
-        [req.requested_effective_from, req.employee_id]
-      );
-      await connection.execute(
-        `UPDATE ats_payroll_hr_validation SET salary_start_date = ?
-          WHERE id = (
-            SELECT id FROM (
-              SELECT v.id FROM ats_payroll_hr_validation v
-                JOIN employees e ON e.candidate_id = v.candidate_id
-               WHERE e.id = ? ORDER BY v.created_at DESC LIMIT 1
-            ) latest
-          )`,
-        [req.requested_effective_from, req.employee_id]
-      );
+      await commitSalaryStartDate(connection, prepared);
 
       // Audit — non-fatal if no review row exists for this employee
       await connection.execute(

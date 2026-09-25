@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { useWorkforceAccess } from '@/hooks/useUserRole';
-import { useDateLockMin } from '@/hooks/useDateLockMin';
+import { useDateLockMin, backdateNeedsReason } from '@/hooks/useDateLockMin';
+import { BackdateReasonField, MIN_BACKDATE_REASON_LENGTH } from '@/components/payroll/BackdateReasonField';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -151,13 +152,16 @@ function DrawerSalaryRow({ label, value, bold, separator }: {
 
 export function OfferedSalarySection({
   os, sc, review, status, isReviewer, effectiveDate, setEffectiveDate, busy, onApprove, payrollHrValidation, onEffectiveDateBlur, exceptionProposal,
+  backdateReason = '', setBackdateReason, joiningDate,
 }: {
   os: any; sc: any; review: any; status: string | undefined; isReviewer: boolean;
   effectiveDate: string; setEffectiveDate: (v: string) => void; busy: boolean;
   onApprove: () => void; payrollHrValidation?: any; onEffectiveDateBlur?: (date: string) => Promise<void>;
   exceptionProposal?: any;
+  backdateReason?: string; setBackdateReason?: (v: string) => void; joiningDate?: string | null;
 }) {
   const dateMin = useDateLockMin();
+  const reasonBlocks = backdateNeedsReason(effectiveDate, joiningDate) && backdateReason.trim().length < MIN_BACKDATE_REASON_LENGTH;
   if (!os) return <p className="text-xs text-slate-400 py-1">No offer on file for this candidate.</p>;
   return (
     <div className="rounded-xl border border-amber-200 overflow-hidden bg-amber-50/50">
@@ -274,6 +278,9 @@ export function OfferedSalarySection({
                   onBlur={onEffectiveDateBlur ? async (e) => { await onEffectiveDateBlur(e.target.value); } : undefined}
                   className="w-[140px] h-8 text-xs rounded-lg border-amber-200"
                 />
+                {setBackdateReason && (
+                  <BackdateReasonField date={effectiveDate} joiningDate={joiningDate} value={backdateReason} onChange={setBackdateReason} />
+                )}
                 {payrollHrValidation?.salary_start_date && (
                   <p className="text-xs text-slate-400">
                     Payroll HR set:{' '}
@@ -283,7 +290,7 @@ export function OfferedSalarySection({
                 )}
               </div>
             </div>
-            <Button size="sm" disabled={busy || !effectiveDate}
+            <Button size="sm" disabled={busy || !effectiveDate || reasonBlocks}
               onClick={onApprove}
               className="h-8 text-xs cursor-pointer bg-emerald-600 hover:bg-emerald-700 rounded-lg px-3 gap-1.5">
               <CheckCircle2 className="h-3 w-3" />Approve This Package
@@ -299,6 +306,7 @@ export function FinalSalarySection({
   sc, os, review, status, isReviewer, effectiveDate, setEffectiveDate, busy,
   packages, selectedGrade, setSelectedGrade, selectedPkgId, setSelectedPkgId,
   assignExisting, acceptPackage, onBuildPackage, onEffectiveDateBlur, salaryStartDateHint,
+  backdateReason = '', setBackdateReason, joiningDate,
 }: {
   sc: any; os: any; review: any; status: string | undefined; isReviewer: boolean;
   effectiveDate: string; setEffectiveDate: (v: string) => void; busy: boolean;
@@ -306,8 +314,10 @@ export function FinalSalarySection({
   selectedPkgId: string; setSelectedPkgId: (v: string) => void;
   assignExisting: () => void; acceptPackage: () => void; onBuildPackage: () => void;
   onEffectiveDateBlur?: (date: string) => Promise<void>; salaryStartDateHint?: string;
+  backdateReason?: string; setBackdateReason?: (v: string) => void; joiningDate?: string | null;
 }) {
   const dateMin = useDateLockMin();
+  const reasonBlocks = backdateNeedsReason(effectiveDate, joiningDate) && backdateReason.trim().length < MIN_BACKDATE_REASON_LENGTH;
   return (
     <div className="rounded-xl border border-slate-100 overflow-hidden">
       <div className="bg-gradient-to-r from-purple-600 to-violet-600 px-4 py-2.5 flex items-center gap-2">
@@ -392,6 +402,9 @@ export function FinalSalarySection({
                     onBlur={onEffectiveDateBlur ? async (e) => { await onEffectiveDateBlur(e.target.value); } : undefined}
                     className="w-[140px] h-8 text-xs rounded-lg"
                   />
+                  {setBackdateReason && (
+                    <BackdateReasonField date={effectiveDate} joiningDate={joiningDate} value={backdateReason} onChange={setBackdateReason} />
+                  )}
                   {salaryStartDateHint && (
                     <p className="text-xs text-slate-400">Payroll HR set: {salaryStartDateHint}</p>
                   )}
@@ -455,12 +468,12 @@ export function FinalSalarySection({
                 );
               })()}
 
-              <Button size="sm" disabled={busy || !selectedPkgId || !effectiveDate}
+              <Button size="sm" disabled={busy || !selectedPkgId || !effectiveDate || reasonBlocks}
                 onClick={() => assignExisting()}
                 className="h-8 text-xs cursor-pointer bg-purple-600 hover:bg-purple-700 rounded-lg px-3 shrink-0">
                 Assign
               </Button>
-              <Button size="sm" variant="outline" disabled={busy || !effectiveDate}
+              <Button size="sm" variant="outline" disabled={busy || !effectiveDate || reasonBlocks}
                 onClick={onBuildPackage}
                 className="h-8 text-xs cursor-pointer rounded-lg px-2 border-purple-200 text-purple-700 hover:bg-purple-50 shrink-0 gap-1">
                 <Calculator className="h-3 w-3" />Build
@@ -806,6 +819,7 @@ function SectionPopup({
   const [selectedGrade, setSelectedGrade] = useState('');
   const [selectedPkgId, setSelectedPkgId] = useState('');
   const [effectiveDate, setEffectiveDate] = useState('');
+  const [backdateReason, setBackdateReason] = useState('');
   const [loadedSalaryStartDate, setLoadedSalaryStartDate] = useState<string>('');
   const [pkgBuilderOpen, setPkgBuilderOpen] = useState(false);
 
@@ -831,7 +845,7 @@ function SectionPopup({
     if (open && employeeId) {
       setJourney(null); setError(null); setNotice(null);
       // Date is auto-filled only when empty; reset so the previous employee's date isn't saved onto this one.
-      setEffectiveDate(''); setLoadedSalaryStartDate('');
+      setEffectiveDate(''); setBackdateReason(''); setLoadedSalaryStartDate('');
       setRejectOpen(false); setRejectCategory(section ? SECTION_META[section].category : '');
       setRejectCode(''); setRejectRemarks('');
       void loadJourney();
@@ -872,8 +886,17 @@ function SectionPopup({
     } finally { setBusy(false); }
   }
 
+  // A date before today / before joining needs a written reason (server: REASON_REQUIRED).
+  const needsBackdateReason = backdateNeedsReason(effectiveDate, journey?.employee?.date_of_joining);
+  const reasonPart = needsBackdateReason ? { reason: backdateReason.trim() } : {};
+
   const handleEffectiveDateBlur = async (newDate: string) => {
     if (!newDate || newDate === loadedSalaryStartDate) return;
+    // A backdated date needs its reason first; it is saved together with the package.
+    if (!journey?.salary_assignment?.effective_from && backdateNeedsReason(newDate, journey?.employee?.date_of_joining) && backdateReason.trim().length < MIN_BACKDATE_REASON_LENGTH) {
+      setNotice('Enter the reason for backdating - the date is saved together with the package.');
+      return;
+    }
 
     const hasLiveAssignment = !!journey?.salary_assignment?.effective_from;
 
@@ -887,19 +910,20 @@ function SectionPopup({
       try {
         await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/salary-start-date`, {
           salary_start_date: newDate,
+          ...(backdateNeedsReason(newDate, journey?.employee?.date_of_joining) ? { reason: backdateReason.trim() } : {}),
         });
         setLoadedSalaryStartDate(newDate);
         setNotice('Salary start date updated.');
         setTimeout(() => setNotice(null), 3000);
-      } catch {
-        setError('Failed to update salary start date.');
+      } catch (e: any) {
+        setError(e?.message ?? 'Failed to update salary start date.');
       }
     }
   };
 
   const assignExisting = () => run(() =>
     hrmsApi.post(`/api/payroll-head-review/${employeeId}/package/assign`, {
-      package_id: selectedPkgId, effective_date: effectiveDate,
+      package_id: selectedPkgId, effective_date: effectiveDate, ...reasonPart,
     }), 'Package assigned.'
   );
   const acceptPackage = () => run(() =>
@@ -912,14 +936,14 @@ function SectionPopup({
   // payroll — the two-click drawer path collapsed into one, as asked. If the assign call fails
   // approve is never attempted, so this can't leave a worse partial state than the manual path.
   const approveOfferedAndClose = () => run(async () => {
-    await hrmsApi.post(`/api/payroll-head-review/${employeeId}/package/approve-offered`, { effective_date: effectiveDate });
+    await hrmsApi.post(`/api/payroll-head-review/${employeeId}/package/approve-offered`, { effective_date: effectiveDate, ...reasonPart });
     await hrmsApi.post(`/api/payroll-head-review/${employeeId}/approve`, {});
   }, 'Offered package approved and payroll approval closed.');
   const onPackageBuilt = async (pkgId: string) => {
     if (!effectiveDate) { setError('Set effective date first.'); return; }
     await run(() =>
       hrmsApi.post(`/api/payroll-head-review/${employeeId}/package/assign`, {
-        package_id: pkgId, effective_date: effectiveDate,
+        package_id: pkgId, effective_date: effectiveDate, ...reasonPart,
       }), 'Package built and assigned.'
     );
   };
@@ -985,6 +1009,7 @@ function SectionPopup({
                 <OfferedSalarySection
                   os={os} sc={sc} review={review} status={status} isReviewer={isReviewer}
                   effectiveDate={effectiveDate} setEffectiveDate={setEffectiveDate} busy={busy}
+                  backdateReason={backdateReason} setBackdateReason={setBackdateReason} joiningDate={journey?.employee?.date_of_joining}
                   onApprove={() => void approveOfferedAndClose()}
                   payrollHrValidation={journey?.payroll_hr_validation}
                   onEffectiveDateBlur={handleEffectiveDateBlur}
@@ -996,6 +1021,7 @@ function SectionPopup({
                   <FinalSalarySection
                     sc={sc} os={os} review={review} status={status} isReviewer={isReviewer}
                     effectiveDate={effectiveDate} setEffectiveDate={setEffectiveDate} busy={busy}
+                  backdateReason={backdateReason} setBackdateReason={setBackdateReason} joiningDate={journey?.employee?.date_of_joining}
                     packages={packages} selectedGrade={selectedGrade} setSelectedGrade={setSelectedGrade}
                     selectedPkgId={selectedPkgId} setSelectedPkgId={setSelectedPkgId}
                     assignExisting={() => void assignExisting()} acceptPackage={() => void acceptPackage()}
@@ -1181,6 +1207,7 @@ function ReviewDrawer({
   const [selectedGrade, setSelectedGrade] = useState('');
   const [selectedPkgId, setSelectedPkgId] = useState('');
   const [effectiveDate, setEffectiveDate] = useState('');
+  const [backdateReason, setBackdateReason] = useState('');
   const [loadedSalaryStartDate, setLoadedSalaryStartDate] = useState<string>('');
   const [pkgBuilderOpen, setPkgBuilderOpen] = useState(false);
 
@@ -1206,7 +1233,7 @@ function ReviewDrawer({
     if (open && employeeId) {
       setJourney(null); setError(null); setNotice(null);
       // Date is auto-filled only when empty; reset so the previous employee's date isn't saved onto this one.
-      setEffectiveDate(''); setLoadedSalaryStartDate('');
+      setEffectiveDate(''); setBackdateReason(''); setLoadedSalaryStartDate('');
       void loadJourney();
     }
   }, [open, employeeId]);
@@ -1245,8 +1272,17 @@ function ReviewDrawer({
     } finally { setBusy(false); }
   }
 
+  // A date before today / before joining needs a written reason (server: REASON_REQUIRED).
+  const needsBackdateReason = backdateNeedsReason(effectiveDate, journey?.employee?.date_of_joining);
+  const reasonPart = needsBackdateReason ? { reason: backdateReason.trim() } : {};
+
   const handleEffectiveDateBlur = async (newDate: string) => {
     if (!newDate || newDate === loadedSalaryStartDate) return;
+    // A backdated date needs its reason first; it is saved together with the package.
+    if (!journey?.salary_assignment?.effective_from && backdateNeedsReason(newDate, journey?.employee?.date_of_joining) && backdateReason.trim().length < MIN_BACKDATE_REASON_LENGTH) {
+      setNotice('Enter the reason for backdating - the date is saved together with the package.');
+      return;
+    }
 
     const hasLiveAssignment = !!journey?.salary_assignment?.effective_from;
 
@@ -1260,19 +1296,20 @@ function ReviewDrawer({
       try {
         await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/salary-start-date`, {
           salary_start_date: newDate,
+          ...(backdateNeedsReason(newDate, journey?.employee?.date_of_joining) ? { reason: backdateReason.trim() } : {}),
         });
         setLoadedSalaryStartDate(newDate);
         setNotice('Salary start date updated.');
         setTimeout(() => setNotice(null), 3000);
-      } catch {
-        setError('Failed to update salary start date.');
+      } catch (e: any) {
+        setError(e?.message ?? 'Failed to update salary start date.');
       }
     }
   };
 
   const assignExisting = () => run(() =>
     hrmsApi.post(`/api/payroll-head-review/${employeeId}/package/assign`, {
-      package_id: selectedPkgId, effective_date: effectiveDate,
+      package_id: selectedPkgId, effective_date: effectiveDate, ...reasonPart,
     }), 'Package assigned.'
   );
 
@@ -1287,7 +1324,7 @@ function ReviewDrawer({
 
   const approveOfferedPackage = () => run(() =>
     hrmsApi.post(`/api/payroll-head-review/${employeeId}/package/approve-offered`, {
-      effective_date: effectiveDate,
+      effective_date: effectiveDate, ...reasonPart,
     }), 'Offered package approved and assigned.'
   );
 
@@ -1295,7 +1332,7 @@ function ReviewDrawer({
     if (!effectiveDate) { setError('Set effective date first.'); return; }
     await run(() =>
       hrmsApi.post(`/api/payroll-head-review/${employeeId}/package/assign`, {
-        package_id: pkgId, effective_date: effectiveDate,
+        package_id: pkgId, effective_date: effectiveDate, ...reasonPart,
       }), 'Package built and assigned.'
     );
   };
@@ -1397,6 +1434,7 @@ function ReviewDrawer({
                 <OfferedSalarySection
                   os={os} sc={sc} review={review} status={status} isReviewer={isReviewer}
                   effectiveDate={effectiveDate} setEffectiveDate={setEffectiveDate} busy={busy}
+                  backdateReason={backdateReason} setBackdateReason={setBackdateReason} joiningDate={journey?.employee?.date_of_joining}
                   onApprove={() => void approveOfferedPackage()}
                   payrollHrValidation={journey?.payroll_hr_validation}
                   onEffectiveDateBlur={handleEffectiveDateBlur}
@@ -1408,6 +1446,7 @@ function ReviewDrawer({
               <FinalSalarySection
                 sc={sc} os={os} review={review} status={status} isReviewer={isReviewer}
                 effectiveDate={effectiveDate} setEffectiveDate={setEffectiveDate} busy={busy}
+                  backdateReason={backdateReason} setBackdateReason={setBackdateReason} joiningDate={journey?.employee?.date_of_joining}
                 packages={packages} selectedGrade={selectedGrade} setSelectedGrade={setSelectedGrade}
                 selectedPkgId={selectedPkgId} setSelectedPkgId={setSelectedPkgId}
                 assignExisting={() => void assignExisting()} acceptPackage={() => void acceptPackage()}

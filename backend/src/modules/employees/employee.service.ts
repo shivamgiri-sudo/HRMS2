@@ -13,6 +13,7 @@ import { dispatchJoinProvisioningTasks } from "../it-provisioning/it-provisionin
 import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
 import { recordSupervisoryChange } from "../management/manager-attribution.service.js";
 import { appendJourneyEvent } from "./journeyLog.service.js";
+import { checkSalaryStartDate, dayOf, setSalaryStartDate, type ApplySalaryStartDateArgs, type SalaryDateAuthority } from "../payroll/salary-start-date.service.js";
 
 // Directory list sort — SortableTableHead on the frontend already exposes these 8 columns,
 // but the query ignored sortBy entirely and always returned employee_code ASC, so "sort by
@@ -510,7 +511,7 @@ export const employeeService = {
     return result;
   },
 
-  async updateEmployee(id: string, input: UpdateEmployeeInput, actorUserId: string): Promise<Employee> {
+  async updateEmployee(id: string, input: UpdateEmployeeInput, actorUserId: string, opts: { authority?: SalaryDateAuthority; allowBackdate?: boolean } = {}): Promise<Employee> {
     // Snapshot current sensitive field values before update for audit trail
     const [snapRows] = await db.execute<RowDataPacket[]>(
       `SELECT branch_id, department_id, process_id, designation_id,
@@ -600,7 +601,8 @@ export const employeeService = {
     if (input.bloodGroup        !== undefined) { sets.push("blood_group = ?");          params.push(normalizeBloodGroup(input.bloodGroup)); }
     if (input.dateOfBirth       !== undefined) { sets.push("date_of_birth = ?");        params.push(input.dateOfBirth ?? null); }
     if (input.dateOfJoining     !== undefined) { sets.push("date_of_joining = ?");      params.push(input.dateOfJoining); }
-    if (input.salaryStartDate   !== undefined) { sets.push("salary_start_date = ?");    params.push(input.salaryStartDate ?? null); }
+    // salary_start_date is NOT written here. It is one of five stored copies of the same date, so
+    // it goes through the central service below, which writes all of them in one transaction.
     if (input.dateOfExit        !== undefined) { sets.push("date_of_exit = ?");         params.push(input.dateOfExit ?? null); }
     if (input.employmentType    !== undefined) { sets.push("employment_type = ?, emp_type = ?"); params.push(input.employmentType, input.employmentType); }
     if (input.employmentStatus  !== undefined) { sets.push("employment_status = ?");    params.push(input.employmentStatus); }
@@ -628,6 +630,28 @@ export const employeeService = {
     // Carry the deactivation across to the column the access gates actually read,
     // in the same statement, so the two can never disagree again.
     if (isDeactivating && wasActive) { sets.push("active_status = 0"); }
+
+    // A salary start date change is validated NOW (ownership, date locks, closed payroll months;
+    // nothing is written) and applied after the profile UPDATE below, so a refused date cannot
+    // leave the rest of the edit half-saved and a failed profile UPDATE cannot leave the date moved.
+    let salaryDateChange: ApplySalaryStartDateArgs | null = null;
+    if (input.salaryStartDate !== undefined && dayOf(input.salaryStartDate) !== dayOf(snap.salary_start_date)) {
+      if (!input.salaryStartDate) {
+        throw Object.assign(new Error("Salary start date cannot be cleared."), {
+          statusCode: 400,
+          code: "SALARY_START_REQUIRED",
+        });
+      }
+      salaryDateChange = {
+        employeeId: id,
+        newDate: String(input.salaryStartDate),
+        actorUserId,
+        source: "employee_edit",
+        authority: opts.authority ?? "standard",
+        allowBackdate: opts.allowBackdate === true,
+      };
+      await checkSalaryStartDate(salaryDateChange);
+    }
 
     if (sets.length > 0) {
       params.push(id);
@@ -760,6 +784,8 @@ export const employeeService = {
         }
       }
     }
+
+    if (salaryDateChange) await setSalaryStartDate(salaryDateChange);
 
     // Sync auth_user.email when official_email is updated; also create the account
     // on the spot if the employee still has no user_id (e.g. added without email,

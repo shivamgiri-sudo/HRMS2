@@ -31,7 +31,19 @@
  */
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { assertNotBeforeToday, canBackdateDates } from "../../utils/dateUtils.js";
+import {
+  actorAuthority,
+  applySalaryStartDate,
+  checkSalaryStartDate,
+  commitSalaryStartDate,
+  dayOf,
+  getSalaryStartDateConsistency,
+  normaliseSalaryDate,
+  prepareSalaryStartDate,
+  type ApplySalaryStartDateResult,
+  type PayrollRunRef,
+  type SalaryDateSource,
+} from "../payroll/salary-start-date.service.js";
 import { getEmployeeBgvStatus } from "../employees/employee-bgv.service.js";
 import { buildBankReadinessReport } from "../payroll/bank-payment-readiness.service.js";
 import { createPackage, getPackageById } from "../payroll-masters/payrollMasters.service.js";
@@ -547,111 +559,80 @@ export async function getEmployeeJourney(employeeId: string) {
   };
 }
 
+/**
+ * What a salary-date change tells the caller: the date now stored everywhere, whether it went
+ * before joining / before today (Payroll Head only, with a reason), and any OPEN payroll run that
+ * was already calculated with the old date and therefore needs recalculating.
+ */
+export interface SalaryDateOutcome {
+  salary_start_date: string;
+  changed: boolean;
+  pre_joining: boolean;
+  before_today: boolean;
+  open_runs_to_recalculate: PayrollRunRef[];
+}
+
+function toSalaryDateOutcome(r: ApplySalaryStartDateResult): SalaryDateOutcome {
+  return {
+    salary_start_date: r.newDate,
+    changed: r.changed,
+    pre_joining: r.preJoining,
+    before_today: r.beforeToday,
+    open_runs_to_recalculate: r.openRunsToRecalculate,
+  };
+}
+
+/**
+ * There is exactly one salary start date. Payroll Head assigns it (and may backdate it - before
+ * joining or before today - with a mandatory reason); every copy of it is written together, in
+ * one transaction, by salary-start-date.service.ts, which fails loudly instead of swallowing
+ * errors. This used to be a best-effort helper with `.catch(() => {})`, which silently left
+ * employees.salary_start_date on the joining date whenever Payroll Head backdated (the column's
+ * CHECK constraint refused the write and nobody was told): 70 of 213 HRMS-onboarded employees
+ * ended up with payroll reading a different date from the one Payroll Head assigned.
+ *
+ * Re-saving the date an employee already carries is allowed and repairs any copy that drifted.
+ */
 export async function updateSalaryStartDate(
   employeeId: string,
   newDate: string,
   actorUserId: string,
-  actorRoles?: readonly string[]
-): Promise<{ salary_start_date: string }> {
+  actorRoles?: readonly string[],
+  reason?: string | null
+): Promise<SalaryDateOutcome> {
   const review = await getReviewRow(employeeId);
   if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
 
-  if (!review.candidate_id) {
-    throw httpError("No candidate linked to this employee — cannot update salary start date.", 400, "NO_CANDIDATE");
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+    const result = await applySalaryStartDate(connection, {
+      employeeId,
+      newDate,
+      actorUserId,
+      ...actorAuthority(actorRoles),
+      source: "payroll_head_change_start_date",
+      reason,
+    });
+    await connection.execute(
+      `INSERT INTO employee_payroll_head_review_history
+         (id, employee_id, review_id, action, actor_user_id, rejection_remarks, notified_employee)
+       VALUES (UUID(), ?, ?, 'salary_start_date_updated', ?, ?, 0)`,
+      [
+        employeeId,
+        review.id as string,
+        actorUserId,
+        JSON.stringify({ old_date: result.oldDate, new_date: result.newDate, reason: reason?.trim() ?? null }),
+      ]
+    );
+    await connection.commit();
+    return toSalaryDateOutcome(result);
+  } catch (e) {
+    await connection.rollback();
+    throw e;
+  } finally {
+    connection.release();
   }
-
-  const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT date_of_joining FROM employees WHERE id = ? LIMIT 1`,
-    [employeeId]
-  );
-  const doj = empRows[0]?.date_of_joining as string | null;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate) || isNaN(Date.parse(newDate))) {
-    throw httpError("salary_start_date must be a valid YYYY-MM-DD date.", 400, "INVALID_DATE");
-  }
-  if (doj && new Date(newDate) < new Date(doj)) {
-    throw httpError("Salary start date cannot be before date of joining.", 400, "INVALID_DATE");
-  }
-  await assertSalaryDateLock(employeeId, newDate, actorRoles);
-
-  const [latestRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, salary_start_date FROM ats_payroll_hr_validation
-      WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
-    [review.candidate_id]
-  );
-  if (!latestRows[0]) {
-    throw httpError("No payroll_hr_validation row found for this candidate.", 404, "NOT_FOUND");
-  }
-  const oldDate = (latestRows[0].salary_start_date as string) || null;
-
-  await db.execute(
-    `UPDATE ats_payroll_hr_validation SET salary_start_date = ? WHERE id = ?`,
-    [newDate, latestRows[0].id]
-  );
-
-  // Also keep employees.salary_start_date (what the Employee page shows) in step.
-  // See syncSalaryStartDateEverywhere() -- reused here for the employees.* half only,
-  // since ats_payroll_hr_validation is already updated above by id (this function's
-  // own, more specific lookup) rather than the shared helper's by-candidate lookup.
-  await db.execute(`UPDATE employees SET salary_start_date = ? WHERE id = ?`, [newDate, employeeId])
-    .catch(() => {}); // non-fatal, same reasoning as syncSalaryStartDateEverywhere()
-
-  await writeHistory({
-    employeeId,
-    reviewId: review.id as string,
-    action: "salary_start_date_updated",
-    actorUserId,
-    rejectionRemarks: JSON.stringify({ old_date: oldDate, new_date: newDate }),
-  });
-
-  return { salary_start_date: newDate };
-}
-
-/**
- * There is exactly one salary start date, not three. Payroll HR picks it at offer
- * stage; Payroll Head can change it (including backdating it -- an intentional,
- * supported action, not something to guard against); Payroll HR can separately
- * request a change that Payroll Head approves. Whichever of those happened last is
- * "the" date, and every place that stores or displays it -- the payroll-driving
- * assignment, the review screen's own record, and the employee's own record (what
- * the Employee page shows) -- must reflect it, not a stale copy.
- *
- * Before this, only updateAssignmentEffectiveDate (the "change an already-live
- * assignment" path) wrote back to ats_payroll_hr_validation at all, and NOTHING
- * wrote to employees.salary_start_date after creation. writeComponentAssignment and
- * approveOfferedPackage (the two most common "assign/approve the package" actions)
- * wrote the real date into salary_component_assignments / employee_payroll_head_review
- * / employee_salary_assignment, but never here -- so the review screen and the
- * Employee page both kept showing the ORIGINAL date while actual payroll had already
- * moved on. Confirmed live: 30 of 60 sampled employees already disagreed this way
- * (e.g. ESTUTI ESTUTI: payroll moved to 2026-09-08 when Payroll Head assigned her
- * package, but both other copies of the date stayed on the original 2026-09-11).
- *
- * Each UPDATE is independently non-fatal (existing precedent) -- a missing
- * candidate_id is valid for a direct hire with no ATS offer, and a failed
- * best-effort display sync must never block the real payroll write it follows.
- */
-async function syncSalaryStartDateEverywhere(
-  executor: { execute: (typeof db)['execute'] },
-  employeeId: string,
-  candidateId: string | null | undefined,
-  newDate: string,
-): Promise<void> {
-  if (candidateId) {
-    await executor.execute(
-      `UPDATE ats_payroll_hr_validation SET salary_start_date = ?
-        WHERE candidate_id = ? AND id = (
-          SELECT id FROM (
-            SELECT id FROM ats_payroll_hr_validation
-             WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1
-          ) sub
-        )`,
-      [newDate, candidateId, candidateId]
-    ).catch(() => {}); // non-fatal
-  }
-  await executor.execute(
-    `UPDATE employees SET salary_start_date = ? WHERE id = ?`,
-    [newDate, employeeId]
-  ).catch(() => {}); // non-fatal -- same reasoning as above
 }
 
 export async function updateAssignmentEffectiveDate(
@@ -660,32 +641,32 @@ export async function updateAssignmentEffectiveDate(
   actorUserId: string,
   reason: string,
   actorRoles?: readonly string[]
-): Promise<{ effective_from: string }> {
+): Promise<SalaryDateOutcome & { effective_from: string }> {
   if (!reason || reason.trim().length < 5) {
     throw httpError("Reason is required (min 5 characters).", 400, "REASON_REQUIRED");
   }
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate) || isNaN(Date.parse(newDate))) {
-    throw httpError("effective_date must be a valid YYYY-MM-DD date.", 400, "INVALID_DATE");
-  }
+  const date = normaliseSalaryDate(newDate, "effective_date");
 
-  await assertSalaryDateLock(employeeId, newDate, actorRoles);
   const review = await getReviewRow(employeeId);
   if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
-
-  const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT date_of_joining FROM employees WHERE id = ? LIMIT 1`,
-    [employeeId]
-  );
-  const doj = empRows[0]?.date_of_joining as string | null;
-  if (doj && new Date(newDate) < new Date(doj)) {
-    throw httpError("Effective date cannot be before date of joining.", 400, "INVALID_DATE");
-  }
 
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
 
-    // Lock the active assignment row immediately — prevents two concurrent requests
+    // Decide first (authority, date locks, closed months), write second: once the assignment row
+    // below carries the new date the locks would see it as "already carried".
+    const prepared = await prepareSalaryStartDate(connection, {
+      employeeId,
+      newDate: date,
+      actorUserId,
+      ...actorAuthority(actorRoles),
+      source: "payroll_head_change_assignment_date",
+      reason,
+      assignmentAlreadyWritten: true,
+    });
+
+    // Lock the active assignment row immediately - prevents two concurrent requests
     // from both reading the same row outside the transaction and each inserting a
     // duplicate active assignment (TOCTOU race).
     const [lockedRows] = await connection.execute<RowDataPacket[]>(
@@ -696,52 +677,46 @@ export async function updateAssignmentEffectiveDate(
       [employeeId]
     );
     if (!lockedRows.length) {
-      await connection.rollback();
       throw httpError("No active salary assignment found. Use the ATS salary-start-date path instead.", 404, "NO_ASSIGNMENT");
     }
-    const oldDate = lockedRows[0].effective_from as string;
+    const oldDate = dayOf(lockedRows[0].effective_from);
     const assignmentId = lockedRows[0].id as string;
 
-    if (oldDate === newDate) {
-      await connection.rollback();
-      return { effective_from: newDate };
+    if (oldDate !== date) {
+      // Stamp effective_to on the current assignment.
+      // Guard against effective_to inversion when backdating: if newDate is before
+      // the row's own effective_from, collapse the period to a single day
+      // (effective_from = effective_to) rather than producing an inverted range.
+      await connection.execute(
+        `UPDATE employee_salary_assignment
+            SET active_status = 0,
+                effective_to = CASE
+                  WHEN DATE(?) < DATE(effective_from) THEN DATE(effective_from)
+                  ELSE DATE_SUB(?, INTERVAL 1 DAY)
+                END
+          WHERE id = ?`,
+        [date, date, assignmentId]
+      );
+
+      // Copy current assignment with the new effective_from
+      const [copyRows] = await connection.execute<RowDataPacket[]>(
+        `SELECT * FROM employee_salary_assignment WHERE id = ? LIMIT 1`,
+        [assignmentId]
+      );
+      const old = copyRows[0];
+
+      await connection.execute(
+        `INSERT INTO employee_salary_assignment
+           (employee_id, structure_id, ctc_annual, effective_from, active_status, assigned_by)
+         VALUES (?, ?, ?, ?, 1, ?)`,
+        [employeeId, old.structure_id, old.ctc_annual, date, actorUserId]
+      );
     }
 
-    // Stamp effective_to on the current assignment.
-    // Guard against effective_to inversion when backdating: if newDate is before
-    // the row's own effective_from, collapse the period to a single day
-    // (effective_from = effective_to) rather than producing an inverted range.
-    await connection.execute(
-      `UPDATE employee_salary_assignment
-          SET active_status = 0,
-              effective_to = CASE
-                WHEN DATE(?) < DATE(effective_from) THEN DATE(effective_from)
-                ELSE DATE_SUB(?, INTERVAL 1 DAY)
-              END
-        WHERE id = ?`,
-      [newDate, newDate, assignmentId]
-    );
+    // Every other copy of the date (employees, validation row, package date, component
+    // assignment) follows in the same transaction, then all are read back and verified.
+    const result = await commitSalaryStartDate(connection, prepared);
 
-    // Copy current assignment with the new effective_from
-    const [copyRows] = await connection.execute<RowDataPacket[]>(
-      `SELECT * FROM employee_salary_assignment WHERE id = ? LIMIT 1`,
-      [assignmentId]
-    );
-    const old = copyRows[0];
-
-    await connection.execute(
-      `INSERT INTO employee_salary_assignment
-         (employee_id, structure_id, ctc_annual, effective_from, active_status, assigned_by)
-       VALUES (?, ?, ?, ?, 1, ?)`,
-      [employeeId, old.structure_id, old.ctc_annual, newDate, actorUserId]
-    );
-
-    // Keep ats_payroll_hr_validation.salary_start_date in sync when a candidate
-    // link exists, and employees.salary_start_date too. See
-    // syncSalaryStartDateEverywhere() above for why this matters.
-    await syncSalaryStartDateEverywhere(connection, employeeId, review.candidate_id as string | null, newDate);
-
-    // Audit
     await connection.execute(
       `INSERT INTO employee_payroll_head_review_history
          (id, employee_id, review_id, action, actor_user_id, rejection_remarks, notified_employee)
@@ -750,19 +725,18 @@ export async function updateAssignmentEffectiveDate(
         employeeId,
         review.id as string,
         actorUserId,
-        JSON.stringify({ old_date: oldDate, new_date: newDate, reason: reason.trim() }),
+        JSON.stringify({ old_date: oldDate, new_date: date, reason: reason.trim() }),
       ]
     );
 
     await connection.commit();
+    return { effective_from: date, ...toSalaryDateOutcome(result) };
   } catch (e) {
     await connection.rollback();
     throw e;
   } finally {
     connection.release();
   }
-
-  return { effective_from: newDate };
 }
 
 // ── Salary package actions ──────────────────────────────────────────────────
@@ -781,7 +755,7 @@ export async function updateAssignmentEffectiveDate(
  * approveOfferedPackage is NOT touched: that path copies FROM the offer INTO the assignment,
  * so the offer is already the source of truth there and syncing back would be a no-op at best.
  * Only the catalog/new-package path (writeComponentAssignment) can make the offer stale, so
- * only it needs this. Non-fatal, same reasoning as syncSalaryStartDateEverywhere -- a failed
+ * only it needs this. Non-fatal - a failed
  * best-effort display sync must never block the real payroll write it follows. professional_tax,
  * gratuity, admin_charges and da have no equivalent on a salary_package_master row and are left
  * untouched deliberately -- overwriting them with 0 would be worse than leaving them stale.
@@ -812,111 +786,119 @@ async function syncOfferRecordFromPackage(
   ).catch(() => {}); // non-fatal
 }
 
-/**
- * Date lock for every Payroll Head action that sets a salary start / effective date:
- * a NEW date may not be before today (IST) nor before the date of joining. Re-using a
- * date the employee already carries (Payroll HR's date, the employee record, or the live
- * assignment) is allowed, so already-past pending reviews can still be approved as-is.
- * super_admin / payroll_head are exempt from the not-before-today rule (exception handling).
- */
-async function assertSalaryDateLock(employeeId: string, newDate: string, actorRoles?: readonly string[]): Promise<void> {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.date_of_joining, e.salary_start_date,
-            (SELECT v.salary_start_date FROM ats_payroll_hr_validation v
-              WHERE v.candidate_id = e.candidate_id ORDER BY v.created_at DESC LIMIT 1) AS hr_date,
-            (SELECT a.effective_from FROM employee_salary_assignment a
-              WHERE a.employee_id = e.id AND a.active_status = 1
-              ORDER BY a.effective_from DESC LIMIT 1) AS assign_date
-       FROM employees e WHERE e.id = ? LIMIT 1`,
-    [employeeId]
-  );
-  const r = rows[0];
-  const day = (v: unknown) => (v ? String(v).slice(0, 10) : "");
-  const nd = day(newDate);
-  if (r && [r.salary_start_date, r.hr_date, r.assign_date].some((d) => day(d) === nd)) return;
-  const doj = day(r?.date_of_joining);
-  if (doj && nd && nd < doj) {
-    throw httpError(`Salary date (${nd}) cannot be before date of joining (${doj}).`, 400, "SALARY_START_BEFORE_JOINING");
-  }
-  assertNotBeforeToday(nd, "Salary date", undefined, canBackdateDates(actorRoles));
+interface PackageDateContext {
+  reason?: string | null;
+  roles?: readonly string[];
+  source: SalaryDateSource;
 }
 
+/**
+ * Writes the package the Payroll Head chose and, in the SAME transaction, the salary start date
+ * everywhere it is stored. Before this, each statement auto-committed on its own: a failure part
+ * way left a component assignment with no matching review/assignment date, and the date sync at
+ * the end swallowed its own errors.
+ */
 async function writeComponentAssignment(
   employeeId: string,
   pkg: RowDataPacket,
   effectiveDate: string,
   actorUserId: string,
   approvalReference: string,
-  candidateId: string | null
-) {
-  // Supersede any existing active assignment before writing the new one.
-  // Without this, repeated "Assign" clicks stack multiple active rows and
-  // payroll queries that read WHERE status='active' return the wrong package.
-  await db.execute(
-    `UPDATE salary_component_assignments SET status = 'superseded'
-      WHERE employee_id = ? AND status = 'active'`,
-    [employeeId]
-  );
-  await db.execute(
-    `INSERT INTO salary_component_assignments
-       (id, employee_id, effective_date, package_id,
-        basic, hra, conveyance, special_allowance,
-        bonus, portfolio, medical_allowance, lta, other_allowance, pli,
-        gross, pf_applicable, esi_applicable, employer_pf,
-        employer_esi, pf_employee, esic_employee, ctc, net_estimate, assigned_by,
-        assigned_at, approval_reference, status)
-     VALUES (UUID(), ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
-    [
-      employeeId, effectiveDate, pkg.id,
-      pkg.basic, pkg.hra, pkg.conveyance, pkg.special_allowance ?? 0,
-      pkg.bonus ?? 0, pkg.portfolio ?? 0, pkg.medical ?? 0, pkg.lta ?? 0,
-      pkg.other_allowance ?? 0, pkg.pli ?? 0,
-      pkg.gross,
-      Number(pkg.epf_employee) > 0 ? 1 : 0, Number(pkg.esic_employee) > 0 ? 1 : 0,
-      pkg.epf_employer, pkg.esic_employer, pkg.epf_employee, pkg.esic_employee,
-      pkg.ctc, pkg.net_in_hand,
-      actorUserId, approvalReference,
-    ]
-  );
-  // package_effective_from is set here too, from the SAME date — accept() no
-  // longer takes its own independent date. Before 1542 these were two
-  // separately-entered dates that could disagree; only this one was ever
-  // actually read by payroll, so the other was pure display drift waiting to
-  // happen.
-  await db.execute(
-    `UPDATE employee_payroll_head_review SET salary_package_id = ?, package_accepted = 0,
-            package_accepted_by = NULL, package_accepted_at = NULL, package_effective_from = ?
-      WHERE employee_id = ?`,
-    [pkg.id, effectiveDate, employeeId]
-  );
+  candidateId: string | null,
+  ctx: PackageDateContext
+): Promise<SalaryDateOutcome> {
+  const connection = await db.getConnection();
+  let outcome: SalaryDateOutcome;
+  try {
+    await connection.beginTransaction();
 
-  // Keep employee_salary_assignment.ctc_annual in sync with the package CTC so
-  // salary slips and CTC reports show the Payroll Head's confirmed figure, not
-  // the original offer CTC. Payroll calculation uses salary_component_assignments
-  // (gross) directly, so this does not affect the payable amount — it only
-  // corrects the display field. Only updates when a row already exists; a missing
-  // ESA row is a creation-orchestrator gap, not something to write here silently.
-  await db.execute(
-    `UPDATE employee_salary_assignment
-        SET ctc_annual = ?, effective_from = ?, updated_at = NOW()
-      WHERE employee_id = ? AND active_status = 1
-      LIMIT 1`,
-    [Number(pkg.package_amount ?? (pkg.ctc ?? 0)) * 12, effectiveDate, employeeId]
-  ).catch((e) => console.warn('[payroll-head-review] could not sync ESA ctc_annual:', e));
+    // Validate before any write (see updateAssignmentEffectiveDate for why the order matters).
+    const prepared = await prepareSalaryStartDate(connection, {
+      employeeId,
+      newDate: effectiveDate,
+      actorUserId,
+      ...actorAuthority(ctx.roles),
+      source: ctx.source,
+      reason: ctx.reason,
+      assignmentAlreadyWritten: true,
+    });
 
-  // See syncSalaryStartDateEverywhere() -- keeps the review screen and the Employee
-  // page from going stale the moment Payroll Head assigns/changes a package here.
-  await syncSalaryStartDateEverywhere(db, employeeId, candidateId, effectiveDate);
+    // Supersede any existing active assignment before writing the new one.
+    // Without this, repeated "Assign" clicks stack multiple active rows and
+    // payroll queries that read WHERE status='active' return the wrong package.
+    await connection.execute(
+      `UPDATE salary_component_assignments SET status = 'superseded'
+        WHERE employee_id = ? AND status = 'active'`,
+      [employeeId]
+    );
+    await connection.execute(
+      `INSERT INTO salary_component_assignments
+         (id, employee_id, effective_date, package_id,
+          basic, hra, conveyance, special_allowance,
+          bonus, portfolio, medical_allowance, lta, other_allowance, pli,
+          gross, pf_applicable, esi_applicable, employer_pf,
+          employer_esi, pf_employee, esic_employee, ctc, net_estimate, assigned_by,
+          assigned_at, approval_reference, status)
+       VALUES (UUID(), ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
+      [
+        employeeId, effectiveDate, pkg.id,
+        pkg.basic, pkg.hra, pkg.conveyance, pkg.special_allowance ?? 0,
+        pkg.bonus ?? 0, pkg.portfolio ?? 0, pkg.medical ?? 0, pkg.lta ?? 0,
+        pkg.other_allowance ?? 0, pkg.pli ?? 0,
+        pkg.gross,
+        Number(pkg.epf_employee) > 0 ? 1 : 0, Number(pkg.esic_employee) > 0 ? 1 : 0,
+        pkg.epf_employer, pkg.esic_employer, pkg.epf_employee, pkg.esic_employee,
+        pkg.ctc, pkg.net_in_hand,
+        actorUserId, approvalReference,
+      ]
+    );
+    // package_effective_from is set here too, from the SAME date - accept() no
+    // longer takes its own independent date. Before 1542 these were two
+    // separately-entered dates that could disagree; only this one was ever
+    // actually read by payroll, so the other was pure display drift waiting to
+    // happen.
+    await connection.execute(
+      `UPDATE employee_payroll_head_review SET salary_package_id = ?, package_accepted = 0,
+              package_accepted_by = NULL, package_accepted_at = NULL, package_effective_from = ?
+        WHERE employee_id = ?`,
+      [pkg.id, effectiveDate, employeeId]
+    );
+
+    // Keep employee_salary_assignment.ctc_annual in sync with the package CTC so
+    // salary slips and CTC reports show the Payroll Head's confirmed figure, not
+    // the original offer CTC. Payroll calculation uses salary_component_assignments
+    // (gross) directly, so this does not affect the payable amount - it only
+    // corrects the display field. Only updates when a row already exists; a missing
+    // ESA row is a creation-orchestrator gap, not something to write here silently.
+    // No error swallowing: a failure here must roll the whole package back, not leave the
+    // assignment date behind. ORDER BY makes it the row payroll picks first.
+    await connection.execute(
+      `UPDATE employee_salary_assignment
+          SET ctc_annual = ?, effective_from = ?, updated_at = NOW()
+        WHERE employee_id = ? AND active_status = 1
+        ORDER BY effective_from DESC
+        LIMIT 1`,
+      [Number(pkg.package_amount ?? (pkg.ctc ?? 0)) * 12, effectiveDate, employeeId]
+    );
+
+    outcome = toSalaryDateOutcome(await commitSalaryStartDate(connection, prepared));
+    await connection.commit();
+  } catch (e) {
+    await connection.rollback();
+    throw e;
+  } finally {
+    connection.release();
+  }
 
   // See syncOfferRecordFromPackage() -- keeps the ORIGINAL offer row from going stale
-  // (e.g. still showing ₹0) the moment Payroll Head assigns a real catalog package here.
+  // (e.g. still showing 0) the moment Payroll Head assigns a real catalog package here.
   await syncOfferRecordFromPackage(candidateId, pkg);
+  return outcome;
 }
 
 export async function assignPackage(
-  employeeId: string, packageId: string, effectiveDate: string, actorUserId: string, actorRoles?: readonly string[]
+  employeeId: string, packageId: string, effectiveDate: string, actorUserId: string, actorRoles?: readonly string[], reason?: string | null
 ) {
-  await assertSalaryDateLock(employeeId, effectiveDate, actorRoles);
   const review = await getReviewRow(employeeId);
   if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
   if (review.status !== "pending_review") {
@@ -924,27 +906,42 @@ export async function assignPackage(
   }
   const pkg = await getPackageById(packageId);
   if (!pkg) throw httpError("Salary package not found.", 404, "PACKAGE_NOT_FOUND");
-  await writeComponentAssignment(employeeId, pkg as RowDataPacket, effectiveDate, actorUserId, review.id, review.candidate_id as string | null);
-  await audit(actorUserId, "PAYROLL_HEAD_PACKAGE_ASSIGNED", employeeId, { package_id: packageId, effective_date: effectiveDate });
-  return { review: await getReviewRow(employeeId) };
+  const salary_date = await writeComponentAssignment(
+    employeeId, pkg as RowDataPacket, effectiveDate, actorUserId, review.id, review.candidate_id as string | null,
+    { reason, roles: actorRoles, source: "payroll_head_assign_package" }
+  );
+  await audit(actorUserId, "PAYROLL_HEAD_PACKAGE_ASSIGNED", employeeId, { package_id: packageId, effective_date: effectiveDate, reason: reason ?? null });
+  return { review: await getReviewRow(employeeId), salary_date };
 }
 
 export async function createAndAssignPackage(
-  employeeId: string, packageData: Record<string, unknown>, effectiveDate: string, actorUserId: string, actorRoles?: readonly string[]
+  employeeId: string, packageData: Record<string, unknown>, effectiveDate: string, actorUserId: string, actorRoles?: readonly string[], reason?: string | null
 ) {
-  await assertSalaryDateLock(employeeId, effectiveDate, actorRoles);
   const review = await getReviewRow(employeeId);
   if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
   if (review.status !== "pending_review") {
     throw httpError("Package can only be assigned while the review is pending.", 409, "NOT_PENDING");
   }
-  // createPackage() is reused UNCHANGED — new packages always land in the shared
+  // Validate the date (authority, date locks, reason, closed payroll months) BEFORE creating the
+  // catalog package, so a refused date cannot leave an orphan package behind on every retry.
+  await checkSalaryStartDate({
+    employeeId,
+    newDate: effectiveDate,
+    actorUserId,
+    ...actorAuthority(actorRoles),
+    source: "payroll_head_create_and_assign_package",
+    reason,
+  });
+  // createPackage() is reused UNCHANGED - new packages always land in the shared
   // reusable catalog (salary_package_master), never as a one-off row, per the
   // explicit decision that package assignment stays catalog-only.
   const pkg = await createPackage(packageData, actorUserId);
-  await writeComponentAssignment(employeeId, pkg as RowDataPacket, effectiveDate, actorUserId, review.id, review.candidate_id as string | null);
-  await audit(actorUserId, "PAYROLL_HEAD_PACKAGE_CREATED_AND_ASSIGNED", employeeId, { package_id: (pkg as RowDataPacket).id, effective_date: effectiveDate });
-  return { review: await getReviewRow(employeeId) };
+  const salary_date = await writeComponentAssignment(
+    employeeId, pkg as RowDataPacket, effectiveDate, actorUserId, review.id, review.candidate_id as string | null,
+    { reason, roles: actorRoles, source: "payroll_head_create_and_assign_package" }
+  );
+  await audit(actorUserId, "PAYROLL_HEAD_PACKAGE_CREATED_AND_ASSIGNED", employeeId, { package_id: (pkg as RowDataPacket).id, effective_date: effectiveDate, reason: reason ?? null });
+  return { review: await getReviewRow(employeeId), salary_date };
 }
 
 export async function acceptPackage(employeeId: string, actorUserId: string) {
@@ -970,9 +967,11 @@ export async function acceptPackage(employeeId: string, actorUserId: string) {
  * One-click approval: copies the offered salary from ats_employment_offer directly
  * to salary_component_assignments without creating a new package in the catalog.
  * This is the fast-path when Payroll Head accepts the Branch HR's suggested package as-is.
+ * Writes the package and every copy of the salary start date in one transaction.
  */
-export async function approveOfferedPackage(employeeId: string, effectiveDate: string, actorUserId: string, actorRoles?: readonly string[]) {
-  await assertSalaryDateLock(employeeId, effectiveDate, actorRoles);
+export async function approveOfferedPackage(
+  employeeId: string, effectiveDate: string, actorUserId: string, actorRoles?: readonly string[], reason?: string | null
+) {
   const review = await getReviewRow(employeeId);
   if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
   if (review.status !== "pending_review") {
@@ -991,60 +990,83 @@ export async function approveOfferedPackage(employeeId: string, effectiveDate: s
     throw httpError("No employment offer found for this candidate.", 404, "NO_OFFER");
   }
 
-  // Write directly to salary_component_assignments from offer values (no catalog package)
-  await db.execute(
-    `INSERT INTO salary_component_assignments
-       (id, employee_id, effective_date, package_id,
-        basic, hra, conveyance, special_allowance,
-        bonus, portfolio, medical_allowance, lta, other_allowance, pli,
-        gross, pf_applicable, esi_applicable, employer_pf,
-        employer_esi, pf_employee, esic_employee, ctc, net_estimate, assigned_by,
-        assigned_at, approval_reference, status)
-     VALUES (UUID(), ?, ?, NULL,  ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
-    [
-      employeeId, effectiveDate,
-      offer.basic ?? 0, offer.hra ?? 0, offer.conveyance ?? 0, offer.special_allowance ?? 0,
-      offer.bonus ?? 0, offer.portfolio ?? 0, offer.medical ?? 0, offer.lta ?? 0,
-      offer.other_allowance ?? 0, offer.pli ?? 0,
-      offer.gross ?? 0,
-      Number(offer.pf_employee) > 0 ? 1 : 0, Number(offer.esic_employee) > 0 ? 1 : 0,
-      offer.pf_employer ?? 0, offer.esic_employer ?? 0, offer.pf_employee ?? 0, offer.esic_employee ?? 0,
-      offer.offered_ctc ?? 0, offer.net_in_hand ?? 0,
-      actorUserId, review.id,
-    ]
-  );
+  const connection = await db.getConnection();
+  let salary_date: SalaryDateOutcome;
+  try {
+    await connection.beginTransaction();
 
-  // Mark review as having an accepted package (skip the assign+accept two-step)
-  await db.execute(
-    `UPDATE employee_payroll_head_review
-        SET salary_package_id = NULL, package_accepted = 1, package_accepted_by = ?,
-            package_accepted_at = NOW(), package_effective_from = ?
-      WHERE employee_id = ?`,
-    [actorUserId, effectiveDate, employeeId]
-  );
+    const prepared = await prepareSalaryStartDate(connection, {
+      employeeId,
+      newDate: effectiveDate,
+      actorUserId,
+      ...actorAuthority(actorRoles),
+      source: "payroll_head_approve_offered",
+      reason,
+      assignmentAlreadyWritten: true,
+    });
 
-  // Sync employee_salary_assignment.ctc_annual
-  await db.execute(
-    `UPDATE employee_salary_assignment
-        SET ctc_annual = ?, effective_from = ?, updated_at = NOW()
-      WHERE employee_id = ? AND active_status = 1
-      LIMIT 1`,
-    [Number(offer.offered_ctc ?? 0) * 12, effectiveDate, employeeId]
-  ).catch((e) => console.warn('[payroll-head-review] could not sync ESA ctc_annual:', e));
+    // Write directly to salary_component_assignments from offer values (no catalog package)
+    await connection.execute(
+      `INSERT INTO salary_component_assignments
+         (id, employee_id, effective_date, package_id,
+          basic, hra, conveyance, special_allowance,
+          bonus, portfolio, medical_allowance, lta, other_allowance, pli,
+          gross, pf_applicable, esi_applicable, employer_pf,
+          employer_esi, pf_employee, esic_employee, ctc, net_estimate, assigned_by,
+          assigned_at, approval_reference, status)
+       VALUES (UUID(), ?, ?, NULL,  ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
+      [
+        employeeId, effectiveDate,
+        offer.basic ?? 0, offer.hra ?? 0, offer.conveyance ?? 0, offer.special_allowance ?? 0,
+        offer.bonus ?? 0, offer.portfolio ?? 0, offer.medical ?? 0, offer.lta ?? 0,
+        offer.other_allowance ?? 0, offer.pli ?? 0,
+        offer.gross ?? 0,
+        Number(offer.pf_employee) > 0 ? 1 : 0, Number(offer.esic_employee) > 0 ? 1 : 0,
+        offer.pf_employer ?? 0, offer.esic_employer ?? 0, offer.pf_employee ?? 0, offer.esic_employee ?? 0,
+        offer.offered_ctc ?? 0, offer.net_in_hand ?? 0,
+        actorUserId, review.id,
+      ]
+    );
 
-  // See syncSalaryStartDateEverywhere() -- keeps the review screen and the Employee
-  // page from going stale the moment Payroll Head one-click-approves the offered package.
-  await syncSalaryStartDateEverywhere(db, employeeId, review.candidate_id as string | null, effectiveDate);
+    // Mark review as having an accepted package (skip the assign+accept two-step)
+    await connection.execute(
+      `UPDATE employee_payroll_head_review
+          SET salary_package_id = NULL, package_accepted = 1, package_accepted_by = ?,
+              package_accepted_at = NOW(), package_effective_from = ?
+        WHERE employee_id = ?`,
+      [actorUserId, effectiveDate, employeeId]
+    );
+
+    // Sync employee_salary_assignment.ctc_annual and its effective date. Not swallowed: a
+    // failure rolls the whole approval back instead of leaving the assignment on the old date.
+    await connection.execute(
+      `UPDATE employee_salary_assignment
+          SET ctc_annual = ?, effective_from = ?, updated_at = NOW()
+        WHERE employee_id = ? AND active_status = 1
+        ORDER BY effective_from DESC
+        LIMIT 1`,
+      [Number(offer.offered_ctc ?? 0) * 12, effectiveDate, employeeId]
+    );
+
+    salary_date = toSalaryDateOutcome(await commitSalaryStartDate(connection, prepared));
+    await connection.commit();
+  } catch (e) {
+    await connection.rollback();
+    throw e;
+  } finally {
+    connection.release();
+  }
 
   await audit(actorUserId, "PAYROLL_HEAD_OFFERED_PACKAGE_APPROVED", employeeId, {
     offer_id: offer.id,
     effective_date: effectiveDate,
+    reason: reason ?? null,
     ctc: offer.offered_ctc,
     gross: offer.gross,
     net_in_hand: offer.net_in_hand,
   });
 
-  return { review: await getReviewRow(employeeId) };
+  return { review: await getReviewRow(employeeId), salary_date };
 }
 
 // ── Notification helpers ─────────────────────────────────────────────────────
@@ -1109,6 +1131,18 @@ export async function approve(employeeId: string, actorUserId: string) {
   }
   if (!review.package_accepted) {
     throw httpError("Salary package must be accepted before approval.", 409, "PACKAGE_NOT_ACCEPTED");
+  }
+  // Last line of defence: never approve a salary whose start date disagrees between the employee
+  // record (what payroll reads), the HR validation row, the package date and the assignment.
+  // Re-saving the salary start date repairs every copy.
+  const dateCheck = await getSalaryStartDateConsistency(db, employeeId);
+  if (!dateCheck.consistent) {
+    throw httpError(
+      `Salary start date is not the same across this employee's records (${dateCheck.problems.join("; ")}). ` +
+        "Re-save the salary start date to repair it, then approve again.",
+      409,
+      "SALARY_DATE_INCONSISTENT"
+    );
   }
   // Atomic: the WHERE clause re-checks status at the moment of the write, not
   // just at the SELECT above. Two concurrent actions on the same employee

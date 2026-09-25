@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { createEmployeeSchema, employeeFiltersSchema, updateEmployeeSchema } from "./employee.validation.js";
 import { employeeService } from "./employee.service.js";
 import { redactEmployeeIdentifiers } from "../../shared/employeeIdentifierRedaction.js";
+import { actorAuthority } from "../payroll/salary-start-date.service.js";
 
 export const employeeController = {
   async createEmployee(req: Request, res: Response) {
@@ -35,7 +36,8 @@ export const employeeController = {
   async updateEmployee(req: Request, res: Response) {
     const parsed = updateEmployeeSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const data = await employeeService.updateEmployee(req.params.id, parsed.data, (req as any).authUser?.id ?? "system");
+    const roles = ((req as any).userRoles ?? (req as any).authUser?.roles ?? []) as string[];
+    const data = await employeeService.updateEmployee(req.params.id, parsed.data, (req as any).authUser?.id ?? "system", actorAuthority(roles));
     res.json({ data });
   },
 

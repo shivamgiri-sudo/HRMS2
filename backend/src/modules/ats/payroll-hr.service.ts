@@ -2,6 +2,7 @@ import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'crypto';
 import { assertNotBeforeToday, canBackdateDates } from '../../utils/dateUtils.js';
+import { assertSalaryDateNotOwnedByPayrollHead } from '../payroll/salary-start-date.service.js';
 import { sendBranchHeadApprovalEmail } from './ats.email.service.js';
 import { triggerOfferApprovalPending } from '../work-inbox/work-inbox.triggers.js';
 
@@ -245,6 +246,8 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
     const allowPast = canBackdateDates(input.actor_roles);
     assertNotBeforeToday(input.joining_date, 'joining_date', prevVal?.joining_date, allowPast);
     assertNotBeforeToday(salaryStartDate, 'salary_start_date', prevVal?.salary_start_date, allowPast);
+    // After Payroll Head approves the salary the date is theirs - refuse before anything is written.
+    await assertSalaryDateNotOwnedByPayrollHead(connection, input.candidate_id, salaryStartDate);
 
     const [slabRowsRaw] = await connection.execute(
       `SELECT id, range_from, range_to, active_status FROM salary_slab_master WHERE id = ? LIMIT 1`,

@@ -3,110 +3,135 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * There is exactly one salary start date, not three. Payroll HR picks it at offer
- * stage; Payroll Head can change it (including backdating it -- an intentional,
- * supported action, confirmed directly by the user, not something to validate
- * against); Payroll HR can separately request a change that Payroll Head approves.
- * Whichever of those happened last is "the" date, and every place that stores or
- * displays it must reflect it -- the payroll-driving assignment
- * (employee_salary_assignment.effective_from), the review screen's own record
- * (ats_payroll_hr_validation.salary_start_date), and the employee's own record
- * (employees.salary_start_date, what the Employee page shows).
+ * There is exactly one salary start date. Payroll Head assigns it (and may backdate it, before
+ * joining or before today, with a mandatory reason - owner decision 2026-09-25); every stored copy
+ * of it - employees.salary_start_date (what payroll reads), the ATS validation row, the package
+ * date, the salary assignment and the component assignment - is written together, in ONE
+ * transaction, by salary-start-date.service.ts.
  *
- * Before this fix, only updateAssignmentEffectiveDate wrote back to
- * ats_payroll_hr_validation, and NOTHING wrote to employees.salary_start_date after
- * creation. writeComponentAssignment (assignPackage/createAndAssignPackage) and
- * approveOfferedPackage -- the two most common "assign/approve the package" actions
- * -- wrote the real date into the payroll-driving tables but never the other two, so
- * the review screen and the Employee page both kept showing the ORIGINAL date after
- * Payroll Head had already moved payroll on. Confirmed live: 30 of 60 sampled
- * employees already disagreed this way (e.g. ESTUTI ESTUTI: payroll moved to
- * 2026-09-08 when Payroll Head assigned her package, but both other copies of the
- * date stayed on the original 2026-09-11).
+ * History: this file used to pin a best-effort helper, syncSalaryStartDateEverywhere, whose writes
+ * ended in `.catch(() => {})`. Payroll Head's backdated date hit the CHECK constraint on
+ * employees.salary_start_date, the error was swallowed, and payroll kept reading the joining date:
+ * 73 of 213 HRMS-onboarded employees (395 backdated days) ended up paid on a different date from
+ * the one Payroll Head assigned. The contracts below pin the replacement so it cannot regress to a
+ * swallowed, non-atomic write.
  *
- * IMPORTANT: an earlier version of this fix mistakenly assumed
- * employee_salary_assignment.effective_from was always the one, ground-truth date
- * and synced the OTHER two fields to match it -- which is backwards when Payroll
- * Head's own package-assignment date is itself the stale/wrong one (as it was for
- * ESTUTI, whose payroll got backdated to before her own joining date by a Payroll
- * Head action with no upstream cause). The correct fix propagates whatever date was
- * JUST set by the action that ran (not a fixed direction), and does not add any
- * "can't be before date of joining" validation to the package-assignment paths --
- * that would contradict the confirmed-intentional backdating feature.
+ * The behaviour of the central service itself is tested in
+ * payroll/__tests__/salary-start-date.service.test.ts.
  */
 const SERVICE = readFileSync(
-  resolve(process.cwd(), "src/modules/payroll-head-review/payroll-head-review.service.ts"),
+  resolve(
+    process.cwd(),
+    "src/modules/payroll-head-review/payroll-head-review.service.ts",
+  ),
   "utf8",
 );
 
-describe("salary start date stays in sync across all three of its copies", () => {
-  it("defines one shared, non-fatal sync helper that updates both the validation row and employees.salary_start_date", () => {
-    expect(SERVICE).toMatch(/async function syncSalaryStartDateEverywhere\(/);
-    const helper = SERVICE.slice(
-      SERVICE.indexOf("async function syncSalaryStartDateEverywhere("),
-      SERVICE.indexOf("export async function updateAssignmentEffectiveDate("),
-    );
-    // Non-fatal: a missing candidate_id is valid for a direct hire with no ATS offer,
-    // and a failed best-effort display sync must never block the real payroll write.
-    expect(helper).toMatch(/if \(candidateId\)/);
-    expect(helper).toContain("UPDATE ats_payroll_hr_validation SET salary_start_date");
-    expect(helper).toContain("UPDATE employees SET salary_start_date");
-    expect((helper.match(/\.catch\(\(\) => \{\}\)/g) ?? []).length).toBeGreaterThanOrEqual(2);
+/** Source of one function, from its declaration to the next top-level declaration. */
+function bodyOf(name: string): string {
+  const start = SERVICE.search(
+    new RegExp(`(export )?async function ${name}\\(`),
+  );
+  expect(start, `${name} not found`).toBeGreaterThanOrEqual(0);
+  const rest = SERVICE.slice(start + 10);
+  const next = rest.search(
+    /\n(export )?(async )?function |\nexport async function |\n\/\*\*\n/,
+  );
+  return SERVICE.slice(start, next < 0 ? undefined : start + 10 + next);
+}
+
+describe("salary start date is written once, atomically, by the central service", () => {
+  it("no longer has the swallowing best-effort helper or the old date lock", () => {
+    expect(SERVICE).not.toContain("syncSalaryStartDateEverywhere(");
+    expect(SERVICE).not.toContain("assertSalaryDateLock(");
   });
 
-  it("does NOT reject a date before date_of_joining in the shared helper -- backdating is intentional", () => {
-    const helper = SERVICE.slice(
-      SERVICE.indexOf("async function syncSalaryStartDateEverywhere("),
-      SERVICE.indexOf("export async function updateAssignmentEffectiveDate("),
-    );
-    expect(helper).not.toMatch(/date_of_joining/);
-    expect(helper).not.toMatch(/cannot be before/i);
+  it("imports the central service", () => {
+    expect(SERVICE).toContain('from "../payroll/salary-start-date.service.js"');
   });
 
-  it("writeComponentAssignment (assignPackage / createAndAssignPackage) syncs all copies of the date", () => {
-    const fn = SERVICE.slice(
-      SERVICE.indexOf("async function writeComponentAssignment("),
-      SERVICE.indexOf("export async function assignPackage"),
+  it("writeComponentAssignment (assign / create-and-assign) validates first, writes in one transaction, then commits the date everywhere", () => {
+    const fn = bodyOf("writeComponentAssignment");
+    expect(fn).toContain("connection.beginTransaction()");
+    expect(fn).toContain("...actorAuthority(ctx.roles)");
+    // Validation must precede the first write, otherwise the locks see the fresh date as "already carried".
+    expect(fn.indexOf("prepareSalaryStartDate(")).toBeGreaterThan(-1);
+    expect(fn.indexOf("prepareSalaryStartDate(")).toBeLessThan(
+      fn.indexOf("INSERT INTO salary_component_assignments"),
     );
-    expect(fn).toMatch(/await syncSalaryStartDateEverywhere\(db, employeeId, candidateId, effectiveDate\);/);
+    expect(fn.indexOf("commitSalaryStartDate(")).toBeGreaterThan(
+      fn.indexOf("UPDATE employee_salary_assignment"),
+    );
+    expect(fn.indexOf("commitSalaryStartDate(")).toBeLessThan(
+      fn.indexOf("connection.commit()"),
+    );
+    expect(fn).toContain("connection.rollback()");
   });
 
-  it("both writeComponentAssignment callers pass the real candidate_id through", () => {
-    const assignBlock = SERVICE.slice(
-      SERVICE.indexOf("export async function assignPackage"),
-      SERVICE.indexOf("export async function createAndAssignPackage"),
+  it("approveOfferedPackage (one-click approval) does the same", () => {
+    const fn = bodyOf("approveOfferedPackage");
+    expect(fn).toContain("connection.beginTransaction()");
+    expect(fn.indexOf("prepareSalaryStartDate(")).toBeLessThan(
+      fn.indexOf("INSERT INTO salary_component_assignments"),
     );
-    expect(assignBlock).toMatch(/writeComponentAssignment\([^)]*review\.candidate_id/s);
-
-    const createAndAssignBlock = SERVICE.slice(
-      SERVICE.indexOf("export async function createAndAssignPackage"),
-      SERVICE.indexOf("export async function acceptPackage"),
+    expect(fn.indexOf("commitSalaryStartDate(")).toBeLessThan(
+      fn.indexOf("connection.commit()"),
     );
-    expect(createAndAssignBlock).toMatch(/writeComponentAssignment\([^)]*review\.candidate_id/s);
+    expect(fn).toContain("connection.rollback()");
   });
 
-  it("approveOfferedPackage (the one-click approval path) syncs all copies of the date too", () => {
-    const fn = SERVICE.slice(
-      SERVICE.indexOf("export async function approveOfferedPackage"),
-      SERVICE.indexOf("// ── Notification helpers"),
+  it("updateAssignmentEffectiveDate validates first and commits the date everywhere inside its transaction", () => {
+    const fn = bodyOf("updateAssignmentEffectiveDate");
+    expect(fn.indexOf("prepareSalaryStartDate(")).toBeGreaterThan(-1);
+    expect(fn.indexOf("prepareSalaryStartDate(")).toBeLessThan(
+      fn.indexOf("INSERT INTO employee_salary_assignment"),
     );
-    expect(fn).toMatch(/await syncSalaryStartDateEverywhere\(db, employeeId, review\.candidate_id[^,]*, effectiveDate\);/);
+    expect(fn.indexOf("commitSalaryStartDate(")).toBeGreaterThan(
+      fn.indexOf("INSERT INTO employee_salary_assignment"),
+    );
+    expect(fn.indexOf("commitSalaryStartDate(")).toBeLessThan(
+      fn.indexOf("connection.commit()"),
+    );
   });
 
-  it("updateAssignmentEffectiveDate still syncs via the shared helper (behavior-preserving rename)", () => {
-    const fn = SERVICE.slice(
-      SERVICE.indexOf("export async function updateAssignmentEffectiveDate("),
-      SERVICE.indexOf("// ── Salary package actions"),
-    );
-    expect(fn).toMatch(/await syncSalaryStartDateEverywhere\(connection, employeeId, review\.candidate_id[^,]*, newDate\);/);
+  it("updateSalaryStartDate delegates every copy to the central service inside a transaction", () => {
+    const fn = bodyOf("updateSalaryStartDate");
+    expect(fn).toContain("applySalaryStartDate(connection");
+    expect(fn).toContain('source: "payroll_head_change_start_date"');
+    expect(fn).toContain("connection.beginTransaction()");
+    expect(fn).toContain("connection.commit()");
+    // The old body updated validation and employees by hand.
+    expect(fn).not.toContain("UPDATE employees SET salary_start_date");
+    expect(fn).not.toContain("UPDATE ats_payroll_hr_validation");
   });
 
-  it("updateSalaryStartDate (Payroll HR request / Payroll Head approval path) now also updates employees.salary_start_date", () => {
-    const fn = SERVICE.slice(
-      SERVICE.indexOf("export async function updateSalaryStartDate("),
-      SERVICE.indexOf("/**\n * There is exactly one salary start date"),
+  it("no date-related write in this file swallows its error", () => {
+    for (const name of [
+      "writeComponentAssignment",
+      "approveOfferedPackage",
+      "updateAssignmentEffectiveDate",
+      "updateSalaryStartDate",
+    ]) {
+      expect(bodyOf(name), `${name} swallows an error`).not.toMatch(
+        /\.catch\(\(\) => \{\}\)/,
+      );
+      expect(bodyOf(name), `${name} swallows an error`).not.toMatch(
+        /\.catch\(\(e\) => console\.warn\('\[payroll-head-review\] could not sync ESA/,
+      );
+    }
+  });
+
+  it("approve() refuses a review whose salary start date disagrees across the employee's records", () => {
+    const fn = bodyOf("approve");
+    expect(fn).toContain("getSalaryStartDateConsistency(db, employeeId)");
+    expect(fn).toContain("SALARY_DATE_INCONSISTENT");
+    expect(fn.indexOf("getSalaryStartDateConsistency")).toBeLessThan(
+      fn.indexOf("UPDATE employee_payroll_head_review SET status = 'approved'"),
     );
-    expect(fn).toContain("UPDATE ats_payroll_hr_validation SET salary_start_date = ? WHERE id = ?");
-    expect(fn).toMatch(/UPDATE employees SET salary_start_date = \?/);
+  });
+
+  it("does not reintroduce a hard 'before joining' rejection for Payroll Head paths - the central service owns that rule", () => {
+    expect(SERVICE).not.toContain("cannot be before date of joining");
+    expect(SERVICE).not.toContain("SALARY_START_BEFORE_JOINING");
   });
 });

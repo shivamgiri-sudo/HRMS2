@@ -14,3 +14,15 @@ export function useDateLockMin(): string | undefined {
   const { hasAnyRole } = useWorkforceAccess();
   return hasAnyRole('payroll_head', 'super_admin') ? undefined : todayIst();
 }
+
+/**
+ * A salary date before today or before the date of joining can only be picked by payroll_head /
+ * super_admin (see useDateLockMin) and the server then requires a written reason (REASON_REQUIRED).
+ * Both dates are YYYY-MM-DD; a missing joining date only leaves the before-today rule.
+ */
+export function backdateNeedsReason(date: string, joiningDate?: string | null): boolean {
+  const d = (date ?? '').slice(0, 10);
+  if (!d) return false;
+  const doj = (joiningDate ?? '').slice(0, 10);
+  return d < todayIst() || (!!doj && d < doj);
+}

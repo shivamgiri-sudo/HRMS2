@@ -6,6 +6,7 @@ import { convertCandidateToEmployee } from "./ats.convert.service.js";
 import { classifyEsignState } from "./esignState.js";
 import { syncEsignStatus } from "../integrations/luckpay/luckpay-status.service.js";
 import { assertNotBeforeToday, canBackdateDates } from "../../utils/dateUtils.js";
+import { assertSalaryDateNotOwnedByPayrollHead, checkSalaryStartDateForCandidate, syncSalaryStartDateForCandidate } from "../payroll/salary-start-date.service.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -496,6 +497,21 @@ export async function savePayrollControlRoomDetails(candidateId: string, input: 
   // Date lock: a salary start date cannot be moved to before today (re-saving the offer's own date is fine).
   assertNotBeforeToday(salaryStartDate, "Salary start date", originalSalaryDate, canBackdateDates(actorRoles));
 
+  // Once Payroll Head has approved the salary the date is theirs: refuse BEFORE writing anything,
+  // otherwise this would change only the validation row and leave payroll reading another date.
+  await assertSalaryDateNotOwnedByPayrollHead(db, candidateId, salaryStartDate);
+  // If the employee record already exists, run every other rule (closed payroll months, date locks)
+  // now, before the validation row is written - a refusal after the write would leave that row on
+  // the new date while the employee, package and assignment stay on the old one.
+  if (salaryStartDate) {
+    await checkSalaryStartDateForCandidate({
+      candidateId,
+      newDate: salaryStartDate,
+      actorUserId: actorId,
+      source: "joining_control_room",
+    });
+  }
+
   // Check if ats_payroll_hr_validation row exists; if not, seed minimal record from offer
   const [existingRows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM ats_payroll_hr_validation WHERE candidate_id = ? LIMIT 1`,
@@ -585,6 +601,17 @@ export async function savePayrollControlRoomDetails(candidateId: string, input: 
         candidateId,
       ],
     );
+  }
+
+  // If the employee record already exists (salary review still pending) carry the date to every
+  // other copy in one transaction. Returns null - and does nothing - before employee creation.
+  if (salaryStartDate) {
+    await syncSalaryStartDateForCandidate({
+      candidateId,
+      newDate: salaryStartDate,
+      actorUserId: actorId,
+      source: "joining_control_room",
+    });
   }
 
   // Auto-lock the salary register the moment Payroll HR validates for payroll,
