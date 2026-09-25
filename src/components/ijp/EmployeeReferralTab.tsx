@@ -66,7 +66,7 @@ const EMPTY: FormState = {
 };
 
 const selectClass =
-  "h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm";
+  "h-11 w-full rounded-md border border-slate-200 bg-white px-2 text-sm sm:h-9";
 
 const nameOf = (
   item:

@@ -115,7 +115,7 @@ export default function RosterQuickFill({
           <Label htmlFor="qf-choice">Apply this</Label>
           <select
             id="qf-choice"
-            className="h-9 min-w-[190px] rounded-md border border-slate-200 bg-white px-2 text-sm"
+            className="h-11 min-w-[190px] rounded-md border border-slate-200 bg-white px-2 text-sm sm:h-9"
             value={choiceValue}
             onChange={(e) => setChoiceValue(e.target.value)}
           >
@@ -136,14 +136,14 @@ export default function RosterQuickFill({
                 type="button"
                 aria-pressed={weekdays.includes(d.value)}
                 onClick={() => toggleDay(d.value)}
-                className={`h-9 rounded-md border px-2 text-xs font-medium ${weekdays.includes(d.value) ? "border-blue-600 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+                className={`h-11 min-w-[44px] cursor-pointer rounded-md border px-2 text-xs font-medium transition-colors duration-200 sm:h-9 sm:min-w-0 ${weekdays.includes(d.value) ? "border-blue-600 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
               >
                 {d.label}
               </button>
             ))}
             <button
               type="button"
-              className="h-9 rounded-md px-2 text-xs text-slate-500 underline"
+              className="h-11 cursor-pointer rounded-md px-2 text-xs text-slate-500 underline sm:h-9"
               onClick={() => setWeekdays([])}
             >
               All days

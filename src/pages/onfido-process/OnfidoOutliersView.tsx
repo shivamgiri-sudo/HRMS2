@@ -54,6 +54,7 @@ interface OutlierRow {
   streak: number;
   repeat: boolean;
   action: ActionSummary | null;
+  tenureBucket: string | null;
 }
 
 interface OutlierReport {
@@ -525,6 +526,7 @@ export default function OnfidoOutliersView({
                 <th>Analyst</th>
                 <th>TL</th>
                 <th>AM</th>
+                <th>Tenure</th>
                 <th>Metric</th>
                 <th className="oc-right">Value</th>
                 <th className="oc-right">Target</th>
@@ -536,7 +538,7 @@ export default function OnfidoOutliersView({
             <tbody>
               {!query.isLoading && outliers.length === 0 && (
                 <tr className="oc-empty-row">
-                  <td colSpan={9}>Nobody is outside target in this period</td>
+                  <td colSpan={10}>Nobody is outside target in this period</td>
                 </tr>
               )}
               {outliers.slice(0, 300).map((o) => (
@@ -544,6 +546,7 @@ export default function OnfidoOutliersView({
                   <td>{o.analystEmail}</td>
                   <td>{o.tlName ?? DASH}</td>
                   <td>{o.amName ?? DASH}</td>
+                  <td title="Tenure (AON) bucket from the latest roster row">{o.tenureBucket ?? DASH}</td>
                   <td>{o.metric}</td>
                   <td className="oc-right">{o.value}%</td>
                   <td className="oc-right" style={{ color: "var(--muted)" }}>
@@ -562,6 +565,7 @@ export default function OnfidoOutliersView({
                       <Button
                         variant="outline"
                         size="sm"
+                        className="min-h-[44px] cursor-pointer sm:min-h-0"
                         onClick={() => setLogTarget({ row: o })}
                       >
                         Log action

@@ -41,7 +41,7 @@ const categoryLabel = (value: string): string =>
   CATEGORIES.find((c) => c.value === value)?.label ?? value;
 const today = (): string => new Date().toISOString().slice(0, 10);
 const selectClass =
-  "h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm";
+  "h-11 w-full rounded-md border border-slate-200 bg-white px-2 text-sm sm:h-9";
 
 function PublishForm({ onDone }: { onDone: () => void }) {
   const [form, setForm] = useState({

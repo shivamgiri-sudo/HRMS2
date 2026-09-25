@@ -48,7 +48,7 @@ const labelOf = (
 ): string => list.find((i) => i.value === value)?.label ?? value;
 const today = (): string => new Date().toISOString().slice(0, 10);
 const selectClass =
-  "h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-sm";
+  "h-11 w-full rounded-md border border-slate-200 bg-white px-2 text-sm sm:h-9";
 
 /**
  * Warnings on an employee's record. The same panel serves the employee (their own, read-only), HR and the
@@ -290,7 +290,7 @@ export function EmployeeWarningsPanel({ employeeId }: { employeeId: string }) {
                   <Button
                     size="sm"
                     variant="ghost"
-                    className="ml-auto h-7 text-xs"
+                    className="ml-auto h-9 text-xs"
                     disabled={withdraw.isPending}
                     onClick={() => onWithdraw(w)}
                   >

@@ -111,7 +111,7 @@ function FillSelect({ label, options, onPick }: { label: string; options: ShiftO
     <select
       aria-label={label}
       title={label}
-      className="mt-1 h-6 w-full max-w-[112px] rounded border border-slate-200 bg-white px-0.5 text-[10px] font-normal text-slate-600"
+      className="mt-1 h-8 w-full max-w-[112px] cursor-pointer rounded border border-slate-200 bg-white px-0.5 text-[10px] font-normal text-slate-600"
       value=""
       onChange={(e) => { const c = parseChoice(e.target.value); if (c) onPick(c); }}
     >
