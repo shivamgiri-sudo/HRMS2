@@ -288,6 +288,7 @@ import { neemansPerformanceDashboardRouter } from "./modules/process-performance
 import { satyaRetailDashboardRouter } from "./modules/process-performance/satya-retail-dashboard.routes.js";
 import { satyaRetailReportRouter } from "./modules/process-performance/satya-retail-report.routes.js";
 import { cloviaLobDashboardRouter } from "./modules/process-performance/clovia-lob-dashboard.routes.js";
+import { dalmiaDashboardRouter } from "./modules/process-performance/dalmia-dashboard.routes.js";
 import { appreciateWealthDashboardRouter } from "./modules/process-performance/appreciate-wealth-dashboard.routes.js";
 import { dashboardExportRouter } from "./modules/process-performance/dashboard-export.routes.js";
 import { inboundInsightsRouter } from "./modules/call-master/inbound-insights.routes.js";
@@ -978,6 +979,7 @@ app.use("/api/process-performance", neemansPerformanceDashboardRouter);
 app.use("/api/process-performance", satyaRetailDashboardRouter);
 app.use("/api/process-performance", satyaRetailReportRouter);
 app.use("/api/process-performance", cloviaLobDashboardRouter);
+app.use("/api/process-performance", dalmiaDashboardRouter);
 app.use("/api/process-performance", appreciateWealthDashboardRouter);
 app.use("/api/process-performance", dashboardExportRouter);
 app.use("/api/inbound-insights", inboundInsightsRouter);

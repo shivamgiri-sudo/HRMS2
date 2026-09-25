@@ -1,7 +1,9 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import { flushDalmiaRows } from "./dalmia-chunk-import.js";
+import type { ChunkInsertRow } from "./masmis-chunked-insert.js";
+import { canonicalizeRow, parseFlexibleDate, parseFlexibleDateTime } from "./dalmia-import-helpers.js";
 
 /**
  * Dalmia Cement's own "Outbound " sheet -- website/careers enquiry log for
@@ -14,20 +16,9 @@ export const DALMIA_OUTBOUND_HEADERS = [
   "Calling Date", "Source of lead",
 ] as const;
 
+/** Accepts ISO, Excel serials and displayed text ("9/2/2026", "31-08-2026") -- see dalmia-import-helpers.ts. */
 export function parseDate(raw: unknown): string | null {
-  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
-    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(raw) * 86400000);
-    return d.toISOString().slice(0, 10);
-  }
-  const v = String(raw ?? "").trim();
-  if (!v) return null;
-  if (/^\d+(\.\d+)?$/.test(v)) {
-    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(Number(v)) * 86400000);
-    return d.toISOString().slice(0, 10);
-  }
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
-  if (m) return m[0];
-  return null;
+  return parseFlexibleDate(raw);
 }
 
 export function parseNullableInt(raw: unknown): number | null {
@@ -82,13 +73,15 @@ export async function importDalmiaOutboundBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
+  const insertRows: ChunkInsertRow[] = [];
 
-  const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
-    const data =
+    const data = canonicalizeRow(
       typeof row.normalized_data === "string"
         ? JSON.parse(row.normalized_data)
-        : ((row.normalized_data ?? {}) as Record<string, unknown>);
+        : ((row.normalized_data ?? {}) as Record<string, unknown>),
+      DALMIA_OUTBOUND_HEADERS,
+    );
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Dalmia Cement" process found to attach this row to`;
@@ -102,59 +95,29 @@ export async function importDalmiaOutboundBatch(
       errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    toInsert.push({ rowId: row.id, rowNo: row.row_no, values: [
-      randomUUID(), processId, sourceRowId, callingDate,
-      cleanText(data["Name"]),
-      cleanText(data["Email"]),
-      cleanText(data["Mobile"]),
-      cleanText(data["Enquiry For"]),
-      cleanText(data["Message"]),
-      cleanText(data["Date"]),
-      cleanText(data["Status"]),
-      cleanText(data["Remarks"]),
-      cleanText(data["Source of lead"]),
-      batchId,
-      importedByUserId,
-    ] });
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, sourceRowId, callingDate,
+        cleanText(data["Name"]),
+        cleanText(data["Email"]),
+        cleanText(data["Mobile"]),
+        cleanText(data["Enquiry For"]),
+        cleanText(data["Message"]),
+        parseFlexibleDateTime(data["Date"]) ?? cleanText(data["Date"]),
+        cleanText(data["Status"]),
+        cleanText(data["Remarks"]),
+        cleanText(data["Source of lead"]),
+        "bulk_upload", batchId, importedByUserId,
+      ],
+    });
   }
-  const inserted = await chunkedMasmisInsert({
-    insertPrefix: `INSERT INTO dalmia_outbound_raw (id, process_id, source_row_id, report_date, customer_name, email, mobile, enquiry_for, message, enquiry_date, status, remarks, source_of_lead, data_source, source_reference, created_by)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
-    insertSuffix: `ON DUPLICATE KEY UPDATE status = VALUES(status), remarks = VALUES(remarks)`,
-    rows: toInsert,
+
+  return flushDalmiaRows({
+    batchId, table: "dalmia_outbound_raw",
+    columns: ["id","process_id","source_row_id","report_date","customer_name","email","mobile","enquiry_for","message","enquiry_date","status","remarks","source_of_lead","data_source","source_reference","created_by"],
+    suffix: "ON DUPLICATE KEY UPDATE status = VALUES(status), remarks = VALUES(remarks)",
+    rows: insertRows, errorUpdates, errors,
   });
-  errorUpdates.push(...inserted.errorUpdates);
-  for (const u of inserted.errorUpdates) errors.push(u.message);
-  const importedRows = inserted.importedRows;
-  const errorRows = errorUpdates.length;
-
-  if (importedRows > 0) {
-    const failedRowIds = new Set(inserted.errorUpdates.map((u) => u.rowId));
-    const successRowIds = toInsert.filter((r) => !failedRowIds.has(r.rowId)).map((r) => r.rowId);
-    if (successRowIds.length) {
-      await db.execute(
-        `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${successRowIds.map(() => "?").join(",")})`,
-        successRowIds,
-      );
-    }
-  }
-
-  if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
-    const ids = errorUpdates.map((u) => u.rowId);
-    await db.execute(
-      `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
-        WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
-    );
-  }
-
-  const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
-  await db.execute(
-    `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
-    [finalStatus, importedRows, errorRows, batchId],
-  );
-
-  return { importedRows, errorRows, errors };
 }

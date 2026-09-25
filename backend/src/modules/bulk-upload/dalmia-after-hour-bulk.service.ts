@@ -1,7 +1,9 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
-import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
+import { flushDalmiaRows } from "./dalmia-chunk-import.js";
+import type { ChunkInsertRow } from "./masmis-chunked-insert.js";
+import { canonicalizeRow, parseFlexibleDateTime, cleanPhone } from "./dalmia-import-helpers.js";
 
 /**
  * Dalmia Cement's own "After Hour Data" sheet -- calls received outside
@@ -9,20 +11,12 @@ import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-inser
  * that confirmed this has no DB backing anywhere.
  */
 
-export const DALMIA_AFTER_HOUR_HEADERS = ["Date", "Contact No"] as const;
+/** "Number" is the same phone number again; Excel often shows "Contact No" as 9.18235E+11 (digits lost) while "Number" keeps them. */
+export const DALMIA_AFTER_HOUR_HEADERS = ["Date", "Contact No", "Number"] as const;
 
+/** Accepts ISO, Excel serials and displayed text ("9/1/2026 19:03") -- see dalmia-import-helpers.ts. */
 export function parseDateTime(raw: unknown): string | null {
-  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
-    const days = Math.floor(raw);
-    const secondsOfDay = Math.round((raw - days) * 86400);
-    const d = new Date(Date.UTC(1899, 11, 30) + days * 86400000 + secondsOfDay * 1000);
-    return d.toISOString().slice(0, 19).replace("T", " ");
-  }
-  const v = String(raw ?? "").trim();
-  if (!v) return null;
-  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(v);
-  if (m) return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}`;
-  return null;
+  return parseFlexibleDateTime(raw);
 }
 
 export function cleanText(raw: unknown): string | null {
@@ -71,13 +65,15 @@ export async function importDalmiaAfterHourBatch(
 
   const errors: string[] = [];
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
+  const insertRows: ChunkInsertRow[] = [];
 
-  const toInsert: ChunkInsertRow[] = [];
   for (const row of batchRows) {
-    const data =
+    const data = canonicalizeRow(
       typeof row.normalized_data === "string"
         ? JSON.parse(row.normalized_data)
-        : ((row.normalized_data ?? {}) as Record<string, unknown>);
+        : ((row.normalized_data ?? {}) as Record<string, unknown>),
+      DALMIA_AFTER_HOUR_HEADERS,
+    );
 
     if (!processId) {
       const msg = `Row ${row.row_no}: no active "Dalmia Cement" process found to attach this row to`;
@@ -85,56 +81,27 @@ export async function importDalmiaAfterHourBatch(
     }
 
     const callDateTime = parseDateTime(data["Date"]);
-    const contactNumber = cleanText(data["Contact No"]);
+    // "Contact No" first; if Excel has rounded it to 9.18235E+11, the sheet's own "Number" column keeps the real digits.
+    const contactNumber = cleanPhone(data["Contact No"], data["Number"]);
     if (!callDateTime || !contactNumber) {
-      const msg = `Row ${row.row_no}: "Date" and "Contact No" are both required -- together they are this row's identity`;
+      const msg = `Row ${row.row_no}: a readable "Date" and a usable "Contact No" (or "Number") are both required -- together they are this row's identity`;
       errors.push(msg); errorUpdates.push({ rowId: row.id, message: msg }); continue;
     }
 
-    toInsert.push({ rowId: row.id, rowNo: row.row_no, values: [
-      randomUUID(), processId, callDateTime, callDateTime.slice(0, 10), contactNumber,
-      batchId,
-      importedByUserId,
-    ] });
+    insertRows.push({
+      rowId: row.id,
+      rowNo: row.row_no,
+      values: [
+        randomUUID(), processId, callDateTime, callDateTime.slice(0, 10), contactNumber,
+        "bulk_upload", batchId, importedByUserId,
+      ],
+    });
   }
-  const inserted = await chunkedMasmisInsert({
-    insertPrefix: `INSERT INTO dalmia_after_hour_raw (id, process_id, call_datetime, report_date, contact_number, data_source, source_reference, created_by)`,
-    placeholderGroup: "(?, ?, ?, ?, ?, 'bulk_upload', ?, ?)",
-    insertSuffix: `ON DUPLICATE KEY UPDATE contact_number = VALUES(contact_number)`,
-    rows: toInsert,
+
+  return flushDalmiaRows({
+    batchId, table: "dalmia_after_hour_raw",
+    columns: ["id","process_id","call_datetime","report_date","contact_number","data_source","source_reference","created_by"],
+    suffix: "ON DUPLICATE KEY UPDATE contact_number = VALUES(contact_number)",
+    rows: insertRows, errorUpdates, errors,
   });
-  errorUpdates.push(...inserted.errorUpdates);
-  for (const u of inserted.errorUpdates) errors.push(u.message);
-  const importedRows = inserted.importedRows;
-  const errorRows = errorUpdates.length;
-
-  if (importedRows > 0) {
-    const failedRowIds = new Set(inserted.errorUpdates.map((u) => u.rowId));
-    const successRowIds = toInsert.filter((r) => !failedRowIds.has(r.rowId)).map((r) => r.rowId);
-    if (successRowIds.length) {
-      await db.execute(
-        `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${successRowIds.map(() => "?").join(",")})`,
-        successRowIds,
-      );
-    }
-  }
-
-  if (errorUpdates.length) {
-    const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");
-    const ids = errorUpdates.map((u) => u.rowId);
-    await db.execute(
-      `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
-        WHERE id IN (${ids.map(() => "?").join(",")})`,
-      [...errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]), ...ids],
-    );
-  }
-
-  const finalStatus =
-    errorRows === 0 ? "imported" : importedRows === 0 ? "validation_failed" : "imported_with_errors";
-  await db.execute(
-    `UPDATE upload_batch SET batch_status = ?, imported_rows = ?, error_rows = ? WHERE id = ?`,
-    [finalStatus, importedRows, errorRows, batchId],
-  );
-
-  return { importedRows, errorRows, errors };
 }

@@ -512,6 +512,7 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_clovia_team_alignment_batch",
   // Dalmia uploads â€” after-hour contacts, DialDesk DD raw, outbound CDR
   "import_dalmia_after_hour_batch",
+  "import_dalmia_apr_batch",
   "import_dalmia_dd_batch",
   "import_dalmia_outbound_batch",
   // Domestic Billing Approved Headcount â€” month/process/LOB-grain planning table.

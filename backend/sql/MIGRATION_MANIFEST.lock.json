@@ -1165,6 +1165,7 @@
     "review_only_cleanup_test_demo_hrms2.sql",
     "revoke_salary_revision_employee_grant.sql",
     "setup-dialer-kpi-metrics.sql",
-    "verify_ats_fix.sql"
+    "verify_ats_fix.sql",
+    "1894_dalmia_apr_raw.sql"
   ]
 }

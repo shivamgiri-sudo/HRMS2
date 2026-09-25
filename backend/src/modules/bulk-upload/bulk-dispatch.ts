@@ -351,6 +351,12 @@ export async function dispatchImport(
     return { success: true, data };
   }
 
+  if (rpc_name === "import_dalmia_apr_batch") {
+    const { importDalmiaAprBatch } = await import("./dalmia-apr-bulk.service.js");
+    const data = await importDalmiaAprBatch(id, userId);
+    return { success: true, data };
+  }
+
   if (rpc_name === "import_dalmia_dd_batch") {
     const { importDalmiaDdBatch } = await import("./dalmia-dd-bulk.service.js");
     const data = await importDalmiaDdBatch(id, userId);

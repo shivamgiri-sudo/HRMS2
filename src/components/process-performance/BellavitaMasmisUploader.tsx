@@ -70,6 +70,10 @@ const RPC_BY_TYPE: Record<string, string> = {
   LP_ONBOARDING_CDR_MASMIS: "import_lp_onboarding_cdr_batch",
   GNC_CHAT_MASMIS: "import_gnc_chat_batch",
   NEEMANS_CHAT_MASMIS: "import_neemans_chat_batch",
+  DALMIA_DD_RAW: "import_dalmia_dd_batch",
+  DALMIA_OUTBOUND_RAW: "import_dalmia_outbound_batch",
+  DALMIA_AFTER_HOUR: "import_dalmia_after_hour_batch",
+  DALMIA_APR: "import_dalmia_apr_batch",
 };
 
 /** Same normalization every aw-*-bulk.service.ts backend importer uses: lowercase,
