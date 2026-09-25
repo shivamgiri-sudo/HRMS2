@@ -210,27 +210,21 @@ export function classifySignals(raw: BranchHealthRawData): {
   if (unbudgeted.count > 0) {
     criticalPoints.push({
       label: `${unbudgeted.count} unbudgeted GRN${unbudgeted.count > 1 ? "s" : ""} (₹${fmt(unbudgeted.amountExGst)} ex-GST)`,
-      detail:
-        "Raised without a budget line — Finance Head must attach one before approval",
+      detail: "Raised without a budget line — Finance Head must attach one before approval",
       severity: "warning",
     });
   }
   if (raw.budgetByHead.overBudget.length > 0) {
     criticalPoints.push({
       label: `${raw.budgetByHead.overBudget.length} head${raw.budgetByHead.overBudget.length > 1 ? "s" : ""} over budget`,
-      detail: raw.budgetByHead.overBudget
-        .map((h) => `${h.head} (${h.pct}%)`)
-        .join(" · "),
+      detail: raw.budgetByHead.overBudget.map((h) => `${h.head} (${h.pct}%)`).join(" · "),
       severity: "critical",
     });
   }
   if (raw.absence.total > 0) {
     criticalPoints.push({
       label: `${raw.absence.total} employee${raw.absence.total > 1 ? "s" : ""} absent ${CONSECUTIVE_ABSENCE_DAYS}+ days running`,
-      detail: raw.absence.rows
-        .slice(0, 5)
-        .map((r) => `${r.name} (${r.manager})`)
-        .join(" · "),
+      detail: raw.absence.rows.slice(0, 5).map((r) => `${r.name} (${r.manager})`).join(" · "),
       severity: "warning",
     });
   }
@@ -241,10 +235,7 @@ export function classifySignals(raw: BranchHealthRawData): {
       severity: "warning",
     });
   }
-  if (
-    raw.offers.conversionPct != null &&
-    raw.offers.conversionPct < OFFER_JOIN_WARN_PCT
-  ) {
+  if (raw.offers.conversionPct != null && raw.offers.conversionPct < OFFER_JOIN_WARN_PCT) {
     criticalPoints.push({
       label: `Offer-to-join only ${raw.offers.conversionPct}%`,
       detail: `${raw.offers.joined} of ${raw.offers.offered} offered candidates joined in the last 30 days`,
@@ -252,8 +243,7 @@ export function classifySignals(raw: BranchHealthRawData): {
     });
   }
   const hc = raw.headcount;
-  const avgHc =
-    (hc.totalActive + hc.leftMtd - hc.joinedMtd + hc.totalActive) / 2;
+  const avgHc = (hc.totalActive + hc.leftMtd - hc.joinedMtd + hc.totalActive) / 2;
   const attritionPct = avgHc > 0 ? (hc.leftMtd / avgHc) * 100 : 0;
   if (attritionPct >= ATTRITION_WARN_PCT) {
     criticalPoints.push({

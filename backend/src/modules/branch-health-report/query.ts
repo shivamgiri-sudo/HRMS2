@@ -228,7 +228,7 @@ async function fetchGrnBridge(
     earlierBudget,
     noBudgetLine,
     chargedThisMonth,
-    fromEarlierMonths:
+        fromEarlierMonths:
       Math.abs(budgetChargeTotal - chargedThisMonth) < BRIDGE_ROUNDING_TOLERANCE
         ? 0
         : budgetChargeTotal - chargedThisMonth,
@@ -554,11 +554,6 @@ export interface RunningPnlStats {
   staffPaid: number;
   estimatedCostCentres: number;
   costCentres: number;
-  /** Legacy-billing GRN already counted through an HRMS GRN, taken out of GRN consumed above. */
-  legacyDuplicatesRemoved: number;
-  /** What the P&L page itself shows for this branch, before that removal. */
-  pageOperatingProfit: number;
-  pageOpPct: number | null;
   dataAvailable: boolean;
 }
 
@@ -965,9 +960,6 @@ export async function fetchRunningPnl(
     estimatedCostCentres: rows.filter((r) => r.revenueBasis === "ESTIMATED")
       .length,
     costCentres: rows.length,
-    legacyDuplicatesRemoved: 0,
-    pageOperatingProfit: branch?.operatingProfit ?? 0,
-    pageOpPct: branch?.marginPct ?? null,
     dataAvailable:
       revenueRunning > 0 || salaryRunning > 0 || grnConsumed + grnReserved > 0,
   };
@@ -1192,13 +1184,6 @@ export interface PnlGrnTieOut {
   legacyBilling: number;
   /** Budget reservations the P&L cannot read: imprest allocations carry no cost centre. */
   imprestReservedNoCostCentre: number;
-  /**
-   * Part of legacyBilling that is the same invoice as an HRMS GRN the P&L already counts: the two
-   * systems number the GRN differently (db_bill "Mas/9/26/127" vs HRMS "MAS/09/26/0009"), so the
-   * P&L's dedupe by GRN number misses it and books the invoice twice.
-   */
-  legacyDuplicate: number;
-  legacyDuplicateCount: number;
 }
 
 /**
@@ -1206,52 +1191,13 @@ export interface PnlGrnTieOut {
  * legs) while the budget counts money against budget lines. This splits the P&L's consumed by
  * leg and finds the reserved amount it cannot see, so every difference is named.
  */
-const DUPLICATE_AMOUNT_TOLERANCE = 1;
-
-/**
- * Pairs each legacy-billing row with at most one HRMS row of the same ex-GST amount (within a
- * rupee) that the P&L already counts as consumed or reserved. One-to-one, so two identical
- * legacy bills cannot both be cleared by a single HRMS GRN.
- */
-function pairLegacyDuplicates(
-  legacy: number[],
-  hrms: { exGst: number; gross: number }[],
-): { amount: number; count: number } {
-  const free = [...hrms];
-  let amount = 0;
-  let count = 0;
-  for (const value of legacy) {
-    // The legacy line amount is often the GST-inclusive invoice value, so it may equal either
-    // the HRMS ex-GST or the HRMS gross amount.
-    const at = free.findIndex(
-      (h) =>
-        Math.abs(h.exGst - value) <= DUPLICATE_AMOUNT_TOLERANCE ||
-        Math.abs(h.gross - value) <= DUPLICATE_AMOUNT_TOLERANCE,
-    );
-    if (at === -1) continue;
-    free.splice(at, 1);
-    amount += value;
-    count += 1;
-  }
-  return { amount, count };
-}
-
 export async function fetchPnlGrnTieOut(
   branchId: string,
   today: string,
 ): Promise<PnlGrnTieOut> {
   const period = today.slice(0, 7);
-  const [spend, countedGrns, budgetRows, imprestRows] = await Promise.all([
+  const [spend, budgetRows, imprestRows] = await Promise.all([
     readGrnSpend(period, "consumed", { withDetail: true }),
-    // HRMS GRNs the P&L already counts (consumed or reserved), one row per GRN.
-    db.execute<RowDataPacket[]>(
-      `SELECT SUM(a.amount_without_tax) AS ex_gst, SUM(a.amount_with_tax) AS gross
-         FROM grn_cost_allocation a JOIN grn_request g ON g.id = a.grn_request_id
-        WHERE g.branch_id = ? AND g.accounting_period = ?
-          AND a.lifecycle_status IN ('consumed', 'reserved')
-        GROUP BY a.grn_request_id`,
-      [branchId, period],
-    ),
     db.execute<RowDataPacket[]>(
       `SELECT COALESCE(SUM(l.consumed_amount), 0) AS consumed, COALESCE(SUM(l.reserved_amount), 0) AS reserved
          FROM finance_budget_line l JOIN finance_budget_header h ON h.id = l.budget_id
@@ -1273,19 +1219,6 @@ export async function fetchPnlGrnTieOut(
       .reduce((sum, r) => sum + r.amount, 0);
   const budgetConsumed = Number((budgetRows[0][0] as any)?.consumed ?? 0);
   const allocation = bySource("app_allocation");
-  const hrmsCounted = [
-    ...(countedGrns[0] as any[]).map((r) => ({
-      exGst: Number(r.ex_gst),
-      gross: Number(r.gross),
-    })),
-    ...mine
-      .filter((r) => r.source === "app_grn")
-      .map((r) => ({ exGst: r.amount, gross: r.amount })),
-  ];
-  const duplicates = pairLegacyDuplicates(
-    mine.filter((r) => r.source === "db_bill_mirror").map((r) => r.amount),
-    hrmsCounted,
-  );
   return {
     budgetConsumed,
     budgetReserved: Number((budgetRows[0][0] as any)?.reserved ?? 0),
@@ -1293,27 +1226,6 @@ export async function fetchPnlGrnTieOut(
     hrmsOrdinary: bySource("app_grn"),
     legacyBilling: bySource("db_bill_mirror"),
     imprestReservedNoCostCentre: Number((imprestRows[0][0] as any)?.amt ?? 0),
-    legacyDuplicate: duplicates.amount,
-    legacyDuplicateCount: duplicates.count,
-  };
-}
-
-/**
- * The P&L page books a legacy bill and its HRMS re-entry as two costs. This report removes the
- * legacy copy so an invoice is counted once; the P&L page's own figures are kept alongside so the
- * difference is explicit rather than silent.
- */
-function withoutLegacyDuplicates(pnl: RunningPnlStats, tie: PnlGrnTieOut): RunningPnlStats {
-  if (tie.legacyDuplicate <= 0) return pnl;
-  const totalCostRunning = pnl.totalCostRunning - tie.legacyDuplicate;
-  const operatingProfit = pnl.operatingProfit + tie.legacyDuplicate;
-  return {
-    ...pnl,
-    grnConsumed: pnl.grnConsumed - tie.legacyDuplicate,
-    totalCostRunning,
-    operatingProfit,
-    opPct: pnl.revenueRunning > 0 ? (operatingProfit / pnl.revenueRunning) * 100 : null,
-    legacyDuplicatesRemoved: tie.legacyDuplicate,
   };
 }
 
@@ -1503,21 +1415,12 @@ export async function fetchAllBranchHealthData(
         staffPaid: 0,
         estimatedCostCentres: 0,
         costCentres: 0,
-        legacyDuplicatesRemoved: 0,
-        pageOperatingProfit: 0,
-        pageOpPct: null,
         dataAvailable: false,
       },
       pendingActions: [],
       budgetByHead: { top: [], overBudget: [] },
       absence: { total: 0, rows: [] },
-      leaveAging: {
-        pending: 0,
-        oldestDays: 0,
-        over3Days: 0,
-        over7Days: 0,
-        staleOlderThanWindow: 0,
-      },
+      leaveAging: { pending: 0, oldestDays: 0, over3Days: 0, over7Days: 0, staleOlderThanWindow: 0 },
       regularization: {
         pending: 0,
         oldestDays: 0,
@@ -1539,8 +1442,6 @@ export async function fetchAllBranchHealthData(
         hrmsOrdinary: 0,
         legacyBilling: 0,
         imprestReservedNoCostCentre: 0,
-        legacyDuplicate: 0,
-        legacyDuplicateCount: 0,
       },
     };
   }
@@ -1594,7 +1495,7 @@ export async function fetchAllBranchHealthData(
     prevShrinkage,
     headcount,
     openHiring,
-    runningPnl: withoutLegacyDuplicates(runningPnl, pnlGrnTieOut),
+    runningPnl,
     pendingActions,
     budgetByHead,
     absence,
