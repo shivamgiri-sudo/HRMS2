@@ -418,9 +418,9 @@ financeAnalyticsRouter.get(
     try {
       const [kpiRows] = await db.query<any[]>(
         `SELECT
-           SUM(gr.total_amount) AS total_spend,
+           SUM(gr.amount_with_tax) AS total_spend,
            SUM(CASE WHEN vpt.payment_status IN ('Payment Pending','Partially Paid') THEN vpt.due_amount ELSE 0 END) AS pending_payments,
-           AVG(DATEDIFF(gr.approved_date, gr.request_date)) AS avg_approval_days
+           AVG(DATEDIFF(gr.approved_at, gr.submitted_at)) AS avg_approval_days
          FROM grn_request gr
          LEFT JOIN vendor_payment_tracking vpt ON vpt.grn_request_id = gr.id
          WHERE gr.status = 'approved'
@@ -443,13 +443,13 @@ financeAnalyticsRouter.get(
       const [monthRows] = await db.query<any[]>(
         `SELECT
            DATE_FORMAT(gr.bill_date, '%Y-%m') AS month,
-           gr.expense_head,
-           SUM(gr.total_amount) AS amount
+           gr.head AS expense_head,
+           SUM(gr.amount_with_tax) AS amount
          FROM grn_request gr
          WHERE gr.status = 'approved'
            AND gr.bill_date BETWEEN ? AND ?
-           AND gr.expense_head IS NOT NULL
-         GROUP BY month, gr.expense_head
+           AND gr.head IS NOT NULL
+         GROUP BY month, gr.head
          ORDER BY month ASC`,
         [fyStart, fyEnd],
       );
@@ -490,7 +490,7 @@ financeAnalyticsRouter.get(
       const [vendorRows] = await db.query<any[]>(
         `SELECT
            COALESCE(v.vendor_name, gr.vendor_id) AS vendor_name,
-           SUM(gr.total_amount) AS total_spend,
+           SUM(gr.amount_with_tax) AS total_spend,
            COUNT(*) AS grn_count
          FROM grn_request gr
          LEFT JOIN vendor_master v ON v.id = gr.vendor_id
