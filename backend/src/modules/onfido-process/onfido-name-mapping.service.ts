@@ -96,6 +96,16 @@ export async function getEmployeeCandidates(): Promise<EmployeeCandidate[]> {
   }));
 }
 
+// onfido_name_employee_map has no FK to employees (migration 1869), so the API
+// must confirm an HR-supplied employeeId exists before writing it.
+export async function employeeExists(employeeId: string): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM employees WHERE id = ? LIMIT 1`,
+    [employeeId],
+  );
+  return rows.length > 0;
+}
+
 /**
  * Writes (or updates) one onfido_name_employee_map row. Per migration 1869's
  * own documented rule: once verified_by_hr = 1, this must never overwrite that

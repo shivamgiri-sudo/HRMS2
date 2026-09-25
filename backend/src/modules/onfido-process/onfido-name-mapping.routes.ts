@@ -69,6 +69,12 @@ onfidoNameMappingRouter.patch(
       return res.status(404).json({ success: false, message: "Mapping row not found" });
     }
 
+    if (employeeId !== null && !(await svc.employeeExists(employeeId))) {
+      return res
+        .status(400)
+        .json({ success: false, message: "employeeId does not match any employee" });
+    }
+
     await svc.verifyMapping(req.params.id, {
       employeeId,
       verifiedByUserId: req.authUser!.id,

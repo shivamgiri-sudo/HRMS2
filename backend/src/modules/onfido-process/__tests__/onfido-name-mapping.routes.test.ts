@@ -6,16 +6,19 @@ const {
   listMappings,
   verifyMapping,
   getMappingRowById,
+  employeeExists,
 } = vi.hoisted(() => ({
   listMappings: vi.fn(),
   verifyMapping: vi.fn(),
   getMappingRowById: vi.fn(),
+  employeeExists: vi.fn(),
 }));
 
 vi.mock("../onfido-name-mapping.service.js", () => ({
   listMappings,
   verifyMapping,
   getMappingRowById,
+  employeeExists,
 }));
 
 // requireAuth/requireRole default to an authenticated "admin" caller so every
@@ -53,6 +56,8 @@ beforeEach(() => {
   listMappings.mockReset();
   verifyMapping.mockReset();
   getMappingRowById.mockReset();
+  employeeExists.mockReset();
+  employeeExists.mockResolvedValue(true);
 });
 
 describe("GET /api/onfido-process/name-mapping", () => {
@@ -147,6 +152,32 @@ describe("PATCH /api/onfido-process/name-mapping/:id", () => {
     expect(res.status).toBe(400);
     expect(getMappingRowById).not.toHaveBeenCalled();
     expect(verifyMapping).not.toHaveBeenCalled();
+  });
+
+  it("rejects an employeeId that matches no employee with 400 and writes nothing", async () => {
+    getMappingRowById.mockResolvedValueOnce({ id: "map-1", employeeId: "emp-1" });
+    employeeExists.mockResolvedValueOnce(false);
+
+    const res = await request(app)
+      .patch("/api/onfido-process/name-mapping/map-1")
+      .send({ employeeId: "00000000-0000-0000-0000-000000000000" });
+
+    expect(res.status).toBe(400);
+    expect(employeeExists).toHaveBeenCalledWith("00000000-0000-0000-0000-000000000000");
+    expect(verifyMapping).not.toHaveBeenCalled();
+  });
+
+  it("does not look up an employee when employeeId is null", async () => {
+    getMappingRowById
+      .mockResolvedValueOnce({ id: "map-1", employeeId: "emp-1" })
+      .mockResolvedValueOnce({ id: "map-1", employeeId: null });
+    verifyMapping.mockResolvedValueOnce(undefined);
+
+    await request(app)
+      .patch("/api/onfido-process/name-mapping/map-1")
+      .send({ employeeId: null });
+
+    expect(employeeExists).not.toHaveBeenCalled();
   });
 
   it("returns 404 when the mapping row does not exist", async () => {
