@@ -142,12 +142,15 @@ export async function changeSalary(params: {
 
   // Keep employee_salary_assignment.ctc_annual in sync, same as the onboarding flow —
   // display field only, payroll reads salary_component_assignments directly.
+  // effective_from is deliberately NOT touched: a salary change adds a new salary line effective
+  // on the change date, it never moves the salary START date. Overwriting effective_from here made
+  // the assignment disagree with employees.salary_start_date (the mismatch payroll then trips on).
   await db.execute(
     `UPDATE employee_salary_assignment
-        SET ctc_annual = ?, effective_from = ?, updated_at = NOW()
+        SET ctc_annual = ?, updated_at = NOW()
       WHERE employee_id = ? AND active_status = 1
       LIMIT 1`,
-    [Number(pkg.ctc ?? 0) * 12, effectiveDate, employeeId]
+    [Number(pkg.ctc ?? 0) * 12, employeeId]
   ).catch(() => {});
 
   await db.execute(
