@@ -177,8 +177,9 @@ router.get(
 
     if (scopeFilter.sql && scopeFilter.sql !== '1=1') { conditions.push(scopeFilter.sql); params.push(...(scopeFilter.params ?? [])); }
 
-    const { branch_id, status, from_date, to_date, search } = req.query;
+    const { branch_id, branch_name, status, from_date, to_date, search } = req.query;
     if (branch_id)  { conditions.push('r.branch_id = ?');                               params.push(branch_id); }
+    if (branch_name) { conditions.push('b.branch_name = ?');                            params.push(branch_name); }
     if (status)     { conditions.push('o.status = ?');                                  params.push(status); }
     if (from_date)  { conditions.push('DATE(o.created_at) >= ?');                       params.push(from_date); }
     if (to_date)    { conditions.push('DATE(o.created_at) <= ?');                       params.push(to_date); }

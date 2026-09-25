@@ -767,7 +767,7 @@ export default function NativeHROnboardingRequests() {
     try {
       const params = new URLSearchParams();
       if (auditSearch)  params.set('search',    auditSearch);
-      if (auditBranch)  params.set('branch_id', auditBranch);
+      if (auditBranch)  params.set('branch_name', auditBranch);
       if (auditStatus)  params.set('status',    auditStatus);
       if (auditFrom)    params.set('from_date', auditFrom);
       if (auditTo)      params.set('to_date',   auditTo);
@@ -796,7 +796,16 @@ export default function NativeHROnboardingRequests() {
     setBgvDetail(null);
     try {
       const r = await hrmsApi.get<any>(`/api/ats/bgv/status/${candidateId}`);
-      setBgvDetail((r as BgvDetailData) ?? null);
+      const d = (r?.data ?? r) as Partial<BgvDetailData> | null;
+      setBgvDetail(d ? {
+        checks: d.checks ?? [],
+        documents: d.documents ?? [],
+        bank_verifications: d.bank_verifications ?? [],
+        score: d.score ?? 0,
+        overall_status: d.overall_status ?? "pending",
+        missing_mandatory_checks: d.missing_mandatory_checks ?? [],
+        consent: d.consent ?? null,
+      } : null);
     } catch {
       setBgvDetail(null);
     }
@@ -1945,6 +1954,7 @@ export default function NativeHROnboardingRequests() {
                           <th className="px-4 py-3 text-left font-bold">ESI</th>
                           <th className="px-4 py-3 text-left font-bold">Status</th>
                           <th className="px-4 py-3 text-left font-bold">Created By</th>
+                          <th className="px-4 py-3 text-left font-bold">Offer Created</th>
                           <th className="px-4 py-3 text-left font-bold">Submitted</th>
                         </tr>
                       </thead>
@@ -2001,6 +2011,7 @@ export default function NativeHROnboardingRequests() {
                                 {row.is_proposed_exception ? <span className="ml-1 rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-bold text-red-600">EXCEPTION</span> : null}
                               </td>
                               <td className="px-4 py-3 text-slate-500 text-xs">{row.created_by_name ?? '—'}</td>
+                              <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{row.offer_created_at ? row.offer_created_at.slice(0, 16).replace('T', ' ') : '—'}</td>
                               <td className="px-4 py-3 text-slate-500 text-xs">{row.submitted_at ? row.submitted_at.slice(0, 10) : '—'}</td>
                             </tr>
                           );
@@ -2082,6 +2093,7 @@ export default function NativeHROnboardingRequests() {
                                 return <p className={`font-medium ${gap ? 'text-red-600' : 'text-slate-800'}`}>{d2 || '—'}{gap && <span className="ml-1 text-xs text-red-500">⚠ before DOJ</span>}</p>;
                               })()}
                             </div>
+                            <div><span className="text-xs text-slate-400">Offer Created At</span><p className="text-slate-700">{auditSelected.offer_created_at ? auditSelected.offer_created_at.slice(0, 16).replace('T', ' ') : '—'}</p></div>
                             <div><span className="text-xs text-slate-400">Submitted At</span><p className="text-slate-700">{auditSelected.submitted_at ? auditSelected.submitted_at.slice(0, 16).replace('T', ' ') : '—'}</p></div>
                             <div><span className="text-xs text-slate-400">Created At</span><p className="text-slate-700">{auditSelected.offer_created_at ? auditSelected.offer_created_at.slice(0, 16).replace('T', ' ') : '—'}</p></div>
                           </div>
