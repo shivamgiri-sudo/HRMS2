@@ -194,7 +194,7 @@ function EmployeePicker({
 
 function DetailDrawer({
   request, open, onClose,
-  isReviewer, onApprove, onReject,
+  isReviewer, onApprove, onReject, actionError,
 }: {
   request: RevisionRequest | null;
   open: boolean;
@@ -202,6 +202,7 @@ function DetailDrawer({
   isReviewer: boolean;
   onApprove: (id: number) => void;
   onReject: (id: number) => void;
+  actionError?: string | null;
 }) {
   if (!request) return null;
   return (
@@ -287,6 +288,12 @@ function DetailDrawer({
             </div>
           </div>
         </div>
+
+        {isReviewer && request.status === 'pending' && actionError && (
+          <div role="alert" className="mx-4 mb-0 mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 flex-shrink-0">
+            {actionError}
+          </div>
+        )}
 
         {isReviewer && request.status === 'pending' && (
           <div className="border-t p-4 flex gap-3 flex-shrink-0">
@@ -729,18 +736,26 @@ export default function SalaryRevisionPage() {
     enabled: isResolved && isFixer && !isReviewer,
   });
 
+  // Review failures (including the not-before-today date lock) must be visible in the drawer,
+  // otherwise a refused Approve looks like nothing happened.
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
   const approveMut = useMutation({
     mutationFn: (id: number) =>
       hrmsApi.post(`/api/salary-revision/${id}/review`, { action: 'approve' }),
+    onMutate: () => setReviewError(null),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['salary-revision'] });
       setDrawer(null);
     },
+    onError: (e: any) => setReviewError(e?.message ?? 'Approval failed.'),
   });
 
   const rejectMut = useMutation({
     mutationFn: ({ id, remarks }: { id: number; remarks: string }) =>
       hrmsApi.post(`/api/salary-revision/${id}/review`, { action: 'reject', remarks }),
+    onMutate: () => setReviewError(null),
+    onError: (e: any) => setReviewError(e?.message ?? 'Rejection failed.'),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['salary-revision'] });
       setDrawer(null); setRejectTarget(null);
@@ -879,8 +894,9 @@ export default function SalaryRevisionPage() {
       <DetailDrawer
         request={drawer}
         open={!!drawer}
-        onClose={() => setDrawer(null)}
+        onClose={() => { setDrawer(null); setReviewError(null); }}
         isReviewer={isReviewer}
+        actionError={reviewError}
         onApprove={(id) => approveMut.mutate(id)}
         onReject={(id) => { setRejectTarget(id); }}
       />
