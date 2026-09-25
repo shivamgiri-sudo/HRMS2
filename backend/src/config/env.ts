@@ -19,7 +19,9 @@ for (const envPath of envCandidates) {
 }
 
 const envSchema = z.object({
-  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  NODE_ENV: z
+    .enum(["development", "test", "production"])
+    .default("development"),
   PORT: z.coerce.number().default(5055),
   FRONTEND_URL: z.string().url().default("http://localhost:8080"),
   BACKEND_URL: z.string().url().default("http://localhost:5056"),
@@ -30,21 +32,21 @@ const envSchema = z.object({
   ACTIVE_DB_PROVIDER: z.enum(["sqlserver", "mysql"]).default("mysql"),
 
   // MySQL (mas_hrms)
-  DB_HOST:     z.string().default("localhost"),
-  DB_PORT:     z.coerce.number().default(3306),
-  DB_USER:     z.string().default("root"),
+  DB_HOST: z.string().default("localhost"),
+  DB_PORT: z.coerce.number().default(3306),
+  DB_USER: z.string().default("root"),
   DB_PASSWORD: z.string().default(""),
-  DB_NAME:     z.string().default("mas_hrms"),
+  DB_NAME: z.string().default("mas_hrms"),
   DB_POOL_MAX: z.coerce.number().default(25),
   DB_POOL_MAX_IDLE: z.coerce.number().default(5),
   DB_POOL_IDLE_TIMEOUT_MS: z.coerce.number().default(60000),
 
   // Independent MCN LMS MySQL DB. Use dedicated LMS_DB_* credentials in production.
-  LMS_DB_HOST:     z.string().default("192.168.11.225"),
-  LMS_DB_PORT:     z.coerce.number().default(3306),
-  LMS_DB_USER:     z.string().default(""),
+  LMS_DB_HOST: z.string().default("192.168.11.225"),
+  LMS_DB_PORT: z.coerce.number().default(3306),
+  LMS_DB_USER: z.string().default(""),
   LMS_DB_PASSWORD: z.string().default(""),
-  LMS_DB_NAME:     z.string().default("lms_mcn"),
+  LMS_DB_NAME: z.string().default("lms_mcn"),
   LMS_DB_POOL_MAX: z.coerce.number().default(10),
 
   // LMS SSO bridge — backend-only secret, never sent to frontend
@@ -52,12 +54,12 @@ const envSchema = z.object({
   LMS_API_URL: z.string().default(""),
 
   // NCOSEC Biometric DB (Matrix Cosec SQL Server)
-  NCOSEC_DB_HOST:     z.string().default(""),
-  NCOSEC_DB_PORT:     z.coerce.number().default(1433),
-  NCOSEC_DB_USER:     z.string().default(""),
+  NCOSEC_DB_HOST: z.string().default(""),
+  NCOSEC_DB_PORT: z.coerce.number().default(1433),
+  NCOSEC_DB_USER: z.string().default(""),
   NCOSEC_DB_PASSWORD: z.string().default(""),
-  NCOSEC_DB_NAME:     z.string().default("NCOSEC"),
-  NCOSEC_DB_ENCRYPT:  z.string().default("false"),
+  NCOSEC_DB_NAME: z.string().default("NCOSEC"),
+  NCOSEC_DB_ENCRYPT: z.string().default("false"),
   NCOSEC_DB_TRUST_CERT: z.string().default("true"),
   NCOSEC_EVENT_TABLE: z.string().default("dbo.Mx_ATDEventTrn"),
   NCOSEC_DAILY_TABLE: z.string().default("dbo.Mx_DATDTrn"),
@@ -79,10 +81,18 @@ const envSchema = z.object({
   // Was 1 — a single missed night left a permanent hole, because the worker only ever
   // looked at yesterday. 7 lets a gap self-heal on the next successful run. Re-detected
   // issues upsert on uq issue_key rather than duplicating.
-  NCOSEC_RECONCILIATION_LOOKBACK_DAYS: z.coerce.number().int().min(1).max(31).default(7),
+  NCOSEC_RECONCILIATION_LOOKBACK_DAYS: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(31)
+    .default(7),
 
-  PORTAL_JWT_SECRET: z.string().min(32).default("change-me-in-production-portal-secret-32ch"),
-  JWT_SECRET: z.string().min(32).default('change-me-jwt-secret-32characters!!'),
+  PORTAL_JWT_SECRET: z
+    .string()
+    .min(32)
+    .default("change-me-in-production-portal-secret-32ch"),
+  JWT_SECRET: z.string().min(32).default("change-me-jwt-secret-32characters!!"),
   // Optional and NOT fatal-checked (unlike JWT_SECRET/PORTAL_JWT_SECRET above): until this
   // is set, candidate-portal.service.ts falls back to JWT_SECRET with a loud startup
   // warning, so an existing production deploy isn't broken by this var simply not being
@@ -111,25 +121,49 @@ const envSchema = z.object({
   // QR already printed (they fall back to manual pass-number entry, which is
   // the pre-Phase-4 behaviour, so nothing is blocked at the gate).
   EXIT_PASS_QR_SECRET: z.string().min(32).optional(),
-  OTP_HMAC_SECRET: z.string().min(32).default('change-me-otp-hmac-secret-32chars!'),
+  OTP_HMAC_SECRET: z
+    .string()
+    .min(32)
+    .default("change-me-otp-hmac-secret-32chars!"),
   PORTAL_DEMO_BYPASS: z.string().default("false"),
   PORTAL_MASTER_PASSWORD: z.string().optional(),
   PAYROLL_BANK_KEY: z.string().min(16).default("hrms-bank-key-dev"),
-  ENCRYPTION_KEY: z.string().regex(/^[0-9a-fA-F]{64}$/, 'ENCRYPTION_KEY must be a 64-character hex string').default('0000000000000000000000000000000000000000000000000000000000000000'),
+  ENCRYPTION_KEY: z
+    .string()
+    .regex(
+      /^[0-9a-fA-F]{64}$/,
+      "ENCRYPTION_KEY must be a 64-character hex string",
+    )
+    .default(
+      "0000000000000000000000000000000000000000000000000000000000000000",
+    ),
   COMM_SECRET: z.string().min(16).optional(),
   INTERNAL_DEMO_BYPASS: z.string().default("false"),
   ENABLE_SCHEDULERS: z.string().default("false"),
   INTEGRATION_SCHEDULER_TIMEZONE: z.string().default("Asia/Kolkata"),
-  INTEGRATION_SCHEDULER_POLL_MS: z.coerce.number().int().min(5000).default(30000),
-  INTEGRATION_SCHEDULER_MAX_RETRIES: z.coerce.number().int().min(1).max(5).default(3),
-  INTEGRATION_SCHEDULER_RETRY_DELAY_MS: z.coerce.number().int().min(100).default(5000),
+  INTEGRATION_SCHEDULER_POLL_MS: z.coerce
+    .number()
+    .int()
+    .min(5000)
+    .default(30000),
+  INTEGRATION_SCHEDULER_MAX_RETRIES: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(5)
+    .default(3),
+  INTEGRATION_SCHEDULER_RETRY_DELAY_MS: z.coerce
+    .number()
+    .int()
+    .min(100)
+    .default(5000),
   OUTBOUND_ALLOW_PRIVATE_URLS: z.string().default("false"),
   SEED_DEMO_DATA: z.string().default("false"),
-  SMTP_HOST:   z.string().default("smtp.gmail.com"),
-  SMTP_PORT:   z.coerce.number().default(587),
-  SMTP_USER:   z.string().default(""),
-  SMTP_PASS:   z.string().default(""),
-  SMTP_FROM:   z.string().default("noreply@mascallnet.com"),
+  SMTP_HOST: z.string().default("smtp.gmail.com"),
+  SMTP_PORT: z.coerce.number().default(587),
+  SMTP_USER: z.string().default(""),
+  SMTP_PASS: z.string().default(""),
+  SMTP_FROM: z.string().default("noreply@mascallnet.com"),
   SMTP_FROM_NAME: z.string().default("MAS Callnet HRMS"),
 
   LEGACY_MYSQL_HOST: z.string().default(""),
@@ -138,12 +172,12 @@ const envSchema = z.object({
   LEGACY_MYSQL_USER: z.string().default(""),
   LEGACY_MYSQL_PASSWORD: z.string().default(""),
 
-  LEGACY_MSSQL_HOST:       z.string().default(""),
-  LEGACY_MSSQL_PORT:       z.coerce.number().default(1433),
-  LEGACY_MSSQL_DATABASE:   z.string().default(""),
-  LEGACY_MSSQL_USER:       z.string().default(""),
-  LEGACY_MSSQL_PASSWORD:   z.string().default(""),
-  LEGACY_MSSQL_ENCRYPT:    z.string().default("false"),
+  LEGACY_MSSQL_HOST: z.string().default(""),
+  LEGACY_MSSQL_PORT: z.coerce.number().default(1433),
+  LEGACY_MSSQL_DATABASE: z.string().default(""),
+  LEGACY_MSSQL_USER: z.string().default(""),
+  LEGACY_MSSQL_PASSWORD: z.string().default(""),
+  LEGACY_MSSQL_ENCRYPT: z.string().default("false"),
   LEGACY_MSSQL_TRUST_CERT: z.string().default("true"),
 
   // Ships disabled: flip only once branch_notification_recipient has at least
@@ -174,25 +208,39 @@ const envSchema = z.object({
   MOLECULAR_EMAIL_DB_PASSWORD: z.string().default(""),
 
   BGV_WEBHOOK_SECRET: z.string().optional(),
-  BGV_PROVIDER: z.enum(["mock", "infinity_ai", "digio", "befisc_luckpay"]).default("mock"),
+  BGV_PROVIDER: z
+    .enum(["mock", "infinity_ai", "digio", "befisc_luckpay"])
+    .default("mock"),
   INFINITY_AI_API_URL: z.string().url().default("https://api.infinityai.in"),
   INFINITY_AI_API_KEY: z.string().optional(),
   INFINITY_AI_CLIENT_ID: z.string().optional(),
-  INFINITY_AI_PORTAL_URL: z.string().url().default("http://candidates.theinfiniti.ai"),
+  INFINITY_AI_PORTAL_URL: z
+    .string()
+    .url()
+    .default("http://candidates.theinfiniti.ai"),
   DIGIO_API_URL: z.string().url().default("https://api.digio.in"),
   DIGIO_CLIENT_ID: z.string().optional(),
   DIGIO_CLIENT_SECRET: z.string().optional(),
   DIGIO_WEBHOOK_SECRET: z.string().optional(),
   LUCKPAY_ENV: z.enum(["staging", "production"]).default("production"),
-  LUCKPAY_BASE_URL: z.string().url().default("https://api-banking.luckpay.in/apibanking/api/v1"),
+  LUCKPAY_BASE_URL: z
+    .string()
+    .url()
+    .default("https://api-banking.luckpay.in/apibanking/api/v1"),
   /**
    * @deprecated The auth URL is derived from the resolved base URL
    * (`${baseUrl}/auth/token`). This value is ignored unless it matches that base
    * — a staging auth URL paired with a production base minted a token for the
    * wrong host and 401'd every call. Retained only for backwards compatibility.
    */
-  LUCKPAY_AUTH_URL: z.string().url().default("https://api-banking.luckpay.in/apibanking/api/v1/auth/token"),
-  LUCKPAY_PROD_BASE_URL: z.string().url().default("https://api-banking.luckpay.in/apibanking/api/v1"),
+  LUCKPAY_AUTH_URL: z
+    .string()
+    .url()
+    .default("https://api-banking.luckpay.in/apibanking/api/v1/auth/token"),
+  LUCKPAY_PROD_BASE_URL: z
+    .string()
+    .url()
+    .default("https://api-banking.luckpay.in/apibanking/api/v1"),
   LUCKPAY_BASIC_TOKEN: z.string().optional(),
   LUCKPAY_CLIENT_ID: z.string().optional(),
   LUCKPAY_WEBHOOK_SECRET: z.string().optional(),
@@ -211,27 +259,31 @@ const envSchema = z.object({
   COURT_CHECK_API_URL: z.string().url().default("https://api.infinityai.in"),
   COURT_CHECK_API_KEY: z.string().optional(),
   PENNY_DROP_WEBHOOK_SECRET: z.string().optional(),
+  ESIGN_AUTO_REDISPATCH_ENABLED: z
+    .string()
+    .transform((v) => v === "true")
+    .default("false"),
 
   // Billing DB (db_bill) — optional, only needed when billing features are used
-  BILL_DB_HOST:     z.string().default(""),
-  BILL_DB_PORT:     z.coerce.number().default(3306),
-  BILL_DB_USER:     z.string().default(""),
+  BILL_DB_HOST: z.string().default(""),
+  BILL_DB_PORT: z.coerce.number().default(3306),
+  BILL_DB_USER: z.string().default(""),
   BILL_DB_PASSWORD: z.string().default(""),
-  BILL_DB_NAME:     z.string().default("db_bill"),
+  BILL_DB_NAME: z.string().default("db_bill"),
 
   // Onfido process raw-data DB — task/report exports bulk-uploaded from HRMS,
   // feeding the Onfido process KPI/Quality/Operations dashboard.
-  ONFIDO_DB_HOST:     z.string().default(""),
-  ONFIDO_DB_PORT:     z.coerce.number().default(3306),
-  ONFIDO_DB_USER:     z.string().default(""),
+  ONFIDO_DB_HOST: z.string().default(""),
+  ONFIDO_DB_PORT: z.coerce.number().default(3306),
+  ONFIDO_DB_USER: z.string().default(""),
   ONFIDO_DB_PASSWORD: z.string().default(""),
-  ONFIDO_DB_NAME:     z.string().default("onfido_db"),
+  ONFIDO_DB_NAME: z.string().default("onfido_db"),
 
-  BELLA_DB_HOST:      z.string().default(""),
-  BELLA_DB_PORT:      z.coerce.number().default(3306),
-  BELLA_DB_USER:      z.string().default(""),
-  BELLA_DB_PASSWORD:  z.string().default(""),
-  BELLA_DB_NAME:      z.string().default("bella_db"),
+  BELLA_DB_HOST: z.string().default(""),
+  BELLA_DB_PORT: z.coerce.number().default(3306),
+  BELLA_DB_USER: z.string().default(""),
+  BELLA_DB_PASSWORD: z.string().default(""),
+  BELLA_DB_NAME: z.string().default("bella_db"),
 
   // Shivamgiri quality/APR database (shared by quality-dashboard module)
   SHIVAMGIRI_DB_NAME: z.string().default("Shivamgiri"),
@@ -259,15 +311,15 @@ const envSchema = z.object({
   // These follow the BILL_DB_* pattern above and EMPTY-DEFAULT TO THE MAIN CONNECTION, so
   // they change nothing until set. That is deliberate: they cost nothing if the database
   // turns out to be co-located, and they are the only available fix if it is not.
-  MASMIS_DB_HOST:     z.string().default(""),
-  MASMIS_DB_PORT:     z.coerce.number().default(0),
-  MASMIS_DB_USER:     z.string().default(""),
+  MASMIS_DB_HOST: z.string().default(""),
+  MASMIS_DB_PORT: z.coerce.number().default(0),
+  MASMIS_DB_USER: z.string().default(""),
   MASMIS_DB_PASSWORD: z.string().default(""),
   MASMIS_DB_NAME: z.string().default("db_masmis"),
 
   // Cross-DB source credentials — used by sourceDb.ts for db_audit, db_external, dialer_db queries
   // Falls back to DB_USER/DB_PASSWORD if not set
-  SOURCE_DB_USER:     z.string().default(""),
+  SOURCE_DB_USER: z.string().default(""),
   SOURCE_DB_PASSWORD: z.string().default(""),
 
   // AI provider — Gemini
@@ -281,7 +333,9 @@ const envSchema = z.object({
   // Caps thinking AND response text together on this model, so it is sized for a full
   // structured verdict rather than a chat reply.
   ANTHROPIC_MAX_OUTPUT_TOKENS: z.coerce.number().default(8000),
-  ANTHROPIC_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("high"),
+  ANTHROPIC_EFFORT: z
+    .enum(["low", "medium", "high", "xhigh", "max"])
+    .default("high"),
   ANTHROPIC_TIMEOUT_MS: z.coerce.number().default(300000),
 
   // UAT pipeline kill switches. Both default OFF: the validator costs money and reaches an
@@ -311,7 +365,9 @@ const envSchema = z.object({
   // The gate a drafted diff must pass before it can ship. Split into bin + args so it is
   // execFile'd as an argv array and never string-interpolated into a shell.
   MIRA_FIX_VERIFY_COMMAND_BIN: z.string().default("npx"),
-  MIRA_FIX_VERIFY_COMMAND_ARGS: z.string().default("vitest,run,--reporter=basic"),
+  MIRA_FIX_VERIFY_COMMAND_ARGS: z
+    .string()
+    .default("vitest,run,--reporter=basic"),
 
   // AI provider — OpenAI Whisper (voice transcription fallback for Safari/iOS,
   // where the browser has no Web Speech API)
@@ -341,45 +397,68 @@ const KNOWN_INSECURE_DEFAULTS = [
 
 if (parsed.data.NODE_ENV === "production") {
   if (KNOWN_INSECURE_DEFAULTS.includes(parsed.data.PORTAL_JWT_SECRET)) {
-    console.error("[FATAL] PORTAL_JWT_SECRET must be changed from the default value in production.");
+    console.error(
+      "[FATAL] PORTAL_JWT_SECRET must be changed from the default value in production.",
+    );
     process.exit(1);
   }
   if (KNOWN_INSECURE_DEFAULTS.includes(parsed.data.JWT_SECRET)) {
-    console.error("[FATAL] JWT_SECRET must be changed from the default value in production.");
+    console.error(
+      "[FATAL] JWT_SECRET must be changed from the default value in production.",
+    );
     process.exit(1);
   }
   if (KNOWN_INSECURE_DEFAULTS.includes(parsed.data.OTP_HMAC_SECRET)) {
-    console.error("[FATAL] OTP_HMAC_SECRET must be changed from the default value in production.");
+    console.error(
+      "[FATAL] OTP_HMAC_SECRET must be changed from the default value in production.",
+    );
     process.exit(1);
   }
   if (parsed.data.PAYROLL_BANK_KEY === "hrms-bank-key-dev") {
-    console.error("[FATAL] PAYROLL_BANK_KEY must be set to a secure value in production.");
+    console.error(
+      "[FATAL] PAYROLL_BANK_KEY must be set to a secure value in production.",
+    );
     process.exit(1);
   }
-  if (parsed.data.ENCRYPTION_KEY === '0000000000000000000000000000000000000000000000000000000000000000') {
-    console.error('[FATAL] ENCRYPTION_KEY must be set to a secure 64-char hex value in production.');
+  if (
+    parsed.data.ENCRYPTION_KEY ===
+    "0000000000000000000000000000000000000000000000000000000000000000"
+  ) {
+    console.error(
+      "[FATAL] ENCRYPTION_KEY must be set to a secure 64-char hex value in production.",
+    );
     process.exit(1);
   }
   // Non-fatal: CANDIDATE_PORTAL_JWT_SECRET not being set yet is handled by a safe fallback
   // in candidate-portal.service.ts (see that var's own comment above), not blocked at boot.
   // But if it HAS been set, it must actually be distinct — reusing JWT_SECRET/PORTAL_JWT_SECRET
   // here would defeat the whole point of a separate secret per token audience.
-  if (parsed.data.CANDIDATE_PORTAL_JWT_SECRET &&
-      (parsed.data.CANDIDATE_PORTAL_JWT_SECRET === parsed.data.JWT_SECRET ||
-       parsed.data.CANDIDATE_PORTAL_JWT_SECRET === parsed.data.PORTAL_JWT_SECRET)) {
-    console.error('[FATAL] CANDIDATE_PORTAL_JWT_SECRET must be distinct from JWT_SECRET and PORTAL_JWT_SECRET.');
+  if (
+    parsed.data.CANDIDATE_PORTAL_JWT_SECRET &&
+    (parsed.data.CANDIDATE_PORTAL_JWT_SECRET === parsed.data.JWT_SECRET ||
+      parsed.data.CANDIDATE_PORTAL_JWT_SECRET === parsed.data.PORTAL_JWT_SECRET)
+  ) {
+    console.error(
+      "[FATAL] CANDIDATE_PORTAL_JWT_SECRET must be distinct from JWT_SECRET and PORTAL_JWT_SECRET.",
+    );
     process.exit(1);
   }
   if (parsed.data.INTERNAL_DEMO_BYPASS === "true") {
-    console.error("[FATAL] INTERNAL_DEMO_BYPASS must not be 'true' in production.");
+    console.error(
+      "[FATAL] INTERNAL_DEMO_BYPASS must not be 'true' in production.",
+    );
     process.exit(1);
   }
   if (parsed.data.PORTAL_DEMO_BYPASS === "true") {
-    console.error("[FATAL] PORTAL_DEMO_BYPASS must not be 'true' in production.");
+    console.error(
+      "[FATAL] PORTAL_DEMO_BYPASS must not be 'true' in production.",
+    );
     process.exit(1);
   }
   if (parsed.data.OUTBOUND_ALLOW_PRIVATE_URLS === "true") {
-    console.error("[FATAL] OUTBOUND_ALLOW_PRIVATE_URLS must not be 'true' in production.");
+    console.error(
+      "[FATAL] OUTBOUND_ALLOW_PRIVATE_URLS must not be 'true' in production.",
+    );
     process.exit(1);
   }
   if (!parsed.data.BGV_WEBHOOK_SECRET) {
@@ -390,16 +469,31 @@ if (parsed.data.NODE_ENV === "production") {
     console.error("[FATAL] ATS_FORM_API_KEY must be set in production.");
     process.exit(1);
   }
-  if (parsed.data.BGV_PROVIDER === "infinity_ai" && !parsed.data.INFINITY_AI_API_KEY) {
-    console.error("[FATAL] INFINITY_AI_API_KEY must be set when BGV_PROVIDER=infinity_ai.");
+  if (
+    parsed.data.BGV_PROVIDER === "infinity_ai" &&
+    !parsed.data.INFINITY_AI_API_KEY
+  ) {
+    console.error(
+      "[FATAL] INFINITY_AI_API_KEY must be set when BGV_PROVIDER=infinity_ai.",
+    );
     process.exit(1);
   }
-  if (parsed.data.BGV_PROVIDER === "digio" && (!parsed.data.DIGIO_CLIENT_ID || !parsed.data.DIGIO_CLIENT_SECRET)) {
-    console.error("[FATAL] DIGIO_CLIENT_ID and DIGIO_CLIENT_SECRET must be set when BGV_PROVIDER=digio.");
+  if (
+    parsed.data.BGV_PROVIDER === "digio" &&
+    (!parsed.data.DIGIO_CLIENT_ID || !parsed.data.DIGIO_CLIENT_SECRET)
+  ) {
+    console.error(
+      "[FATAL] DIGIO_CLIENT_ID and DIGIO_CLIENT_SECRET must be set when BGV_PROVIDER=digio.",
+    );
     process.exit(1);
   }
-  if (parsed.data.LUCKPAY_PROVIDER_ENABLED === "true" && !parsed.data.LUCKPAY_WEBHOOK_SECRET) {
-    console.error("[FATAL] LUCKPAY_WEBHOOK_SECRET must be set when LUCKPAY_PROVIDER_ENABLED=true.");
+  if (
+    parsed.data.LUCKPAY_PROVIDER_ENABLED === "true" &&
+    !parsed.data.LUCKPAY_WEBHOOK_SECRET
+  ) {
+    console.error(
+      "[FATAL] LUCKPAY_WEBHOOK_SECRET must be set when LUCKPAY_PROVIDER_ENABLED=true.",
+    );
     process.exit(1);
   }
 }
@@ -407,16 +501,19 @@ if (parsed.data.NODE_ENV === "production") {
 // Non-production warning: zero ENCRYPTION_KEY with a live upstream host means
 // external-DB credentials stored in MySQL are encrypted with a null key.
 if (parsed.data.NODE_ENV !== "production") {
-  const zeroKey = '0000000000000000000000000000000000000000000000000000000000000000';
-  const isLiveHost = (h: string) => !!h && !/^(localhost|127\.0\.0\.1|::1)$/.test(h.trim());
+  const zeroKey =
+    "0000000000000000000000000000000000000000000000000000000000000000";
+  const isLiveHost = (h: string) =>
+    !!h && !/^(localhost|127\.0\.0\.1|::1)$/.test(h.trim());
   if (
     parsed.data.ENCRYPTION_KEY === zeroKey &&
-    (isLiveHost(parsed.data.NCOSEC_DB_HOST) || isLiveHost(parsed.data.LMS_DB_HOST))
+    (isLiveHost(parsed.data.NCOSEC_DB_HOST) ||
+      isLiveHost(parsed.data.LMS_DB_HOST))
   ) {
     console.warn(
-      '[WARN] ENCRYPTION_KEY is the all-zero default while a live upstream DB host is configured. ' +
-      'External-DB connector credentials stored in mas_hrms are encrypted with a null key. ' +
-      'Set a real ENCRYPTION_KEY before connecting to production source systems.'
+      "[WARN] ENCRYPTION_KEY is the all-zero default while a live upstream DB host is configured. " +
+        "External-DB connector credentials stored in mas_hrms are encrypted with a null key. " +
+        "Set a real ENCRYPTION_KEY before connecting to production source systems.",
     );
   }
 }
@@ -425,25 +522,36 @@ export const env = {
   ...parsed.data,
   LMS_DB_USER: parsed.data.LMS_DB_USER || parsed.data.DB_USER,
   LMS_DB_PASSWORD: parsed.data.LMS_DB_PASSWORD || parsed.data.DB_PASSWORD,
-  JOB_REQUISITION_RAISED_EMAIL_ENABLED: parsed.data.JOB_REQUISITION_RAISED_EMAIL_ENABLED === 'true',
-  LEGACY_SYNC_ENABLED: parsed.data.LEGACY_SYNC_ENABLED === 'true',
-  LEGACY_SYNC_PARALLEL_DOMAINS: parsed.data.LEGACY_SYNC_PARALLEL_DOMAINS !== 'false',
-  ENABLE_SCHEDULERS: parsed.data.ENABLE_SCHEDULERS === 'true',
-  OUTBOUND_ALLOW_PRIVATE_URLS: parsed.data.OUTBOUND_ALLOW_PRIVATE_URLS === 'true',
-  SEED_DEMO_DATA: parsed.data.SEED_DEMO_DATA === 'true',
+  JOB_REQUISITION_RAISED_EMAIL_ENABLED:
+    parsed.data.JOB_REQUISITION_RAISED_EMAIL_ENABLED === "true",
+  LEGACY_SYNC_ENABLED: parsed.data.LEGACY_SYNC_ENABLED === "true",
+  LEGACY_SYNC_PARALLEL_DOMAINS:
+    parsed.data.LEGACY_SYNC_PARALLEL_DOMAINS !== "false",
+  ENABLE_SCHEDULERS: parsed.data.ENABLE_SCHEDULERS === "true",
+  OUTBOUND_ALLOW_PRIVATE_URLS:
+    parsed.data.OUTBOUND_ALLOW_PRIVATE_URLS === "true",
+  SEED_DEMO_DATA: parsed.data.SEED_DEMO_DATA === "true",
   LUCKPAY_PROVIDER_ENABLED: parsed.data.LUCKPAY_PROVIDER_ENABLED === "true",
   JOINING_KIT_ESIGN_ENABLED: parsed.data.JOINING_KIT_ESIGN_ENABLED === "true",
-  ESIGN_RECONCILIATION_ENABLED: parsed.data.ESIGN_RECONCILIATION_ENABLED === "true",
-  NCOSEC_RECONCILIATION_ENABLED: parsed.data.NCOSEC_RECONCILIATION_ENABLED !== "false",
-  NCOSEC_RECONCILIATION_AUTO_FIX: parsed.data.NCOSEC_RECONCILIATION_AUTO_FIX === "true",
+  ESIGN_RECONCILIATION_ENABLED:
+    parsed.data.ESIGN_RECONCILIATION_ENABLED === "true",
+  NCOSEC_RECONCILIATION_ENABLED:
+    parsed.data.NCOSEC_RECONCILIATION_ENABLED !== "false",
+  NCOSEC_RECONCILIATION_AUTO_FIX:
+    parsed.data.NCOSEC_RECONCILIATION_AUTO_FIX === "true",
   MIRA_AUTO_DRAFT_ENABLED: parsed.data.MIRA_AUTO_DRAFT_ENABLED === "true",
   MIRA_AUTO_DEPLOY_ENABLED: parsed.data.MIRA_AUTO_DEPLOY_ENABLED === "true",
   MIRA_FIX_REPO_PATH: parsed.data.MIRA_FIX_REPO_PATH,
   MIRA_FIX_HEALTH_URL: parsed.data.MIRA_FIX_HEALTH_URL.replace(/\/+$/, ""),
   MIRA_FIX_VERIFY_COMMAND_BIN: parsed.data.MIRA_FIX_VERIFY_COMMAND_BIN,
-  MIRA_FIX_VERIFY_COMMAND_ARGS: parsed.data.MIRA_FIX_VERIFY_COMMAND_ARGS
-    .split(",").map((a) => a.trim()).filter(Boolean),
+  MIRA_FIX_VERIFY_COMMAND_ARGS: parsed.data.MIRA_FIX_VERIFY_COMMAND_ARGS.split(
+    ",",
+  )
+    .map((a) => a.trim())
+    .filter(Boolean),
   MCNMEET_ENABLED: parsed.data.MCNMEET_ENABLED === "true",
-  MCNMEET_GOOGLE_BACKUP_ENABLED: parsed.data.MCNMEET_GOOGLE_BACKUP_ENABLED !== "false",
-  MCNMEET_GOOGLE_AUTO_CREATE_ENABLED: parsed.data.MCNMEET_GOOGLE_AUTO_CREATE_ENABLED === "true",
+  MCNMEET_GOOGLE_BACKUP_ENABLED:
+    parsed.data.MCNMEET_GOOGLE_BACKUP_ENABLED !== "false",
+  MCNMEET_GOOGLE_AUTO_CREATE_ENABLED:
+    parsed.data.MCNMEET_GOOGLE_AUTO_CREATE_ENABLED === "true",
 };

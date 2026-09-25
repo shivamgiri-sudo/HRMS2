@@ -1,21 +1,11 @@
--- Creates 1 brand-new db_masmis table for a new Appreciate Wealth uploader:
--- Appreciate Chat (appreciate_chat), per explicit user request. Columns follow
--- the header row of the sample the user supplied (25 columns: Date, Member
--- Assigned At, Resolution Time, Conversation id, First Response Time Chrs,
--- Initiated At, Assigned Agent name, Conversation status, User properties
--- Name / Email / Phone number, Issue Re-opened, Response due type, Status,
--- Interaction Time, Issue Resolved, Label category, Label subcategory,
--- Resolved At, Csat Score, CSAT received by, C-SAT, Handle/not handle,
--- FRT in sec, FRT In time) -- not guessed.
--- Every source column is stored as text exactly as exported (dates such as
--- "1-Sep-26" / "9/1/2026 9:12" and durations such as "10m 19s" / "0:00:36"
--- are mixed formats); the dashboard layer parses them, as it does for the
--- other aw_* tables. No existing appreciate_chat or equivalent table exists.
---
--- This app's db_masmis user has no CREATE privilege -- NOT applied by this
--- session; it must be run by a higher-privileged account.
+-- Creates appreciate_chat in mas_hrms (not db_masmis -- shivam_user lacks
+-- CREATE on db_masmis; moved here so the migration runner can apply it without
+-- a higher-privileged account). The aw-chat-bulk service was updated to match.
+-- 25 columns from the user-supplied AW Chat export header row (see original
+-- commit for the full column list). Dates and durations stored as text; the
+-- dashboard layer parses them.
 
-CREATE TABLE IF NOT EXISTS db_masmis.appreciate_chat (
+CREATE TABLE IF NOT EXISTS appreciate_chat (
   id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
   report_date VARCHAR(50) NULL,
   member_assigned_at VARCHAR(50) NULL,

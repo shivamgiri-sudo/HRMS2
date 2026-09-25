@@ -20,7 +20,11 @@ import type { RowDataPacket } from "mysql2";
 import type { luckpayClient } from "../integrations/luckpay/luckpay.client.js";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
-import { assembleJoiningKit, kitEligibleDocuments, type AssembledKit } from "./joiningKitAssembly.service.js";
+import {
+  assembleJoiningKit,
+  kitEligibleDocuments,
+  type AssembledKit,
+} from "./joiningKitAssembly.service.js";
 import { regenerateMissingKitDrafts } from "./joiningKitDraftRepair.service.js";
 
 const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
@@ -28,13 +32,22 @@ const STORAGE = (employeeId: string) =>
   path.resolve(process.cwd(), "private-storage", "joining-kits", employeeId);
 
 function frontendBaseUrl(): string {
-  return String(env.FRONTEND_URL ?? "https://mcnhrms.teammas.in").replace(/\/+$/, "");
+  return String(env.FRONTEND_URL ?? "https://mcnhrms.teammas.in").replace(
+    /\/+$/,
+    "",
+  );
 }
 
 export type BlockedReason =
-  | "feature_disabled" | "per_document_flow_active" | "draft_missing"
-  | "placeholder_draft" | "hr_fill_pending" | "no_recipient_email"
-  | "provider_disabled" | "no_documents" | "payroll_head_not_approved";
+  | "feature_disabled"
+  | "per_document_flow_active"
+  | "draft_missing"
+  | "placeholder_draft"
+  | "hr_fill_pending"
+  | "no_recipient_email"
+  | "provider_disabled"
+  | "no_documents"
+  | "payroll_head_not_approved";
 
 export type DispatchOutcome = {
   kitId: string | null;
@@ -71,23 +84,28 @@ async function audit(
    */
   oldValue?: unknown,
 ) {
-  await db.execute(
-    `INSERT INTO employee_joining_document_audit_log
+  await db
+    .execute(
+      `INSERT INTO employee_joining_document_audit_log
        (id, employee_id, checklist_id, document_code, action_type,
         old_value, new_value, remarks, actor_user_id, actor_type)
      VALUES (?, ?, NULL, 'JOINING_KIT', ?, CAST(? AS JSON), CAST(? AS JSON), ?, ?, 'system')`,
-    [
-      randomUUID(),
-      employeeId,
-      action,
-      oldValue === undefined ? null : JSON.stringify(oldValue),
-      JSON.stringify({ kitId, ...((detail as object) ?? {}) }),
-      `Joining kit ${kitId ?? ""}`.trim(),
-      actorUserId,
-    ],
-  ).catch((e: unknown) => {
-    console.warn("[joining-kit] audit entry not written:", e instanceof Error ? e.message : e);
-  });
+      [
+        randomUUID(),
+        employeeId,
+        action,
+        oldValue === undefined ? null : JSON.stringify(oldValue),
+        JSON.stringify({ kitId, ...((detail as object) ?? {}) }),
+        `Joining kit ${kitId ?? ""}`.trim(),
+        actorUserId,
+      ],
+    )
+    .catch((e: unknown) => {
+      console.warn(
+        "[joining-kit] audit entry not written:",
+        e instanceof Error ? e.message : e,
+      );
+    });
 }
 
 /**
@@ -105,8 +123,14 @@ async function assembleRepairingMissingDraftsOnce(
     return await assemble();
   } catch (e) {
     if ((e as { code?: string }).code !== "draft_missing") throw e;
-    const repair = await regenerateMissingKitDrafts(employeeId, actorUserId).catch((repairErr: unknown) => {
-      console.error("[joining-kit] draft repair failed:", repairErr instanceof Error ? repairErr.message : repairErr);
+    const repair = await regenerateMissingKitDrafts(
+      employeeId,
+      actorUserId,
+    ).catch((repairErr: unknown) => {
+      console.error(
+        "[joining-kit] draft repair failed:",
+        repairErr instanceof Error ? repairErr.message : repairErr,
+      );
       return null;
     });
     if (!repair || repair.attempted === 0) throw e; // nothing repairable: keep the original block
@@ -114,11 +138,18 @@ async function assembleRepairingMissingDraftsOnce(
   }
 }
 
-async function blockKit(kitId: string, employeeId: string, reason: BlockedReason, message: string): Promise<DispatchOutcome> {
-  await db.execute(
-    `UPDATE employee_joining_esign_kit SET status = 'blocked', blocked_reason = ? WHERE id = ?`,
-    [reason, kitId],
-  ).catch(() => undefined);
+async function blockKit(
+  kitId: string,
+  employeeId: string,
+  reason: BlockedReason,
+  message: string,
+): Promise<DispatchOutcome> {
+  await db
+    .execute(
+      `UPDATE employee_joining_esign_kit SET status = 'blocked', blocked_reason = ? WHERE id = ?`,
+      [reason, kitId],
+    )
+    .catch(() => undefined);
   await audit(kitId, employeeId, "KIT_BLOCKED", null, { reason, message });
   return { kitId, status: "blocked", blockedReason: reason, message };
 }
@@ -133,10 +164,12 @@ export async function queueJoiningKit(params: {
   actorUserId?: string | null;
   triggerSource?: string;
 }): Promise<{ kitId: string; created: boolean }> {
-  const [open] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM employee_joining_esign_kit WHERE employee_id = ? AND open_marker = 'Y' LIMIT 1`,
-    [params.employeeId],
-  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const [open] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT id FROM employee_joining_esign_kit WHERE employee_id = ? AND open_marker = 'Y' LIMIT 1`,
+      [params.employeeId],
+    )
+    .catch(() => [[]] as unknown as [RowDataPacket[]]);
   const existing = (open as RowDataPacket[])[0];
   if (existing) return { kitId: String(existing.id), created: false };
 
@@ -145,7 +178,9 @@ export async function queueJoiningKit(params: {
   const docs = await kitEligibleDocuments(params.employeeId);
   if (docs.length === 0) {
     throw Object.assign(
-      new Error("This employee has no eSign joining documents, so there is nothing to send."),
+      new Error(
+        "This employee has no eSign joining documents, so there is nothing to send.",
+      ),
       { statusCode: 409, code: "no_documents" },
     );
   }
@@ -155,10 +190,22 @@ export async function queueJoiningKit(params: {
     `INSERT INTO employee_joining_esign_kit
        (id, employee_id, candidate_id, anchor_checklist_id, status, open_marker, trigger_source, created_by)
      VALUES (?, ?, ?, ?, 'queued', 'Y', ?, ?)`,
-    [kitId, params.employeeId, params.candidateId ?? null, String(docs[0].id),
-     params.triggerSource ?? "manual", params.actorUserId ?? null],
+    [
+      kitId,
+      params.employeeId,
+      params.candidateId ?? null,
+      String(docs[0].id),
+      params.triggerSource ?? "manual",
+      params.actorUserId ?? null,
+    ],
   );
-  await audit(kitId, params.employeeId, "KIT_QUEUED", params.actorUserId ?? null, { documents: docs.length });
+  await audit(
+    kitId,
+    params.employeeId,
+    "KIT_QUEUED",
+    params.actorUserId ?? null,
+    { documents: docs.length },
+  );
   return { kitId, created: true };
 }
 
@@ -170,7 +217,11 @@ export async function queueJoiningKit(params: {
  * clientTransactionId on first receipt, so a resend returns 409 permanently and
  * the first attempt may already have been billed.
  */
-export async function dispatchJoiningKit(kitId: string, actorUserId: string | null = null, ccEmails: string[] = []): Promise<DispatchOutcome> {
+export async function dispatchJoiningKit(
+  kitId: string,
+  actorUserId: string | null = null,
+  ccEmails: string[] = [],
+): Promise<DispatchOutcome> {
   const [kits] = await db.execute<RowDataPacket[]>(
     `SELECT k.*, e.employee_code, e.personal_email, e.branch_id,
             COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS official_email,
@@ -188,16 +239,31 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
     [kitId],
   );
   const kit = (kits as RowDataPacket[])[0];
-  if (!kit) throw Object.assign(new Error("Kit not found"), { statusCode: 404 });
+  if (!kit)
+    throw Object.assign(new Error("Kit not found"), { statusCode: 404 });
   if (String(kit.status) === "sent" || String(kit.status) === "signed") {
-    return { kitId, status: "already_open", message: `This kit is already ${kit.status}.` };
+    return {
+      kitId,
+      status: "already_open",
+      message: `This kit is already ${kit.status}.`,
+    };
   }
 
   if (!env.JOINING_KIT_ESIGN_ENABLED) {
-    return blockKit(kitId, String(kit.employee_id), "feature_disabled", "The consolidated joining kit is switched off (JOINING_KIT_ESIGN_ENABLED).");
+    return blockKit(
+      kitId,
+      String(kit.employee_id),
+      "feature_disabled",
+      "The consolidated joining kit is switched off (JOINING_KIT_ESIGN_ENABLED).",
+    );
   }
   if (!env.LUCKPAY_PROVIDER_ENABLED) {
-    return blockKit(kitId, String(kit.employee_id), "provider_disabled", "The eSign provider is disabled, so no kit can be sent.");
+    return blockKit(
+      kitId,
+      String(kit.employee_id),
+      "provider_disabled",
+      "The eSign provider is disabled, so no kit can be sent.",
+    );
   }
 
   const employeeId = String(kit.employee_id);
@@ -205,17 +271,23 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
   // Someone already part-way through the per-document flow must not receive a
   // kit as well: they would end up with two live signing links for the same
   // documents.
-  const [live] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) n
+  const [live] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT COUNT(*) n
        FROM employee_joining_document_public_token t
        JOIN employee_joining_document_checklist c ON c.id = t.checklist_id
       WHERE c.employee_id = ? AND t.kit_id IS NULL
         AND t.token_status = 'active' AND t.expires_at > NOW()`,
-    [employeeId],
-  ).catch(() => [[{ n: 0 }]] as unknown as [RowDataPacket[]]);
+      [employeeId],
+    )
+    .catch(() => [[{ n: 0 }]] as unknown as [RowDataPacket[]]);
   if (Number((live as RowDataPacket[])[0]?.n ?? 0) > 0) {
-    return blockKit(kitId, employeeId, "per_document_flow_active",
-      "This employee already has an active per-document signing link. Let it complete or expire before sending a kit.");
+    return blockKit(
+      kitId,
+      employeeId,
+      "per_document_flow_active",
+      "This employee already has an active per-document signing link. Let it complete or expire before sending a kit.",
+    );
   }
 
   // Joining documents must not be sent before the Payroll Head has approved the
@@ -223,14 +295,20 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
   // appendix comes from salary_package_master, which is only written after the
   // Payroll Head assigns and accepts a package. Sending before approval means
   // the candidate signs a contract that may not reflect the final agreed salary.
-  const [reviewRows] = await db.execute<RowDataPacket[]>(
-    `SELECT status FROM employee_payroll_head_review WHERE employee_id = ? LIMIT 1`,
-    [employeeId],
-  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const [reviewRows] = await db
+    .execute<RowDataPacket[]>(
+      `SELECT status FROM employee_payroll_head_review WHERE employee_id = ? LIMIT 1`,
+      [employeeId],
+    )
+    .catch(() => [[]] as unknown as [RowDataPacket[]]);
   const reviewStatus = String((reviewRows as RowDataPacket[])[0]?.status ?? "");
   if (reviewStatus !== "approved") {
-    return blockKit(kitId, employeeId, "payroll_head_not_approved",
-      "Salary has not been approved by the Payroll Head. Joining documents can only be sent after salary approval.");
+    return blockKit(
+      kitId,
+      employeeId,
+      "payroll_head_not_approved",
+      "Salary has not been approved by the Payroll Head. Joining documents can only be sent after salary approval.",
+    );
   }
 
   // Anything HR is still filling in would be signed half-finished — but only
@@ -245,47 +323,79 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
   const members = await kitEligibleDocuments(employeeId);
   const memberIds = members.map((d) => String(d.id));
   const pendingRows: RowDataPacket[] = memberIds.length
-    ? ((await db.query<RowDataPacket[]>(
-        `SELECT document_name FROM employee_joining_document_checklist
+    ? ((
+        await db
+          .query<RowDataPacket[]>(
+            `SELECT document_name FROM employee_joining_document_checklist
           WHERE id IN (${memberIds.map(() => "?").join(",")})
             AND fill_status = 'hr_fill_required'`,
-        memberIds,
-      ).catch(() => [[]] as unknown as [RowDataPacket[]]))[0] as RowDataPacket[])
+            memberIds,
+          )
+          .catch(() => [[]] as unknown as [RowDataPacket[]])
+      )[0] as RowDataPacket[])
     : [];
   if (pendingRows.length > 0) {
     // Name them: HR needs to know which document to complete, not merely that
     // one exists.
-    return blockKit(kitId, employeeId, "hr_fill_pending",
-      `These documents still need HR to complete them before the kit can be sent: ${
-        pendingRows.map((r) => r.document_name).join(", ")}.`);
+    return blockKit(
+      kitId,
+      employeeId,
+      "hr_fill_pending",
+      `These documents still need HR to complete them before the kit can be sent: ${pendingRows
+        .map((r) => r.document_name)
+        .join(", ")}.`,
+    );
   }
 
-  const recipients = [kit.personal_email, kit.official_email]
-    .filter((e): e is string => typeof e === "string" && e.includes("@"));
+  const recipients = [kit.personal_email, kit.official_email].filter(
+    (e): e is string => typeof e === "string" && e.includes("@"),
+  );
   if (recipients.length === 0) {
-    return blockKit(kitId, employeeId, "no_recipient_email", "This employee has no email address on record.");
+    return blockKit(
+      kitId,
+      employeeId,
+      "no_recipient_email",
+      "This employee has no email address on record.",
+    );
   }
 
   // ── assemble ───────────────────────────────────────────────────────────────
-  await db.execute(`UPDATE employee_joining_esign_kit SET status = 'assembling' WHERE id = ?`, [kitId]);
+  await db.execute(
+    `UPDATE employee_joining_esign_kit SET status = 'assembling' WHERE id = ?`,
+    [kitId],
+  );
   let assembled;
   try {
-    assembled = await assembleRepairingMissingDraftsOnce(employeeId, actorUserId, () => assembleJoiningKit(employeeId, {
-      employeeName: String(kit.full_name ?? ""),
-      employeeCode: String(kit.employee_code ?? ""),
-      designation: (kit.designation_name as string) ?? null,
-      branchName: (kit.branch_name as string) ?? null,
-      dateOfJoining: (kit.date_of_joining as Date | null) ?? null,
-    }));
+    assembled = await assembleRepairingMissingDraftsOnce(
+      employeeId,
+      actorUserId,
+      () =>
+        assembleJoiningKit(employeeId, {
+          employeeName: String(kit.full_name ?? ""),
+          employeeCode: String(kit.employee_code ?? ""),
+          designation: (kit.designation_name as string) ?? null,
+          branchName: (kit.branch_name as string) ?? null,
+          dateOfJoining: (kit.date_of_joining as Date | null) ?? null,
+        }),
+    );
   } catch (e) {
     const err = e as { code?: string; message: string };
-    return blockKit(kitId, employeeId, (err.code as BlockedReason) ?? "draft_missing", err.message);
+    return blockKit(
+      kitId,
+      employeeId,
+      (err.code as BlockedReason) ?? "draft_missing",
+      err.message,
+    );
   }
 
   // A placeholder would ask the employee to sign a watermarked draft.
   if (assembled.buffer.toString("latin1").includes("TEMPLATE NOT CONFIGURED")) {
-    return blockKit(kitId, employeeId, "placeholder_draft",
-      "One of the documents is still an unconfigured placeholder draft. Configure its template before sending.");
+    return blockKit(
+      kitId,
+      employeeId,
+      "placeholder_draft",
+      "One of the documents is still an unconfigured placeholder draft. Configure its template before sending.",
+    );
   }
 
   const dir = STORAGE(employeeId);
@@ -294,16 +404,26 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
   await fs.promises.writeFile(kitPath, assembled.buffer);
 
   const kitFileId = randomUUID();
-  await db.execute(
-    `INSERT INTO employee_joining_document_file
+  await db
+    .execute(
+      `INSERT INTO employee_joining_document_file
        (id, checklist_id, employee_id, candidate_id, document_code, file_role,
         original_filename, stored_filename, storage_path, mime_type, file_size_bytes,
         file_hash_sha256, uploaded_by_type, uploaded_at)
      VALUES (?, ?, ?, ?, 'JOINING_KIT', 'kit_source', ?, ?, ?, 'application/pdf', ?, ?, 'system', NOW())`,
-    [kitFileId, String(kit.anchor_checklist_id), employeeId, kit.candidate_id ?? null,
-     `joining-kit-${kitId}.pdf`, path.basename(kitPath), kitPath,
-     assembled.buffer.byteLength, assembled.sha256],
-  ).catch(() => undefined);
+      [
+        kitFileId,
+        String(kit.anchor_checklist_id),
+        employeeId,
+        kit.candidate_id ?? null,
+        `joining-kit-${kitId}.pdf`,
+        path.basename(kitPath),
+        kitPath,
+        assembled.buffer.byteLength,
+        assembled.sha256,
+      ],
+    )
+    .catch(() => undefined);
 
   for (const [i, it] of assembled.items.entries()) {
     await db.execute(
@@ -311,8 +431,18 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
          (id, kit_id, checklist_id, document_code, document_name, sort_order,
           source_file_id, source_sha256, page_from, page_to)
        VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      [randomUUID(), kitId, it.checklistId, it.documentCode, it.documentName, i,
-       it.sourceFileId, it.sourceSha256, it.pageFrom, it.pageTo],
+      [
+        randomUUID(),
+        kitId,
+        it.checklistId,
+        it.documentCode,
+        it.documentName,
+        i,
+        it.sourceFileId,
+        it.sourceSha256,
+        it.pageFrom,
+        it.pageTo,
+      ],
     );
   }
 
@@ -323,13 +453,22 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
     `INSERT INTO employee_joining_document_public_token
        (id, checklist_id, kit_id, employee_id, candidate_id, document_code,
         public_token_hash, token_status, expires_at, created_by)
-     VALUES (?, ?, ?, ?, ?, 'JOINING_KIT', ?, 'active', (NOW() + INTERVAL 7 DAY), ?)`,
-    [randomUUID(), String(kit.anchor_checklist_id), kitId, employeeId,
-     kit.candidate_id ?? null, sha256(publicToken), actorUserId],
+     VALUES (?, ?, ?, ?, ?, 'JOINING_KIT', ?, 'active', (NOW() + INTERVAL 15 DAY), ?)`,
+    [
+      randomUUID(),
+      String(kit.anchor_checklist_id),
+      kitId,
+      employeeId,
+      kit.candidate_id ?? null,
+      sha256(publicToken),
+      actorUserId,
+    ],
   );
 
-  const { luckpayClient, esignWithUrl } = await import("../integrations/luckpay/luckpay.client.js");
-  const clientTransactionId = luckpayClient.generateClientTransactionId("joining-kit");
+  const { luckpayClient, esignWithUrl } =
+    await import("../integrations/luckpay/luckpay.client.js");
+  const clientTransactionId =
+    luckpayClient.generateClientTransactionId("joining-kit");
   let providerUrl: string | null = null;
   let providerReferenceId: string | null = null;
   let txStatus = "link_generated";
@@ -352,9 +491,14 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
       }),
       new Promise<never>((_, reject) =>
         setTimeout(
-          () => reject(new Error(`eSign provider timed out after ${PROVIDER_TIMEOUT_MS / 1000} s`)),
+          () =>
+            reject(
+              new Error(
+                `eSign provider timed out after ${PROVIDER_TIMEOUT_MS / 1000} s`,
+              ),
+            ),
           PROVIDER_TIMEOUT_MS,
-        )
+        ),
       ),
     ]);
     // esignWithUrl returns providerUrl; verificationUrl is the raw client's shape.
@@ -366,12 +510,20 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
     // receipt, so a resend returns 409 permanently and the first attempt may
     // already have been billed. Fail the kit and let HR retry with a fresh id.
     errorMessage = e instanceof Error ? e.message : String(e);
-    await db.execute(
-      `UPDATE employee_joining_esign_kit SET status = 'failed', blocked_reason = 'provider_error' WHERE id = ?`,
-      [kitId],
-    ).catch(() => undefined);
-    await audit(kitId, employeeId, "KIT_PROVIDER_FAILED", actorUserId, { error: errorMessage });
-    return { kitId, status: "failed", message: `The eSign provider rejected the request: ${errorMessage}` };
+    await db
+      .execute(
+        `UPDATE employee_joining_esign_kit SET status = 'failed', blocked_reason = 'provider_error' WHERE id = ?`,
+        [kitId],
+      )
+      .catch(() => undefined);
+    await audit(kitId, employeeId, "KIT_PROVIDER_FAILED", actorUserId, {
+      error: errorMessage,
+    });
+    return {
+      kitId,
+      status: "failed",
+      message: `The eSign provider rejected the request: ${errorMessage}`,
+    };
   }
 
   const txId = randomUUID();
@@ -381,20 +533,35 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
         client_transaction_id, provider_reference_id, signer_name, signer_email,
         signer_location, signing_reason, status, provider_url, initiated_by)
      VALUES (?, ?, ?, 'kit', ?, ?, 'JOINING_KIT', 'luckpay', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [txId, String(kit.anchor_checklist_id), kitId, employeeId, kit.candidate_id ?? null,
-     clientTransactionId, providerReferenceId, kit.full_name ?? null, recipients[0] ?? null,
-     kit.branch_name ?? "India", `Joining Documents Kit`, txStatus, providerUrl, actorUserId],
+    [
+      txId,
+      String(kit.anchor_checklist_id),
+      kitId,
+      employeeId,
+      kit.candidate_id ?? null,
+      clientTransactionId,
+      providerReferenceId,
+      kit.full_name ?? null,
+      recipients[0] ?? null,
+      kit.branch_name ?? "India",
+      `Joining Documents Kit`,
+      txStatus,
+      providerUrl,
+      actorUserId,
+    ],
   );
 
   // Every member moves to esign_initiated — an existing allowed status, so
   // dashboards, reports and the compliance worker keep working unchanged.
   for (const it of assembled.items) {
-    await db.execute(
-      `UPDATE employee_joining_document_checklist
+    await db
+      .execute(
+        `UPDATE employee_joining_document_checklist
           SET status = 'esign_initiated', fill_status = 'esign_initiated', updated_at = NOW()
         WHERE id = ?`,
-      [it.checklistId],
-    ).catch(() => undefined);
+        [it.checklistId],
+      )
+      .catch(() => undefined);
   }
 
   await db.execute(
@@ -402,14 +569,22 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
         SET status = 'sent', sent_at = NOW(), document_count = ?, total_pages = ?,
             kit_file_id = ?, kit_sha256 = ?, blocked_reason = NULL
       WHERE id = ?`,
-    [assembled.items.length, assembled.totalPages, kitFileId, assembled.sha256, kitId],
+    [
+      assembled.items.length,
+      assembled.totalPages,
+      kitFileId,
+      assembled.sha256,
+      kitId,
+    ],
   );
 
   // ── one email ─────────────────────────────────────────────────────────────
   const emailedTo: string[] = [];
   try {
     const { emailService } = await import("../communication/email.service.js");
-    const validCcEmails = ccEmails.filter((e) => typeof e === "string" && e.includes("@"));
+    const validCcEmails = ccEmails.filter(
+      (e) => typeof e === "string" && e.includes("@"),
+    );
     for (const addr of [...new Set(recipients)]) {
       await emailService.send({
         to: addr,
@@ -419,7 +594,9 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
           employeeName: String(kit.full_name ?? ""),
           employeeCode: String(kit.employee_code ?? ""),
           processName: kit.process_name ? String(kit.process_name) : null,
-          reportingManagerName: kit.reporting_manager_name ? String(kit.reporting_manager_name) : null,
+          reportingManagerName: kit.reporting_manager_name
+            ? String(kit.reporting_manager_name)
+            : null,
           documents: assembled.items.map((i) => i.documentName),
           signLink,
         }),
@@ -429,17 +606,25 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
   } catch (e) {
     // The kit is assembled, stored and initiated; a mail failure must not undo
     // that. HR can resend.
-    console.warn("[joining-kit] email failed:", e instanceof Error ? e.message : e);
+    console.warn(
+      "[joining-kit] email failed:",
+      e instanceof Error ? e.message : e,
+    );
   }
 
   await audit(kitId, employeeId, "KIT_SENT", actorUserId, {
-    documents: assembled.items.length, pages: assembled.totalPages, emailed: emailedTo.length,
+    documents: assembled.items.length,
+    pages: assembled.totalPages,
+    emailed: emailedTo.length,
   });
 
   try {
-    const { recalculateDocumentProgress } = await import("./employeeJoiningDocuments.service.js");
+    const { recalculateDocumentProgress } =
+      await import("./employeeJoiningDocuments.service.js");
     await recalculateDocumentProgress(employeeId);
-  } catch { /* progress is derived; never block the send on it */ }
+  } catch {
+    /* progress is derived; never block the send on it */
+  }
 
   return {
     kitId,
@@ -522,20 +707,55 @@ async function loadKitForRelink(kitId: string): Promise<KitForRelink | null> {
  * been captured. This is the guard that stops that: a resend or reminder only
  * mints a link when the kit's own transaction is not already terminal.
  */
+/**
+ * eMudhra sessions have a hard TTL — typically 24-72 hours. After that, clicking
+ * the signing link shows "Invalid Page!" because the session no longer exists on
+ * their side. The system cannot tell whether a FAILED status is a temporary OTP
+ * failure (recoverable) or a session that has truly died.
+ *
+ * The heuristic: a `failed` transaction less than SESSION_DEAD_AFTER_DAYS old
+ * might still be recoverable — the candidate could retry on the same link. After
+ * that, the eMudhra session is definitely gone; treat it as dead so redispatch
+ * becomes possible.
+ */
+const SESSION_DEAD_AFTER_DAYS = 3;
+
 export async function kitEsignSessionIsAlive(kitId: string): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT status FROM employee_document_esign_transaction
+    `SELECT status, initiated_at, DATEDIFF(NOW(), initiated_at) AS age_days
+       FROM employee_document_esign_transaction
       WHERE kit_id = ? ORDER BY initiated_at DESC LIMIT 1`,
     [kitId],
   );
-  const status = String((rows as RowDataPacket[])[0]?.status ?? "").toLowerCase();
-  if (!status) return true; // no transaction row yet: nothing to have failed
-  // 'failed' is deliberately not treated as dead here — see the matching note on
+  const row = (rows as RowDataPacket[])[0];
+  if (!row) return true; // no transaction row yet: nothing to have failed
+
+  const status = String(row.status ?? "").toLowerCase();
+  const ageDays = Number(row.age_days ?? 0);
+
+  // Definitely dead states
+  if (["expired", "cancelled", "abandoned_unresolved"].includes(status)) {
+    return false;
+  }
+
+  // 'failed' is deliberately not treated as dead when fresh — see the matching note on
   // TERMINAL in esign-reconciliation.worker.ts. Verified live: a transaction Luckpay
   // reported FAILED was completed by the candidate on the same session two days
-  // later. Excluding it from "dead" keeps resend/reminder links flowing instead of
-  // silently going quiet the moment one status check comes back FAILED.
-  return !["expired", "cancelled", "abandoned_unresolved"].includes(status);
+  // later. But after SESSION_DEAD_AFTER_DAYS, the eMudhra session is definitely gone —
+  // the candidate clicking the link gets "Invalid Page!" and cannot sign even if they
+  // wanted to. Treat it as dead so redispatch becomes possible.
+  if (status === "failed" && ageDays >= SESSION_DEAD_AFTER_DAYS) {
+    return false;
+  }
+
+  // Pending/initiated sessions older than 7 days are also effectively dead — eMudhra
+  // sessions don't survive that long, and a candidate who hasn't signed in a week
+  // is not going to sign on the same link.
+  if (["pending", "initiated"].includes(status) && ageDays >= 7) {
+    return false;
+  }
+
+  return true;
 }
 
 /**
@@ -558,7 +778,10 @@ export async function kitEsignSessionIsAlive(kitId: string): Promise<boolean> {
  * kit whose Luckpay session is still alive — see kitEsignSessionIsAlive,
  * which both callers check first.
  */
-async function mintFreshKitSigningLink(kit: KitForRelink, actorUserId: string | null): Promise<string> {
+async function mintFreshKitSigningLink(
+  kit: KitForRelink,
+  actorUserId: string | null,
+): Promise<string> {
   await db.execute(
     `UPDATE employee_joining_document_public_token
         SET token_status = 'superseded'
@@ -571,9 +794,16 @@ async function mintFreshKitSigningLink(kit: KitForRelink, actorUserId: string | 
     `INSERT INTO employee_joining_document_public_token
        (id, checklist_id, kit_id, employee_id, candidate_id, document_code,
         public_token_hash, token_status, expires_at, created_by)
-     VALUES (?, ?, ?, ?, ?, 'JOINING_KIT', ?, 'active', (NOW() + INTERVAL 7 DAY), ?)`,
-    [randomUUID(), String(kit.anchor_checklist_id), kit.id, String(kit.employee_id),
-     kit.candidate_id ?? null, sha256(publicToken), actorUserId],
+     VALUES (?, ?, ?, ?, ?, 'JOINING_KIT', ?, 'active', (NOW() + INTERVAL 15 DAY), ?)`,
+    [
+      randomUUID(),
+      String(kit.anchor_checklist_id),
+      kit.id,
+      String(kit.employee_id),
+      kit.candidate_id ?? null,
+      sha256(publicToken),
+      actorUserId,
+    ],
   );
   return `${frontendBaseUrl()}/employee/joining-kit/esign/${publicToken}`;
 }
@@ -596,29 +826,40 @@ export async function resendKitEsignLink(
   actorUserId: string | null,
 ): Promise<{ resent: boolean; message: string; emailedTo?: string[] }> {
   const kit = await loadKitForRelink(kitId);
-  if (!kit) throw Object.assign(new Error("Kit not found"), { statusCode: 404 });
+  if (!kit)
+    throw Object.assign(new Error("Kit not found"), { statusCode: 404 });
   if (String(kit.status) !== "sent") {
-    return { resent: false, message: `This kit is "${kit.status}", not awaiting a signature — there is nothing to resend.` };
+    return {
+      resent: false,
+      message: `This kit is "${kit.status}", not awaiting a signature — there is nothing to resend.`,
+    };
   }
   if (!(await kitEsignSessionIsAlive(kitId))) {
     return {
       resent: false,
-      message: "The candidate's signing session has already failed or expired at the provider. Resending a link cannot fix this — the kit needs to be re-dispatched as a new signing request, which bills the provider again.",
+      message:
+        "The candidate's signing session has already failed or expired at the provider. Resending a link cannot fix this — the kit needs to be re-dispatched as a new signing request, which bills the provider again.",
     };
   }
 
   const employeeId = String(kit.employee_id);
-  const recipients = [kit.personal_email, kit.official_email]
-    .filter((e): e is string => typeof e === "string" && e.includes("@"));
+  const recipients = [kit.personal_email, kit.official_email].filter(
+    (e): e is string => typeof e === "string" && e.includes("@"),
+  );
   if (recipients.length === 0) {
-    return { resent: false, message: "This employee has no email address on record." };
+    return {
+      resent: false,
+      message: "This employee has no email address on record.",
+    };
   }
 
   const [items] = await db.execute<RowDataPacket[]>(
     `SELECT document_name FROM employee_joining_esign_kit_item WHERE kit_id = ? ORDER BY sort_order`,
     [kitId],
   );
-  const documents = (items as RowDataPacket[]).map((i) => String(i.document_name));
+  const documents = (items as RowDataPacket[]).map((i) =>
+    String(i.document_name),
+  );
   const signLink = await mintFreshKitSigningLink(kit, actorUserId);
 
   const emailedTo: string[] = [];
@@ -632,7 +873,9 @@ export async function resendKitEsignLink(
           employeeName: String(kit.full_name ?? ""),
           employeeCode: String(kit.employee_code ?? ""),
           processName: kit.process_name ? String(kit.process_name) : null,
-          reportingManagerName: kit.reporting_manager_name ? String(kit.reporting_manager_name) : null,
+          reportingManagerName: kit.reporting_manager_name
+            ? String(kit.reporting_manager_name)
+            : null,
           documents,
           signLink,
         }),
@@ -641,12 +884,25 @@ export async function resendKitEsignLink(
     }
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    await audit(kitId, employeeId, "KIT_LINK_RESEND_EMAIL_FAILED", actorUserId, { error: message });
-    return { resent: false, message: `A fresh signing link was created, but the email failed to send: ${message}` };
+    await audit(
+      kitId,
+      employeeId,
+      "KIT_LINK_RESEND_EMAIL_FAILED",
+      actorUserId,
+      { error: message },
+    );
+    return {
+      resent: false,
+      message: `A fresh signing link was created, but the email failed to send: ${message}`,
+    };
   }
 
   await audit(kitId, employeeId, "KIT_LINK_RESENT", actorUserId, { emailedTo });
-  return { resent: true, message: `Signing link re-sent to ${emailedTo.join(", ")}.`, emailedTo };
+  return {
+    resent: true,
+    message: `Signing link re-sent to ${emailedTo.join(", ")}.`,
+    emailedTo,
+  };
 }
 
 /**
@@ -661,14 +917,19 @@ export async function resendKitEsignLink(
  * going out with its old (still generically true) message — it simply goes
  * out without a fresh button, same as before this existed.
  */
-export async function autoRefreshKitLinkForReminder(kitId: string): Promise<string | null> {
+export async function autoRefreshKitLinkForReminder(
+  kitId: string,
+): Promise<string | null> {
   try {
     const kit = await loadKitForRelink(kitId);
     if (!kit || String(kit.status) !== "sent") return null;
     if (!(await kitEsignSessionIsAlive(kitId))) return null;
     return await mintFreshKitSigningLink(kit, null);
   } catch (error) {
-    console.warn(`[joining-kit] reminder link refresh failed for kit ${kitId}:`, error instanceof Error ? error.message : error);
+    console.warn(
+      `[joining-kit] reminder link refresh failed for kit ${kitId}:`,
+      error instanceof Error ? error.message : error,
+    );
     return null;
   }
 }
@@ -680,10 +941,16 @@ export async function autoRefreshKitLinkForReminder(kitId: string): Promise<stri
  * (open_marker cleared, status set to 'abandoned') and must never be used to
  * discard a kit someone could still complete.
  */
-async function abandonDeadKit(kitId: string, employeeId: string, actorUserId: string | null): Promise<void> {
+async function abandonDeadKit(
+  kitId: string,
+  employeeId: string,
+  actorUserId: string | null,
+): Promise<void> {
   if (await kitEsignSessionIsAlive(kitId)) {
     throw Object.assign(
-      new Error("This kit's signing session is not in a terminal state — it cannot be abandoned."),
+      new Error(
+        "This kit's signing session is not in a terminal state — it cannot be abandoned.",
+      ),
       { statusCode: 409 },
     );
   }
@@ -692,7 +959,8 @@ async function abandonDeadKit(kitId: string, employeeId: string, actorUserId: st
     [kitId],
   );
   await audit(kitId, employeeId, "KIT_ABANDONED_DEAD_SESSION", actorUserId, {
-    reason: "Underlying Luckpay session reached a terminal state before completion",
+    reason:
+      "Underlying Luckpay session reached a terminal state before completion",
   });
 }
 
@@ -711,19 +979,27 @@ async function abandonDeadKit(kitId: string, employeeId: string, actorUserId: st
  * dispatchJoiningKit's own non-retry rule protects against accidental
  * double-billing.
  */
-export async function redispatchDeadKit(employeeId: string, actorUserId: string | null): Promise<DispatchOutcome> {
+export async function redispatchDeadKit(
+  employeeId: string,
+  actorUserId: string | null,
+): Promise<DispatchOutcome> {
   const [open] = await db.execute<RowDataPacket[]>(
     `SELECT id, candidate_id FROM employee_joining_esign_kit WHERE employee_id = ? AND open_marker = 'Y' LIMIT 1`,
     [employeeId],
   );
   const existing = (open as RowDataPacket[])[0];
   if (!existing) {
-    throw Object.assign(new Error("This employee has no open joining kit to redispatch."), { statusCode: 404 });
+    throw Object.assign(
+      new Error("This employee has no open joining kit to redispatch."),
+      { statusCode: 404 },
+    );
   }
   const existingKitId = String(existing.id);
   if (await kitEsignSessionIsAlive(existingKitId)) {
     throw Object.assign(
-      new Error("This employee's current kit is still awaiting signature and its session is not dead — redispatch is only for a kit whose provider session has already failed or expired."),
+      new Error(
+        "This employee's current kit is still awaiting signature and its session is not dead — redispatch is only for a kit whose provider session has already failed or expired.",
+      ),
       { statusCode: 409 },
     );
   }
@@ -746,12 +1022,18 @@ function buildKitEmailHtml(d: {
   documents: string[];
   signLink: string;
 }): string {
-  const list = d.documents.map((n) => `<li style="margin:3px 0">${n}</li>`).join("");
+  const list = d.documents
+    .map((n) => `<li style="margin:3px 0">${n}</li>`)
+    .join("");
   const identityBits = [
     d.employeeCode ? `Code: <strong>${d.employeeCode}</strong>` : null,
     d.processName ? `Process: <strong>${d.processName}</strong>` : null,
-    d.reportingManagerName ? `Reporting Manager: <strong>${d.reportingManagerName}</strong>` : null,
-  ].filter(Boolean).join(" &nbsp;|&nbsp; ");
+    d.reportingManagerName
+      ? `Reporting Manager: <strong>${d.reportingManagerName}</strong>`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" &nbsp;|&nbsp; ");
   return `<!doctype html><html><body style="margin:0;background:#0f172a;font-family:Segoe UI,Arial,sans-serif">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f172a;padding:28px 12px"><tr><td align="center">
     <table width="100%" style="max-width:560px;background:#fff;border-radius:16px;overflow:hidden">
@@ -816,7 +1098,12 @@ export async function finalizeKitEsign(params: {
    * bound covers this internal call as well as its own status call.
    */
   client?: Pick<typeof luckpayClient, "downloadESignDocument">;
-}): Promise<{ kitId: string; documentsClosed: number; artefactRetrieved: boolean; placementOk: boolean }> {
+}): Promise<{
+  kitId: string;
+  documentsClosed: number;
+  artefactRetrieved: boolean;
+  placementOk: boolean;
+}> {
   const completedAt = params.completedAt ?? null;
   const [kits] = await db.execute<RowDataPacket[]>(
     `SELECT k.id, k.employee_id, k.candidate_id, k.reserved_band_pt,
@@ -827,7 +1114,8 @@ export async function finalizeKitEsign(params: {
     [params.kitId],
   );
   const kit = (kits as RowDataPacket[])[0];
-  if (!kit) throw Object.assign(new Error("Kit not found"), { statusCode: 404 });
+  if (!kit)
+    throw Object.assign(new Error("Kit not found"), { statusCode: 404 });
 
   const [itemRows] = await db.execute<RowDataPacket[]>(
     `SELECT checklist_id, document_code, document_name FROM employee_joining_esign_kit_item WHERE kit_id = ?`,
@@ -850,14 +1138,22 @@ export async function finalizeKitEsign(params: {
   } catch (e) {
     // The signature did happen; only the download failed. Record that honestly
     // rather than claiming a verified signature we do not hold.
-    console.warn("[joining-kit] signed artefact not retrieved:", e instanceof Error ? e.message : e);
+    console.warn(
+      "[joining-kit] signed artefact not retrieved:",
+      e instanceof Error ? e.message : e,
+    );
   }
 
   let signedFileId: string | null = null;
   let placementOk = true;
   let signedPath: string | null = null;
   if (signedBytes) {
-    const dir = path.resolve(process.cwd(), "private-storage", "joining-kits", String(kit.employee_id));
+    const dir = path.resolve(
+      process.cwd(),
+      "private-storage",
+      "joining-kits",
+      String(kit.employee_id),
+    );
     await fs.promises.mkdir(dir, { recursive: true });
     signedPath = path.join(dir, `joining-kit-${params.kitId}-signed.pdf`);
     await fs.promises.writeFile(signedPath, signedBytes);
@@ -867,17 +1163,27 @@ export async function finalizeKitEsign(params: {
     // completion boundary below: placement analysis is diagnostic, and a PDF
     // parser throwing must not roll back a real signature.
     try {
-      const { assertSignatureInsideReservedArea } = await import("./joiningKitAssembly.service.js");
-      const r = await assertSignatureInsideReservedArea(signedBytes, Number(kit.reserved_band_pt ?? 180));
+      const { assertSignatureInsideReservedArea } =
+        await import("./joiningKitAssembly.service.js");
+      const r = await assertSignatureInsideReservedArea(
+        signedBytes,
+        Number(kit.reserved_band_pt ?? 180),
+      );
       placementOk = r.ok;
-      await db.execute(
-        `UPDATE employee_joining_esign_kit SET signature_placement_json = CAST(? AS JSON) WHERE id = ?`,
-        [JSON.stringify(r), params.kitId],
-      ).catch(() => undefined);
-    } catch { /* placement analysis must never block completion */ }
+      await db
+        .execute(
+          `UPDATE employee_joining_esign_kit SET signature_placement_json = CAST(? AS JSON) WHERE id = ?`,
+          [JSON.stringify(r), params.kitId],
+        )
+        .catch(() => undefined);
+    } catch {
+      /* placement analysis must never block completion */
+    }
   }
 
-  const signatureMode = signedBytes ? "aadhaar_esign_verified" : "aadhaar_esign_pending_artefact";
+  const signatureMode = signedBytes
+    ? "aadhaar_esign_verified"
+    : "aadhaar_esign_pending_artefact";
 
   /**
    * One boundary around the whole "this kit is signed" fact.
@@ -942,10 +1248,18 @@ export async function finalizeKitEsign(params: {
               original_filename, stored_filename, storage_path, mime_type, file_size_bytes,
               file_hash_sha256, uploaded_by_type, uploaded_at)
            VALUES (?, ?, ?, ?, ?, 'kit_signed', ?, ?, ?, 'application/pdf', ?, ?, 'system', NOW())`,
-          [signedFileId, String(it.checklist_id), String(kit.employee_id), kit.candidate_id ?? null,
-           String(it.document_code), `${it.document_name ?? it.document_code}.pdf`,
-           path.basename(signedPath), signedPath, signedBytes.byteLength,
-           createHash("sha256").update(signedBytes).digest("hex")],
+          [
+            signedFileId,
+            String(it.checklist_id),
+            String(kit.employee_id),
+            kit.candidate_id ?? null,
+            String(it.document_code),
+            `${it.document_name ?? it.document_code}.pdf`,
+            path.basename(signedPath),
+            signedPath,
+            signedBytes.byteLength,
+            createHash("sha256").update(signedBytes).digest("hex"),
+          ],
         );
       }
     }
@@ -980,8 +1294,15 @@ export async function finalizeKitEsign(params: {
                                            THEN NULL ELSE due_at END,
                 updated_at = NOW()
           WHERE id = ?`,
-        [signatureMode, completedAt, signatureMode, signatureMode, signatureMode, signatureMode,
-         String(it.checklist_id)],
+        [
+          signatureMode,
+          completedAt,
+          signatureMode,
+          signatureMode,
+          signatureMode,
+          signatureMode,
+          String(it.checklist_id),
+        ],
       );
     }
 
@@ -1017,13 +1338,24 @@ export async function finalizeKitEsign(params: {
 
   // recalculateDocumentProgress is the documented single writer of completion.
   try {
-    const { recalculateDocumentProgress } = await import("./employeeJoiningDocuments.service.js");
+    const { recalculateDocumentProgress } =
+      await import("./employeeJoiningDocuments.service.js");
     await recalculateDocumentProgress(String(kit.employee_id));
-  } catch { /* derived value; never block completion on it */ }
+  } catch {
+    /* derived value; never block completion on it */
+  }
 
-  await audit(params.kitId, String(kit.employee_id), "KIT_SIGNED", params.backfill?.actorUserId ?? null, {
-    documents: items.length, artefactRetrieved: Boolean(signedBytes), placementOk,
-  });
+  await audit(
+    params.kitId,
+    String(kit.employee_id),
+    "KIT_SIGNED",
+    params.backfill?.actorUserId ?? null,
+    {
+      documents: items.length,
+      artefactRetrieved: Boolean(signedBytes),
+      placementOk,
+    },
+  );
 
   // Provenance of the verification, as a VALUE rather than a timestamp
   // comparison: a bulk remediation must never be readable as 26 candidates
@@ -1037,10 +1369,15 @@ export async function finalizeKitEsign(params: {
     {
       verificationSource: "aadhaar_esign",
       signatureMode,
-      providerReferenceId: params.backfill?.providerReferenceId ?? params.providerReferenceId ?? null,
+      providerReferenceId:
+        params.backfill?.providerReferenceId ??
+        params.providerReferenceId ??
+        null,
       documents: items.length,
       completedAtSource: completedAt ? "provider" : "now",
-      ...(params.backfill ? { backfillActorUserId: params.backfill.actorUserId } : {}),
+      ...(params.backfill
+        ? { backfillActorUserId: params.backfill.actorUserId }
+        : {}),
     },
     { kit: { status: preWriteKitStatus }, checklist: preWriteChecklist },
   );
@@ -1051,7 +1388,8 @@ export async function finalizeKitEsign(params: {
   // on a legitimate signature would be worse than the fraud it looks for.
   if (signedBytes) {
     try {
-      const { extractEsignCertificateIdentity } = await import("../../shared/esignCertificateIdentity.js");
+      const { extractEsignCertificateIdentity } =
+        await import("../../shared/esignCertificateIdentity.js");
       const { classifyNameMatch } = await import("../ats/indian-name-match.js");
       const identity = extractEsignCertificateIdentity(signedBytes);
       const ownerName = String(kit.employee_full_name ?? "");
@@ -1068,10 +1406,20 @@ export async function finalizeKitEsign(params: {
             certificate_valid_from, certificate_valid_to, match_tier, is_suspicious, match_reason)
          VALUES (?, ?, ?, 'joining_kit', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          randomUUID(), String(kit.employee_id), kit.candidate_id ?? null, params.kitId, params.transactionId,
-          ownerName, identity?.commonName ?? null, identity?.issuerCommonName ?? null,
-          identity?.validFrom ?? null, identity?.validTo ?? null,
-          matchTier, suspicious ? 1 : 0, match?.reason ?? (identity ? null : "No embedded eSign certificate found"),
+          randomUUID(),
+          String(kit.employee_id),
+          kit.candidate_id ?? null,
+          params.kitId,
+          params.transactionId,
+          ownerName,
+          identity?.commonName ?? null,
+          identity?.issuerCommonName ?? null,
+          identity?.validFrom ?? null,
+          identity?.validTo ?? null,
+          matchTier,
+          suspicious ? 1 : 0,
+          match?.reason ??
+            (identity ? null : "No embedded eSign certificate found"),
         ],
       );
 
@@ -1088,8 +1436,11 @@ export async function finalizeKitEsign(params: {
           [
             String(kit.employee_id),
             JSON.stringify({
-              kitId: params.kitId, documentOwnerName: ownerName,
-              certificateCommonName: identity?.commonName ?? null, matchTier, reason: match?.reason ?? null,
+              kitId: params.kitId,
+              documentOwnerName: ownerName,
+              certificateCommonName: identity?.commonName ?? null,
+              matchTier,
+              reason: match?.reason ?? null,
             }),
             `This kit was addressed to "${ownerName}" but the eSign certificate's verified signer is "${identity?.commonName}" — review before treating this signature as valid.`,
           ],
@@ -1097,7 +1448,10 @@ export async function finalizeKitEsign(params: {
       }
     } catch (e) {
       // Diagnostic only — a broken identity check must never undo a real signature.
-      console.warn("[joining-kit] signer-identity check failed:", e instanceof Error ? e.message : e);
+      console.warn(
+        "[joining-kit] signer-identity check failed:",
+        e instanceof Error ? e.message : e,
+      );
     }
   }
 
@@ -1108,7 +1462,11 @@ export async function finalizeKitEsign(params: {
   // a failure of the kit sign-off itself.
   import("../letters/appointmentLetterIssue.service.js")
     .then(({ issueAppointmentLetter }) =>
-      issueAppointmentLetter({ employeeId: String(kit.employee_id), actorUserId: "system" }))
+      issueAppointmentLetter({
+        employeeId: String(kit.employee_id),
+        actorUserId: "system",
+      }),
+    )
     .catch((e: unknown) => {
       const code = (e as { code?: string })?.code;
       if (code === "already_issued") return; // benign — someone already issued it manually
