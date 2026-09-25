@@ -1576,10 +1576,37 @@ const breakdownToRows = (rows: AttritionBreakdownRow[]): AttrTableRow[] =>
 const breakdownToCombo = (rows: AttritionBreakdownRow[]) =>
   rows.map((r) => ({ label: r.label, count: r.attritionCount, attrPct: r.attritionRate, ulPct: r.ulShrinkageRate }));
 
+type AttritionMode = "all" | "attrition" | "shrinkage";
+type ExitGrouping = "list" | Granularity;
+
+/** Bucket key for an exit date: the day, the Monday of its week, or its month. */
+function exitBucketKey(isoDate: string, grouping: Granularity): string {
+  if (grouping === "daily") return isoDate;
+  if (grouping === "monthly") return isoDate.slice(0, 7);
+  const day = new Date(`${isoDate}T00:00:00Z`);
+  day.setUTCDate(day.getUTCDate() - ((day.getUTCDay() + 6) % 7));
+  return day.toISOString().slice(0, 10);
+}
+
+function groupExits(exits: { exitDate: string; attritionType: string | null }[], grouping: Granularity) {
+  const buckets = new Map<string, { total: number; voluntary: number; involuntary: number }>();
+  for (const e of exits) {
+    const key = exitBucketKey(e.exitDate, grouping);
+    const bucket = buckets.get(key) ?? { total: 0, voluntary: 0, involuntary: 0 };
+    bucket.total += 1;
+    if (e.attritionType === "Voluntary") bucket.voluntary += 1;
+    if (e.attritionType === "Involuntary") bucket.involuntary += 1;
+    buckets.set(key, bucket);
+  }
+  return [...buckets.entries()].sort(([x], [y]) => (x < y ? 1 : -1)).map(([key, v]) => ({ key, ...v }));
+}
+
 function AttritionView({
   range, tlFilter, amFilter, analystFilter = "", onOpenRecord,
 }: { range: { from: string; to: string }; tlFilter: string; amFilter: string; analystFilter?: string; onOpenRecord: (r: RawRecord, table: string) => void }) {
   const [granularity, setGranularity] = useState<Granularity>("monthly");
+  const [mode, setMode] = useState<AttritionMode>("all");
+  const [exitGrouping, setExitGrouping] = useState<ExitGrouping>("list");
   const [drilldown, setDrilldown] = useState<{ dimension: AttritionDimension; label: string; rawLabel: string; month: string } | null>(null);
   const qs = tlAmQS(tlFilter, amFilter, analystFilter);
   const url = (path: string) => `/api/onfido-process/attrition/${path}?from=${range.from}&to=${range.to}${qs}`;
@@ -1616,6 +1643,9 @@ function AttritionView({
   const exits = exitsQuery.data?.data ?? [];
 
   const cur = ov?.month ? monLabel(ov.month) : "";
+  const showAttrition = mode !== "shrinkage";
+  const showShrinkage = mode !== "attrition";
+  const shrinkageLineData = months.map((m) => ({ label: monLabel(m.month), ulShrinkage: m.ulShrinkageRate ?? 0, actualShrinkage: m.actualShrinkageRate ?? 0 }));
   const kv = (k: KpiValue | undefined) => k?.value ?? null;
   const openDrill = (dimension: AttritionDimension) => (r: AttrTableRow) =>
     setDrilldown({ dimension, label: r.label ?? "", rawLabel: r.rawLabel ?? r.label ?? "", month: r.month });
@@ -1630,17 +1660,18 @@ function AttritionView({
 
   return (
     <div className="space-y-4">
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <PillGroup value={mode} onChange={setMode} options={[{ key: "all", label: "Attrition + Shrinkage" }, { key: "attrition", label: "Attrition" }, { key: "shrinkage", label: "Shrinkage" }]} />
         <OnfidoDownloadButton path="/api/onfido-process/attrition/exits/export.csv" params={{ from: range.from, to: range.to, tlName: tlFilter, amName: amFilter }} filename="onfido_attrition_analyst_wise.csv" label="Download analyst-wise attrition (CSV)" />
       </div>
       {/* 1 · Current-month status */}
-      <div className="kr k6">
-        <AttrKpi label="Attrition Count" value={kv(ov?.attritionCount) === null ? "—" : fmtNum(kv(ov?.attritionCount)!)} sub={`${cur || "Latest month"} · Onfloor`} accent={AC.orange} />
-        <AttrKpi label="Attrition %" value={fmtPct(kv(ov?.attritionRate))} sub="Attrition ÷ ((Opening HC + Closing HC) ÷ 2)" accent={(kv(ov?.attritionRate) ?? 0) > 0 ? AC.red : AC.green} />
-        <AttrKpi label="Opening HC" value={kv(ov?.openingHc) === null ? "—" : fmtNum(kv(ov?.openingHc)!)} sub="First available day HC" accent={AC.blue} />
-        <AttrKpi label="Closing HC" value={kv(ov?.closingHc) === null ? "—" : fmtNum(kv(ov?.closingHc)!)} sub="Last available day HC" accent={AC.teal} />
-        <AttrKpi label="UL Shrinkage" value={fmtPct(kv(ov?.ulShrinkageRate))} sub="UL ÷ Scheduled" accent={AC.purple} />
-        <AttrKpi label="Actual Shrinkage" value={fmtPct(kv(ov?.actualShrinkageRate))} sub="Actual UL ÷ Scheduled" accent={AC.pink} />
+      <div className={mode === "all" ? "kr k6" : "kr"}>
+        {showAttrition && <AttrKpi label="Attrition Count" value={kv(ov?.attritionCount) === null ? "—" : fmtNum(kv(ov?.attritionCount)!)} sub={`${cur || "Latest month"} · Onfloor`} accent={AC.orange} />}
+        {showAttrition && <AttrKpi label="Attrition %" value={fmtPct(kv(ov?.attritionRate))} sub="Attrition ÷ ((Opening HC + Closing HC) ÷ 2)" accent={(kv(ov?.attritionRate) ?? 0) > 0 ? AC.red : AC.green} />}
+        {showAttrition && <AttrKpi label="Opening HC" value={kv(ov?.openingHc) === null ? "—" : fmtNum(kv(ov?.openingHc)!)} sub="First available day HC" accent={AC.blue} />}
+        {showAttrition && <AttrKpi label="Closing HC" value={kv(ov?.closingHc) === null ? "—" : fmtNum(kv(ov?.closingHc)!)} sub="Last available day HC" accent={AC.teal} />}
+        {showShrinkage && <AttrKpi label="UL Shrinkage" value={fmtPct(kv(ov?.ulShrinkageRate))} sub="UL ÷ Scheduled" accent={AC.purple} />}
+        {showShrinkage && <AttrKpi label="Actual Shrinkage" value={fmtPct(kv(ov?.actualShrinkageRate))} sub="Actual UL ÷ Scheduled" accent={AC.pink} />}
       </div>
       {ov?.month && (
         <div style={{ fontSize: 11, color: AC.muted }}>
@@ -1674,6 +1705,15 @@ function AttritionView({
       </AttrSection>
 
       {/* 3 · AON month-wise Attrition % */}
+      {mode === "shrinkage" && (
+        <AttrSection title="Month Wise · UL Shrinkage % and Actual Shrinkage %" color={AC.purple}>
+          {shrinkageLineData.length === 0
+            ? <AttrEmpty loading={monthlyQuery.isLoading} message="No shrinkage data in this range." />
+            : <AttrLineChart data={shrinkageLineData} suffix="%" minMax={10} series={[{ key: "ulShrinkage", name: "UL Shrinkage %", color: AC.purple }, { key: "actualShrinkage", name: "Actual Shrinkage %", color: AC.pink }]} />}
+        </AttrSection>
+      )}
+
+      {showAttrition && (<>
       <AttrSection title="AON Month Wise · Attrition %" color={AC.yellow}>
         {aonLineData.length === 0
           ? <AttrEmpty loading={aonMonthlyQuery.isLoading} message="No AON data in this range." />
@@ -1691,6 +1731,8 @@ function AttritionView({
       <AttrSection title="Month-on-Month · Reason-wise Attrition Count" color={AC.teal}>
         <AttrReasonTable data={reasons} loading={reasonQuery.isLoading} />
       </AttrSection>
+
+      </>)}
 
       {/* 6 · AM and AON current month */}
       <div className="grid gap-4 xl:grid-cols-2">
@@ -1739,7 +1781,29 @@ function AttritionView({
         />
       )}
 
-      <AttrSection title="Exits in Range" color={AC.red}>
+      {showAttrition && (
+      <AttrSection
+        title="Exits in Range"
+        color={AC.red}
+        right={<PillGroup value={exitGrouping} onChange={setExitGrouping} options={[{ key: "list", label: "Analyst list" }, { key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]} />}
+      >
+        {exitGrouping !== "list" && (
+          <div style={{ overflowX: "auto" }}>
+            <table className="oc-table">
+              <thead><tr><th>{exitGrouping === "daily" ? "Day" : exitGrouping === "weekly" ? "Week" : "Month"}</th><th className="oc-right">Exits</th><th className="oc-right">Voluntary</th><th className="oc-right">Involuntary</th></tr></thead>
+              <tbody>
+                {exits.length === 0 && <tr className="oc-empty-row"><td colSpan={4}>{exitsQuery.isLoading ? "Loading…" : "No exits in this range"}</td></tr>}
+                {groupExits(exits, exitGrouping).map((g) => (
+                  <tr key={g.key}>
+                    <td>{exitGrouping === "monthly" ? monLabel(g.key) : formatBucketTick(g.key, exitGrouping)}</td>
+                    <td className="oc-right">{g.total}</td><td className="oc-right">{g.voluntary}</td><td className="oc-right">{g.involuntary}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {exitGrouping === "list" && (<>
         <div style={{ overflowX: "auto" }}>
           <table className="oc-table">
             <thead><tr><th>Date</th><th>Emp</th><th>Analyst Email</th><th>TL</th><th>AM</th><th>Reason</th><th>Type</th></tr></thead>
@@ -1767,7 +1831,9 @@ function AttritionView({
           </table>
         </div>
         {exits.length > 100 && <div style={{ marginTop: 10, fontSize: 11, color: AC.muted }}>Showing first 100 of {exits.length}</div>}
+        </>)}
       </AttrSection>
+      )}
     </div>
   );
 }
