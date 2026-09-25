@@ -13,6 +13,7 @@ import { SecureDocumentList } from "@/components/documents/SecureDocumentList";
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { AddressBgvPanel } from "@/components/bgv/AddressBgvPanel";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useDateLockMin } from "@/hooks/useDateLockMin";
 import { BGV_REPORT_ROLES } from "@/lib/bgvReportAccess";
 import { ErrorState } from "@/components/enterprise/ErrorState";
 
@@ -411,6 +412,7 @@ function ProvisioningTaskCard({ task }: { task: ProvisioningTask }) {
 
 export default function NativeJoiningControlRoom() {
   const { hasAnyRole } = useWorkforceAccess();
+  const salaryDateMin = useDateLockMin();
   // BGV report / address panel: admin, branch HR and branch manager/head only (API enforces it too).
   const canViewBgvReport = hasAnyRole(...BGV_REPORT_ROLES);
   const [queue, setQueue] = useState<QueueRow[]>([]);
@@ -448,7 +450,7 @@ export default function NativeJoiningControlRoom() {
       setDetail(res.data);
       setDateForm({
         ...blankDates,
-        salary_start_date: res.data.offer?.date_of_salary || res.data.payroll?.salary_start_date || "",
+        salary_start_date: res.data.payroll?.salary_start_date || res.data.offer?.date_of_salary || "",
         attendance_effective_from: res.data.payroll?.attendance_effective_from || "",
         statutory_effective_from: res.data.payroll?.statutory_effective_from || "",
         payroll_month_effective: res.data.payroll?.payroll_month_effective || "",
@@ -1023,7 +1025,7 @@ export default function NativeJoiningControlRoom() {
                           type="date"
                           className={`h-10 rounded border px-3 text-sm${dateForm.salary_start_date && detail?.offer?.date_of_joining && dateForm.salary_start_date < detail.offer.date_of_joining ? ' border-red-500 bg-red-50' : ' border-slate-300'}`}
                           value={dateForm.salary_start_date ?? ""}
-                          min={detail?.offer?.date_of_joining || undefined}
+                          min={[detail?.offer?.date_of_joining, salaryDateMin].filter(Boolean).sort().pop()}
                           onChange={(e) => setDateForm({ ...dateForm, salary_start_date: e.target.value })}
                         />
                         {dateForm.salary_start_date && detail?.offer?.date_of_joining && dateForm.salary_start_date < detail.offer.date_of_joining ? (

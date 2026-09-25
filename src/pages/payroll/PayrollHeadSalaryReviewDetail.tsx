@@ -1140,6 +1140,9 @@ export default function PayrollHeadSalaryReviewDetail() {
                 className="rounded-xl resize-none text-sm"
               />
             </div>
+            {error && (
+              <p role="alert" className="text-xs text-red-600">{error}</p>
+            )}
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" className="rounded-xl"
@@ -1152,6 +1155,7 @@ export default function PayrollHeadSalaryReviewDetail() {
               onClick={async () => {
                 if (!confirmDateDialog) return;
                 setConfirmDateBusy(true);
+                setError(null);
                 try {
                   await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/assignment-effective-date`, {
                     effective_date: confirmDateDialog.newDate,
