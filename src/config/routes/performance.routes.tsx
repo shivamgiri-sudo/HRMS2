@@ -14,6 +14,7 @@ const NativeKPIConfiguration         = lazy(() => import("@/pages/NativeKPIConfi
 const KpiMasterConfig                = lazy(() => import("@/pages/KpiMasterConfig"));
 const KpiTargetMatrix                = lazy(() => import("@/pages/KpiTargetMatrix"));
 const KpiTeamScorecard               = lazy(() => import("@/pages/KpiTeamScorecard"));
+const TeamCoachingPage              = lazy(() => import("@/pages/team/TeamCoachingPage"));
 const MyKpiDashboard                 = lazy(() => import("@/pages/MyKpiDashboard"));
 const NativeAgentPerformanceDashboard = lazy(() => import("@/pages/NativeAgentPerformanceDashboard"));
 const NativeProcessMetricConfig = lazy(() => import("@/pages/NativeProcessMetricConfig"));
@@ -92,6 +93,7 @@ export const performanceRouteElements = (
       <Route path="/my-kpi"       element={<ProtectedRoute><Gate pageCode="MY_KPI"><DashboardLayout><MyKpiDashboard /></DashboardLayout></Gate></ProtectedRoute>} />
       {/* KPI Team Scorecard — manager sees all direct reports' KPIs vs target */}
       <Route path="/kpi/my-team"  element={<ProtectedRoute><Gate pageCode="TEAM_KPI_SCORECARD"><KpiTeamScorecard /></Gate></ProtectedRoute>} />
+      <Route path="/team/coaching" element={<ProtectedRoute><Gate pageCode="COACHING"><TeamCoachingPage /></Gate></ProtectedRoute>} />
       <Route path="/agent-performance" element={<ProtectedRoute><Gate pageCode="AGENT_PERFORMANCE"><NativeAgentPerformanceDashboard /></Gate></ProtectedRoute>} />
       <Route path="/pip-management" element={<ProtectedRoute roles={['admin','hr','super_admin','manager','payroll_head','process_manager','tq_head']}><Gate pageCode="PIP_MANAGEMENT"><NativePIPManagement /></Gate></ProtectedRoute>} />
       <Route path="/career-planning" element={<ProtectedRoute><Gate pageCode="CAREER_PLANNING"><NativeCareerPlanning /></Gate></ProtectedRoute>} />

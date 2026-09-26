@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useHierarchyFilters } from "./useHierarchyFilters";
+import { CoachingDetail } from "@/components/coaching/CoachingDetail";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
   DASH, EmptyNote, GranularityPills, SectionCard, describePeriod, fmtInt, fmtNum, fmtPct, presetRange, type DateRange, type Granularity,
@@ -185,6 +186,7 @@ function AnalystDrawer({ row, range, onClose }: { row: AnalystRow | null; range:
                 <tr><td>Unplanned leave / scheduled days</td><td className="oc-right">{row.unplannedLeaveDays === null ? DASH : `${fmtNum(row.unplannedLeaveDays, 1)} / ${fmtInt(row.scheduledDays)}`}</td></tr>
               </tbody></table>
             </div>
+            <CoachingSection email={row.analyst} />
             <AnalystWeeklyTable analyst={row.analyst} tlName={row.tlName} amName={row.amName} range={range} />
             <QualityTable title="Internal quality" cols={INTERNAL_COLUMNS} cells={row.internal} />
             <QualityTable title="External quality" cols={EXTERNAL_COLUMNS} cells={row.external} />
@@ -192,6 +194,17 @@ function AnalystDrawer({ row, range, onClose }: { row: AnalystRow | null; range:
         )}
       </SheetContent>
     </Sheet>
+  );
+}
+
+/** Coaching and training history for this analyst from the LMS, loaded only when the section is opened. */
+function CoachingSection({ email }: { email: string }) {
+  const [opened, setOpened] = useState(false);
+  return (
+    <details className="rounded-xl border border-slate-200 p-3" onToggle={(e) => { if ((e.currentTarget as HTMLDetailsElement).open) setOpened(true); }}>
+      <summary className="cursor-pointer text-sm font-semibold text-[color:var(--text)]">Coaching &amp; training (LMS)</summary>
+      <div className="mt-3">{opened && <CoachingDetail source={{ email }} />}</div>
+    </details>
   );
 }
 

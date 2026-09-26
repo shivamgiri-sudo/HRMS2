@@ -387,6 +387,7 @@ export const MOUNTED_ROUTE_PATHS: ReadonlySet<string> = new Set([
   "/super-admin/policy-engine",
   "/support/command-center",
   "/support/grievance-command-center",
+  "/team/coaching",
   "/terms-of-service",
   "/two-factor",
   "/uat/checklist",

@@ -168,6 +168,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/kpi-config": "KPI_CONFIG",
   "/kpi-master": "KPI_MASTER",
   "/kpi/my-team": "TEAM_KPI_SCORECARD",
+  "/team/coaching": "COACHING",
   "/leave-types": "LEAVE_TYPES",
   "/letters": "LETTERS",
   "/lms/admin": "LMS_ADMIN",
