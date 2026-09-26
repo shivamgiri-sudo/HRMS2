@@ -3,6 +3,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { lazy } from "./lazy";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
+import { TpzRoute } from "@/components/process-performance/TpzRoute";
 
 const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactNode }) =>
   <WorkforcePageGate pageCode={pageCode}>{children}</WorkforcePageGate>;
@@ -119,7 +120,7 @@ export const performanceRouteElements = (
           process managers from their own report card. */}
       <Route path="/performance/process-performance" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head']}><Gate pageCode="OPERATIONS_DASHBOARD"><ProcessPerformancePage /></Gate></ProtectedRoute>} />
       {/* Draft placeholder sitting next to Process Performance above — intentionally blank, content TBD. */}
-      <Route path="/performance/process-performance-v2" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head']}><Gate pageCode="OPERATIONS_DASHBOARD"><ProcessPerformanceV2Page /></Gate></ProtectedRoute>} />
+      <Route path="/performance/process-performance-v2" element={<TpzRoute><ProcessPerformanceV2Page /></TpzRoute>} />
       {/* Client/process SLA-target scorecards from the "Process KPI's" sheet, with a
           4-level TL-pod/agent/raw-row drill-down. Sibling to Process Performance
           above; same viewer set, separate page_catalog code (migration 1676). */}

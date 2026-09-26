@@ -85,6 +85,8 @@ import { orgRouter } from "./modules/org/org.routes.js";
 import { eventsRouter } from "./modules/org/events.routes.js";
 import { orgSettingsRouter } from "./modules/org/org_settings.routes.js";
 import { bulkUploadRouter } from "./modules/bulk-upload/bulk-upload.routes.js";
+import { tpzAccessRouter } from "./modules/tpz-access/tpz-access.routes.js";
+import { tpzPerformanceGate, tpzInsightsGate, tpzInboundProjectGate, tpzUploadGate } from "./modules/tpz-access/tpz-access.middleware.js";
 import { bulkApprovalRouter } from "./modules/bulk-upload/bulk-approval.routes.js";
 import { workflowRouter } from "./modules/workflow/workflow.routes.js";
 import { lifecycleRouter } from "./modules/lifecycle/lifecycle.routes.js";
@@ -588,6 +590,8 @@ app.use("/api/onboarding/name-validation", nameValidationRouter);
 // Mounted BEFORE bulkUploadRouter so its more specific /approvals/* paths are not
 // shadowed by a looser pattern there — the router-shadowing failure mode that has
 // silently disabled guards elsewhere in this codebase.
+// TPZ Process grants: the gate runs first and only acts on TPZ upload types (see modules/tpz-access).
+app.use("/api/bulk-upload", tpzUploadGate);
 app.use("/api/bulk-upload", bulkApprovalRouter);
 app.use("/api/bulk-upload", bulkUploadRouter);
 app.use("/api/admin/email-templates", emailTemplatesRouter);
@@ -774,7 +778,9 @@ app.use("/api/quality-governance", qualityGovernanceRouter);   // per-process qu
 app.use("/api/kpi/process-metrics", processMetricDefinitionRouter);   // per-process metric definitions — 1047 had readers and no writer
 app.use("/api/agent", qualityAggregationRouter);
 app.use("/api/call-master", callMasterRouter);
+app.use("/api/inbound", tpzInboundProjectGate);
 app.use("/api/inbound", inboundRouter);
+app.use("/api/inbound-insights", tpzInsightsGate);
 app.use("/api/inbound-insights", inboundInsightsRouter);
 app.use("/api/sales-upload", salesUploadRouter);
 app.use("/api/housing-dashboards", housingDashboardsRouter);
@@ -797,6 +803,8 @@ app.use("/api/ats/joining-control-room", joiningControlRoomRouter);
 app.use("/api/ats", secureDocumentsRouter);
 app.use("/api/ats/salary-components", salaryComponentAssignmentRouter);
 app.use("/api/payroll-head-review", payrollHeadReviewRouter);
+app.use("/api/tpz-access", tpzAccessRouter);
+app.use("/api/process-performance", tpzPerformanceGate);
 app.use("/api/process-performance", processPerformanceRouter);
 app.use("/api/process-performance", bellavitaSaleDashboardRouter);
 app.use("/api/process-performance", housingOwnerDashboardRouter);

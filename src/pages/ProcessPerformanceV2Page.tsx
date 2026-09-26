@@ -23,6 +23,7 @@ import { CloviaDashboard } from "@/components/process-performance/CloviaDashboar
 import { BirlanuDashboard } from "@/components/process-performance/BirlanuDashboard";
 import { AppreciateWealthDashboard } from "@/components/process-performance/AppreciateWealthDashboard";
 import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
+import { useTpzAccess } from "@/hooks/useTpzAccess";
 import { apiUrl } from "@/lib/apiBase";
 import { TONE_CLASSES, TONE_GRADIENT_CLASSES, type Tone } from "@/lib/processPerformanceTones";
 import { UploaderHub, type UploaderHubItem } from "@/components/process-performance/UploaderHub";
@@ -537,7 +538,21 @@ export default function ProcessPerformanceV2Page() {
   const [stats, setStats] = useState({ totalFilesUploaded: 0, activeUsers: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
 
+  // Admin-assigned access (Settings -> TPZ Access). A role-based user who has not been narrowed sees the page exactly as before;
+  // anyone else -- a granted user, or a role-based user an admin restricted -- sees only their processes and sections.
+  const { data: tpz } = useTpzAccess();
+  const limited = tpz !== undefined && !tpz.roleBased;
+  const grantFor = (key: CompanyKey) => tpz?.companies.find((c) => c.key === key);
+  const visibleCompanies = limited ? COMPANIES.filter((c) => grantFor(c.key)) : COMPANIES;
+  const sectionAllowed = (key: CompanyKey, sec: SectionKey): boolean => {
+    if (!limited) return true;
+    const g = grantFor(key);
+    return sec === "dashboards" ? Boolean(g?.dashboards) : sec === "uploader" ? Boolean(g?.upload) : Boolean(g?.mis);
+  };
+  const showUploadStats = !limited || Boolean(tpz?.companies.some((c) => c.upload));
+
   useEffect(() => {
+    if (limited && !showUploadStats) { setStatsLoading(false); return; }
     let cancelled = false;
     hrmsApi
       .get<{ success: boolean; data: { totalFilesUploaded: number; activeUsers: number } }>(
@@ -547,7 +562,7 @@ export default function ProcessPerformanceV2Page() {
       .catch(() => { /* leave zeros — the stat cards show 0 rather than block the page */ })
       .finally(() => { if (!cancelled) setStatsLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [limited, showUploadStats]);
 
   const companyLabel = COMPANIES.find((c) => c.key === company)?.label ?? "";
   // Companies with exactly one dashboard tile (Housing Owner, Housing Premium, Clovia, ...)
@@ -568,27 +583,34 @@ export default function ProcessPerformanceV2Page() {
           <div className="space-y-6">
             <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-50 via-violet-50 to-fuchsia-50 p-6 sm:p-8">
               <p className="text-xs font-bold uppercase tracking-wider text-indigo-500">Welcome</p>
-              <h1 className="mt-1 text-2xl font-bold text-slate-900 sm:text-3xl">Process Performance V2</h1>
+              <h1 className="mt-1 text-2xl font-bold text-slate-900 sm:text-3xl">TPZ Process</h1>
               <p className="mt-1 max-w-xl text-sm text-slate-600">
                 Select a process to manage data, upload files and view performance dashboards.
               </p>
             </div>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <StatCard icon={LayoutGrid} label="Total Processes" value={COMPANIES.length} tone="emerald" />
-              <StatCard icon={UploadCloud} label="Total Files Uploaded" value={stats.totalFilesUploaded} tone="indigo" loading={statsLoading} />
-              <StatCard icon={Users} label="Active Users" value={stats.activeUsers} tone="fuchsia" loading={statsLoading} />
+              <StatCard icon={LayoutGrid} label={limited ? "Your Processes" : "Total Processes"} value={visibleCompanies.length} tone="emerald" />
+              {showUploadStats && <StatCard icon={UploadCloud} label="Total Files Uploaded" value={stats.totalFilesUploaded} tone="indigo" loading={statsLoading} />}
+              {showUploadStats && <StatCard icon={Users} label="Active Users" value={stats.activeUsers} tone="fuchsia" loading={statsLoading} />}
             </div>
 
             <div>
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-sm font-bold text-slate-900">All Processes</h2>
-                <Link to="/bulk-upload" className="text-xs font-semibold text-indigo-600 hover:underline">
-                  View All
-                </Link>
+                {!limited && (
+                  <Link to="/bulk-upload" className="text-xs font-semibold text-indigo-600 hover:underline">
+                    View All
+                  </Link>
+                )}
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {COMPANIES.map((c) => {
+                {visibleCompanies.length === 0 && (
+                  <p className="col-span-full rounded-xl border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-400">
+                    No processes are assigned to you yet.
+                  </p>
+                )}
+                {visibleCompanies.map((c) => {
                   const meta = COMPANY_META[c.key];
                   return (
                     <Box
@@ -611,7 +633,7 @@ export default function ProcessPerformanceV2Page() {
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel]} onBack={reset} />
             <BoxGrid>
-              {SECTIONS.map((s) => (
+              {SECTIONS.filter((s) => sectionAllowed(company, s.key)).map((s) => (
                 <Box
                   key={s.key}
                   icon={s.key === "dashboards" ? LayoutDashboard : s.key === "uploader" ? Upload : FileText}

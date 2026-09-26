@@ -12,10 +12,84 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
+  Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu, DrawerExcelButton,
   localDateStr, formatShortDate,
-  type ExportSlide,
+  type ExportSlide, type DrawerSheet,
 } from "./DashboardKit";
+
+/** Right-side drawer: one agent's performance date by date (volume, SL, AHT, hold, ACW, transfers and FCR %). A date row opens
+ * that agent's calls for the day in the existing call drawer. */
+function AgentDailyDrawer({
+  agent, rows, slSec, showFcr, from, to, onClose, onOpenCalls,
+}: {
+  agent: AgentRow | null; rows: AgentDailyRow[]; slSec: number; showFcr: boolean; from: string; to: string;
+  onClose: () => void; onOpenCalls: (title: string, params: Record<string, string>) => void;
+}) {
+  const days = useMemo(
+    () => (agent ? rows.filter((r) => r.agentId === agent.agentId).sort((a, b) => a.date.localeCompare(b.date)) : []),
+    [agent, rows],
+  );
+  const sheets = (): DrawerSheet[] => agent ? [{
+    name: "Date-wise",
+    columns: ["Date", "Handled", `SL ≤${slSec}s %`, "AHT", "Avg Talk", "Avg Hold", "Avg ACW", "Transfers", ...(showFcr ? ["FCR %", "FCR tagged calls"] : [])],
+    rows: days.map((d) => [fmtDate(d.date), d.calls, `${d.slWithinPct}%`, fmtSec(d.aht), fmtSec(d.avgTalk), fmtSec(d.avgHold), fmtSec(d.avgAcw), d.transfers, ...(showFcr ? [d.fcrPct != null ? `${d.fcrPct}%` : "—", d.fcrTagged] : [])]),
+  }] : [];
+  return (
+    <Sheet open={agent !== null} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <SheetContent side="right" className="w-full max-w-2xl overflow-y-auto sm:max-w-2xl">
+        <SheetHeader>
+          <div className="flex items-center justify-between gap-2 pr-8">
+            <SheetTitle>{agent ? `${agent.agentName} (${agent.agentId})` : "Agent"}</SheetTitle>
+            <DrawerExcelButton fileBase={`Agent_${agent?.agentId ?? "detail"}_datewise`} getSheets={sheets} disabled={days.length === 0} />
+          </div>
+          <SheetDescription>{fmtDate(from)} – {fmtDate(to)} · date-wise performance</SheetDescription>
+        </SheetHeader>
+        {agent && (
+          <div className="mt-4 space-y-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[
+                { l: "Handled", v: fmtNum(agent.handled) }, { l: `SL ≤${slSec}s`, v: `${agent.slWithinPct}%` },
+                { l: "AHT", v: fmtSec(agent.aht) }, ...(showFcr ? [{ l: "FCR %", v: agent.fcrPct != null ? `${agent.fcrPct}%` : "—" }] : [{ l: "Days active", v: String(agent.daysActive) }]),
+              ].map((k) => (
+                <div key={k.l} className="rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{k.l}</p>
+                  <p className="text-lg font-extrabold text-slate-800">{k.v}</p>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Date-wise performance</p>
+            {days.length === 0 ? (
+              <div className="py-6 text-center text-xs text-slate-400">None</div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-slate-100">
+                <table className="w-full min-w-[560px] border-collapse text-xs">
+                  <thead><tr className={THEAD}>
+                    <Head first>Date</Head><Head>Handled</Head><Head>SL ≤{slSec}s</Head><Head>AHT</Head><Head>Avg hold</Head><Head>Avg ACW</Head><Head>Transfers</Head>
+                    {showFcr && <Head>FCR %</Head>}
+                  </tr></thead>
+                  <tbody>
+                    {days.map((d, i) => (
+                      <tr key={d.date} className={rowCls(i)} onClick={() => onOpenCalls(`${agent.agentName} · ${fmtDate(d.date)}`, { agentId: agent.agentId, date: d.date })} title="Click for this day's calls">
+                        <td className="py-2 pl-3 pr-3 font-medium text-slate-700">{fmtDate(d.date)}</td>
+                        <td className={`${td} font-bold text-slate-700`}>{fmtNum(d.calls)}</td>
+                        <td className={`${td} font-bold ${slTone(d.slWithinPct)}`}>{d.slWithinPct}%</td>
+                        <td className={td}>{fmtSec(d.aht)}</td>
+                        <td className={td}>{fmtSec(d.avgHold)}</td>
+                        <td className={td}>{fmtSec(d.avgAcw)}</td>
+                        <td className={td}>{d.transfers}</td>
+                        {showFcr && <td className={`${td} font-bold`} title={d.fcrTagged ? `${d.fcrTagged} tagged calls` : undefined}>{d.fcrPct != null ? `${d.fcrPct}%` : "—"}</td>}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </SheetContent>
+    </Sheet>
+  );
+}
 
 /**
  * Inbound view for the dialer-backed "pattern B" processes (DU Bangladesh,
@@ -61,6 +135,12 @@ interface AgentRow {
   agentId: string; agentName: string; handled: number; sharePct: number; slWithinPct: number; aht: number;
   avgTalk: number; avgHold: number; avgAcw: number; asa: number; maxDuration: number; shortCalls: number;
   longCalls: number; transfers: number; daysActive: number; callsPerDay: number; firstCall: string; lastCall: string;
+  /** null when the project has no FCR tagging (or no tagged calls for this agent). */
+  fcrPct: number | null; fcrTagged: number;
+}
+interface AgentDailyRow {
+  agentId: string; date: string; calls: number; slWithinPct: number; aht: number; avgTalk: number; avgHold: number; avgAcw: number;
+  transfers: number; fcrPct: number | null; fcrTagged: number;
 }
 interface LobRow extends Metrics { campaign: string; sharePct: number; uniqueCallers: number; agents: number }
 interface LobGroupRow extends Metrics { label: string; sharePct: number }
@@ -73,7 +153,7 @@ interface Insights {
   headline: Headline;
   insights: Array<{ tone: "info" | "good" | "warn" | "bad"; text: string }>;
   daily: DailyRow[]; hourly: HourRow[]; quarterHourly: QuarterRow[]; weekdays: WeekdayRow[]; heatmap: HeatCell[];
-  agents: AgentRow[]; agentDaily: Array<{ agentId: string; date: string; calls: number }>;
+  agents: AgentRow[]; agentDaily: AgentDailyRow[];
   agentHourly: Array<{ agentId: string; hour: number; calls: number }>;
   lobs: LobRow[]; lobGroups: { byBrand: LobGroupRow[]; byLanguage: LobGroupRow[] } | null; lobDaily: Array<{ campaign: string; date: string; offered: number }>;
   waitBuckets: Array<{ label: string; answered: number; abandoned: number }>;
@@ -222,6 +302,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
   const [heatMetric, setHeatMetric] = useState<HeatMetric>("offered");
   const [agentGrid, setAgentGrid] = useState<"date" | "hour">("date");
   const [drill, setDrill] = useState<DrillSpec | null>(null);
+  const [agentView, setAgentView] = useState<AgentRow | null>(null);
   const [insightsOpen, setInsightsOpen] = useState(false);
 
   const load = useCallback(async () => {
@@ -388,8 +469,8 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
         title: "Agent-wise",
         tables: [{
           title: "Agent-wise Call Performance",
-          columns: ["Agent", "Agent ID", "Handled", "Share %", `SL ≤${h.slThresholdSec}s %`, "AHT", "Avg Hold", "Avg ACW", "Days", "Calls / Day", "Short (<10s)", "Long (10m+)", "Transfers"],
-          rows: data.agents.map((a) => [a.agentName, a.agentId, a.handled, `${a.sharePct}%`, `${a.slWithinPct}%`, fmtSec(a.aht), fmtSec(a.avgHold), fmtSec(a.avgAcw), a.daysActive, a.callsPerDay, a.shortCalls, a.longCalls, a.transfers]),
+          columns: ["Agent", "Agent ID", "Handled", "Share %", `SL ≤${h.slThresholdSec}s %`, "AHT", "Avg Hold", "Avg ACW", "Days", "Calls / Day", "Short (<10s)", "Long (10m+)", "Transfers", ...(h.fcrPct != null ? ["FCR %"] : [])],
+          rows: data.agents.map((a) => [a.agentName, a.agentId, a.handled, `${a.sharePct}%`, `${a.slWithinPct}%`, fmtSec(a.aht), fmtSec(a.avgHold), fmtSec(a.avgAcw), a.daysActive, a.callsPerDay, a.shortCalls, a.longCalls, a.transfers, ...(h.fcrPct != null ? [a.fcrPct != null ? `${a.fcrPct}%` : "—"] : [])]),
         }],
       },
     ];
@@ -768,6 +849,20 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
           {/* ───────────────────────────── Date-wise ───────────────────────────── */}
           {tab === "datewise" && (
             <div className="space-y-4">
+              {h.fcrPct != null && (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <KpiCard icon={Gauge} label="FCR % (period)" value={`${h.fcrPct}%`} sub="first-contact resolution" tone="teal" />
+                  {(() => {
+                    const withFcr = data.daily.filter((d) => d.fcrPct != null);
+                    const best = [...withFcr].sort((a, b) => (b.fcrPct as number) - (a.fcrPct as number))[0];
+                    const worst = [...withFcr].sort((a, b) => (a.fcrPct as number) - (b.fcrPct as number))[0];
+                    return (<>
+                      {best && <KpiCard icon={TrendingUp} label="Best FCR day" value={`${best.fcrPct}%`} sub={fmtDate(best.date)} tone="emerald" />}
+                      {worst && <KpiCard icon={TrendingUp} label="Lowest FCR day" value={`${worst.fcrPct}%`} sub={fmtDate(worst.date)} tone="violet" />}
+                    </>);
+                  })()}
+                </div>
+              )}
               <SectionCard icon={Gauge} title="Date-wise answered, AL % and SL %" tone="blue">
                 <ResponsiveContainer width="100%" height={260}>
                   <AreaChart data={data.daily} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
@@ -786,6 +881,7 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                     <Area yAxisId="l" type="monotone" dataKey="answered" name="Answered" stroke="#10b981" strokeWidth={2.5} fill={`url(#ib-${projectKey}-ans)`} />
                     <Line yAxisId="r" type="monotone" dataKey="slPct" name="SL %" stroke="#6366f1" strokeWidth={2} dot={false} />
                     <Line yAxisId="r" type="monotone" dataKey="abandonPct" name="AL %" stroke="#f43f5e" strokeWidth={2} dot={false} />
+                    {h.fcrPct != null && <Line yAxisId="r" type="monotone" dataKey="fcrPct" name="FCR %" stroke="#0d9488" strokeWidth={2} strokeDasharray="4 3" dot={false} connectNulls />}
                   </AreaChart>
                 </ResponsiveContainer>
               </SectionCard>
@@ -831,6 +927,19 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
           {/* ───────────────────────────── Agent-wise ───────────────────────────── */}
           {tab === "agents" && (
             <div className="space-y-4">
+              {h.fcrPct != null && (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <KpiCard icon={Gauge} label="FCR % (all agents)" value={`${h.fcrPct}%`} sub="first-contact resolution" tone="teal" />
+                  {(() => {
+                    const ranked = data.agents.filter((a) => a.fcrPct != null && a.fcrTagged >= 20).sort((a, b) => (b.fcrPct as number) - (a.fcrPct as number));
+                    const top = ranked[0]; const low = ranked[ranked.length - 1];
+                    return (<>
+                      {top && <KpiCard icon={Users} label="Highest agent FCR" value={`${top.fcrPct}%`} sub={top.agentName} tone="emerald" />}
+                      {low && low !== top && <KpiCard icon={Users} label="Lowest agent FCR" value={`${low.fcrPct}%`} sub={low.agentName} tone="violet" />}
+                    </>);
+                  })()}
+                </div>
+              )}
               <div className="grid gap-4 lg:grid-cols-2">
                 <SectionCard icon={Users} title="Calls handled by agent" tone="indigo">
                   <ResponsiveContainer width="100%" height={Math.max(180, data.agents.length * 34)}>
@@ -869,11 +978,11 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                   <thead><tr className={THEAD}>
                     <Head first>Agent</Head><Head>Handled</Head><Head>Share</Head><Head>SL ≤{h.slThresholdSec}s</Head><Head>AHT</Head><Head>Avg talk</Head>
                     <Head>Avg hold</Head><Head>Avg ACW</Head><Head>Days</Head><Head>Calls/day</Head><Head>Short</Head><Head>Long</Head>
-                    <Head>Transfers</Head><Head>First → last call</Head>
+                    <Head>Transfers</Head>{h.fcrPct != null && <Head>FCR %</Head>}<Head>First → last call</Head>
                   </tr></thead>
                   <tbody>
                     {filteredAgents.map((a, i) => (
-                      <tr key={a.agentId} className={rowCls(i)} onClick={() => openDrill(`${a.agentName} (${a.agentId})`, { agentId: a.agentId })}>
+                      <tr key={a.agentId} className={rowCls(i)} onClick={() => setAgentView(a)} title="Click for this agent's date-wise performance">
                         <td className="py-2.5 pl-3 pr-3">
                           <div className="font-medium text-slate-700">{a.agentName}</div>
                           <div className="text-[11px] text-slate-400">{a.agentId}</div>
@@ -890,10 +999,11 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
                         <td className={td}>{a.shortCalls}</td>
                         <td className={td}>{a.longCalls}</td>
                         <td className={td}>{a.transfers}</td>
+                        {h.fcrPct != null && <td className={`${td} font-bold`}>{a.fcrPct != null ? `${a.fcrPct}%` : "—"}</td>}
                         <td className={td}>{a.firstCall.slice(0, 5)} → {a.lastCall.slice(0, 5)}</td>
                       </tr>
                     ))}
-                    {filteredAgents.length === 0 && <tr><td colSpan={14} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>}
+                    {filteredAgents.length === 0 && <tr><td colSpan={h.fcrPct != null ? 15 : 14} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>}
                   </tbody>
                 </TableShell>
               </SectionCard>
@@ -1146,6 +1256,11 @@ export function InboundInsightsDashboard({ projectKey, initialRange, onRangeChan
         </DialogContent>
       </Dialog>
 
+      <AgentDailyDrawer
+        agent={agentView} rows={data?.agentDaily ?? []} slSec={data?.headline.slThresholdSec ?? 0} showFcr={data?.headline.fcrPct != null}
+        from={from} to={to} onClose={() => setAgentView(null)}
+        onOpenCalls={(title, params) => openDrill(title, params)}
+      />
       <CallDrawer projectKey={projectKey} from={from} to={to} campaign={campaign} spec={drill} onClose={() => setDrill(null)} />
     </div>
   );

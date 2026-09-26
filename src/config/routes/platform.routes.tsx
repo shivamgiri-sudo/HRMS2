@@ -48,6 +48,7 @@ const NativeAuditLog                = lazy(() => import("@/pages/NativeAuditLog"
 const NativeSecurityCenter          = lazy(() => import("@/pages/NativeSecurityCenter"));
 const UnifiedAccessControl          = lazy(() => import("@/pages/UnifiedAccessControl"));
 const SuperAdminAccessControl       = lazy(() => import("@/pages/SuperAdminAccessControl"));
+const TpzAccessAdmin                = lazy(() => import("@/pages/TpzAccessAdmin"));
 const SuperAdminModuleAccess        = lazy(() => import("@/pages/SuperAdminModuleAccess"));
 const NativePolicyEngine            = lazy(() => import("@/pages/NativePolicyEngine"));
 const AIProviderSettings            = lazy(() => import("@/pages/AIProviderSettings"));
@@ -216,6 +217,7 @@ export const platformRouteElements = (
 
       {/* Security / access */}
       <Route path="/security-center"             element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="SECURITY_CENTER"><NativeSecurityCenter /></Gate></ProtectedRoute>} />
+      <Route path="/settings/tpz-access"         element={<ProtectedRoute roles={['super_admin','admin']}><TpzAccessAdmin /></ProtectedRoute>} />
       <Route path="/settings/access-control"     element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/page-access"     element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="ACCESS_CONTROL"><SuperAdminAccessControl /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/module-access"   element={<ProtectedRoute roles={['admin','branch_admin','it_head','payroll_head']}><Gate pageCode="MODULE_ACCESS"><SuperAdminModuleAccess /></Gate></ProtectedRoute>} />

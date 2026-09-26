@@ -8,6 +8,7 @@ import {
 } from "../../backend/src/shared/dashboardAccessRegistry";
 import { useIsAdminOrHR, useWorkforceAccess } from "@/hooks/useUserRole";
 import { useIsManager } from "@/hooks/useTeamLeaves";
+import { useTpzAccess } from "@/hooks/useTpzAccess";
 
 type AccessContext = {
   canViewPage: (pageCode: string) => boolean;
@@ -17,10 +18,12 @@ type AccessContext = {
   visiblePageCodes: string[];
   /** True when the authenticated user has at least one active direct report (is_manager from /api/employees/me) */
   isManager: boolean;
+  /** True when the user holds a TPZ Process grant (see hooks/useTpzAccess). */
+  hasTpzAccess?: boolean;
 };
 
 export function canAccessNavItem(
-  item: Pick<NavItem, "href" | "pageCode" | "roles" | "public">,
+  item: Pick<NavItem, "href" | "pageCode" | "roles" | "public" | "managerVisible" | "tpzVisible">,
   access: AccessContext,
 ): boolean {
   const visibleSet = new Set(access.visiblePageCodes);
@@ -31,6 +34,7 @@ export function canAccessNavItem(
   );
   const dashboardCode = getDashboardDefinition(pageCode)?.code ?? dashboardByRoute.get(item.href);
 
+  if (item.tpzVisible && access.hasTpzAccess) return true;
   if (dashboardCode) return canAccessDashboard(dashboardCode, access.roleKeys);
   if (isSuperAdmin) return true;
   if (pageCode) return visibleSet.has(pageCode) || access.canViewPage(pageCode);
@@ -85,6 +89,8 @@ export function useAccessibleNavGroups(groups: NavGroup[]) {
   const { canViewPage, visiblePageCodes, hasAnyRole, roleKeys } = useWorkforceAccess();
   const { isAdminOrHR } = useIsAdminOrHR();
   const { data: isManager = false } = useIsManager();
+  const { data: tpz } = useTpzAccess();
+  const hasTpzAccess = tpz?.hasAccess ?? false;
 
   return useMemo(
     () =>
@@ -95,7 +101,8 @@ export function useAccessibleNavGroups(groups: NavGroup[]) {
         roleKeys,
         isAdminOrHR,
         isManager,
+        hasTpzAccess,
       }),
-    [canViewPage, visiblePageCodes, hasAnyRole, roleKeys, isAdminOrHR, isManager, groups],
+    [canViewPage, visiblePageCodes, hasAnyRole, roleKeys, isAdminOrHR, isManager, hasTpzAccess, groups],
   );
 }

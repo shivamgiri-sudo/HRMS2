@@ -22,6 +22,8 @@ export type NavItem = {
   description?: string;
   /** When true, also visible to anyone who has direct reports (is_manager), regardless of role */
   managerVisible?: boolean;
+  /** When true, also visible to anyone holding a TPZ Process grant (admin-assigned), regardless of role */
+  tpzVisible?: boolean;
   /** Sub-items — when present this item becomes a collapsible master */
   children?: NavItem[];
 };

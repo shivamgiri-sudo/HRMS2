@@ -6,6 +6,8 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { startBatchJob, getBatchJob, readBatchProgress } from "./batch-job.js";
+import { tpzAllowsUploadType } from "../tpz-access/tpz-access.middleware.js";
+import { TPZ_UPLOAD_TYPES } from "../tpz-access/tpz-access.catalog.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { loadRowsWithLiveStatus, reconcileStuckRows } from "./bulk-approval.service.js";
 import { withDeadlockRetry, isDeadlockError } from "../../shared/deadlockRetry.js";
@@ -26,12 +28,13 @@ interface UploadBatchRow extends RowDataPacket {
 }
 router.use(requireAuth);
 
-router.get("/templates", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
+router.get("/templates", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM upload_template_master WHERE active_status = 1 ORDER BY upload_type_code ASC"
     );
-    res.json({ success: true, data: rows });
+    // TPZ Process grants (modules/tpz-access): a narrowed or grant-only user sees only the TPZ upload types they may use.
+    res.json({ success: true, data: rows.filter((r) => tpzAllowsUploadType(req, String(r.upload_type_code))) });
   } catch (err: unknown) {
     // Table may not exist yet — return empty array gracefully
     if (typeof err === "object" && err !== null) {
@@ -69,6 +72,7 @@ const PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES = [
   "OWNER_AGENT_DETAILS_MASMIS", "OWNER_CDR_MASMIS", "OWNER_SALE_MASMIS",
   "PRE_AGENT_DETAILS_MASMIS", "PRE_CDR_MASMIS", "PRE_SALE_MASMIS",
   "SATYA_ALLOCATION_MASMIS", "SATYA_CDR_MASMIS",
+  "DALMIA_DD_RAW", "DALMIA_OUTBOUND_RAW", "DALMIA_APR", "DALMIA_AFTER_HOUR",
 ];
 
 router.get("/process-performance-v2-stats", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
@@ -89,7 +93,9 @@ router.get("/process-performance-v2-stats", requireRole("admin", "hr", "super_ad
     .split(",")
     .map((c) => c.trim())
     .filter((c) => PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES.includes(c));
-  const typeCodes = requestedCodes.length ? requestedCodes : PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES;
+  // Narrowed / grant-only TPZ users are counted only over the upload types they may use.
+  const typeCodes = (requestedCodes.length ? requestedCodes : PROCESS_PERFORMANCE_V2_UPLOAD_TYPE_CODES).filter((c) => tpzAllowsUploadType(req, c));
+  if (typeCodes.length === 0) return res.json({ success: true, data: { totalFilesUploaded: 0, activeUsers: 0 } });
 
   const typeCodePlaceholders = typeCodes.map(() => "?").join(",");
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -149,6 +155,17 @@ router.get("/batches", requireRole("admin", "hr", "super_admin", "wfm", "wfm_ana
   // Filters. Each is optional and additive; an absent filter never narrows the result.
   const uploadType = String(req.query.uploadType ?? "").trim();
   if (uploadType) { where.push("ub.upload_type_code = ?"); params.push(uploadType); }
+
+  // TPZ Process grants: hide TPZ upload types this user may not use (narrowed role users), or show ONLY the granted TPZ
+  // types (grant-only users). Empty for everyone else.
+  const tpzFilter = (req as unknown as { tpzUploadFilter?: { allow: Set<string>; deny: Set<string>; grantOnly: boolean } }).tpzUploadFilter;
+  if (tpzFilter?.grantOnly) {
+    const allowed = [...tpzFilter.allow];
+    where.push(`ub.upload_type_code IN (${allowed.map(() => "?").join(",")})`); params.push(...allowed);
+  } else if (tpzFilter && tpzFilter.deny.size > 0) {
+    const denied = [...tpzFilter.deny];
+    where.push(`ub.upload_type_code NOT IN (${denied.map(() => "?").join(",")})`); params.push(...denied);
+  }
 
   const status = String(req.query.status ?? "").trim();
   if (status) { where.push("ub.batch_status = ?"); params.push(status); }

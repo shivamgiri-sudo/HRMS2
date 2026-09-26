@@ -5,6 +5,7 @@ import os from "os";
 import path from "path";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { tpzMisAllowed } from "../tpz-access/tpz-access.middleware.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
 import { buildMisExcel, getMisCompanies } from "./mis-export.service.js";
 
@@ -32,9 +33,11 @@ function currentMonthRange(): { from: string; to: string } {
   return { from, to };
 }
 
-router.get("/mis/companies", requireRole(...VIEWER_ROLES), h(async (_req, res) => {
+router.get("/mis/companies", requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const companies = await getMisCompanies();
-  res.json({ success: true, data: companies });
+  // TPZ Process grants: list only the companies this user may download MIS for.
+  const allowed = new Set(await tpzMisAllowed(req, Object.keys(companies)));
+  res.json({ success: true, data: Object.fromEntries(Object.entries(companies).filter(([k]) => allowed.has(k))) });
 }));
 
 router.get("/mis/:company/excel", requireRole(...VIEWER_ROLES), h(async (req, res) => {
