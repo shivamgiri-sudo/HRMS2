@@ -15,6 +15,7 @@ import {
 } from "./DashboardKit";
 import { GncAgentDrawer } from "./GncAgentDrawer";
 import { GncCampaignDrawer } from "./GncCampaignDrawer";
+import { GncLobOverview } from "./GncLobOverview";
 import { useSortableRows } from "./useSortableRows";
 import { SortTh } from "./SortTh";
 
@@ -26,6 +27,7 @@ interface DashboardData {
     codPct: number;
     aov: number;
     activeAgents: number;
+    totalAllocation?: number;
   };
   from: string;
   to: string;
@@ -55,7 +57,10 @@ interface DashboardData {
     codPct: number; paidPct: number; revenue: number; attendanceDays: number;
     target?: number | null; achPct?: number | null;
   }>;
-  targets?: { tableAvailable: boolean; coveredLobs: string[]; total: { target: number; revenue: number; achPct: number | null } | null };
+  targets?: {
+    tableAvailable: boolean; coveredLobs: string[]; total: { target: number; revenue: number; achPct: number | null } | null;
+    blocks: Array<{ lob: string; configured: boolean; monthlyTarget: number | null; rangeTarget: number | null; agentCount: number | null; revenue: number; achPct: number | null }>;
+  };
 }
 
 const CAMPAIGN_COLORS = ["#059669", "#0ea5e9", "#f59e0b", "#8b5cf6", "#e11d48"];
@@ -276,6 +281,9 @@ export function GncSaleDashboard() {
           </>
         )}
       </div>
+
+      {/* Inbound / Chat / Abandon Cart side by side */}
+      <GncLobOverview data={data} onOpenLob={setDrawerCampaign} onOpenAgent={setDrawerEmpId} />
 
       {/* Date-wise trend + Campaign revenue */}
       <div className="grid gap-4 lg:grid-cols-3">
