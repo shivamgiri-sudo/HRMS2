@@ -9,6 +9,7 @@ import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { excludeEmployeeShapedCandidatesSql } from "./ats-reporting-scope.js";
 import { JOINED_STAGE_PREDICATE, candidateBecameEmployee, getEmployeeMobileJoinMap } from "./analytics.unified.service.js";
 import { toStoredNameRequired } from "../../shared/nameFormat.js";
+import { nonReactivatableSqlList } from "../exit/exitEmploymentStatus.js";
 import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { maskPii } from "../../shared/piiMask.js";
 import type {
@@ -200,6 +201,49 @@ export const atsService = {
     // stored value verbatim means one recruiter's placeholder blocks the next 538
     // candidates who share it as "already registered".
     const isRealMobile = /^[6-9]\d{9}$/.test(String(input.mobile ?? "").trim());
+
+    // A former employee coming back for an interview already has an old candidate row under
+    // the same mobile, which the duplicate guards below would refuse. When that mobile belongs
+    // only to employees who have left (none still active), the person is a rehire: re-open the
+    // existing row as a fresh registration instead of rejecting the form.
+    if (isRealMobile) {
+      const [reusable] = await db.execute<RowDataPacket[]>(
+        `SELECT c.id
+           FROM ats_candidate c
+          WHERE c.mobile = ?
+            AND EXISTS (SELECT 1 FROM employees e WHERE e.mobile = c.mobile
+                         AND LOWER(COALESCE(e.employment_status, '')) IN (${nonReactivatableSqlList()}))
+            AND NOT EXISTS (SELECT 1 FROM employees e2 WHERE e2.mobile = c.mobile
+                             AND LOWER(COALESCE(e2.employment_status, '')) NOT IN (${nonReactivatableSqlList()}))
+          LIMIT 1`,
+        [input.mobile]
+      );
+      const reuseId = (reusable as RowDataPacket[])[0]?.id as string | undefined;
+      if (reuseId) {
+        const rehireEmail = String(input.email ?? "").trim();
+        await db.execute(
+          `UPDATE ats_candidate
+              SET full_name = ?, email = COALESCE(NULLIF(?, ''), email), gender = ?, date_of_birth = ?,
+                  applied_for_process = ?, applied_for_branch = ?, sourcing_channel = ?, referred_by = ?,
+                  walk_in_date = ?, remarks = ?, address = ?, education = ?, experience = ?,
+                  rotational_shift = ?, preferred_shift = ?, night_shift_ok = ?, leaves_in_3months = ?,
+                  owns_two_wheeler = ?, id_proof_available = ?, education_proof_available = ?,
+                  recruiter_name = ?, profile_status = ?, current_stage = DEFAULT(current_stage),
+                  active_status = 1
+            WHERE id = ?`,
+          [toStoredNameRequired(input.fullName), rehireEmail, input.gender ?? null,
+           input.dateOfBirth ?? null, input.appliedForProcess ?? null, input.appliedForBranch ?? null,
+           normalizeSourceChannel(input.sourcingChannel), input.referredBy ?? null, input.walkInDate ?? null,
+           input.remarks ?? null, input.address ?? null, input.education ?? null, input.experience ?? null,
+           input.rotationalShift ?? null, input.preferredShift ?? null, input.nightShiftOk ?? null,
+           input.leavesIn3months ?? null, input.ownsTwoWheeler ?? null, input.idProofAvailable ?? null,
+           input.educationProofAvailable ?? null, input.recruiterName ?? null,
+           input.profileStatus ?? "registered", reuseId]
+        );
+        return this.getCandidate(reuseId);
+      }
+    }
+
     const [dupMobile] = isRealMobile
       ? await db.execute<RowDataPacket[]>(
           "SELECT id, current_stage, active_status FROM ats_candidate WHERE mobile = ? LIMIT 1",

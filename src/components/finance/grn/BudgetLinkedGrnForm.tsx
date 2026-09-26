@@ -356,14 +356,6 @@ function parsePaymentTermDays(raw: unknown): number | null {
   return days;
 }
 
-function addDays(dateString: string, days: number) {
-  if (!dateString) return "";
-  const date = new Date(`${dateString}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return "";
-  date.setDate(date.getDate() + Number(days || 0));
-  return date.toISOString().slice(0, 10);
-}
-
 function daysBetween(from: string, to: string) {
   if (!from || !to) return null;
   const a = new Date(`${from}T00:00:00`).getTime();
@@ -2778,22 +2770,12 @@ export function BudgetLinkedGrnForm({
                                 || extractStateCodeFromGstin(gstin)
                                 || "");
                             const termDays = parsePaymentTermDays(picked?.payment_terms);
-                            // The due date is a function of the vendor's terms and the bill date,
-                            // so a new vendor re-derives it. With no terms mapped there is nothing
-                            // to derive from, and whatever is on screen is left as it stands.
-                            const seededDue =
-                              termDays !== null && current.billDate
-                                ? (vendorChanged || !current.dueDate
-                                  ? addDays(current.billDate, termDays)
-                                  : current.dueDate)
-                                : current.dueDate;
                             return {
                               ...current,
                               vendorId: value,
                               vendorGstin: gstin,
                               vendorStateCode: vendorState,
                               paymentTermsDays: termDays ?? current.paymentTermsDays,
-                              dueDate: seededDue,
                             };
                           });
                         }}
@@ -2915,10 +2897,6 @@ export function BudgetLinkedGrnForm({
                         subHead: "",
                         budgetLineId: "",
                         lateInvoiceReason: "",
-                        dueDate:
-                          current.dueDate || !billDate
-                            ? current.dueDate
-                            : addDays(billDate, current.paymentTermsDays),
                       }));
                       setAllocations([newAllocation()]);
                       setInvoiceComponents([newInvoiceComponent()]);
