@@ -1774,6 +1774,8 @@ export function BudgetLinkedGrnForm({
     setForm(EMPTY_FORM);
     setAllocations([newAllocation()]);
     setCostCentreSplits([]);
+    setCostCentreSplitMethod("equal_split");
+    setDirectCostCentreKey("");
     setInvoiceComponents([newInvoiceComponent()]);
     setFiles([]);
     setCreated(null);
@@ -2243,13 +2245,16 @@ export function BudgetLinkedGrnForm({
 
   const actionButtons = (
     <div className="flex gap-2">
-      <GrnIconButton
-        onClick={() => resetForm()}
-        aria-label={created ? "Start a new GRN" : "Clear form"}
-        title={created ? "Start a new GRN" : "Clear form"}
+      <Button
+        type="button"
+        variant="default"
+        className="flex-1 md:flex-none"
+        disabled={persistMutation.isPending}
+        onClick={() => resetForm({ navigateAway: false })}
       >
         <RotateCcw className="h-3.5 w-3.5" />
-      </GrnIconButton>
+        Cancel draft
+      </Button>
       <Button
         className="flex-1 md:flex-none"
         disabled={persistMutation.isPending || submitted}
