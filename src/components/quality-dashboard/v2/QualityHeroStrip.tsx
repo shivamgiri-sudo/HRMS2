@@ -3,6 +3,7 @@ import { BarChart2, Target, TrendingUp, AlertTriangle, Users, Shield, PhoneCall 
 import { AnimatedCounter } from "./AnimatedCounter";
 import type { QDSummary } from "./types";
 import { safeNum } from "./types";
+import { qualityScoreTone } from "@/lib/qualityScoreFormatting";
 
 interface Props {
   summary: QDSummary | undefined;
@@ -81,7 +82,10 @@ export function QualityHeroStrip({ summary: s, loading }: Props) {
       label: "Avg Quality",
       raw: safeNum(s.avg_quality_score),
       display: `${safeNum(s.avg_quality_score)}%`,
-      intent: s.avg_quality_score >= 80 ? "good" : s.avg_quality_score >= 65 ? "warning" : "critical",
+      // Conditional formatting matches the shared bands in qualityScoreFormatting.ts
+      // (good >=80, warn/caution 60-79, critical <60) instead of this tile's own
+      // previous ad hoc 80/65 cut points.
+      intent: qualityScoreTone(s.avg_quality_score) === "good" ? "good" : qualityScoreTone(s.avg_quality_score) === "bad" ? "critical" : "warning",
       icon: <Target className="h-4 w-4" />,
       animate: false,
     },

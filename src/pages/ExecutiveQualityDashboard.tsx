@@ -25,13 +25,15 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useUserRole, useWorkforceAccess } from "@/hooks/useUserRole";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { qualityScoreTextClass, qualityScoreTone } from "@/lib/qualityScoreFormatting";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+// CartesianGrid intentionally not imported — clean plain background, no gridlines.
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import {
   TrendingUp,
   TrendingDown,
@@ -75,10 +77,10 @@ interface ExecutiveQualityData {
   org_benchmarks: { avg_quality: number; median_quality: number; std_deviation: number };
 }
 
+// Conditional formatting matches the shared bands in qualityScoreFormatting.ts
+// so a score renders the same colour here as on every other quality dashboard page.
 function qualityColor(score: number): string {
-  if (score >= 80) return "text-green-600 font-semibold";
-  if (score >= 70) return "text-yellow-600 font-semibold";
-  return "text-red-600 font-semibold";
+  return `${qualityScoreTextClass(score)} font-semibold`;
 }
 
 function statusBadge(status: string): string {
@@ -95,11 +97,15 @@ function daysAgo(n: number) { const d = new Date(); d.setDate(d.getDate() - n); 
 // ─── Drill-down / analyst-detail infrastructure — moved from QualityDashboard.tsx.
 //     qualityTone is duplicated there too (still needed by its SelfQualityScorecard). ──────
 
+// Drill-down node tone (branch/process/team/analyst rollups). Wired to the same
+// shared bands as every other quality score on the site (qualityScoreFormatting.ts)
+// so a given quality percentage reads the same "good/warn/bad" here as anywhere
+// else — this used to be its own looser 70/50 scale, which meant a 72% rollup
+// showed "good" here but "warn" (yellow) as a ScorePill elsewhere.
 function qualityTone(pct: number | null): "good" | "warn" | "bad" | "neutral" {
   if (pct === null) return "neutral";
-  if (pct >= 70) return "good";
-  if (pct >= 50) return "warn";
-  return "bad";
+  const tone = qualityScoreTone(pct);
+  return tone === "caution" ? "warn" : tone;
 }
 
 interface QualityApiNode {
@@ -296,7 +302,6 @@ function AnalystDetailSheet({ node, open, onOpenChange }: { node: DrillNode | nu
           <div className="mt-6 h-44">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
                 <XAxis dataKey="date" fontSize={10} />
                 <YAxis fontSize={10} domain={[0, 100]} />
                 <Tooltip contentStyle={{ borderRadius: 8, fontSize: 12 }} />

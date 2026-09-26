@@ -102,5 +102,8 @@
   ],
   "workers/bulk-import.worker.ts": [
     "bulk_import_queue"
+  ],
+  "modules/quality-dashboard/onfido-utilization.routes.ts": [
+    "onfido_utilization_upload"
   ]
 }
