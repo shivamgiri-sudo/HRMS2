@@ -3,12 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
-  DASH, EmptyNote, GranularityPills, MatrixLineChart, MatrixTable, SectionCard, SectionState, fmtDate, fmtHc, fmtPct,
+  DASH, EmptyNote, GranularityPills, MatrixTable, SectionCard, SectionState, fmtDate, fmtHc, fmtPct,
   matrixIsEmpty, type AonRow, type DateRange, type Granularity, type Matrix, type MatrixFormat, type OverviewReport,
   type QueueRow, type Section,
 } from "./onfidoReportShared";
 import { OnfidoManpowerPlanSheet, QUEUE_OPTIONS, usePlanRecords, useCanEditWfmInputs } from "./OnfidoManpowerPlanSheet";
 import { OnfidoKpiStrip } from "./OnfidoKpiStrip";
+import { MatrixChart } from "./MatrixChart";
 import { buildOverviewKpis } from "./onfidoKpi";
 
 /**
@@ -200,7 +201,7 @@ export default function OnfidoOverviewReport({ range, tlFilter, amFilter }: { ra
             <SectionState loading={loadingFor(s.key)} error={errorFor(s.key) ?? section?.error} empty={matrixIsEmpty(section?.data)} emptyText={s.emptyText}>
               {section?.data && picked && (
                 <>
-                  <MatrixLineChart matrix={picked.matrix} granularity={g} format={s.format} formats={picked.formats} secondAxisFrom={s.secondAxisFrom} />
+                  <MatrixChart matrix={picked.matrix} granularity={g} format={s.format} formats={picked.formats} secondAxisFrom={s.secondAxisFrom} />
                   <MatrixTable matrix={section.data} granularity={g} format={s.format} formats={s.formats} labelHeader={s.labelHeader} />
                 </>
               )}
