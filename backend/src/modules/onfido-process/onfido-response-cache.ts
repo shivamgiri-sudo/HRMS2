@@ -29,6 +29,11 @@ export function clearOnfidoResponseCache(): void {
   inFlight.clear();
 }
 
+/** Stores a body computed outside a request (the startup warmer) under the URL the page will request. */
+export function primeOnfidoResponseCache(key: string, body: unknown): void {
+  remember(key, body);
+}
+
 function isCacheable(req: Request): boolean {
   // /wfm-inputs is hand-entered and can differ per viewer (can-edit), so it is never shared.
   return req.method === "GET" && !req.path.startsWith("/live/") && !req.path.startsWith("/live") && !req.path.startsWith("/wfm-inputs") && !req.path.endsWith("/export.csv");
