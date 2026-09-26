@@ -93,10 +93,12 @@ export function assertValidExitTransition(
  *
  * NOC is also not checked here — see the 2026-09-16 ruling comment in noc.service.ts.
  *
- * Clearance tasks remain the sole gate: they represent physical handover (IT deprovisioning,
- * asset return) that must complete before the employee is formally inactive.
+ * Clearance no longer gates "exited" either (owner ruling 2026-09-26: generate clearance and
+ * NOC must not block the exit gate). Open tasks are reported back as `pendingAtExit` and
+ * keep gating the money/paperwork steps instead: F&F approval (ff-approval-guard), F&F paid,
+ * bank batch, leaver salary release and the relieving letter.
  */
-async function finalExitBlockers(exitRequestId: string): Promise<string[]> {
+async function openClearanceAtExit(exitRequestId: string): Promise<number> {
   const [clearanceRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS open_count
        FROM exit_clearance_task
@@ -104,10 +106,7 @@ async function finalExitBlockers(exitRequestId: string): Promise<string[]> {
         AND status NOT IN ('cleared', 'waived')`,
     [exitRequestId],
   );
-  const blockers: string[] = [];
-  const openClearance = Number(clearanceRows[0]?.open_count ?? 0);
-  if (openClearance > 0) blockers.push(`${openClearance} clearance task(s) still open`);
-  return blockers;
+  return Number(clearanceRows[0]?.open_count ?? 0);
 }
 
 function normalizeExitStatus(status: unknown): string {
@@ -380,16 +379,7 @@ async function handleExitStatusUpdate(req: any, res: any) {
     });
   }
 
-  if (nextStatus === "exited") {
-    const blockers = await finalExitBlockers(req.params.id);
-    if (blockers.length) {
-      return res.status(409).json({
-        success: false,
-        message: "Cannot mark employee exited until exit controls are complete.",
-        blockers,
-      });
-    }
-  }
+  const pendingAtExit = nextStatus === "exited" ? await openClearanceAtExit(req.params.id) : 0;
 
   // currentStatus is the value the FSM check above was decided on. Handing it to the
   // service lets the transaction there refuse the write if another approver moved the
@@ -403,7 +393,15 @@ async function handleExitStatusUpdate(req: any, res: any) {
     currentStatus,
     { lastWorkingDayConfirmed, noticePeriodDays },
   );
-  return res.json({ success: true, data, message: `Exit request status updated to ${nextStatus}` });
+  return res.json({
+    success: true,
+    data,
+    pendingAtExit,
+    message:
+      pendingAtExit > 0
+        ? `Exit request status updated to ${nextStatus}. ${pendingAtExit} clearance task(s) still open; they will block F&F approval.`
+        : `Exit request status updated to ${nextStatus}`,
+  });
 }
 
 exitSecureRouter.patch("/:id/status", h(handleExitStatusUpdate));
@@ -476,9 +474,8 @@ exitSecureRouter.post("/:id/objection", h(async (req: any, res: any) => {
 }));
 
 /**
- * Test-only export. finalExitBlockers is module-private on purpose — it is not a second
- * entry point into the exit FSM — but its clearance-task/F&F blockers (and the deliberate
- * absence of a NOC blocker) are rules that must stay pinned, so the test drives the real
- * function rather than a copy of its logic.
+ * Test-only export. openClearanceAtExit is module-private on purpose — it is not a second
+ * entry point into the exit FSM — but the rule that it only counts (never blocks) must stay
+ * pinned, so the test drives the real function rather than a copy of its logic.
  */
-export const __testFinalExitBlockers = finalExitBlockers;
+export const __testOpenClearanceAtExit = openClearanceAtExit;
