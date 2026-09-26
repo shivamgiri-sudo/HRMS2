@@ -5,15 +5,13 @@
 import { canBackdateDates } from "../../utils/dateUtils.js";
 
 /**
- * Ownership tier. "payroll_head" (Payroll Head, admin, super_admin - the roles the Payroll Head
- * routes already gate on) may change a date AFTER Payroll Head has approved the salary; "standard"
+ * Ownership tier. "payroll_head" (Payroll Head and super_admin only - admin is not an approver) may change a date AFTER Payroll Head has approved the salary; "standard"
  * (Payroll HR, HR, Joining Control Room) may not.
  */
 export type SalaryDateAuthority = "payroll_head" | "standard";
 
 export const SALARY_DATE_REVIEWER_ROLES: readonly string[] = [
   "payroll_head",
-  "admin",
   "super_admin",
 ];
 

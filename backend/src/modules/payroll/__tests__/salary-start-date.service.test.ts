@@ -88,8 +88,8 @@ describe("actorAuthority", () => {
   it("splits ownership (reviewer tier) from the backdating exemption, exactly like canBackdateDates", () => {
     expect(actorAuthority(["payroll_head"])).toEqual({ authority: "payroll_head", allowBackdate: true });
     expect(actorAuthority(["super_admin"])).toEqual({ authority: "payroll_head", allowBackdate: true });
-    // admin may change an approved salary's date but is NOT exempt from the date locks.
-    expect(actorAuthority(["hr", "admin"])).toEqual({ authority: "payroll_head", allowBackdate: false });
+    // admin is not an approver: it cannot change an approved salary's date, and is not exempt from the date locks.
+    expect(actorAuthority(["hr", "admin"])).toEqual({ authority: "standard", allowBackdate: false });
     expect(actorAuthority(["hr"])).toEqual({ authority: "standard", allowBackdate: false });
     expect(actorAuthority(["payroll_hr", "branch_head"])).toEqual({ authority: "standard", allowBackdate: false });
     expect(actorAuthority([])).toEqual({ authority: "standard", allowBackdate: false });
@@ -503,7 +503,7 @@ describe("applySalaryStartDate", () => {
     expect(state.employee.salary_start_date).toBe("2026-09-30");
   });
 
-  it("lets admin change an approved salary's date (reviewer tier) but not before today/joining (no backdate exemption)", async () => {
+  it("lets a reviewer-tier actor without the backdate exemption change an approved salary's date, but not before today/joining", async () => {
     const state = newState();
     state.review!.status = "approved";
     const admin = { actorUserId: "user-admin", authority: "payroll_head" as const, allowBackdate: false, source: "revision_request_approved" as const };
