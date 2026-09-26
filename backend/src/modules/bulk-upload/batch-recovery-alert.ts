@@ -2,8 +2,8 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { emailService } from "../communication/email.service.js";
 
-/** Who is told when an import needs a human: active super_admins. */
-const ALERT_ROLE = "super_admin";
+/** Who is told when an import needs a human: active super_admins and admins. */
+const ALERT_ROLES = ["super_admin", "admin"];
 export const RECOVERY_ALERT_TYPE = "bulk_import_recovery";
 
 export interface RecoveryAlert {
@@ -44,8 +44,8 @@ export async function alertAdmins(alert: RecoveryAlert): Promise<boolean> {
       `SELECT DISTINCT ur.user_id, au.email
          FROM user_roles ur
          JOIN auth_user au ON au.id = ur.user_id
-        WHERE ur.active_status = 1 AND ur.role_key = ?`,
-      [ALERT_ROLE],
+        WHERE ur.active_status = 1 AND ur.role_key IN (${ALERT_ROLES.map(() => "?").join(",")})`,
+      ALERT_ROLES,
     );
     for (const admin of admins) {
       await db.execute(
