@@ -704,6 +704,13 @@ router.post("/batches/:id/import", requireRole(...HUB_ROLES), restrictLobOnlyBat
   // Hand off to hrms-workers via the DB queue. The worker polls bulk_import_queue
   // every few seconds, claims this row, and runs dispatchImport â€” completely off
   // the API process, zero impact on live users during large imports.
+  // Remember how to re-run this import, so batch-auto-recovery can re-queue it after a transient
+  // failure without a person having to open the batch and press Import again.
+  await db.execute(
+    `UPDATE upload_batch SET metadata = JSON_SET(COALESCE(metadata, JSON_OBJECT()),
+       '$.import_rpc_name', ?, '$.import_user_id', ?) WHERE id = ?`,
+    [rpc_name, req.authUser!.id, id]
+  );
   await db.execute(
     `INSERT INTO bulk_import_queue (id, batch_id, rpc_name, user_id, queued_at)
      VALUES (UUID(), ?, ?, ?, NOW())
