@@ -267,7 +267,7 @@ lmsCoachingRouter.get(
   }),
 );
 
-/** Same view found by work email - how the Onfido dashboard (which knows analysts by email) reaches it. */
+/** Same view found by OFFICIAL email only (personal and legacy addresses are never used)  - how the Onfido dashboard (which knows analysts by email) reaches it. */
 lmsCoachingRouter.get(
   "/coaching/by-email",
   wrap(async (req, res) => {
@@ -282,9 +282,9 @@ lmsCoachingRouter.get(
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM employees
         WHERE active_status = 1
-          AND (LOWER(official_email) = ? OR LOWER(email) = ? OR LOWER(office_email) = ? OR LOWER(personal_email) = ?)
+          AND LOWER(official_email) = ?
         LIMIT 2`,
-      [email, email, email, email],
+      [email],
     );
     if (rows.length !== 1) {
       return res
@@ -293,8 +293,8 @@ lmsCoachingRouter.get(
           success: false,
           message:
             rows.length === 0
-              ? "No employee is registered with that email."
-              : "More than one employee has that email.",
+              ? "No employee has that official email."
+              : "More than one employee has that official email.",
         });
     }
     const employeeId = String(rows[0].id);
