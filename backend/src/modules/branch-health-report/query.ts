@@ -828,6 +828,8 @@ export interface HeadcountProcessRow {
   leftMtd: number;
   /** Mandated seats for this process at this branch (workforce mandate); null when none is set. */
   mandateSeats: number | null;
+  /** Where the mandate came from: the HRMS workforce mandate, or the db_bill seat history. */
+  mandateSource: "workforce" | "db_bill" | null;
 }
 
 export interface HeadcountMovement {
@@ -845,6 +847,65 @@ export interface HeadcountMovement {
   /** Sum of the mandated seats of the processes that have one. */
   mandateSeatsTotal: number | null;
   totalActive: number;
+}
+
+const MIN_MATCH_LENGTH = 4;
+const COMPANY_SUFFIX = /\b(private|pvt|limited|ltd|india|company|co)\b/g;
+
+/** Same client spelled differently by HRMS and db_bill ("IDAM NATURAL WELLNESS PRIVATE LIMITED"). */
+export function normalizeClientName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(COMPANY_SUFFIX, " ")
+    .replace(/\s+/g, "");
+}
+
+/**
+ * Fills the mandate for processes the HRMS workforce mandate does not cover from the latest
+ * db_bill mandate-seat history (legacy billing), matched on client name. A billed client with no
+ * process row here is left out: db_bill names the legal entity ("Locon Solutions" = Housing.com),
+ * so adding it as its own line would count that mandate twice.
+ */
+async function applyBillingMandates(
+  branchId: string,
+  perProcess: Map<string, HeadcountProcessRow>,
+  processMaster: { process_name: string; client_name: string | null }[],
+): Promise<void> {
+  const [history] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(TRIM(h.client_name), ''), NULLIF(TRIM(h.process_name), '')) AS client,
+            SUM(h.mandate_seats) AS seats
+       FROM mandate_seat_history h
+       JOIN branch_master b ON b.branch_name = h.branch_name
+      WHERE b.id = ?
+        AND h.period_month = (SELECT MAX(x.period_month) FROM mandate_seat_history x
+                               WHERE x.branch_name = h.branch_name AND x.mandate_seats > 0)
+      GROUP BY client
+     HAVING seats > 0`,
+    [branchId],
+  );
+  const clientOf = new Map<string, string>();
+  for (const p of processMaster) {
+    if (p.client_name)
+      clientOf.set(p.process_name, normalizeClientName(p.client_name));
+  }
+  for (const h of history as any[]) {
+    const key = normalizeClientName(String(h.client));
+    if (!key) continue;
+    const seats = Number(h.seats);
+    const sameClient = (own: string) =>
+      own.length >= MIN_MATCH_LENGTH &&
+      (own.includes(key) || key.includes(own));
+    const matches = [...perProcess.values()].filter(
+      (r) =>
+        sameClient(normalizeClientName(r.process)) ||
+        sameClient(clientOf.get(r.process) ?? ""),
+    );
+    if (matches.length === 0) continue;
+    if (matches.some((r) => r.mandateSource === "workforce")) continue;
+    matches[0].mandateSeats = seats;
+    matches[0].mandateSource = "db_bill";
+  }
 }
 
 /**
@@ -923,6 +984,7 @@ export async function fetchHeadcountMovement(
       leftToday: 0,
       leftMtd: 0,
       mandateSeats: null,
+      mandateSource: null,
     };
     perProcess.set(process, fresh);
     return fresh;
@@ -937,11 +999,10 @@ export async function fetchHeadcountMovement(
       GROUP BY process`,
     [branchId, today, today],
   );
-  let mandateSeatsTotal: number | null = null;
   for (const r of mandateRows as any[]) {
-    const seats = Number(r.seats);
-    row(String(r.process)).mandateSeats = seats;
-    mandateSeatsTotal = (mandateSeatsTotal ?? 0) + seats;
+    const b = row(String(r.process));
+    b.mandateSeats = Number(r.seats);
+    b.mandateSource = "workforce";
   }
   let totalActive = 0;
   for (const r of activeRows as any[]) {
@@ -960,6 +1021,15 @@ export async function fetchHeadcountMovement(
     b.leftMtd += 1;
     if (Number(r.is_today) === 1) b.leftToday += 1;
   }
+  const [processNames] = await db.execute<RowDataPacket[]>(
+    `SELECT process_name, client_name FROM process_master WHERE branch_id = ?`,
+    [branchId],
+  );
+  await applyBillingMandates(branchId, perProcess, processNames as any[]);
+  const mandateSeatsTotal = [...perProcess.values()].reduce<number | null>(
+    (sum, r) => (r.mandateSeats == null ? sum : (sum ?? 0) + r.mandateSeats),
+    null,
+  );
   const todayOnly = (list: any[]) =>
     list
       .filter((r) => Number(r.is_today) === 1)
