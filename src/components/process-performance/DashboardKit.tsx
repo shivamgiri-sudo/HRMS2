@@ -1,4 +1,4 @@
-import { useState, type ComponentType, type ReactNode } from "react";
+import { Fragment, useState, type ComponentType, type ReactNode } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { Download, FileText, FileSpreadsheet, Layers, Loader2 } from "lucide-react";
@@ -382,6 +382,177 @@ export async function exportSlidesToExcel(params: {
   };
 }
 
+
+/* ------------------------------------------------------------------------ *
+ * Side-view (drawer) helpers -- every "View details" drawer shares these so
+ * each one gets the same Week-wise / Date-wise / Combined switch and the same
+ * "Download Excel" button. The workbook is built in the browser (a drawer only
+ * ever holds a few dozen rows, unlike the server-built full-report export).
+ * ------------------------------------------------------------------------ */
+
+export interface DrawerSheet {
+  name: string;
+  columns: string[];
+  rows: Array<Array<string | number>>;
+}
+
+const stampNow = (): string => localDateStr(new Date());
+
+/** Builds and downloads a small workbook client-side. `xlsx` is loaded on demand so it
+ * only costs the bundle when someone actually clicks Download. */
+export async function downloadDrawerExcel(fileBase: string, sheets: DrawerSheet[]): Promise<void> {
+  const XLSX = await import("xlsx");
+  const wb = XLSX.utils.book_new();
+  const used = new Set<string>();
+  for (const sheet of sheets) {
+    const ws = XLSX.utils.aoa_to_sheet([sheet.columns, ...sheet.rows]);
+    ws["!cols"] = sheet.columns.map((c, i) => ({
+      wch: Math.min(40, Math.max(c.length, ...sheet.rows.map((r) => String(r[i] ?? "").length)) + 2),
+    }));
+    let name = sheet.name.replace(/[\\/?*[\]:]/g, " ").trim().slice(0, 31) || "Sheet";
+    let n = 2;
+    while (used.has(name.toLowerCase())) name = `${name.slice(0, 28)} ${n++}`;
+    used.add(name.toLowerCase());
+    XLSX.utils.book_append_sheet(wb, ws, name);
+  }
+  XLSX.writeFile(wb, `${fileBase.replace(/[^\w.-]+/g, "_")}_${stampNow()}.xlsx`);
+}
+
+/** Small "Download Excel" button for a drawer header/section. */
+export function DrawerExcelButton({
+  fileBase, getSheets, disabled,
+}: { fileBase: string; getSheets: () => DrawerSheet[]; disabled?: boolean }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button" disabled={disabled || busy}
+      onClick={async () => {
+        setBusy(true);
+        try { await downloadDrawerExcel(fileBase, getSheets()); } finally { setBusy(false); }
+      }}
+      className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+    >
+      {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileSpreadsheet className="h-3 w-3" />}Download Excel
+    </button>
+  );
+}
+
+/** Icon-only "Download Excel" for a table card's top-right corner (SectionCard `action` slot). */
+export function TableExcelIconButton({ fileBase, getSheets, disabled }: { fileBase: string; getSheets: () => DrawerSheet[]; disabled?: boolean }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button" title="Download Excel" aria-label="Download Excel" disabled={disabled || busy}
+      onClick={async () => {
+        setBusy(true);
+        try { await downloadDrawerExcel(fileBase, getSheets()); } finally { setBusy(false); }
+      }}
+      className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50"
+    >
+      {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
+    </button>
+  );
+}
+
+export type PeriodViewMode = "week" | "date" | "combined";
+
+const PERIOD_MODES: Array<{ key: PeriodViewMode; label: string }> = [
+  { key: "week", label: "Week-wise" }, { key: "date", label: "Date-wise" }, { key: "combined", label: "Combined" },
+];
+
+/** Segmented Week-wise / Date-wise / Combined switch shared by every drawer. */
+export function PeriodModeToggle({ mode, onChange }: { mode: PeriodViewMode; onChange: (m: PeriodViewMode) => void }) {
+  return (
+    <div className="inline-flex rounded-full bg-slate-100 p-0.5">
+      {PERIOD_MODES.map((m) => (
+        <button
+          key={m.key} type="button" onClick={() => onChange(m.key)}
+          className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${mode === m.key ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+        >{m.label}</button>
+      ))}
+    </div>
+  );
+}
+export interface PeriodRow { key: string; label: string; cells: string[]; raw: Array<string | number> }
+export interface PeriodWeek extends PeriodRow { days: PeriodRow[] }
+
+/** Week-wise / Date-wise / Combined tables (+ the Excel button) for a drawer.
+ * `weeks` carries each week's own total row and the day rows that make it up, so the
+ * Combined view is a week total followed by its days. `leadSheets` are extra sheets
+ * (e.g. the drawer's Overall KPIs) placed before the period sheets in the workbook. */
+export function PeriodSection({
+  metricLabels, weeks, fileBase, leadSheets = [], accentClass = "text-rose-700",
+}: {
+  metricLabels: string[]; weeks: PeriodWeek[]; fileBase: string; leadSheets?: DrawerSheet[]; accentClass?: string;
+}) {
+  const [mode, setMode] = useState<PeriodViewMode>("combined");
+  const days = weeks.flatMap((w) => w.days);
+  const th = "border border-slate-200 px-2 py-1.5";
+  const td = "border border-slate-200 px-2 py-1.5";
+  const empty = <tr><td colSpan={metricLabels.length + 1} className="border border-slate-200 py-6 text-center text-slate-400">No data for this period.</td></tr>;
+  const table = (first: string, body: ReactNode) => (
+    <div className="overflow-x-auto rounded-xl border border-slate-100">
+      <table className="w-full min-w-[420px] border-collapse text-center text-[11px]">
+        <thead>
+          <tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+            <th className={`${th} text-left`}>{first}</th>
+            {metricLabels.map((m) => <th key={m} className={th}>{m}</th>)}
+          </tr>
+        </thead>
+        <tbody>{body}</tbody>
+      </table>
+    </div>
+  );
+  const cellsOf = (r: PeriodRow, cls: string) => r.cells.map((c, i) => <td key={i} className={`${td} ${cls}`}>{c}</td>);
+
+  const getSheets = (): DrawerSheet[] => [
+    ...leadSheets,
+    { name: "Week-wise", columns: ["Week", ...metricLabels], rows: weeks.map((w) => [w.label, ...w.raw]) },
+    { name: "Date-wise", columns: ["Date", ...metricLabels], rows: days.map((d) => [d.label, ...d.raw]) },
+    {
+      name: "Combined", columns: ["Period", "Level", ...metricLabels],
+      rows: weeks.flatMap((w) => [[w.label, "Week total", ...w.raw], ...w.days.map((d) => [d.label, "Day", ...d.raw])]),
+    },
+  ];
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <PeriodModeToggle mode={mode} onChange={setMode} />
+        <DrawerExcelButton fileBase={fileBase} getSheets={getSheets} />
+      </div>
+
+      {mode === "week" && table("Week", weeks.length === 0 ? empty : weeks.map((w) => (
+        <tr key={w.key}>
+          <td className={`${td} text-left font-medium text-slate-700`}>{w.label}</td>
+          {cellsOf(w, `font-semibold ${accentClass}`)}
+        </tr>
+      )))}
+
+      {mode === "date" && table("Date", days.length === 0 ? empty : days.map((d) => (
+        <tr key={d.key}>
+          <td className={`${td} font-medium text-slate-700`}>{d.label}</td>
+          {cellsOf(d, `font-semibold ${accentClass}`)}
+        </tr>
+      )))}
+
+      {mode === "combined" && table("Week / Date", weeks.length === 0 ? empty : weeks.map((w) => (
+        <Fragment key={w.key}>
+          <tr className="bg-slate-100/80">
+            <td className={`${td} text-left font-bold text-slate-800`}>{w.label}</td>
+            {cellsOf(w, `font-bold ${accentClass}`)}
+          </tr>
+          {w.days.map((d) => (
+            <tr key={d.key}>
+              <td className={`${td} pl-5 text-left font-medium text-slate-600`}>{d.label}</td>
+              {cellsOf(d, "text-slate-700")}
+            </tr>
+          ))}
+        </Fragment>
+      )))}
+    </div>
+  );
+}
 
 /** Drop-in "Export" button for a dashboard's toolbar row, next to
  * DateRangeToolbar. `slides` is every tab the dashboard has (feeds the two
