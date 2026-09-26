@@ -4599,7 +4599,7 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
     <Shell>
       <div className="onfido-central-theme">
         <div className="space-y-5">
-          <OnfidoHero
+          <OnfidoHero<ViewKey>
             tabs={VIEW_TABS}
             view={view}
             onChange={setView}
