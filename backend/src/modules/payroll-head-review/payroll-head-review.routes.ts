@@ -10,7 +10,8 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
   void fn(req, res).catch(next);
 };
 
-const REVIEWER_ROLES = ["payroll_head", "admin", "super_admin"] as const;
+// Only Payroll Head and Super Admin approve, reject, assign packages or change salary dates here; admin may view/fix but not approve.
+const REVIEWER_ROLES = ["payroll_head", "super_admin"] as const;
 // The reviewer is not the fixer: resubmit is for whoever can actually correct the
 // underlying document/BGV/bank/salary issue, not for payroll_head to loop back to
 // themselves.
