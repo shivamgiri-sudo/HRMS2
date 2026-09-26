@@ -696,6 +696,14 @@ export function renderEmail(
   const hcProcessRows = [
     ...hc.byProcess.map((r) => [
       r.process,
+      r.mandateSeats == null ? "—" : String(r.mandateSeats),
+      {
+        raw: mandateGapCell(
+          r.active - (r.mandateSeats ?? 0),
+          r.mandateSeats != null,
+          false,
+        ),
+      },
       String(r.active),
       String(r.joinedToday),
       String(r.joinedMtd),
@@ -704,11 +712,17 @@ export function renderEmail(
       {
         raw: `<span style="color:${r.joinedMtd - r.leftMtd < 0 ? C.danger : C.success};font-weight:700;">${signed(r.joinedMtd - r.leftMtd)}</span>`,
       },
-      r.mandateSeats == null ? "—" : String(r.mandateSeats),
-      { raw: mandateGapCell(r.active - (r.mandateSeats ?? 0), r.mandateSeats != null, false) },
     ]),
     [
       { raw: "<strong>Total</strong>" },
+      { raw: `<strong>${hc.mandateSeatsTotal ?? "—"}</strong>` },
+      {
+        raw: mandateGapCell(
+          mandatedActive - (hc.mandateSeatsTotal ?? 0),
+          hc.mandateSeatsTotal != null,
+          true,
+        ),
+      },
       { raw: `<strong>${hcTotals.active}</strong>` },
       { raw: `<strong>${hcTotals.joinedToday}</strong>` },
       { raw: `<strong>${hcTotals.joinedMtd}</strong>` },
@@ -716,10 +730,6 @@ export function renderEmail(
       { raw: `<strong>${hcTotals.leftMtd}</strong>` },
       {
         raw: `<strong>${signed(hcTotals.joinedMtd - hcTotals.leftMtd)}</strong>`,
-      },
-      { raw: `<strong>${hc.mandateSeatsTotal ?? "—"}</strong>` },
-      {
-        raw: mandateGapCell(mandatedActive - (hc.mandateSeatsTotal ?? 0), hc.mandateSeatsTotal != null, true),
       },
     ],
   ];
@@ -763,14 +773,14 @@ export function renderEmail(
     dataTable(
       [
         "Process",
+        "Mandate seats",
+        "Active vs mandate",
         "Active",
         "Joined today",
         "Joined MTD",
         "Left today",
         "Left MTD",
         "Net MTD",
-        "Mandate seats",
-        "Active vs mandate",
       ],
       hcProcessRows,
       true,
