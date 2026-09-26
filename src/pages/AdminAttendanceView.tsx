@@ -5,6 +5,9 @@ import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { AttendanceHubFilters } from "@/components/attendance/AttendanceHubFilters";
 import { AttendanceHubTable } from "@/components/attendance/AttendanceHubTable";
 import { AttendanceHubDrawer } from "@/components/attendance/AttendanceHubDrawer";
+import { AttendanceSourceSheet } from "@/components/attendance/AttendanceSourceSheet";
+import { hrmsApi } from "@/lib/hrmsApi";
+import type { SourceSheetEmployee } from "@/hooks/useAttendanceSourceSheet";
 import { useHubEmployees, useDebounce, useTodaySummary } from "@/hooks/useAttendanceHub";
 import { formatLastSynced } from "@/lib/utils";
 import type { HubEmployee, HubFilters } from "@/hooks/useAttendanceHub";
@@ -43,6 +46,7 @@ export default function AdminAttendanceView() {
   const [filters, setFilters] = useState<HubFilters>(DEFAULT_FILTERS);
   const [month, setMonth] = useState(currentMonthStr);
   const [selectedEmployee, setSelectedEmployee] = useState<HubEmployee | null>(null);
+  const [view, setView] = useState<"directory" | "sheet">("directory");
 
   // Debounce search so API isn't called on every keystroke
   const debouncedSearch = useDebounce(filters.search, 250);
@@ -70,6 +74,20 @@ export default function AdminAttendanceView() {
   }, []);
 
   const handleCloseDrawer = useCallback(() => setSelectedEmployee(null), []);
+
+  // The source sheet has no month totals, so open the drawer from the directory's own row
+  // (same payload the directory rows carry) rather than fabricating zeroed counters.
+  const handleSelectFromSheet = useCallback(async (emp: SourceSheetEmployee) => {
+    const params = new URLSearchParams({ month, page: "1", limit: "1", search: emp.employeeCode });
+    try {
+      const res = await hrmsApi.get<any>(`/api/employees/hr-hub?${params}`);
+      const rows: HubEmployee[] = Array.isArray(res) ? res : (res?.data ?? []);
+      const row = rows.find((r) => r.employee_code === emp.employeeCode) ?? rows[0];
+      if (row) setSelectedEmployee(row);
+    } catch {
+      // The drawer is a convenience on top of the sheet; a failed lookup leaves the sheet as is.
+    }
+  }, [month]);
 
   if (!canAccess) {
     return (
@@ -134,7 +152,37 @@ export default function AdminAttendanceView() {
           onMonthChange={handleMonthChange}
         />
 
-        {/* Directory table */}
+        {/* Directory (payroll summary) or the day-by-day Cosec vs APR source sheet */}
+        <div className="flex gap-1.5">
+          {([
+            ["directory", "Directory"],
+            ["sheet", "Source Sheet (Cosec vs APR)"],
+          ] as const).map(([key, label]) => (
+            <Button
+              key={key}
+              size="sm"
+              variant={view === key ? "default" : "outline"}
+              onClick={() => setView(key)}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
+
+        {view === "sheet" ? (
+          <AttendanceSourceSheet
+            filters={{
+              month,
+              branchId: filters.branchId,
+              processId: filters.processId,
+              search: debouncedSearch,
+              page: filters.page,
+              limit: filters.limit,
+            }}
+            onPageChange={handlePageChange}
+            onSelectEmployee={handleSelectFromSheet}
+          />
+        ) : (
         <AttendanceHubTable
           employees={employees}
           total={total}
@@ -147,6 +195,7 @@ export default function AdminAttendanceView() {
           onSelect={setSelectedEmployee}
           selectedId={selectedEmployee?.id ?? null}
         />
+        )}
 
         {/* Detail drawer */}
         <AttendanceHubDrawer

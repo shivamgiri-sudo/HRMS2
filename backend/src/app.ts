@@ -193,6 +193,7 @@ import { attendanceManualOverrideRouter } from "./modules/attendance/attendance.
 import { discardRouter } from "./modules/discard/discard.routes.js";
 import { mismatchReviewRouter } from "./modules/wfm/mismatch-review.routes.js";
 import { attendanceLedgerRouter } from "./modules/wfm/attendance-ledger.routes.js";
+import { attendanceSourceSheetRouter } from "./modules/wfm/attendance-source-sheet.routes.js";
 import { attendanceExceptionsRouter } from "./modules/wfm/attendance-exceptions.routes.js";
 import { billingConfigRouter } from "./modules/attendance/billing-config.routes.js";
 import customizationRouter from "./modules/customization/customization.routes.js";
@@ -900,6 +901,8 @@ app.use("/api/discard", discardRouter);
 app.use("/api/wfm/mismatches", mismatchReviewRouter);
 // Read-only per-branch ledger of regularizations / mismatch + exception resolutions / disputes / overrides.
 app.use("/api/wfm/attendance-ledger", attendanceLedgerRouter);
+// Month sheet: per-day status + COSEC + APR duration, payroll source flagged. Read-only.
+app.use("/api/wfm/attendance-source-sheet", attendanceSourceSheetRouter);
 app.use("/api/wfm/roster-imports", rosterImportRouter);
 // Weekly roster-upload status grid + missing-upload escalation (reads only; alerts need migration 1834).
 app.use("/api/wfm/roster-upload-tracker", rosterUploadTrackerRouter);
