@@ -23,6 +23,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { AIInsightPanel } from "@/components/ai";
 import { NoticePeriodDrawer } from "@/components/exit/NoticePeriodDrawer";
+import { ExitStagePipeline, exitStageOf, isPendingAtExit, type ExitStageKey } from "@/components/exit/ExitStagePipeline";
 import { CLEARANCE_STATUS_COLORS, NOC_STATUS_COLORS, NOC_STATUS_LABELS } from "@/lib/exitClearance";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
@@ -907,11 +908,11 @@ function FfSettlementPanel({ exitRequests }: { exitRequests: ExitRow[] }) {
 function OverviewTab({ data, loading, onStatusChange, onGenerateClearance, onStartNocClearance }: {
   data: CenterData | null;
   loading: boolean;
-  onStatusChange: (id: string, status: string) => Promise<void>;
+  onStatusChange: (id: string, status: string) => Promise<number>;
   onGenerateClearance: (id: string) => Promise<void>;
   onStartNocClearance: (exitRequestId: string, employeeId: string) => Promise<void>;
 }) {
-  const [status, setStatus] = useState("all");
+  const [stage, setStage] = useState<ExitStageKey | "all">("all");
   const [message, setMessage] = useState("");
   const [drawerExitId, setDrawerExitId] = useState<string | null>(null);
   const { hasAnyRole } = useWorkforceAccess();
@@ -936,13 +937,14 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance, onSta
 
   const filtered = useMemo(() => {
     const rows = data?.requests ?? [];
-    return status === "all" ? rows : rows.filter((r) => r.status === status);
-  }, [data, status]);
+    return stage === "all" ? rows : rows.filter((r) => exitStageOf(r.status) === stage);
+  }, [data, stage]);
 
   const moveStatus = async (id: string, nextStatus: string) => {
     try {
-      await onStatusChange(id, nextStatus);
-      setMessage(`Moved to ${nextStatus.replace(/_/g, " ")}`);
+      const pending = await onStatusChange(id, nextStatus);
+      const moved = `Moved to ${nextStatus.replace(/_/g, " ")}`;
+      setMessage(pending > 0 ? `${moved}. ${pending} clearance task(s) still open; they will block F&F approval.` : moved);
     } catch (err: any) {
       const blockers: string[] = err?.payload?.blockers ?? [];
       const detail = blockers.length ? ` — ${blockers.join("; ")}` : "";
@@ -998,20 +1000,7 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance, onSta
 
       {message && <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm font-bold text-blue-800">{message}</div>}
 
-      {/* Status Filter */}
-      <div className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm p-4 shadow-sm">
-        <div className="flex flex-wrap gap-2">
-          {["all", ...statusFlow, "rejected", "revoked"].map((s) => (
-            <button
-              key={s}
-              onClick={() => setStatus(s)}
-              className={`rounded-xl px-3 py-1.5 text-xs font-bold capitalize transition-all ${status === s ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
-            >
-              {s.replace(/_/g, " ")}
-            </button>
-          ))}
-        </div>
-      </div>
+      <ExitStagePipeline rows={data?.requests ?? []} active={stage} onSelect={setStage} />
 
       {/* Journey Board */}
       <div className="overflow-hidden rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm">
@@ -1045,7 +1034,10 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance, onSta
                       <div className="text-xs">{r.process_name ?? "—"}</div>
                     </td>
                     <td className="p-4 font-mono text-xs text-slate-600">{r.last_working_day_proposed ?? "—"}</td>
-                    <td className="p-4"><Pill tone="blue">{r.status?.replace(/_/g, " ")}</Pill></td>
+                    <td className="p-4">
+                      <Pill tone="blue">{r.status?.replace(/_/g, " ")}</Pill>
+                      <div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Stage: {exitStageOf(r.status)}</div>
+                    </td>
                     <td className="p-4">
                       <div className="font-bold">{Math.round(Number(r.engagement_score ?? 0))}%</div>
                       <div className="text-xs text-slate-500">Engagement</div>
@@ -1053,6 +1045,7 @@ function OverviewTab({ data, loading, onStatusChange, onGenerateClearance, onSta
                     <td className="p-4">
                       <div className="font-bold">{cleared}/{total}</div>
                       <div className="text-xs text-slate-500">Cleared</div>
+                      {isPendingAtExit(r) && <div className="mt-1"><Pill tone="amber">Pending at exit</Pill></div>}
                     </td>
                     <td className="p-4">
                       {r.regrettable_exit ? (
@@ -1412,9 +1405,10 @@ export default function NativeExitCommandCenter() {
     finally { setSaving(false); }
   };
 
-  const handleStatusChange = async (id: string, status: string) => {
-    await hrmsApi.patch(`/api/exit/${id}/status`, { status, remarks: `Moved to ${status}` });
+  const handleStatusChange = async (id: string, status: string): Promise<number> => {
+    const res: any = await hrmsApi.patch(`/api/exit/${id}/status`, { status, remarks: `Moved to ${status}` });
     await load();
+    return Number(res?.pendingAtExit ?? res?.data?.pendingAtExit ?? 0);
   };
 
   const handleGenerateClearance = async (id: string) => {
@@ -1469,33 +1463,20 @@ export default function NativeExitCommandCenter() {
           </div>
         </div>
 
-        {/* Tabs */}
+        {/* Tabs: four working areas; secondary tools live under Insights */}
         <Tabs defaultValue="overview" className="space-y-4">
           <TabsList className="bg-white/95 border border-white/60 backdrop-blur-sm p-1 rounded-xl flex-wrap">
-            <TabsTrigger value="overview" className="data-[state=active]:bg-rose-600 data-[state=active]:text-white rounded-lg">
-              <Users className="w-4 h-4 mr-2" />
-              Overview
-            </TabsTrigger>
-            <TabsTrigger value="notice" className="data-[state=active]:bg-cyan-600 data-[state=active]:text-white rounded-lg">
-              <Clock className="w-4 h-4 mr-2" />
-              Notice Period
-            </TabsTrigger>
-            <TabsTrigger value="analytics" className="data-[state=active]:bg-rose-600 data-[state=active]:text-white rounded-lg">
-              <BarChart3 className="w-4 h-4 mr-2" />
-              Analytics
-            </TabsTrigger>
-            <TabsTrigger value="bulk" className="data-[state=active]:bg-rose-600 data-[state=active]:text-white rounded-lg">
-              <CheckSquare className="w-4 h-4 mr-2" />
-              Bulk Actions
-            </TabsTrigger>
-            <TabsTrigger value="ff" className="data-[state=active]:bg-rose-600 data-[state=active]:text-white rounded-lg">
-              <IndianRupee className="w-4 h-4 mr-2" />
-              F&F Settlement
-            </TabsTrigger>
-            <TabsTrigger value="task-board" className="data-[state=active]:bg-rose-600 data-[state=active]:text-white rounded-lg">
-              <ShieldCheck className="w-4 h-4 mr-2" />
-              Exit Task Board
-            </TabsTrigger>
+            {[
+              { value: "overview", label: "Overview", icon: Users },
+              { value: "task-board", label: "Exit Task Board", icon: ShieldCheck },
+              { value: "ff", label: "F&F Settlement", icon: IndianRupee },
+              { value: "insights", label: "Insights & Tools", icon: BarChart3 },
+            ].map(({ value, label, icon: Icon }) => (
+              <TabsTrigger key={value} value={value} className="data-[state=active]:bg-rose-600 data-[state=active]:text-white rounded-lg min-h-[44px] sm:min-h-0">
+                <Icon className="w-4 h-4 mr-2" />
+                {label}
+              </TabsTrigger>
+            ))}
           </TabsList>
 
           <TabsContent value="overview">
@@ -1508,24 +1489,31 @@ export default function NativeExitCommandCenter() {
             />
           </TabsContent>
 
-          <TabsContent value="notice">
-            <NoticePeriodTab />
-          </TabsContent>
-
-          <TabsContent value="analytics">
-            <AnalyticsTab data={data} loading={loading} />
-          </TabsContent>
-
-          <TabsContent value="bulk">
-            <BulkActionsTab exitRequests={data?.requests ?? []} onRefresh={load} />
+          <TabsContent value="task-board">
+            <ExitTaskBoardTab exitRequests={data?.requests ?? []} loading={loading} />
           </TabsContent>
 
           <TabsContent value="ff">
             <FfSettlementPanel exitRequests={data?.requests ?? []} />
           </TabsContent>
 
-          <TabsContent value="task-board">
-            <ExitTaskBoardTab exitRequests={data?.requests ?? []} loading={loading} />
+          <TabsContent value="insights">
+            <Tabs defaultValue="analytics" className="space-y-4">
+              <TabsList className="bg-slate-100 rounded-xl">
+                <TabsTrigger value="analytics" className="rounded-lg">Analytics</TabsTrigger>
+                <TabsTrigger value="notice" className="rounded-lg">Notice Period</TabsTrigger>
+                <TabsTrigger value="bulk" className="rounded-lg">Bulk Actions</TabsTrigger>
+              </TabsList>
+              <TabsContent value="analytics">
+                <AnalyticsTab data={data} loading={loading} />
+              </TabsContent>
+              <TabsContent value="notice">
+                <NoticePeriodTab />
+              </TabsContent>
+              <TabsContent value="bulk">
+                <BulkActionsTab exitRequests={data?.requests ?? []} onRefresh={load} />
+              </TabsContent>
+            </Tabs>
           </TabsContent>
         </Tabs>
       </main>
