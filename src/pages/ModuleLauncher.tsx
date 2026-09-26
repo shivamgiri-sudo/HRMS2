@@ -6,6 +6,7 @@ import { ArrowRight, Briefcase, GraduationCap, ShieldCheck, Users, BarChart3, Cl
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { PAGE_CODE_BY_ROUTE } from "@/lib/pageRoutePageCodes";
+import { MOUNTED_ROUTE_PATHS } from "@/lib/mountedRoutePaths";
 
 /**
  * page_code -> route, inverted from the frontend's own route map.
@@ -74,6 +75,17 @@ const ROUTE_OVERRIDE_BY_PAGE_CODE: Record<string, string> = {
   WFM_ROSTER_SHIFT_EFFECTIVENESS: "/wfm/roster-command-center?tab=shifts",
   WFM_ROSTER_INTERVENTIONS: "/wfm/roster-command-center?tab=interventions",
   WFM_ROSTER_AUDIT_TRAIL: "/wfm/roster-command-center?tab=audit",
+  // Catalog codes whose stored page_path names a page that is not mounted (renamed or merged since the
+  // catalog row was written). Each lands on the closest mounted page instead of dead-ending on /dashboard.
+  // Audited 2026-09-26 against the live page_catalog; confirm the target with the page owner.
+  LEAVE_MANAGEMENT: "/leave-approvals",
+  SALARY_PREP: "/payroll/salary-review",
+  SALARY_BAND_MASTER: "/payroll/masters",
+  PAYROLL_ATTENDANCE_OVERRIDES: "/payroll/attendance-control-tower",
+  WFM_ROSTER_MANAGER_QUEUE: "/wfm/team-roster?tab=approvals",
+  META_INTEGRATION_SETTINGS: "/ats/meta-campaigns",
+  ONBOARDING_REVIEW: "/ats/onboarding",
+  ONBOARDING_SECTION_STATUS: "/ats/onboarding",
 };
 
 /**
@@ -94,7 +106,10 @@ export function resolveLaunchRoute(page: { page_code: string; route_path?: strin
 
   const dbPath = page.route_path ?? page.page_path ?? null;
   // Catalog paths sometimes carry a query string (?tab=…); the route is the part before it.
-  if (dbPath && KNOWN_ROUTES.has(dbPath.split("?")[0])) return dbPath;
+  // A path is trusted when the router mounts it - either it has a page-code mapping or it is one of the
+  // routes gated by a wrapper instead (finance, most payroll and WFM pages), which the map does not list.
+  const dbRoute = dbPath ? dbPath.split("?")[0] : null;
+  if (dbPath && dbRoute && (KNOWN_ROUTES.has(dbRoute) || MOUNTED_ROUTE_PATHS.has(dbRoute))) return dbPath;
 
   return "/dashboard";
 }

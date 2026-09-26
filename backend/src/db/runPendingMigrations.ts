@@ -1171,6 +1171,7 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1891_employee_warning.sql", // Registered 2026-09-25. Creates employee_warning, the disciplinary record kept on the employee; issue and withdrawal also go to employee_journey_log. CREATE TABLE IF NOT EXISTS, additive.
   "migrations/1892_company_policy.sql", // Registered 2026-09-25. Creates company_policy and company_policy_acknowledgement (versioned policies HR publishes, per-employee acknowledgement). CREATE TABLE IF NOT EXISTS, additive.
   "migrations/1893_resignation_submitted_cc_skip_level.sql", // Registered 2026-09-25. Adds the skip_level_manager (AM) to the CC of resignation_submitted so the AM is told when a resignation is submitted. UPDATE only, appends when missing.
+  "migrations/1894_list_unlisted_pages_in_catalog.sql", // Registered 2026-09-26. Lists 18 mounted, role-gated pages that had no page_catalog row (so never showed under My Modules), for exactly the roles their routes already admit. INSERT ... WHERE NOT EXISTS only, additive.
 ];
 
 export type MigrationHealth = {
