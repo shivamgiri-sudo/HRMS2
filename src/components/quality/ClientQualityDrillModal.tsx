@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { X, Activity, AlertTriangle, Target, BarChart2, Phone, FileText, TrendingUp } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { qualityScoreBadgeClass, qualityScoreTextClass } from "@/lib/qualityScoreFormatting";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line,
 } from "recharts";
@@ -280,7 +281,7 @@ export function ClientQualityDrillModal({ clientId, clientName, from, to, onClos
                               </td>
                               <td className="px-4 py-3 text-right font-semibold text-slate-700">{a.audit_count}</td>
                               <td className="px-4 py-3 text-right">
-                                <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-bold ${a.cq_score >= 80 ? "bg-emerald-100 text-emerald-700" : a.cq_score >= 70 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-700"}`}>
+                                <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-bold ${qualityScoreBadgeClass(a.cq_score)}`}>
                                   {a.cq_score}%
                                 </span>
                               </td>
@@ -359,7 +360,7 @@ export function ClientQualityDrillModal({ clientId, clientName, from, to, onClos
                               <td className="px-4 py-3 text-slate-600">{s.sub_scenario ?? "—"}</td>
                               <td className="px-4 py-3 text-right font-bold text-slate-700">{s.count}</td>
                               <td className="px-4 py-3 text-right">
-                                <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-bold ${s.avg_score >= 80 ? "bg-emerald-100 text-emerald-700" : s.avg_score >= 70 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-700"}`}>
+                                <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-bold ${qualityScoreBadgeClass(s.avg_score)}`}>
                                   {s.avg_score}%
                                 </span>
                               </td>
@@ -447,7 +448,7 @@ export function ClientQualityDrillModal({ clientId, clientName, from, to, onClos
                     </div>
                     <div>
                       <p className="text-xs font-semibold text-slate-500">CQ Score</p>
-                      <p className={`text-sm font-bold ${transcriptQ.data.cq_score >= 80 ? "text-emerald-700" : transcriptQ.data.cq_score >= 70 ? "text-yellow-700" : "text-red-700"}`}>{transcriptQ.data.cq_score}%</p>
+                      <p className={`text-sm font-bold ${qualityScoreTextClass(transcriptQ.data.cq_score)}`}>{transcriptQ.data.cq_score}%</p>
                     </div>
                     <div>
                       <p className="text-xs font-semibold text-slate-500">Fatal Parameters</p>

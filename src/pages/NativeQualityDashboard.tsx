@@ -4,9 +4,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { InterventionPanel } from "@/components/dashboard/InterventionPanel";
 import type { InterventionFlag } from "@/components/dashboard/InterventionPanel";
+// CartesianGrid intentionally not imported — the "clean dashboard background"
+// requirement removes Excel-style gridlines from every chart on this page.
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis,
-  CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
+  Tooltip, ResponsiveContainer, ReferenceLine,
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   PieChart, Pie, Cell,
 } from "recharts";
@@ -14,10 +16,12 @@ import {
   Shield, TrendingUp, TrendingDown, Users, AlertTriangle, Target,
   BarChart2, RefreshCcw, CheckCircle2, Zap, Brain, DollarSign,
   ChevronRight, X, Info, ArrowUp, ArrowDown, Clock, Activity,
-  Layers,
+  Layers, Download,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { qualityScoreBadgeClass, qualityScoreTextClass } from "@/lib/qualityScoreFormatting";
+import { exportDashboardToExcel, type ExcelSheetSpec } from "@/lib/dashboardExcelExport";
 
 // ─── Date Helpers ─────────────────────────────────────────────────────────────
 
@@ -95,13 +99,16 @@ function ErrBanner({ msg }: { msg: string }) {
   );
 }
 
+// Conditional formatting for quality score values is centralised in
+// src/lib/qualityScoreFormatting.ts so every quality dashboard page (this one,
+// the Agent Performance Dashboard, Executive Quality Dashboard, Call Master
+// Dashboard, etc.) colours the same score the same way.
 function ScorePill({ score }: { score: number }) {
-  const cls =
-    score >= 80 ? "bg-emerald-100 text-emerald-700 border-emerald-200" :
-    score >= 70 ? "bg-yellow-100 text-yellow-700 border-yellow-200" :
-    score >= 60 ? "bg-orange-100 text-orange-700 border-orange-200" :
-                  "bg-red-100 text-red-700 border-red-200";
-  return <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold ${cls}`}>{score}%</span>;
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold ${qualityScoreBadgeClass(score)}`}>
+      {score}%
+    </span>
+  );
 }
 
 // ─── Animated Counter ─────────────────────────────────────────────────────────
@@ -419,6 +426,10 @@ export default function NativeQualityDashboard() {
   const trendQ    = useQuery({ queryKey: ["qd-trend",    ...key], queryFn: () => hrmsApi.get<{ trend: TrendPoint[] }>(`/api/quality-dashboard/trend?from=${from}&to=${to}&granularity=${granularity}`).then(r => r.trend), enabled: activeTab === "overview" || activeTab === "quality" });
   const agentsQ   = useQuery({ queryKey: ["qd-agents",   ...key], queryFn: () => hrmsApi.get<{ agents: AgentRow[] }>(`/api/quality-dashboard/agents?${qs}&limit=20`).then(r => r.agents), enabled: activeTab === "overview" || activeTab === "quality" });
   const aprQ      = useQuery({ queryKey: ["qd-apr",      ...key], queryFn: () => hrmsApi.get<{ processes: AprRow[] }>(`/api/quality-dashboard/apr-summary?from=${from}&to=${to}`).then(r => r.processes), enabled: activeTab === "quality" });
+  // Queue Wise panel, populated directly from the "Onfido Utilization" bulk upload — see
+  // OnfidoUtilizationBulkUpload.tsx / onfido-utilization.routes.ts. Uses `to` (the range end
+  // date) as "as of", so the panel reflects the latest upload on or before the selected range.
+  const onfidoUtilQ = useQuery({ queryKey: ["qd-onfido-util", to], queryFn: () => hrmsApi.get<{ data: { as_of: string | null; queues: { queue_name: string; approved_hc: number | null; required_hc: number | null; active_hc: number | null; buffer_pct: number | null; shortfall: number | null }[] } }>(`/api/quality-dashboard/onfido-utilization?date=${to}`).then(r => r.data), enabled: activeTab === "quality" });
   const heatmapQ  = useQuery({ queryKey: ["qd-heatmap",  ...key], queryFn: () => hrmsApi.get<{ heatmap: Record<string, Record<number, HeatmapCell>> }>(`/api/quality-dashboard/heatmap?from=${from}&to=${to}`).then(r => r.heatmap), enabled: activeTab === "quality" });
   const agentRiskQ = useQuery({ queryKey: ["qd-agentrisk",...key], queryFn: () => hrmsApi.get<{ agents: AgentRisk[] }>(`/api/quality-dashboard/agent-risk?from=${from}&to=${to}`).then(r => r.agents), enabled: activeTab === "quality" });
   const salesQ    = useQuery({ queryKey: ["qd-sales",    ...key], queryFn: () => hrmsApi.get<{ summary: SalesSummary; top_competitors: Competitor[] }>(`/api/quality-dashboard/sales-intelligence?${qs}`).then(r => r), enabled: activeTab === "overview" || activeTab === "sales" });
@@ -458,7 +469,7 @@ export default function NativeQualityDashboard() {
 
   const s = summaryQ.data;
   const pct = (n: number) => s && s.total_calls > 0 ? `${((n / s.total_calls) * 100).toFixed(1)}% of total` : "–";
-  const scoreColor = !s ? "text-slate-900" : s.avg_quality_score >= 80 ? "text-emerald-600" : s.avg_quality_score >= 70 ? "text-yellow-600" : "text-red-600";
+  const scoreColor = !s ? "text-slate-900" : qualityScoreTextClass(s.avg_quality_score);
 
   const shrinkageColor = (p: number) => p < 15 ? "text-emerald-600 font-bold" : p <= 25 ? "text-yellow-600 font-bold" : "text-red-600 font-bold";
 
@@ -556,7 +567,6 @@ export default function NativeQualityDashboard() {
                     <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#94a3b8" }} tickLine={false} />
                 <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: "#94a3b8" }} tickLine={false} axisLine={false} />
                 <Tooltip formatter={(v: number) => [`${v}%`, "Avg Score"]} contentStyle={{ borderRadius: "12px", border: "1px solid #e2e8f0", fontSize: 12 }} />
@@ -764,6 +774,42 @@ export default function NativeQualityDashboard() {
 
   const QualityTab = (
     <div className="space-y-5">
+      {/* Queue Wise — populated from the Onfido Utilization bulk upload (Bulk Upload → Onfido Utilization) */}
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-100 px-5 py-4">
+          <div className="flex items-center gap-2">
+            <h2 className="font-black text-slate-900">Queue Wise</h2>
+            {onfidoUtilQ.data?.as_of && (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-500">As of {onfidoUtilQ.data.as_of}</span>
+            )}
+          </div>
+          <p className="text-xs text-slate-500">Required HC = Approved HC × 120%. From the latest Onfido Utilization upload.</p>
+        </div>
+        {onfidoUtilQ.isLoading ? <Spinner size="sm" /> : onfidoUtilQ.isError ? <div className="p-4"><ErrBanner msg="Failed to load Onfido Utilization data" /></div> : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-sm">
+              <thead className="bg-slate-50 text-left text-xs uppercase text-slate-400">
+                <tr>{["Queue", "Required HC", "Active HC", "Buffer %", "Shortfall"].map(h => <th key={h} className="px-4 py-3 font-semibold">{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {(onfidoUtilQ.data?.queues ?? []).map(q => (
+                  <tr key={q.queue_name} className="border-t border-slate-50 transition-colors hover:bg-slate-50/70">
+                    <td className="px-4 py-3 font-semibold text-slate-800">{q.queue_name}</td>
+                    <td className="px-4 py-3 text-slate-600">{q.required_hc ?? "–"}</td>
+                    <td className="px-4 py-3 text-slate-600">{q.active_hc ?? "–"}</td>
+                    <td className="px-4 py-3 text-slate-600">{q.buffer_pct ?? "–"}</td>
+                    <td className="px-4 py-3 text-slate-600">{q.shortfall ?? "–"}</td>
+                  </tr>
+                ))}
+                {(onfidoUtilQ.data?.queues ?? []).length === 0 && (
+                  <tr><td colSpan={5} className="px-4 py-6 text-center text-sm text-slate-400">No Onfido Utilization data uploaded yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Heatmap */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-1 flex items-center gap-2">
@@ -882,7 +928,6 @@ export default function NativeQualityDashboard() {
           {salesQ.isLoading ? <Spinner size="sm" /> : salesQ.isError ? <ErrBanner msg="Failed" /> : (
             <ResponsiveContainer width="100%" height={200}>
               <BarChart data={salesQ.data?.top_competitors ?? []} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
                 <XAxis type="number" tick={{ fontSize: 11, fill: "#94a3b8" }} tickLine={false} axisLine={false} />
                 <YAxis dataKey="CompetitorName" type="category" tick={{ fontSize: 11, fill: "#64748b" }} tickLine={false} width={100} />
                 <Tooltip contentStyle={{ borderRadius: "12px", border: "1px solid #e2e8f0", fontSize: 12 }} />
@@ -956,7 +1001,6 @@ export default function NativeQualityDashboard() {
                   <h3 className="mb-3 text-xs font-black uppercase tracking-widest text-slate-700">Top Rejection Reasons</h3>
                   <ResponsiveContainer width="100%" height={Math.max(reasons.length * 36, 120)}>
                     <BarChart data={reasons} layout="vertical" margin={{ top: 0, right: 24, left: 0, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
                       <XAxis type="number" tick={{ fontSize: 11, fill: "#94a3b8" }} tickLine={false} axisLine={false} />
                       <YAxis dataKey="reason" type="category" tick={{ fontSize: 11, fill: "#64748b" }} tickLine={false} width={160} />
                       <Tooltip contentStyle={{ borderRadius: "12px", border: "1px solid #e2e8f0", fontSize: 12 }} />
@@ -1117,7 +1161,6 @@ export default function NativeQualityDashboard() {
           {ibDailyQ.isLoading ? <Spinner /> : (
             <ResponsiveContainer width="100%" height={200}>
               <AreaChart data={ibDailyQ.data ?? []}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={d => d?.slice(5) ?? d} />
                 <YAxis tick={{ fontSize: 11 }} domain={[0, 100]} />
                 <Tooltip formatter={(v: number) => `${Number(v).toFixed(1)}%`} />
@@ -1275,7 +1318,6 @@ export default function NativeQualityDashboard() {
         {clapSummaryQ.isLoading ? <Spinner size="sm" /> : (
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={clapSummaryQ.data ?? []} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="branch" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 10 }} />
               <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
@@ -1341,6 +1383,232 @@ export default function NativeQualityDashboard() {
     roi:      RoiTab,
   };
 
+  /**
+   * Export/Download to Excel — exports exactly what is currently displayed on
+   * this dashboard (the active tab's already-fetched, already-rendered figures),
+   * never a raw or backend export. Each sheet is built straight from the same
+   * query results (`summaryQ.data`, `agentsQ.data`, etc.) that the tab already
+   * renders on screen — no new API call is made, and no column beyond what a
+   * viewer can already see is included.
+   */
+  function exportActiveTabToExcel() {
+    const sheets: ExcelSheetSpec[] = [];
+    const rangeLabel = `Range: ${from} to ${to}${clientId ? ` · Client: ${clientId}` : ""}`;
+
+    if (activeTab === "overview" || activeTab === "quality") {
+      if (s) {
+        sheets.push({
+          name: "Summary",
+          title: rangeLabel,
+          rows: [{
+            "Total Calls": s.total_calls,
+            "Audited Calls": s.audited_calls,
+            "Avg Quality Score (%)": s.avg_quality_score,
+            "Above 80%": s.calls_above_80,
+            "Below 50%": s.calls_below_50,
+            "Unique Agents": s.unique_agents,
+            "Fraud Flags": s.fraud_flags,
+            "Fail Rate - Call Opening (%)": s.fail_rate_call_open,
+            "Fail Rate - Professionalism (%)": s.fail_rate_professionalism,
+            "Fail Rate - Active Listening (%)": s.fail_rate_active_listening,
+            "Fail Rate - Call Closure (%)": s.fail_rate_call_closure,
+            "Fail Rate - Accuracy (%)": s.fail_rate_accuracy,
+          }],
+        });
+      }
+      if (trendQ.data?.length) {
+        sheets.push({
+          name: "Quality Trend",
+          rows: trendQ.data.map((t) => ({
+            "Date": t.date, "Total Calls": t.total_calls, "Avg Score (%)": t.avg_score,
+            "Above 80%": t.above_80, "Below 50%": t.below_50,
+          })),
+        });
+      }
+      if (agentsQ.data?.length) {
+        sheets.push({
+          name: "Agent Leaderboard",
+          rows: agentsQ.data.map((a) => ({
+            "Agent": a.agent_name, "Agent Code": a.agent_code ?? "", "Calls": a.total_calls,
+            "Avg Score (%)": a.avg_score, "Above 80%": a.calls_above_80, "Below 50%": a.calls_below_50, "Band": a.band,
+          })),
+        });
+      }
+      if (clientsQ.data?.length) {
+        sheets.push({
+          name: "Client Performance",
+          rows: clientsQ.data.map((c) => ({
+            "Client": clientLabel(c), "Total Calls": c.total_calls, "Avg Score (%)": c.avg_score, "Agents": c.agent_count,
+          })),
+        });
+      }
+      if (aprQ.data?.length) {
+        sheets.push({
+          name: "APR Shrinkage",
+          rows: aprQ.data.map((r) => ({
+            "Process": r.process, "Process Code": r.process_code ?? "", "Agents": r.agents,
+            "Avg Calls": r.avg_calls, "Avg AHT": r.avg_aht, "Shrinkage (%)": r.avg_shrinkage_pct,
+            "Bio (min)": r.avg_bio_mins, "Lunch (min)": r.avg_lunch_mins, "QA (min)": r.avg_qa_mins, "Training (min)": r.avg_training_mins,
+          })),
+        });
+      }
+      if (agentRiskQ.data?.length) {
+        sheets.push({
+          name: "Agent Risk",
+          rows: agentRiskQ.data.map((a) => ({
+            "Agent": a.agent_name, "Agent Code": a.agent_code ?? "", "Total Calls": a.total_calls,
+            "Overall Avg (%)": a.overall_avg, "Week Avg (%)": a.week_avg, "Yesterday Avg (%)": a.yesterday_avg,
+            "Volatility": a.volatility, "Critical Count": a.critical_count, "Trend Delta (%)": a.trend_delta,
+            "Risk Status": a.risk_status, "Recommended Action": a.recommended_action,
+          })),
+        });
+      }
+      if (fraudQ.data) {
+        const f = fraudQ.data;
+        sheets.push({
+          name: "Fraud Signals",
+          rows: [{
+            "Data Theft": f.data_theft, "Financial Fraud": f.financial_fraud, "Collusion": f.collusion,
+            "Escalation Failure": f.escalation_failure, "Unprofessional": f.unprofessional, "System Manipulation": f.system_manipulation,
+          }],
+        });
+      }
+      if (onfidoUtilQ.data?.queues?.length) {
+        sheets.push({
+          name: "Queue Wise",
+          title: `As of: ${onfidoUtilQ.data.as_of ?? "–"}`,
+          rows: onfidoUtilQ.data.queues.map((q) => ({
+            "Queue": q.queue_name, "Required HC": q.required_hc ?? "", "Active HC": q.active_hc ?? "",
+            "Buffer %": q.buffer_pct ?? "", "Shortfall": q.shortfall ?? "",
+          })),
+        });
+      }
+    }
+
+    if (activeTab === "inbound") {
+      const k = ibKpisQ.data as any;
+      if (k) {
+        sheets.push({
+          name: "Inbound Summary",
+          title: rangeLabel,
+          rows: [{
+            "Total Audited": k.total_audited, "Avg CQ Score (%)": k.avg_cq_score,
+            "Fatal Calls": k.fatal_count, "Fatal Rate (%)": k.fatal_pct,
+          }],
+        });
+      }
+      if (ibDailyQ.data?.length) {
+        sheets.push({
+          name: "Daily Scores",
+          rows: (ibDailyQ.data as any[]).map((d) => ({ "Date": d.date, "Avg Score (%)": d.avg_score, "Audit Count": d.audit_count })),
+        });
+      }
+      if (ibTopQ.data?.length) {
+        sheets.push({
+          name: "Top Performers",
+          rows: (ibTopQ.data as any[]).map((a) => ({ "Agent": a.agent, "Calls": a.calls, "CQ Score (%)": safeNumber(a.score) })),
+        });
+      }
+    }
+
+    if (activeTab === "clap") {
+      if (clapSummaryQ.data?.length) {
+        sheets.push({
+          name: "CLAP VOC Summary",
+          title: rangeLabel,
+          rows: (clapSummaryQ.data as any[]).map((r) => ({
+            "Branch": r.branch, "Positive Count": r.positive_count, "Negative Count": r.negative_count, "Total Calls": r.total_calls,
+          })),
+        });
+      }
+      if (clapVocQ.data?.length) {
+        sheets.push({
+          name: "VOC Quotes",
+          rows: (clapVocQ.data as any[]).slice(0, 500).map((r) => ({
+            "Call Date": r.call_date, "Agent": r.agent_name, "Client": r.client, "Branch": r.branch,
+            "Positive Quote": r.positive_quote ?? "", "Negative Quote": r.negative_quote ?? "",
+          })),
+        });
+      }
+    }
+
+    if (activeTab === "sales") {
+      const ss = salesQ.data?.summary;
+      if (ss) {
+        sheets.push({
+          name: "Sales Summary",
+          title: rangeLabel,
+          rows: [{
+            "Total Calls": ss.total_calls, "Sales Converted": ss.sales_done,
+            "Competitor Mentions": ss.competitor_mentions, "Objection Calls": ss.objection_calls,
+          }],
+        });
+      }
+      if (salesQ.data?.top_competitors?.length) {
+        sheets.push({
+          name: "Top Competitors",
+          rows: salesQ.data.top_competitors.map((c) => ({ "Competitor": c.CompetitorName, "Mentions": c.mentions })),
+        });
+      }
+      const sf = funnelQ.data?.sales_funnel;
+      if (sf) {
+        sheets.push({
+          name: "Sales Funnel",
+          rows: [{
+            "Total Calls": sf.total_calls, "Opening Done": sf.opening_done, "Offer Made": sf.offer_made,
+            "Objection Handled": sf.objection_handled, "Sale Done": sf.sale_done,
+          }],
+        });
+      }
+      const rf = funnelQ.data?.rejection_funnel;
+      if (rf) {
+        sheets.push({
+          name: "Rejection Funnel",
+          rows: [{
+            "Total Calls": rf.total_calls, "Not Interested": rf.not_interested, "Objection Raised": rf.objection_raised,
+            "Rejected After Offer": rf.rejected_after_offer, "Offering Rejected": rf.offering_rejected, "Opening Rejected": rf.opening_rejected,
+          }],
+        });
+      }
+    }
+
+    if (activeTab === "insights") {
+      if (insightsQ.data?.length) {
+        sheets.push({
+          name: "AI Insights",
+          title: rangeLabel,
+          rows: insightsQ.data.map((i) => ({
+            "Type": i.type, "Title": i.title, "Message": i.message, "Metric": i.metric ?? "", "Action": i.action ?? "",
+          })),
+        });
+      }
+    }
+
+    if (activeTab === "roi" && roiQ.data) {
+      const roi = roiQ.data;
+      sheets.push({
+        name: "ROI Baseline",
+        title: rangeLabel,
+        rows: [{
+          "Current Quality (%)": roi.current_metrics.quality, "Conversion Rate": roi.current_metrics.conversion,
+          "Total Calls": roi.current_metrics.total_calls, "Total Sales": roi.current_metrics.total_sales,
+        }],
+      });
+      if (roi.projections?.length) {
+        sheets.push({
+          name: "ROI Projections",
+          rows: roi.projections.map((p) => ({
+            "Scenario": p.label, "Current Quality (%)": p.current_quality, "Projected Quality (%)": p.projected_quality,
+            "Current Conversion": p.current_conversion, "Projected Conversion": p.projected_conversion,
+            "Additional Sales": p.additional_sales, "Additional Revenue (INR)": p.additional_revenue, "ROI Multiple": p.roi_multiple,
+          })),
+        });
+      }
+    }
+
+    exportDashboardToExcel(`Quality-Dashboard_${activeTab}`, sheets);
+  }
+
   return (
     <DashboardLayout>
       <div className="space-y-5">
@@ -1350,7 +1618,7 @@ export default function NativeQualityDashboard() {
             <div className="flex items-center gap-2">
               <p className="text-xs font-black uppercase tracking-[0.2em] text-blue-600">Call Audit Intelligence</p>
               {s && (
-                <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${s.avg_quality_score >= 80 ? "bg-emerald-100 text-emerald-700" : s.avg_quality_score >= 70 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-700"}`}>
+                <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${qualityScoreBadgeClass(s.avg_quality_score)}`}>
                   {s.avg_quality_score}% avg
                 </span>
               )}
@@ -1358,12 +1626,22 @@ export default function NativeQualityDashboard() {
             <h1 className="mt-1 text-3xl font-black tracking-tight text-slate-950">Quality Dashboard</h1>
             <p className="mt-1 text-sm text-slate-500">Outbound quality · Inbound quality · Opening intelligence · Customer intelligence · Sales funnel · AI insights</p>
           </div>
-          {summaryQ.data?.scope_label && summaryQ.data.scope_label !== "All" && (
-            <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-              <Layers className="h-4 w-4 text-amber-600" />
-              <span className="text-xs font-bold text-amber-700">Scoped: {summaryQ.data.scope_label}</span>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            {summaryQ.data?.scope_label && summaryQ.data.scope_label !== "All" && (
+              <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                <Layers className="h-4 w-4 text-amber-600" />
+                <span className="text-xs font-bold text-amber-700">Scoped: {summaryQ.data.scope_label}</span>
+              </div>
+            )}
+            {/* Exports exactly what is displayed on the current tab — no raw/backend data. */}
+            <button
+              onClick={exportActiveTabToExcel}
+              className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
+              title="Export the currently displayed dashboard data to Excel"
+            >
+              <Download className="h-4 w-4" /> Export to Excel
+            </button>
+          </div>
         </div>
 
         {FilterBar}

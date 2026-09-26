@@ -32,7 +32,8 @@ const inr = (v: number | null | undefined) =>
 const fmtDate = (d: string | null | undefined) =>
   d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
-const REVIEWER_ROLES = ['payroll_head', 'admin', 'super_admin'];
+// Admin can view and fix but only Payroll Head / Super Admin approve.
+const REVIEWER_ROLES = ['payroll_head', 'super_admin'];
 const FIXER_ROLES   = ['payroll_hr', 'branch_head', 'hr', 'admin', 'super_admin'];
 
 interface Reason { code: string; category: string; label: string; }

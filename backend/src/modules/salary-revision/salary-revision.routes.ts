@@ -9,7 +9,8 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
   void fn(req, res).catch(next);
 };
 
-const REVIEWER_ROLES = ["payroll_head", "admin", "super_admin"] as const;
+// Only Payroll Head and Super Admin approve a salary date revision; admin may raise one (FIXER_ROLES) but not approve it.
+const REVIEWER_ROLES = ["payroll_head", "super_admin"] as const;
 // "payroll" is what a payroll_hr-only account is resolved to before requireRole runs (payroll_hr is aliased to
 // payroll), so without it Payroll HR -- the primary requester -- was refused on every write.
 const FIXER_ROLES    = ["payroll_hr", "payroll", "branch_head", "hr", "admin", "super_admin"] as const;

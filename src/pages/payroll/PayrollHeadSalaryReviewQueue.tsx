@@ -86,7 +86,8 @@ export const SECTION_META: Record<SectionKey, { label: string; icon: any; catego
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const REVIEWER_ROLES = ['payroll_head', 'admin', 'super_admin'];
+// Admin can view and fix but only Payroll Head / Super Admin approve.
+const REVIEWER_ROLES = ['payroll_head', 'super_admin'];
 const FIXER_ROLES = ['payroll_hr', 'branch_head', 'hr', 'payroll_head', 'admin', 'super_admin'];
 export const STATUS_CFG = {
   pending_review: { label: 'Pending Review', chip: 'bg-amber-50 text-amber-700 border-amber-200', icon: Clock },

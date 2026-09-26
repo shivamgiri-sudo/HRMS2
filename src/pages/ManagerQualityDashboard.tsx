@@ -8,13 +8,13 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Users, TrendingUp, Phone, AlertCircle, Loader2 } from "lucide-react";
+// CartesianGrid intentionally not imported — clean plain background, no gridlines.
 import {
   BarChart,
   Bar,
   Cell,
   XAxis,
   YAxis,
-  CartesianGrid,
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
@@ -238,7 +238,6 @@ export default function ManagerQualityDashboard() {
                 <h2 className="text-base font-bold text-slate-800 mb-4">Quality Distribution</h2>
                 <ResponsiveContainer width="100%" height={200}>
                   <BarChart data={distData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} />
                     <Tooltip

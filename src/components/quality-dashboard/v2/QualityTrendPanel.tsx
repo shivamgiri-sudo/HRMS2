@@ -1,6 +1,7 @@
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
+  AreaChart, Area, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine,
+  // CartesianGrid intentionally not imported — clean plain background, no gridlines.
 } from "recharts";
 import type { TrendPoint } from "./types";
 import { Spinner, ErrBanner, PanelShell } from "./shared";
@@ -39,7 +40,6 @@ export function QualityTrendPanel({ data, loading, error }: Props) {
                 <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
             <XAxis
               dataKey="date"
               tick={{ fontSize: 11, fill: "#94a3b8" }}

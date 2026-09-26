@@ -11,6 +11,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge";
 import { AprBulkUpload } from "@/components/attendance/AprBulkUpload";
+import { OnfidoUtilizationBulkUpload } from "@/components/quality-dashboard/OnfidoUtilizationBulkUpload";
 import {
   ProductivityUpload,
   canUseProductivityTab,
@@ -1380,7 +1381,7 @@ function TdsUploadTab() {
 
 // ── Main BulkUploadHub ─────────────────────────────────────────────────────────
 
-type HubTab = "master" | "apr" | "productivity" | "deduction-types" | "tds-upload";
+type HubTab = "master" | "apr" | "productivity" | "deduction-types" | "tds-upload" | "onfido_utilization";
 
 export default function BulkUploadHub() {
   const { user } = useAuth();
@@ -2100,6 +2101,18 @@ export default function BulkUploadHub() {
                   TDS Upload
                 </button>
               )}
+              <button
+                type="button"
+                onClick={() => setActiveTab("onfido_utilization")}
+                aria-pressed={effectiveTab === "onfido_utilization"}
+                className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                  effectiveTab === "onfido_utilization"
+                    ? "bg-white text-slate-950 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                Onfido Utilization
+              </button>
             </div>
           </section>
 
@@ -2123,6 +2136,12 @@ export default function BulkUploadHub() {
 
           {canUploadTds && effectiveTab === "tds-upload" && (
             <TdsUploadTab />
+          )}
+
+          {effectiveTab === "onfido_utilization" && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <OnfidoUtilizationBulkUpload />
+            </section>
           )}
 
           {effectiveTab === "master" && activeImportBatchId && (

@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+// CartesianGrid intentionally not imported — clean plain background, no gridlines.
 import {
   LineChart, Line, BarChart, Bar,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
   ScatterChart, Scatter, ZAxis, Cell, ReferenceLine,
 } from "recharts";
 import {
@@ -12,6 +13,7 @@ import {
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useUserRole } from "@/hooks/useUserRole";
+import { qualityScoreBadgeClass } from "@/lib/qualityScoreFormatting";
 
 const AGENT_PERF_ALLOWED_ROLES = new Set([
   "super_admin", "admin", "ceo", "management",
@@ -78,13 +80,11 @@ function ErrBanner({ msg }: { msg: string }) {
   );
 }
 
+// Conditional formatting matches the shared bands in qualityScoreFormatting.ts
+// so a score renders the same colour on this page as on every other quality
+// dashboard page.
 function ScorePill({ score }: { score: number }) {
-  const cls =
-    score >= 80 ? "bg-emerald-100 text-emerald-700 border-emerald-200" :
-    score >= 70 ? "bg-yellow-100 text-yellow-700 border-yellow-200" :
-    score >= 60 ? "bg-orange-100 text-orange-700 border-orange-200" :
-                  "bg-red-100 text-red-700 border-red-200";
-  return <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold ${cls}`}>{score}%</span>;
+  return <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold ${qualityScoreBadgeClass(score)}`}>{score}%</span>;
 }
 
 function AnimatedNumber({ target, suffix = "" }: { target: number; suffix?: string }) {
@@ -326,7 +326,6 @@ export default function NativeAgentPerformanceDashboard() {
         {trendQ.isLoading ? <Spinner size="sm" /> : trendQ.isError ? <ErrBanner msg="Failed to load trend data" /> : (
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={mergedTrend} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="date" tick={{ fontSize: 11 }} />
               <YAxis yAxisId="left" tick={{ fontSize: 11 }} />
               <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tick={{ fontSize: 11 }} />
@@ -453,7 +452,6 @@ export default function NativeAgentPerformanceDashboard() {
         {processQ.isLoading ? <Spinner size="sm" /> : processQ.isError ? <ErrBanner msg="Failed to load process data" /> : (
           <ResponsiveContainer width="100%" height={320}>
             <BarChart data={processQ.data ?? []} margin={{ top: 8, right: 16, left: 0, bottom: 40 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="process" tick={{ fontSize: 10 }} angle={-30} textAnchor="end" interval={0} />
               <YAxis tick={{ fontSize: 11 }} domain={[0, 100]} />
               <Tooltip />
@@ -571,7 +569,6 @@ export default function NativeAgentPerformanceDashboard() {
           <p className="mb-4 text-xs text-slate-500">Stacked breakdown of non-productive time as % of total offline minutes</p>
           <ResponsiveContainer width="100%" height={320}>
             <BarChart data={utilizPieData} layout="vertical" margin={{ top: 0, right: 24, left: 80, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
               <XAxis type="number" tick={{ fontSize: 11 }} unit="%" domain={[0, 100]} />
               <YAxis dataKey="name" type="category" tick={{ fontSize: 11 }} tickLine={false} width={80} />
               <Tooltip formatter={(v: number) => [`${v}%`]} />
@@ -609,7 +606,6 @@ export default function NativeAgentPerformanceDashboard() {
       {matrixQ.isLoading ? <Spinner size="sm" /> : matrixQ.isError ? <ErrBanner msg="Failed to load matrix data" /> : (
         <ResponsiveContainer width="100%" height={360}>
           <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
             <XAxis type="number" dataKey="x" domain={[0, 100]} name="Quality" unit="%" tick={{ fontSize: 11 }}
               label={{ value: "Quality Score %", position: "insideBottom", offset: -10, fontSize: 11 }} />
             <YAxis type="number" dataKey="y" domain={[0, "auto"]} name="Conversion" unit="%" tick={{ fontSize: 11 }}
