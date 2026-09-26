@@ -6,7 +6,7 @@ import {
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   PhoneCall, Users, Gauge, Timer, Filter, Eye, Trophy, ListChecks, Activity, Layers, MousePointerClick,
-  UserCheck, PhoneForwarded, Repeat, Target, Database,
+  UserCheck, PhoneForwarded, Repeat, Target, Database, X,
 } from "lucide-react";
 import {
   Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
@@ -115,6 +115,41 @@ function CallFunnel({ stages }: { stages: Array<{ stage: string; count: number }
   );
 }
 
+/** Right-side slide-over for cards whose figures are whole-range aggregates (no daily split): shows the full
+ * table behind the card, from the payload the page already holds. */
+function InfoDrawer({ title, subtitle, onClose, children }: { title: string; subtitle: string; onClose: () => void; children: ReactNode }) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setShown(true));
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => { cancelAnimationFrame(id); window.removeEventListener("keydown", onKey); };
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className={`absolute inset-0 bg-slate-900/40 transition-opacity duration-200 ${shown ? "opacity-100" : "opacity-0"}`} onClick={onClose} />
+      <aside className={`relative flex h-full w-full max-w-2xl flex-col overflow-y-auto bg-white shadow-2xl transition-transform duration-200 ${shown ? "translate-x-0" : "translate-x-full"}`}>
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-100 bg-white px-5 py-3">
+          <div>
+            <p className="text-sm font-bold text-slate-800">{title}</p>
+            <p className="text-[11px] text-slate-400">{subtitle}</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Close"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="space-y-5 p-5">{children}</div>
+      </aside>
+    </div>
+  );
+}
+function InfoSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-2">
+      <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{title}</p>
+      {children}
+    </section>
+  );
+}
+
 const pct1 = (part: number, whole: number) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0);
 
 export function LpCallDashboard({
@@ -134,6 +169,7 @@ export function LpCallDashboard({
   const [agentSearch, setAgentSearch] = useState("");
   const [record, setRecord] = useState<DrawerTarget | null>(null);
   const [metric, setMetric] = useState<{ title: string; series: DrawerSeries[] } | null>(null);
+  const [info, setInfo] = useState<"disp" | "perf" | "prod" | "hour" | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -383,7 +419,7 @@ export function LpCallDashboard({
           </div>
 
           <div className="grid gap-3 lg:grid-cols-3">
-            <SectionCard icon={ListChecks} title="Follow-ups & Dispositions" tone="amber" footnote={`Call back: ${fmtN(h.callBackCalls)} calls (${h.callBackPct}%). Whole-range only -- no daily split.`}>
+            <SectionCard icon={ListChecks} title="Follow-ups & Dispositions" tone="amber" action={<ViewDetailsBtn onClick={() => setInfo("disp")} />} footnote={`Call back: ${fmtN(h.callBackCalls)} calls (${h.callBackPct}%). Whole-range only -- no daily split.`}>
               <div className="max-h-52 overflow-y-auto rounded-xl border border-slate-100">
                 <table className="w-full text-xs">
                   <thead>
@@ -405,7 +441,7 @@ export function LpCallDashboard({
               </div>
             </SectionCard>
 
-            <SectionCard icon={Trophy} title="Top Performers" tone="violet" footnote="Connect % ranks agents with at least half the average call volume.">
+            <SectionCard icon={Trophy} title="Top Performers" tone="violet" action={<ViewDetailsBtn onClick={() => setInfo("perf")} />} footnote="Connect % ranks agents with at least half the average call volume.">
               <div className="grid grid-cols-2 gap-3 text-xs">
                 <div>
                   <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">By Calls</p>
@@ -430,7 +466,7 @@ export function LpCallDashboard({
               </div>
             </SectionCard>
 
-            <SectionCard icon={Timer} title="Login & Productivity (Team Avg)" tone="sky" footnote="Per agent per day, from the APR file. Whole-range only.">
+            <SectionCard icon={Timer} title="Login & Productivity (Team Avg)" tone="sky" action={<ViewDetailsBtn onClick={() => setInfo("prod")} />} footnote="Per agent per day, from the APR file. Whole-range only.">
               <div className="grid grid-cols-3 gap-2">
                 {[
                   ["Net Login", secToHms(avgOf(tu.netLoginSec))], ["Talk Time", secToHms(avgOf(tu.talkSec))], ["Wrap Time", secToHms(avgOf(tu.wrapupSec))],
@@ -475,7 +511,7 @@ export function LpCallDashboard({
             </div>
           </SectionCard>
 
-          <SectionCard icon={Layers} title="Hourly Call Pattern" tone="teal" footnote="Hour of day has no week/date split, so this chart has no drill-down.">
+          <SectionCard icon={Layers} title="Hourly Call Pattern" tone="teal" action={<ViewDetailsBtn onClick={() => setInfo("hour")} />} footnote="Hour of day has no week/date split, so the detail is the full hour-by-hour table.">
             <ResponsiveContainer width="100%" height={170}>
               <ComposedChart data={data.byHour.map((r) => ({ ...r, label: hourLabel(r.hour) }))} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -676,6 +712,154 @@ export function LpCallDashboard({
         </>
       )}
 
+      {info && (
+        <InfoDrawer
+          onClose={() => setInfo(null)}
+          title={info === "disp" ? "Follow-ups & Dispositions" : info === "perf" ? "Top Performers" : info === "prod" ? "Login & Productivity" : "Hourly Call Pattern"}
+          subtitle={`${title} · ${fmtDate(from)} – ${fmtDate(to)} · whole range`}
+        >
+          {info === "disp" && (
+            <>
+              <InfoSection title="All dispositions">
+                <div className="overflow-hidden rounded-xl border border-slate-100">
+                  <table className="w-full text-xs">
+                    <thead><tr className="bg-amber-700 text-[10px] uppercase tracking-wide text-white"><Th left>Disposition</Th><Th>Calls</Th><Th>Share</Th></tr></thead>
+                    <tbody>
+                      {data.byDisposition.map((d, i) => (
+                        <tr key={d.disposition} className={`border-b border-slate-50 last:border-0 ${i % 2 ? "bg-amber-50/30" : "bg-white"}`}>
+                          <td className="px-2 py-1.5 font-medium text-slate-700">{d.disposition}</td>
+                          <td className="px-2 py-1.5 text-center text-slate-600">{fmtN(d.calls)}</td>
+                          <td className="px-2 py-1.5 text-center font-semibold text-amber-700">{d.pct}%</td>
+                        </tr>
+                      ))}
+                      {data.byDisposition.length === 0 && <tr><td colSpan={3} className="py-4 text-center text-slate-400">None</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </InfoSection>
+              <InfoSection title="Call status">
+                <div className="overflow-hidden rounded-xl border border-slate-100">
+                  <table className="w-full text-xs">
+                    <thead><tr className="bg-slate-700 text-[10px] uppercase tracking-wide text-white"><Th left>Status</Th><Th>Calls</Th><Th>Share</Th></tr></thead>
+                    <tbody>
+                      {data.byStatus.map((d, i) => (
+                        <tr key={d.status} className={`border-b border-slate-50 last:border-0 ${i % 2 ? "bg-slate-50/50" : "bg-white"}`}>
+                          <td className="px-2 py-1.5 font-medium text-slate-700">{d.status}</td>
+                          <td className="px-2 py-1.5 text-center text-slate-600">{fmtN(d.calls)}</td>
+                          <td className="px-2 py-1.5 text-center font-semibold text-slate-700">{d.pct}%</td>
+                        </tr>
+                      ))}
+                      {data.byStatus.length === 0 && <tr><td colSpan={3} className="py-4 text-center text-slate-400">None</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </InfoSection>
+              <InfoSection title="Call back">
+                <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">{fmtN(h.callBackCalls)} calls ({h.callBackPct}% of all calls) were a request for a call back.</p>
+              </InfoSection>
+            </>
+          )}
+          {info === "perf" && (
+            <>
+              {([
+                ["Ranked by calls", [...data.agents].sort((a, b) => b.totalCalls - a.totalCalls)],
+                ["Ranked by connect % (agents with at least half the average call volume)", (() => {
+                  const ag = data.agents;
+                  const avg = ag.length ? ag.reduce((x, a) => x + a.totalCalls, 0) / ag.length : 0;
+                  return ag.filter((a) => a.totalCalls >= avg * 0.5).sort((a, b) => b.connectedPct - a.connectedPct);
+                })()],
+              ] as Array<[string, typeof data.agents]>).map(([label, rows]) => (
+                <InfoSection key={label} title={label}>
+                  <div className="overflow-hidden rounded-xl border border-slate-100">
+                    <table className="w-full text-xs">
+                      <thead><tr className="bg-violet-700 text-[10px] uppercase tracking-wide text-white"><Th>#</Th><Th left>Agent</Th><Th>Calls</Th><Th>Connected</Th><Th>Connect %</Th></tr></thead>
+                      <tbody>
+                        {rows.map((a, i) => (
+                          <tr key={a.agent} onClick={() => { setInfo(null); openRecord("agent", a.agent); }} className={`cursor-pointer border-b border-slate-50 last:border-0 hover:bg-violet-50 ${i % 2 ? "bg-violet-50/30" : "bg-white"}`}>
+                            <td className="px-2 py-1.5 text-center text-slate-400">{i + 1}</td>
+                            <td className="px-2 py-1.5 font-medium text-slate-700">{a.agent}</td>
+                            <td className="px-2 py-1.5 text-center text-slate-600">{fmtN(a.totalCalls)}</td>
+                            <td className="px-2 py-1.5 text-center text-emerald-600">{fmtN(a.connectedCalls)}</td>
+                            <td className="px-2 py-1.5 text-center font-semibold text-amber-600">{a.connectedPct}%</td>
+                          </tr>
+                        ))}
+                        {rows.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">None</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                </InfoSection>
+              ))}
+            </>
+          )}
+          {info === "prod" && (
+            <>
+              <InfoSection title="Where the logged-in time goes (all agents, whole range)">
+                <div className="overflow-hidden rounded-xl border border-slate-100">
+                  <table className="w-full text-xs">
+                    <thead><tr className="bg-sky-700 text-[10px] uppercase tracking-wide text-white"><Th left>Bucket</Th><Th>Total</Th><Th>Avg / agent-day</Th><Th>% of login</Th></tr></thead>
+                    <tbody>
+                      {([
+                        ["Login time", tu.loginSec], ["Net login", tu.netLoginSec], ["Talk", tu.talkSec], ["Wrap-up", tu.wrapupSec], ["Idle", tu.idleSec],
+                        ["Hold", tu.holdSec], ["Ring", tu.ringSec], ["Break (all)", tu.breakSec], ["Other", tu.otherSec],
+                        ["  Tea", tu.breaks.tea], ["  Lunch", tu.breaks.lunch], ["  Meeting", tu.breaks.meeting], ["  Bio", tu.breaks.bio], ["  Unsolicited", tu.breaks.unsolicited],
+                      ] as Array<[string, number]>).map(([l, v], i) => (
+                        <tr key={l} className={`border-b border-slate-50 last:border-0 ${i % 2 ? "bg-sky-50/30" : "bg-white"}`}>
+                          <td className="whitespace-pre px-2 py-1.5 font-medium text-slate-700">{l}</td>
+                          <td className="px-2 py-1.5 text-center text-slate-600">{secToHms(v)}</td>
+                          <td className="px-2 py-1.5 text-center text-slate-600">{secToHms(avgOf(v))}</td>
+                          <td className="px-2 py-1.5 text-center font-semibold text-sky-700">{tu.loginSec > 0 ? `${pct1(v, tu.loginSec)}%` : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[11px] text-slate-400">{fmtN(tu.agentDays)} agent-days · {fmtN(tu.breakCount)} breaks · occupancy {h.occupancyPct}% · shrinkage {h.shrinkagePct}%. From the APR file; whole range only.</p>
+              </InfoSection>
+              <InfoSection title="Agent-wise (click an agent for their day-by-day detail)">
+                <div className="overflow-x-auto rounded-xl border border-slate-100">
+                  <table className="w-full text-xs">
+                    <thead><tr className="bg-sky-700 text-[10px] uppercase tracking-wide text-white"><Th left>Agent</Th><Th>Net login</Th><Th>Talk</Th><Th>Wrap</Th><Th>Idle</Th><Th>Occupancy</Th><Th>Shrinkage</Th></tr></thead>
+                    <tbody>
+                      {data.agents.map((a, i) => (
+                        <tr key={a.agent} onClick={() => { setInfo(null); openRecord("agent", a.agent); }} className={`cursor-pointer border-b border-slate-50 last:border-0 hover:bg-sky-50 ${i % 2 ? "bg-sky-50/30" : "bg-white"}`}>
+                          <td className="whitespace-nowrap px-2 py-1.5 font-medium text-slate-700">{a.agent}</td>
+                          <td className="px-2 py-1.5 text-center text-slate-600">{secToHms(a.netLoginTimeSec)}</td>
+                          <td className="px-2 py-1.5 text-center text-slate-600">{secToHms(a.talkTimeSec)}</td>
+                          <td className="px-2 py-1.5 text-center text-slate-600">{secToHms(a.wrapupSec)}</td>
+                          <td className="px-2 py-1.5 text-center text-slate-600">{secToHms(a.idleSec)}</td>
+                          <td className="px-2 py-1.5 text-center font-semibold text-sky-700">{a.occupancyPct}%</td>
+                          <td className="px-2 py-1.5 text-center font-semibold text-amber-600">{a.shrinkagePct}%</td>
+                        </tr>
+                      ))}
+                      {data.agents.length === 0 && <tr><td colSpan={7} className="py-4 text-center text-slate-400">None</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </InfoSection>
+            </>
+          )}
+          {info === "hour" && (
+            <InfoSection title="Calls by hour of day">
+              <div className="overflow-hidden rounded-xl border border-slate-100">
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-teal-700 text-[10px] uppercase tracking-wide text-white"><Th left>Hour</Th><Th>Calls</Th><Th>Connected</Th><Th>Connect %</Th></tr></thead>
+                  <tbody>
+                    {data.byHour.map((r, i) => (
+                      <tr key={r.hour} className={`border-b border-slate-50 last:border-0 ${i % 2 ? "bg-teal-50/30" : "bg-white"}`}>
+                        <td className="px-2 py-1.5 font-medium text-slate-700">{hourLabel(r.hour)}</td>
+                        <td className="px-2 py-1.5 text-center text-slate-600">{fmtN(r.calls)}</td>
+                        <td className="px-2 py-1.5 text-center text-emerald-600">{fmtN(r.connected)}</td>
+                        <td className="px-2 py-1.5 text-center font-semibold text-amber-600">{r.connectedPct}%</td>
+                      </tr>
+                    ))}
+                    {data.byHour.length === 0 && <tr><td colSpan={4} className="py-4 text-center text-slate-400">None</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </InfoSection>
+          )}
+        </InfoDrawer>
+      )}
       {record && <LpCallDrawer apiPath={apiPath} target={record} from={from} to={to} onClose={() => setRecord(null)} />}
       {metric && (
         <GncDetailDrawer

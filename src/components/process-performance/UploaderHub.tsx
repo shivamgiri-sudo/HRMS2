@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { TONE_CLASSES, TONE_SOLID_CLASSES, TONE_GRADIENT_CLASSES, type Tone } from "@/lib/processPerformanceTones";
 import { ChevronRight, BarChart3, FileText, Users, Lightbulb, ExternalLink } from "lucide-react";
+import { UploadCoverageLine, useUploadCoverage } from "./UploadCoverage";
 
 export interface UploaderHubItem {
   code: string;
@@ -30,6 +31,7 @@ export function UploaderHub({
 }) {
   const [stats, setStats] = useState({ totalFilesUploaded: 0, activeUsers: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
+  const coverageQ = useUploadCoverage(uploaders.map((u) => u.code));
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +90,7 @@ export function UploaderHub({
                   </span>
                 </div>
                 <div className="text-xs text-slate-500">{u.description}</div>
+                <div className="mt-0.5"><UploadCoverageLine coverage={coverageQ.data?.[u.code]} loading={coverageQ.isLoading} /></div>
               </div>
             </div>
             <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />

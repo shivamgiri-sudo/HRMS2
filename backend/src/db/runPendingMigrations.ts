@@ -1055,6 +1055,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1781_dalmia_apr_raw.sql", // Registered 2026-09-25. Creates db_masmis.dalmia_apr_raw (RAW store of Dalmia Cement's APR sheet, the "dalmia_apr" uploader, one row per agent per day) and its DALMIA_APR upload_template_master row. Deliberately NOT wired into any KPI -- productivity KPIs keep reading mas_hrms.apr (see the sql/1733 retraction above). Additive: new table + one template row only.
   "1782_tpz_access.sql", // Registered 2026-09-26. Creates mas_hrms.tpz_user_access + tpz_access_grant (per-user TPZ Process grants: which processes/branches a user may open, plus separate uploader and MIS switches). Additive: two new tables, no existing row touched; until rows exist nobody's access changes.
   "1870_gnc_lob_target.sql", // Registered 2026-09-25. Creates mas_hrms.gnc_lob_target (editable, effective-dated monthly revenue targets for GNC Inbound / Chat / Abandon Cart) and seeds the three business-supplied targets from 2026-09. CREATE TABLE IF NOT EXISTS + INSERT IGNORE, purely additive.
+  "1871_bb_chat_template_new_table_columns.sql", // Registered 2026-09-26. Updates the single BB_CHAT_MASMIS upload_template_master row so the uploader's required/optional columns and downloadable template match db_masmis.new_bb_chat (Unique ID key + the 23 other sheet columns) instead of the old bb_chat ticket-export headers. UPDATE of one row; no DDL.
   ];
 
 export type MigrationHealth = {

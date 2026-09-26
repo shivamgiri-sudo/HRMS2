@@ -31,6 +31,14 @@ interface AgentRow {
   avgSale: number;
 }
 
+/** Hours (2 dp, as the API sends them) -> average per attendance day as H:MM:SS ("—" with no attendance). */
+const avgHms = (hours: number, days: number): string => {
+  if (!(days > 0)) return "—";
+  const t = Math.round((hours / days) * 3600);
+  return `${Math.floor(t / 3600)}:${String(Math.floor((t % 3600) / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+};
+const avgSec = (hours: number, days: number): number | null => (days > 0 ? Math.round((hours / days) * 3600) : null);
+
 const formatINR = (v: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(v);
 
@@ -59,6 +67,9 @@ const COLS: Col[] = [
   { key: "login", label: "Login Hrs", get: (r) => r.loginHours, cell: (r) => r.loginHours, className: "text-slate-600" },
   { key: "break", label: "Break Hrs", get: (r) => r.breakHours, cell: (r) => r.breakHours, className: "text-slate-600" },
   { key: "talk", label: "Talk Hrs", get: (r) => r.talkHours, cell: (r) => r.talkHours, className: "text-slate-600" },
+  { key: "avgLogin", label: "Avg Login", get: (r) => avgSec(r.loginHours, r.attendanceDays), cell: (r) => avgHms(r.loginHours, r.attendanceDays), className: "text-slate-600" },
+  { key: "avgBreak", label: "Avg Break", get: (r) => avgSec(r.breakHours, r.attendanceDays), cell: (r) => avgHms(r.breakHours, r.attendanceDays), className: "text-slate-600" },
+  { key: "avgTalk", label: "Avg Talk", get: (r) => avgSec(r.talkHours, r.attendanceDays), cell: (r) => avgHms(r.talkHours, r.attendanceDays), className: "font-semibold text-indigo-700" },
   { key: "acht", label: "ACHT", get: (r) => r.achtSeconds, cell: (r) => `${r.achtSeconds}s`, className: "text-slate-600" },
   { key: "sale", label: "Sale", get: (r) => r.saleCount, cell: (r) => r.saleCount, className: "font-semibold text-slate-800" },
   { key: "zecpe", label: "Zecpe", get: (r) => r.zecpeCount, cell: (r) => r.zecpeCount, className: "text-slate-600" },
@@ -81,6 +92,9 @@ const colGetter = (r: AgentRow, key: string) => COLS.find((c) => c.key === key)?
  * "Agent Metric" sheet are real (sourced from these two tables) vs.
  * deliberately left out (no real source exists in this app: DOJ, Bucket,
  * per-agent Target/Achiv%, TQ/MQ/BQ, Compliance%, Man Day, Start Date).
+ *
+ * Login / Break / Talk Hrs are range TOTALS; the Avg columns divide them by the agent's attendance days
+ * (P = 1, HD = 0.5) so agents with different attendance compare fairly.
  */
 export function BellavitaAgentPerformance({ from, to, lob }: { from: string; to: string; lob?: string }) {
   const [rows, setRows] = useState<AgentRow[] | null>(null);
@@ -122,10 +136,10 @@ export function BellavitaAgentPerformance({ from, to, lob }: { from: string; to:
       title: "Agent Performance",
       tables: [{
         title: "Agent Performance",
-        columns: ["Agent", "Emp ID", "TL", "LOB", "Tenure", "Attendance", "Login Hrs", "Break Hrs", "Talk Hrs", "ACHT", "Sale", "Zecpe", "Website", "Draft Order", "COD%", "Paid%", "RTO%", "Revenue", "Avg Sale"],
+        columns: ["Agent", "Emp ID", "TL", "LOB", "Tenure", "Attendance", "Login Hrs", "Break Hrs", "Talk Hrs", "Avg Login", "Avg Break", "Avg Talk", "ACHT", "Sale", "Zecpe", "Website", "Draft Order", "COD%", "Paid%", "RTO%", "Revenue", "Avg Sale"],
         rows: rows.map((r) => [
           r.empName, r.empId, r.teamLeader, r.lob, r.tenureDays ?? "—", r.attendanceDays, r.loginHours, r.breakHours,
-          r.talkHours, `${r.achtSeconds}s`, r.saleCount, r.zecpeCount, r.websiteCount, r.draftOrderCount,
+          r.talkHours, avgHms(r.loginHours, r.attendanceDays), avgHms(r.breakHours, r.attendanceDays), avgHms(r.talkHours, r.attendanceDays), `${r.achtSeconds}s`, r.saleCount, r.zecpeCount, r.websiteCount, r.draftOrderCount,
           `${r.codPct}%`, `${r.paidPct}%`, `${r.rtoPct}%`, formatINR(r.revenue), formatINR(r.avgSale),
         ]),
       }],
@@ -199,7 +213,7 @@ export function BellavitaAgentPerformance({ from, to, lob }: { from: string; to:
               </tr>
             ))}
             {filteredRows.length === 0 && (
-              <tr><td colSpan={18} className="border border-slate-200 py-6 text-center text-slate-400">{rows.length === 0 ? "No agent data for this period." : "No agents match the search / filters."}</td></tr>
+              <tr><td colSpan={21} className="border border-slate-200 py-6 text-center text-slate-400">{rows.length === 0 ? "No agent data for this period." : "No agents match the search / filters."}</td></tr>
             )}
           </tbody>
         </table>

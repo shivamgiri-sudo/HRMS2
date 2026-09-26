@@ -8,6 +8,7 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { startBatchJob, getBatchJob, readBatchProgress } from "./batch-job.js";
 import { tpzAllowsUploadType } from "../tpz-access/tpz-access.middleware.js";
 import { TPZ_UPLOAD_TYPES } from "../tpz-access/tpz-access.catalog.js";
+import { getUploadCoverage } from "./upload-coverage.service.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { loadRowsWithLiveStatus, reconcileStuckRows } from "./bulk-approval.service.js";
 import { withDeadlockRetry, isDeadlockError } from "../../shared/deadlockRetry.js";
@@ -46,6 +47,18 @@ router.get("/templates", requireRole("admin", "hr", "super_admin", "wfm", "wfm_a
     }
     throw err;
   }
+}));
+
+/**
+ * GET /coverage?codes=A,B[&refresh=1] -- "data uploaded till <date>" per upload type: the latest data date present in the type's
+ * target table (see upload-coverage.service.ts), so the uploader knows where to continue from. Narrowed for TPZ grants like the
+ * template list.
+ */
+router.get("/coverage", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const codes = String(req.query.codes ?? "").split(",").map((c) => c.trim()).filter(Boolean).slice(0, 60)
+    .filter((c) => tpzAllowsUploadType(req, c));
+  const data = await getUploadCoverage(codes, req.query.refresh === "1");
+  res.json({ success: true, data });
 }));
 
 /**

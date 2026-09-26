@@ -130,7 +130,7 @@ function uploadShape(req: AuthenticatedRequest) {
   return {
     isTemplates: method === "GET" && path === "/templates",
     isStats: method === "GET" && path === "/process-performance-v2-stats",
-    isList: method === "GET" && path === "/batches",
+    isList: method === "GET" && (path === "/batches" || path === "/coverage"),
     isCreate: method === "POST" && path === "/batches",
     batchOp: BATCH_OP.exec(path),
   };

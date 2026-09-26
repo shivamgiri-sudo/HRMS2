@@ -22,6 +22,14 @@ interface AgentDetail {
   }>;
 }
 
+/** Hours (2 dp, as the API sends them) -> average per attendance day as H:MM:SS ("—" with no attendance). */
+const avgHms = (hours: number, days: number): string => {
+  if (!(days > 0)) return "—";
+  const t = Math.round((hours / days) * 3600);
+  return `${Math.floor(t / 3600)}:${String(Math.floor((t % 3600) / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+};
+const avgSec = (hours: number, days: number): number | null => (days > 0 ? Math.round((hours / days) * 3600) : null);
+
 /** Same "day-of-month 1-7 -> W-1, 8-14 -> W-2, ..." convention this app's
  * other week-wise views already use (HousingOwnerDashboard, satyaReportModel). */
 function weekBucket(iso: string): { key: string; label: string } {
@@ -79,17 +87,18 @@ export function BellavitaAgentDetailDrawer({
   const weeklyRows = useMemo(() => {
     const map = new Map<string, {
       label: string; saleCount: number; revenue: number; codCount: number; paidCount: number;
-      rtoCount: number; loginHours: number; talkHours: number; attendanceDays: number;
+      rtoCount: number; loginHours: number; breakHours: number; talkHours: number; attendanceDays: number;
     }>();
     for (const d of data?.daily ?? []) {
       const { key, label } = weekBucket(d.date);
-      const cur = map.get(key) ?? { label, saleCount: 0, revenue: 0, codCount: 0, paidCount: 0, rtoCount: 0, loginHours: 0, talkHours: 0, attendanceDays: 0 };
+      const cur = map.get(key) ?? { label, saleCount: 0, revenue: 0, codCount: 0, paidCount: 0, rtoCount: 0, loginHours: 0, breakHours: 0, talkHours: 0, attendanceDays: 0 };
       cur.saleCount += d.saleCount;
       cur.revenue += d.revenue;
       cur.codCount += d.codCount;
       cur.paidCount += d.paidCount;
       cur.rtoCount += d.rtoCount;
       cur.loginHours += d.loginHours;
+      cur.breakHours += d.breakHours;
       cur.talkHours += d.talkHours;
       cur.attendanceDays += d.attendanceDays;
       map.set(key, cur);
@@ -143,9 +152,20 @@ export function BellavitaAgentDetailDrawer({
                   <Stat label="COD / Paid" value={`${data.overall.codCount} / ${data.overall.paidCount}`} sub={`${data.overall.codPct}% / ${data.overall.paidPct}%`} />
                   <Stat label="RTO %" value={`${data.overall.rtoPct}%`} sub={`${data.overall.rtoCount} orders`} />
                   <Stat label="Attendance" value={`${data.overall.attendanceDays}d`} />
-                  <Stat label="Login / Talk" value={`${data.overall.loginHours}h / ${data.overall.talkHours}h`} />
+                  <Stat label="Login / Talk (total)" value={`${data.overall.loginHours}h / ${data.overall.talkHours}h`} />
                   <Stat label="ACHT" value={`${data.overall.achtSeconds}s`} />
                 </div>
+              </section>
+
+              <section className="space-y-2">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400">APR — average per attendance day</p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <Stat label="Avg Login" value={avgHms(data.overall.loginHours, data.overall.attendanceDays)} sub={`${data.overall.loginHours}h over ${data.overall.attendanceDays}d`} />
+                  <Stat label="Avg Break" value={avgHms(data.overall.breakHours, data.overall.attendanceDays)} sub={`${data.overall.breakHours}h total`} />
+                  <Stat label="Avg Talk" value={avgHms(data.overall.talkHours, data.overall.attendanceDays)} sub={`${data.overall.talkHours}h total`} />
+                  <Stat label="ACHT" value={`${data.overall.achtSeconds}s`} sub="avg handling time" />
+                </div>
+                <p className="text-[11px] text-slate-400">Attendance days count P as 1 and HD as 0.5. Login, break and talk hours come from the APR file (de-duplicated re-uploads).</p>
               </section>
 
               <section className="space-y-2">
@@ -192,7 +212,10 @@ export function BellavitaAgentDetailDrawer({
                             <th className="px-3 py-2 font-semibold">Paid</th>
                             <th className="px-3 py-2 font-semibold">RTO%</th>
                             <th className="px-3 py-2 font-semibold">Login Hrs</th>
+                            <th className="px-3 py-2 font-semibold">Break Hrs</th>
                             <th className="px-3 py-2 font-semibold">Talk Hrs</th>
+                            <th className="px-3 py-2 font-semibold">Avg Login</th>
+                            <th className="px-3 py-2 font-semibold">Avg Talk</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -207,7 +230,10 @@ export function BellavitaAgentDetailDrawer({
                                 {d.saleCount > 0 ? `${Math.round((d.rtoCount / d.saleCount) * 10000) / 100}%` : "—"}
                               </td>
                               <td className="px-3 py-2 text-slate-600">{d.loginHours}</td>
+                              <td className="px-3 py-2 text-slate-600">{d.breakHours}</td>
                               <td className="px-3 py-2 text-slate-600">{d.talkHours}</td>
+                              <td className="px-3 py-2 text-slate-600">{avgHms(d.loginHours, d.attendanceDays)}</td>
+                              <td className="px-3 py-2 font-semibold text-indigo-700">{avgHms(d.talkHours, d.attendanceDays)}</td>
                             </tr>
                           )) : weeklyRows.map((w) => (
                             <tr key={w.key} className="border-t border-slate-50">
@@ -218,7 +244,10 @@ export function BellavitaAgentDetailDrawer({
                               <td className="px-3 py-2 text-emerald-600">{w.paidCount}</td>
                               <td className={`px-3 py-2 font-semibold ${w.rtoPct > 10 ? "text-red-600" : "text-slate-600"}`}>{w.rtoPct}%</td>
                               <td className="px-3 py-2 text-slate-600">{Math.round(w.loginHours * 100) / 100}</td>
+                              <td className="px-3 py-2 text-slate-600">{Math.round(w.breakHours * 100) / 100}</td>
                               <td className="px-3 py-2 text-slate-600">{Math.round(w.talkHours * 100) / 100}</td>
+                              <td className="px-3 py-2 text-slate-600">{avgHms(w.loginHours, w.attendanceDays)}</td>
+                              <td className="px-3 py-2 font-semibold text-indigo-700">{avgHms(w.talkHours, w.attendanceDays)}</td>
                             </tr>
                           ))}
                         </tbody>

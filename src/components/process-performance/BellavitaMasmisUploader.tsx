@@ -5,6 +5,7 @@ import { pollBatchJob, isBatchJobStarted } from "@/lib/bulkBatchJob";
 import { apiUrl } from "@/lib/apiBase";
 import { TONE_SOLID_CLASSES, type Tone } from "@/lib/processPerformanceTones";
 import { Upload, Loader2, CheckCircle2, XCircle, Trash2, UploadCloud, Download, CheckCircle } from "lucide-react";
+import { UploadCoverageBanner, useRefreshUploadCoverage, useUploadCoverage } from "./UploadCoverage";
 
 /**
  * Inline uploader embedded directly on Process Performance V2's Bellavita and
@@ -176,6 +177,9 @@ export function BellavitaMasmisUploader({
   const [showAllLog, setShowAllLog] = useState(false);
   const [lastBatchId, setLastBatchId] = useState<string | null>(null);
   const [downloadingErrorsId, setDownloadingErrorsId] = useState<string | null>(null);
+  const [downloadingAllId, setDownloadingAllId] = useState<string | null>(null);
+  const coverageQ = useUploadCoverage([templateCode]);
+  const refreshCoverage = useRefreshUploadCoverage();
 
   function loadLog() {
     setLogLoading(true);
@@ -256,6 +260,45 @@ export function BellavitaMasmisUploader({
       window.alert(err instanceof Error ? err.message : "Failed to load the error rows for this upload.");
     } finally {
       setDownloadingErrorsId(null);
+    }
+  }
+
+  /** Downloads EVERY row of an earlier upload exactly as it was staged (original columns, straight from
+   * upload_batch_row.raw_data) plus a Status and Error Reason column, so a past file can be re-checked or
+   * re-used without hunting for the original. Same endpoint and access as the failed-rows download. */
+  async function downloadUploadedRows(batchId: string, fileName: string | null) {
+    setDownloadingAllId(batchId);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: Array<Record<string, unknown>> }>(`/api/bulk-upload/batches/${batchId}/rows`);
+      const parseJsonField = (v: unknown): unknown => {
+        if (typeof v !== "string") return v;
+        try { return JSON.parse(v); } catch { return v; }
+      };
+      const all = (res.data || []).slice().sort((a, b) => Number(a.row_no) - Number(b.row_no));
+      if (all.length === 0) {
+        window.alert("No rows are stored for this upload.");
+        return;
+      }
+      const sheetRows = all.map((r) => {
+        const raw = parseJsonField(r.raw_data);
+        const rawObj = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Record<string, unknown>;
+        const errors = (parseJsonField(r.error_messages) ?? []) as unknown;
+        return {
+          "Row #": r.row_no,
+          ...rawObj,
+          "Status": r.row_status,
+          "Error Reason": Array.isArray(errors) ? errors.join("; ") : errors ? String(errors) : "",
+        };
+      });
+      const worksheet = XLSX.utils.json_to_sheet(sheetRows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Uploaded Rows");
+      const base = (fileName || label).replace(/.[a-z0-9]+$/i, "").replace(/[^a-z0-9]+/gi, "_").toLowerCase();
+      XLSX.writeFile(workbook, `${base}_uploaded_rows.xlsx`);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Failed to load the rows of this upload.");
+    } finally {
+      setDownloadingAllId(null);
     }
   }
 
@@ -431,6 +474,7 @@ export function BellavitaMasmisUploader({
       }
 
       setResult({ imported, errors: errored });
+      void refreshCoverage([templateCode]);
       setPhase("done");
       setMessage(null);
       setFile(null);
@@ -447,6 +491,7 @@ export function BellavitaMasmisUploader({
 
   return (
     <div className="space-y-4">
+      <UploadCoverageBanner coverage={coverageQ.data?.[templateCode]} loading={coverageQ.isLoading} />
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Dropzone + status */}
         <div className="lg:col-span-2">
@@ -613,6 +658,15 @@ export function BellavitaMasmisUploader({
                     </td>
                     <td className="py-2.5 pr-0 text-right">
                       <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          disabled={downloadingAllId === b.id}
+                          onClick={() => downloadUploadedRows(b.id, b.original_file_name)}
+                          title="Download all rows of this upload (as uploaded, with status)"
+                          className="rounded p-1.5 text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 disabled:opacity-40"
+                        >
+                          {downloadingAllId === b.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                        </button>
                         {Number(b.error_rows ?? 0) > 0 && (
                           <button
                             type="button"
