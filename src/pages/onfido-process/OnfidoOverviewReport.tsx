@@ -8,6 +8,8 @@ import {
   type QueueRow, type Section,
 } from "./onfidoReportShared";
 import { OnfidoManpowerPlanSheet, QUEUE_OPTIONS, usePlanRecords, useCanEditWfmInputs } from "./OnfidoManpowerPlanSheet";
+import { OnfidoKpiStrip } from "./OnfidoKpiStrip";
+import { buildOverviewKpis } from "./onfidoKpi";
 
 /**
  * Overview tab in the 23-Sep-26 format ("OVERVIEW PAGE NEED TO CHANGE.xlsx"), replacing the
@@ -87,9 +89,18 @@ export default function OnfidoOverviewReport({ range, tlFilter, amFilter }: { ra
   const manpowerSection: Section<NonNullable<OverviewReport["manpower"]["data"]>> | undefined = dataFor("manpower")?.manpower;
   const aonSection = dataFor("aon")?.aon;
   const mp = manpowerSection?.data;
+  const trendData = (key: TrendKey) => (dataFor(key)?.[key] as Section<Matrix> | undefined)?.data;
+  const kpis = buildOverviewKpis({
+    manpower: mp,
+    attrition: trendData("attritionTrend"),
+    shrinkage: trendData("shrinkageTrend"),
+    docAht: trendData("docProcessingTrend"),
+    poaAht: trendData("poaVolumeTime"),
+  });
 
   return (
     <div className="space-y-5">
+      <OnfidoKpiStrip kpis={kpis} loading={loadingFor("manpower") && !mp} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
           <span className="oc-eyebrow">Range for every section</span>

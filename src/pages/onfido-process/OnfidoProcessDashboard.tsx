@@ -16,6 +16,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import OnfidoOverviewReport from "./OnfidoOverviewReport";
 import OnfidoAnalystReport from "./OnfidoAnalystReport";
 import OnfidoNameMapping from "./OnfidoNameMapping";
+import OnfidoHero from "./OnfidoHero";
 import OnfidoUtilizationReport from "./OnfidoUtilizationReport";
 import { formatBucketTick, shiftDays } from "./onfidoReportShared";
 import "./onfido-central-theme.css";
@@ -4564,17 +4565,15 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
     <Shell>
       <div className="onfido-central-theme">
         <div className="space-y-5">
-          {/* Header */}
-          <div>
-            <div className="oc-eyebrow" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>Quality &amp; Operations</div>
-            <h1 style={{ marginTop: 4, fontSize: 22, fontWeight: 800, color: "var(--text)" }}>Onfido Process Dashboard</h1>
-            <p style={{ marginTop: 4, maxWidth: 720, fontSize: 13, color: "var(--muted)" }}>
-              DOC and POA queue volume, AHT, quality audits and client escalations — built from the
-              report files uploaded through Bulk Upload Hub.
-            </p>
-          </div>
-
-          <TabBar view={view} onChange={setView} />
+          <OnfidoHero
+            tabs={VIEW_TABS}
+            view={view}
+            onChange={setView}
+            range={range}
+            tlFilter={tlFilter}
+            amFilter={amFilter}
+            showFilters={view !== "live" && view !== "analyst" && view !== "utilization" && view !== "namemapping"}
+          />
 
           {/* Executive filters — shared across every view except Live, which is
               deliberately always "today" / "this month" and ignores the range
