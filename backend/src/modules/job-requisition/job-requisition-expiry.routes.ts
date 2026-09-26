@@ -11,6 +11,7 @@ import {
   HR_TEAM_ROLES,
   listPendingExpiryDecisions,
 } from "./job-requisition-deadline.service.js";
+import { resolveHrBranchScope } from "./job-requisition-hr-scope.js";
 
 export const jobRequisitionExpiryRouter = Router();
 
@@ -26,8 +27,9 @@ const handler =
 
 jobRequisitionExpiryRouter.get(
   "/pending",
-  handler(async (_req, res) => {
-    const data = await listPendingExpiryDecisions();
+  handler(async (req, res) => {
+    // HR sees only their own branch's decisions; head office / admin see all.
+    const data = await listPendingExpiryDecisions(await resolveHrBranchScope(req.authUser!.id));
     return res.json({ success: true, data });
   }),
 );
@@ -67,6 +69,8 @@ jobRequisitionExpiryRouter.post(
         id.data,
         { id: req.authUser!.id, name: req.authUser?.email ?? null },
         body.data,
+        undefined,
+        await resolveHrBranchScope(req.authUser!.id),
       );
       return res.json({ success: true });
     } catch (error) {

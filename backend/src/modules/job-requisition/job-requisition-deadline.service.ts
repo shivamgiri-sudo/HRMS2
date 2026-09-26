@@ -1,3 +1,4 @@
+import { ORG_WIDE_HR_ROLES, branchInScope, requisitionBranchCondition, type HrBranchScope } from "./job-requisition-hr-scope.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import { logger } from "../../lib/logger.js";
@@ -55,16 +56,39 @@ async function userIds(sql: string, params: unknown[]): Promise<string[]> {
   return rows.map((r) => String(r.user_id));
 }
 
-export function resolveHrTeam(): Promise<string[]> {
-  return userIds(
-    `SELECT DISTINCT ur.user_id AS user_id
+/**
+ * HR recipients. Given a requisition's branch, only HR of that branch plus head-office HR are returned, so a
+ * branch HR user is not alerted about other branches. Called with no branch it returns the whole HR team.
+ */
+export function resolveHrTeam(branchId?: string | null): Promise<string[]> {
+  const roleMarks = HR_TEAM_ROLES.map(() => "?").join(",");
+  const base = `SELECT DISTINCT ur.user_id AS user_id
        FROM user_roles ur
        LEFT JOIN employees e ON e.user_id = ur.user_id
       WHERE ur.active_status = 1
-        AND ur.role_key IN (${HR_TEAM_ROLES.map(() => "?").join(",")})
-        AND (e.id IS NULL OR e.active_status = 1)`,
-    HR_TEAM_ROLES,
+        AND ur.role_key IN (${roleMarks})
+        AND (e.id IS NULL OR e.active_status = 1)`;
+  if (branchId === undefined) return userIds(base, [...HR_TEAM_ROLES]);
+  return userIds(
+    `${base}
+        AND (
+          ur.role_key IN (${ORG_WIDE_HR_ROLES.map(() => "?").join(",")})
+          OR e.branch_id = ?
+          OR EXISTS (
+            SELECT 1 FROM user_assignment_scope uas
+             WHERE uas.user_id = ur.user_id AND uas.active_status = 1
+               AND (uas.scope_type = 'all' OR (uas.scope_type IN ('branch', 'branch_process') AND uas.branch_id = ?))
+          )
+        )`,
+    [...HR_TEAM_ROLES, ...ORG_WIDE_HR_ROLES, branchId ?? "", branchId ?? ""],
   );
+}
+
+/** Requisitions can carry only a branch name; find its id so HR can be matched to the branch. */
+async function branchIdByName(branchName: string): Promise<string | null> {
+  if (!branchName) return null;
+  const [rows] = await db.execute<RowDataPacket[]>("SELECT id FROM branch_master WHERE branch_name = ? OR branch_code = ? LIMIT 1", [branchName, branchName]);
+  return rows[0]?.id ? String(rows[0].id) : null;
 }
 
 async function resolveBranchHeads(branchName: string): Promise<string[]> {
@@ -98,7 +122,7 @@ async function resolveAudience(
   a: Audience,
 ): Promise<string[]> {
   const [hr, bh, pm] = await Promise.all([
-    a.hr ? resolveHrTeam() : Promise.resolve([]),
+    a.hr ? resolveHrTeam(r.branchId ?? (await branchIdByName(r.branchName))) : Promise.resolve([]),
     a.branchHead ? resolveBranchHeads(r.branchName) : Promise.resolve([]),
     a.processManager
       ? resolveProcessManagers(r.processId)
@@ -393,7 +417,8 @@ export async function runRequisitionDeadlineSweep(
 
 // ── HR decisions ────────────────────────────────────────────────────────────
 
-export async function listPendingExpiryDecisions() {
+export async function listPendingExpiryDecisions(scope?: HrBranchScope) {
+  const branch = scope ? requisitionBranchCondition(scope, "jr") : { sql: "1=1", params: [] as string[] };
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT d.id, d.requisition_id, d.cycle_no, DATE_FORMAT(d.validity_at_detection, '%Y-%m-%d') AS validity,
             d.requested_headcount, jr.fulfilled_headcount, d.created_at,
@@ -401,8 +426,9 @@ export async function listPendingExpiryDecisions() {
             DATE_FORMAT(jr.target_joining_date, '%Y-%m-%d') AS target_joining_date
        FROM job_requisition_expiry_decision d
        JOIN job_requisition jr ON jr.id = d.requisition_id
-      WHERE d.status = 'pending' AND jr.approval_status = 'approved' AND jr.active_status = 1
+      WHERE d.status = 'pending' AND jr.approval_status = 'approved' AND jr.active_status = 1 AND ${branch.sql}
       ORDER BY d.validity_at_detection ASC`,
+    branch.params,
   );
   return rows;
 }
@@ -426,6 +452,7 @@ export async function decideExpiry(
   actor: { id: string; name: string | null },
   input: ExpiryDecisionInput,
   today: string = getCurrentDateIST(),
+  scope?: HrBranchScope,
 ): Promise<void> {
   const reason = input.reason?.trim();
   if (!reason) throw new ExpiryDecisionError("A reason is required", 400);
@@ -446,6 +473,13 @@ export async function decideExpiry(
   const requisitionId = rows[0]?.requisition_id
     ? String(rows[0].requisition_id)
     : null;
+  if (requisitionId && scope) {
+    const [own] = await db.execute<RowDataPacket[]>("SELECT branch_id, branch_name FROM job_requisition WHERE id = ? LIMIT 1", [requisitionId]);
+    const target = own[0];
+    if (!branchInScope(scope, target?.branch_id ? String(target.branch_id) : null, target?.branch_name ? String(target.branch_name) : null)) {
+      throw new ExpiryDecisionError("This requisition belongs to another branch", 403);
+    }
+  }
   if (!requisitionId)
     throw new ExpiryDecisionError(
       "This decision was already made by someone else",
