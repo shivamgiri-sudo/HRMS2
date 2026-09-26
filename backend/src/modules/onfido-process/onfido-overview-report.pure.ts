@@ -97,7 +97,7 @@ export function computeManpower(approvedHc: number | null, activeHc: number | nu
 export type ProcessQueue = "EXTRACTION" | "POA" | "ENCORD";
 export const PROCESS_QUEUES: readonly ProcessQueue[] = ["EXTRACTION", "POA", "ENCORD"];
 export const QUEUE_LABELS: Record<ProcessQueue, string> = {
-  EXTRACTION: "Extraction Queue",
+  EXTRACTION: "EWYS Queue",
   POA: "POA Queue",
   ENCORD: "Encord",
 };
@@ -247,6 +247,9 @@ export type DocTaskGroup = (typeof DOC_TASK_GROUPS)[number];
  */
 export function classifyTaskType(raw: string | null | undefined): DocTaskGroup {
   const t = String(raw ?? "").toLowerCase();
+  // Raw extraction IS EWYS (business decision 2026-09-26); it must be tested before "label",
+  // because the task type reads process_labelling_document_raw_extraction.
+  if (t.includes("raw_extraction") || t.includes("raw extraction")) return "EWYS";
   if (t.includes("label")) return "Labelling";
   if (t.includes("address")) return "EWYS Address";
   if (t.includes("consist")) return "Consistency";

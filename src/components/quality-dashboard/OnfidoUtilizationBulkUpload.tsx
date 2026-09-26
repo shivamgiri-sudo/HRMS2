@@ -37,7 +37,7 @@ const OPTIONAL_COLUMNS = ["approved_hc", "buffer_pct", "shortfall"];
 const ALL_COLUMNS = [...REQUIRED_COLUMNS, ...OPTIONAL_COLUMNS];
 
 const SAMPLE_CSV = `upload_date,queue_name,approved_hc,required_hc,active_hc,buffer_pct,shortfall
-01-06-2026,Extraction Queue,55,66,60,9.1,0
+01-06-2026,EWYS Queue,55,66,60,9.1,0
 01-06-2026,POA Queue,50,60,66,-,-
 01-06-2026,Encord,-,-,-,-,-`;
 
@@ -178,7 +178,7 @@ export function OnfidoUtilizationBulkUpload() {
       </div>
 
       <p className="text-xs text-slate-500">
-        Weekly or daily queue-wise headcount for the Onfido process (Extraction Queue, POA Queue, Encord, etc.),
+        Weekly or daily queue-wise headcount for the Onfido process (EWYS Queue, POA Queue, Encord, etc.),
         feeding the dashboard&apos;s Queue Wise panel directly. CSV or Excel (.xlsx/.xls) — the header row must contain{" "}
         <strong>upload_date, queue_name, required_hc, active_hc</strong> (optionally <strong>approved_hc, buffer_pct, shortfall</strong>) in any order.
         Date format: <strong>DD-MM-YYYY</strong> or <strong>YYYY-MM-DD</strong>. The uploaded file must contain static values only — no formulas.

@@ -1940,7 +1940,7 @@ export async function getQualityOverview(rawFilters: { from?: string; to?: strin
     classificationErrorRate: kpi("quality_class", "Classification Error Rate", r2(Number(agg.classN ?? 0)), "percent", `${agg.classN ?? 0} of ${total}`),
     extractionErrorRate: kpi("quality_ext", "Extraction Error Rate", r2(Number(agg.extN ?? 0)), "percent", `${agg.extN ?? 0} of ${total}`),
     addExtractionErrorRate: kpi("quality_add_ext", "Add. Extraction Error Rate", r2(Number(agg.addExtN ?? 0)), "percent", `${agg.addExtN ?? 0} of ${total}`),
-    rawExtractionErrorRate: kpi("quality_raw_ext", "Raw Extraction Error Rate", r2(Number(agg.rawExtN ?? 0)), "percent", `${agg.rawExtN ?? 0} of ${total}`),
+    rawExtractionErrorRate: kpi("quality_raw_ext", "EWYS Error Rate", r2(Number(agg.rawExtN ?? 0)), "percent", `${agg.rawExtN ?? 0} of ${total}`),
   };
 }
 

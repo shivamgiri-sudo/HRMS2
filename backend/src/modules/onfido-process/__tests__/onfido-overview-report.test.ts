@@ -173,7 +173,7 @@ describe("staffing aggregation (attrition and shrinkage)", () => {
 
 describe("task-type grouping", () => {
   it("tests the specific names before the general ones", () => {
-    expect(classifyTaskType("process_labelling_document_raw_extraction")).toBe("Labelling");
+    expect(classifyTaskType("process_labelling_document_raw_extraction")).toBe("EWYS");
     expect(classifyTaskType("process_ewys_address")).toBe("EWYS Address");
     expect(classifyTaskType("process_classification_document")).toBe("Classification");
     expect(classifyTaskType("process_ewys_document")).toBe("EWYS");

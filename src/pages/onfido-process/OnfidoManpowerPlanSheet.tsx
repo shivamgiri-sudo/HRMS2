@@ -18,7 +18,7 @@ export interface PlanRecord {
 }
 
 export const QUEUE_OPTIONS: { key: PlanQueue; label: string }[] = [
-  { key: "EXTRACTION", label: "Extraction Queue" },
+  { key: "EXTRACTION", label: "EWYS Queue" },
   { key: "POA", label: "POA Queue" },
   { key: "ENCORD", label: "Encord" },
 ];

@@ -460,9 +460,10 @@ function pivotTaskTypeTrend(points: DocTaskTypeTrendPoint[], metric: "taskCount"
 function prettyTaskType(raw: string): string {
   return raw
     .replace(/^process_/i, "")
+    .replace(/raw_extraction/i, "ewys")
     .split(/[_\s]+/)
     .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .map((w) => (w.toLowerCase() === "ewys" ? "EWYS" : w.charAt(0).toUpperCase() + w.slice(1)))
     .join(" ");
 }
 
@@ -2436,7 +2437,7 @@ function QualityView({
     { name: "Classification Error %", value: ov.classificationErrorRate?.value ?? null, external: true },
     { name: "Extraction Error %", value: ov.extractionErrorRate?.value ?? null, external: true },
     { name: "Add. Extraction Error %", value: ov.addExtractionErrorRate?.value ?? null, external: true },
-    { name: "Raw Extraction Error %", value: ov.rawExtractionErrorRate?.value ?? null, external: true },
+    { name: "EWYS Error %", value: ov.rawExtractionErrorRate?.value ?? null, external: true },
     { name: "Int Overall Error %", value: intOv?.overallErrorRate?.value ?? null, external: false },
     { name: "POA Error %", value: poaOv?.errorRate?.value ?? null, external: false },
     { name: "Ext POA %", value: poaExtOv?.errorRate?.value ?? null, external: true },
@@ -2463,7 +2464,7 @@ function QualityView({
       { label: "Classification Error %", external: true, getVal: (b) => metricByBucket.get(b)?.classificationErrorRate ?? null },
       { label: "Extraction Error %", external: true, getVal: (b) => metricByBucket.get(b)?.extractionErrorRate ?? null },
       { label: "Add. Extraction Error %", external: true, getVal: (b) => metricByBucket.get(b)?.addExtractionErrorRate ?? null },
-      { label: "Raw Extraction Error %", external: true, getVal: (b) => metricByBucket.get(b)?.rawExtractionErrorRate ?? null },
+      { label: "EWYS Error %", external: true, getVal: (b) => metricByBucket.get(b)?.rawExtractionErrorRate ?? null },
       { label: "Int Overall Error %", external: false, getVal: (b) => intByBucket.get(b)?.errorRate ?? null },
       { label: "POA Error %", external: false, getVal: (b) => poaByBucket.get(b)?.errorRate ?? null },
       {

@@ -57,7 +57,7 @@ function optionalRemarks(raw: unknown): Parsed<string | null> {
 export function parseManpowerPlanInput(raw: unknown): Parsed<ManpowerPlanInput> {
   if (typeof raw !== "object" || raw === null) return fail("Request body must be an object.");
   const r = raw as Record<string, unknown>;
-  if (!PROCESS_QUEUES.includes(r.processQueue as ProcessQueue)) return fail("Queue must be Extraction, POA or Encord.");
+  if (!PROCESS_QUEUES.includes(r.processQueue as ProcessQueue)) return fail("Queue must be EWYS, POA or Encord.");
   if (!isIsoDay(r.effectiveFrom)) return fail("Effective from must be a valid date.");
   const approved = optionalNumber(r.approvedHc, "Approved HC", { integer: true, max: MAX_HC });
   if (!approved.ok) return approved;
