@@ -1,10 +1,9 @@
 import { Router, type NextFunction, type Response } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { getBellavitaSaleDashboard, currentMonthRange, setBellavitaSaleMonthlyTarget, getBellavitaSaleDateLobMatrix } from "./bellavita-sale-dashboard.service.js";
+import { getBellavitaSaleDashboard, currentMonthRange, getBellavitaSaleDateLobMatrix } from "./bellavita-sale-dashboard.service.js";
 import { getBellavitaAgentPerformance, getBellavitaAgentDetail } from "./bellavita-agent-performance.service.js";
 import { hasAnyRole } from "../../shared/scopeAccess.js";
-import { writeAuditLog } from "../../shared/auditLog.js";
 import { TARGET_ADMIN_ROLES } from "./dashboard-monthly-target.shared.js";
 
 const router = Router();
@@ -43,29 +42,13 @@ router.get("/bellavita-sale-dashboard/date-lob-matrix", requireRole(...VIEWER_RO
   res.json({ success: true, data });
 }));
 
-router.put("/bellavita-sale-dashboard/monthly-target", requireRole(...TARGET_ADMIN_ROLES), h(async (req, res) => {
-  const body = (req.body ?? {}) as { lob?: string; month?: string; target?: number | string; reason?: string };
-  const lob = String(body.lob ?? "").trim();
-  if (!lob) return res.status(400).json({ success: false, error: "lob is required" });
-  let change;
-  try {
-    change = await setBellavitaSaleMonthlyTarget(lob, String(body.month ?? ""), Number(body.target), req.authUser!.id);
-  } catch (err) {
-    return res.status(400).json({ success: false, error: err instanceof Error ? err.message : "Invalid target" });
-  }
-  await writeAuditLog({
-    actor_user_id: req.authUser!.id,
-    action_type: "BB_SALE_MONTHLY_TARGET_SET",
-    module_key: "process-performance",
-    entity_type: "dashboard_metric_target",
-    entity_id: `bellavita_sale:${lob}:${change.month}`,
-    reason: body.reason ? String(body.reason) : undefined,
-    old_value_json: { target: change.oldValue },
-    new_value_json: { target: change.newValue, lob, month: change.month },
-    req,
-  });
-  res.json({ success: true, data: change });
-}));
+// Retired: Bellavita targets are automatic now (bellavita-auto-targets.shared.ts) -- Repeat / Chat /
+// Inbound from their fixed monthly figures, Abandon Cart from its date-wise conv% x allocation x 500
+// table -- so there is nothing to set. Kept as an explicit 410 (not deleted) so an old client gets a
+// clear answer instead of a silent 404, and so no manual value can be written that nothing reads.
+router.put("/bellavita-sale-dashboard/monthly-target", requireRole(...TARGET_ADMIN_ROLES), (_req, res) => {
+  res.status(410).json({ success: false, error: "Bellavita targets are automatic and can no longer be set by hand." });
+});
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 

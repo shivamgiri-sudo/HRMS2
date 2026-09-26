@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Search } from "lucide-react";
 import { DashboardExportMenu, type ExportSlide } from "./DashboardKit";
 import { BellavitaAgentDetailDrawer } from "./BellavitaAgentDetailDrawer";
+import { useSortableRows } from "./useSortableRows";
+import { FilterSortTh, useColumnFilters, type FilterColumn } from "./ColumnFilterHeader";
 
 interface AgentRow {
   empId: string;
@@ -29,6 +31,14 @@ interface AgentRow {
   avgSale: number;
 }
 
+/** Hours (2 dp, as the API sends them) -> average per attendance day as H:MM:SS ("—" with no attendance). */
+const avgHms = (hours: number, days: number): string => {
+  if (!(days > 0)) return "—";
+  const t = Math.round((hours / days) * 3600);
+  return `${Math.floor(t / 3600)}:${String(Math.floor((t % 3600) / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+};
+const avgSec = (hours: number, days: number): number | null => (days > 0 ? Math.round((hours / days) * 3600) : null);
+
 const formatINR = (v: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(v);
 
@@ -40,6 +50,40 @@ function Spinner() {
   );
 }
 
+interface Col {
+  key: string; label: string;
+  /** Raw value -- what the column sorts by and what its filter list offers. */
+  get: (r: AgentRow) => string | number | null;
+  cell: (r: AgentRow) => ReactNode;
+  className?: string;
+}
+const TD = "border border-slate-200 px-3 py-2";
+const COLS: Col[] = [
+  { key: "agent", label: "Agent", get: (r) => r.empName, cell: (r) => null },
+  { key: "tl", label: "TL", get: (r) => r.teamLeader, cell: (r) => r.teamLeader, className: "text-slate-500" },
+  { key: "lob", label: "LOB", get: (r) => r.lob, cell: (r) => r.lob, className: "text-slate-500" },
+  { key: "tenure", label: "Tenure", get: (r) => r.tenureDays, cell: (r) => r.tenureDays ?? "—", className: "text-slate-600" },
+  { key: "attendance", label: "Attendance", get: (r) => r.attendanceDays, cell: (r) => r.attendanceDays, className: "text-slate-600" },
+  { key: "login", label: "Login Hrs", get: (r) => r.loginHours, cell: (r) => r.loginHours, className: "text-slate-600" },
+  { key: "break", label: "Break Hrs", get: (r) => r.breakHours, cell: (r) => r.breakHours, className: "text-slate-600" },
+  { key: "talk", label: "Talk Hrs", get: (r) => r.talkHours, cell: (r) => r.talkHours, className: "text-slate-600" },
+  { key: "avgLogin", label: "Avg Login", get: (r) => avgSec(r.loginHours, r.attendanceDays), cell: (r) => avgHms(r.loginHours, r.attendanceDays), className: "text-slate-600" },
+  { key: "avgBreak", label: "Avg Break", get: (r) => avgSec(r.breakHours, r.attendanceDays), cell: (r) => avgHms(r.breakHours, r.attendanceDays), className: "text-slate-600" },
+  { key: "avgTalk", label: "Avg Talk", get: (r) => avgSec(r.talkHours, r.attendanceDays), cell: (r) => avgHms(r.talkHours, r.attendanceDays), className: "font-semibold text-indigo-700" },
+  { key: "acht", label: "ACHT", get: (r) => r.achtSeconds, cell: (r) => `${r.achtSeconds}s`, className: "text-slate-600" },
+  { key: "sale", label: "Sale", get: (r) => r.saleCount, cell: (r) => r.saleCount, className: "font-semibold text-slate-800" },
+  { key: "zecpe", label: "Zecpe", get: (r) => r.zecpeCount, cell: (r) => r.zecpeCount, className: "text-slate-600" },
+  { key: "website", label: "Website", get: (r) => r.websiteCount, cell: (r) => r.websiteCount, className: "text-slate-600" },
+  { key: "draft", label: "Draft Order", get: (r) => r.draftOrderCount, cell: (r) => r.draftOrderCount, className: "text-slate-600" },
+  { key: "cod", label: "COD%", get: (r) => r.codPct, cell: (r) => `${r.codPct}%`, className: "text-slate-600" },
+  { key: "paid", label: "Paid%", get: (r) => r.paidPct, cell: (r) => `${r.paidPct}%`, className: "text-slate-600" },
+  { key: "rto", label: "RTO%", get: (r) => r.rtoPct, cell: (r) => `${r.rtoPct}%`, className: "font-semibold" },
+  { key: "revenue", label: "Revenue", get: (r) => r.revenue, cell: (r) => formatINR(r.revenue), className: "font-semibold text-slate-800" },
+  { key: "avgSale", label: "Avg Sale", get: (r) => r.avgSale, cell: (r) => formatINR(r.avgSale), className: "text-slate-600" },
+];
+const FILTER_COLS: Array<FilterColumn<AgentRow>> = COLS.map((c) => ({ key: c.key, get: c.get }));
+const colGetter = (r: AgentRow, key: string) => COLS.find((c) => c.key === key)?.get(r);
+
 /**
  * Slide 2: per-agent performance, joining db_masmis.bb_apr (attendance/
  * login/talk-time) with db_masmis.bb_sale (sale outcomes) via GET
@@ -48,6 +92,9 @@ function Spinner() {
  * "Agent Metric" sheet are real (sourced from these two tables) vs.
  * deliberately left out (no real source exists in this app: DOJ, Bucket,
  * per-agent Target/Achiv%, TQ/MQ/BQ, Compliance%, Man Day, Start Date).
+ *
+ * Login / Break / Talk Hrs are range TOTALS; the Avg columns divide them by the agent's attendance days
+ * (P = 1, HD = 0.5) so agents with different attendance compare fairly.
  */
 export function BellavitaAgentPerformance({ from, to, lob }: { from: string; to: string; lob?: string }) {
   const [rows, setRows] = useState<AgentRow[] | null>(null);
@@ -74,11 +121,14 @@ export function BellavitaAgentPerformance({ from, to, lob }: { from: string; to:
 
   useEffect(() => { void load(); }, [load]);
 
-  const filteredRows = useMemo(() => {
+  const searchedRows = useMemo(() => {
     const q = nameSearch.trim().toLowerCase();
     if (!q || !rows) return rows ?? [];
     return rows.filter((r) => r.empName.toLowerCase().includes(q) || r.empId.toLowerCase().includes(q));
   }, [rows, nameSearch]);
+  // Excel-style: every header sorts (click) and filters (funnel icon); filters AND together, then the sort applies.
+  const filters = useColumnFilters(searchedRows, FILTER_COLS);
+  const { sorted: filteredRows, sortKey, sortDir, toggleSort } = useSortableRows(filters.filtered, colGetter);
 
   const exportSlides = useMemo<ExportSlide[]>(() => {
     if (!rows) return [];
@@ -86,10 +136,10 @@ export function BellavitaAgentPerformance({ from, to, lob }: { from: string; to:
       title: "Agent Performance",
       tables: [{
         title: "Agent Performance",
-        columns: ["Agent", "Emp ID", "TL", "LOB", "Tenure", "Attendance", "Login Hrs", "Break Hrs", "Talk Hrs", "ACHT", "Sale", "Zecpe", "Website", "Draft Order", "COD%", "Paid%", "RTO%", "Revenue", "Avg Sale"],
+        columns: ["Agent", "Emp ID", "TL", "LOB", "Tenure", "Attendance", "Login Hrs", "Break Hrs", "Talk Hrs", "Avg Login", "Avg Break", "Avg Talk", "ACHT", "Sale", "Zecpe", "Website", "Draft Order", "COD%", "Paid%", "RTO%", "Revenue", "Avg Sale"],
         rows: rows.map((r) => [
           r.empName, r.empId, r.teamLeader, r.lob, r.tenureDays ?? "—", r.attendanceDays, r.loginHours, r.breakHours,
-          r.talkHours, `${r.achtSeconds}s`, r.saleCount, r.zecpeCount, r.websiteCount, r.draftOrderCount,
+          r.talkHours, avgHms(r.loginHours, r.attendanceDays), avgHms(r.breakHours, r.attendanceDays), avgHms(r.talkHours, r.attendanceDays), `${r.achtSeconds}s`, r.saleCount, r.zecpeCount, r.websiteCount, r.draftOrderCount,
           `${r.codPct}%`, `${r.paidPct}%`, `${r.rtoPct}%`, formatINR(r.revenue), formatINR(r.avgSale),
         ]),
       }],
@@ -107,6 +157,11 @@ export function BellavitaAgentPerformance({ from, to, lob }: { from: string; to:
           <p className="text-sm font-semibold text-slate-700">Agent Performance ({filteredRows.length} of {rows.length} agents)</p>
           {lob && lob !== "All" && (
             <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-700">LOB: {lob}</span>
+          )}
+          {filters.activeCount > 0 && (
+            <button type="button" onClick={filters.clearAll} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-200">
+              Clear {filters.activeCount} filter{filters.activeCount > 1 ? "s" : ""}
+            </button>
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -134,24 +189,15 @@ export function BellavitaAgentPerformance({ from, to, lob }: { from: string; to:
         <table className="w-full border-collapse text-center text-xs">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-slate-500">
-              <th className="sticky left-0 z-10 min-w-[140px] border border-slate-200 bg-slate-50 px-3 py-2 font-semibold shadow-[2px_0_6px_-2px_rgba(0,0,0,0.15)]">Agent</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">TL</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">LOB</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Tenure</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Attendance</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Login Hrs</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Break Hrs</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Talk Hrs</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">ACHT</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Sale</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Zecpe</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Website</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Draft Order</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">COD%</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Paid%</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">RTO%</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Revenue</th>
-              <th className="border border-slate-200 bg-slate-50 px-3 py-2 font-semibold">Avg Sale</th>
+              {COLS.map((c) => (
+                <FilterSortTh
+                  key={c.key} label={c.label} columnKey={c.key} sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} filters={filters}
+                  sticky={c.key === "agent"}
+                  className={c.key === "agent"
+                    ? "min-w-[140px] border border-slate-200 bg-slate-50 px-3 py-2 font-semibold shadow-[2px_0_6px_-2px_rgba(0,0,0,0.15)]"
+                    : "border border-slate-200 bg-slate-50 px-3 py-2 font-semibold"}
+                />
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -161,27 +207,13 @@ export function BellavitaAgentPerformance({ from, to, lob }: { from: string; to:
                   <div className="font-medium text-rose-700 underline-offset-2 hover:underline">{r.empName}</div>
                   <div className="text-[11px] text-slate-400">{r.empId}</div>
                 </td>
-                <td className="border border-slate-200 px-3 py-2 text-slate-500">{r.teamLeader}</td>
-                <td className="border border-slate-200 px-3 py-2 text-slate-500">{r.lob}</td>
-                <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.tenureDays ?? "—"}</td>
-                <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.attendanceDays}</td>
-                <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.loginHours}</td>
-                <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.breakHours}</td>
-                <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.talkHours}</td>
-                <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.achtSeconds}s</td>
-                <td className="border border-slate-200 px-3 py-2 font-semibold text-slate-800">{r.saleCount}</td>
-                <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.zecpeCount}</td>
-                <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.websiteCount}</td>
-                <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.draftOrderCount}</td>
-                <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.codPct}%</td>
-                <td className="border border-slate-200 px-3 py-2 text-slate-600">{r.paidPct}%</td>
-                <td className={`border border-slate-200 px-3 py-2 font-semibold ${r.rtoPct > 10 ? "text-red-600" : "text-slate-600"}`}>{r.rtoPct}%</td>
-                <td className="border border-slate-200 px-3 py-2 font-semibold text-slate-800">{formatINR(r.revenue)}</td>
-                <td className="border border-slate-200 px-3 py-2 text-slate-600">{formatINR(r.avgSale)}</td>
+                {COLS.filter((c) => c.key !== "agent").map((c) => (
+                  <td key={c.key} className={`${TD} ${c.key === "rto" ? (r.rtoPct > 10 ? "text-red-600" : "text-slate-600") : ""} ${c.className ?? ""}`.replace(/s+/g, " ")}>{c.cell(r)}</td>
+                ))}
               </tr>
             ))}
             {filteredRows.length === 0 && (
-              <tr><td colSpan={18} className="border border-slate-200 py-6 text-center text-slate-400">{rows.length === 0 ? "No agent data for this period." : "No agents match this search."}</td></tr>
+              <tr><td colSpan={21} className="border border-slate-200 py-6 text-center text-slate-400">{rows.length === 0 ? "No agent data for this period." : "No agents match the search / filters."}</td></tr>
             )}
           </tbody>
         </table>

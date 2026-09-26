@@ -5,6 +5,7 @@ import { ProjectDetailView } from "@/pages/NativeInboundDashboard";
 import { BellavitaSaleDashboard } from "@/components/process-performance/BellavitaSaleDashboard";
 import { GncSaleDashboard } from "@/components/process-performance/GncSaleDashboard";
 import { GncChatDashboard } from "@/components/process-performance/GncChatDashboard";
+import { GncTargetsDashboard } from "@/components/process-performance/GncTargetsDashboard";
 import { GncAbandonCartDashboard } from "@/components/process-performance/GncAbandonCartDashboard";
 import { InboundInsightsDashboard, type InboundInsightProject } from "@/components/process-performance/InboundInsightsDashboard";
 import { NeemansCartDashboard } from "@/components/process-performance/NeemansCartDashboard";
@@ -12,6 +13,7 @@ import { NeemansPerformanceDashboard } from "@/components/process-performance/Ne
 import { NeemansChatDashboard } from "@/components/process-performance/NeemansChatDashboard";
 import { BellavitaChatDashboard } from "@/components/process-performance/BellavitaChatDashboard";
 import { BellavitaCartDashboard } from "@/components/process-performance/BellavitaCartDashboard";
+import { DalmiaDashboard } from "@/components/process-performance/DalmiaDashboard";
 import { HousingOwnerDashboard } from "@/components/process-performance/HousingOwnerDashboard";
 import { HousingPremiumSaleDashboard } from "@/components/process-performance/HousingPremiumSaleDashboard";
 import { LpFeedbackDashboard } from "@/components/process-performance/LpFeedbackDashboard";
@@ -20,8 +22,8 @@ import { SatyaRetailDashboard } from "@/components/process-performance/SatyaReta
 import { CloviaDashboard } from "@/components/process-performance/CloviaDashboard";
 import { BirlanuDashboard } from "@/components/process-performance/BirlanuDashboard";
 import { AppreciateWealthDashboard } from "@/components/process-performance/AppreciateWealthDashboard";
-import { DalmiaDashboard } from "@/components/process-performance/DalmiaDashboard";
 import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
+import { useTpzAccess } from "@/hooks/useTpzAccess";
 import { apiUrl } from "@/lib/apiBase";
 import { TONE_CLASSES, TONE_GRADIENT_CLASSES, type Tone } from "@/lib/processPerformanceTones";
 import { UploaderHub, type UploaderHubItem } from "@/components/process-performance/UploaderHub";
@@ -94,7 +96,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
  * separate mapping. "stub" entries are the pre-existing "nothing built
  * yet" placeholders (Neemans' Sale/Allocation cards) -- unchanged.
  */
-const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" }>>> = {
+const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" }>>> = {
   bellavita: [
     { key: "sale_performance", label: "Overall Dashboard", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
     { key: "chat_performance", label: "Chat Sale Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
@@ -119,6 +121,7 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
   gnc: [
     { key: "sale_performance", label: "Overall Dashboard", description: "Gross revenue, prepaid%, allocation, top performers — live from uploaded sale data", kind: "gnc_sale" },
     { key: "abandon_cart", label: "Abandon Cart Dashboard", description: "Cart-recovery funnel, conversion, weekly comparison & top products — live from uploaded allocation/sale data", kind: "gnc_abandon_cart" },
+    { key: "targets", label: "Targets", description: "Monthly revenue target per LOB (Inbound, Chat, Abandon Cart) — editable, and used by every GNC dashboard incl. agent-wise", kind: "gnc_targets" },
     { key: "chat_performance", label: "Chat Performance", description: "Tickets, unique/repeat, FRT/resolution TAT, QRC & agent-wise, with Sale (Chat) linkage — live from uploaded chat data", kind: "gnc_chat" },
     { key: "inbound", label: "Inbound", description: "Live call performance — Overview, agent-wise & date-wise breakdowns", kind: "inbound" },
   ],
@@ -138,8 +141,8 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
     { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%, FCR%", kind: "inbound" },
   ],
   dalmia: [
-    { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%", kind: "inbound" },
     { key: "performance", label: "Inbound & Outbound Performance", description: "Calls, AL/SL, language-wise, outbound, QRC and leads — inbound live from the dialer, DD/Outbound/APR from the uploaders", kind: "dalmia_dashboard" },
+    { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%", kind: "inbound" },
   ],
   dubangladesh: [
     { key: "inbound", label: "Inbound", description: "Live call performance — AL%, SL%, ACHT, Repeat%", kind: "inbound" },
@@ -531,11 +534,25 @@ export default function ProcessPerformanceV2Page() {
   const [company, setCompany] = useState<CompanyKey | null>(null);
   const [section, setSection] = useState<SectionKey | null>(null);
   const [selectedUploader, setSelectedUploader] = useState<{ code: string; label: string } | null>(null);
-  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" } | null>(null);
+  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" } | null>(null);
   const [stats, setStats] = useState({ totalFilesUploaded: 0, activeUsers: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
 
+  // Admin-assigned access (Settings -> TPZ Access). A role-based user who has not been narrowed sees the page exactly as before;
+  // anyone else -- a granted user, or a role-based user an admin restricted -- sees only their processes and sections.
+  const { data: tpz } = useTpzAccess();
+  const limited = tpz !== undefined && !tpz.roleBased;
+  const grantFor = (key: CompanyKey) => tpz?.companies.find((c) => c.key === key);
+  const visibleCompanies = limited ? COMPANIES.filter((c) => grantFor(c.key)) : COMPANIES;
+  const sectionAllowed = (key: CompanyKey, sec: SectionKey): boolean => {
+    if (!limited) return true;
+    const g = grantFor(key);
+    return sec === "dashboards" ? Boolean(g?.dashboards) : sec === "uploader" ? Boolean(g?.upload) : Boolean(g?.mis);
+  };
+  const showUploadStats = !limited || Boolean(tpz?.companies.some((c) => c.upload));
+
   useEffect(() => {
+    if (limited && !showUploadStats) { setStatsLoading(false); return; }
     let cancelled = false;
     hrmsApi
       .get<{ success: boolean; data: { totalFilesUploaded: number; activeUsers: number } }>(
@@ -545,7 +562,7 @@ export default function ProcessPerformanceV2Page() {
       .catch(() => { /* leave zeros — the stat cards show 0 rather than block the page */ })
       .finally(() => { if (!cancelled) setStatsLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [limited, showUploadStats]);
 
   const companyLabel = COMPANIES.find((c) => c.key === company)?.label ?? "";
   // Companies with exactly one dashboard tile (Housing Owner, Housing Premium, Clovia, ...)
@@ -566,27 +583,34 @@ export default function ProcessPerformanceV2Page() {
           <div className="space-y-6">
             <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-50 via-violet-50 to-fuchsia-50 p-6 sm:p-8">
               <p className="text-xs font-bold uppercase tracking-wider text-indigo-500">Welcome</p>
-              <h1 className="mt-1 text-2xl font-bold text-slate-900 sm:text-3xl">Process Performance V2</h1>
+              <h1 className="mt-1 text-2xl font-bold text-slate-900 sm:text-3xl">TPZ Process</h1>
               <p className="mt-1 max-w-xl text-sm text-slate-600">
                 Select a process to manage data, upload files and view performance dashboards.
               </p>
             </div>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <StatCard icon={LayoutGrid} label="Total Processes" value={COMPANIES.length} tone="emerald" />
-              <StatCard icon={UploadCloud} label="Total Files Uploaded" value={stats.totalFilesUploaded} tone="indigo" loading={statsLoading} />
-              <StatCard icon={Users} label="Active Users" value={stats.activeUsers} tone="fuchsia" loading={statsLoading} />
+              <StatCard icon={LayoutGrid} label={limited ? "Your Processes" : "Total Processes"} value={visibleCompanies.length} tone="emerald" />
+              {showUploadStats && <StatCard icon={UploadCloud} label="Total Files Uploaded" value={stats.totalFilesUploaded} tone="indigo" loading={statsLoading} />}
+              {showUploadStats && <StatCard icon={Users} label="Active Users" value={stats.activeUsers} tone="fuchsia" loading={statsLoading} />}
             </div>
 
             <div>
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-sm font-bold text-slate-900">All Processes</h2>
-                <Link to="/bulk-upload" className="text-xs font-semibold text-indigo-600 hover:underline">
-                  View All
-                </Link>
+                {!limited && (
+                  <Link to="/bulk-upload" className="text-xs font-semibold text-indigo-600 hover:underline">
+                    View All
+                  </Link>
+                )}
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {COMPANIES.map((c) => {
+                {visibleCompanies.length === 0 && (
+                  <p className="col-span-full rounded-xl border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-400">
+                    No processes are assigned to you yet.
+                  </p>
+                )}
+                {visibleCompanies.map((c) => {
                   const meta = COMPANY_META[c.key];
                   return (
                     <Box
@@ -609,7 +633,7 @@ export default function ProcessPerformanceV2Page() {
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel]} onBack={reset} />
             <BoxGrid>
-              {SECTIONS.map((s) => (
+              {SECTIONS.filter((s) => sectionAllowed(company, s.key)).map((s) => (
                 <Box
                   key={s.key}
                   icon={s.key === "dashboards" ? LayoutDashboard : s.key === "uploader" ? Upload : FileText}
@@ -670,9 +694,16 @@ export default function ProcessPerformanceV2Page() {
                 ? <InboundInsightsDashboard projectKey={company as InboundInsightProject} />
                 : <InboundDashboardTab projectKey={company} />
             ) : selectedDashboard.kind === "bellavita_sale" ? (
-              <BellavitaSaleDashboard />
+              <BellavitaSaleDashboard
+                onOpenDashboard={(key) => {
+                  const target = DASHBOARDS_BY_COMPANY.bellavita?.find((d) => d.key === key);
+                  if (target) setSelectedDashboard({ key: target.key, label: target.label, kind: target.kind });
+                }}
+              />
             ) : selectedDashboard.kind === "gnc_sale" ? (
               <GncSaleDashboard />
+            ) : selectedDashboard.kind === "gnc_targets" ? (
+              <GncTargetsDashboard />
             ) : selectedDashboard.kind === "gnc_abandon_cart" ? (
               <GncAbandonCartDashboard />
             ) : selectedDashboard.kind === "gnc_chat" ? (
@@ -685,6 +716,8 @@ export default function ProcessPerformanceV2Page() {
               <NeemansChatDashboard />
             ) : selectedDashboard.kind === "bellavita_chat" ? (
               <BellavitaChatDashboard />
+            ) : selectedDashboard.kind === "dalmia_dashboard" ? (
+              <DalmiaDashboard />
             ) : selectedDashboard.kind === "bellavita_cart" ? (
               <BellavitaCartDashboard />
             ) : selectedDashboard.kind === "housing_owner_sale" ? (
@@ -703,8 +736,6 @@ export default function ProcessPerformanceV2Page() {
               <AppreciateWealthDashboard />
             ) : selectedDashboard.kind === "birlanu_dashboard" ? (
               <BirlanuDashboard />
-            ) : selectedDashboard.kind === "dalmia_dashboard" ? (
-              <DalmiaDashboard />
             ) : (
               <div className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white p-16 text-sm text-slate-400">
                 Nothing here yet

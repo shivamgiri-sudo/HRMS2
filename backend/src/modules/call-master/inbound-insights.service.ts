@@ -318,34 +318,87 @@ function bucketIndex(sec: number, buckets: readonly { min: number; max: number }
 }
 
 /**
- * First-contact-resolution for projects that have it (Neemans): the same
- * data_master_in Field2 = 'FCR' share inbound.service.ts reports, for the same
- * client. Best-effort -- a failure here must not take the whole dashboard down.
+ * First-contact-resolution, tagged by the agent on the dialer's disposition form (dialer_db.data_master_in).
+ *  - Neemans:   client 475, Field1 = 'Inbound', FCR = Field2 = 'FCR', over the calls that carry a Field2 tag
+ *               (the same share inbound.service.ts / the SOP report use).
+ *  - Bellavita: client 375, Field13 = 'Inbound', FCR = Field28 = 'FCR', over every tagged inbound call
+ *               (the SOP report's definition, inbound-cdr-sync.service.ts bellavitaQuery) -- "Not Required" counts in the base.
+ * The tagging row carries the agent as callcreated = "DialDesk - <employee code>", which is the CDR's AgentId.
+ * Best-effort -- a failure here must not take the whole dashboard down.
  */
-async function loadFcr(clientId: number | undefined, f: InsightFilters): Promise<{ overall: number | null; byDate: Map<string, number> } | null> {
-  if (!clientId) return null;
+const FCR_SOURCES: Record<string, { clientId: number; valueField: string; inboundCond: string; totalExpr: string }> = {
+  neemans: { clientId: 475, valueField: "Field2", inboundCond: "Field1 = 'Inbound'", totalExpr: "COUNT(Field2)" },
+  bellavita: { clientId: 375, valueField: "Field28", inboundCond: "Field13 = 'Inbound'", totalExpr: "COUNT(*)" },
+};
+
+interface FcrResult {
+  overall: number | null;
+  byDate: Map<string, number>;
+  byAgent: Map<string, { fcr: number; tot: number }>;
+  byAgentDate: Map<string, { fcr: number; tot: number }>;
+}
+
+const agentCodeOf = (callcreated: unknown): string => {
+  const m = /-\s*([A-Za-z0-9]+)\s*$/.exec(String(callcreated ?? ""));
+  return m ? m[1].toUpperCase() : "";
+};
+
+// data_master_in is large and the range scan takes 7-20s on the shared DB, so a result is kept for a while and a slow
+// query is never awaited past FCR_WAIT_MS -- the dashboard then shows "—" for FCR and the finished query fills the cache.
+const FCR_TTL_MS = 15 * 60 * 1000;
+const FCR_WAIT_MS = 22_000;
+const fcrCache = new Map<string, { at: number; value: Promise<FcrResult | null> }>();
+
+async function queryFcr(projectKey: string, f: InsightFilters): Promise<FcrResult | null> {
+  const src = FCR_SOURCES[projectKey];
+  if (!src) return null;
   try {
     const pool = await getDialerPool();
     const [raw] = await pool.execute(
-      `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS d,
-              SUM(CASE WHEN Field2='FCR' THEN 1 ELSE 0 END) AS fcr, COUNT(Field2) AS tot
+      `SELECT DATE_FORMAT(CallDate,'%Y-%m-%d') AS d, callcreated AS a,
+              SUM(CASE WHEN ${src.valueField} = 'FCR' THEN 1 ELSE 0 END) AS fcr, ${src.totalExpr} AS tot
          FROM dialer_db.data_master_in
-        WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY) AND ClientId = ? AND Field1 = 'Inbound'
-        GROUP BY DATE_FORMAT(CallDate,'%Y-%m-%d')`,
-      [f.startDate, f.endDate, clientId],
+        WHERE CallDate >= ? AND CallDate < DATE_ADD(DATE(?), INTERVAL 1 DAY) AND ClientId = ? AND ${src.inboundCond}
+        GROUP BY DATE_FORMAT(CallDate,'%Y-%m-%d'), callcreated`,
+      [f.startDate, f.endDate, src.clientId],
     );
-    const byDate = new Map<string, number>();
+    const dayTot = new Map<string, { fcr: number; tot: number }>();
+    const byAgent = new Map<string, { fcr: number; tot: number }>();
+    const byAgentDate = new Map<string, { fcr: number; tot: number }>();
+    const bump = (m: Map<string, { fcr: number; tot: number }>, k: string, fcr: number, tot: number) => {
+      const c = m.get(k) ?? { fcr: 0, tot: 0 };
+      c.fcr += fcr; c.tot += tot; m.set(k, c);
+    };
     let fcrSum = 0;
     let totSum = 0;
     for (const r of raw as Record<string, unknown>[]) {
-      byDate.set(String(r.d), pct(n(r.fcr), n(r.tot)));
-      fcrSum += n(r.fcr);
-      totSum += n(r.tot);
+      const d = String(r.d); const fcr = n(r.fcr); const tot = n(r.tot); const agent = agentCodeOf(r.a);
+      bump(dayTot, d, fcr, tot);
+      if (agent) { bump(byAgent, agent, fcr, tot); bump(byAgentDate, `${agent}|${d}`, fcr, tot); }
+      fcrSum += fcr; totSum += tot;
     }
-    return { overall: totSum ? pct(fcrSum, totSum) : null, byDate };
+    const byDate = new Map<string, number>();
+    for (const [d, v] of dayTot) byDate.set(d, pct(v.fcr, v.tot));
+    return { overall: totSum ? pct(fcrSum, totSum) : null, byDate, byAgent, byAgentDate };
   } catch {
     return null;
   }
+}
+
+function loadFcr(projectKey: string, f: InsightFilters): Promise<FcrResult | null> {
+  if (!FCR_SOURCES[projectKey]) return Promise.resolve(null);
+  const key = `${projectKey}|${f.startDate}|${f.endDate}`;
+  const hit = fcrCache.get(key);
+  if (hit && Date.now() - hit.at < FCR_TTL_MS) return hit.value;
+  const value = queryFcr(projectKey, f).then((v) => { if (!v) fcrCache.delete(key); return v; });
+  fcrCache.set(key, { at: Date.now(), value });
+  if (fcrCache.size > 60) for (const k of fcrCache.keys()) { fcrCache.delete(k); if (fcrCache.size <= 40) break; }
+  return value;
+}
+
+/** loadFcr, but never waits longer than FCR_WAIT_MS (the query keeps running and fills the cache). */
+function loadFcrWithinBudget(projectKey: string, f: InsightFilters): Promise<FcrResult | null> {
+  return Promise.race([loadFcr(projectKey, f), new Promise<null>((resolve) => setTimeout(() => resolve(null), FCR_WAIT_MS))]);
 }
 
 /**
@@ -387,6 +440,7 @@ function buildBellavitaGroups(rows: CallRow[]) {
 /* ─────────────────────────────── insights ─────────────────────────────── */
 
 export async function getInboundInsights(projectKey: string, f: InsightFilters) {
+  const fcrP = loadFcrWithinBudget(projectKey, f); // started now so it overlaps the CDR load
   const { rows, truncated, campaigns, slSec } = await loadCalls(projectKey, f);
   const p = getProject(projectKey);
 
@@ -427,7 +481,7 @@ export async function getInboundInsights(projectKey: string, f: InsightFilters) 
       dayCallers.get(r.date)!.add(r.phone);
     }
   }
-  const fcr = p.hasFCR ? await loadFcr(p.fcrClientId, f) : null;
+  const fcr = await fcrP;
   const daily = dateKeys.map((d) => ({
     date: d,
     weekday: WEEKDAYS[weekdayOf(d)],
@@ -517,6 +571,8 @@ export async function getInboundInsights(projectKey: string, f: InsightFilters) 
         handled: a.handled,
         sharePct: pct(a.handled, total.handled),
         slWithinPct: pct(a.slNum, a.answered),
+        fcrPct: fcr?.byAgent.get(agentId.toUpperCase()) ? pct(fcr.byAgent.get(agentId.toUpperCase())!.fcr, fcr.byAgent.get(agentId.toUpperCase())!.tot) : null,
+        fcrTagged: fcr?.byAgent.get(agentId.toUpperCase())?.tot ?? 0,
         aht: m.aht,
         avgTalk: m.avgTalk,
         avgHold: m.avgHold,
@@ -534,12 +590,20 @@ export async function getInboundInsights(projectKey: string, f: InsightFilters) 
     })
     .sort((x, y) => y.handled - x.handled);
 
-  const agentDaily: { agentId: string; date: string; calls: number }[] = [];
-  const ad = new Map<string, number>();
-  for (const r of answeredRows) ad.set(`${r.agentId}|${r.date}`, (ad.get(`${r.agentId}|${r.date}`) ?? 0) + 1);
-  for (const [k, calls] of ad) {
+  // One row per agent per day: volume plus the same service/handling metrics as the agent table, so clicking an agent
+  // can show that agent's date-wise performance (FCR% included where the project has it).
+  const agentDaily: Array<{
+    agentId: string; date: string; calls: number; slWithinPct: number; aht: number; avgTalk: number; avgHold: number; avgAcw: number;
+    transfers: number; fcrPct: number | null; fcrTagged: number;
+  }> = [];
+  for (const [k, a] of groupBy(answeredRows, (r) => `${r.agentId}|${r.date}`)) {
     const [agentId, date] = k.split("|");
-    agentDaily.push({ agentId, date, calls });
+    const m = metrics(a);
+    const fc = fcr?.byAgentDate.get(`${agentId.toUpperCase()}|${date}`);
+    agentDaily.push({
+      agentId, date, calls: a.handled, slWithinPct: pct(a.slNum, a.answered), aht: m.aht, avgTalk: m.avgTalk, avgHold: m.avgHold,
+      avgAcw: m.avgAcw, transfers: a.transfers, fcrPct: fc ? pct(fc.fcr, fc.tot) : null, fcrTagged: fc?.tot ?? 0,
+    });
   }
 
   const agentHourly: { agentId: string; hour: number; calls: number }[] = [];
@@ -686,6 +750,9 @@ export async function getInboundInsights(projectKey: string, f: InsightFilters) 
       abandoned: "Calls that never reached an agent (agent = VDCL)",
       al: "AL % = Answered / Offered",
       sl: `SL % = answered within ${slSec}s of queueing, as % of ANSWERED calls`,
+      ...(FCR_SOURCES[projectKey] ? { fcr: projectKey === "bellavita"
+        ? "FCR % = calls tagged 'FCR' / all inbound calls tagged on the disposition form (Field13 = Inbound); tagged 'Not Required' stay in the base"
+        : "FCR % = calls tagged 'FCR' / inbound calls carrying an FCR tag (FCR + NFCR)" } : {}),
       aht: "Average call duration of answered calls",
       asa: "Average queue wait of answered calls",
       unavailable: "Occupancy, staffing plan and callback outcomes are not in the dialer data",

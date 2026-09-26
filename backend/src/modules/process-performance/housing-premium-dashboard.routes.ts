@@ -19,7 +19,9 @@ const VIEWER_ROLES = [
 ];
 
 router.get("/housing-premium-dashboard/overview", requireRole(...VIEWER_ROLES), h(async (req, res) => {
-  const data = await getHousingPremiumOverview(String(req.query.from ?? ""), String(req.query.to ?? ""));
+  const data = await getHousingPremiumOverview(
+    String(req.query.from ?? ""), String(req.query.to ?? ""), req.query.agent ? String(req.query.agent) : undefined,
+  );
   res.json({ success: true, data });
 }));
 

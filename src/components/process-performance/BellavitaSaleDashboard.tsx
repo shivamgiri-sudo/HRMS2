@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
+  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, ComposedChart,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   IndianRupee, ShoppingBag, CreditCard, RotateCcw, TrendingUp, Users, CalendarDays, Wallet, Target,
-  MessageSquare, MessagesSquare, Percent, ShoppingCart, PhoneCall, Loader2, PhoneIncoming, PhoneMissed, Pencil,
+  MessageSquare, MessagesSquare, Percent, ShoppingCart, PhoneCall, Loader2, PhoneIncoming, PhoneMissed, Filter, Check, ArrowUpRight,
 } from "lucide-react";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { BellavitaAgentPerformance } from "./BellavitaAgentPerformance";
 import { BellavitaSaleDateLobMatrix } from "./BellavitaSaleDateLobMatrix";
-import { DashboardExportMenu, type ExportSlide } from "./DashboardKit";
+import { DashboardExportMenu, PeriodSection, type ExportSlide, type PeriodWeek, type PeriodRow } from "./DashboardKit";
 import { useSortableRows } from "./useSortableRows";
 import { SortTh } from "./SortTh";
 
@@ -33,13 +34,15 @@ interface DashboardData {
   to: string;
   /** The calendar month (YYYY-MM) lobRevenue's target/achievementPct apply to. */
   targetMonth: string;
-  /** Whether the signed-in user may set a monthly target (admin/management roles only). */
-  canSetTarget: boolean;
+  /** Whether the signed-in user may set a monthly target -- always unused now: targets are automatic. */
+  canSetTarget?: boolean;
+  /** Automatic per-LOB daily revenue targets (selected days up to today) for the LOBs in this view. */
+  dailyTargets: Record<string, Array<{ date: string; target: number }>>;
   dateWiseTrend: Array<{ date: string; saleCount: number; turnover: number; paidCount: number; codCount: number; rtoCount: number }>;
   lobRevenue: Array<{
     lob: string; saleCount: number; turnover: number; target: number | null; achievementPct: number | null; targetNote?: string;
-    /** "manual" = an admin set this month's target; "default" = the older hardcoded LOB_TARGETS fallback; "none" = no target at all. */
-    targetSource: "manual" | "default" | "none";
+    /** "auto" = computed by the automatic target rules; "none" = no target rule for this LOB. */
+    targetSource: "auto" | "manual" | "default" | "none";
     codCount: number; paidCount: number; codPct: number; paidPct: number; rtoAmount: number; rtoCount: number; rtoPct: number;
     aov: number; netSaleCount: number; netRevenue: number;
   }>;
@@ -55,11 +58,6 @@ interface DashboardData {
 
 const LOB_COLORS = ["#e11d48", "#0ea5e9", "#f59e0b", "#10b981", "#8b5cf6"];
 
-/** "September 2026" from a "2026-09" month key, for the target editor's label. */
-function monthLabel(ym: string): string {
-  const [y, m] = ym.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("en-IN", { month: "long", year: "numeric", timeZone: "UTC" });
-}
 
 /** Local YYYY-MM-DD, deliberately NOT via toISOString(): that converts
  * through UTC and rolls the date back a day for a viewer ahead of UTC
@@ -88,7 +86,6 @@ const formatShortDate = (iso: string) => {
   return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
 };
 const pct = (part: number, whole: number): number => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0);
-const daysInMonthOf = (iso: string): number => new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)), 0).getDate();
 
 /** Same "day-of-month 1-7 -> W-1, 8-14 -> W-2, ..." convention this app's
  * other week-wise tables/exports already use (see HousingOwnerDashboard.tsx's
@@ -170,24 +167,26 @@ const GROUP_WASH: Record<string, string> = {
 
 /** Boxes a related set of KpiCards under its own small heading, so Sale/Chat/
  * Cart/Inbound each read as one visually separate group instead of one flat
- * grid of differently-colored cards. `onEditTarget`, when given, adds a small
- * pencil button next to the heading that jumps straight to the shared Monthly
- * target editor below, pre-set to this group's own LOB. */
+ * grid of differently-colored cards. `onOpen`, when given, makes the heading a link to that
+ * LOB's own dashboard (targets are automatic now, so the old "Edit target" button is gone).
+ */
 function KpiGroup({
-  label, tone, cols, children, onEditTarget,
-}: { label: string; tone: string; cols?: string; children: ReactNode; onEditTarget?: () => void }) {
+  label, tone, cols, children, onOpen,
+}: { label: string; tone: string; cols?: string; children: ReactNode; onOpen?: () => void }) {
   const wash = GROUP_WASH[tone] ?? "bg-white border-slate-100";
   return (
     <div className={`rounded-2xl border p-3 shadow-sm ${wash}`}>
       <div className="mb-2 flex items-center justify-between">
-        <p className={`text-[11px] font-bold uppercase tracking-wide ${tone}`}>{label}</p>
-        {onEditTarget && (
+        {onOpen ? (
           <button
-            type="button" onClick={onEditTarget}
-            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+            type="button" onClick={onOpen} title={`Open ${label} dashboard`}
+            className={`group inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide ${tone} hover:underline`}
           >
-            <Pencil className="h-3 w-3" /> Edit target
+            {label}
+            <ArrowUpRight className="h-3 w-3 opacity-70 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
           </button>
+        ) : (
+          <p className={`text-[11px] font-bold uppercase tracking-wide ${tone}`}>{label}</p>
         )}
       </div>
       <div className={`grid gap-2 ${cols ?? "grid-cols-2 sm:grid-cols-4"}`}>{children}</div>
@@ -233,18 +232,6 @@ interface InboundHeadline { offered: number; answered: number; abandonPct: numbe
 
 type DrillEntity = { kind: "lob"; value: string } | { kind: "agent"; value: string; label: string };
 
-/** One row of the week-wise table below -- summed from the same dateWiseTrend
- * rows the date-wise table already shows, not a separate fetch. codCount/
- * paidCount/rtoCount are kept as raw sums only to derive that week's %
- * columns; targetSum accumulates each day's pro-rated share of the LOB's
- * monthly target (null once any day in the week has no target), so
- * achievementPct is null rather than a misleadingly-partial % when the
- * entity has no target configured. */
-interface WeekAgg {
-  key: string; label: string; saleCount: number; turnover: number;
-  codCount: number; paidCount: number; rtoCount: number; targetSum: number | null;
-}
-
 /**
  * Right-side drill-down for one LOB-wise Performance row OR one Top
  * Performers agent row: that entity's own summary + date-wise AND week-wise
@@ -274,28 +261,39 @@ function EntityDrillDrawer({ entity, from, to, onClose }: { entity: DrillEntity 
   // monthly target (bellavita_sale has no per-agent target anywhere in this
   // app) -- lobRevenue comes back lob-filtered to this one entry when
   // entity.kind is "lob" (the backend's lob=? filter), so [0] is this LOB's row.
-  const monthTarget = entity?.kind === "lob" ? (data?.lobRevenue[0]?.target ?? null) : null;
-  const dayTarget = useCallback(
-    (date: string) => (monthTarget != null ? monthTarget / daysInMonthOf(date) : null),
-    [monthTarget],
-  );
+  const targetByDate = useMemo(() => {
+    const rows = entity?.kind === "lob" ? (data?.dailyTargets?.[entity.value] ?? null) : null;
+    return rows ? new Map(rows.map((r) => [r.date, r.target])) : null;
+  }, [entity, data]);
+  // Days after today (or a LOB with no target rule) have no entry -> no Achi%.
+  const dayTarget = useCallback((date: string) => (targetByDate ? (targetByDate.get(date) ?? null) : null), [targetByDate]);
 
-  const weekly = useMemo<WeekAgg[]>(() => {
+  const periodWeeks = useMemo<PeriodWeek[]>(() => {
     if (!data) return [];
-    const byWeek = new Map<string, WeekAgg>();
+    type Day = DashboardData["dateWiseTrend"][number];
+    const toRow = (key: string, label: string, days: Day[]): PeriodRow => {
+      const sales = days.reduce((n, r) => n + r.saleCount, 0), rev = days.reduce((n, r) => n + r.turnover, 0);
+      const cod = days.reduce((n, r) => n + r.codCount, 0), paid = days.reduce((n, r) => n + r.paidCount, 0), rto = days.reduce((n, r) => n + r.rtoCount, 0);
+      // Achi% only exists when every day in the row has an automatic target.
+      const targets = days.map((r) => dayTarget(r.date));
+      const target = targets.every((t) => t != null) && targets.length > 0 ? targets.reduce<number>((n, t) => n + (t ?? 0), 0) : null;
+      const achi = target ? pct(rev, target) : null;
+      return {
+        key, label,
+        cells: [sales.toLocaleString("en-IN"), formatINR(rev), `${pct(cod, sales)}%`, `${pct(paid, sales)}%`, `${pct(rto, sales)}%`, achi != null ? `${achi}%` : "—"],
+        raw: [sales, rev, pct(cod, sales), pct(paid, sales), pct(rto, sales), achi ?? "—"],
+      };
+    };
+    const byWeek = new Map<string, Day[]>();
     for (const r of data.dateWiseTrend) {
-      const wk = weekBucket(r.date);
-      const cur = byWeek.get(wk.key) ?? { key: wk.key, label: wk.label, saleCount: 0, turnover: 0, codCount: 0, paidCount: 0, rtoCount: 0, targetSum: monthTarget != null ? 0 : null };
-      cur.saleCount += r.saleCount;
-      cur.turnover += r.turnover;
-      cur.codCount += r.codCount;
-      cur.paidCount += r.paidCount;
-      cur.rtoCount += r.rtoCount;
-      if (cur.targetSum != null) cur.targetSum += dayTarget(r.date) ?? 0;
-      byWeek.set(wk.key, cur);
+      const k = weekBucket(r.date).key;
+      byWeek.set(k, [...(byWeek.get(k) ?? []), r]);
     }
-    return [...byWeek.values()].sort((a, b) => a.key.localeCompare(b.key));
-  }, [data, monthTarget, dayTarget]);
+    return [...byWeek.entries()].sort(([x], [y]) => x.localeCompare(y)).map(([key, days]) => ({
+      ...toRow(key, weekBucket(days[0].date).label, days),
+      days: days.map((r) => toRow(r.date, formatShortDate(r.date), [r])),
+    }));
+  }, [data, dayTarget]);
 
   const title = entity?.kind === "lob" ? entity.value : entity?.kind === "agent" ? entity.label : "";
   const badge = entity?.kind === "lob" ? "LOB" : "Agent";
@@ -333,83 +331,18 @@ function EntityDrillDrawer({ entity, from, to, onClose }: { entity: DrillEntity 
                 </div>
               </div>
 
-              <div>
-                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Week-wise</p>
-                <div className="overflow-hidden rounded-xl border border-slate-100">
-                  <table className="w-full border-collapse text-center text-[11px]">
-                    <thead>
-                      <tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                        <th className="border border-slate-200 px-2 py-1.5">Week</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Sale Count</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Revenue</th>
-                        <th className="border border-slate-200 px-2 py-1.5">COD%</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Paid%</th>
-                        <th className="border border-slate-200 px-2 py-1.5">RTO%</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Achi%</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {weekly.map((w) => (
-                        <tr key={w.key}>
-                          <td className="border border-slate-200 px-2 py-1.5 text-left font-medium text-slate-700">{w.label}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 text-slate-600">{w.saleCount.toLocaleString("en-IN")}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 font-semibold text-slate-800">{formatINR(w.turnover)}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 text-slate-600">{pct(w.codCount, w.saleCount)}%</td>
-                          <td className="border border-slate-200 px-2 py-1.5 text-slate-600">{pct(w.paidCount, w.saleCount)}%</td>
-                          <td className={`border border-slate-200 px-2 py-1.5 font-semibold ${pct(w.rtoCount, w.saleCount) > 10 ? "text-red-600" : "text-slate-600"}`}>{pct(w.rtoCount, w.saleCount)}%</td>
-                          <td className={`border border-slate-200 px-2 py-1.5 font-semibold ${w.targetSum ? (pct(w.turnover, w.targetSum) >= 100 ? "text-emerald-600" : "text-slate-600") : "text-slate-400"}`}>
-                            {w.targetSum ? `${pct(w.turnover, w.targetSum)}%` : "—"}
-                          </td>
-                        </tr>
-                      ))}
-                      {weekly.length === 0 && (
-                        <tr><td colSpan={7} className="border border-slate-200 py-6 text-center text-slate-400">No data for this period.</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div>
-                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Date-wise</p>
-                <div className="overflow-hidden rounded-xl border border-slate-100">
-                  <table className="w-full border-collapse text-center text-[11px]">
-                    <thead>
-                      <tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                        <th className="border border-slate-200 px-2 py-1.5">Date</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Sale Count</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Revenue</th>
-                        <th className="border border-slate-200 px-2 py-1.5">COD%</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Paid%</th>
-                        <th className="border border-slate-200 px-2 py-1.5">RTO%</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Achi%</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.dateWiseTrend.map((r) => {
-                        const dt = dayTarget(r.date);
-                        const achi = dt ? pct(r.turnover, dt) : null;
-                        return (
-                          <tr key={r.date}>
-                            <td className="border border-slate-200 px-2 py-1.5 font-medium text-slate-700">{formatShortDate(r.date)}</td>
-                            <td className="border border-slate-200 px-2 py-1.5 text-slate-600">{r.saleCount.toLocaleString("en-IN")}</td>
-                            <td className="border border-slate-200 px-2 py-1.5 font-semibold text-slate-800">{formatINR(r.turnover)}</td>
-                            <td className="border border-slate-200 px-2 py-1.5 text-slate-600">{pct(r.codCount, r.saleCount)}%</td>
-                            <td className="border border-slate-200 px-2 py-1.5 text-slate-600">{pct(r.paidCount, r.saleCount)}%</td>
-                            <td className={`border border-slate-200 px-2 py-1.5 font-semibold ${pct(r.rtoCount, r.saleCount) > 10 ? "text-red-600" : "text-slate-600"}`}>{pct(r.rtoCount, r.saleCount)}%</td>
-                            <td className={`border border-slate-200 px-2 py-1.5 font-semibold ${achi != null ? (achi >= 100 ? "text-emerald-600" : "text-slate-600") : "text-slate-400"}`}>
-                              {achi != null ? `${achi}%` : "—"}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                      {data.dateWiseTrend.length === 0 && (
-                        <tr><td colSpan={7} className="border border-slate-200 py-6 text-center text-slate-400">No data for this period.</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+              <PeriodSection
+                metricLabels={["Sale Count", "Revenue", "COD%", "Paid%", "RTO%", "Achi%"]} weeks={periodWeeks}
+                fileBase={`Bellavita_Sale_${title}`}
+                leadSheets={[{
+                  name: "Summary", columns: ["Item", "Value"],
+                  rows: [
+                    [badge, title], ["From", from], ["To", to],
+                    ["Revenue", data.headline.turnover], ["Sale Count", data.headline.saleCount], ["Prepaid %", data.headline.prepaidPct],
+                    ["RTO %", data.headline.rtoPct], ["AOV", data.headline.aov], ["Net Revenue", data.headline.netTurnover],
+                  ],
+                }]}
+              />
             </>
           )}
         </div>
@@ -418,9 +351,154 @@ function EntityDrillDrawer({ entity, from, to, onClose }: { entity: DrillEntity 
   );
 }
 
+type SaleChartView = "sale" | "target" | "pay";
+const SALE_CHART_VIEWS: Array<{ key: SaleChartView; label: string }> = [
+  { key: "sale", label: "Sale & Revenue" }, { key: "target", label: "Target vs Achi%" }, { key: "pay", label: "COD% vs Paid%" },
+];
+
+/**
+ * "Date-wise Sale & Revenue" card with switchable slides -- Sale & Revenue, date-wise Target vs
+ * Achievement %, and COD % vs Paid % -- and a small LOB filter in the corner. The LOB filter is
+ * chart-local: it fetches its own copy of the dashboard scoped to that LOB (same lob= param the
+ * page filter and the LOB drill-down use) and leaves every other block on the page untouched.
+ * Daily target = the automatic target for that date (fixed monthly / days in month for Repeat, Chat
+ * and Inbound; Abandon Cart's date-wise Revenue Target), summed across LOBs for "All". Days after
+ * today, and LOBs with no target rule, have none -- it is blank rather than guessed.
+ */
+function DateWiseSaleChart({ data }: { data: DashboardData }) {
+  const [view, setView] = useState<SaleChartView>("sale");
+  const [chartLob, setChartLob] = useState<string>("All");
+  const [lobData, setLobData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (chartLob === "All") { setLobData(null); return; }
+    let cancelled = false;
+    setLoading(true);
+    hrmsApi.get<{ success: boolean; data: DashboardData }>(`${SALE_API}?from=${data.from}&to=${data.to}&lob=${encodeURIComponent(chartLob)}`)
+      .then((res) => { if (!cancelled) setLobData(res.data); })
+      .catch(() => { if (!cancelled) setLobData(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [chartLob, data.from, data.to]);
+
+  const src = chartLob === "All" ? data : lobData;
+  const lobOptions = useMemo(() => data.lobRevenue.map((r) => r.lob), [data.lobRevenue]);
+  const targetByDate = useMemo(() => {
+    if (!src) return null;
+    const m = new Map<string, number>();
+    for (const rows of Object.values(src.dailyTargets ?? {})) for (const r of rows) m.set(r.date, (m.get(r.date) ?? 0) + r.target);
+    return m.size > 0 ? m : null;
+  }, [src]);
+
+  const rows = useMemo(() => (src?.dateWiseTrend ?? []).map((r) => {
+    const t = targetByDate?.get(r.date);
+    const dayTarget = t !== undefined ? Math.round(t) : null;
+    const payTotal = r.paidCount + r.codCount;
+    return {
+      ...r,
+      dayTarget,
+      achiPct: dayTarget ? pct(r.turnover, dayTarget) : null,
+      codPct: payTotal > 0 ? Math.round((r.codCount / payTotal) * 1000) / 10 : 0,
+      paidPct: payTotal > 0 ? Math.round((r.paidCount / payTotal) * 1000) / 10 : 0,
+    };
+  }), [src, targetByDate]);
+
+  const tip = { contentStyle: { fontSize: 12, borderRadius: 8 } } as const;
+  const chart = !src ? (
+    <div className="flex h-[240px] items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-slate-400" /></div>
+  ) : view === "sale" ? (
+    <ResponsiveContainer width="100%" height={240}>
+      <LineChart data={rows} margin={{ top: 4, right: 12, left: -16, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+        <XAxis dataKey="date" tickFormatter={formatShortDate} tick={{ fontSize: 9 }} />
+        <YAxis yAxisId="left" tick={{ fontSize: 10 }} />
+        <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} />
+        <Tooltip labelFormatter={(v: unknown) => formatShortDate(String(v))} formatter={(value: number, name: string) => (name === "Revenue" ? formatINR(value) : value)} {...tip} />
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+        <Line yAxisId="left" type="monotone" dataKey="saleCount" name="Sale Count" stroke="#0ea5e9" strokeWidth={2} dot={false} />
+        <Line yAxisId="right" type="monotone" dataKey="turnover" name="Revenue" stroke="#e11d48" strokeWidth={2} dot={false} />
+      </LineChart>
+    </ResponsiveContainer>
+  ) : view === "target" ? (
+    targetByDate == null ? (
+      <p className="flex h-[240px] items-center justify-center text-center text-xs text-slate-400">
+        {chartLob === "All" ? "These LOBs have" : `${chartLob} has`} no target for the selected days, so there is nothing to compare Achi% against.
+      </p>
+    ) : (
+      <ResponsiveContainer width="100%" height={240}>
+        <ComposedChart data={rows} margin={{ top: 4, right: 12, left: -6, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+          <XAxis dataKey="date" tickFormatter={formatShortDate} tick={{ fontSize: 9 }} />
+          <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v))} />
+          <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v: number) => `${v}%`} />
+          <Tooltip labelFormatter={(v: unknown) => formatShortDate(String(v))} formatter={(value: number, name: string) => (name === "Achi %" ? `${value}%` : formatINR(value))} {...tip} />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          <Bar yAxisId="left" dataKey="dayTarget" name="Target (daily)" fill="#94a3b8" radius={[3, 3, 0, 0]} />
+          <Bar yAxisId="left" dataKey="turnover" name="Achieved (Revenue)" fill="#0d9488" radius={[3, 3, 0, 0]} />
+          <Line yAxisId="right" type="monotone" dataKey="achiPct" name="Achi %" stroke="#e11d48" strokeWidth={2} dot={false} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    )
+  ) : (
+    <ResponsiveContainer width="100%" height={240}>
+      <BarChart data={rows} margin={{ top: 4, right: 12, left: -16, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+        <XAxis dataKey="date" tickFormatter={formatShortDate} tick={{ fontSize: 9 }} />
+        <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} tickFormatter={(v: number) => `${v}%`} />
+        <Tooltip labelFormatter={(v: unknown) => formatShortDate(String(v))} formatter={(value: number, name: string) => [`${value}%`, name]} {...tip} />
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+        <Bar dataKey="codPct" name="COD %" fill="#f59e0b" radius={[3, 3, 0, 0]} />
+        <Bar dataKey="paidPct" name="Paid %" fill="#10b981" radius={[3, 3, 0, 0]} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm lg:col-span-2">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-slate-700">Date-wise Sale &amp; Revenue</p>
+          {chartLob !== "All" && <p className="text-[10px] font-medium text-slate-400">Filtered to {chartLob}</p>}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="inline-flex rounded-full bg-slate-100 p-0.5">
+            {SALE_CHART_VIEWS.map((v) => (
+              <button
+                key={v.key} type="button" onClick={() => setView(v.key)}
+                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${view === v.key ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+              >{v.label}</button>
+            ))}
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button" title="Filter by LOB" aria-label="Filter by LOB"
+                className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${chartLob !== "All" ? "bg-rose-100 text-rose-700" : "bg-slate-100 text-slate-500 hover:bg-slate-200"}`}
+              >
+                {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Filter className="h-3.5 w-3.5" />}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[10rem]">
+              {["All", ...lobOptions].map((l) => (
+                <DropdownMenuItem key={l} onSelect={() => setChartLob(l)} className="flex items-center justify-between gap-3 text-xs">
+                  {l === "All" ? "All LOBs" : l}{chartLob === l && <Check className="h-3.5 w-3.5 text-rose-600" />}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+      {chart}
+    </div>
+  );
+}
+
 function SaleDashboardSlide({
-  from, to, lobFilter, onExportNodeChange,
+  from, to, lobFilter, onExportNodeChange, onOpenDashboard,
 }: {
+  /** When given, the Chat / Abandon Cart / Inbound KPI boxes get an "open that dashboard" link. */
+  onOpenDashboard?: (key: BellavitaDashboardKey) => void;
   from: string; to: string;
   /** Read-only here -- the LOB Select itself now lives in the parent shell's
    * merged toolbar row; this slide just fetches/filters by whatever it's set to. */
@@ -434,11 +512,6 @@ function SaleDashboardSlide({
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [targetLob, setTargetLob] = useState("");
-  const [targetMonth, setTargetMonth] = useState("");
-  const [targetValue, setTargetValue] = useState("");
-  const [targetBusy, setTargetBusy] = useState(false);
-  const [targetMsg, setTargetMsg] = useState("");
   const [chatHeadline, setChatHeadline] = useState<ChatHeadline | null>(null);
   const [cartHeadline, setCartHeadline] = useState<CartHeadline | null>(null);
   const [inboundHeadline, setInboundHeadline] = useState<InboundHeadline | null>(null);
@@ -483,12 +556,12 @@ function SaleDashboardSlide({
   useEffect(() => {
     let cancelled = false;
     hrmsApi
-      .get<{ success: boolean; data: { headline: { totalCarts: number; workableCases: number; abandonCartSaleCount: number } } }>(
-        `/api/process-performance/bellavita-cart-dashboard?from=${from}&to=${to}`,
+      .get<{ success: boolean; data: { totalCarts: number; workableCases: number; abandonCartSaleCount: number } }>(
+        `/api/process-performance/bellavita-cart-dashboard/summary?from=${from}&to=${to}`,
       )
       .then((res) => {
         if (cancelled) return;
-        const h = res.data.headline;
+        const h = res.data;
         setCartHeadline({ totalCarts: h.totalCarts, workableCases: h.workableCases, abandonCartSaleCount: h.abandonCartSaleCount });
       })
       .catch(() => { if (!cancelled) setCartHeadline(null); });
@@ -509,37 +582,6 @@ function SaleDashboardSlide({
       .catch(() => { if (!cancelled) setInboundHeadline(null); });
     return () => { cancelled = true; };
   }, [from, to]);
-
-  // Keep the target editor's month in step with whichever month the LOB
-  // table is actually showing, and default the LOB picker to the first row
-  // once data loads (or once the previously-selected LOB disappears).
-  useEffect(() => {
-    if (!data) return;
-    setTargetMonth(data.targetMonth);
-    setTargetLob((cur) => (data.lobRevenue.some((r) => r.lob === cur) ? cur : (data.lobRevenue[0]?.lob ?? "")));
-  }, [data]);
-
-  /** Jumps to the shared Monthly target editor below, pre-set to this LOB --
-   * used by the "Edit target" button on the Chat/Abandon Cart/Inbound boxes. */
-  function openTargetEditor(lob: string) {
-    setTargetLob(lob);
-    document.getElementById("bellavita-monthly-target-editor")?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }
-
-  async function saveTarget() {
-    setTargetBusy(true);
-    setTargetMsg("");
-    try {
-      await hrmsApi.put(`${SALE_API}/monthly-target`, { lob: targetLob, month: targetMonth, target: Number(targetValue) });
-      setTargetValue("");
-      setTargetMsg(`Saved ${targetLob} target for ${monthLabel(targetMonth)}.`);
-      await load();
-    } catch (err) {
-      setTargetMsg(err instanceof Error ? err.message : "Could not save the target.");
-    } finally {
-      setTargetBusy(false);
-    }
-  }
 
   const exportSlides = useMemo<ExportSlide[]>(() => {
     if (!data) return [];
@@ -674,7 +716,7 @@ function SaleDashboardSlide({
         {chatHeadline && (lobFilter === "All" || lobFilter === "Chat") && (
           <KpiGroup
             label="Chat Performance" tone="text-fuchsia-500" cols="grid-cols-3"
-            onEditTarget={data.canSetTarget ? () => openTargetEditor("Chat") : undefined}
+            onOpen={onOpenDashboard ? () => onOpenDashboard("chat_performance") : undefined}
           >
             <KpiCard icon={MessageSquare} label="Overall Chat" value={chatHeadline.overallChat.toLocaleString("en-IN")} tone="bg-fuchsia-50 text-fuchsia-600" />
             <KpiCard icon={MessagesSquare} label="Unique Chat" value={chatHeadline.unique.toLocaleString("en-IN")} tone="bg-purple-50 text-purple-600" />
@@ -685,7 +727,7 @@ function SaleDashboardSlide({
         {cartHeadline && (lobFilter === "All" || lobFilter === "Abandon Cart") && (
           <KpiGroup
             label="Abandon Cart" tone="text-cyan-600" cols="grid-cols-3"
-            onEditTarget={data.canSetTarget ? () => openTargetEditor("Abandon Cart") : undefined}
+            onOpen={onOpenDashboard ? () => onOpenDashboard("cart_performance") : undefined}
           >
             <KpiCard icon={ShoppingCart} label="Total Allocation" value={cartHeadline.totalCarts.toLocaleString("en-IN")} tone="bg-cyan-50 text-cyan-600" />
             <KpiCard icon={PhoneCall} label="Workable Allocation" value={cartHeadline.workableCases.toLocaleString("en-IN")} tone="bg-teal-50 text-teal-600" />
@@ -700,7 +742,7 @@ function SaleDashboardSlide({
         {inboundHeadline && (lobFilter === "All" || lobFilter === "Inbound") && (
           <KpiGroup
             label="Inbound" tone="text-emerald-600" cols="grid-cols-2"
-            onEditTarget={data.canSetTarget ? () => openTargetEditor("Inbound") : undefined}
+            onOpen={onOpenDashboard ? () => onOpenDashboard("inbound") : undefined}
           >
             <KpiCard icon={PhoneIncoming} label="Call Offered" value={inboundHeadline.offered.toLocaleString("en-IN")} tone="bg-emerald-50 text-emerald-600" />
             <KpiCard icon={PhoneCall} label="Answered" value={inboundHeadline.answered.toLocaleString("en-IN")} tone="bg-teal-50 text-teal-600" />
@@ -712,25 +754,7 @@ function SaleDashboardSlide({
 
       {/* Date-wise trend + LOB revenue */}
       <div className="grid gap-4 lg:grid-cols-3">
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm lg:col-span-2">
-          <p className="mb-3 text-sm font-semibold text-slate-700">Date-wise Sale &amp; Revenue</p>
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={data.dateWiseTrend} margin={{ top: 4, right: 12, left: -16, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis dataKey="date" tickFormatter={formatShortDate} tick={{ fontSize: 9 }} />
-              <YAxis yAxisId="left" tick={{ fontSize: 10 }} />
-              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} />
-              <Tooltip
-                labelFormatter={(v: unknown) => formatShortDate(String(v))}
-                formatter={(value: number, name: string) => (name === "Revenue" ? formatINR(value) : value)}
-                contentStyle={{ fontSize: 12, borderRadius: 8 }}
-              />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Line yAxisId="left" type="monotone" dataKey="saleCount" name="Sale Count" stroke="#0ea5e9" strokeWidth={2} dot={false} />
-              <Line yAxisId="right" type="monotone" dataKey="turnover" name="Revenue" stroke="#e11d48" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
+        <DateWiseSaleChart data={data} />
 
         <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
           <p className="mb-3 text-sm font-semibold text-slate-700">LOB-wise Revenue</p>
@@ -816,7 +840,7 @@ function SaleDashboardSlide({
                   <td className="border border-slate-200 px-3 py-2 font-semibold text-slate-800">{formatINR(r.turnover)}</td>
                   <td className="border border-slate-200 px-3 py-2 text-slate-500">
                     {r.target != null ? formatINR(r.target) : "—"}
-                    {r.targetSource === "default" && <span className="ml-1 rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-slate-400">default</span>}
+                    {r.targetSource === "auto" && <span className="ml-1 rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-slate-400">auto</span>}
                   </td>
                   <td className={`border border-slate-200 px-3 py-2 font-semibold ${r.achievementPct != null ? (r.achievementPct >= 100 ? "text-emerald-600" : r.achievementPct >= 70 ? "text-amber-600" : "text-red-600") : "text-slate-400"}`}>
                     {r.achievementPct != null ? `${r.achievementPct}%` : "—"}
@@ -858,49 +882,6 @@ function SaleDashboardSlide({
             )}
           </table>
         </div>
-      </div>
-
-      {/* Monthly target editor -- sets the Target column above per LOB, per month.
-          Also what the Chat/Abandon Cart/Inbound boxes' "Edit target" button
-          scrolls to (id below), pre-selecting that box's own LOB. */}
-      <div id="bellavita-monthly-target-editor" className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-        <div className="mb-1 flex items-center gap-2">
-          <Target className="h-4 w-4 text-amber-500" />
-          <p className="text-sm font-semibold text-slate-700">Monthly target — {monthLabel(data.targetMonth)}</p>
-        </div>
-        <p className="mb-3 text-[11px] text-slate-400">
-          A target applies to one LOB for one calendar month. It's a business commitment, so it's entered by an admin rather than derived from data.
-          "Default" rows above are the older fixed figures used until an admin sets a real monthly value here.
-        </p>
-        {data.canSetTarget ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <Select value={targetLob} onValueChange={setTargetLob}>
-              <SelectTrigger className="h-8 w-[180px] bg-white text-xs" aria-label="LOB"><SelectValue placeholder="LOB" /></SelectTrigger>
-              <SelectContent>
-                {data.lobRevenue.map((r) => <SelectItem key={r.lob} value={r.lob}>{r.lob}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <input
-              type="month" value={targetMonth} onChange={(e) => setTargetMonth(e.target.value)} aria-label="Target month"
-              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm focus:border-amber-400 focus:outline-none"
-            />
-            <input
-              type="number" min={1} inputMode="numeric" value={targetValue} onChange={(e) => setTargetValue(e.target.value)}
-              placeholder={(() => { const cur = data.lobRevenue.find((r) => r.lob === targetLob)?.target; return cur != null ? `Now ${formatINR(cur)}` : "Target amount (₹)"; })()}
-              aria-label="Target amount for the LOB and month"
-              className="w-48 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm focus:border-amber-400 focus:outline-none"
-            />
-            <button
-              type="button" onClick={() => void saveTarget()} disabled={targetBusy || !targetLob || !targetMonth || !(Number(targetValue) > 0)}
-              className="rounded-lg bg-amber-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {targetBusy ? "Saving…" : "Save"}
-            </button>
-            {targetMsg && <span className="text-[11px] text-slate-500">{targetMsg}</span>}
-          </div>
-        ) : (
-          <p className="text-[11px] text-slate-400">Ask an admin to set monthly targets.</p>
-        )}
       </div>
 
       <BellavitaSaleDateLobMatrix from={from} to={to} />
@@ -1004,7 +985,10 @@ function SaleDashboardSlide({
  * by the user (not computed), since no target uploader exists for
  * Bellavita — see LOB_TARGETS in the backend service.
  */
-export function BellavitaSaleDashboard() {
+/** Which sibling Bellavita dashboard a KPI group on this page should open (keys match DASHBOARDS_BY_COMPANY.bellavita). */
+export type BellavitaDashboardKey = "chat_performance" | "cart_performance" | "inbound";
+
+export function BellavitaSaleDashboard({ onOpenDashboard }: { onOpenDashboard?: (key: BellavitaDashboardKey) => void } = {}) {
   const [slide, setSlide] = useState<"dashboard" | "agents">("dashboard");
   const defaultRange = currentMonthRange();
   const [from, setFrom] = useState(defaultRange.from);
@@ -1072,7 +1056,7 @@ export function BellavitaSaleDashboard() {
       </div>
 
       {slide === "dashboard"
-        ? <SaleDashboardSlide from={from} to={to} lobFilter={lobFilter} onExportNodeChange={setExportNode} />
+        ? <SaleDashboardSlide from={from} to={to} lobFilter={lobFilter} onExportNodeChange={setExportNode} onOpenDashboard={onOpenDashboard} />
         : <BellavitaAgentPerformance from={from} to={to} lob={lobFilter} />}
     </div>
   );

@@ -6,7 +6,7 @@ import {
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   ShoppingCart, PhoneCall, Users, ShoppingBag, IndianRupee, Gauge, Filter,
-  ArrowUp, ArrowDown, Layers, Wallet, TrendingUp, ClipboardList, Package, Eye, PhoneOutgoing,
+  ArrowUp, ArrowDown, Layers, Wallet, TrendingUp, ClipboardList, Package, Eye, PhoneOutgoing, Target,
 } from "lucide-react";
 import {
   Spinner, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
@@ -25,7 +25,7 @@ import { GncDetailDrawer, type DrawerSeries } from "./GncAbandonCartDetailDrawer
  * Several panels from the reference layout this was modeled on are
  * deliberately left out -- no real source anywhere in this app (see
  * gnc-abandon-cart-dashboard.service.ts for the full list): Target
- * Achievement / Target vs Revenue, RTO orders, Workable/DND case counts,
+ * Achievement / Target vs Revenue (now shown from the GNC Targets page, above), RTO orders, Workable/DND case counts,
  * NC Connect, and CPA.
  *
  * The funnel is a plain div bar-chart, not recharts' Funnel -- that
@@ -58,6 +58,8 @@ interface AbandonCartData {
   }>;
   conversionTrend: Array<{ date: string; conversionOnBase: number; conversionOnConnect: number }>;
   topProducts: Array<{ product: string; saleCount: number; revenue: number; aov: number }>;
+  /** Abandon Cart revenue target for the range (Targets page) -- absent/unconfigured until one is set. */
+  target?: { tableAvailable: boolean; configured: boolean; monthlyTarget: number | null; rangeTarget: number | null; perAgentMonthlyTarget: number | null; agentCount: number | null; uncoveredMonths: string[]; revenue: number; achPct: number | null };
 }
 
 const FUNNEL_COLORS = ["#ec4899", "#a855f7", "#3b82f6", "#10b981", "#f59e0b"];
@@ -111,7 +113,7 @@ function StatTile({ icon: Icon, tone, label, value, sub, delta, onClick }: {
 
 /** Equal-height horizontal bars, width proportional to pctOfBase -- see the
  * file-level note for why this replaces recharts' Funnel. */
-function CartFunnel({ stages }: { stages: Array<{ stage: string; count: number; pctOfBase: number }> }) {
+function CartFunnel({ stages, conversion }: { stages: Array<{ stage: string; count: number; pctOfBase: number }>; conversion?: Array<{ label: string; value: number; sub: string }> }) {
   return (
     <div className="space-y-1">
       {stages.map((s, i) => (
@@ -128,6 +130,16 @@ function CartFunnel({ stages }: { stages: Array<{ stage: string; count: number; 
           </div>
         </div>
       ))}
+      {conversion && conversion.length > 0 && (
+        <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+          {conversion.map((c) => (
+            <div key={c.label} className="flex items-center justify-between gap-2 rounded-lg border border-violet-100 bg-violet-50/60 px-3 py-1.5">
+              <span className="text-[11px] font-semibold text-violet-700">{c.label}<span className="ml-1 font-normal text-violet-400">{c.sub}</span></span>
+              <span className="text-sm font-extrabold text-violet-700">{c.value}%</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -270,6 +282,15 @@ export function GncAbandonCartDashboard() {
           onClick={() => openDrawer("Conversion on Unique Connect", [{ key: "conversionOnConnect", label: "Conversion %", fmt: "pct", color: "#8b5cf6" }])} />
       </div>
 
+      {data.target?.configured && data.target.rangeTarget !== null && (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <StatTile icon={Target} tone="sky" label="Monthly Target" value={data.target.monthlyTarget !== null ? formatINR(data.target.monthlyTarget) : "—"} />
+          <StatTile icon={Target} tone="indigo" label="Target (range)" value={formatINR(data.target.rangeTarget)} />
+          <StatTile icon={Gauge} tone={(data.target.achPct ?? 0) >= 100 ? "emerald" : (data.target.achPct ?? 0) >= 60 ? "amber" : "rose"} label="Target Achi %" value={data.target.achPct === null ? "—" : `${data.target.achPct}%`} />
+          <StatTile icon={IndianRupee} tone="rose" label="Gap to target" value={formatINR(Math.max(0, data.target.rangeTarget - data.target.revenue))} />
+        </div>
+      )}
+
       {/* Snapshot + Funnel */}
       <div className="grid gap-3 lg:grid-cols-2">
         <SectionCard
@@ -306,7 +327,10 @@ export function GncAbandonCartDashboard() {
             { key: "saleCount", label: "Sale", fmt: "int", color: "#f59e0b" },
           ])} />}
         >
-          <CartFunnel stages={data.funnel} />
+          <CartFunnel stages={data.funnel} conversion={[
+            { label: "Conv. %", value: data.headline.conversionOnBase, sub: "Sale ÷ Total Allocation" },
+            { label: "Conv. % (Connect)", value: data.headline.conversionOnConnect, sub: "Sale ÷ Connected" },
+          ]} />
         </SectionCard>
       </div>
 
@@ -351,11 +375,15 @@ export function GncAbandonCartDashboard() {
             { key: "saleCount", label: "Sale Count", fmt: "int", color: "#10b981" },
             { key: "revenue", label: "Revenue", fmt: "currency", color: "#14b8a6" },
             { key: "aov", label: "AOV", fmt: "currency", color: "#06b6d4" },
+            { key: "conversionOnBase", label: "Conv. % (Base)", fmt: "pct", color: "#8b5cf6" },
+            { key: "conversionOnConnect", label: "Conv. % (Connect)", fmt: "pct", color: "#6366f1" },
           ])} />}
         >
           <div className="mb-2 grid grid-cols-2 gap-2">
             <StatTile icon={ShoppingBag} tone="emerald" label="Sale Count" value={h.saleCount.toLocaleString("en-IN")} delta={data.deltas.saleCount} />
             <StatTile icon={IndianRupee} tone="teal" label="Revenue" value={formatINR(h.revenue)} delta={data.deltas.revenue} />
+            <StatTile icon={Gauge} tone="violet" label="Conv. % (Base)" value={`${h.conversionOnBase}%`} />
+            <StatTile icon={Gauge} tone="indigo" label="Conv. % (Connect)" value={`${h.conversionOnConnect}%`} delta={data.deltas.conversionOnConnect} />
           </div>
           <ResponsiveContainer width="100%" height={160}>
             <ComposedChart data={data.dailyTrend} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>

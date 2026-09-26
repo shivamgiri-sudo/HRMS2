@@ -1173,6 +1173,8 @@ const MIGRATION_MANIFEST: string[] = [
   "migrations/1893_resignation_submitted_cc_skip_level.sql", // Registered 2026-09-25. Adds the skip_level_manager (AM) to the CC of resignation_submitted so the AM is told when a resignation is submitted. UPDATE only, appends when missing.
   "migrations/1894_list_unlisted_pages_in_catalog.sql", // Registered 2026-09-26. Lists 18 mounted, role-gated pages that had no page_catalog row (so never showed under My Modules), for exactly the roles their routes already admit. INSERT ... WHERE NOT EXISTS only, additive.
   "1897_employee_org_mapping_upload_template.sql", // Registered 2026-09-26. Turns the EMPLOYEE_LOB_MAPPING upload template into the single Employee Process / Cost Centre / LOB Mapping upload (employee_code, cost_centre_code, process_code, lob_code). Updates that one template row only; no batch of this type existed. Idempotent.
+  "1898_tpz_access.sql", // Registered 2026-09-26 (ported from tausif-mis, renumbered from 1782). Creates mas_hrms.tpz_user_access + tpz_access_grant (per-user TPZ Process grants: which processes/branches a user may open). Additive, idempotent.
+  "1899_gnc_lob_target.sql", // Registered 2026-09-26 (ported from tausif-mis, renumbered from 1870). Creates gnc_lob_target (effective-dated GNC LOB monthly revenue targets) + seeds the business-supplied targets with INSERT IGNORE. Additive, idempotent.
 ];
 
 export type MigrationHealth = {

@@ -11,6 +11,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import {
   Spinner, KpiCard, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
   formatShortDate, formatINR, currentMonthRange, localDateStr, type ExportSlide,
+  PeriodSection, TableExcelIconButton, type PeriodWeek, type PeriodRow,
 } from "./DashboardKit";
 import { BellavitaChatLobSnapshot } from "./BellavitaChatLobSnapshot";
 import { BellavitaChatOverview } from "./BellavitaChatOverview";
@@ -42,7 +43,7 @@ interface TlRow {
   saleCount: number; amount: number; conversionPct: number;
 }
 interface AgentRow {
-  agent: string; empId: string; tickets: number; uniqueCount: number;
+  lobs: string; agent: string; empId: string; tickets: number; uniqueCount: number;
   saleChatCount: number; conversionPct: number;
   resolvedPct: number; avgWaitTimeMin: number;
   revenue: number | null;
@@ -83,8 +84,23 @@ function weekBucket(iso: string): { key: string; label: string } {
   return { key: `${monthKey}-W${weekNum}`, label: `W-${weekNum} (${startDay}-${endDay} ${monLabel})` };
 }
 
+const conv1 = (num: number, den: number): number => (den > 0 ? Math.round((num / den) * 1000) / 10 : 0);
+
+/** Groups day rows into W-1.. week rows (each carrying its own day rows) for PeriodSection. */
+function buildPeriodWeeks<T extends { date: string }>(rows: T[], toRow: (key: string, label: string, dayRows: T[]) => PeriodRow): PeriodWeek[] {
+  const byWeek = new Map<string, T[]>();
+  for (const r of rows) {
+    const k = weekBucket(r.date).key;
+    byWeek.set(k, [...(byWeek.get(k) ?? []), r]);
+  }
+  return [...byWeek.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, dayRows]) => ({
+    ...toRow(key, weekBucket(dayRows[0].date).label, dayRows),
+    days: dayRows.map((r) => toRow(r.date, formatShortDate(r.date), [r])),
+  }));
+}
+const num0 = (n: number) => n.toLocaleString("en-IN");
+
 interface TlTrendRow { date: string; tickets: number; uniqueCount: number; saleCount: number; conversionPct: number; amount: number }
-interface WeekAgg { key: string; label: string; tickets: number; uniqueCount: number; saleCount: number; amount: number }
 
 /** Right-side drill-down for one TL-wise Summary row: that TL's own
  * date-wise AND week-wise Total Chat/Unique/Sale Count/Amount/Conversion%,
@@ -111,20 +127,12 @@ function TlTrendDrawer({
     return () => { cancelled = true; };
   }, [tlName, from, to, lob]);
 
-  const weekly = useMemo<WeekAgg[]>(() => {
-    if (!rows) return [];
-    const byWeek = new Map<string, WeekAgg>();
-    for (const r of rows) {
-      const wk = weekBucket(r.date);
-      const cur = byWeek.get(wk.key) ?? { key: wk.key, label: wk.label, tickets: 0, uniqueCount: 0, saleCount: 0, amount: 0 };
-      cur.tickets += r.tickets;
-      cur.uniqueCount += r.uniqueCount;
-      cur.saleCount += r.saleCount;
-      cur.amount += r.amount;
-      byWeek.set(wk.key, cur);
-    }
-    return [...byWeek.values()].sort((a, b) => a.key.localeCompare(b.key));
-  }, [rows]);
+  const periodWeeks = useMemo<PeriodWeek[]>(() => buildPeriodWeeks(rows ?? [], (key, label, d) => {
+    const tickets = d.reduce((n, r) => n + r.tickets, 0), unique = d.reduce((n, r) => n + r.uniqueCount, 0);
+    const sales = d.reduce((n, r) => n + r.saleCount, 0), amount = d.reduce((n, r) => n + r.amount, 0);
+    const cv = conv1(sales, tickets);
+    return { key, label, cells: [num0(tickets), num0(unique), num0(sales), formatINR(amount), `${cv}%`], raw: [tickets, unique, sales, amount, cv] };
+  }), [rows]);
 
   return (
     <Sheet open={!!tlName} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -143,73 +151,11 @@ function TlTrendDrawer({
           {loading && <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>}
           {error && <p className="rounded-xl border border-red-100 bg-red-50 p-3 text-xs text-red-700">{error}</p>}
           {rows && (
-            <>
-              <div>
-                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Week-wise</p>
-                <div className="overflow-hidden rounded-xl border border-slate-100">
-                  <table className="w-full border-collapse text-center text-[11px]">
-                    <thead>
-                      <tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                        <th className="border border-slate-200 px-2 py-1.5">Week</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Total Chat</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Unique Chat</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Sale Count</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Amount</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Conv%</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {weekly.map((w) => (
-                        <tr key={w.key}>
-                          <td className="border border-slate-200 px-2 py-1.5 text-left font-medium text-slate-700">{w.label}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 text-slate-600">{w.tickets.toLocaleString("en-IN")}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 text-slate-600">{w.uniqueCount.toLocaleString("en-IN")}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 font-semibold text-emerald-700">{w.saleCount.toLocaleString("en-IN")}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 font-semibold text-emerald-700">{formatINR(w.amount)}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 font-semibold text-indigo-700">{w.tickets > 0 ? Math.round((w.saleCount / w.tickets) * 1000) / 10 : 0}%</td>
-                        </tr>
-                      ))}
-                      {weekly.length === 0 && (
-                        <tr><td colSpan={6} className="border border-slate-200 py-6 text-center text-slate-400">No data for this period.</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div>
-                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Date-wise</p>
-                <div className="overflow-hidden rounded-xl border border-slate-100">
-                  <table className="w-full border-collapse text-center text-[11px]">
-                    <thead>
-                      <tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                        <th className="border border-slate-200 px-2 py-1.5">Date</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Total Chat</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Unique Chat</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Sale Count</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Amount</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Conv%</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((r) => (
-                        <tr key={r.date}>
-                          <td className="border border-slate-200 px-2 py-1.5 font-medium text-slate-700">{formatShortDate(r.date)}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 text-slate-600">{r.tickets.toLocaleString("en-IN")}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 text-slate-600">{r.uniqueCount.toLocaleString("en-IN")}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 font-semibold text-emerald-700">{r.saleCount.toLocaleString("en-IN")}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 font-semibold text-emerald-700">{formatINR(r.amount)}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 font-semibold text-indigo-700">{r.conversionPct}%</td>
-                        </tr>
-                      ))}
-                      {rows.length === 0 && (
-                        <tr><td colSpan={6} className="border border-slate-200 py-6 text-center text-slate-400">No data for this period.</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </>
+            <PeriodSection
+              metricLabels={["Total Chat", "Unique Chat", "Sale Count", "Amount", "Conv%"]} weeks={periodWeeks}
+              fileBase={`Bellavita_Chat_TL_${tlName ?? ""}`}
+              leadSheets={[{ name: "Summary", columns: ["Item", "Value"], rows: [["TL", tlName ?? ""], ["From", from], ["To", to], ["LOB", lob || "All"]] }]}
+            />
           )}
         </div>
       </SheetContent>
@@ -221,7 +167,6 @@ interface AgentTarget { agent: string; empId: string }
 interface AgentTrendRow {
   date: string; tickets: number; uniqueCount: number; saleChatCount: number; conversionPct: number; resolvedPct: number; revenue: number | null;
 }
-interface AgentWeekAgg { key: string; label: string; tickets: number; uniqueCount: number; saleChatCount: number; revenue: number | null }
 
 /** Right-side drill-down for one Agent-wise row (Top 5 / Bottom 5 or the
  * overall table): that agent's own date-wise AND week-wise performance,
@@ -253,20 +198,15 @@ function AgentTrendDrawer({
 
   const hasRevenue = !!target?.empId;
 
-  const weekly = useMemo<AgentWeekAgg[]>(() => {
-    if (!rows) return [];
-    const byWeek = new Map<string, AgentWeekAgg>();
-    for (const r of rows) {
-      const wk = weekBucket(r.date);
-      const cur = byWeek.get(wk.key) ?? { key: wk.key, label: wk.label, tickets: 0, uniqueCount: 0, saleChatCount: 0, revenue: hasRevenue ? 0 : null };
-      cur.tickets += r.tickets;
-      cur.uniqueCount += r.uniqueCount;
-      cur.saleChatCount += r.saleChatCount;
-      if (cur.revenue !== null) cur.revenue += r.revenue ?? 0;
-      byWeek.set(wk.key, cur);
-    }
-    return [...byWeek.values()].sort((a, b) => a.key.localeCompare(b.key));
-  }, [rows, hasRevenue]);
+  const periodWeeks = useMemo<PeriodWeek[]>(() => buildPeriodWeeks(rows ?? [], (key, label, d) => {
+    const tickets = d.reduce((n, r) => n + r.tickets, 0), unique = d.reduce((n, r) => n + r.uniqueCount, 0);
+    const sales = d.reduce((n, r) => n + r.saleChatCount, 0), revenue = d.reduce((n, r) => n + (r.revenue ?? 0), 0);
+    const cv = conv1(sales, tickets);
+    return {
+      key, label, cells: [num0(tickets), num0(unique), num0(sales), `${cv}%`, hasRevenue ? formatINR(revenue) : "—"],
+      raw: [tickets, unique, sales, cv, hasRevenue ? revenue : "—"],
+    };
+  }), [rows, hasRevenue]);
 
   return (
     <Sheet open={!!target} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -285,73 +225,11 @@ function AgentTrendDrawer({
           {loading && <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>}
           {error && <p className="rounded-xl border border-red-100 bg-red-50 p-3 text-xs text-red-700">{error}</p>}
           {rows && (
-            <>
-              <div>
-                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Week-wise</p>
-                <div className="overflow-hidden rounded-xl border border-slate-100">
-                  <table className="w-full border-collapse text-center text-[11px]">
-                    <thead>
-                      <tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                        <th className="border border-slate-200 px-2 py-1.5">Week</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Total Chat</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Unique Chat</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Sale Chats</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Conv%</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Revenue</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {weekly.map((w) => (
-                        <tr key={w.key}>
-                          <td className="border border-slate-200 px-2 py-1.5 text-left font-medium text-slate-700">{w.label}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 text-slate-600">{w.tickets.toLocaleString("en-IN")}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 text-slate-600">{w.uniqueCount.toLocaleString("en-IN")}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 font-semibold text-emerald-700">{w.saleChatCount.toLocaleString("en-IN")}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 font-semibold text-indigo-700">{w.tickets > 0 ? Math.round((w.saleChatCount / w.tickets) * 1000) / 10 : 0}%</td>
-                          <td className="border border-slate-200 px-2 py-1.5 font-semibold text-amber-700">{w.revenue !== null ? formatINR(w.revenue) : "—"}</td>
-                        </tr>
-                      ))}
-                      {weekly.length === 0 && (
-                        <tr><td colSpan={6} className="border border-slate-200 py-6 text-center text-slate-400">No data for this period.</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div>
-                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Date-wise</p>
-                <div className="overflow-hidden rounded-xl border border-slate-100">
-                  <table className="w-full border-collapse text-center text-[11px]">
-                    <thead>
-                      <tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                        <th className="border border-slate-200 px-2 py-1.5">Date</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Total Chat</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Unique Chat</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Sale Chats</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Conv%</th>
-                        <th className="border border-slate-200 px-2 py-1.5">Revenue</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((r) => (
-                        <tr key={r.date}>
-                          <td className="border border-slate-200 px-2 py-1.5 font-medium text-slate-700">{formatShortDate(r.date)}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 text-slate-600">{r.tickets.toLocaleString("en-IN")}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 text-slate-600">{r.uniqueCount.toLocaleString("en-IN")}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 font-semibold text-emerald-700">{r.saleChatCount.toLocaleString("en-IN")}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 font-semibold text-indigo-700">{r.conversionPct}%</td>
-                          <td className="border border-slate-200 px-2 py-1.5 font-semibold text-amber-700">{r.revenue !== null ? formatINR(r.revenue) : "—"}</td>
-                        </tr>
-                      ))}
-                      {rows.length === 0 && (
-                        <tr><td colSpan={6} className="border border-slate-200 py-6 text-center text-slate-400">No data for this period.</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </>
+            <PeriodSection
+              metricLabels={["Total Chat", "Unique Chat", "Sale Chats", "Conv%", "Revenue"]} weeks={periodWeeks}
+              fileBase={`Bellavita_Chat_Agent_${target?.agent ?? ""}`}
+              leadSheets={[{ name: "Summary", columns: ["Item", "Value"], rows: [["Agent", target?.agent ?? ""], ["Emp ID", target?.empId || "—"], ["From", from], ["To", to], ["LOB", lob || "All"]] }]}
+            />
           )}
         </div>
       </SheetContent>
@@ -457,12 +335,32 @@ export function BellavitaChatDashboard() {
     return () => { cancelled = true; };
   }, [from, to, lob, needsLegacy]);
 
+  /** Kenaz / Bevzilla have only a handful of agents, so a Top 5 / Bottom 5 split just repeats the
+   * same few names -- for those LOBs only the full Agent-wise table is shown. */
+  const smallLob = ["kenaz", "bevzilla"].includes(lob.trim().toLowerCase());
+
   const filteredAgents = useMemo(() => {
     const rows = data?.agents ?? [];
     const q = agentSearch.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((a) => a.agent.toLowerCase().includes(q) || a.empId.toLowerCase().includes(q));
   }, [data, agentSearch]);
+
+  /** Column totals for the Agent-wise table header (over the agents currently listed). Percentages
+   * are chat-weighted, not a plain average of the per-agent percentages. */
+  const agentTotals = useMemo(() => {
+    const rows = filteredAgents;
+    const tickets = rows.reduce((n, a) => n + a.tickets, 0);
+    const wsum = (pick: (a: AgentRow) => number) => (tickets > 0 ? rows.reduce((n, a) => n + pick(a) * a.tickets, 0) / tickets : 0);
+    const sales = rows.reduce((n, a) => n + a.saleChatCount, 0);
+    return {
+      tickets, unique: rows.reduce((n, a) => n + a.uniqueCount, 0), sales,
+      conv: tickets > 0 ? Math.round((sales / tickets) * 10000) / 100 : 0,
+      resolved: Math.round(wsum((a) => a.resolvedPct) * 100) / 100,
+      wait: Math.round(wsum((a) => a.avgWaitTimeMin) * 100) / 100,
+      revenue: rows.reduce((n, a) => n + (a.revenue ?? 0), 0),
+    };
+  }, [filteredAgents]);
 
   /** Top 5 / Bottom 5 ranked by a composite of Unique Chat, Conversion % and
    * Revenue -- each metric turned into a 0..1 percentile rank within this
@@ -722,6 +620,14 @@ export function BellavitaChatDashboard() {
 
         <SectionCard
           icon={Users} title="TL-wise Summary" tone="rose"
+          action={<TableExcelIconButton
+            fileBase={`Bellavita_Chat_TL_wise${lob ? `_${lob}` : ""}`}
+            getSheets={() => [{
+              name: "TL-wise",
+              columns: ["TL Name", "Total Chat", "Unique Chat", "FRT %", "IN TAT %", "Repeat %", "Sale Count", "Amount", "Conversion %"],
+              rows: data.byTl.map((r) => [r.tlName, r.tickets, r.uniqueCount, r.frtPct, r.inTatPct, r.repeatPct, r.saleCount, r.amount, r.conversionPct]),
+            }]}
+          />}
           footnote="Click a TL name for its date-wise and week-wise breakdown. Amount is SUM(bb_sale.amount) for that TL where campaign = 'Chat', over the same date range — a real figure from Bellavita's sale table, matched by TL name. It reflects every Chat-channel sale for that TL and does not narrow further when the LOB filter above is set to Bevzilla or Kenaz specifically, since bb_sale has no such split."
         >
           <div className="overflow-x-auto rounded-xl border border-slate-200">
@@ -768,14 +674,14 @@ export function BellavitaChatDashboard() {
 
       {tab === "agents" && data && (
       <div className="space-y-4">
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {!smallLob && <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <SectionCard icon={Users} title="Top 5 Performers" tone="emerald" footnote="Ranked by a combined percentile of Unique Chat, Conversion % and Revenue. Click a row for date-wise/week-wise detail.">
             <AgentMiniTable rows={topAgents} onRowClick={(a) => setDrawerAgent({ agent: a.agent, empId: a.empId })} />
           </SectionCard>
           <SectionCard icon={Users} title="Bottom 5 Performers" tone="amber" footnote="Same combined ranking, lowest 5. Click a row for date-wise/week-wise detail.">
             <AgentMiniTable rows={bottomAgents} onRowClick={(a) => setDrawerAgent({ agent: a.agent, empId: a.empId })} />
           </SectionCard>
-        </div>
+        </div>}
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="relative w-full max-w-sm">
@@ -789,6 +695,14 @@ export function BellavitaChatDashboard() {
         </div>
         <SectionCard
           icon={Users} title="Overall Agent-wise Chat Performance" tone="rose"
+          action={<TableExcelIconButton
+            fileBase={`Bellavita_Chat_Agent_wise${lob ? `_${lob}` : ""}`}
+            getSheets={() => [{
+              name: "Agent-wise",
+              columns: ["Agent", "Emp ID", "LOB", "Total Chats", "Unique", "Sale Chats", "Conversion %", "Resolved %", "Avg Wait Time (min)", "Revenue"],
+              rows: filteredAgents.map((a) => [a.agent, a.empId, a.lobs || "—", a.tickets, a.uniqueCount, a.saleChatCount, a.conversionPct, a.resolvedPct, a.avgWaitTimeMin, a.revenue ?? "—"]),
+            }]}
+          />}
           footnote="Click a row for date-wise/week-wise detail. Some rows show 'Unassigned' — agent_name/emp_id is NULL on part of the uploaded data (visible on the most recent upload batches), which this dashboard reflects rather than guesses. Sale Chats counts disposition = 'Saleschat' specifically — the separate 'Inactive sale chat' disposition (visible in Disposition Breakdown) is not counted here, since 'inactive' means it didn't convert. Revenue is '—' for rows with no real emp_id to join bb_sale by."
         >
           <div className="overflow-x-auto">
@@ -796,6 +710,7 @@ export function BellavitaChatDashboard() {
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
                   <th className="py-2 pr-3 font-semibold">Agent</th>
+                  <th className="py-2 pr-3 font-semibold">LOB</th>
                   <th className="py-2 pr-3 text-right font-semibold">Total Chats</th>
                   <th className="py-2 pr-3 text-right font-semibold">Unique</th>
                   <th className="py-2 pr-3 text-right font-semibold">Sale Chats</th>
@@ -803,6 +718,17 @@ export function BellavitaChatDashboard() {
                   <th className="py-2 pr-3 text-right font-semibold">Resolved %</th>
                   <th className="py-2 pr-3 text-right font-semibold">Avg Wait Time</th>
                   <th className="py-2 pr-0 text-right font-semibold">Revenue</th>
+                </tr>
+                <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold normal-case tracking-normal text-slate-800">
+                  <th className="py-2 pl-2 pr-3">Total ({filteredAgents.length} agents)</th>
+                  <th className="py-2 pr-3" />
+                  <th className="py-2 pr-3 text-right">{agentTotals.tickets.toLocaleString("en-IN")}</th>
+                  <th className="py-2 pr-3 text-right">{agentTotals.unique.toLocaleString("en-IN")}</th>
+                  <th className="py-2 pr-3 text-right">{agentTotals.sales.toLocaleString("en-IN")}</th>
+                  <th className="py-2 pr-3 text-right text-emerald-600">{agentTotals.conv}%</th>
+                  <th className="py-2 pr-3 text-right">{agentTotals.resolved}%</th>
+                  <th className="py-2 pr-3 text-right">{agentTotals.wait ? `${agentTotals.wait}m` : "—"}</th>
+                  <th className="py-2 pr-2 text-right text-amber-700">{formatINR(agentTotals.revenue)}</th>
                 </tr>
               </thead>
               <tbody>
@@ -815,6 +741,7 @@ export function BellavitaChatDashboard() {
                       <div className="font-medium text-rose-700 underline-offset-2 hover:underline">{a.agent}</div>
                       <div className="text-[11px] text-slate-400">{a.empId || "—"}</div>
                     </td>
+                    <td className="py-2.5 pr-3 text-slate-600">{a.lobs || "—"}</td>
                     <td className="py-2.5 pr-3 text-right text-slate-600">{a.tickets.toLocaleString("en-IN")}</td>
                     <td className="py-2.5 pr-3 text-right text-slate-600">{a.uniqueCount.toLocaleString("en-IN")}</td>
                     <td className="py-2.5 pr-3 text-right text-slate-600">{a.saleChatCount.toLocaleString("en-IN")}</td>
@@ -825,7 +752,7 @@ export function BellavitaChatDashboard() {
                   </tr>
                 ))}
                 {filteredAgents.length === 0 && (
-                  <tr><td colSpan={8} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
+                  <tr><td colSpan={9} className="py-6 text-center text-slate-400">No agents match this search.</td></tr>
                 )}
               </tbody>
             </table>

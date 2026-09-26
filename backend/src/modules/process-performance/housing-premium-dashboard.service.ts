@@ -161,6 +161,8 @@ export interface OverviewValues {
   connected: number; notConnected: number; uniqueConnected: number; totalCalls: number; connectedPct: number;
   target: number; revenue: number; saleCount: number; achievedPct: number; aov: number;
   presentCount: number; perAgentDialCount: number; avgSalePerAgent: number;
+  /** Total talk seconds / Present Count (agent-days) -- average talk time per agent per day, same denominator Per Agent Dial Count uses. */
+  avgTalkPerAgentSec: number;
 }
 export interface HousingPremiumOverviewData {
   from: string; to: string; columns: OverviewColumn[];
@@ -170,23 +172,23 @@ export interface HousingPremiumOverviewData {
 }
 
 /** tlName filters by the AGENT's roster TL (see header note) -- pre_sale.tl_name itself is not usable. */
-async function loadSaleDaily(from: string, to: string, tlName?: string): Promise<Map<string, { revenue: number; count: number }>> {
+async function loadSaleDaily(from: string, to: string, tlName?: string, agentName?: string): Promise<Map<string, { revenue: number; count: number }>> {
   const join = tlName ? `JOIN db_masmis.pre_agent_details ad ON ad.agent_name = ps.agent_name AND ad.tl_name = ?` : "";
   const [rows] = await readRows(
     `SELECT ps.report_date AS d, SUM(ps.amount) AS rev, COUNT(*) AS n FROM db_masmis.pre_sale ps
-      ${join} WHERE ps.report_date BETWEEN ? AND ? GROUP BY ps.report_date`,
-    tlName ? [tlName, from, to] : [from, to],
+      ${join} WHERE ps.report_date BETWEEN ? AND ? ${agentName ? "AND ps.agent_name = ?" : ""} GROUP BY ps.report_date`,
+    [...(tlName ? [tlName] : []), from, to, ...(agentName ? [agentName] : [])],
   );
   return new Map(rows.map((r) => [String(r.d), { revenue: num(r.rev), count: num(r.n) }]));
 }
 interface CdrDay { connected: number; notConnected: number; uniqueConnected: number; present: number; talkSec: number }
-async function loadCdrDaily(from: string, to: string, tlName?: string): Promise<{ daily: Map<string, CdrDay>; rowCount: number }> {
+async function loadCdrDaily(from: string, to: string, tlName?: string, agentName?: string): Promise<{ daily: Map<string, CdrDay>; rowCount: number }> {
   const [rows] = await readRows(
     `SELECT DATE_FORMAT(d, '%Y-%m-%d') AS day, SUM(status='Answered') AS conn, SUM(status='No Answered') AS noconn,
             SUM(status='Answered' AND unique_count='1') AS uconn, SUM(call_count='1') AS present, SUM(talk_duration+0) AS talk
-       FROM (SELECT ${CDR_DATE_SQL} AS d, status, unique_count, call_count, talk_duration, tl_name FROM db_masmis.Pre_cdr) x
-      WHERE d BETWEEN ? AND ? ${tlName ? "AND tl_name = ?" : ""} GROUP BY d`,
-    tlName ? [from, to, tlName] : [from, to],
+       FROM (SELECT ${CDR_DATE_SQL} AS d, status, unique_count, call_count, talk_duration, tl_name, member FROM db_masmis.Pre_cdr) x
+      WHERE d BETWEEN ? AND ? ${tlName ? "AND tl_name = ?" : ""} ${agentName ? "AND member = ?" : ""} GROUP BY d`,
+    [from, to, ...(tlName ? [tlName] : []), ...(agentName ? [agentName] : [])],
   );
   const daily = new Map<string, CdrDay>();
   for (const r of rows) {
@@ -223,10 +225,10 @@ function rollUpOverview(
   const out: Record<string, OverviewValues> = {};
   for (const col of columns) {
     const span = eachDay(col.from, col.to);
-    let revenue = 0, saleCount = 0, connected = 0, notConnected = 0, uniqueConnected = 0, present = 0;
+    let revenue = 0, saleCount = 0, connected = 0, notConnected = 0, uniqueConnected = 0, present = 0, talkSec = 0;
     for (const d of span) {
       const s = saleDaily.get(d); if (s) { revenue += s.revenue; saleCount += s.count; }
-      const c = cdrDaily.get(d); if (c) { connected += c.connected; notConnected += c.notConnected; uniqueConnected += c.uniqueConnected; present += c.present; }
+      const c = cdrDaily.get(d); if (c) { connected += c.connected; notConnected += c.notConnected; uniqueConnected += c.uniqueConnected; present += c.present; talkSec += c.talkSec; }
     }
     const totalCalls = connected + notConnected;
     let target = 0;
@@ -238,15 +240,24 @@ function rollUpOverview(
       target, revenue: round2(revenue), saleCount, achievedPct: pct(revenue, target), aov: saleCount > 0 ? Math.round(revenue / saleCount) : 0,
       presentCount: present, perAgentDialCount: present > 0 ? Math.round(totalCalls / present) : 0,
       avgSalePerAgent: present > 0 ? round2(saleCount / present) : 0,
+      avgTalkPerAgentSec: present > 0 ? Math.round(talkSec / present) : 0,
     };
   }
   return out;
 }
 
-export async function getHousingPremiumOverview(fromInput: string, toInput: string): Promise<HousingPremiumOverviewData> {
+export async function getHousingPremiumOverview(fromInput: string, toInput: string, agentInput?: string): Promise<HousingPremiumOverviewData> {
   const { from, to } = resolveRange(fromInput, toInput);
   const columns = buildOverviewColumns(from, to);
   const roster = await loadRoster();
+  const agent = agentInput && agentInput.trim() && agentInput.trim().toLowerCase() !== "overall" ? agentInput.trim() : null;
+  if (agent) {
+    // Agent scope: the same day/week/MTD columns for one agent, with that agent's own roster target (same convention getHousingPremiumDayWise uses). No per-TL blocks -- they would not describe one agent.
+    const agentTarget = roster.find((r) => r.name.toLowerCase() === agent.toLowerCase())?.target ?? 0;
+    const [sd, cd] = await Promise.all([loadSaleDaily(from, to, undefined, agent), loadCdrDaily(from, to, undefined, agent)]);
+    const [[saleCntA]] = await readRows(`SELECT COUNT(*) AS n FROM db_masmis.pre_sale`);
+    return { from, to, columns, overall: rollUpOverview(columns, sd, cd.daily, agentTarget), byTl: [], cdrRowCount: cd.rowCount, saleRowCount: num(saleCntA?.n), cdrAvailable: cd.rowCount > 0 };
+  }
   const activeTarget = roster.filter((r) => r.status === "Active").reduce((s, r) => s + r.target, 0);
   const targetByTl = new Map<string, number>();
   for (const r of roster.filter((r) => r.status === "Active")) targetByTl.set(r.tlName, (targetByTl.get(r.tlName) ?? 0) + r.target);

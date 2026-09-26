@@ -22,6 +22,8 @@ export type NavItem = {
   description?: string;
   /** When true, also visible to anyone who has direct reports (is_manager), regardless of role */
   managerVisible?: boolean;
+  /** When true, also visible to anyone holding a TPZ Process grant (admin-assigned), regardless of role */
+  tpzVisible?: boolean;
   /**
    * When true the page grant is necessary but NOT sufficient: the item also needs is_manager (at least one
    * direct report) or one of `roles`. For pages whose grant goes to the employee role so that managers who

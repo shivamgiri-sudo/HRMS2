@@ -8,6 +8,7 @@ import { getChatDetail, getChatLob, getChatPeriods } from "./clovia-lob-chat.ser
 import { getOutboundDetail, getOutboundLob, getOutboundPeriods } from "./clovia-lob-outbound.service.js";
 import { getInboundExtras, getInboundExtrasDetail, getInboundExtrasPeriods } from "./clovia-lob-inbound.service.js";
 import { getOverview, getOverviewDetail, getOverviewPeriods } from "./clovia-lob-overview.service.js";
+import { getCloviaOverviewDashboard } from "./clovia-overview-dashboard.service.js";
 
 /**
  * Clovia per-LOB dashboards (read-only).
@@ -39,6 +40,18 @@ function badInput(err: unknown): string | null {
   const m = err instanceof Error ? err.message : "";
   return /limited to|Unknown (department|campaign)/.test(m) ? m : null;
 }
+
+// Registered before the generic :lob route so "overview-dashboard" is never read as a LOB name.
+router.get("/clovia-lob/overview-dashboard", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  try {
+    const data = await getCloviaOverviewDashboard(q(req.query.from, 10), q(req.query.to, 10));
+    res.json({ success: true, data });
+  } catch (err) {
+    const m = badInput(err);
+    if (m) { res.status(400).json({ success: false, error: m }); return; }
+    throw err;
+  }
+}));
 
 router.get("/clovia-lob/:lob", requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const lob = String(req.params.lob);

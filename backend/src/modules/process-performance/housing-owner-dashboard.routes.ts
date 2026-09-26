@@ -1,7 +1,7 @@
 import { Router, type NextFunction, type Response } from "express";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
-import { getHousingOwnerDashboard, getHousingOwnerEntityTrend } from "./housing-owner-dashboard.service.js";
+import { getHousingOwnerDashboard, getHousingOwnerEntityTrend, getHousingOwnerOutbound } from "./housing-owner-dashboard.service.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
@@ -37,6 +37,11 @@ router.get("/housing-owner-dashboard/entity-trend", requireRole(...VIEWER_ROLES)
   const from = String(req.query.from ?? "");
   const to = String(req.query.to ?? "");
   const data = await getHousingOwnerEntityTrend(from, to, type, name);
+  res.json({ success: true, data });
+}));
+
+router.get("/housing-owner-dashboard/outbound", requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await getHousingOwnerOutbound(String(req.query.from ?? ""), String(req.query.to ?? ""));
   res.json({ success: true, data });
 }));
 

@@ -45,6 +45,8 @@ export interface CartTrendRow {
   abandonCartRevenue: number; abandonCartSaleCount: number;
   ncConnectCount: number; sameDayUniqueAttempt: number; sameDayUniqueConnect: number;
   codOrderCount: number; paidOrderCount: number; rtoOrderCount: number;
+  /** Automatic Revenue Target for this date (0 = no allocation yet / after today). */
+  revenueTarget: number;
 }
 export interface CartTopProduct {
   product: string; baseCount: number; cartValue: number;
@@ -97,6 +99,7 @@ export function BellavitaCartDashboard() {
     try {
       const res = await hrmsApi.get<{ success: boolean; data: DashboardData }>(
         `/api/process-performance/bellavita-cart-dashboard?from=${from}&to=${to}`,
+        120000, // the cart aggregates scan a large text-dated table; the default 30 s limit is too short on a cold load
       );
       setData(res.data);
     } catch (err) {

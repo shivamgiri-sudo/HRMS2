@@ -9,7 +9,8 @@ import {
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { KpiCard, SectionCard, formatINR, type KpiTone } from "./DashboardKit";
+import { BellavitaCartTargetTable } from "./BellavitaCartTargetTable";
+import { KpiCard, SectionCard, formatINR, type KpiTone, PeriodSection, type PeriodWeek, type PeriodRow } from "./DashboardKit";
 import type { CartHeadline, CartTrendRow, CartTopProduct } from "./BellavitaCartDashboard";
 
 /**
@@ -105,25 +106,30 @@ function DeltaChip({ curr, prev }: { curr?: number; prev?: number }) {
   );
 }
 
+/** Groups the per-day trend rows into W-1.. week rows (each with its own day rows) for PeriodSection. */
+function cartPeriodWeeks(rows: CartTrendRow[], metrics: ChartMetric[]): PeriodWeek[] {
+  const toRow = (key: string, label: string, dayRows: CartTrendRow[]): PeriodRow => {
+    const vals = metrics.map((m) => drillValueForRows(m.drill, dayRows));
+    return { key, label, cells: vals.map((v) => fmtDrillValue(v.value, v.fmt)), raw: vals.map((v) => v.value) };
+  };
+  const byWeek = new Map<string, CartTrendRow[]>();
+  for (const r of rows) {
+    const k = weekBucket(r.date).key;
+    byWeek.set(k, [...(byWeek.get(k) ?? []), r]);
+  }
+  return [...byWeek.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, dayRows]) => ({
+    ...toRow(key, weekBucket(dayRows[0].date).label, dayRows),
+    days: dayRows.map((r) => toRow(r.date, formatShortDate(r.date), [r])),
+  }));
+}
+
 function KpiDrawer({
   kpi, rows, onClose,
 }: { kpi: (KpiDef & { drill: Drill }) | null; rows: CartTrendRow[]; onClose: () => void }) {
-  const weekly = useMemo(() => {
-    if (!kpi) return [];
-    const byWeek = new Map<string, CartTrendRow[]>();
-    for (const r of rows) {
-      const wk = weekBucket(r.date);
-      const cur = byWeek.get(wk.key) ?? [];
-      cur.push(r);
-      byWeek.set(wk.key, cur);
-    }
-    return [...byWeek.entries()].sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, dayRows]) => ({ key, label: weekBucket(dayRows[0].date).label, ...drillValueForRows(kpi.drill, dayRows) }));
-  }, [kpi, rows]);
-  const daily = useMemo(() => {
-    if (!kpi) return [];
-    return rows.map((r) => ({ date: r.date, ...drillValueForRows(kpi.drill, [r]) }));
-  }, [kpi, rows]);
+  const periodWeeks = useMemo<PeriodWeek[]>(
+    () => (kpi ? cartPeriodWeeks(rows, [{ key: "kpi", label: kpi.label, drill: kpi.drill }]) : []),
+    [kpi, rows],
+  );
 
   return (
     <Sheet open={!!kpi} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -138,46 +144,9 @@ function KpiDrawer({
         <div className="space-y-4 px-5 py-4">
           {!kpi && <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>}
           {kpi && (
-            <>
-              <div>
-                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Week-wise</p>
-                <div className="overflow-hidden rounded-xl border border-slate-100">
-                  <table className="w-full border-collapse text-center text-[11px]">
-                    <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                      <th className="border border-slate-200 px-2 py-1.5">Week</th><th className="border border-slate-200 px-2 py-1.5">{kpi.label}</th>
-                    </tr></thead>
-                    <tbody>
-                      {weekly.map((w) => (
-                        <tr key={w.key}>
-                          <td className="border border-slate-200 px-2 py-1.5 text-left font-medium text-slate-700">{w.label}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 font-semibold text-fuchsia-700">{fmtDrillValue(w.value, w.fmt)}</td>
-                        </tr>
-                      ))}
-                      {weekly.length === 0 && <tr><td colSpan={2} className="border border-slate-200 py-6 text-center text-slate-400">No data for this period.</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              <div>
-                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Date-wise</p>
-                <div className="overflow-hidden rounded-xl border border-slate-100">
-                  <table className="w-full border-collapse text-center text-[11px]">
-                    <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                      <th className="border border-slate-200 px-2 py-1.5">Date</th><th className="border border-slate-200 px-2 py-1.5">{kpi.label}</th>
-                    </tr></thead>
-                    <tbody>
-                      {daily.map((r) => (
-                        <tr key={r.date}>
-                          <td className="border border-slate-200 px-2 py-1.5 font-medium text-slate-700">{formatShortDate(r.date)}</td>
-                          <td className="border border-slate-200 px-2 py-1.5 font-semibold text-fuchsia-700">{fmtDrillValue(r.value, r.fmt)}</td>
-                        </tr>
-                      ))}
-                      {daily.length === 0 && <tr><td colSpan={2} className="border border-slate-200 py-6 text-center text-slate-400">No data for this period.</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </>
+            <PeriodSection
+              metricLabels={[kpi.label]} weeks={periodWeeks} fileBase={`Bellavita_Cart_${kpi.label}`} accentClass="text-fuchsia-700"
+            />
           )}
         </div>
       </SheetContent>
@@ -217,25 +186,7 @@ function ViewDetailsButton({ onClick }: { onClick: () => void }) {
 function ChartDetailsDrawer({
   chart, rows, onClose,
 }: { chart: ChartDetail | null; rows: CartTrendRow[]; onClose: () => void }) {
-  const weekly = useMemo(() => {
-    if (!chart) return [];
-    const byWeek = new Map<string, CartTrendRow[]>();
-    for (const r of rows) {
-      const wk = weekBucket(r.date);
-      const cur = byWeek.get(wk.key) ?? [];
-      cur.push(r);
-      byWeek.set(wk.key, cur);
-    }
-    return [...byWeek.entries()].sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, dayRows]) => ({
-        key, label: weekBucket(dayRows[0].date).label,
-        values: chart.metrics.map((m) => drillValueForRows(m.drill, dayRows)),
-      }));
-  }, [chart, rows]);
-  const daily = useMemo(() => {
-    if (!chart) return [];
-    return rows.map((r) => ({ date: r.date, values: chart.metrics.map((m) => drillValueForRows(m.drill, [r])) }));
-  }, [chart, rows]);
+  const periodWeeks = useMemo<PeriodWeek[]>(() => (chart ? cartPeriodWeeks(rows, chart.metrics) : []), [chart, rows]);
 
   return (
     <Sheet open={!!chart} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -270,49 +221,12 @@ function ChartDetailsDrawer({
               </div>
 
               <div>
-                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Week-wise</p>
-                <div className="overflow-x-auto rounded-xl border border-slate-100">
-                  <table className="w-full min-w-[480px] border-collapse text-center text-[11px]">
-                    <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                      <th className="border border-slate-200 px-2 py-1.5 text-left">Week</th>
-                      {chart.metrics.map((m) => <th key={m.key} className="border border-slate-200 px-2 py-1.5">{m.label}</th>)}
-                    </tr></thead>
-                    <tbody>
-                      {weekly.map((w) => (
-                        <tr key={w.key}>
-                          <td className="border border-slate-200 px-2 py-1.5 text-left font-medium text-slate-700">{w.label}</td>
-                          {w.values.map((v, i) => (
-                            <td key={chart.metrics[i].key} className="border border-slate-200 px-2 py-1.5 font-semibold text-fuchsia-700">{fmtDrillValue(v.value, v.fmt)}</td>
-                          ))}
-                        </tr>
-                      ))}
-                      {weekly.length === 0 && <tr><td colSpan={chart.metrics.length + 1} className="border border-slate-200 py-6 text-center text-slate-400">No data for this period.</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div>
-                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Date-wise</p>
-                <div className="overflow-x-auto rounded-xl border border-slate-100">
-                  <table className="w-full min-w-[480px] border-collapse text-center text-[11px]">
-                    <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                      <th className="border border-slate-200 px-2 py-1.5 text-left">Date</th>
-                      {chart.metrics.map((m) => <th key={m.key} className="border border-slate-200 px-2 py-1.5">{m.label}</th>)}
-                    </tr></thead>
-                    <tbody>
-                      {daily.map((r) => (
-                        <tr key={r.date}>
-                          <td className="border border-slate-200 px-2 py-1.5 font-medium text-slate-700">{formatShortDate(r.date)}</td>
-                          {r.values.map((v, i) => (
-                            <td key={chart.metrics[i].key} className="border border-slate-200 px-2 py-1.5 font-semibold text-fuchsia-700">{fmtDrillValue(v.value, v.fmt)}</td>
-                          ))}
-                        </tr>
-                      ))}
-                      {daily.length === 0 && <tr><td colSpan={chart.metrics.length + 1} className="border border-slate-200 py-6 text-center text-slate-400">No data for this period.</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
+                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Week-wise / Date-wise</p>
+                <PeriodSection
+                  metricLabels={chart.metrics.map((m) => m.label)} weeks={periodWeeks}
+                  fileBase={`Bellavita_Cart_${chart.title}`} accentClass="text-fuchsia-700"
+                  leadSheets={[{ name: "Overall KPIs", columns: ["KPI", "Value"], rows: chart.overall.map((o) => [o.label, o.value]) }]}
+                />
               </div>
             </>
           )}
@@ -362,7 +276,7 @@ export function BellavitaCartOverview({ data }: { data: OverviewData }) {
     { key: "totalSales", label: "Total Sales", icon: ShoppingBag, tone: "teal", value: h.abandonCartSaleCount.toLocaleString("en-IN"), drill: { kind: "sum", field: "abandonCartSaleCount", fmt: "count" }, currValue: h.abandonCartSaleCount, prevValue: prevHeadline?.abandonCartSaleCount },
     { key: "revenue", label: "Revenue", icon: IndianRupee, tone: "violet", value: formatINR(h.abandonCartRevenue), drill: { kind: "sum", field: "abandonCartRevenue", fmt: "currency" }, currValue: h.abandonCartRevenue, prevValue: prevHeadline?.abandonCartRevenue },
     { key: "conversionUniqueConnect", label: "Conversion (Unique Connect)", icon: Percent, tone: "cyan", value: `${conversionOnUniqueConnectPct}%`, drill: { kind: "ratio", num: "abandonCartSaleCount", den: "uniqueCallConnectedCount" }, currValue: conversionOnUniqueConnectPct, prevValue: prevConversionOnUniqueConnectPct },
-    { key: "targetAchievement", label: "Target Achievement", icon: Trophy, tone: "amber", value: h.target !== null ? `${h.achievementPct}%` : "not set", sub: h.target !== null ? `of ${formatINR(h.target)} target` : "no target set for this month" },
+    { key: "targetAchievement", label: "Target Achievement", icon: Trophy, tone: "amber", value: h.target !== null ? `${h.achievementPct}%` : "not set", sub: h.target !== null ? `of ${formatINR(h.target)} target` : "no target for these dates" },
   ];
 
   const funnelData = [
@@ -591,6 +505,8 @@ export function BellavitaCartOverview({ data }: { data: OverviewData }) {
     metrics: [
       { key: "abandonCartRevenue", label: "Revenue", drill: { kind: "sum", field: "abandonCartRevenue", fmt: "currency" } },
       { key: "abandonCartSaleCount", label: "Sale Count", drill: { kind: "sum", field: "abandonCartSaleCount", fmt: "count" } },
+      { key: "revenueTarget", label: "Target", drill: { kind: "sum", field: "revenueTarget", fmt: "currency" } },
+      { key: "achiPct", label: "Achi %", drill: { kind: "ratio", num: "abandonCartRevenue", den: "revenueTarget" } },
     ],
   };
 
@@ -767,6 +683,8 @@ export function BellavitaCartOverview({ data }: { data: OverviewData }) {
           </div>
         </SectionCard>
       </div>
+
+      <BellavitaCartTargetTable from={data.from} to={data.to} />
 
       <KpiDrawer kpi={drawerKpi} rows={data.dateWiseTrend} onClose={() => setDrawerKpi(null)} />
       <ChartDetailsDrawer chart={drawerChart} rows={data.dateWiseTrend} onClose={() => setDrawerChart(null)} />

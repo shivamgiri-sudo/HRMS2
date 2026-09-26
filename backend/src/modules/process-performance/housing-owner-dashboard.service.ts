@@ -735,3 +735,139 @@ export async function getHousingOwnerEntityTrend(
     dailyTrend,
   };
 }
+
+/* ------------------------------------------------------------------------ *
+ * Outbound Performance dashboard (fact-level feed)
+ *
+ * Returns the de-duplicated, roster-resolved CDR and sale rows for a window
+ * that covers everything the page needs in one call: the requested range,
+ * the equal-length previous period (for the KPI deltas), month-to-date and
+ * last-month-to-date. The page slices those rows per AM / TL / Vintage /
+ * agent itself, so a filter change needs no round trip and every KPI, matrix
+ * cell and drawer is computed from the same rows. The existing endpoints
+ * above are untouched.
+ * ------------------------------------------------------------------------ */
+
+export interface HousingOwnerCdrFact {
+  date: string; agent: string; tl: string; am: string; vintage: string;
+  calls: number; connected: number; notConnected: number; talkSec: number;
+}
+export interface HousingOwnerSaleFact {
+  date: string; agent: string; tl: string; am: string; vintage: string;
+  revenue: number; saleCount: number;
+}
+export interface HousingOwnerRosterFact {
+  name: string; empId: string | null; tl: string; am: string; vintage: string;
+  status: string; monthlyTarget: number;
+}
+export interface HousingOwnerOutboundData {
+  from: string; to: string; windowFrom: string;
+  cdrThrough: string | null; saleThrough: string | null;
+  cdr: HousingOwnerCdrFact[];
+  sales: HousingOwnerSaleFact[];
+  roster: HousingOwnerRosterFact[];
+}
+
+function shiftDate(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+}
+function dayDiff(a: string, b: string): number {
+  const p = (s: string) => { const [y, m, d] = s.split("-").map(Number); return Date.UTC(y, m - 1, d); };
+  return Math.round((p(b) - p(a)) / 86400000);
+}
+
+export async function getHousingOwnerOutbound(fromInput: string, toInput: string): Promise<HousingOwnerOutboundData> {
+  const { from, to } = resolveRange(fromInput, toInput);
+
+  const spanDays = dayDiff(from, to) + 1;
+  const prevFrom = shiftDate(from, -spanDays);
+  // Month-to-date of the range's end month, and the same span of the month before it.
+  const monthStart = `${to.slice(0, 7)}-01`;
+  const [ty, tm] = to.split("-").map(Number);
+  const lmY = tm === 1 ? ty - 1 : ty;
+  const lmM = tm === 1 ? 12 : tm - 1;
+  const lmStart = `${lmY}-${pad2(lmM)}-01`;
+  const windowFrom = [prevFrom, monthStart, lmStart].sort()[0];
+
+  const [agentRows] = await db.execute<any[]>(
+    `SELECT crm_id, overall, tl_name, am, status, bucket, monthly_target FROM db_masmis.owner_agent_details`
+  );
+  const [saleRows] = await db.execute<any[]>(
+    `SELECT opp_id, agent_name, tl_name, am, value, sale_count, package_type, day, month FROM db_masmis.owner_sale`
+  );
+  const [cdrRows] = await db.execute<any[]>(
+    `SELECT agent, tl_name, am, total_calls, connected, not_connected, avg_talk_time, report_date FROM db_masmis.Owner_cdr`
+  );
+
+  const roster = new Map<string, HousingOwnerRosterFact>();
+  const vintageOf = new Map<string, string>();
+  for (const r of agentRows as any[]) {
+    const name = normalizeName(r.overall);
+    if (!name) continue;
+    const vintage = String(r.bucket ?? "").trim() || "Unmapped";
+    roster.set(name, {
+      name,
+      empId: r.crm_id ?? null,
+      tl: normalizeName(r.tl_name) || "Unassigned",
+      am: normalizeName(r.am) || "Unassigned",
+      vintage,
+      status: r.status ?? "Unknown",
+      monthlyTarget: num(r.monthly_target),
+    });
+    vintageOf.set(name, vintage);
+  }
+  // Roster first, else the row's own TL / AM -- the precedence the existing endpoints use.
+  // Uploaded rows carry placeholder values ("0", "-", "--") for a missing AM / TL.
+  const label = (v: unknown) => {
+    const s = normalizeName(v);
+    return s === "" || s === "0" || s === "-" || s === "--" ? "Unassigned" : s;
+  };
+  const resolve = (agent: string, rowTl: unknown, rowAm: unknown) => {
+    const ro = roster.get(agent);
+    return {
+      tl: ro?.tl ?? label(rowTl),
+      am: ro?.am ?? label(rowAm),
+      vintage: ro?.vintage ?? "Unmapped",
+    };
+  };
+
+  const sales: HousingOwnerSaleFact[] = [];
+  const seenSales = new Set<string>();
+  let saleThrough: string | null = null;
+  for (const r of saleRows as any[]) {
+    const date = saleRowDate(r.month, r.day);
+    if (date === null || date < windowFrom || date > to) continue;
+    const agent = normalizeName(r.agent_name);
+    const oppId = String(r.opp_id ?? "").trim();
+    if (oppId) {
+      const key = `${oppId}|${agent}|${num(r.value)}|${String(r.package_type ?? "").trim()}`;
+      if (seenSales.has(key)) continue;
+      seenSales.add(key);
+    }
+    if (saleThrough === null || date > saleThrough) saleThrough = date;
+    sales.push({ date, agent, ...resolve(agent, r.tl_name, r.am), revenue: num(r.value), saleCount: num(r.sale_count) || 1 });
+  }
+
+  const cdr: HousingOwnerCdrFact[] = [];
+  const seenCdr = new Set<string>();
+  let cdrThrough: string | null = null;
+  for (const r of cdrRows as any[]) {
+    const date = cdrRowDate(r.report_date);
+    if (date === null || date < windowFrom || date > to) continue;
+    const agent = normalizeName(r.agent);
+    const key = [agent, date, r.total_calls, r.connected, r.not_connected, r.avg_talk_time].join("|");
+    if (seenCdr.has(key)) continue;
+    seenCdr.add(key);
+    if (cdrThrough === null || date > cdrThrough) cdrThrough = date;
+    const talkStr = String(r.avg_talk_time ?? "").trim();
+    cdr.push({
+      date, agent, ...resolve(agent, r.tl_name, r.am),
+      calls: num(r.total_calls), connected: num(r.connected), notConnected: num(r.not_connected),
+      talkSec: talkStr === "" || talkStr === "0:00:00" ? 0 : timeToSec(talkStr),
+    });
+  }
+
+  return { from, to, windowFrom, cdrThrough, saleThrough, cdr, sales, roster: [...roster.values()] };
+}

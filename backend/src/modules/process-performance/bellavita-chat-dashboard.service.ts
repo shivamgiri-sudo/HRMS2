@@ -66,6 +66,8 @@ export interface BellavitaChatTlRow {
   amount: number;
 }
 export interface BellavitaChatAgentRow {
+  /** Every LOB this agent handled chats in within the range (e.g. "Chat, Kenaz"). */
+  lobs: string;
   agent: string; empId: string; tickets: number; uniqueCount: number;
   /** disposition = 'Saleschat' specifically -- the real, distinct
    * "Inactive sale chat" disposition (22,782 rows live) is NOT counted
@@ -255,7 +257,8 @@ export async function getBellavitaChatDashboard(
        SUM(CASE WHEN ${RESOLVED_EXPR} THEN 1 ELSE 0 END) AS resolved,
        SUM(CASE WHEN repeat_status = 'Unique' THEN 1 ELSE 0 END) AS unique_count,
        SUM(CASE WHEN disposition = 'Saleschat' THEN 1 ELSE 0 END) AS sale_chat_count,
-       AVG(NULLIF(average_wait_time, '') + 0) AS avg_wait
+       AVG(NULLIF(average_wait_time, '') + 0) AS avg_wait,
+       GROUP_CONCAT(DISTINCT lob ORDER BY lob SEPARATOR ', ') AS lobs
      FROM db_masmis.bb_chat
      WHERE chat_date >= ? AND chat_date < DATE_ADD(?, INTERVAL 1 DAY) ${lobClause}
      GROUP BY agent ORDER BY n DESC LIMIT 200`,
@@ -338,7 +341,7 @@ export async function getBellavitaChatDashboard(
     agents: agentRows.map((r) => {
       const empId = String(r.emp_id || "");
       return {
-        agent: String(r.agent), empId, tickets: num(r.n),
+        agent: String(r.agent), empId, lobs: String(r.lobs ?? ""), tickets: num(r.n),
         uniqueCount: num(r.unique_count), saleChatCount: num(r.sale_chat_count),
         conversionPct: pct(num(r.sale_chat_count), num(r.n)),
         resolvedPct: pct(num(r.resolved), num(r.n)), avgWaitTimeMin: Math.round(num(r.avg_wait) * 100) / 100,

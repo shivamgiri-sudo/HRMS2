@@ -25,9 +25,14 @@ interface ProtectedRouteProps {
   roles?: readonly string[];
   /** Canonical role-dashboard entitlement. Takes precedence over a local role list. */
   dashboardCode?: DashboardCode;
+  /**
+   * The caller has ALREADY verified an entitlement that replaces the role list and page grant for this route (TPZ Process
+   * per-user grants, enforced again by the API). Sign-in, password, 2FA and onboarding checks still apply.
+   */
+  entitlementVerified?: boolean;
 }
 
-export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRouteProps) {
+export function ProtectedRoute({ children, roles, dashboardCode, entitlementVerified = false }: ProtectedRouteProps) {
   const { user, isLoading, mustChangePassword, twoFactorRequired, twoFactorVerified } = useAuth();
   const location = useLocation();
   const { data: employeeStatus, isLoading: isEmployeeLoading } = useEmployeeStatus();
@@ -189,7 +194,7 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
   // Grants and lists were reconciled in the same change, so no live user loses a page they
   // hold today; the lists now pin that surface in place, and a grant added later cannot
   // silently widen a route past what its own file declares.
-  if (roles && roles.length > 0) {
+  if (!entitlementVerified && roles && roles.length > 0) {
     const hasRequiredRole = dashboardCode
       ? canAccessDashboard(dashboardCode, roleKeys)
       : roleKeys.includes("super_admin") || roles.some((r) => roleKeys.includes(r));
@@ -217,7 +222,7 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
     }
   }
 
-  if (routePageCode && !hasRoutePageAccess) {
+  if (!entitlementVerified && routePageCode && !hasRoutePageAccess) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <Card className="max-w-md w-full">

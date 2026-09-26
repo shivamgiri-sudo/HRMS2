@@ -12,6 +12,12 @@ export function requireRole(...allowedRoles: string[]) {
         return res.status(401).json({ success: false, message: "Unauthenticated" });
       }
 
+      // A TPZ Process access gate (modules/tpz-access) has already verified THIS request against the user's grants and set this
+      // flag -- only for a TPZ path the user was granted, and for dashboards only on GET/HEAD. It is never derived from client input.
+      if ((req as AuthenticatedRequest & { tpzBypass?: boolean }).tpzBypass === true) {
+        return next();
+      }
+
       const normalizedAllowedRoles = normalizeRoleInputs(allowedRoles);
 
       // Demo bypass: resolve roles from req.authUser.role (set by DEMO_TOKEN_MAP)

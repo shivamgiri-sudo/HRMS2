@@ -4,12 +4,13 @@ import {
 } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
-  PhoneIncoming, PhoneMissed, Timer, Users, Mail, MessageSquare, Star, ShieldCheck,
-  CalendarDays, TrendingUp, PhoneOff, Repeat, LayoutDashboard, Headset, Grid3x3, PhoneOutgoing,
+  PhoneIncoming, PhoneMissed, Timer, Users, Mail, MessageSquare,
+  CalendarDays, TrendingUp, Repeat, LayoutDashboard, Headset, Grid3x3, PhoneOutgoing,
 } from "lucide-react";
 import { DashboardExportMenu, type ExportSlide } from "./DashboardKit";
 import { CloviaLobSlide } from "./CloviaLobSlide";
 import { CloviaInboundSlide } from "./CloviaInboundSlide";
+import { CloviaOverviewDashboard } from "./CloviaOverviewDashboard";
 
 // ── Types ────────────────────────────────────────────────────────────────
 interface InboundSummary {
@@ -528,69 +529,6 @@ function ChannelsSlide({ from, to, onData }: { from: string; to: string; onData?
   );
 }
 
-/** Snapshot of OverviewSlide's already-fetched data, lifted to the parent
- * purely for the "Export" feature -- no new fetch, no new calculation. */
-export interface OverviewExportData {
-  summary: InboundSummary | null;
-  channels: ChannelsData | null;
-}
-
-// ── Overview slide ───────────────────────────────────────────────────────
-function OverviewSlide({ from, to, onData }: { from: string; to: string; onData?: (d: OverviewExportData) => void }) {
-  const [summary, setSummary] = useState<InboundSummary | null>(null);
-  const [channels, setChannels] = useState<ChannelsData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const qs = `startDate=${from}&endDate=${to}`;
-      const [s, c] = await Promise.all([
-        hrmsApi.get<{ success: boolean; data: InboundSummary }>(`/api/inbound/project/clovia?${qs}`),
-        hrmsApi.get<{ success: boolean; data: ChannelsData }>(`/api/process-performance/clovia-channels-dashboard?from=${from}&to=${to}`),
-      ]);
-      setSummary(s.data);
-      setChannels(c.data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load the Clovia overview.");
-    } finally {
-      setLoading(false);
-    }
-  }, [from, to]);
-
-  useEffect(() => { void load(); }, [load]);
-
-  useEffect(() => { onData?.({ summary, channels }); }, [summary, channels, onData]);
-
-  if (loading && !summary) return <Spinner />;
-  if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
-  if (!summary || !channels) return null;
-
-  return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
-        <KpiCard icon={PhoneIncoming} label="Inbound Offered" value={summary.total.toLocaleString("en-IN")} sub={`SL ${summary.sl_pct}%`} tone="bg-purple-50 text-purple-600" />
-        <KpiCard icon={PhoneOff} label="Outbound Dialed" value={channels.outbound.totalCalls.toLocaleString("en-IN")} sub={channels.outbound.totalCalls === 0 ? "no data yet" : `${channels.outbound.connectedPct}% connected`} tone="bg-fuchsia-50 text-fuchsia-600" />
-        <KpiCard icon={Mail} label="Emails" value={channels.email.totalAssigned.toLocaleString("en-IN")} sub={channels.email.totalAssigned === 0 ? "no data yet" : `${channels.email.closed} closed`} tone="bg-sky-50 text-sky-600" />
-        <KpiCard icon={MessageSquare} label="Chats" value={channels.chat.totalChats.toLocaleString("en-IN")} sub={channels.chat.totalChats === 0 ? "no data yet" : `${channels.chat.csatPct}% resolved`} tone="bg-teal-50 text-teal-600" />
-        <KpiCard icon={Star} label="Feedback CSAT" value={channels.feedback.totalFeedback === 0 ? "—" : `${channels.feedback.csatPct}%`} sub={channels.feedback.totalFeedback === 0 ? "no data yet" : `${channels.feedback.totalFeedback} responses`} tone="bg-amber-50 text-amber-600" />
-        <KpiCard icon={ShieldCheck} label="Quality Score" value={channels.quality.auditsCount === 0 ? "—" : `${channels.quality.avgScorePct}%`} sub={channels.quality.auditsCount === 0 ? "no data yet" : `${channels.quality.auditsCount} audits`} tone="bg-indigo-50 text-indigo-600" />
-        <KpiCard icon={Users} label="Agents (APR)" value={channels.productivity.agentCount === 0 ? "—" : String(channels.productivity.agentCount)} sub={channels.productivity.agentCount === 0 ? "no data yet" : `${channels.productivity.avgUtilizationPct}% utilization`} tone="bg-rose-50 text-rose-600" />
-      </div>
-      <SectionCard title="Snapshot">
-        <p className="text-xs text-slate-500">
-          Every number here is real, uploaded Clovia data — Inbound from live call detail records, and Outbound/Email/
-          Chat/Feedback/Quality/Productivity from what has been uploaded via Uploader (Outbound / Email Raw / Chat /
-          Feedback / Quality / APR). Any section still showing "no data yet" simply has no rows uploaded for the
-          selected date range yet.
-        </p>
-      </SectionCard>
-    </div>
-  );
-}
-
 // ── Shell ────────────────────────────────────────────────────────────────
 /**
  * Clovia's dedicated dashboard -- three slides sharing one date range.
@@ -625,28 +563,12 @@ export function CloviaDashboard() {
   // snapshots are lifted up (via each slide's optional `onData` callback)
   // purely so the shared DashboardExportMenu can mirror what's on screen.
   // No new fetch, no new calculation -- see InboundSlide/ChannelsSlide/
-  // OverviewSlide's `onData` effects above.
-  const [overviewExport, setOverviewExport] = useState<OverviewExportData | null>(null);
   const [inboundExport, setInboundExport] = useState<InboundExportData | null>(null);
   const [channelsExport, setChannelsExport] = useState<ChannelsData | null>(null);
-  const handleOverviewData = useCallback((d: OverviewExportData) => setOverviewExport(d), []);
   const handleInboundData = useCallback((d: InboundExportData) => setInboundExport(d), []);
   const handleChannelsData = useCallback((d: ChannelsData | null) => setChannelsExport(d), []);
 
   const exportSlides = useMemo<ExportSlide[]>(() => {
-    const overviewKpis = overviewExport?.summary && overviewExport?.channels
-      ? [
-        { label: "Inbound Offered", value: overviewExport.summary.total.toLocaleString("en-IN") },
-        { label: "Outbound Dialed", value: overviewExport.channels.outbound.totalCalls.toLocaleString("en-IN") },
-        { label: "Emails", value: overviewExport.channels.email.totalAssigned.toLocaleString("en-IN") },
-        { label: "Chats", value: overviewExport.channels.chat.totalChats.toLocaleString("en-IN") },
-        { label: "Feedback CSAT", value: overviewExport.channels.feedback.totalFeedback === 0 ? "—" : `${overviewExport.channels.feedback.csatPct}%` },
-        { label: "Quality Score", value: overviewExport.channels.quality.auditsCount === 0 ? "—" : `${overviewExport.channels.quality.avgScorePct}%` },
-        { label: "Agents (APR)", value: overviewExport.channels.productivity.agentCount === 0 ? "—" : String(overviewExport.channels.productivity.agentCount) },
-      ]
-      : [];
-    const overviewSlide: ExportSlide = { title: "Overview", kpis: overviewKpis };
-
     const summary = inboundExport?.summary ?? null;
     const trend = inboundExport?.trend ?? [];
     const agentsList = inboundExport?.agents ?? [];
@@ -750,8 +672,8 @@ export function CloviaDashboard() {
         : [],
     };
 
-    return [overviewSlide, inboundSlide, channelsSlide];
-  }, [overviewExport, inboundExport, channelsExport]);
+    return [inboundSlide, channelsSlide];
+  }, [inboundExport, channelsExport]);
 
   return (
     <div className="space-y-5">
@@ -815,10 +737,7 @@ export function CloviaDashboard() {
         return (
           <>
             {slide === "overview" && (
-              <div className="space-y-5">
-                <OverviewSlide from={from} to={to} onData={handleOverviewData} />
-                <CloviaLobSlide lob="overview" from={from} to={to} onRangeChange={setRange} hideHero />
-              </div>
+              <CloviaOverviewDashboard from={from} to={to} />
             )}
             {slide === "inbound" && (
               <CloviaInboundSlide

@@ -1,968 +1,1041 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  LineChart, Line,
+  ComposedChart, Bar, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
-  IndianRupee, ShoppingBag, PhoneCall, PhoneIncoming, Percent, Timer, Target, TrendingUp, TrendingDown,
-  CalendarDays, Search, X, Users, Award, ClipboardList,
+  Home, PhoneCall, PhoneOutgoing, PhoneOff, Percent, ShoppingBag, IndianRupee, Wallet, Target, TrendingUp,
+  Timer, Users, Lightbulb, Eye, RefreshCw, Layers, ArrowUp, ArrowDown, Search, ClipboardList, Award, PieChart as PieIcon, Filter, Check,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { DashboardExportMenu, KPI_TONES, type KpiTone, type ExportSlide } from "./DashboardKit";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Spinner, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
+  currentMonthRange, formatINR, formatShortDate,
+  KPI_TONES, type KpiTone, type ExportSlide,
+} from "./DashboardKit";
+import { GncDetailDrawer, type DrawerSeries } from "./GncAbandonCartDetailDrawer";
 import { useSortableRows } from "./useSortableRows";
 import { SortTh } from "./SortTh";
 
-interface Headline {
-  totalRevenue: number;
-  totalSaleCount: number;
-  aov: number;
-  totalCalls: number;
-  connectedCalls: number;
-  notConnectedCalls: number;
-  connectedPct: number;
-  avgTalkTimeSec: number;
-  activeAgents: number;
-  totalTarget: number;
-  totalMtdReported: number;
-  achievementPct: number;
-  revenuePerAgent: number;
+/**
+ * Housing Owner -- Outbound Performance Dashboard (Calls / Sales / Revenue /
+ * Team Performance).
+ *
+ * Every figure is live from GET /api/process-performance/housing-owner-dashboard/outbound,
+ * which returns the de-duplicated, roster-resolved rows of db_masmis.Owner_cdr,
+ * owner_sale and owner_agent_details for the requested range plus the previous
+ * period, month-to-date and last-month-to-date. The AM / TL / Vintage / Agent
+ * filters, KPI deltas, matrices, charts and drawers are all computed here from
+ * those same rows, so they can never disagree with each other.
+ *
+ * "Vintage" is the agent's tenure bucket (owner_agent_details.bucket: 0-30 ...
+ * 180 Above). Targets are the Active roster agents' monthly_target. There is no
+ * source for a Connected % target, so that KPI shows no target line.
+ */
+
+interface CdrFact { date: string; agent: string; tl: string; am: string; vintage: string; calls: number; connected: number; notConnected: number; talkSec: number }
+interface SaleFact { date: string; agent: string; tl: string; am: string; vintage: string; revenue: number; saleCount: number }
+interface RosterFact { name: string; empId: string | null; tl: string; am: string; vintage: string; status: string; monthlyTarget: number }
+interface OutboundData {
+  from: string; to: string; windowFrom: string; cdrThrough: string | null; saleThrough: string | null;
+  cdr: CdrFact[]; sales: SaleFact[]; roster: RosterFact[];
 }
 
-interface GroupRow {
-  name: string;
-  totalCalls: number;
-  connectedCalls: number;
-  connectedPct: number;
-  revenue: number;
-  saleCount: number;
-  target: number;
-  achievementPct: number;
-  aov: number;
-  agentCount: number;
-  rpa: number;
-  tqCount: number;
-  mqCount: number;
-  bqCount: number;
-}
+type Win = { from: string; to: string };
+type Who = { agent: string; tl: string; am: string; vintage: string };
+type Pred = (f: Who) => boolean;
+interface Ctx { cdr: CdrFact[]; sales: SaleFact[]; roster: RosterFact[]; dataTo: string }
 
-interface AgentRow {
-  empId: string | null;
-  name: string;
-  tlName: string;
-  am: string;
-  doj: string | null;
-  bucket: string | null;
-  status: string;
-  target: number;
-  mtdReported: number;
-  totalCalls: number;
-  connectedCalls: number;
-  notConnectedCalls: number;
-  connectedPct: number;
-  avgTalkTimeSec: number;
-  saleCount: number;
-  revenue: number;
-  achievementPct: number;
-  stage: "TQ" | "MQ" | "BQ" | "NA";
-}
+/* ------------------------------ date helpers ------------------------------ */
 
-interface FilterOptions {
-  tls: string[];
-  ams: string[];
-  tlByAm: Record<string, string[]>;
-}
-
-interface DashboardData {
-  filterOptions: FilterOptions;
-  headline: Headline;
-  byAm: GroupRow[];
-  byTl: GroupRow[];
-  agents: AgentRow[];
-  topPerformers: AgentRow[];
-  bottomPerformers: AgentRow[];
-  packageTypeBreakdown: { packageType: string; count: number; revenue: number }[];
-  dailyTrend: { date: string; revenue: number; saleCount: number; totalCalls: number; connectedCalls: number }[];
-}
-
-const formatINR = (v: number) =>
-  new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(v);
-const formatSecs = (s: number) => {
-  const total = Math.round(s);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const sec = total % 60;
-  return `${h}h ${m}m ${sec}s`;
+const parts = (iso: string) => iso.split("-").map(Number) as [number, number, number];
+const fromUtc = (ms: number) => {
+  const d = new Date(ms);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 };
-const formatShortDate = (iso: string) => {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
-};
+const toUtc = (iso: string) => { const [y, m, d] = parts(iso); return Date.UTC(y, m - 1, d); };
+const shiftDays = (iso: string, n: number) => fromUtc(toUtc(iso) + n * 86400000);
+const daysBetween = (a: string, b: string) => Math.round((toUtc(b) - toUtc(a)) / 86400000);
+const dim = (iso: string) => { const [y, m] = parts(iso); return new Date(Date.UTC(y, m, 0)).getUTCDate(); };
+const monthStart = (iso: string) => `${iso.slice(0, 7)}-01`;
 
-/** Local YYYY-MM-DD, deliberately NOT via toISOString(): that converts
- * through UTC and rolls the date back a day for a viewer ahead of UTC
- * (e.g. IST, UTC+5:30) — midnight local time becomes the previous day's
- * evening in UTC. Same fix already applied to the Bellavita dashboard. */
-function localDateStr(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+/** Share of a month elapsed between two dates (each day = 1 / days-in-its-month). */
+function monthFraction(from: string, to: string): number {
+  if (to < from) return 0;
+  let f = 0;
+  for (let d = from; d <= to; d = shiftDays(d, 1)) f += 1 / dim(d);
+  return f;
 }
 
-/** 1st of the current month .. today — same default the backend falls
- * back to on its own, kept in sync so the pickers show what's actually
- * being queried on first load rather than an empty/different range. */
-function currentMonthRange(): { from: string; to: string } {
-  const now = new Date();
-  const from = localDateStr(new Date(now.getFullYear(), now.getMonth(), 1));
-  const to = localDateStr(now);
-  return { from, to };
-}
-
-function Spinner() {
-  return (
-    <div className="flex items-center justify-center py-16">
-      <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-blue-500" />
-    </div>
-  );
-}
-
-/** Same "day-of-month 1-7 -> W-1, 8-14 -> W-2, ..." convention this app's
- * other week-wise tables/exports already use (see satyaReportModel.weekOf).
- * Keyed by month too, so a range spanning more than one month never merges
- * two different months' "W-1" into one bucket. */
+/** Same day-of-month buckets (1-7 -> W-1, 8-14 -> W-2 ...) this app's other week-wise tables use. */
 function weekBucket(iso: string): { key: string; label: string } {
   const day = Number(iso.slice(8, 10));
-  const monthKey = iso.slice(0, 7);
   const weekNum = Math.ceil(day / 7);
   const startDay = (weekNum - 1) * 7 + 1;
-  const daysInMonth = new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)), 0).getDate();
-  const endDay = Math.min(startDay + 6, daysInMonth);
-  const monLabel = new Date(iso).toLocaleDateString("en-IN", { month: "short" });
-  return { key: `${monthKey}-W${weekNum}`, label: `W-${weekNum} (${startDay}-${endDay} ${monLabel})` };
+  const endDay = Math.min(startDay + 6, dim(iso));
+  const mon = new Date(iso).toLocaleDateString("en-IN", { month: "short" });
+  return { key: `${iso.slice(0, 7)}-W${weekNum}`, label: `W-${weekNum} (${startDay}-${endDay} ${mon})` };
 }
 
-function KpiCard({
-  icon: Icon, label, value, sub, tone,
-}: { icon: React.ComponentType<{ className?: string }>; label: string; value: string; sub?: string; tone: KpiTone }) {
+const fmtHms = (s: number) => {
+  const t = Math.round(s);
+  return `${Math.floor(t / 3600)}:${String(Math.floor((t % 3600) / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+};
+const int = (n: number) => Math.round(n).toLocaleString("en-IN");
+const r1 = (n: number) => Math.round(n * 10) / 10;
+
+/* ------------------------------- aggregation ------------------------------ */
+
+interface Agg {
+  calls: number; connected: number; notConnected: number; revenue: number; saleCount: number;
+  agentDays: number; cdrDays: number; talkSum: number; talkRows: number; target: number;
+}
+const emptyAgg = (): Agg => ({ calls: 0, connected: 0, notConnected: 0, revenue: 0, saleCount: 0, agentDays: 0, cdrDays: 0, talkSum: 0, talkRows: 0, target: 0 });
+function addAgg(t: Agg, a: Agg) {
+  t.calls += a.calls; t.connected += a.connected; t.notConnected += a.notConnected; t.revenue += a.revenue;
+  t.saleCount += a.saleCount; t.agentDays += a.agentDays; t.cdrDays += a.cdrDays; t.talkSum += a.talkSum;
+  t.talkRows += a.talkRows; t.target += a.target;
+}
+
+/** Ratios always recomputed from summed numerators / denominators, never averaged. */
+function derive(a: Agg) {
+  return {
+    calls: a.calls, connected: a.connected, notConnected: a.notConnected,
+    connectedPct: a.calls > 0 ? r1((a.connected / a.calls) * 100) : 0,
+    saleCount: a.saleCount, revenue: a.revenue,
+    aov: a.saleCount > 0 ? Math.round(a.revenue / a.saleCount) : 0,
+    target: Math.round(a.target),
+    achPct: a.target > 0 ? r1((a.revenue / a.target) * 100) : 0,
+    present: a.cdrDays > 0 ? r1(a.agentDays / a.cdrDays) : 0,
+    dialPerAgent: a.agentDays > 0 ? Math.round(a.calls / a.agentDays) : 0,
+    avgTalkSec: a.talkRows > 0 ? Math.round(a.talkSum / a.talkRows) : 0,
+  };
+}
+
+const monthlyTargetOf = (ctx: Ctx, pred: Pred) =>
+  ctx.roster.reduce((s, r) => (r.status === "Active" && pred({ agent: r.name, tl: r.tl, am: r.am, vintage: r.vintage }) ? s + r.monthlyTarget : s), 0);
+
+function collect(ctx: Ctx, pred: Pred, w: Win) {
+  const days = new Map<string, Agg>();
+  const agents = new Set<string>();
+  const day = (d: string) => { let a = days.get(d); if (!a) { a = emptyAgg(); days.set(d, a); } return a; };
+  for (const r of ctx.cdr) {
+    if (r.date < w.from || r.date > w.to || !pred(r)) continue;
+    const a = day(r.date);
+    a.calls += r.calls; a.connected += r.connected; a.notConnected += r.notConnected;
+    if (r.calls > 0) { a.agentDays += 1; agents.add(r.agent); }
+    if (r.talkSec > 0) { a.talkSum += r.talkSec; a.talkRows += 1; }
+  }
+  for (const r of ctx.sales) {
+    if (r.date < w.from || r.date > w.to || !pred(r)) continue;
+    const a = day(r.date);
+    a.revenue += r.revenue; a.saleCount += r.saleCount;
+  }
+  const monthly = monthlyTargetOf(ctx, pred);
+  for (const [d, a] of days) { a.cdrDays = a.agentDays > 0 ? 1 : 0; a.target = monthly > 0 ? monthly / dim(d) : 0; }
+  return { days, agents, monthly };
+}
+
+function calc(ctx: Ctx, pred: Pred, w: Win) {
+  const { days, agents, monthly } = collect(ctx, pred, w);
+  const t = emptyAgg();
+  for (const a of days.values()) addAgg(t, a);
+  const d = derive(t);
+  const mFrom = monthStart(w.to);
+  const mTo = w.to < ctx.dataTo ? w.to : ctx.dataTo;
+  let mtdRevenue = 0;
+  for (const s of ctx.sales) if (s.date >= mFrom && s.date <= w.to && pred(s)) mtdRevenue += s.revenue;
+  const mtdTarget = monthly * monthFraction(mFrom, mTo);
+  return {
+    ...d,
+    hasData: t.calls > 0 || t.saleCount > 0,
+    monthlyTarget: monthly,
+    achPct: monthly > 0 ? r1((t.revenue / monthly) * 100) : 0,
+    mtdTarget,
+    mtdPct: mtdTarget > 0 ? r1((mtdRevenue / mtdTarget) * 100) : 0,
+    salePerAgent: agents.size > 0 ? r1(t.saleCount / agents.size) : 0,
+  };
+}
+type M = ReturnType<typeof calc>;
+
+interface RowSet { dailyRows: Array<Record<string, string | number>>; weeklyRows: Array<Record<string, string | number>>; monthly: number }
+function buildRows(ctx: Ctx, pred: Pred, w: Win): RowSet {
+  const { days, monthly } = collect(ctx, pred, w);
+  const dates = [...days.keys()].sort();
+  const dailyRows = dates.map((date) => ({ date, ...derive(days.get(date)!) }));
+  const weeks = new Map<string, { label: string; agg: Agg }>();
+  for (const date of dates) {
+    const { key, label } = weekBucket(date);
+    const cur = weeks.get(key) ?? { label, agg: emptyAgg() };
+    addAgg(cur.agg, days.get(date)!);
+    weeks.set(key, cur);
+  }
+  const weeklyRows = [...weeks.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, v]) => ({ label: v.label, ...derive(v.agg) }));
+  return { dailyRows, weeklyRows, monthly };
+}
+
+/* ------------------------------- presentation ----------------------------- */
+
+const COLORS = {
+  calls: "#f97316", connected: "#0ea5e9", notConnected: "#f43f5e", pct: "#6366f1", sale: "#10b981",
+  revenue: "#f59e0b", aov: "#06b6d4", ach: "#8b5cf6", talk: "#ec4899", present: "#14b8a6", dial: "#a855f7",
+};
+const S: Record<string, DrawerSeries> = {
+  calls: { key: "calls", label: "Total Calls", fmt: "int", color: COLORS.calls },
+  connected: { key: "connected", label: "Connected Calls", fmt: "int", color: COLORS.connected },
+  notConnected: { key: "notConnected", label: "Not Connected Calls", fmt: "int", color: COLORS.notConnected },
+  connectedPct: { key: "connectedPct", label: "Connected %", fmt: "pct", color: COLORS.pct },
+  saleCount: { key: "saleCount", label: "Sale Count", fmt: "int", color: COLORS.sale },
+  revenue: { key: "revenue", label: "Revenue", fmt: "currency", color: COLORS.revenue },
+  aov: { key: "aov", label: "AOV", fmt: "currency", color: COLORS.aov },
+  achPct: { key: "achPct", label: "Ach %", fmt: "pct", color: COLORS.ach },
+  target: { key: "target", label: "Target (fair share)", fmt: "currency", color: "#64748b" },
+  avgTalkSec: { key: "avgTalkSec", label: "Avg Talk / Agent-day", fmt: "hms", color: COLORS.talk },
+  present: { key: "present", label: "Present Count (avg/day)", fmt: "int", color: COLORS.present },
+  dialPerAgent: { key: "dialPerAgent", label: "Per Agent Dial Count", fmt: "int", color: COLORS.dial },
+};
+// Sale Count, Revenue and Ach % lead so the week-wise / date-wise tables show Ach % without scrolling the drawer sideways.
+const ENTITY_SERIES = [S.saleCount, S.revenue, S.achPct, S.calls, S.connected, S.notConnected, S.connectedPct, S.aov, S.avgTalkSec];
+const TOOLTIP_STYLE = { fontSize: 11, borderRadius: 10, border: "1px solid #e2e8f0", background: "#ffffff", boxShadow: "0 8px 24px rgba(15,23,42,0.12)", padding: "8px 12px" } as const;
+// Recharts colours each tooltip row with its series colour, which is close to invisible for pale series (e.g. the peach "Total Calls" bars) -- force readable dark text; the legend still carries the series colours.
+const TOOLTIP_PROPS = {
+  contentStyle: TOOLTIP_STYLE,
+  itemStyle: { color: "#0f172a", fontWeight: 600 },
+  labelStyle: { color: "#334155", fontWeight: 700, marginBottom: 4 },
+} as const;
+const VINTAGE_ORDER = ["0-30", "31-60", "61-90", "91-120", "121-160", "161-180", "180 Above", "Unmapped"];
+const byVintage = (a: string, b: string) => {
+  const ia = VINTAGE_ORDER.indexOf(a), ib = VINTAGE_ORDER.indexOf(b);
+  return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+};
+
+function DeltaBadge({ value, unit = "%" }: { value: number | null; unit?: "%" | "pp" }) {
+  if (value === null) return null;
+  const up = value >= 0;
+  return (
+    <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${up ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"}`}>
+      {up ? <ArrowUp className="h-2.5 w-2.5" /> : <ArrowDown className="h-2.5 w-2.5" />}
+      {Math.abs(value)}{unit}
+    </span>
+  );
+}
+
+function StatTile({ icon: Icon, tone, label, value, sub, delta, deltaUnit, onClick }: {
+  icon: typeof PhoneCall; tone: KpiTone; label: string; value: string; sub?: string;
+  delta?: number | null; deltaUnit?: "%" | "pp"; onClick?: () => void;
+}) {
   const t = KPI_TONES[tone];
   return (
-    <div className="group relative overflow-hidden rounded-xl border border-slate-100 bg-white p-2.5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
-      <div className={`absolute inset-x-0 top-0 h-1 ${t.accent}`} />
-      <div className={`mb-1.5 inline-flex rounded-lg p-1.5 ${t.badge}`}>
-        <Icon className="h-3.5 w-3.5" />
+    <button
+      type="button" onClick={onClick} disabled={!onClick} title="Click for week-wise & date-wise details"
+      className={`relative overflow-hidden rounded-lg border border-slate-100 bg-white p-2 text-left shadow-sm transition-shadow ${onClick ? "cursor-pointer hover:shadow-md" : "cursor-default"}`}
+    >
+      <div className={`absolute inset-y-0 left-0 w-1 ${t.accent}`} />
+      <div className="flex items-start justify-between pl-1">
+        <span className={`flex h-6 w-6 items-center justify-center rounded-md ${t.badge}`}>
+          <Icon className="h-3 w-3" />
+        </span>
+        <DeltaBadge value={delta ?? null} unit={deltaUnit} />
       </div>
-      <p className={`text-base font-bold leading-tight tracking-tight ${t.value}`}>{value}</p>
-      <p className="mt-0.5 truncate text-[10px] font-semibold text-slate-500" title={label}>{label}</p>
-      {sub && <p className="truncate text-[9px] text-slate-400" title={sub}>{sub}</p>}
+      <p className={`mt-1 pl-1 text-base font-extrabold leading-tight tracking-tight ${t.value}`}>{value}</p>
+      <p className="truncate pl-1 text-[10px] font-semibold leading-tight text-slate-600">{label}</p>
+      {sub && <p className="truncate pl-1 text-[9px] leading-tight text-slate-400" title={sub}>{sub}</p>}
+    </button>
+  );
+}
+
+function ViewDetailsBtn({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button" onClick={onClick}
+      className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-slate-50 px-2 py-1 text-[10px] font-semibold text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+    >
+      <Eye className="h-3 w-3" /> View details
+    </button>
+  );
+}
+
+function Seg<T extends string>({ value, onChange, options }: { value: T; onChange: (v: T) => void; options: Array<{ key: NoInfer<T>; label: string }> }) {
+  return (
+    <div className="inline-flex rounded-lg bg-slate-100 p-0.5">
+      {options.map((o) => (
+        <button
+          key={o.key} type="button" onClick={() => onChange(o.key)}
+          className={`rounded-md px-2 py-0.5 text-[10px] font-semibold transition-colors ${value === o.key ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }
 
-function StageBadge({ stage }: { stage: AgentRow["stage"] }) {
-  const styles: Record<AgentRow["stage"], string> = {
-    TQ: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200",
-    MQ: "bg-amber-50 text-amber-700 ring-1 ring-amber-200",
-    BQ: "bg-red-50 text-red-700 ring-1 ring-red-200",
-    NA: "bg-slate-100 text-slate-500 ring-1 ring-slate-200",
-  };
-  return <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${styles[stage]}`}>{stage}</span>;
-}
-
-/** Same TQ/MQ/BQ thresholds stageFor() uses server-side (>=80 / >=50 / below) —
- * a colored pill instead of a badge letter, for tables that show the raw %. */
-function AchBadge({ pct, hasTarget }: { pct: number; hasTarget: boolean }) {
-  if (!hasTarget) return <span className="text-slate-300">—</span>;
-  const cls = pct >= 80 ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
-    : pct >= 50 ? "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
-    : "bg-red-50 text-red-700 ring-1 ring-red-200";
-  return <span className={`inline-block min-w-[46px] rounded-full px-2 py-0.5 text-[11px] font-bold ${cls}`}>{pct.toFixed(0)}%</span>;
-}
-
-function ConnBadge({ pct }: { pct: number }) {
-  return <span className="inline-block min-w-[52px] rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200">{pct.toFixed(1)}%</span>;
-}
-
-/** Colored icon + title strip shared by every table card on this page, so
- * each block reads at a glance (AM=blue, TL=violet, Top=emerald, Bottom=red). */
-function TableCardHeader({
-  icon: Icon, title, tone,
-}: { icon: React.ComponentType<{ className?: string }>; title: string; tone: KpiTone }) {
-  const t = KPI_TONES[tone];
+/** Small filter-icon button that narrows ONE chart to a single AM (the page-level AM filter, when set, wins and this is disabled). */
+function AmFilterButton({ value, options, onChange, disabled }: { value: string; options: string[]; onChange: (v: string) => void; disabled?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const active = value !== "all";
   return (
-    <div className="mb-3 flex items-center gap-2">
-      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${t.badge}`}>
-        <Icon className="h-3.5 w-3.5" />
-      </span>
-      <p className="text-sm font-bold text-slate-800">{title}</p>
-    </div>
-  );
-}
-
-function GroupTable({
-  title, rows, icon, tone, onRowClick,
-}: { title: string; rows: GroupRow[]; icon: React.ComponentType<{ className?: string }>; tone: KpiTone; onRowClick: (name: string) => void }) {
-  const sort = useSortableRows<GroupRow>(rows, (r, key) => {
-    switch (key) {
-      case "name": return r.name;
-      case "totalCalls": return r.totalCalls;
-      case "connectedPct": return r.connectedPct;
-      case "saleCount": return r.saleCount;
-      case "revenue": return r.revenue;
-      case "aov": return r.aov;
-      case "rpa": return r.rpa;
-      case "target": return r.target;
-      case "achievementPct": return r.achievementPct;
-      case "tqCount": return r.tqCount;
-      case "mqCount": return r.mqCount;
-      case "bqCount": return r.bqCount;
-      default: return null;
-    }
-  });
-  const totals = rows.reduce((acc, r) => ({
-    totalCalls: acc.totalCalls + r.totalCalls,
-    connectedCalls: acc.connectedCalls + r.connectedCalls,
-    saleCount: acc.saleCount + r.saleCount,
-    revenue: acc.revenue + r.revenue,
-    agentCount: acc.agentCount + r.agentCount,
-    target: acc.target + r.target,
-    tqCount: acc.tqCount + r.tqCount,
-    mqCount: acc.mqCount + r.mqCount,
-    bqCount: acc.bqCount + r.bqCount,
-  }), { totalCalls: 0, connectedCalls: 0, saleCount: 0, revenue: 0, agentCount: 0, target: 0, tqCount: 0, mqCount: 0, bqCount: 0 });
-  const totalConnectedPct = totals.totalCalls > 0 ? (totals.connectedCalls / totals.totalCalls) * 100 : 0;
-  const totalAchievementPct = totals.target > 0 ? (totals.revenue / totals.target) * 100 : 0;
-  const totalAov = totals.saleCount > 0 ? totals.revenue / totals.saleCount : 0;
-  const totalRpa = totals.agentCount > 0 ? totals.revenue / totals.agentCount : 0;
-
-  return (
-    <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-      <TableCardHeader icon={icon} title={title} tone={tone} />
-      <div className="overflow-x-auto">
-        <table className="w-full text-center text-xs">
-          <thead>
-            <tr className="bg-slate-800 text-[11px] font-bold uppercase tracking-wide text-white">
-              <SortTh label="Name" sortKey="name" activeKey={sort.sortKey} dir={sort.sortDir} onSort={sort.toggleSort} className="sticky left-0 z-20 rounded-l-lg border-r border-slate-700 bg-slate-800 py-2.5 px-2 font-bold shadow-[2px_0_6px_-2px_rgba(0,0,0,0.25)]" />
-              <SortTh label="Calls" sortKey="totalCalls" activeKey={sort.sortKey} dir={sort.sortDir} onSort={sort.toggleSort} className="py-2.5 px-2 font-bold" />
-              <SortTh label="Connected%" sortKey="connectedPct" activeKey={sort.sortKey} dir={sort.sortDir} onSort={sort.toggleSort} className="py-2.5 px-2 font-bold" />
-              <SortTh label="Sale Count" sortKey="saleCount" activeKey={sort.sortKey} dir={sort.sortDir} onSort={sort.toggleSort} className="py-2.5 px-2 font-bold" />
-              <SortTh label="Revenue" sortKey="revenue" activeKey={sort.sortKey} dir={sort.sortDir} onSort={sort.toggleSort} className="py-2.5 px-2 font-bold" />
-              <SortTh label="AOV" sortKey="aov" activeKey={sort.sortKey} dir={sort.sortDir} onSort={sort.toggleSort} className="py-2.5 px-2 font-bold" />
-              <SortTh label="RPA" sortKey="rpa" activeKey={sort.sortKey} dir={sort.sortDir} onSort={sort.toggleSort} className="py-2.5 px-2 font-bold" />
-              <SortTh label="Target" sortKey="target" activeKey={sort.sortKey} dir={sort.sortDir} onSort={sort.toggleSort} className="py-2.5 px-2 font-bold" />
-              <SortTh label="Ach%" sortKey="achievementPct" activeKey={sort.sortKey} dir={sort.sortDir} onSort={sort.toggleSort} className="py-2.5 px-2 font-bold" />
-              <SortTh label="TQ" sortKey="tqCount" activeKey={sort.sortKey} dir={sort.sortDir} onSort={sort.toggleSort} className="py-2.5 px-2 font-bold text-emerald-300" />
-              <SortTh label="MQ" sortKey="mqCount" activeKey={sort.sortKey} dir={sort.sortDir} onSort={sort.toggleSort} className="py-2.5 px-2 font-bold text-amber-300" />
-              <SortTh label="BQ" sortKey="bqCount" activeKey={sort.sortKey} dir={sort.sortDir} onSort={sort.toggleSort} className="rounded-r-lg py-2.5 px-2 font-bold text-red-300" />
-            </tr>
-          </thead>
-          <tbody>
-            {sort.sorted.map((r, i) => (
-              <tr
-                key={r.name} onClick={() => onRowClick(r.name)} role="button" tabIndex={0}
-                className={`cursor-pointer transition-colors hover:bg-blue-50/60 ${i % 2 === 1 ? "bg-slate-50/70" : "bg-white"}`}
-              >
-                <td className={`sticky left-0 z-10 border-r border-slate-100 py-2.5 px-2 font-semibold text-blue-700 underline-offset-2 hover:underline ${i % 2 === 1 ? "bg-slate-50" : "bg-white"}`}>{r.name}</td>
-                <td className="py-2.5 px-2 text-slate-600">{r.totalCalls.toLocaleString("en-IN")}</td>
-                <td className="py-2.5 px-2"><ConnBadge pct={r.connectedPct} /></td>
-                <td className="py-2.5 px-2 text-slate-600">{r.saleCount}</td>
-                <td className="py-2.5 px-2 font-bold text-emerald-700">{formatINR(r.revenue)}</td>
-                <td className="py-2.5 px-2 text-slate-600">{formatINR(r.aov)}</td>
-                <td className="py-2.5 px-2 text-slate-600">{formatINR(r.rpa)}</td>
-                <td className="py-2.5 px-2 text-slate-500">{r.target > 0 ? formatINR(r.target) : "—"}</td>
-                <td className="py-2.5 px-2"><AchBadge pct={r.achievementPct} hasTarget={r.target > 0} /></td>
-                <td className="py-2.5 px-2 font-bold text-emerald-600">{r.tqCount}</td>
-                <td className="py-2.5 px-2 font-bold text-amber-600">{r.mqCount}</td>
-                <td className="py-2.5 px-2 font-bold text-red-600">{r.bqCount}</td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr><td colSpan={12} className="py-6 text-center text-slate-400">No data.</td></tr>
-            )}
-          </tbody>
-          {rows.length > 0 && (
-            <tfoot>
-              <tr className="border-t-2 border-slate-300 bg-slate-100 text-[13px] font-bold text-slate-800">
-                <td className="sticky left-0 z-10 border-r border-slate-200 bg-slate-100 py-2.5 px-2">Total</td>
-                <td className="py-2.5 px-2">{totals.totalCalls.toLocaleString("en-IN")}</td>
-                <td className="py-2.5 px-2"><ConnBadge pct={totalConnectedPct} /></td>
-                <td className="py-2.5 px-2">{totals.saleCount.toLocaleString("en-IN")}</td>
-                <td className="py-2.5 px-2 text-emerald-700">{formatINR(totals.revenue)}</td>
-                <td className="py-2.5 px-2 text-slate-600">{formatINR(totalAov)}</td>
-                <td className="py-2.5 px-2 text-slate-600">{formatINR(totalRpa)}</td>
-                <td className="py-2.5 px-2 text-slate-600">{totals.target > 0 ? formatINR(totals.target) : "—"}</td>
-                <td className="py-2.5 px-2"><AchBadge pct={totalAchievementPct} hasTarget={totals.target > 0} /></td>
-                <td className="py-2.5 px-2 text-emerald-700">{totals.tqCount}</td>
-                <td className="py-2.5 px-2 text-amber-700">{totals.mqCount}</td>
-                <td className="py-2.5 px-2 text-red-700">{totals.bqCount}</td>
-              </tr>
-            </tfoot>
-          )}
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function PerformerTable({
-  title, rows, icon, tone, onRowClick,
-}: { title: string; rows: AgentRow[]; icon: React.ComponentType<{ className?: string }>; tone: KpiTone; onRowClick: (name: string) => void }) {
-  return (
-    <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-      <TableCardHeader icon={icon} title={title} tone={tone} />
-      <div className="overflow-x-auto">
-        <table className="w-full text-center text-xs">
-          <thead>
-            <tr className="bg-slate-800 text-[11px] font-bold uppercase tracking-wide text-white">
-              <th className="rounded-l-lg py-2.5 px-2 font-bold">Agent</th>
-              <th className="py-2.5 px-2 font-bold">TL</th>
-              <th className="py-2.5 px-2 font-bold">Revenue</th>
-              <th className="rounded-r-lg py-2.5 px-2 font-bold">Ach%</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr
-                key={r.name} onClick={() => onRowClick(r.name)} role="button" tabIndex={0}
-                className={`cursor-pointer transition-colors hover:bg-blue-50/60 ${i % 2 === 1 ? "bg-slate-50/70" : "bg-white"}`}
-              >
-                <td className="py-2.5 px-2 font-semibold text-blue-700 underline-offset-2 hover:underline">{r.name}</td>
-                <td className="py-2.5 px-2 text-slate-500">{r.tlName}</td>
-                <td className="py-2.5 px-2 font-bold text-emerald-700">{formatINR(r.revenue)}</td>
-                <td className="py-2.5 px-2"><AchBadge pct={r.achievementPct} hasTarget /></td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr><td colSpan={4} className="py-6 text-center text-slate-400">No data.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-interface EntityTrendRow {
-  date: string; totalCalls: number; connectedCalls: number; connectedPct: number;
-  saleCount: number; revenue: number; cumulativeRevenue: number; dayTarget: number; achievementPct: number;
-}
-interface EntityTrendData {
-  entityType: "am" | "tl" | "agent"; entityName: string; from: string; to: string; target: number;
-  headline: {
-    totalCalls: number; connectedCalls: number; connectedPct: number;
-    saleCount: number; revenue: number; achievementPct: number; avgTalkTimeSec: number;
-  };
-  dailyTrend: EntityTrendRow[];
-}
-
-/**
- * Drill-down drawer for any AM/TL/agent row across this dashboard's tables —
- * fetches its own day-wise breakdown from a dedicated endpoint (never reuses
- * the list payload), defaulting to the current month per the drill-down
- * mandate's "record detail" requirement.
- */
-function EntityTrendDrawer({
-  target, onClose,
-}: { target: { type: "am" | "tl" | "agent"; name: string }; onClose: () => void }) {
-  const defaultRange = currentMonthRange();
-  const [from, setFrom] = useState(defaultRange.from);
-  const [to, setTo] = useState(defaultRange.to);
-  const [data, setData] = useState<EntityTrendData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [period, setPeriod] = useState<"day" | "week">("day");
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError("");
-    const qs = new URLSearchParams({ type: target.type, name: target.name, from, to });
-    hrmsApi.get<{ success: boolean; data: EntityTrendData }>(`/api/process-performance/housing-owner-dashboard/entity-trend?${qs.toString()}`)
-      .then((res) => { if (!cancelled) setData(res.data); })
-      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Unable to load performance."); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [target.type, target.name, from, to]);
-
-  const typeLabel = target.type === "am" ? "AM" : target.type === "tl" ? "TL" : "Agent";
-
-  /** Week bucket sums straight off the already-fetched day rows -- no extra
-   * fetch. Achievement % uses the same per-day fair-share target (dayTarget)
-   * the day-wise chart uses, summed over the week, not revenue-to-date over
-   * the full monthly target -- see dailyTrendWithAchievement's own comment
-   * on why a cumulative ratio isn't a genuine per-period figure. */
-  const weeklyTrend = useMemo(() => {
-    const rows = data?.dailyTrend ?? [];
-    const map = new Map<string, {
-      label: string; totalCalls: number; connectedCalls: number; saleCount: number; revenue: number; weekTarget: number;
-    }>();
-    for (const d of rows) {
-      const { key, label } = weekBucket(d.date);
-      const cur = map.get(key) ?? { label, totalCalls: 0, connectedCalls: 0, saleCount: 0, revenue: 0, weekTarget: 0 };
-      cur.totalCalls += d.totalCalls;
-      cur.connectedCalls += d.connectedCalls;
-      cur.saleCount += d.saleCount;
-      cur.revenue += d.revenue;
-      cur.weekTarget += d.dayTarget;
-      map.set(key, cur);
-    }
-    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, v]) => ({
-      key,
-      label: v.label,
-      totalCalls: v.totalCalls,
-      connectedPct: v.totalCalls > 0 ? Math.round((v.connectedCalls / v.totalCalls) * 1000) / 10 : 0,
-      saleCount: v.saleCount,
-      revenue: v.revenue,
-      achievementPct: v.weekTarget > 0 ? Math.round((v.revenue / v.weekTarget) * 1000) / 10 : 0,
-    }));
-  }, [data]);
-
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
-      <div className="relative flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <div>
-            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-600">{typeLabel}</span>
-            <h3 className="mt-1 text-base font-bold text-slate-800">{target.name}</h3>
-            <p className="text-xs text-slate-400">Date-wise performance</p>
-          </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="rounded-full p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600">
-            <X className="h-4 w-4" />
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button" disabled={disabled} aria-label="Filter this chart by AM"
+          title={disabled ? "The page-level AM filter is active" : "Filter this chart by AM"}
+          className={`inline-flex h-7 items-center gap-1 rounded-lg border px-2 text-[10px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${active ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"}`}
+        >
+          <Filter className="h-3 w-3" />{active && <span className="max-w-[80px] truncate">{value}</span>}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-44 p-1">
+        <p className="px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">AM</p>
+        {["all", ...options].map((o) => (
+          <button
+            key={o} type="button" onClick={() => { onChange(o); setOpen(false); }}
+            className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${value === o ? "bg-amber-50 font-bold text-amber-700" : "text-slate-600 hover:bg-slate-50"}`}
+          >
+            {o === "all" ? "All AMs" : o}{value === o && <Check className="h-3 w-3" />}
           </button>
-        </div>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
-        <div className="flex-1 space-y-5 overflow-y-auto p-5">
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <CalendarDays className="h-4 w-4 text-slate-400" />
-            <input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm" />
-            <span className="text-xs text-slate-400">to</span>
-            <input type="date" value={to} min={from} max={localDateStr(new Date())} onChange={(e) => setTo(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm" />
-            <button
-              type="button"
-              onClick={() => { const r = currentMonthRange(); setFrom(r.from); setTo(r.to); }}
-              className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200"
-            >
-              This Month
-            </button>
-          </div>
+function MiniSelect<T extends string>({ value, onChange, options, label }: { value: T; onChange: (v: T) => void; options: Array<{ key: NoInfer<T>; label: string }>; label: string }) {
+  return (
+    <Select value={value} onValueChange={(v) => onChange(v as T)}>
+      <SelectTrigger className="h-7 w-[128px] bg-white text-[11px]" aria-label={label}><SelectValue /></SelectTrigger>
+      <SelectContent>{options.map((o) => <SelectItem key={o.key} value={o.key}>{o.label}</SelectItem>)}</SelectContent>
+    </Select>
+  );
+}
 
-          {loading && !data && <Spinner />}
-          {error && <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
+/* --------------------------------- matrix --------------------------------- */
 
-          {data && (
-            <>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                <KpiCard icon={ShoppingBag} label="Sale Count" value={data.headline.saleCount.toLocaleString("en-IN")} tone="sky" />
-                <KpiCard icon={IndianRupee} label="Revenue" value={formatINR(data.headline.revenue)} tone="emerald" />
-                <KpiCard
-                  icon={TrendingUp} label="Achievement %"
-                  value={data.target > 0 ? `${data.headline.achievementPct.toFixed(1)}%` : "—"}
-                  sub={data.target > 0 ? `vs ${formatINR(data.target)} target` : "no target set"}
-                  tone="indigo"
-                />
-                <KpiCard icon={PhoneCall} label="Total Calls" value={data.headline.totalCalls.toLocaleString("en-IN")} tone="blue" />
-                <KpiCard icon={Percent} label="Connected %" value={`${data.headline.connectedPct.toFixed(1)}%`} tone="cyan" />
-                <KpiCard icon={Timer} label="Avg Talk Time" value={data.headline.avgTalkTimeSec > 0 ? formatSecs(data.headline.avgTalkTimeSec) : "—"} tone="amber" />
-              </div>
+const pctTone = (v: number, has: boolean) => (!has ? "text-slate-300" : v >= 80 ? "text-emerald-600" : v >= 50 ? "text-amber-600" : "text-red-600");
 
-              <div className="inline-flex rounded-lg bg-slate-100 p-1">
-                <button
-                  type="button" onClick={() => setPeriod("day")}
-                  className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${period === "day" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}
-                >
-                  Day-wise
+const MATRIX_ROWS: Array<{ label: string; hint?: string; cell: (m: M) => { text: string; cls?: string } }> = [
+  { label: "Connected Calls", cell: (m) => ({ text: int(m.connected) }) },
+  { label: "Not Connected Calls", cell: (m) => ({ text: int(m.notConnected) }) },
+  { label: "Total Calls", cell: (m) => ({ text: int(m.calls), cls: "font-bold text-slate-800" }) },
+  { label: "Connected %", cell: (m) => ({ text: `${m.connectedPct}%`, cls: "font-semibold text-sky-700" }) },
+  { label: "Revenue Achieved", cell: (m) => ({ text: formatINR(m.revenue), cls: "font-bold text-emerald-700" }) },
+  { label: "Sale Count", cell: (m) => ({ text: int(m.saleCount) }) },
+  { label: "Monthly Target", hint: "Sum of Active roster agents' monthly target", cell: (m) => ({ text: m.monthlyTarget > 0 ? formatINR(m.monthlyTarget) : "—", cls: "text-slate-500" }) },
+  { label: "Ach %", hint: "Revenue in the window / monthly target", cell: (m) => ({ text: m.monthlyTarget > 0 ? `${m.achPct}%` : "—", cls: `font-bold ${pctTone(m.achPct, m.monthlyTarget > 0)}` }) },
+  { label: "MTD Target", hint: "Monthly target x share of the month elapsed (up to the latest uploaded day)", cell: (m) => ({ text: m.mtdTarget > 0 ? formatINR(m.mtdTarget) : "—", cls: "text-slate-500" }) },
+  { label: "MTD %", hint: "Month-to-date revenue / MTD target", cell: (m) => ({ text: m.mtdTarget > 0 ? `${m.mtdPct}%` : "—", cls: `font-bold ${pctTone(m.mtdPct, m.mtdTarget > 0)}` }) },
+  { label: "AOV", hint: "Revenue / sale count", cell: (m) => ({ text: m.saleCount > 0 ? formatINR(m.aov) : "—" }) },
+  { label: "Present Count", hint: "Average agents with calls per calling day", cell: (m) => ({ text: m.present > 0 ? String(m.present) : "—" }) },
+  { label: "Per Agent Dial Count", hint: "Total calls / agent-days present", cell: (m) => ({ text: m.dialPerAgent > 0 ? int(m.dialPerAgent) : "—" }) },
+  { label: "Avg. Sale Count per Agent", hint: "Sale count / agents who dialled in the window", cell: (m) => ({ text: m.salePerAgent > 0 ? String(m.salePerAgent) : "—" }) },
+  { label: "Talk Time", hint: "Average talk time per agent-day (dialer report)", cell: (m) => ({ text: m.avgTalkSec > 0 ? fmtHms(m.avgTalkSec) : "—" }) },
+];
+
+interface MatrixCol { key: string; label: string; m: M; onClick: () => void }
+
+function MetricMatrix({ columns, total, firstColLabel = "Metric" }: { columns: MatrixCol[]; total?: MatrixCol; firstColLabel?: string }) {
+  const all = total ? [...columns, total] : columns;
+  if (columns.length === 0) return <p className="py-6 text-center text-xs text-slate-400">No data for the current selection.</p>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-max text-center text-xs">
+        <thead>
+          <tr className="sticky top-0 z-10 bg-slate-800 text-[11px] font-bold uppercase tracking-wide text-white">
+            <th className="sticky left-0 z-20 rounded-l-lg bg-slate-800 px-3 py-2 text-left font-bold text-white">{firstColLabel}</th>
+            {all.map((c, i) => (
+              <th key={c.key} className={`px-3 py-2 font-bold text-white ${i === all.length - 1 ? "rounded-r-lg" : ""} ${total && c.key === total.key ? "bg-slate-700" : ""}`}>
+                <button type="button" onClick={c.onClick} className="font-bold uppercase tracking-wide text-white underline-offset-2 hover:underline" title="View week-wise & date-wise details">
+                  {c.label}
                 </button>
-                <button
-                  type="button" onClick={() => setPeriod("week")}
-                  className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors ${period === "week" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"}`}
-                >
-                  Week-wise
-                </button>
-              </div>
-
-              <div className="rounded-2xl border border-slate-100 bg-white p-4">
-                <TableCardHeader icon={TrendingUp} title={period === "day" ? "Day-wise Revenue & Achievement %" : "Week-wise Revenue & Achievement %"} tone="indigo" />
-                {(period === "day" ? data.dailyTrend.length : weeklyTrend.length) === 0 ? (
-                  <div className="py-10 text-center text-xs text-slate-400">No activity in this range.</div>
-                ) : period === "day" ? (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <LineChart data={data.dailyTrend} margin={{ top: 4, right: 12, left: -16, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                      <XAxis dataKey="date" tickFormatter={formatShortDate} tick={{ fontSize: 9 }} />
-                      <YAxis yAxisId="left" tick={{ fontSize: 10 }} />
-                      <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v: number) => `${v}%`} />
-                      <Tooltip
-                        labelFormatter={(v: unknown) => formatShortDate(String(v))}
-                        formatter={(value: number, name: string) => (name === "Achievement %" ? `${value}%` : formatINR(value))}
-                        contentStyle={{ fontSize: 12, borderRadius: 8 }}
-                      />
-                      <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Line yAxisId="left" type="monotone" dataKey="revenue" name="Revenue" stroke="#2563eb" strokeWidth={2} dot={false} />
-                      <Line yAxisId="left" type="monotone" dataKey="dayTarget" name="Target" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 3" dot={false} />
-                      <Line yAxisId="right" type="monotone" dataKey="achievementPct" name="Achievement %" stroke="#f59e0b" strokeWidth={2} dot={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <LineChart data={weeklyTrend} margin={{ top: 4, right: 12, left: -16, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                      <XAxis dataKey="label" tick={{ fontSize: 9 }} />
-                      <YAxis yAxisId="left" tick={{ fontSize: 10 }} />
-                      <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v: number) => `${v}%`} />
-                      <Tooltip
-                        formatter={(value: number, name: string) => (name === "Achievement %" ? `${value}%` : formatINR(value))}
-                        contentStyle={{ fontSize: 12, borderRadius: 8 }}
-                      />
-                      <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Line yAxisId="left" type="monotone" dataKey="revenue" name="Revenue" stroke="#2563eb" strokeWidth={2} dot={{ r: 3 }} />
-                      <Line yAxisId="right" type="monotone" dataKey="achievementPct" name="Achievement %" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3 }} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-
-              <div className="rounded-2xl border border-slate-100 bg-white p-4">
-                <TableCardHeader icon={ClipboardList} title={period === "day" ? "Day-wise Detail" : "Week-wise Detail"} tone="teal" />
-                <div className="overflow-x-auto">
-                  <table className="w-full text-center text-xs">
-                    <thead>
-                      <tr className="bg-slate-800 text-[11px] font-bold uppercase tracking-wide text-white">
-                        <th className="rounded-l-lg py-2.5 px-2 font-bold">{period === "day" ? "Date" : "Week"}</th>
-                        <th className="py-2.5 px-2 font-bold">Calls</th>
-                        <th className="py-2.5 px-2 font-bold">Connected%</th>
-                        <th className="py-2.5 px-2 font-bold">Sale Count</th>
-                        <th className="py-2.5 px-2 font-bold">Revenue</th>
-                        <th className="rounded-r-lg py-2.5 px-2 font-bold">Achievement%</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {period === "day" ? data.dailyTrend.map((d, i) => (
-                        <tr key={d.date} className={i % 2 === 1 ? "bg-slate-50/70" : "bg-white"}>
-                          <td className="py-2 px-2 font-medium text-slate-700">{formatShortDate(d.date)}</td>
-                          <td className="py-2 px-2 text-slate-600">{d.totalCalls.toLocaleString("en-IN")}</td>
-                          <td className="py-2 px-2"><ConnBadge pct={d.connectedPct} /></td>
-                          <td className="py-2 px-2 text-slate-600">{d.saleCount}</td>
-                          <td className="py-2 px-2 font-bold text-emerald-700">{formatINR(d.revenue)}</td>
-                          <td className="py-2 px-2"><AchBadge pct={d.achievementPct} hasTarget={data.target > 0} /></td>
-                        </tr>
-                      )) : weeklyTrend.map((w, i) => (
-                        <tr key={w.key} className={i % 2 === 1 ? "bg-slate-50/70" : "bg-white"}>
-                          <td className="py-2 px-2 font-medium text-slate-700">{w.label}</td>
-                          <td className="py-2 px-2 text-slate-600">{w.totalCalls.toLocaleString("en-IN")}</td>
-                          <td className="py-2 px-2"><ConnBadge pct={w.connectedPct} /></td>
-                          <td className="py-2 px-2 text-slate-600">{w.saleCount}</td>
-                          <td className="py-2 px-2 font-bold text-emerald-700">{formatINR(w.revenue)}</td>
-                          <td className="py-2 px-2"><AchBadge pct={w.achievementPct} hasTarget={data.target > 0} /></td>
-                        </tr>
-                      ))}
-                      {(period === "day" ? data.dailyTrend.length : weeklyTrend.length) === 0 && (
-                        <tr><td colSpan={6} className="py-6 text-center text-slate-400">No activity in this range.</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {MATRIX_ROWS.map((row, ri) => (
+            <tr key={row.label} className={ri % 2 === 1 ? "bg-slate-50/70" : "bg-white"}>
+              <td title={row.hint} className={`sticky left-0 z-10 whitespace-nowrap border-r border-slate-100 px-3 py-1.5 text-left font-semibold text-slate-600 ${ri % 2 === 1 ? "bg-slate-50" : "bg-white"}`}>{row.label}</td>
+              {all.map((c) => {
+                const { text, cls } = row.cell(c.m);
+                return (
+                  <td
+                    key={c.key} onClick={c.onClick} role="button" tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter") c.onClick(); }}
+                    className={`cursor-pointer whitespace-nowrap px-3 py-1.5 text-slate-600 transition-colors hover:bg-orange-50 ${total && c.key === total.key ? "bg-slate-100/70 font-semibold" : ""} ${cls ?? ""}`}
+                  >
+                    {text}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-/**
- * Housing Owner dashboard, real data only — every figure is a live
- * aggregate over db_masmis.owner_sale, Owner_cdr and owner_agent_details
- * (via GET /api/process-performance/housing-owner-dashboard), joined
- * client-side by agent name since the three source tables use slightly
- * different name spellings for the same person. Layout mirrors the
- * reference "Dashboard" / "Agent Wise Performance" / "Top 5 Bottom 5"
- * sheets, but shows none of that file's own numbers -- only this app's
- * own uploaded data. owner_agent_details already carries real
- * monthly_target/mtd per agent, so Achievement% here is computed
- * genuinely (revenue / target), unlike Bellavita where no target
- * uploader exists.
- */
+/* ---------------------------------- page ---------------------------------- */
+
+type DrawerState = { title: string; series: DrawerSeries[]; dailyRows: RowSet["dailyRows"]; weeklyRows: RowSet["weeklyRows"] };
+type EntityKind = "am" | "vintage" | "tl";
+
 export function HousingOwnerDashboard() {
-  const defaultRange = currentMonthRange();
-  const [from, setFrom] = useState(defaultRange.from);
-  const [to, setTo] = useState(defaultRange.to);
-  const [data, setData] = useState<DashboardData | null>(null);
+  const initial = currentMonthRange();
+  const [from, setFrom] = useState(initial.from);
+  const [to, setTo] = useState(initial.to);
+  const [data, setData] = useState<OutboundData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [tl, setTl] = useState("all");
   const [am, setAm] = useState("all");
+  const [tl, setTl] = useState("all");
+  const [agent, setAgent] = useState("all");
+  const [vintage, setVintage] = useState("all");
+  const [drawer, setDrawer] = useState<DrawerState | null>(null);
+  const [dailyBar, setDailyBar] = useState<"calls" | "connected" | "notConnected">("calls");
+  const [trendView, setTrendView] = useState<"calls" | "target">("calls");
+  const [trendAm, setTrendAm] = useState("all");
+  const [revMode, setRevMode] = useState<"daily" | "weekly">("daily");
+  const [talkMode, setTalkMode] = useState<"daily" | "weekly">("daily");
+  const [amMode, setAmMode] = useState<"period" | "mtd">("period");
+  const [vintageMode, setVintageMode] = useState<"period" | "mtd">("period");
+  const [tlMode, setTlMode] = useState<"period" | "mtd">("period");
+  const [agentView, setAgentView] = useState<"chart" | "table">("chart");
+  const [agentSort, setAgentSort] = useState<"saleCount" | "calls" | "revenue">("saleCount");
   const [agentSearch, setAgentSearch] = useState("");
-  const [drillTarget, setDrillTarget] = useState<{ type: "am" | "tl" | "agent"; name: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
       const qs = new URLSearchParams({ from, to });
-      if (tl !== "all") qs.set("tl", tl);
-      if (am !== "all") qs.set("am", am);
-      const res = await hrmsApi.get<{ success: boolean; data: DashboardData }>(
-        `/api/process-performance/housing-owner-dashboard?${qs.toString()}`,
-      );
+      const res = await hrmsApi.get<{ success: boolean; data: OutboundData }>(`/api/process-performance/housing-owner-dashboard/outbound?${qs.toString()}`);
       setData(res.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load the Housing Owner dashboard.");
     } finally {
       setLoading(false);
     }
-  }, [from, to, tl, am]);
-
+  }, [from, to]);
   useEffect(() => { void load(); }, [load]);
 
-  const tlOptions = useMemo(() => {
-    const opts = data?.filterOptions;
-    if (!opts) return [];
-    return am === "all" ? opts.tls : (opts.tlByAm[am] ?? []);
-  }, [data, am]);
+  const ctx = useMemo<Ctx | null>(() => {
+    if (!data) return null;
+    const last = [data.cdrThrough, data.saleThrough].filter((x): x is string => !!x).sort().pop();
+    return { cdr: data.cdr, sales: data.sales, roster: data.roster, dataTo: last ?? data.to };
+  }, [data]);
 
-  /** AM is the parent of TL: picking an AM narrows the TL list and drops a TL that no longer belongs. */
-  const changeAm = (next: string) => {
-    setAm(next);
-    if (next !== "all" && tl !== "all" && !(data?.filterOptions.tlByAm[next] ?? []).includes(tl)) setTl("all");
+  /* Filter options: AM -> TL -> Agent narrow each other; Vintage is independent. */
+  const people = useMemo(() => {
+    const m = new Map<string, Who>();
+    for (const r of ctx?.roster ?? []) m.set(r.name, { agent: r.name, tl: r.tl, am: r.am, vintage: r.vintage });
+    for (const r of ctx?.cdr ?? []) if (!m.has(r.agent)) m.set(r.agent, r);
+    for (const r of ctx?.sales ?? []) if (!m.has(r.agent)) m.set(r.agent, r);
+    return [...m.values()];
+  }, [ctx]);
+  const amOptions = useMemo(() => [...new Set(people.map((p) => p.am))].sort(), [people]);
+  const tlOptions = useMemo(() => [...new Set(people.filter((p) => am === "all" || p.am === am).map((p) => p.tl))].sort(), [people, am]);
+  const vintageOptions = useMemo(() => [...new Set(people.map((p) => p.vintage))].sort(byVintage), [people]);
+  const agentOptions = useMemo(
+    () => people.filter((p) => (am === "all" || p.am === am) && (tl === "all" || p.tl === tl) && (vintage === "all" || p.vintage === vintage))
+      .map((p) => p.agent).sort(),
+    [people, am, tl, vintage],
+  );
+  useEffect(() => { if (tl !== "all" && !tlOptions.includes(tl)) setTl("all"); }, [tl, tlOptions]);
+  useEffect(() => { if (agent !== "all" && !agentOptions.includes(agent)) setAgent("all"); }, [agent, agentOptions]);
+
+  const filtersActive = am !== "all" || tl !== "all" || agent !== "all" || vintage !== "all";
+  const basePred = useCallback<Pred>((f) =>
+    (am === "all" || f.am === am) && (tl === "all" || f.tl === tl) && (agent === "all" || f.agent === agent) && (vintage === "all" || f.vintage === vintage),
+  [am, tl, agent, vintage]);
+
+  const range = useMemo<Win>(() => ({ from: data?.from ?? from, to: data?.to ?? to }), [data, from, to]);
+  const prevRange = useMemo<Win>(() => {
+    const span = daysBetween(range.from, range.to) + 1;
+    return { from: shiftDays(range.from, -span), to: shiftDays(range.from, -1) };
+  }, [range]);
+  const mtdRange = useMemo<Win>(() => ({ from: monthStart(range.to), to: range.to }), [range]);
+  const lmtdRange = useMemo<Win>(() => {
+    const [y, m, d] = parts(range.to);
+    const ly = m === 1 ? y - 1 : y, lm = m === 1 ? 12 : m - 1;
+    const lFrom = `${ly}-${String(lm).padStart(2, "0")}-01`;
+    const lTo = `${ly}-${String(lm).padStart(2, "0")}-${String(Math.min(d, dim(lFrom))).padStart(2, "0")}`;
+    return { from: lFrom, to: lTo };
+  }, [range]);
+
+  const cur = useMemo(() => (ctx ? calc(ctx, basePred, range) : null), [ctx, basePred, range]);
+  const prev = useMemo(() => (ctx ? calc(ctx, basePred, prevRange) : null), [ctx, basePred, prevRange]);
+  const rows = useMemo(() => (ctx ? buildRows(ctx, basePred, range) : null), [ctx, basePred, range]);
+
+  const pctDelta = (c: number, p: number | undefined) => (prev?.hasData && p && p > 0 ? r1(((c - p) / p) * 100) : null);
+  const ppDelta = (c: number, p: number | undefined) => (prev?.hasData && p !== undefined ? r1(c - p) : null);
+
+  const openRows = (title: string, series: DrawerSeries[], set: RowSet) =>
+    setDrawer({ title, series, dailyRows: set.dailyRows, weeklyRows: set.weeklyRows });
+  const openOverall = (title: string, series: DrawerSeries[]) => { if (rows) openRows(title, series, rows); };
+  const openEntity = (title: string, pred: Pred, w: Win = range) => {
+    if (!ctx) return;
+    const set = buildRows(ctx, pred, w);
+    openRows(title, set.monthly > 0 ? ENTITY_SERIES : ENTITY_SERIES.filter((s) => s.key !== "achPct"), set);
   };
 
-  const filteredAgents = useMemo(() => {
-    const q = agentSearch.trim().toLowerCase();
-    const list = data?.agents ?? [];
-    return q ? list.filter((a) => a.name.toLowerCase().includes(q) || (a.empId ?? "").toLowerCase().includes(q)) : list;
-  }, [data, agentSearch]);
+  /* Matrix column sets */
+  const entityCols = useCallback((kind: EntityKind, mode: "period" | "mtd"): { cols: MatrixCol[]; total: MatrixCol | undefined } => {
+    if (!ctx) return { cols: [], total: undefined };
+    const w = mode === "mtd" ? mtdRange : range;
+    const field = (f: Who) => f[kind];
+    const names = [...new Set(people.filter(basePred).map(field))];
+    const cols = names.map((name) => {
+      const pred: Pred = (f) => basePred(f) && field(f) === name;
+      return { key: name, label: name, m: calc(ctx, pred, w), onClick: () => openEntity(`${name} · ${kind === "am" ? "AM" : kind === "tl" ? "TL" : "Vintage"}`, pred, w) };
+    }).filter((c) => c.m.hasData)
+      .sort((a, b) => (kind === "vintage" ? byVintage(a.label, b.label) : b.m.revenue - a.m.revenue));
+    const total: MatrixCol = { key: "__total", label: "Total", m: calc(ctx, basePred, w), onClick: () => openEntity("Total", basePred, w) };
+    return { cols, total };
+    // openEntity closes over ctx/range only
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx, people, basePred, range, mtdRange]);
 
-  const agentSort = useSortableRows<AgentRow>(filteredAgents, (a, key) => {
+  const amCols = useMemo(() => entityCols("am", amMode), [entityCols, amMode]);
+  const vintageCols = useMemo(() => entityCols("vintage", vintageMode), [entityCols, vintageMode]);
+  const tlCols = useMemo(() => entityCols("tl", tlMode), [entityCols, tlMode]);
+
+  const overallCols = useMemo<MatrixCol[]>(() => {
+    if (!ctx) return [];
+    const lastDay = (() => {
+      const ds = new Set<string>();
+      for (const r of ctx.cdr) if (r.date >= range.from && r.date <= range.to && basePred(r)) ds.add(r.date);
+      for (const r of ctx.sales) if (r.date >= range.from && r.date <= range.to && basePred(r)) ds.add(r.date);
+      return [...ds].sort().pop() ?? null;
+    })();
+    const wins: Array<{ key: string; label: string; w: Win | null }> = [
+      { key: "lmtd", label: "LMTD", w: lmtdRange },
+      { key: "day", label: lastDay ? `Last Day (${formatShortDate(lastDay)})` : "Last Day", w: lastDay ? { from: lastDay, to: lastDay } : null },
+      { key: "period", label: "Selected Period", w: range },
+      { key: "mtd", label: "MTD", w: mtdRange },
+    ];
+    return wins.flatMap((x) => {
+      if (!x.w) return [];
+      const w = x.w;
+      const m = calc(ctx, basePred, w);
+      if (x.key === "lmtd" && !m.hasData) return [];
+      return [{ key: x.key, label: x.label, m, onClick: () => openEntity(`Overall · ${x.label}`, basePred, w) }];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx, basePred, range, mtdRange, lmtdRange]);
+  const lmtdMissing = ctx ? !overallCols.some((c) => c.key === "lmtd") : false;
+
+  /* Agent productivity */
+  const agentRows = useMemo(() => {
+    if (!ctx) return [];
+    const list = new Map<string, Who>();
+    for (const p of people) if (basePred(p)) list.set(p.agent, p);
+    return [...list.values()].map((p) => {
+      const pred: Pred = (f) => f.agent === p.agent;
+      const m = calc(ctx, pred, range);
+      return { ...p, m, pred };
+    }).filter((r) => r.m.hasData);
+  }, [ctx, people, basePred, range]);
+
+  const topAgents = useMemo(
+    () => [...agentRows].sort((a, b) => {
+      const va = agentSort === "saleCount" ? a.m.saleCount : agentSort === "calls" ? a.m.calls : a.m.revenue;
+      const vb = agentSort === "saleCount" ? b.m.saleCount : agentSort === "calls" ? b.m.calls : b.m.revenue;
+      return vb - va;
+    }).slice(0, 10).map((r) => ({ name: r.agent.replace(/\s+MCN$/i, ""), full: r.agent, calls: r.m.calls, connected: r.m.connected, saleCount: r.m.saleCount, revenue: r.m.revenue, pred: r.pred })),
+    [agentRows, agentSort],
+  );
+
+  const tableRows = useMemo(() => {
+    const q = agentSearch.trim().toLowerCase();
+    return q ? agentRows.filter((r) => r.agent.toLowerCase().includes(q)) : agentRows;
+  }, [agentRows, agentSearch]);
+  const tableSort = useSortableRows(tableRows, (r, key) => {
     switch (key) {
-      case "name": return a.name;
-      case "tlName": return a.tlName;
-      case "am": return a.am;
-      case "bucket": return a.bucket;
-      case "status": return a.status;
-      case "target": return a.target;
-      case "totalCalls": return a.totalCalls;
-      case "connectedPct": return a.connectedPct;
-      case "avgTalkTimeSec": return a.avgTalkTimeSec;
-      case "saleCount": return a.saleCount;
-      case "revenue": return a.revenue;
-      case "achievementPct": return a.achievementPct;
-      case "stage": return a.stage;
+      case "agent": return r.agent;
+      case "tl": return r.tl;
+      case "am": return r.am;
+      case "vintage": return r.vintage;
+      case "calls": return r.m.calls;
+      case "connectedPct": return r.m.connectedPct;
+      case "saleCount": return r.m.saleCount;
+      case "revenue": return r.m.revenue;
+      case "achPct": return r.m.monthlyTarget > 0 ? r.m.achPct : null;
+      case "talk": return r.m.avgTalkSec;
       default: return null;
     }
   });
 
-  /** Day-wise revenue plus that day's OWN achievement % -- this day's revenue
-   * against this day's fair share of the monthly target (target / days in
-   * that month). Deliberately not a cumulative running total: revenue-to-date
-   * / target produces a smooth ramp climbing all month regardless of any
-   * single day's actual performance, which looks like "achievement" but
-   * isn't a per-day figure -- same fix applied to the entity-drawer chart's
-   * backend computation (getHousingOwnerEntityTrend). */
-  const dailyTrendWithAchievement = useMemo(() => {
-    const target = data?.headline.totalTarget ?? 0;
-    return (data?.dailyTrend ?? []).map((d) => {
-      const [y, m] = d.date.slice(0, 7).split("-").map(Number);
-      const daysInMonth = new Date(y, m, 0).getDate();
-      const dayTarget = target > 0 ? Math.round(target / daysInMonth) : 0;
-      return {
-        ...d,
-        dayTarget,
-        achievementPct: dayTarget > 0 ? Math.round((d.revenue / dayTarget) * 1000) / 10 : 0,
-      };
-    });
-  }, [data]);
+  /* Chart series */
+  const dailyChart = useMemo<Array<Record<string, string | number>>>(() => (rows?.dailyRows ?? []).map((r) => ({ ...r, x: formatShortDate(String(r.date)) })), [rows]);
+  const weeklyChart = useMemo<Array<Record<string, string | number>>>(() => (rows?.weeklyRows ?? []).map((r) => ({ ...r, x: String(r.label).replace(/\s*\(.*\)/, "") })), [rows]);
+  // Daily Performance Trend has its own AM filter; the page-level AM filter, when set, already narrows everything, so it wins.
+  const trendAmActive = am === "all" ? trendAm : "all";
+  const trendRows = useMemo(() => {
+    if (!ctx) return null;
+    if (trendAmActive === "all") return rows;
+    const pred: Pred = (f) => basePred(f) && f.am === trendAmActive;
+    return buildRows(ctx, pred, range);
+  }, [ctx, rows, basePred, range, trendAmActive]);
+  const trendChart = useMemo<Array<Record<string, string | number>>>(() => (trendRows?.dailyRows ?? []).map((r) => ({ ...r, x: formatShortDate(String(r.date)) })), [trendRows]);
+  const talkChart = useMemo(() => (talkMode === "daily" ? dailyChart : weeklyChart).map((r) => ({ ...r, talkMin: r1(Number(r.avgTalkSec) / 60) })), [talkMode, dailyChart, weeklyChart]);
 
-  /** Single export slide for "Download Snap"/"Download Excel" — this
-   * dashboard has no tabs, so the whole page's KPIs/tables become one
-   * slide, built from the same data already rendered on screen. */
+  const insights = useMemo(() => {
+    if (!ctx || !cur || !cur.hasData) return [];
+    const out: Array<{ tone: string; text: string }> = [];
+    const total = amCols.total?.m.revenue ?? 0;
+    const topAm = amCols.cols[0];
+    if (topAm && topAm.m.revenue > 0 && amCols.cols.length > 1) {
+      out.push({ tone: "bg-emerald-500", text: `${topAm.label} leads revenue with ${formatINR(topAm.m.revenue)} (${total > 0 ? Math.round((topAm.m.revenue / total) * 100) : 0}% of total).` });
+    }
+    const tlByConn = [...tlCols.cols].filter((c) => c.m.calls >= 500).sort((a, b) => b.m.connectedPct - a.m.connectedPct);
+    if (tlByConn.length > 1) out.push({ tone: "bg-sky-500", text: `${tlByConn[0].label} has the best connected % at ${tlByConn[0].m.connectedPct}%; ${tlByConn[tlByConn.length - 1].label} is lowest at ${tlByConn[tlByConn.length - 1].m.connectedPct}%.` });
+    const best = [...(rows?.dailyRows ?? [])].sort((a, b) => Number(b.revenue) - Number(a.revenue))[0];
+    if (best && Number(best.revenue) > 0) out.push({ tone: "bg-amber-500", text: `Best revenue day was ${formatShortDate(String(best.date))}: ${formatINR(Number(best.revenue))} from ${best.saleCount} sales.` });
+    const vAov = [...vintageCols.cols].filter((c) => c.m.saleCount >= 5).sort((a, b) => b.m.aov - a.m.aov)[0];
+    if (vAov) out.push({ tone: "bg-cyan-500", text: `Vintage ${vAov.label} has the highest AOV at ${formatINR(vAov.m.aov)}.` });
+    const targeted = agentRows.filter((r) => r.m.monthlyTarget > 0);
+    if (targeted.length > 0) {
+      const tq = targeted.filter((r) => r.m.achPct >= 80).length;
+      const bq = targeted.filter((r) => r.m.achPct < 50).length;
+      out.push({ tone: "bg-violet-500", text: `${tq} of ${targeted.length} agents with a target are at 80%+ of it; ${bq} are below 50%.` });
+    }
+    const dRev = pctDelta(cur.revenue, prev?.revenue);
+    if (dRev !== null) out.push({ tone: dRev >= 0 ? "bg-emerald-500" : "bg-rose-500", text: `Revenue is ${dRev >= 0 ? "up" : "down"} ${Math.abs(dRev)}% vs the previous period.` });
+    if (cur.avgTalkSec > 0) out.push({ tone: "bg-pink-500", text: `Average talk time is ${fmtHms(cur.avgTalkSec)} per agent-day at ${cur.dialPerAgent.toLocaleString("en-IN")} dials per agent-day.` });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx, cur, prev, amCols, tlCols, vintageCols, rows, agentRows]);
+
+  /* Export */
   const exportSlides = useMemo<ExportSlide[]>(() => {
-    if (!data) return [];
-    const { headline } = data;
-    const mtdPct = headline.totalTarget > 0 ? (headline.totalMtdReported / headline.totalTarget) * 100 : 0;
-    const slide: ExportSlide = {
-      title: "Housing Owner Performance",
+    if (!cur) return [];
+    const matrixTable = (title: string, set: { cols: MatrixCol[]; total: MatrixCol | undefined }) => {
+      const all = set.total ? [...set.cols, set.total] : set.cols;
+      return { title, columns: ["Metric", ...all.map((c) => c.label)], rows: MATRIX_ROWS.map((r) => [r.label, ...all.map((c) => r.cell(c.m).text)]) };
+    };
+    return [{
+      title: "Housing Owner Outbound Performance",
       kpis: [
-        { label: "Sale Count", value: headline.totalSaleCount.toLocaleString("en-IN") },
-        { label: "Revenue", value: formatINR(headline.totalRevenue) },
-        { label: "MTD Achievement %", value: `${mtdPct.toFixed(1)}%` },
-        { label: "Overall Achievement %", value: `${headline.achievementPct.toFixed(1)}%` },
-        { label: "Total Calls", value: headline.totalCalls.toLocaleString("en-IN") },
-        { label: "Connected Calls", value: headline.connectedCalls.toLocaleString("en-IN") },
-        { label: "Connected %", value: `${headline.connectedPct.toFixed(1)}%` },
-        { label: "Avg Talk Time / Agent", value: formatSecs(headline.avgTalkTimeSec) },
-        { label: "AOV", value: formatINR(headline.aov) },
-        { label: "Revenue Per Agent (RPA)", value: formatINR(headline.revenuePerAgent) },
+        { label: "Total Calls", value: int(cur.calls) },
+        { label: "Connected Calls", value: int(cur.connected) },
+        { label: "Not Connected Calls", value: int(cur.notConnected) },
+        { label: "Connected %", value: `${cur.connectedPct}%` },
+        { label: "Sale Count", value: int(cur.saleCount) },
+        { label: "Revenue Achieved", value: formatINR(cur.revenue) },
+        { label: "AOV", value: formatINR(cur.aov) },
+        { label: "Ach %", value: cur.monthlyTarget > 0 ? `${cur.achPct}%` : "—" },
+        { label: "MTD Ach %", value: cur.mtdTarget > 0 ? `${cur.mtdPct}%` : "—" },
       ],
       tables: [
+        matrixTable("AM Wise Performance Metrics", amCols),
+        matrixTable("Vintage Wise Performance Metrics", vintageCols),
+        matrixTable("TL Wise Performance Metrics", tlCols),
         {
-          title: "AM-wise Performance",
-          columns: ["Name", "Calls", "Connected %", "Sale Count", "Revenue", "AOV", "RPA", "Target", "Achievement %", "TQ", "MQ", "BQ"],
-          rows: data.byAm.map((r) => [
-            r.name, r.totalCalls.toLocaleString("en-IN"), `${r.connectedPct.toFixed(1)}%`, r.saleCount, formatINR(r.revenue), formatINR(r.aov), formatINR(r.rpa),
-            r.target > 0 ? formatINR(r.target) : "—", r.target > 0 ? `${r.achievementPct.toFixed(0)}%` : "—", r.tqCount, r.mqCount, r.bqCount,
-          ]),
-        },
-        {
-          title: "TL-wise Performance",
-          columns: ["Name", "Calls", "Connected %", "Sale Count", "Revenue", "AOV", "RPA", "Target", "Achievement %", "TQ", "MQ", "BQ"],
-          rows: data.byTl.map((r) => [
-            r.name, r.totalCalls.toLocaleString("en-IN"), `${r.connectedPct.toFixed(1)}%`, r.saleCount, formatINR(r.revenue), formatINR(r.aov), formatINR(r.rpa),
-            r.target > 0 ? formatINR(r.target) : "—", r.target > 0 ? `${r.achievementPct.toFixed(0)}%` : "—", r.tqCount, r.mqCount, r.bqCount,
-          ]),
-        },
-        {
-          title: "Top 5 Performers (by Achievement %)",
-          columns: ["Agent", "TL", "Revenue", "Achievement %"],
-          rows: data.topPerformers.map((r) => [r.name, r.tlName, formatINR(r.revenue), `${r.achievementPct.toFixed(0)}%`]),
-        },
-        {
-          title: "Bottom 5 Performers (by Achievement %)",
-          columns: ["Agent", "TL", "Revenue", "Achievement %"],
-          rows: data.bottomPerformers.map((r) => [r.name, r.tlName, formatINR(r.revenue), `${r.achievementPct.toFixed(0)}%`]),
-        },
-        {
-          title: "Agent-wise Performance",
-          columns: [
-            "Agent", "Emp ID", "TL", "AM", "Bucket", "Status", "Target", "Total Calls", "Connected %",
-            "Avg Daily Talk", "Sale Count", "Revenue", "Achievement %", "Stage",
-          ],
-          rows: data.agents.map((a) => [
-            a.name, a.empId ?? "—", a.tlName, a.am, a.bucket ?? "—", a.status,
-            a.target > 0 ? formatINR(a.target) : "—", a.totalCalls.toLocaleString("en-IN"), `${a.connectedPct.toFixed(1)}%`,
-            a.avgTalkTimeSec > 0 ? formatSecs(a.avgTalkTimeSec) : "—", a.saleCount, formatINR(a.revenue),
-            a.target > 0 ? `${a.achievementPct.toFixed(0)}%` : "—", a.stage,
-          ]),
+          title: "Agent Productivity",
+          columns: ["Agent", "TL", "AM", "Vintage", "Calls", "Connected %", "Sale Count", "Revenue", "Ach %", "Avg Talk"],
+          rows: agentRows.map((r) => [r.agent, r.tl, r.am, r.vintage, int(r.m.calls), `${r.m.connectedPct}%`, r.m.saleCount, formatINR(r.m.revenue), r.m.monthlyTarget > 0 ? `${r.m.achPct}%` : "—", r.m.avgTalkSec > 0 ? fmtHms(r.m.avgTalkSec) : "—"]),
         },
       ],
-    };
-    return [slide];
-  }, [data]);
+    }];
+  }, [cur, amCols, vintageCols, tlCols, agentRows]);
 
-  const dateFilter = (
-    <div className="flex flex-wrap items-center justify-end gap-2">
-      <CalendarDays className="h-4 w-4 text-slate-400" />
-      <input
-        type="date"
-        value={from}
-        max={to}
-        onChange={(e) => setFrom(e.target.value)}
-        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm"
+  const toolbar = (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <DashboardExportMenu
+        reportTitle="Housing Owner — Outbound Performance"
+        fileBaseName="Housing_Owner_Outbound"
+        raw={{ dashboard: "housing_owner", from, to }}
+        subtitle={`${from} to ${to}`}
+        slides={exportSlides}
+        activeSlideTitle="Housing Owner Outbound Performance"
       />
-      <span className="text-xs text-slate-400">to</span>
-      <input
-        type="date"
-        value={to}
-        min={from}
-        max={localDateStr(new Date())}
-        onChange={(e) => setTo(e.target.value)}
-        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm"
-      />
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <DateRangeToolbar
+          from={from} to={to} onFrom={setFrom} onTo={setTo}
+          onReset={() => { const r = currentMonthRange(); setFrom(r.from); setTo(r.to); }}
+          accentFocus="focus:border-orange-400"
+        />
+      </div>
+    </div>
+  );
+
+  const filterBar = (
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-100 bg-white p-2 shadow-sm">
+      <span className="px-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">Filters</span>
+      <Select value={am} onValueChange={setAm}>
+        <SelectTrigger className="h-8 w-[140px] bg-white text-xs" aria-label="Filter by AM"><SelectValue placeholder="All AMs" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All AMs</SelectItem>
+          {amOptions.map((a) => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      <Select value={tl} onValueChange={setTl}>
+        <SelectTrigger className="h-8 w-[170px] bg-white text-xs" aria-label="Filter by TL"><SelectValue placeholder="All TLs" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All TLs</SelectItem>
+          {tlOptions.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      <div className="w-[210px]">
+        <SearchableSelect
+          value={agent} onChange={setAgent} placeholder="All Agents" searchPlaceholder="Search agent..."
+          options={[{ value: "all", label: "All Agents" }, ...agentOptions.map((a) => ({ value: a, label: a }))]}
+        />
+      </div>
+      <Select value={vintage} onValueChange={setVintage}>
+        <SelectTrigger className="h-8 w-[150px] bg-white text-xs" aria-label="Filter by Vintage (agent tenure)"><SelectValue placeholder="All Vintage" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Vintage</SelectItem>
+          {vintageOptions.map((v) => <SelectItem key={v} value={v}>{v}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      {filtersActive && (
+        <button
+          type="button" onClick={() => { setAm("all"); setTl("all"); setAgent("all"); setVintage("all"); }}
+          className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+        >
+          Clear
+        </button>
+      )}
       <button
-        type="button"
-        onClick={() => { const r = currentMonthRange(); setFrom(r.from); setTo(r.to); }}
-        className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+        type="button" onClick={() => void load()} disabled={loading}
+        className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-orange-700 disabled:opacity-60"
       >
-        This Month
+        <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
       </button>
     </div>
   );
 
-  if (loading && !data) {
-    return (
-      <div className="space-y-5">
-        {dateFilter}
-        <Spinner />
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div className="space-y-5">
-        {dateFilter}
-        <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div>
-      </div>
-    );
-  }
-  if (!data) return null;
+  if (loading && !data) return <div className="space-y-3">{toolbar}<Spinner /></div>;
+  if (error && !data) return <div className="space-y-3">{toolbar}<div className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div></div>;
+  if (!data || !ctx || !cur || !rows) return null;
 
-  const { headline } = data;
-  const mtdAchievementPct = headline.totalTarget > 0 ? (headline.totalMtdReported / headline.totalTarget) * 100 : 0;
+  const donut = [
+    { name: "Connected", value: cur.connected, color: COLORS.connected },
+    { name: "Not Connected", value: cur.notConnected, color: COLORS.calls },
+  ];
+  const donutTotal = cur.connected + cur.notConnected;
+  const dataNote = `Call data through ${data.cdrThrough ? formatShortDate(data.cdrThrough) : "—"} · Sale data through ${data.saleThrough ? formatShortDate(data.saleThrough) : "—"}`;
+  const targetSub = cur.monthlyTarget > 0 ? `Target ${formatINR(cur.monthlyTarget)}` : "No target set";
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <DashboardExportMenu
-          reportTitle="Housing Owner — Performance"
-          fileBaseName="Housing_Owner_Performance"
-          raw={{ dashboard: "housing_owner", from, to }}
-          subtitle={`${from} to ${to}`}
-          slides={exportSlides}
-          activeSlideTitle="Housing Owner Performance"
-        />
-        <div className="flex flex-wrap items-center gap-2">
-          <Select value={am} onValueChange={changeAm}>
-            <SelectTrigger className="h-8 w-[170px] bg-white text-xs" aria-label="Filter by AM"><SelectValue placeholder="All AMs" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All AMs</SelectItem>
-              {data.filterOptions.ams.map((a) => <SelectItem key={a} value={a}>{a}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select value={tl} onValueChange={setTl}>
-            <SelectTrigger className="h-8 w-[190px] bg-white text-xs" aria-label="Filter by TL"><SelectValue placeholder="All TLs" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All TLs</SelectItem>
-              {tlOptions.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        {dateFilter}
+    <div className="space-y-3">
+      <DashboardHero<"outbound">
+        icon={Home} eyebrow="Housing Owner · Calls • Sales • Revenue • Team Performance" title="Outbound Performance Dashboard"
+        tabs={[{ key: "outbound", label: "Outbound" }]} activeTab="outbound" onTabChange={() => {}}
+        gradient="from-orange-600 via-amber-600 to-orange-700"
+      />
+      {toolbar}
+      {filterBar}
+      {error && <div className="rounded-xl border border-red-100 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
+
+      {/* KPI row -- every card opens its own week/date drill-down */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-9">
+        <StatTile icon={PhoneCall} tone="amber" label="Total Calls" value={int(cur.calls)} sub={prev?.hasData ? `vs previous ${int(prev.calls)}` : undefined} delta={pctDelta(cur.calls, prev?.calls)} onClick={() => openOverall("Total Calls", [S.calls])} />
+        <StatTile icon={PhoneOutgoing} tone="sky" label="Connected Calls" value={int(cur.connected)} sub={prev?.hasData ? `vs previous ${int(prev.connected)}` : undefined} delta={pctDelta(cur.connected, prev?.connected)} onClick={() => openOverall("Connected Calls", [S.connected])} />
+        <StatTile icon={PhoneOff} tone="rose" label="Not Connected Calls" value={int(cur.notConnected)} sub={prev?.hasData ? `vs previous ${int(prev.notConnected)}` : undefined} delta={pctDelta(cur.notConnected, prev?.notConnected)} onClick={() => openOverall("Not Connected Calls", [S.notConnected])} />
+        <StatTile icon={Percent} tone="indigo" label="Connected %" value={`${cur.connectedPct}%`} sub={prev?.hasData ? `vs previous ${prev.connectedPct}%` : undefined} delta={ppDelta(cur.connectedPct, prev?.connectedPct)} deltaUnit="pp" onClick={() => openOverall("Connected %", [S.connectedPct, S.calls, S.connected])} />
+        <StatTile icon={ShoppingBag} tone="emerald" label="Sale Count" value={int(cur.saleCount)} sub={prev?.hasData ? `vs previous ${int(prev.saleCount)}` : undefined} delta={pctDelta(cur.saleCount, prev?.saleCount)} onClick={() => openOverall("Sale Count", [S.saleCount])} />
+        <StatTile icon={IndianRupee} tone="teal" label="Revenue Achieved" value={formatINR(cur.revenue)} sub={prev?.hasData ? `vs previous ${formatINR(prev.revenue)}` : undefined} delta={pctDelta(cur.revenue, prev?.revenue)} onClick={() => openOverall("Revenue Achieved", [S.revenue])} />
+        <StatTile icon={Wallet} tone="cyan" label="AOV" value={cur.saleCount > 0 ? formatINR(cur.aov) : "—"} sub={prev?.hasData && prev.saleCount > 0 ? `vs previous ${formatINR(prev.aov)}` : undefined} delta={pctDelta(cur.aov, prev?.aov)} onClick={() => openOverall("AOV (Average Order Value)", [S.aov, S.saleCount, S.revenue])} />
+        <StatTile icon={Target} tone="violet" label="Ach %" value={cur.monthlyTarget > 0 ? `${cur.achPct}%` : "—"} sub={targetSub} delta={cur.monthlyTarget > 0 ? ppDelta(cur.achPct, prev?.achPct) : null} deltaUnit="pp" onClick={() => openOverall("Ach % (vs daily share of monthly target)", [S.achPct, S.revenue])} />
+        <StatTile icon={Target} tone="blue" label="MTD Ach %" value={cur.mtdTarget > 0 ? `${cur.mtdPct}%` : "—"} sub={cur.mtdTarget > 0 ? `MTD target ${formatINR(cur.mtdTarget)}` : "No target set"} delta={cur.mtdTarget > 0 ? ppDelta(cur.mtdPct, prev?.mtdPct) : null} deltaUnit="pp" onClick={() => openOverall("MTD Ach % (month-to-date revenue / target prorated to date)", [S.revenue, S.achPct])} />
       </div>
 
-      {/* Headline KPIs */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-5">
-        <KpiCard icon={ShoppingBag} label="Sale Count" value={headline.totalSaleCount.toLocaleString("en-IN")} tone="sky" />
-        <KpiCard icon={IndianRupee} label="Revenue" value={formatINR(headline.totalRevenue)} tone="emerald" />
-        <KpiCard icon={Target} label="MTD Achievement %" value={`${mtdAchievementPct.toFixed(1)}%`} sub="reported vs target" tone="violet" />
-        <KpiCard icon={TrendingUp} label="Overall Achievement %" value={`${headline.achievementPct.toFixed(1)}%`} sub={`vs ${formatINR(headline.totalTarget)}`} tone="indigo" />
-        <KpiCard icon={PhoneCall} label="Total Calls" value={headline.totalCalls.toLocaleString("en-IN")} tone="blue" />
-        <KpiCard icon={PhoneIncoming} label="Connected Calls" value={headline.connectedCalls.toLocaleString("en-IN")} tone="teal" />
-        <KpiCard icon={Percent} label="Connected %" value={`${headline.connectedPct.toFixed(1)}%`} tone="cyan" />
-        <KpiCard icon={Timer} label="Avg Talk / Agent" value={formatSecs(headline.avgTalkTimeSec)} tone="amber" />
-        <KpiCard icon={IndianRupee} label="AOV" value={formatINR(headline.aov)} sub="revenue / sale count" tone="rose" />
-        <KpiCard icon={Users} label="RPA" value={formatINR(headline.revenuePerAgent)} sub="revenue / active agents" tone="blue" />
-      </div>
-
-      {/* Daily trend */}
-      <div className="grid gap-4">
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-          <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-            <TableCardHeader icon={TrendingUp} title="Day-wise Revenue & Achievement %" tone="indigo" />
-            <div className="flex items-center gap-2">
-              <Select value={am} onValueChange={changeAm}>
-                <SelectTrigger className="h-7 w-[130px] bg-white text-[11px]" aria-label="Filter chart by AM"><SelectValue placeholder="AM" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All AMs</SelectItem>
-                  {(data.filterOptions.ams ?? []).map((n) => <SelectItem key={n} value={n}>{n}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Select value={tl} onValueChange={setTl}>
-                <SelectTrigger className="h-7 w-[130px] bg-white text-[11px]" aria-label="Filter chart by TL"><SelectValue placeholder="TL" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All TLs</SelectItem>
-                  {tlOptions.map((n) => <SelectItem key={n} value={n}>{n}</SelectItem>)}
-                </SelectContent>
-              </Select>
+      {/* Call status + Daily performance */}
+      <div className="grid gap-3 lg:grid-cols-3">
+        <SectionCard
+          icon={PieIcon} title="Call Status Distribution" tone="amber"
+          action={<ViewDetailsBtn onClick={() => openOverall("Call Status Distribution", [S.connected, S.notConnected, S.connectedPct])} />}
+        >
+          <div className="relative">
+            <ResponsiveContainer width="100%" height={190}>
+              <PieChart>
+                <Pie data={donut} dataKey="value" nameKey="name" innerRadius={55} outerRadius={80} paddingAngle={2} stroke="none">
+                  {donut.map((d) => <Cell key={d.name} fill={d.color} />)}
+                </Pie>
+                <Tooltip {...TOOLTIP_PROPS} formatter={(v: number, n: string) => [`${int(v)} (${donutTotal > 0 ? r1((v / donutTotal) * 100) : 0}%)`, n]} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+              <p className="text-lg font-extrabold leading-tight text-slate-800">{int(donutTotal)}</p>
+              <p className="text-[10px] font-medium text-slate-400">Total Calls</p>
             </div>
           </div>
-          <p className="mb-2 text-[11px] text-slate-400">
-            Filtering here uses the same AM/TL filter as the rest of the page -- it narrows every section, not just this chart.
-          </p>
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={dailyTrendWithAchievement} margin={{ top: 4, right: 12, left: -16, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis dataKey="date" tickFormatter={formatShortDate} tick={{ fontSize: 9 }} />
-              <YAxis yAxisId="left" tick={{ fontSize: 10 }} />
-              <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v: number) => `${v}%`} />
-              <Tooltip
-                labelFormatter={(v: unknown) => formatShortDate(String(v))}
-                formatter={(value: number, name: string) => (name === "Achievement %" ? `${value}%` : formatINR(value))}
-                contentStyle={{ fontSize: 12, borderRadius: 8 }}
-              />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Line yAxisId="left" type="monotone" dataKey="revenue" name="Revenue" stroke="#2563eb" strokeWidth={2} dot={false} />
-              <Line yAxisId="left" type="monotone" dataKey="dayTarget" name="Target" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 3" dot={false} />
-              <Line yAxisId="right" type="monotone" dataKey="achievementPct" name="Achievement %" stroke="#f59e0b" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      {/* AM-wise + TL-wise */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        <GroupTable title="AM-wise Performance" rows={data.byAm} icon={Users} tone="blue" onRowClick={(name) => setDrillTarget({ type: "am", name })} />
-        <GroupTable title="TL-wise Performance" rows={data.byTl} icon={Users} tone="violet" onRowClick={(name) => setDrillTarget({ type: "tl", name })} />
-      </div>
-
-      {/* Top / Bottom performers */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        <PerformerTable title="Top 5 Performers (by Achievement %)" rows={data.topPerformers} icon={Award} tone="emerald" onRowClick={(name) => setDrillTarget({ type: "agent", name })} />
-        <PerformerTable title="Bottom 5 Performers (by Achievement %)" rows={data.bottomPerformers} icon={TrendingDown} tone="red" onRowClick={(name) => setDrillTarget({ type: "agent", name })} />
-      </div>
-
-      {/* Full agent-wise table */}
-      <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <TableCardHeader
-            icon={ClipboardList} tone="indigo"
-            title={`Agent-wise Performance (${agentSearch.trim() ? `${filteredAgents.length} of ${data.agents.length}` : data.agents.length} agents)`}
-          />
-          <div className="relative w-full max-w-xs">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text" value={agentSearch} onChange={(e) => setAgentSearch(e.target.value)}
-              placeholder="Search agent name or ID..." aria-label="Search agents by name"
-              className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-8 pr-3 text-xs text-slate-700 shadow-sm focus:border-blue-400 focus:outline-none"
-            />
+          <div className="mt-1 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+            {donut.map((d) => (
+              <span key={d.name} className="inline-flex items-center gap-1.5 text-[11px] text-slate-600">
+                <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: d.color }} />
+                {d.name} <span className="font-semibold text-slate-800">{donutTotal > 0 ? r1((d.value / donutTotal) * 100) : 0}%</span>
+              </span>
+            ))}
           </div>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-center text-xs">
-            <thead>
-              <tr className="bg-slate-800 text-[11px] font-bold uppercase tracking-wide text-white">
-                <SortTh label="Agent" sortKey="name" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="rounded-l-lg py-2.5 px-2 font-bold" />
-                <SortTh label="TL" sortKey="tlName" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2.5 px-2 font-bold" />
-                <SortTh label="AM" sortKey="am" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2.5 px-2 font-bold" />
-                <SortTh label="Bucket" sortKey="bucket" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2.5 px-2 font-bold" />
-                <SortTh label="Status" sortKey="status" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2.5 px-2 font-bold" />
-                <SortTh label="Target" sortKey="target" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2.5 px-2 font-bold" />
-                <SortTh label="Total Calls" sortKey="totalCalls" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2.5 px-2 font-bold" />
-                <SortTh label="Connected%" sortKey="connectedPct" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2.5 px-2 font-bold" />
-                <SortTh label="Avg Daily Talk" sortKey="avgTalkTimeSec" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2.5 px-2 font-bold" />
-                <SortTh label="Sale Count" sortKey="saleCount" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2.5 px-2 font-bold" />
-                <SortTh label="Revenue" sortKey="revenue" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2.5 px-2 font-bold" />
-                <SortTh label="Ach%" sortKey="achievementPct" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="py-2.5 px-2 font-bold" />
-                <SortTh label="Stage" sortKey="stage" activeKey={agentSort.sortKey} dir={agentSort.sortDir} onSort={agentSort.toggleSort} className="rounded-r-lg py-2.5 px-2 font-bold" />
-              </tr>
-            </thead>
-            <tbody>
-              {agentSort.sorted.map((a, i) => (
-                <tr
-                  key={a.name} onClick={() => setDrillTarget({ type: "agent", name: a.name })} role="button" tabIndex={0}
-                  className={`cursor-pointer transition-colors hover:bg-blue-50/60 ${i % 2 === 1 ? "bg-slate-50/70" : "bg-white"}`}
-                >
-                  <td className="py-2.5 px-2">
-                    <div className="font-semibold text-blue-700 underline-offset-2 hover:underline">{a.name}</div>
-                    {a.empId && <div className="text-[11px] text-slate-400">{a.empId}</div>}
-                  </td>
-                  <td className="py-2.5 px-2 text-slate-500">{a.tlName}</td>
-                  <td className="py-2.5 px-2 text-slate-500">{a.am}</td>
-                  <td className="py-2.5 px-2 text-slate-500">{a.bucket ?? "—"}</td>
-                  <td className="py-2.5 px-2">
-                    <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${a.status === "Active" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : a.status === "Inactive" ? "bg-slate-100 text-slate-500 ring-slate-200" : "bg-amber-50 text-amber-700 ring-amber-200"}`}>
-                      {a.status}
-                    </span>
-                  </td>
-                  <td className="py-2.5 px-2 text-slate-500">{a.target > 0 ? formatINR(a.target) : "—"}</td>
-                  <td className="py-2.5 px-2 text-slate-600">{a.totalCalls.toLocaleString("en-IN")}</td>
-                  <td className="py-2.5 px-2"><ConnBadge pct={a.connectedPct} /></td>
-                  <td className="py-2.5 px-2 text-slate-600">{a.avgTalkTimeSec > 0 ? formatSecs(a.avgTalkTimeSec) : "—"}</td>
-                  <td className="py-2.5 px-2 font-semibold text-slate-800">{a.saleCount}</td>
-                  <td className="py-2.5 px-2 font-bold text-emerald-700">{formatINR(a.revenue)}</td>
-                  <td className="py-2.5 px-2"><AchBadge pct={a.achievementPct} hasTarget={a.target > 0} /></td>
-                  <td className="py-2.5 px-2"><StageBadge stage={a.stage} /></td>
-                </tr>
-              ))}
-              {filteredAgents.length === 0 && (
-                <tr><td colSpan={13} className="py-6 text-center text-slate-400">{data.agents.length === 0 ? "No agent data." : "No agents match this search."}</td></tr>
-              )}
-            </tbody>
-          </table>
+        </SectionCard>
+
+        <div className="lg:col-span-2">
+          <SectionCard
+            icon={TrendingUp} title={`Daily Performance Trend${trendAmActive !== "all" ? ` · ${trendAmActive}` : ""}`} tone="amber"
+            action={
+              <div className="flex flex-wrap items-center gap-2">
+                <Seg value={trendView} onChange={(v) => setTrendView(v)} options={[{ key: "calls", label: "Calls & Sales" }, { key: "target", label: "Target vs Ach %" }]} />
+                {trendView === "calls" && (
+                  <MiniSelect
+                    label="Bar metric" value={dailyBar} onChange={(v) => setDailyBar(v)}
+                    options={[{ key: "calls", label: "Total Calls" }, { key: "connected", label: "Connected Calls" }, { key: "notConnected", label: "Not Connected" }]}
+                  />
+                )}
+                <AmFilterButton value={trendAmActive} options={amOptions} onChange={setTrendAm} disabled={am !== "all"} />
+                <ViewDetailsBtn
+                  onClick={() => trendRows && openRows(
+                    `Daily Performance Trend${trendAmActive !== "all" ? ` · ${trendAmActive}` : ""}`,
+                    trendView === "calls" ? [S.calls, S.connected, S.notConnected, S.saleCount] : [S.revenue, S.target, S.achPct],
+                    trendRows,
+                  )}
+                />
+              </div>
+            }
+          >
+            {trendChart.length === 0 ? <p className="py-16 text-center text-xs text-slate-400">No activity in this range.</p>
+              : trendView === "target" ? (
+                (trendRows?.monthly ?? 0) > 0 ? (
+                  <ResponsiveContainer width="100%" height={210}>
+                    <ComposedChart data={trendChart} margin={{ top: 4, right: 8, left: -4, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                      <XAxis dataKey="x" tick={{ fontSize: 9 }} />
+                      <YAxis yAxisId="l" tick={{ fontSize: 9 }} tickFormatter={(x: number) => (x >= 100000 ? `${r1(x / 100000)}L` : x >= 1000 ? `${r1(x / 1000)}k` : String(x))} />
+                      <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 9 }} tickFormatter={(x: number) => `${x}%`} />
+                      <Tooltip {...TOOLTIP_PROPS} formatter={(v: number, n: string) => (n === "Ach %" ? `${v}%` : formatINR(Number(v)))} />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      <Bar yAxisId="l" dataKey="revenue" name="Revenue Achieved" fill={COLORS.revenue} radius={[3, 3, 0, 0]} maxBarSize={22} />
+                      <Line yAxisId="l" type="monotone" dataKey="target" name="Daily Target" stroke="#64748b" strokeWidth={2} strokeDasharray="5 3" dot={false} />
+                      <Line yAxisId="r" type="monotone" dataKey="achPct" name="Ach %" stroke={COLORS.ach} strokeWidth={2} dot={{ r: 2 }} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="py-16 text-center text-xs text-slate-400">No monthly target is set for this selection, so Target and Ach % can't be shown.</p>
+                )
+              ) : (
+              <ResponsiveContainer width="100%" height={210}>
+                <ComposedChart data={trendChart} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="x" tick={{ fontSize: 9 }} />
+                  <YAxis yAxisId="l" tick={{ fontSize: 9 }} />
+                  <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 9 }} />
+                  <Tooltip {...TOOLTIP_PROPS} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Bar yAxisId="l" dataKey={dailyBar} name={S[dailyBar].label} fill={S[dailyBar].color} radius={[3, 3, 0, 0]} maxBarSize={22} />
+                  {dailyBar !== "connected" && <Line yAxisId="l" type="monotone" dataKey="connected" name="Connected Calls" stroke={COLORS.connected} strokeWidth={2} dot={{ r: 2 }} />}
+                  <Line yAxisId="r" type="monotone" dataKey="saleCount" name="Sale Count" stroke={COLORS.sale} strokeWidth={2} dot={{ r: 2 }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            )}
+          </SectionCard>
         </div>
       </div>
 
-      {drillTarget && <EntityTrendDrawer target={drillTarget} onClose={() => setDrillTarget(null)} />}
+      {/* Revenue & Sales + Talk Time */}
+      <div className="grid gap-3 lg:grid-cols-2">
+        <SectionCard
+          icon={IndianRupee} title="Revenue & Sales Trend" tone="emerald"
+          action={
+            <div className="flex items-center gap-2">
+              <MiniSelect label="Period" value={revMode} onChange={(v) => setRevMode(v)} options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }]} />
+              <ViewDetailsBtn onClick={() => openOverall("Revenue & Sales Trend", [S.revenue, S.saleCount, S.aov])} />
+            </div>
+          }
+        >
+          {dailyChart.length === 0 ? <p className="py-16 text-center text-xs text-slate-400">No activity in this range.</p> : (
+            <ResponsiveContainer width="100%" height={210}>
+              <ComposedChart data={revMode === "daily" ? dailyChart : weeklyChart} margin={{ top: 4, right: 8, left: -8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="x" tick={{ fontSize: 9 }} />
+                <YAxis yAxisId="l" tick={{ fontSize: 9 }} tickFormatter={(v: number) => (v >= 100000 ? `${r1(v / 100000)}L` : v >= 1000 ? `${r1(v / 1000)}K` : String(v))} />
+                <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 9 }} />
+                <Tooltip {...TOOLTIP_PROPS} formatter={(v: number, n: string) => (n === "Revenue" ? formatINR(v) : int(v))} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Bar yAxisId="l" dataKey="revenue" name="Revenue" fill={COLORS.revenue} radius={[3, 3, 0, 0]} maxBarSize={26} />
+                <Line yAxisId="r" type="monotone" dataKey="saleCount" name="Sale Count" stroke={COLORS.sale} strokeWidth={2} dot={{ r: 2 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
+        </SectionCard>
+
+        <SectionCard
+          icon={Timer} title="Talk Time Analysis" tone="rose"
+          footnote="Talk time is the dialer's per-agent daily in-call duration; the line is the average per agent-day."
+          action={
+            <div className="flex items-center gap-2">
+              <MiniSelect label="Period" value={talkMode} onChange={(v) => setTalkMode(v)} options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }]} />
+              <ViewDetailsBtn onClick={() => openOverall("Talk Time Analysis", [S.avgTalkSec, S.calls, S.dialPerAgent, S.present])} />
+            </div>
+          }
+        >
+          {talkChart.length === 0 ? <p className="py-16 text-center text-xs text-slate-400">No activity in this range.</p> : (
+            <ResponsiveContainer width="100%" height={200}>
+              <ComposedChart data={talkChart} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="x" tick={{ fontSize: 9 }} />
+                <YAxis yAxisId="l" tick={{ fontSize: 9 }} tickFormatter={(v: number) => `${v}m`} />
+                <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 9 }} />
+                <Tooltip {...TOOLTIP_PROPS} formatter={(v: number, n: string, item) => (n === "Avg Talk Time" ? fmtHms(Number((item?.payload as { avgTalkSec?: number })?.avgTalkSec ?? v * 60)) : int(v))} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Bar yAxisId="r" dataKey="calls" name="Total Calls" fill="#fed7aa" radius={[3, 3, 0, 0]} maxBarSize={22} />
+                <Line yAxisId="l" type="monotone" dataKey="talkMin" name="Avg Talk Time" stroke={COLORS.talk} strokeWidth={2} dot={{ r: 2 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
+        </SectionCard>
+      </div>
+
+      {/* AM wise */}
+      <SectionCard
+        icon={Users} title="AM Wise Performance Metrics" tone="blue"
+        footnote="Click any column or cell for that AM's week-wise and date-wise breakdown. AM / TL / Vintage come from the agent roster (owner_agent_details); agents not on it fall back to the AM / TL on their own upload rows."
+        action={<Seg value={amMode} onChange={(v) => setAmMode(v)} options={[{ key: "period", label: "Selected Period" }, { key: "mtd", label: "MTD" }]} />}
+      >
+        <MetricMatrix columns={amCols.cols} total={amCols.total} firstColLabel="AM" />
+      </SectionCard>
+
+      {/* Vintage wise */}
+      <SectionCard
+        icon={Layers} title="Vintage Wise Performance Metrics" tone="violet"
+        footnote="Vintage = the agent's tenure bucket from the roster (days since joining). Agents missing from the roster are grouped as Unmapped."
+        action={<Seg value={vintageMode} onChange={(v) => setVintageMode(v)} options={[{ key: "period", label: "Overall" }, { key: "mtd", label: "MTD" }]} />}
+      >
+        <MetricMatrix columns={vintageCols.cols} total={vintageCols.total} firstColLabel="Vintage" />
+      </SectionCard>
+
+      {/* Overall */}
+      <SectionCard
+        icon={ClipboardList} title="Overall Performance Metrics" tone="teal"
+        footnote={`${lmtdMissing ? "LMTD is not shown: no calls or sales were uploaded for the same days of the previous month. " : ""}${dataNote}.`}
+      >
+        <MetricMatrix columns={overallCols} firstColLabel="Metric" />
+      </SectionCard>
+
+      {/* TL wise */}
+      <SectionCard
+        icon={Users} title="TL Wise Performance Metrics" tone="indigo"
+        action={<Seg value={tlMode} onChange={(v) => setTlMode(v)} options={[{ key: "period", label: "Selected Period" }, { key: "mtd", label: "TL MTD" }]} />}
+      >
+        <MetricMatrix columns={tlCols.cols} total={tlCols.total} firstColLabel="TL" />
+      </SectionCard>
+
+      {/* Agent productivity + insights */}
+      <div className="grid gap-3 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <SectionCard
+            icon={Award} title={agentView === "chart" ? "Agent Productivity (Top 10)" : `Agent-wise Performance (${tableRows.length}${agentSearch.trim() ? ` of ${agentRows.length}` : ""} agents)`} tone="emerald"
+            action={
+              <div className="flex items-center gap-2">
+                {agentView === "chart" && (
+                  <MiniSelect
+                    label="Rank by" value={agentSort} onChange={(v) => setAgentSort(v)}
+                    options={[{ key: "saleCount", label: "Sale Count" }, { key: "calls", label: "Total Calls" }, { key: "revenue", label: "Revenue" }]}
+                  />
+                )}
+                <Seg value={agentView} onChange={(v) => setAgentView(v)} options={[{ key: "chart", label: "Top 10" }, { key: "table", label: "All agents" }]} />
+              </div>
+            }
+            footnote={agentView === "chart" ? "Click a bar for that agent's week-wise and date-wise breakdown, or switch to All agents for the full table." : undefined}
+          >
+            {agentView === "chart" ? (
+              topAgents.length === 0 ? <p className="py-16 text-center text-xs text-slate-400">No agent activity in this range.</p> : (
+                <ResponsiveContainer width="100%" height={260}>
+                  <ComposedChart data={topAgents} margin={{ top: 4, right: 8, left: -8, bottom: 30 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="name" tick={{ fontSize: 9 }} interval={0} angle={-28} textAnchor="end" height={54} />
+                    <YAxis yAxisId="l" tick={{ fontSize: 9 }} />
+                    <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 9 }} />
+                    <Tooltip {...TOOLTIP_PROPS} labelFormatter={(_, p) => String((p?.[0]?.payload as { full?: string })?.full ?? "")} formatter={(v: number, n: string) => (n === "Revenue" ? formatINR(v) : int(v))} />
+                    <Legend verticalAlign="top" wrapperStyle={{ fontSize: 11 }} />
+                    <Bar yAxisId="l" dataKey="calls" name="Total Calls" fill={COLORS.calls} radius={[3, 3, 0, 0]} maxBarSize={20} cursor="pointer"
+                      onClick={(d: { payload?: { full: string; pred: Pred } }) => { if (d?.payload) openEntity(d.payload.full, d.payload.pred); }} />
+                    <Bar yAxisId="l" dataKey="connected" name="Connected Calls" fill={COLORS.connected} radius={[3, 3, 0, 0]} maxBarSize={20} cursor="pointer"
+                      onClick={(d: { payload?: { full: string; pred: Pred } }) => { if (d?.payload) openEntity(d.payload.full, d.payload.pred); }} />
+                    <Line yAxisId="r" type="monotone" dataKey="saleCount" name="Sale Count" stroke={COLORS.sale} strokeWidth={2} dot={{ r: 3 }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              )
+            ) : (
+              <div>
+                <div className="relative mb-2 w-full max-w-xs">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text" value={agentSearch} onChange={(e) => setAgentSearch(e.target.value)} placeholder="Search agent..." aria-label="Search agents"
+                    className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-3 text-xs text-slate-700 shadow-sm focus:border-orange-400 focus:outline-none"
+                  />
+                </div>
+                <div className="max-h-[420px] overflow-auto">
+                  <table className="w-full text-center text-xs">
+                    <thead>
+                      <tr className="sticky top-0 z-10 bg-slate-800 text-[11px] font-bold uppercase tracking-wide text-white">
+                        <SortTh label="Agent" sortKey="agent" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="rounded-l-lg px-2 py-2 text-left font-bold text-white" />
+                        <SortTh label="TL" sortKey="tl" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
+                        <SortTh label="AM" sortKey="am" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
+                        <SortTh label="Vintage" sortKey="vintage" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
+                        <SortTh label="Calls" sortKey="calls" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
+                        <SortTh label="Conn %" sortKey="connectedPct" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
+                        <SortTh label="Sales" sortKey="saleCount" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
+                        <SortTh label="Revenue" sortKey="revenue" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
+                        <SortTh label="Ach %" sortKey="achPct" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
+                        <SortTh label="Avg Talk" sortKey="talk" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="rounded-r-lg px-2 py-2 font-bold text-white" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tableSort.sorted.map((r, i) => (
+                        <tr
+                          key={r.agent} role="button" tabIndex={0}
+                          onClick={() => openEntity(r.agent, r.pred)} onKeyDown={(e) => { if (e.key === "Enter") openEntity(r.agent, r.pred); }}
+                          className={`cursor-pointer transition-colors hover:bg-orange-50 ${i % 2 === 1 ? "bg-slate-50/70" : "bg-white"}`}
+                        >
+                          <td className="px-2 py-1.5 text-left font-semibold text-orange-700">{r.agent}</td>
+                          <td className="px-2 py-1.5 text-slate-500">{r.tl}</td>
+                          <td className="px-2 py-1.5 text-slate-500">{r.am}</td>
+                          <td className="px-2 py-1.5 text-slate-500">{r.vintage}</td>
+                          <td className="px-2 py-1.5 text-slate-600">{int(r.m.calls)}</td>
+                          <td className="px-2 py-1.5 font-semibold text-sky-700">{r.m.connectedPct}%</td>
+                          <td className="px-2 py-1.5 text-slate-700">{int(r.m.saleCount)}</td>
+                          <td className="px-2 py-1.5 font-bold text-emerald-700">{formatINR(r.m.revenue)}</td>
+                          <td className={`px-2 py-1.5 font-bold ${pctTone(r.m.achPct, r.m.monthlyTarget > 0)}`}>{r.m.monthlyTarget > 0 ? `${r.m.achPct}%` : "—"}</td>
+                          <td className="px-2 py-1.5 text-slate-600">{r.m.avgTalkSec > 0 ? fmtHms(r.m.avgTalkSec) : "—"}</td>
+                        </tr>
+                      ))}
+                      {tableRows.length === 0 && <tr><td colSpan={10} className="py-6 text-center text-slate-400">No agents match.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </SectionCard>
+        </div>
+
+        <SectionCard icon={Lightbulb} title="Key Insights" tone="amber" footnote={dataNote}>
+          {insights.length === 0 ? <p className="py-6 text-center text-xs text-slate-400">Not enough data in this selection.</p> : (
+            <ul className="space-y-2.5">
+              {insights.map((i) => (
+                <li key={i.text} className="flex items-start gap-2 text-xs leading-snug text-slate-600">
+                  <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${i.tone}`} />
+                  <span>{i.text}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
+      </div>
+
+      {drawer && (
+        <GncDetailDrawer
+          title={drawer.title} eyebrow="Housing Owner · Week-wise & Date-wise"
+          gradient="from-orange-600 via-amber-600 to-orange-700"
+          series={drawer.series} dailyRows={drawer.dailyRows} weeklyRows={drawer.weeklyRows}
+          onClose={() => setDrawer(null)}
+        />
+      )}
     </div>
   );
 }

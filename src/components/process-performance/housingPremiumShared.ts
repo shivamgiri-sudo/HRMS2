@@ -8,6 +8,8 @@ export interface HPOverviewValues {
   connected: number; notConnected: number; uniqueConnected: number; totalCalls: number; connectedPct: number;
   target: number; revenue: number; saleCount: number; achievedPct: number; aov: number;
   presentCount: number; perAgentDialCount: number; avgSalePerAgent: number;
+  /** Total talk seconds / Present Count (agent-days). */
+  avgTalkPerAgentSec: number;
 }
 export interface HPOverviewData {
   from: string; to: string; columns: HPColumn[];

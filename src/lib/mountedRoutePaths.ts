@@ -374,6 +374,7 @@ export const MOUNTED_ROUTE_PATHS: ReadonlySet<string> = new Set([
   "/settings/fraud-alerts",
   "/settings/provisioning-recipients",
   "/settings/signing-certificate",
+  "/settings/tpz-access",
   "/social-feed",
   "/social-feed/admin",
   "/statutory-change-approvals",
