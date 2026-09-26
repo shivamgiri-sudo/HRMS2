@@ -178,6 +178,24 @@ describe("dashboard gate", () => {
   });
 });
 
+describe("percent-encoded inbound key", () => {
+  beforeEach(() => { state.restrict = 0; state.grants = []; state.branchRows = []; state.batch = null; invalidateTpzAccessCache(); });
+
+  it("is decoded before the gate looks the company up, so encoding cannot skip a refusal", async () => {
+    state.grants = [{ scope_type: "company", company_key: "bellavita", branch_id: null, can_dashboards: 1, can_upload: 0, can_mis: 0 }];
+    const plain = await run(tpzInsightsGate, { user: employee, path: "/neemans/calls" });
+    const encoded = await run(tpzInsightsGate, { user: employee, path: "/neem%61ns/calls" });
+    expect(plain.status).toBe(403);
+    expect(encoded.status).toBe(403);
+  });
+
+  it("treats a malformed escape as no key and passes it on (the router rejects it)", async () => {
+    const r = await run(tpzInsightsGate, { user: employee, path: "/neem%zzns/calls" });
+    expect(r.passed).toBe(true);
+    expect(r.req.tpzBypass).toBeUndefined();
+  });
+});
+
 describe("uploader gate", () => {
   beforeEach(() => { state.restrict = 0; state.grants = []; state.batch = null; invalidateTpzAccessCache(); });
   const grantDalmiaUpload = () => { state.grants = [{ scope_type: "company", company_key: "dalmia", branch_id: null, can_dashboards: 0, can_upload: 1, can_mis: 0 }]; invalidateTpzAccessCache(); };

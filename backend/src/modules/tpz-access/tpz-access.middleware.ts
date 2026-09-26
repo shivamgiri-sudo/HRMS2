@@ -87,7 +87,7 @@ export const tpzPerformanceGate = gate(
       const access = await accessOf(req);
       const any = access.roleFullView || Object.values(access.companies).some((c) => c.mis);
       if (!any) return forbidden(res, "You don't have MIS access in TPZ Process.");
-      req.tpzBypass = true;
+      if (req.method === "GET" || req.method === "HEAD") req.tpzBypass = true;
       return next();
     }
     const hit = companyForPerformancePath(req.path);
@@ -96,8 +96,17 @@ export const tpzPerformanceGate = gate(
   },
 );
 
+/**
+ * A path segment as the router will see it. Express URL-decodes `/:key` params, but req.path is still raw, so a percent-encoded
+ * key ("clov%69a") would read as an unknown company here and skip the gate while the router served that company. Decoding first
+ * closes that; a malformed escape is treated as no key (the router itself rejects it).
+ */
+const decodedSegment = (raw: string): string => {
+  try { return decodeURIComponent(raw); } catch { return ""; }
+};
+
 /** /api/inbound-insights/:key/* */
-const insightsCompany = (req: AuthenticatedRequest): string | null => companyForInboundKey(req.path.split("/").filter(Boolean)[0] ?? "");
+const insightsCompany = (req: AuthenticatedRequest): string | null => companyForInboundKey(decodedSegment(req.path.split("/").filter(Boolean)[0] ?? ""));
 export const tpzInsightsGate = gate(
   (req) => insightsCompany(req) !== null,
   async (req, res, next) => decide(req, res, next, insightsCompany(req) as string, "dashboards"),
@@ -106,7 +115,7 @@ export const tpzInsightsGate = gate(
 /** /api/inbound/project/:key/* (the summary / project-list endpoints stay role-only). */
 const inboundProjectCompany = (req: AuthenticatedRequest): string | null => {
   const parts = req.path.split("/").filter(Boolean);
-  return parts[0] === "project" && parts[1] ? companyForInboundKey(parts[1]) : null;
+  return parts[0] === "project" && parts[1] ? companyForInboundKey(decodedSegment(parts[1])) : null;
 };
 export const tpzInboundProjectGate = gate(
   (req) => inboundProjectCompany(req) !== null,
