@@ -1,5 +1,6 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { markRowsImported } from "./batch-row-status.js";
 import { setNeemansTarget } from "../sales-upload/sales-upload.service.js";
 import { mapWithConcurrency, BULK_ROW_CONCURRENCY } from "./batch-job.js";
 
@@ -91,10 +92,7 @@ export async function importNeemansMonthTargetBatch(
   }
 
   if (importedIds.length) {
-    await db.execute(
-      `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${importedIds.map(() => "?").join(",")})`,
-      importedIds,
-    );
+    await markRowsImported(importedIds);
   }
   if (errorUpdates.length) {
     const cases = errorUpdates.map(() => "WHEN ? THEN CAST(? AS JSON)").join(" ");

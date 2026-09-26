@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { markRowsImported } from "./batch-row-status.js";
 import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
@@ -210,10 +211,7 @@ export async function importGs1EmailDailyBatch(
   }
 
   if (importedRowIds.length) {
-    await db.execute(
-      `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${importedRowIds.map(() => "?").join(",")})`,
-      importedRowIds,
-    );
+    await markRowsImported(importedRowIds);
   }
 
   if (errorUpdates.length) {

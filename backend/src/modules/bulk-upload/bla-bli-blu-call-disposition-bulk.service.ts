@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
+import { markRowsImported } from "./batch-row-status.js";
 import { chunkedMasmisInsert, type ChunkInsertRow } from "./masmis-chunked-insert.js";
 
 /**
@@ -155,10 +156,7 @@ export async function importBlaBliBluCallDispositionBatch(
   if (importedRows > 0) {
     const failedRowIds = new Set(inserted.errorUpdates.map((e) => e.rowId));
     const successRowIds = toInsert.filter((r) => !failedRowIds.has(r.rowId)).map((r) => r.rowId);
-    await db.execute(
-      `UPDATE upload_batch_row SET row_status = 'imported' WHERE id IN (${successRowIds.map(() => "?").join(",")})`,
-      successRowIds as never[],
-    );
+    await markRowsImported(successRowIds);
   }
 
   if (errorUpdates.length) {
