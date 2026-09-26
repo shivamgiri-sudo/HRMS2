@@ -15,11 +15,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *      payroll attributed at all, whose ratios only look good because a whole cost line is absent.
  */
 
-const { execute, tableExists } = vi.hoisted(() => ({ execute: vi.fn(), tableExists: vi.fn() }));
+const { execute, tableExists } = vi.hoisted(() => ({
+  execute: vi.fn(),
+  tableExists: vi.fn(),
+}));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
-vi.mock("../../../shared/dbHelpers.js", () => ({ tableExists, queryRows: vi.fn() }));
+vi.mock("../../../shared/dbHelpers.js", () => ({
+  tableExists,
+  queryRows: vi.fn(),
+}));
 // The seat-rate estimate is read from the Live P&L; only months inside the open billing window ask.
-const { getPnlReconciliation } = vi.hoisted(() => ({ getPnlReconciliation: vi.fn() }));
+const { getPnlReconciliation } = vi.hoisted(() => ({
+  getPnlReconciliation: vi.fn(),
+}));
 vi.mock("../pnl-reconciliation.service.js", () => ({ getPnlReconciliation }));
 
 interface Fixture {
@@ -28,11 +36,17 @@ interface Fixture {
   people?: { branch_id: string | null; staff: number; cost: number }[];
   spend?: { branch_id: string | null; amount: number }[];
   budget?: { branch_id: string | null; amount: number }[];
-  /** Cost-centre code buildFocus should resolve to, and its branch's total GRN. */
+  /** db_bill mirror GRN rows. Under the HRMS-only ruling these must never reach any figure. */
+  mirrorSpend?: { branch_id: string | null; amount: number }[];
+  /** Cost-centre code buildFocus should resolve to. */
   focusCode?: string;
-  branchGrn?: number;
   /** Rows for the billing-completeness probe: invoice lines and value per period, per branch. */
-  billing?: { period_code: string; branch_id: string | null; line_count: number; amount: number }[];
+  billing?: {
+    period_code: string;
+    branch_id: string | null;
+    line_count: number;
+    amount: number;
+  }[];
 }
 
 function mockDb(f: Fixture) {
@@ -42,23 +56,40 @@ function mockDb(f: Fixture) {
   execute.mockImplementation(async (sql: string) => {
     const q = String(sql);
     if (q.includes("process_master")) return [[], []];
-    if (q.includes("FROM branch_master") && !q.includes("JOIN")) return [f.branches, []];
+    if (q.includes("FROM branch_master") && !q.includes("JOIN"))
+      return [f.branches, []];
     // buildFocus resolves the cost-centre code (and its branch) before it can check anything else.
     if (q.includes("FROM cost_centre_master WHERE id")) {
-      return [[{ code: f.focusCode ?? "CC/TEST", branch_id: f.branches[0]?.id ?? null }], []];
+      return [
+        [
+          {
+            code: f.focusCode ?? "CC/TEST",
+            branch_id: f.branches[0]?.id ?? null,
+          },
+        ],
+        [],
+      ];
     }
-    if (q.includes("COUNT(*) AS n FROM billing_invoice_particular_snapshot")) return [[{ n: 3 }], []];
+    if (q.includes("COUNT(*) AS n FROM billing_invoice_particular_snapshot"))
+      return [[{ n: 3 }], []];
     // The completeness probe is the only query asking for a per-period line count, so it must be
     // matched BEFORE the generic revenue branch below or it would be handed revenue-shaped rows.
     if (q.includes("COUNT(*) AS line_count")) return [f.billing ?? [], []];
-    if (q.includes("billing_invoice_particular_snapshot")) return [f.revenue ?? [], []];
-    if (q.includes("salary_prep_line") && q.includes("zero_paid")) return [[{ zero_paid: 0 }], []];
+    if (q.includes("billing_invoice_particular_snapshot"))
+      return [f.revenue ?? [], []];
+    if (q.includes("salary_prep_line") && q.includes("zero_paid"))
+      return [[{ zero_paid: 0 }], []];
     if (q.includes("salary_prep_line")) return [f.people ?? [], []];
-    // The branch-overhead comparison asks for one scalar; spendByBranch groups by branch.
-    if (q.includes("grn_entry_line_snapshot") && q.includes("COALESCE(SUM(l.amount), 0) AS a")) {
-      return [[{ a: f.branchGrn ?? (f.spend ?? []).reduce((t, r) => t + r.amount, 0) }], []];
+    // Owner ruling 2026-09-26: no legacy bill is added to HRMS figures. The shared GRN reader
+    // (readGrnSpend) reads only HRMS-raised GRNs from grn_cost_allocation / grn_request; the
+    // fixture's `spend` is served as those HRMS-raised consumed rows (the mock bypasses SQL).
+    // Its committed leg ('reserved') is answered by withReservedGrn or is empty.
+    if (q.includes("FROM grn_cost_allocation a")) {
+      return [q.includes("lifecycle_status = 'reserved'") ? [] : (f.spend ?? []), []];
     }
-    if (q.includes("grn_entry_line_snapshot")) return [f.spend ?? [], []];
+    // The db_bill mirror is a TRAP: nothing may query it any more. If a query ever reaches it,
+    // hand back `mirrorSpend` so a regression shows up as an inflated figure instead of a silent 0.
+    if (q.includes("grn_entry_line_snapshot")) return [f.mirrorSpend ?? [], []];
     if (q.includes("finance_budget_line_snapshot")) return [f.budget ?? [], []];
     return [[], []];
   });
@@ -85,7 +116,10 @@ describe("CEO overview", () => {
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-06");
     expect(out.branches, "three spellings are one branch").toHaveLength(1);
-    expect(out.branches[0].staffPaid, "headcount must not be split across the duplicates").toBe(26);
+    expect(
+      out.branches[0].staffPaid,
+      "headcount must not be split across the duplicates",
+    ).toBe(26);
     expect(out.branches[0].peopleCost).toBeCloseTo(L(12.47), 0);
   });
 
@@ -115,7 +149,10 @@ describe("CEO overview", () => {
     const out = await getCeoOverview("2026-06");
     expect(out.branches[0].flag).toBe("no payroll attributed");
     const opp = out.opportunities.find((o) => o.id.startsWith("no-payroll"));
-    expect(opp?.severity, "an 87% margin from a missing cost line is critical, not good news").toBe("critical");
+    expect(
+      opp?.severity,
+      "an 87% margin from a missing cost line is critical, not good news",
+    ).toBe("critical");
   });
 
   it("never benchmarks against a branch whose cost line is missing", async () => {
@@ -128,21 +165,27 @@ describe("CEO overview", () => {
         { id: "c", branch_name: "NOIDA-DIALDESK", active_status: 1 },
       ],
       revenue: [
-        { branch_id: "a", amount: L(177.4) }, { branch_id: "b", amount: L(117.45) },
+        { branch_id: "a", amount: L(177.4) },
+        { branch_id: "b", amount: L(117.45) },
         { branch_id: "c", amount: L(25.92) },
       ],
       people: [
-        { branch_id: "a", staff: 496, cost: L(102.22) }, { branch_id: "b", staff: 448, cost: L(76.24) },
+        { branch_id: "a", staff: 496, cost: L(102.22) },
+        { branch_id: "b", staff: 448, cost: L(76.24) },
       ],
       spend: [
-        { branch_id: "a", amount: L(27.32) }, { branch_id: "b", amount: L(24.93) },
+        { branch_id: "a", amount: L(27.32) },
+        { branch_id: "b", amount: L(24.93) },
         { branch_id: "c", amount: L(3.38) },
       ],
     });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-06");
     const gap = out.opportunities.find((o) => o.id === "indirect-gap");
-    expect(gap?.title, "the benchmark must be NOIDA, not the branch with no payroll").toContain("NOIDA spends");
+    expect(
+      gap?.title,
+      "the benchmark must be NOIDA, not the branch with no payroll",
+    ).toContain("NOIDA spends");
     expect(gap?.title).not.toContain("NOIDA-DIALDESK spends");
   });
 
@@ -156,7 +199,10 @@ describe("CEO overview", () => {
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-06");
     expect(out.branches[0].isCostCentre).toBe(true);
-    expect(out.branches[0].marginPct, "a margin for Head Office would be nonsense").toBeNull();
+    expect(
+      out.branches[0].marginPct,
+      "a margin for Head Office would be nonsense",
+    ).toBeNull();
   });
 
   it("counts staff paid nothing, and keeps them out of the money", async () => {
@@ -165,7 +211,10 @@ describe("CEO overview", () => {
         { id: "k", branch_name: "KARNAL", active_status: 0 },
         { id: "d", branch_name: "Delhi Office", active_status: 0 },
       ],
-      people: [{ branch_id: "k", staff: 50, cost: 0 }, { branch_id: "d", staff: 51, cost: 0 }],
+      people: [
+        { branch_id: "k", staff: 50, cost: 0 },
+        { branch_id: "d", staff: 51, cost: 0 },
+      ],
     });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-06");
@@ -177,7 +226,9 @@ describe("CEO overview", () => {
   });
 
   it("omits branches where nothing happened at all", async () => {
-    mockDb({ branches: [{ id: "x", branch_name: "DORMANT", active_status: 0 }] });
+    mockDb({
+      branches: [{ id: "x", branch_name: "DORMANT", active_status: 0 }],
+    });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     expect((await getCeoOverview("2026-06")).branches).toHaveLength(0);
   });
@@ -190,8 +241,14 @@ describe("CEO overview", () => {
         { id: "a", branch_name: "NOIDA", active_status: 1 },
         { id: "b", branch_name: "NOIDA-2", active_status: 1 },
       ],
-      revenue: [{ branch_id: "a", amount: L(177.4) }, { branch_id: "b", amount: L(117.45) }],
-      people: [{ branch_id: "a", staff: 496, cost: L(102.22) }, { branch_id: "b", staff: 448, cost: L(76.24) }],
+      revenue: [
+        { branch_id: "a", amount: L(177.4) },
+        { branch_id: "b", amount: L(117.45) },
+      ],
+      people: [
+        { branch_id: "a", staff: 496, cost: L(102.22) },
+        { branch_id: "b", staff: 448, cost: L(76.24) },
+      ],
     });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-06", { branchId: "a" });
@@ -211,18 +268,25 @@ describe("CEO overview", () => {
         { id: "b", branch_name: "NOIDA-2", active_status: 1 },
       ],
       revenue: [
-        { branch_id: "a", amount: L(170) }, { branch_id: "a2", amount: L(7.4) },
-        { branch_id: "b", amount: L(117.45) }, { branch_id: null, amount: L(3) },
+        { branch_id: "a", amount: L(170) },
+        { branch_id: "a2", amount: L(7.4) },
+        { branch_id: "b", amount: L(117.45) },
+        { branch_id: null, amount: L(3) },
       ],
-      people: [{ branch_id: "a", staff: 496, cost: L(102.22) }, { branch_id: "b", staff: 448, cost: L(76.24) }],
+      people: [
+        { branch_id: "a", staff: 496, cost: L(102.22) },
+        { branch_id: "b", staff: 448, cost: L(76.24) },
+      ],
     });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-06", { branchId: "a" });
     expect(out.revenue).toBeCloseTo(L(177.4), 0);
     expect(out.trend).toHaveLength(4);
     for (const point of out.trend) {
-      expect(point.revenue, `${point.period} must be NOIDA only (both spellings), no other branch, no unbranched`)
-        .toBeCloseTo(L(177.4), 0);
+      expect(
+        point.revenue,
+        `${point.period} must be NOIDA only (both spellings), no other branch, no unbranched`,
+      ).toBeCloseTo(L(177.4), 0);
       expect(point.operatingProfit).toBeCloseTo(L(177.4 - 102.22), 0);
     }
   });
@@ -230,12 +294,22 @@ describe("CEO overview", () => {
   it("carries unbranched revenue in the headline, same as payroll and the trend (audit item 25)", async () => {
     mockDb({
       branches: [{ id: "a", branch_name: "NOIDA", active_status: 1 }],
-      revenue: [{ branch_id: "a", amount: L(100) }, { branch_id: null, amount: L(5) }, { branch_id: "gone", amount: L(2) }],
-      people: [{ branch_id: "a", staff: 400, cost: L(60) }, { branch_id: null, staff: 7, cost: L(1.11) }],
+      revenue: [
+        { branch_id: "a", amount: L(100) },
+        { branch_id: null, amount: L(5) },
+        { branch_id: "gone", amount: L(2) },
+      ],
+      people: [
+        { branch_id: "a", staff: 400, cost: L(60) },
+        { branch_id: null, staff: 7, cost: L(1.11) },
+      ],
     });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-06");
-    expect(out.revenue, "no-branch and orphan-branch revenue must reach the headline").toBeCloseTo(L(107), 0);
+    expect(
+      out.revenue,
+      "no-branch and orphan-branch revenue must reach the headline",
+    ).toBeCloseTo(L(107), 0);
     expect(out.peopleCost).toBeCloseTo(L(61.11), 0);
     expect(out.staffPaid).toBe(407);
     expect(out.unbranched?.revenue).toBeCloseTo(L(7), 0);
@@ -248,7 +322,8 @@ describe("CEO overview", () => {
     // Under a process filter (no branch selected) the same buckets still count, as they do in the trend.
     const filtered = await getCeoOverview("2026-06", { processId: "p1" });
     expect(filtered.revenue).toBeCloseTo(L(107), 0);
-    for (const point of filtered.trend) expect(point.revenue).toBeCloseTo(L(107), 0);
+    for (const point of filtered.trend)
+      expect(point.revenue).toBeCloseTo(L(107), 0);
 
     // A branch selection genuinely excludes them.
     const scoped = await getCeoOverview("2026-06", { branchId: "a" });
@@ -260,9 +335,18 @@ describe("CEO overview", () => {
     // March 2026 read 40.6% on Live P&L before its idcMissing rule, with Rs 0 of indirect cost —
     // the overhead data was absent, not nil. CEO Overview had no such rule.
     mockDb({
-      branches: [{ id: "a", branch_name: "NOIDA", active_status: 1 }, { id: "b", branch_name: "NOIDA-2", active_status: 1 }],
-      revenue: [{ branch_id: "a", amount: L(170) }, { branch_id: "b", amount: L(110) }],
-      people: [{ branch_id: "a", staff: 496, cost: L(100) }, { branch_id: "b", staff: 448, cost: L(70) }],
+      branches: [
+        { id: "a", branch_name: "NOIDA", active_status: 1 },
+        { id: "b", branch_name: "NOIDA-2", active_status: 1 },
+      ],
+      revenue: [
+        { branch_id: "a", amount: L(170) },
+        { branch_id: "b", amount: L(110) },
+      ],
+      people: [
+        { branch_id: "a", staff: 496, cost: L(100) },
+        { branch_id: "b", staff: 448, cost: L(70) },
+      ],
     });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-03");
@@ -276,9 +360,18 @@ describe("CEO overview", () => {
     // Under a branch filter the check stays company-wide: GRN on ANOTHER branch still means IDC data
     // exists for the month (Live P&L's readGrn is company-wide whatever the branch filter).
     mockDb({
-      branches: [{ id: "a", branch_name: "NOIDA", active_status: 1 }, { id: "b", branch_name: "NOIDA-2", active_status: 1 }],
-      revenue: [{ branch_id: "a", amount: L(170) }, { branch_id: "b", amount: L(110) }],
-      people: [{ branch_id: "a", staff: 496, cost: L(100) }, { branch_id: "b", staff: 448, cost: L(70) }],
+      branches: [
+        { id: "a", branch_name: "NOIDA", active_status: 1 },
+        { id: "b", branch_name: "NOIDA-2", active_status: 1 },
+      ],
+      revenue: [
+        { branch_id: "a", amount: L(170) },
+        { branch_id: "b", amount: L(110) },
+      ],
+      people: [
+        { branch_id: "a", staff: 496, cost: L(100) },
+        { branch_id: "b", staff: 448, cost: L(70) },
+      ],
       spend: [{ branch_id: "b", amount: L(20) }],
     });
     const scoped = await getCeoOverview("2026-03", { branchId: "a" });
@@ -292,17 +385,32 @@ describe("CEO overview", () => {
         { id: "a", branch_name: "NOIDA", active_status: 1 },
         { id: "b", branch_name: "NOIDA-2", active_status: 1 },
       ],
-      revenue: [{ branch_id: "a", amount: L(100) }, { branch_id: "b", amount: L(50) }],
-      people: [{ branch_id: "a", staff: 10, cost: L(60) }, { branch_id: "b", staff: 5, cost: L(30) }],
-      spend: [{ branch_id: "a", amount: L(5) }, { branch_id: "b", amount: L(4) }],
-      budget: [{ branch_id: "a", amount: L(8) }, { branch_id: "b", amount: L(6) }],
+      revenue: [
+        { branch_id: "a", amount: L(100) },
+        { branch_id: "b", amount: L(50) },
+      ],
+      people: [
+        { branch_id: "a", staff: 10, cost: L(60) },
+        { branch_id: "b", staff: 5, cost: L(30) },
+      ],
+      spend: [
+        { branch_id: "a", amount: L(5) },
+        { branch_id: "b", amount: L(4) },
+      ],
+      budget: [
+        { branch_id: "a", amount: L(8) },
+        { branch_id: "b", amount: L(6) },
+      ],
     });
     const { getYtdSummary } = await import("../ceo-overview.service.js");
     const all = await getYtdSummary("2026-05");
     const scoped = await getYtdSummary("2026-05", { branchId: "a" });
     expect(all.months).toEqual(["2026-04", "2026-05"]);
     expect(all.totalBudget).toBeCloseTo(L(28), 0);
-    expect(scoped.totalBudget, "NOIDA's budget only, for both months").toBeCloseTo(L(16), 0);
+    expect(
+      scoped.totalBudget,
+      "NOIDA's budget only, for both months",
+    ).toBeCloseTo(L(16), 0);
     expect(scoped.totalRevenue).toBeCloseTo(L(200), 0);
     expect(scoped.scope?.branchIds).toEqual(["a"]);
   });
@@ -314,26 +422,65 @@ describe("CEO overview", () => {
         { id: "a", branch_name: "NOIDA", active_status: 1 },
         { id: "b", branch_name: "NOIDA-2", active_status: 1 },
       ],
-      revenue: [{ branch_id: "a", amount: L(100) }, { branch_id: "b", amount: L(50) }],
-      people: [{ branch_id: "a", staff: 10, cost: L(60) }, { branch_id: "b", staff: 5, cost: L(30) }],
-      spend: [{ branch_id: "a", amount: L(5) }, { branch_id: "b", amount: L(4) }],
+      revenue: [
+        { branch_id: "a", amount: L(100) },
+        { branch_id: "b", amount: L(50) },
+      ],
+      people: [
+        { branch_id: "a", staff: 10, cost: L(60) },
+        { branch_id: "b", staff: 5, cost: L(30) },
+      ],
+      spend: [
+        { branch_id: "a", amount: L(5) },
+        { branch_id: "b", amount: L(4) },
+      ],
       // Mirror rows for BOTH branches; NOIDA's must be dropped.
-      budget: [{ branch_id: "a", amount: L(8) }, { branch_id: "b", amount: L(6) }],
+      budget: [
+        { branch_id: "a", amount: L(8) },
+        { branch_id: "b", amount: L(6) },
+      ],
     });
     const base = execute.getMockImplementation()!;
     execute.mockImplementation(async (sql: string, params?: unknown[]) => {
       const q = String(sql);
-      if (q.includes("FROM finance_budget_header h") && q.includes("JOIN finance_budget_line l")) {
-        return [[{ budget_id: "h1", branch_id: "a", branch_name: "NOIDA", line_id: "l1", allocation_id: null,
-          head: "Admin", sub_head: null, item_name: "Rent", cost_centre_id: "cc", cost_centre_code: "CC/TEST", amount: L(3) }], []];
+      if (
+        q.includes("FROM finance_budget_header h") &&
+        q.includes("JOIN finance_budget_line l")
+      ) {
+        return [
+          [
+            {
+              budget_id: "h1",
+              branch_id: "a",
+              branch_name: "NOIDA",
+              line_id: "l1",
+              allocation_id: null,
+              head: "Admin",
+              sub_head: null,
+              item_name: "Rent",
+              cost_centre_id: "cc",
+              cost_centre_code: "CC/TEST",
+              amount: L(3),
+            },
+          ],
+          [],
+        ];
       }
-      if (q.includes("FROM finance_budget_header h")) return [[{ id: "h1", branch_id: "a", branch_name: "NOIDA" }], []];
+      if (q.includes("FROM finance_budget_header h"))
+        return [[{ id: "h1", branch_id: "a", branch_name: "NOIDA" }], []];
       return base(sql, params);
     });
-    const { getCeoOverview, getYtdSummary } = await import("../ceo-overview.service.js");
+    const { getCeoOverview, getYtdSummary } =
+      await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-05");
-    expect(out.branches.find((b) => b.branchId === "a")?.budget).toBeCloseTo(L(3), 0);
-    expect(out.branches.find((b) => b.branchId === "b")?.budget).toBeCloseTo(L(6), 0);
+    expect(out.branches.find((b) => b.branchId === "a")?.budget).toBeCloseTo(
+      L(3),
+      0,
+    );
+    expect(out.branches.find((b) => b.branchId === "b")?.budget).toBeCloseTo(
+      L(6),
+      0,
+    );
     const ytd = await getYtdSummary("2026-04");
     expect(ytd.totalBudget, "YTD uses the same reader").toBeCloseTo(L(9), 0);
   });
@@ -362,11 +509,21 @@ describe("CEO overview", () => {
     const out = await getCeoOverview("2026-06");
 
     expect(out.branches.map((b) => b.branchName)).toEqual(["NOIDA"]);
-    expect(out.closedBranchesHidden.map((b) => b.branchName).sort()).toEqual(["Delhi Office", "KARNAL"]);
-    expect(out.closedBranchesHidden.reduce((t, b) => t + b.staffPaid, 0)).toBe(101);
+    expect(out.closedBranchesHidden.map((b) => b.branchName).sort()).toEqual([
+      "Delhi Office",
+      "KARNAL",
+    ]);
+    expect(out.closedBranchesHidden.reduce((t, b) => t + b.staffPaid, 0)).toBe(
+      101,
+    );
     // Still counted, still found: hiding a row from a table is not the same as deleting it.
-    expect(out.staffPaid, "company headcount must not move because a row was hidden").toBe(565);
-    expect(out.opportunities.find((o) => o.id === "zero-paid")?.value).toBe("101");
+    expect(
+      out.staffPaid,
+      "company headcount must not move because a row was hidden",
+    ).toBe(565);
+    expect(out.opportunities.find((o) => o.id === "zero-paid")?.value).toBe(
+      "101",
+    );
   });
 
   it("keeps a closed branch that is still spending", async () => {
@@ -379,7 +536,9 @@ describe("CEO overview", () => {
     const out = await getCeoOverview("2026-06");
     expect(out.branches.map((b) => b.branchName)).toEqual(["MOHALI"]);
     expect(out.closedBranchesHidden).toHaveLength(0);
-    expect(out.opportunities.some((o) => o.id.startsWith("closed-spend"))).toBe(true);
+    expect(out.opportunities.some((o) => o.id.startsWith("closed-spend"))).toBe(
+      true,
+    );
   });
 
   it("refuses a malformed period without querying", async () => {
@@ -400,7 +559,12 @@ describe("billing completeness — an unfinished month is not a bad month", () =
    * had been invoiced; the rest had simply not been raised.
    */
   const juneBaseline = (branch: string, lines: number, amount: number) =>
-    ["2026-04", "2026-05", "2026-06"].map((period_code) => ({ period_code, branch_id: branch, line_count: lines, amount }));
+    ["2026-04", "2026-05", "2026-06"].map((period_code) => ({
+      period_code,
+      branch_id: branch,
+      line_count: lines,
+      amount,
+    }));
 
   it("flags a month billed far below its own recent norm, and names the branch that is missing", async () => {
     mockDb({
@@ -408,25 +572,46 @@ describe("billing completeness — an unfinished month is not a bad month", () =
         { id: "n", branch_name: "NOIDA", active_status: 1 },
         { id: "n2", branch_name: "NOIDA-2", active_status: 1 },
       ],
-      revenue: [{ branch_id: "n", amount: L(1.31) }, { branch_id: "n2", amount: L(93.39) }],
+      revenue: [
+        { branch_id: "n", amount: L(1.31) },
+        { branch_id: "n2", amount: L(93.39) },
+      ],
       people: [{ branch_id: "n", staff: 464, cost: L(80.36) }],
       billing: [
         ...juneBaseline("n", 53, L(127.4)),
         ...juneBaseline("n2", 14, L(117.45)),
-        { period_code: "2026-07", branch_id: "n", line_count: 2, amount: L(1.31) },
-        { period_code: "2026-07", branch_id: "n2", line_count: 5, amount: L(93.39) },
+        {
+          period_code: "2026-07",
+          branch_id: "n",
+          line_count: 2,
+          amount: L(1.31),
+        },
+        {
+          period_code: "2026-07",
+          branch_id: "n2",
+          line_count: 5,
+          amount: L(93.39),
+        },
       ],
     });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-07");
 
-    expect(out.billing.incomplete, "7 lines against a 67-line norm is an unfinished month").toBe(true);
+    expect(
+      out.billing.incomplete,
+      "7 lines against a 67-line norm is an unfinished month",
+    ).toBe(true);
     expect(out.billing.lines).toBe(7);
     expect(out.billing.baselineLines).toBeCloseTo(67, 0);
-    expect(out.billing.gaps.map((g) => g.branchName), "NOIDA is 1% of its norm; NOIDA-2 is 79%").toEqual(["NOIDA"]);
+    expect(
+      out.billing.gaps.map((g) => g.branchName),
+      "NOIDA is 1% of its norm; NOIDA-2 is 79%",
+    ).toEqual(["NOIDA"]);
     expect(out.billing.gaps[0].baselineRevenue).toBeCloseTo(L(127.4), 0);
     // The figures themselves are untouched — an estimate on a P&L is worse than an incomplete fact.
-    expect(out.branches.find((b) => b.branchName === "NOIDA")?.revenue).toBeCloseTo(L(1.31), 0);
+    expect(
+      out.branches.find((b) => b.branchName === "NOIDA")?.revenue,
+    ).toBeCloseTo(L(1.31), 0);
   });
 
   it("stays silent on a month that billed normally", async () => {
@@ -435,7 +620,12 @@ describe("billing completeness — an unfinished month is not a bad month", () =
       revenue: [{ branch_id: "n", amount: L(127.4) }],
       billing: [
         ...juneBaseline("n", 53, L(127.4)),
-        { period_code: "2026-07", branch_id: "n", line_count: 51, amount: L(126.0) },
+        {
+          period_code: "2026-07",
+          branch_id: "n",
+          line_count: 51,
+          amount: L(126.0),
+        },
       ],
     });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
@@ -467,11 +657,13 @@ describe("multi-select filters", () => {
       { id: "c", branch_name: "AHMEDABAD-JALDARSHAN", active_status: 1 },
     ],
     revenue: [
-      { branch_id: "a", amount: L(127.4) }, { branch_id: "b", amount: L(117.45) },
+      { branch_id: "a", amount: L(127.4) },
+      { branch_id: "b", amount: L(117.45) },
       { branch_id: "c", amount: L(49.41) },
     ],
     people: [
-      { branch_id: "a", staff: 464, cost: L(80.36) }, { branch_id: "b", staff: 460, cost: L(58.95) },
+      { branch_id: "a", staff: 464, cost: L(80.36) },
+      { branch_id: "b", staff: 460, cost: L(58.95) },
       { branch_id: "c", staff: 293, cost: L(18.6) },
     ],
   };
@@ -480,16 +672,28 @@ describe("multi-select filters", () => {
     mockDb(three);
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-06", { branchIds: ["a", "b"] });
-    expect(out.branches.map((b) => b.branchName).sort()).toEqual(["NOIDA", "NOIDA-2"]);
-    expect(out.revenue, "totals cover the selection, not the company").toBeCloseTo(L(244.85), 0);
+    expect(out.branches.map((b) => b.branchName).sort()).toEqual([
+      "NOIDA",
+      "NOIDA-2",
+    ]);
+    expect(
+      out.revenue,
+      "totals cover the selection, not the company",
+    ).toBeCloseTo(L(244.85), 0);
   });
 
   it("folds the singular branchId into the list rather than ignoring either", async () => {
     // The branch-scope resolver still passes branchId; a selection must not silently drop it.
     mockDb(three);
     const { getCeoOverview } = await import("../ceo-overview.service.js");
-    const out = await getCeoOverview("2026-06", { branchId: "c", branchIds: ["a"] });
-    expect(out.branches.map((b) => b.branchName).sort()).toEqual(["AHMEDABAD-JALDARSHAN", "NOIDA"]);
+    const out = await getCeoOverview("2026-06", {
+      branchId: "c",
+      branchIds: ["a"],
+    });
+    expect(out.branches.map((b) => b.branchName).sort()).toEqual([
+      "AHMEDABAD-JALDARSHAN",
+      "NOIDA",
+    ]);
   });
 
   it("shows no focus panel for a multi-process selection", async () => {
@@ -500,14 +704,21 @@ describe("multi-select filters", () => {
      */
     mockDb(three);
     const { getCeoOverview } = await import("../ceo-overview.service.js");
-    expect((await getCeoOverview("2026-06", { processIds: ["p1", "p2"] })).focus).toBeNull();
-    expect((await getCeoOverview("2026-06", { processIds: ["p1"] })).focus).not.toBeNull();
+    expect(
+      (await getCeoOverview("2026-06", { processIds: ["p1", "p2"] })).focus,
+    ).toBeNull();
+    expect(
+      (await getCeoOverview("2026-06", { processIds: ["p1"] })).focus,
+    ).not.toBeNull();
   });
 
   it("suppresses company-wide findings under any selection", async () => {
     mockDb(three);
     const { getCeoOverview } = await import("../ceo-overview.service.js");
-    expect((await getCeoOverview("2026-06", { branchIds: ["a", "b"] })).opportunities).toHaveLength(0);
+    expect(
+      (await getCeoOverview("2026-06", { branchIds: ["a", "b"] }))
+        .opportunities,
+    ).toHaveLength(0);
   });
 });
 
@@ -530,7 +741,9 @@ describe("filter options — active + branch scoped (bug fix)", () => {
   ];
 
   function findCall(substring: string) {
-    const call = execute.mock.calls.find(([sql]) => String(sql).includes(substring));
+    const call = execute.mock.calls.find(([sql]) =>
+      String(sql).includes(substring),
+    );
     if (!call) throw new Error(`No execute() call matched: ${substring}`);
     return { sql: String(call[0]), params: call[1] as unknown[] };
   }
@@ -547,8 +760,12 @@ describe("filter options — active + branch scoped (bug fix)", () => {
     mockDb({ branches });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     await getCeoOverview("2026-06", {});
-    expect(findCall("pm.process_name AS name").sql).not.toContain("branch_id IN");
-    expect(findCall("ccm.cost_centre_code AS code").sql).not.toContain("branch_id IN");
+    expect(findCall("pm.process_name AS name").sql).not.toContain(
+      "branch_id IN",
+    );
+    expect(findCall("ccm.cost_centre_code AS code").sql).not.toContain(
+      "branch_id IN",
+    );
   });
 
   it("branch selected: both option queries filter by that branch, params bound in order", async () => {
@@ -569,8 +786,14 @@ describe("filter options — active + branch scoped (bug fix)", () => {
     mockDb({ branches });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     await getCeoOverview("2026-06", { branchId: "c" });
-    expect(findCall("pm.process_name AS name").params).toEqual(["2026-06", "c"]);
-    expect(findCall("ccm.cost_centre_code AS code").params).toEqual(["2026-06", "c"]);
+    expect(findCall("pm.process_name AS name").params).toEqual([
+      "2026-06",
+      "c",
+    ]);
+    expect(findCall("ccm.cost_centre_code AS code").params).toEqual([
+      "2026-06",
+      "c",
+    ]);
   });
 });
 
@@ -616,7 +839,10 @@ describe("focus panel — the caveats are the point", () => {
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-06", { costCentreId: "cc-x" });
     expect(out.focus!.notes.join(" ")).toMatch(/no invoice maps to it/i);
-    expect(out.focus!.marginPct, "no revenue means no margin, not a 0% one").toBeNull();
+    expect(
+      out.focus!.marginPct,
+      "no revenue means no margin, not a 0% one",
+    ).toBeNull();
   });
 
   it("is absent entirely when nothing is filtered", async () => {
@@ -642,10 +868,36 @@ describe("legal entity — this page is one company's P&L, not a consolidation",
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     await getCeoOverview("2026-06");
     const sql = execute.mock.calls.map((c) => String(c[0]));
-    const revenue = sql.find((q) => q.includes("billing_invoice_particular_snapshot") && q.includes("GROUP BY"));
-    const spend = sql.find((q) => q.includes("grn_entry_line_snapshot") && q.includes("GROUP BY"));
-    expect(revenue, "revenue must be filtered to our own company").toMatch(/mascallnet/i);
-    expect(spend, "indirect cost must be filtered to our own company").toMatch(/mascallnet/i);
+    const revenue = sql.find(
+      (q) =>
+        q.includes("billing_invoice_particular_snapshot") &&
+        q.includes("GROUP BY"),
+    );
+    const spend = sql.find(
+      (q) => q.includes("FROM grn_cost_allocation a") && q.includes("GROUP BY"),
+    );
+    expect(revenue, "revenue must be filtered to our own company").toMatch(
+      /mascallnet/i,
+    );
+    expect(spend, "indirect cost must be filtered to our own company").toMatch(
+      /mascallnet/i,
+    );
+  });
+
+  it("never reads the db_bill mirror for GRN spend: mirror rows add nothing (owner ruling 2026-09-26)", async () => {
+    mockDb({
+      branches: [{ id: "b", branch_name: "NOIDA", active_status: 1 }],
+      revenue: [{ branch_id: "b", amount: L(80) }],
+      people: [{ branch_id: "b", staff: 10, cost: L(30) }],
+      spend: [{ branch_id: "b", amount: L(10) }], // HRMS-raised
+      mirrorSpend: [{ branch_id: "b", amount: L(20) }], // db_bill mirror: must be ignored
+    });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    const out = await getCeoOverview("2026-06");
+    expect(out.indirectCost).toBeCloseTo(L(10), 0);
+    expect(out.operatingProfit).toBeCloseTo(L(40), 0); // 80 - 30 - 10
+    const sql = execute.mock.calls.map((c) => String(c[0]));
+    expect(sql.some((q) => q.includes("grn_entry_line_snapshot"))).toBe(false);
   });
 
   it("does NOT filter payroll by company", async () => {
@@ -658,20 +910,36 @@ describe("legal entity — this page is one company's P&L, not a consolidation",
     mockDb({ branches: [{ id: "b", branch_name: "NOIDA", active_status: 1 }] });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     await getCeoOverview("2026-06");
-    const payroll = execute.mock.calls.map((c) => String(c[0]))
-      .find((q) => q.includes("salary_prep_line") && q.includes("GROUP BY CASE WHEN pcc.id IS NULL THEN e.branch_id ELSE pcc.branch_id END"));
+    const payroll = execute.mock.calls
+      .map((c) => String(c[0]))
+      .find(
+        (q) =>
+          q.includes("salary_prep_line") &&
+          q.includes(
+            "GROUP BY CASE WHEN pcc.id IS NULL THEN e.branch_id ELSE pcc.branch_id END",
+          ),
+      );
     expect(payroll).toBeDefined();
-    expect(payroll, "payroll must not be confined by cost-centre company").not.toMatch(/mascallnet/i);
+    expect(
+      payroll,
+      "payroll must not be confined by cost-centre company",
+    ).not.toMatch(/mascallnet/i);
   });
 
   it("counts pay against the effective cost centre's branch, home branch only when unmapped (same rule as Live P&L)", async () => {
     mockDb({ branches: [{ id: "b", branch_name: "NOIDA", active_status: 1 }] });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     await getCeoOverview("2026-06");
-    const payroll = execute.mock.calls.map((c) => String(c[0]))
-      .find((q) => q.includes("FROM salary_prep_line l") && q.includes("GROUP BY CASE"));
+    const payroll = execute.mock.calls
+      .map((c) => String(c[0]))
+      .find(
+        (q) =>
+          q.includes("FROM salary_prep_line l") && q.includes("GROUP BY CASE"),
+      );
     expect(payroll).toMatch(/LEFT JOIN cost_centre_master pcc ON pcc\.id = /);
-    expect(payroll).toContain("CASE WHEN pcc.id IS NULL THEN e.branch_id ELSE pcc.branch_id END AS branch_id");
+    expect(payroll).toContain(
+      "CASE WHEN pcc.id IS NULL THEN e.branch_id ELSE pcc.branch_id END AS branch_id",
+    );
   });
 
   it("matches the company however the source spells it", async () => {
@@ -680,18 +948,33 @@ describe("legal entity — this page is one company's P&L, not a consolidation",
     mockDb({ branches: [{ id: "b", branch_name: "NOIDA", active_status: 1 }] });
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     await getCeoOverview("2026-06");
-    const revenue = execute.mock.calls.map((c) => String(c[0]))
-      .find((q) => q.includes("billing_invoice_particular_snapshot") && q.includes("GROUP BY"))!;
+    const revenue = execute.mock.calls
+      .map((c) => String(c[0]))
+      .find(
+        (q) =>
+          q.includes("billing_invoice_particular_snapshot") &&
+          q.includes("GROUP BY"),
+      )!;
     expect(revenue).toContain("LOWER(");
-    expect(revenue, "spaces and full stops must be stripped before matching").toContain("REPLACE(");
+    expect(
+      revenue,
+      "spaces and full stops must be stripped before matching",
+    ).toContain("REPLACE(");
   });
 });
 
 describe("seat-rate estimate — same revenue as the Live P&L tab", () => {
   // Always inside the estimate window (current + previous IST month), whatever day the suite runs.
-  const openMonth = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 7);
-  const recRows = (rows: { branchId: string; costCentreId: string; revenueEstimated: number }[]) =>
-    getPnlReconciliation.mockResolvedValue({ rows });
+  const openMonth = new Date(Date.now() + 5.5 * 3600_000)
+    .toISOString()
+    .slice(0, 7);
+  const recRows = (
+    rows: {
+      branchId: string;
+      costCentreId: string;
+      revenueEstimated: number;
+    }[],
+  ) => getPnlReconciliation.mockResolvedValue({ rows });
 
   beforeEach(() => getPnlReconciliation.mockReset());
 
@@ -723,11 +1006,18 @@ describe("seat-rate estimate — same revenue as the Live P&L tab", () => {
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview(openMonth);
     expect(out.revenue).toBeCloseTo(L(140), 0);
-    expect(out.marginPct, "an ~93% margin with no people cost is not a result").toBeNull();
+    expect(
+      out.marginPct,
+      "an ~93% margin with no people cost is not a result",
+    ).toBeNull();
     expect(out.branches[0].marginPct).toBeNull();
     expect(out.branches[0].flag).toBe("payroll not run yet");
-    expect(out.opportunities.some((o) => o.id.startsWith("no-payroll"))).toBe(false);
-    expect(out.trend.find((t) => t.period === openMonth)?.marginPct ?? null).toBeNull();
+    expect(out.opportunities.some((o) => o.id.startsWith("no-payroll"))).toBe(
+      false,
+    );
+    expect(
+      out.trend.find((t) => t.period === openMonth)?.marginPct ?? null,
+    ).toBeNull();
   });
 
   it("an invoiced branch with no payroll is still the attribution finding", async () => {
@@ -739,7 +1029,9 @@ describe("seat-rate estimate — same revenue as the Live P&L tab", () => {
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview(openMonth);
     expect(out.branches[0].flag).toBe("no payroll attributed");
-    expect(out.opportunities.some((o) => o.id.startsWith("no-payroll"))).toBe(true);
+    expect(out.opportunities.some((o) => o.id.startsWith("no-payroll"))).toBe(
+      true,
+    );
   });
 
   it("honours a cost-centre filter and adds nothing under a process filter", async () => {
@@ -777,10 +1069,17 @@ describe("seat-rate estimate — same revenue as the Live P&L tab", () => {
 
 describe("committed GRN (reserved, not yet consumed) — parity with Live P&L", () => {
   // Always inside the estimate window (current + previous IST month), whatever day the suite runs.
-  const openMonth = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 7);
-  beforeEach(() => getPnlReconciliation.mockReset().mockResolvedValue({ rows: [] }));
+  const openMonth = new Date(Date.now() + 5.5 * 3600_000)
+    .toISOString()
+    .slice(0, 7);
+  beforeEach(() =>
+    getPnlReconciliation.mockReset().mockResolvedValue({ rows: [] }),
+  );
 
-  function withReservedGrn(f: Fixture, reserved: { branch_id: string | null; amount: number }[]) {
+  function withReservedGrn(
+    f: Fixture,
+    reserved: { branch_id: string | null; amount: number }[],
+  ) {
     mockDb(f);
     const base = execute.getMockImplementation()!;
     execute.mockImplementation(async (sql: string, params?: unknown[]) => {
@@ -791,12 +1090,15 @@ describe("committed GRN (reserved, not yet consumed) — parity with Live P&L", 
   }
 
   it("folds approved-but-unconsumed GRN into indirect cost for the open month", async () => {
-    withReservedGrn({
-      branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
-      revenue: [{ branch_id: "n", amount: L(80) }],
-      people: [{ branch_id: "n", staff: 10, cost: L(30) }],
-      spend: [{ branch_id: "n", amount: L(10) }], // consumed
-    }, [{ branch_id: "n", amount: L(5) }]); // reserved
+    withReservedGrn(
+      {
+        branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
+        revenue: [{ branch_id: "n", amount: L(80) }],
+        people: [{ branch_id: "n", staff: 10, cost: L(30) }],
+        spend: [{ branch_id: "n", amount: L(10) }], // consumed
+      },
+      [{ branch_id: "n", amount: L(5) }],
+    ); // reserved
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview(openMonth);
     expect(out.indirectCost).toBeCloseTo(L(15), 0);
@@ -806,12 +1108,15 @@ describe("committed GRN (reserved, not yet consumed) — parity with Live P&L", 
   // Owner rule 2026-09-24: "Reserved + Consumed should be there in P&L" — for EVERY month. This
   // test used to pin the opposite (reserved dropped outside the estimate window); inverted on purpose.
   it("counts reserved GRN for a closed month outside the estimate window too", async () => {
-    withReservedGrn({
-      branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
-      revenue: [{ branch_id: "n", amount: L(80) }],
-      people: [{ branch_id: "n", staff: 10, cost: L(30) }],
-      spend: [{ branch_id: "n", amount: L(10) }],
-    }, [{ branch_id: "n", amount: L(5) }]);
+    withReservedGrn(
+      {
+        branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
+        revenue: [{ branch_id: "n", amount: L(80) }],
+        people: [{ branch_id: "n", staff: 10, cost: L(30) }],
+        spend: [{ branch_id: "n", amount: L(10) }],
+      },
+      [{ branch_id: "n", amount: L(5) }],
+    );
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-01");
     expect(out.indirectCost).toBeCloseTo(L(15), 0);
@@ -819,12 +1124,15 @@ describe("committed GRN (reserved, not yet consumed) — parity with Live P&L", 
   });
 
   it("owner rule fixture: consumed 100 + reserved 40 = indirect 140 for a closed month older than the window", async () => {
-    withReservedGrn({
-      branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
-      revenue: [{ branch_id: "n", amount: 1000 }],
-      people: [{ branch_id: "n", staff: 1, cost: 500 }],
-      spend: [{ branch_id: "n", amount: 100 }], // consumed
-    }, [{ branch_id: "n", amount: 40 }]); // reserved
+    withReservedGrn(
+      {
+        branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
+        revenue: [{ branch_id: "n", amount: 1000 }],
+        people: [{ branch_id: "n", staff: 1, cost: 500 }],
+        spend: [{ branch_id: "n", amount: 100 }], // consumed
+      },
+      [{ branch_id: "n", amount: 40 }],
+    ); // reserved
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview("2026-02");
     expect(out.indirectCost).toBeCloseTo(140, 5);
@@ -833,30 +1141,47 @@ describe("committed GRN (reserved, not yet consumed) — parity with Live P&L", 
 });
 
 describe("accrued running-salary fallback — parity with Live P&L's readPayroll()", () => {
-  const openMonth = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 7);
-  beforeEach(() => getPnlReconciliation.mockReset().mockResolvedValue({ rows: [] }));
+  const openMonth = new Date(Date.now() + 5.5 * 3600_000)
+    .toISOString()
+    .slice(0, 7);
+  beforeEach(() =>
+    getPnlReconciliation.mockReset().mockResolvedValue({ rows: [] }),
+  );
 
-  function withRunningSalary(f: Fixture, running: { branch_id: string | null; staff: number; cost: number }[]) {
+  function withRunningSalary(
+    f: Fixture,
+    running: { branch_id: string | null; staff: number; cost: number }[],
+  ) {
     mockDb(f);
     const base = execute.getMockImplementation()!;
     execute.mockImplementation(async (sql: string, params?: unknown[]) => {
       const q = String(sql);
       if (q.includes("FROM pnl_running_salary_snapshot")) {
-        return [running.map((r) => ({ branch_id: r.branch_id, staff: r.staff, cost: r.cost })), []];
+        return [
+          running.map((r) => ({
+            branch_id: r.branch_id,
+            staff: r.staff,
+            cost: r.cost,
+          })),
+          [],
+        ];
       }
       return base(sql, params);
     });
   }
 
   it("falls back to the accrual snapshot when final payroll has not run, same as Live P&L", async () => {
-    withRunningSalary({
-      branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
-      revenue: [{ branch_id: "n", amount: L(150) }],
-      // Some GRN exists this month, so the margin is not NA'd by the no-IDC rule (audit item 11).
-      spend: [{ branch_id: "n", amount: L(2) }],
-      // payrollRows: 0 -> salary_prep_line COUNT(*) rows = 0 -> peopleByBranch's own query returns
-      // nothing either (no fixture rows), matching a month where final payroll never ran.
-    }, [{ branch_id: "n", staff: 300, cost: L(58) }]);
+    withRunningSalary(
+      {
+        branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
+        revenue: [{ branch_id: "n", amount: L(150) }],
+        // Some GRN exists this month, so the margin is not NA'd by the no-IDC rule (audit item 11).
+        spend: [{ branch_id: "n", amount: L(2) }],
+        // payrollRows: 0 -> salary_prep_line COUNT(*) rows = 0 -> peopleByBranch's own query returns
+        // nothing either (no fixture rows), matching a month where final payroll never ran.
+      },
+      [{ branch_id: "n", staff: 300, cost: L(58) }],
+    );
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview(openMonth);
     expect(out.peopleCost).toBeCloseTo(L(58), 0);
@@ -865,11 +1190,14 @@ describe("accrued running-salary fallback — parity with Live P&L's readPayroll
   });
 
   it("never uses the accrual once final payroll has actually posted", async () => {
-    withRunningSalary({
-      branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
-      revenue: [{ branch_id: "n", amount: L(150) }],
-      people: [{ branch_id: "n", staff: 10, cost: L(90) }],
-    }, [{ branch_id: "n", staff: 300, cost: L(58) }]);
+    withRunningSalary(
+      {
+        branches: [{ id: "n", branch_name: "NOIDA", active_status: 1 }],
+        revenue: [{ branch_id: "n", amount: L(150) }],
+        people: [{ branch_id: "n", staff: 10, cost: L(90) }],
+      },
+      [{ branch_id: "n", staff: 300, cost: L(58) }],
+    );
     const { getCeoOverview } = await import("../ceo-overview.service.js");
     const out = await getCeoOverview(openMonth);
     expect(out.peopleCost).toBeCloseTo(L(90), 0);

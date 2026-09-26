@@ -31,10 +31,16 @@ try {
 function run(sql: string, params: unknown[] = []): unknown[] {
   const db = sqlite!;
   if (/information_schema\.tables/i.test(sql)) {
-    return db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = ?`).all(String(params[0]));
+    return db
+      .prepare(
+        `SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = ?`,
+      )
+      .all(String(params[0]));
   }
   const text = sql.replace(/COLLATE\s+utf8mb4_unicode_ci/gi, "");
-  return db.prepare(text).all(...params.map((p) => (p === undefined ? null : p)));
+  return db
+    .prepare(text)
+    .all(...params.map((p) => (p === undefined ? null : p)));
 }
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
@@ -67,63 +73,131 @@ INSERT INTO grn_cost_allocation VALUES
 beforeAll(() => {
   if (!sqlite) return;
   sqlite.exec(SCHEMA);
-  execute.mockImplementation(async (sql: string, params?: unknown[]) => [run(String(sql), params ?? []), []]);
+  // HRMS-raised marker columns (2026-09-26 owner ruling: no legacy bill in HRMS figures).
+  sqlite.exec(
+    "ALTER TABLE grn_request ADD COLUMN bill_source_id TEXT; ALTER TABLE grn_request ADD COLUMN created_by TEXT;",
+  );
+  sqlite.exec(`
+    UPDATE grn_request SET created_by = 'user-1';
+    INSERT INTO grn_request (id, grn_number, branch_id, cost_centre_id, accounting_period, bill_date, budget_line_id, status, vendor_name, head, sub_head, recoverable_tax_pct, amount_without_tax, tax_amount, amount_with_tax, pnl_cost_amount, amount, bill_source_id, created_by) VALUES
+      ('G7','GRN-7','B1','cc1','${PERIOD}','2026-03-10','L1','finance_head_approved','V','Admin','Rent',100,700,0,700,700,700,'DB-BILL-1','user-1'),
+      ('G8','GRN-8','B1','cc1','${PERIOD}','2026-03-10','L1','branch_head_approved','V','Admin','Rent',100,800,0,800,800,800,NULL,'00000000-0000-0000-0000-000000000001');
+    INSERT INTO grn_cost_allocation VALUES
+      ('A7','G7','cc1',NULL,'consumed',100,700,0,700,700),
+      ('A8','G8','cc1',NULL,'reserved',100,800,0,800,800);
+  `);
+
+  execute.mockImplementation(async (sql: string, params?: unknown[]) => [
+    run(String(sql), params ?? []),
+    [],
+  ]);
 });
 
-const total = (rows: { amount: number }[]) => rows.reduce((t, r) => t + r.amount, 0);
-const empty = () => ({ byBranch: new Map(), byProcess: new Map(), byCostCentre: new Map() });
+const total = (rows: { amount: number }[]) =>
+  rows.reduce((t, r) => t + r.amount, 0);
+const empty = () => ({
+  byBranch: new Map(),
+  byProcess: new Map(),
+  byCostCentre: new Map(),
+});
 
-describe.skipIf(!sqlite)("GRN Consumed + Committed (reserved) for a closed month, draft excluded", () => {
-  it("the shared reader returns consumed 100 and reserved 40, ex-GST, and never the draft 1000", async () => {
-    const { readGrnSpend } = await import("../pnl-actuals.service.js");
-    expect(total(await readGrnSpend(PERIOD, "consumed"))).toBe(100);
-    expect(total(await readGrnSpend(PERIOD, "reserved"))).toBe(40);
-  });
-
-  it("the Statement readers split the same rows: consumed 100, committed 40, per branch and process", async () => {
-    const { getIndirectCostActuals, getCommittedIndirectCostActuals } = await import("../pnl-actuals.service.js");
-    const consumed = await getIndirectCostActuals(PERIOD);
-    const committed = await getCommittedIndirectCostActuals(PERIOD);
-    expect(consumed.byBranch.get("B1")).toBe(100);
-    expect(committed.byBranch.get("B1")).toBe(40);
-    expect(committed.byProcess.get("P1")).toBe(40);
-  });
-
-  it("the Statement's Total Indirect Cost is 140 and Operating Profit = Revenue − Total Cost", async () => {
-    const { getIndirectCostActuals, getCommittedIndirectCostActuals } = await import("../pnl-actuals.service.js");
-    const { getStatement } = await import("../pnl-statement.service.js");
-    const component = (key: string, field: string, order: number) => ({
-      component_key: key, display_name: key, section_key: "cost", parent_component_key: null,
-      display_order: order, component_type: "SOURCE_ACTUAL", source_field: field, format_type: "CURRENCY",
-      sign_convention: "+", is_subtotal: 0, active_status: 1,
+describe.skipIf(!sqlite)(
+  "GRN Consumed + Committed (reserved) for a closed month, draft excluded",
+  () => {
+    it("the shared reader returns consumed 100 and reserved 40, ex-GST, and never the draft 1000", async () => {
+      const { readGrnSpend } = await import("../pnl-actuals.service.js");
+      expect(total(await readGrnSpend(PERIOD, "consumed"))).toBe(100);
+      expect(total(await readGrnSpend(PERIOD, "reserved"))).toBe(40);
     });
-    const statement = await getStatement({ period: PERIOD } as never, "branch", {
-      getComponents: async () => [
-        component("total_idc", "indirectCostTotal", 250),
-        component("total_cost", "totalCost", 260),
-        component("operating_profit", "operatingProfit", 270),
-      ],
-      getSummary: async () => ({
-        rows: [{ processId: "P1", processName: "P1", branchId: "B1", branchName: "NOIDA", recognizedRevenue: 0, agentSalary: 0 }],
-        generatedAt: new Date().toISOString(),
-      }),
-      getProcessSummary: async () => ({ rows: [] }),
-      getIndirectCost: getIndirectCostActuals,
-      getCommittedIndirectCost: getCommittedIndirectCostActuals,
-      getDriverRevenue: async () => empty(),
-      getInvoicedRevenue: async () => ({ ...empty(), byBranch: new Map([["B1", 1000]]) }),
-      getSeatRevenue: async () => ({ ...empty(), rateMissingByKey: empty() }),
-      getPeopleCost: async () => ({
-        byBranch: new Map(), byProcess: new Map(), coverageByBranch: new Map(), coverageByProcess: new Map(), asOfDate: null,
-      }),
-      getManualAdjustments: async () => new Map(),
-      getRevenueEstimate: async () => empty(),
-    } as never);
-    const value = (key: string) => statement.rows.find((r) => r.componentKey === key)?.values.B1;
-    expect(value("total_idc")).toBe(140);
-    expect(value("grn_consumed")).toBe(100);
-    expect(value("grn_committed")).toBe(40);
-    expect(value("operating_profit")).toBe(1000 - (value("total_cost") as number));
-    expect(value("total_cost")).toBe(140);
-  });
-});
+
+    it("only HRMS-raised GRNs count: a bill_source_id GRN and a system-user (00000000-) GRN are excluded", async () => {
+      const { readGrnSpend } = await import("../pnl-actuals.service.js");
+      // G7 (consumed, bill_source_id) and G8 (reserved, system user) would add 700 / 800 if counted.
+      expect(total(await readGrnSpend(PERIOD, "consumed"))).toBe(100);
+      expect(total(await readGrnSpend(PERIOD, "reserved"))).toBe(40);
+    });
+
+    it("the Statement readers split the same rows: consumed 100, committed 40, per branch and process", async () => {
+      const { getIndirectCostActuals, getCommittedIndirectCostActuals } =
+        await import("../pnl-actuals.service.js");
+      const consumed = await getIndirectCostActuals(PERIOD);
+      const committed = await getCommittedIndirectCostActuals(PERIOD);
+      expect(consumed.byBranch.get("B1")).toBe(100);
+      expect(committed.byBranch.get("B1")).toBe(40);
+      expect(committed.byProcess.get("P1")).toBe(40);
+    });
+
+    it("the Statement's Total Indirect Cost is 140 and Operating Profit = Revenue − Total Cost", async () => {
+      const { getIndirectCostActuals, getCommittedIndirectCostActuals } =
+        await import("../pnl-actuals.service.js");
+      const { getStatement } = await import("../pnl-statement.service.js");
+      const component = (key: string, field: string, order: number) => ({
+        component_key: key,
+        display_name: key,
+        section_key: "cost",
+        parent_component_key: null,
+        display_order: order,
+        component_type: "SOURCE_ACTUAL",
+        source_field: field,
+        format_type: "CURRENCY",
+        sign_convention: "+",
+        is_subtotal: 0,
+        active_status: 1,
+      });
+      const statement = await getStatement(
+        { period: PERIOD } as never,
+        "branch",
+        {
+          getComponents: async () => [
+            component("total_idc", "indirectCostTotal", 250),
+            component("total_cost", "totalCost", 260),
+            component("operating_profit", "operatingProfit", 270),
+          ],
+          getSummary: async () => ({
+            rows: [
+              {
+                processId: "P1",
+                processName: "P1",
+                branchId: "B1",
+                branchName: "NOIDA",
+                recognizedRevenue: 0,
+                agentSalary: 0,
+              },
+            ],
+            generatedAt: new Date().toISOString(),
+          }),
+          getProcessSummary: async () => ({ rows: [] }),
+          getIndirectCost: getIndirectCostActuals,
+          getCommittedIndirectCost: getCommittedIndirectCostActuals,
+          getDriverRevenue: async () => empty(),
+          getInvoicedRevenue: async () => ({
+            ...empty(),
+            byBranch: new Map([["B1", 1000]]),
+          }),
+          getSeatRevenue: async () => ({
+            ...empty(),
+            rateMissingByKey: empty(),
+          }),
+          getPeopleCost: async () => ({
+            byBranch: new Map(),
+            byProcess: new Map(),
+            coverageByBranch: new Map(),
+            coverageByProcess: new Map(),
+            asOfDate: null,
+          }),
+          getManualAdjustments: async () => new Map(),
+          getRevenueEstimate: async () => empty(),
+        } as never,
+      );
+      const value = (key: string) =>
+        statement.rows.find((r) => r.componentKey === key)?.values.B1;
+      expect(value("total_idc")).toBe(140);
+      expect(value("grn_consumed")).toBe(100);
+      expect(value("grn_committed")).toBe(40);
+      expect(value("operating_profit")).toBe(
+        1000 - (value("total_cost") as number),
+      );
+      expect(value("total_cost")).toBe(140);
+    });
+  },
+);

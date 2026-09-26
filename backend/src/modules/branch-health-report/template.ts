@@ -304,9 +304,25 @@ export function renderEmail(
   const typeTable =
     g.byType.length > 0
       ? dataTable(
-          ["GRN type", "Raised (MTD)", "Value incl. GST", "Value ex-GST", "Approved (MTD)", "Open pending (all-time)", "Pending value incl. GST"],
           [
-            ...g.byType.map((r) => [r.label, String(r.raised), inr(r.raisedInclGst), inr(r.raisedExGst), String(r.approved), String(r.pending), inr(r.pendingInclGst)]),
+            "GRN type",
+            "Raised (MTD)",
+            "Value incl. GST",
+            "Value ex-GST",
+            "Approved (MTD)",
+            "Open pending (all-time)",
+            "Pending value incl. GST",
+          ],
+          [
+            ...g.byType.map((r) => [
+              r.label,
+              String(r.raised),
+              inr(r.raisedInclGst),
+              inr(r.raisedExGst),
+              String(r.approved),
+              String(r.pending),
+              inr(r.pendingInclGst),
+            ]),
             [
               { raw: "<strong>Total</strong>" },
               { raw: `<strong>${typeTotals.raised}</strong>` },
@@ -327,9 +343,19 @@ export function renderEmail(
   const stageTable =
     g.pendingByStage.length > 0
       ? dataTable(
-          ["Pending GRNs — by stage (who acts next)", "GRNs", "Value incl. GST", "Oldest"],
           [
-            ...g.pendingByStage.map((r) => [r.stage, String(r.count), inr(r.amountInclGst), `${r.oldestDays}d`]),
+            "Pending GRNs — by stage (who acts next)",
+            "GRNs",
+            "Value incl. GST",
+            "Oldest",
+          ],
+          [
+            ...g.pendingByStage.map((r) => [
+              r.stage,
+              String(r.count),
+              inr(r.amountInclGst),
+              `${r.oldestDays}d`,
+            ]),
             [
               { raw: "<strong>Total open pending</strong>" },
               { raw: `<strong>${stageTotals.count}</strong>` },
@@ -687,7 +713,11 @@ export function renderEmail(
   const mandatedActive = hc.byProcess
     .filter((r) => r.mandateSeats != null)
     .reduce((n, r) => n + r.active, 0);
-  const mandateGapCell = (gap: number, hasMandate: boolean, strong: boolean): string => {
+  const mandateGapCell = (
+    gap: number,
+    hasMandate: boolean,
+    strong: boolean,
+  ): string => {
     if (!hasMandate) return "—";
     const text = `${gap > 0 ? "+" : ""}${gap}`;
     const html = `<span style="color:${gap < 0 ? C.danger : C.success};font-weight:700;">${text}</span>`;
@@ -870,7 +900,11 @@ export function renderEmail(
         value: String(off.mtd.offered),
         color: C.primary,
       },
-      { label: "Joined (MTD)", value: String(off.mtd.joined), color: C.success },
+      {
+        label: "Joined (MTD)",
+        value: String(off.mtd.joined),
+        color: C.success,
+      },
       {
         label: "Not joined (MTD)",
         value: String(off.mtd.notJoined),
@@ -878,7 +912,8 @@ export function renderEmail(
       },
       {
         label: "Offer → Join (MTD)",
-        value: off.mtd.conversionPct != null ? `${off.mtd.conversionPct}%` : "—",
+        value:
+          off.mtd.conversionPct != null ? `${off.mtd.conversionPct}%` : "—",
         color:
           off.mtd.conversionPct != null && off.mtd.conversionPct < 70
             ? C.danger
@@ -1050,7 +1085,7 @@ export function renderEmail(
         true,
       ) +
       note(
-        `OP = running revenue − running salary − GRN (consumed + reserved, ex-GST) — the P&amp;L page's Live view (${esc(pnl.mode || "live")}). Revenue uses invoice or accrual where it exists, otherwise seat rate × seats to date. GRN here is booked by accounting period and includes bills held in the legacy billing system, so it is ${grnOutsideBudget >= 0 ? "higher" : "lower"} than the budget charge of ${inr(br.budgetChargeTotal)} in Section 1 by ${inr(Math.abs(grnOutsideBudget))}.`,
+        `OP = running revenue − running salary − GRN (consumed + reserved, ex-GST) — the P&amp;L page's Live view (${esc(pnl.mode || "live")}). Revenue uses invoice or accrual where it exists, otherwise seat rate × seats to date. GRN here is the HRMS-raised GRNs booked to the accounting period; no legacy-system bill is included. It differs from the budget charge of ${inr(br.budgetChargeTotal)} in Section 1 by ${inr(Math.abs(grnOutsideBudget))} because the budget counts budget-line charges only, while the P&amp;L also counts unbudgeted GRNs and skips imprest reservations that have no cost centre.`,
       ) +
       (pnl.staffPaid < raw.headcount.totalActive
         ? note(
@@ -1063,10 +1098,7 @@ export function renderEmail(
   // ── 8b. Why the P&L GRN differs from the budget ──
   const tie = raw.pnlGrnTieOut;
   const consumedParts =
-    tie.budgetConsumed +
-    tie.hrmsNoBudgetLine +
-    tie.hrmsOrdinary +
-    tie.legacyBilling;
+    tie.budgetConsumed + tie.hrmsNoBudgetLine + tie.hrmsOrdinary;
   const consumedGap = pnl.grnConsumed - consumedParts;
   const reservedGap =
     pnl.grnReserved - (tie.budgetReserved - tie.imprestReservedNoCostCentre);
@@ -1088,14 +1120,10 @@ export function renderEmail(
             right(tie.budgetConsumed),
           ],
           [
-            "   + HRMS GRNs booked with no budget line (system backfill)",
+            "   + HRMS GRNs booked with no budget line (unbudgeted)",
             right(tie.hrmsNoBudgetLine),
           ],
           ["   + HRMS GRNs without allocation rows", right(tie.hrmsOrdinary)],
-          [
-            "   + bills held in the legacy billing system (db_bill)",
-            right(tie.legacyBilling),
-          ],
           ...(Math.abs(consumedGap) >= 1
             ? [["   + other / rounding", right(consumedGap)]]
             : []),

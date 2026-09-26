@@ -680,7 +680,7 @@ export interface RunningPnlStats {
   revenueRunning: number;
   /** Payroll cost to date from the P&L payroll source. */
   salaryRunning: number;
-  /** GRN consumed, ex-GST, by accounting period (P&L basis — includes legacy-system bills). */
+  /** GRN consumed, ex-GST, by accounting period (P&L basis; HRMS-raised GRNs only). */
   grnConsumed: number;
   /** GRN approved and reserved but not yet consumed, ex-GST. */
   grnReserved: number;
@@ -1372,8 +1372,6 @@ export interface PnlGrnTieOut {
   hrmsNoBudgetLine: number;
   /** P&L consumed from HRMS GRNs that carry no allocation rows. */
   hrmsOrdinary: number;
-  /** P&L consumed from bills held in the legacy billing system (db_bill mirror). */
-  legacyBilling: number;
   /** Budget reservations the P&L cannot read: imprest allocations carry no cost centre. */
   imprestReservedNoCostCentre: number;
 }
@@ -1416,7 +1414,6 @@ export async function fetchPnlGrnTieOut(
     budgetReserved: Number((budgetRows[0][0] as any)?.reserved ?? 0),
     hrmsNoBudgetLine: allocation - budgetConsumed,
     hrmsOrdinary: bySource("app_grn"),
-    legacyBilling: bySource("db_bill_mirror"),
     imprestReservedNoCostCentre: Number((imprestRows[0][0] as any)?.amt ?? 0),
   };
 }
@@ -1633,7 +1630,6 @@ export async function fetchAllBranchHealthData(
         budgetReserved: 0,
         hrmsNoBudgetLine: 0,
         hrmsOrdinary: 0,
-        legacyBilling: 0,
         imprestReservedNoCostCentre: 0,
       },
     };

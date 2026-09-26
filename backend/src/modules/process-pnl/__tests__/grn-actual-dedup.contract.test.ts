@@ -11,51 +11,17 @@ function read(relativePath: string) {
 }
 
 /**
- * 2026-08-29: every P&L surface reading GRN spend from the db_bill mirror
- * (grn_entry_line_snapshot/grn_entry_snapshot) was found to have no de-duplication against the
- * app's own grn_cost_allocation. Both sources were built at different times to answer "what did
- * this GRN actually cost", and by the time this was caught, matching by GRN NUMBER (the same
- * physical voucher's own identifier, not a fuzzy vendor/amount/date guess) found 97% of the app's
- * own consumed allocations already present in the mirror under the same number — meaning three
- * separate P&L tabs were counting the same real spend twice:
+ * History: on 2026-08-29 the P&L surfaces were found to count the same GRN twice, once from the
+ * app's grn_cost_allocation and once from the db_bill mirror (grn_entry_line_snapshot). That was
+ * first fixed with a grn_number NOT EXISTS guard, and on 2026-09-23 the four copies were collapsed
+ * into ONE reader, pnl-actuals.service.ts's readGrnSpend().
  *
- *   pnl-actuals.service.ts::getIndirectCostActuals    — P&L Statement tab
- *   ceo-overview.service.ts::spendByBranch            — CEO Overview headline + trend
- *   ceo-overview.service.ts::buildFocus's branchGrn    — CEO Overview's own "is this really the
- *                                                        whole branch's overhead" heuristic,
- *                                                        compared against spendByBranch's already
- *                                                        de-duplicated total and so needing the
- *                                                        same treatment to stay consistent with it
- *   pnl-reconciliation.service.ts::readGrn            — Live P&L / Alerts tab
- *
- * Measured live: 1,452 of 1,495 consumed GRNs (97%) had an exact grn_number = grn_no match;
- * fixing pnl-actuals.service.ts alone dropped its mirror contribution for Apr-Aug 2026 from
- * Rs 32-72 lakh/month (near-total duplication) to Rs 27-59K/month (the genuine remaining gap).
- *
- * Every fix follows the SAME resolution, for the same reason: the app's own consumed allocation
- * is the PRIMARY source (it carries pnl_cost_amount — proper non-recoverable-GST treatment —
- * which the mirror's flat l.amount does not), and the mirror is UNIONed in only for a GRN number
- * the app has not captured, via a NOT EXISTS guard keyed on grn_number = grn_no.
- *
- * 2026-09-23: the four copies had drifted apart again (company filter, ordinary-GRN leg), so they
- * were collapsed into ONE reader, pnl-actuals.service.ts's readGrnSpend(). The guard is now
- * asserted once on that reader, and each surface is asserted to call it rather than run its own.
+ * Owner ruling 2026-09-26: "no legacy bill is added to HRMS figures, anywhere". The mirror leg
+ * (and its dedup / twin guards) were REMOVED. readGrnSpend now reads HRMS-raised GRNs only
+ * (bill_source_id IS NULL and not a 00000000-* system-user backfill row), so there is nothing left
+ * to de-duplicate against. These assertions pin that contract at the source-text level.
  */
-describe("GRN actual spend is not double-counted across the app and the db_bill mirror", () => {
-  /** Checked as independent, whitespace-insensitive lines rather than one indented block — the
-   *  same guard is nested at a different depth (and a different join-alias for the outer GRN,
-   *  `gr` vs `gr2`) at each of the four call sites, and asserting on indentation would make this
-   *  test more fragile than the code it protects. */
-  function expectDedupGuard(body: string, outerGrnAlias: string) {
-    expect(body).toContain("NOT EXISTS (");
-    expect(body).toContain("FROM grn_request gr2");
-    expect(body).toContain(
-      "JOIN grn_cost_allocation a2 ON a2.grn_request_id = gr2.id",
-    );
-    expect(body).toContain(`WHERE gr2.grn_number = ${outerGrnAlias}.grn_no`);
-    expect(body).toContain("AND a2.lifecycle_status = 'consumed'");
-  }
-
+describe("GRN actual spend is HRMS-raised only: no db_bill mirror leg in the shared reader", () => {
   /** The one shared reader (2026-09-23): every surface below must route through it. */
   function readerBody() {
     const service = read("src/modules/process-pnl/pnl-actuals.service.ts");
@@ -65,22 +31,25 @@ describe("GRN actual spend is not double-counted across the app and the db_bill 
     return fn.slice(0, fn.indexOf("\n}\n"));
   }
 
-  it("legacy lines are also dropped when an HRMS GRN of the same branch, period and total is already counted (two systems, two numbers)", () => {
-    const service = read("src/modules/process-pnl/pnl-actuals.service.ts");
+  it("readGrnSpend has no mirror leg: it never touches the db_bill snapshot tables or their guards", () => {
     const body = readerBody();
-    // Only ever the mirror leg: the twin guard must sit on grn_entry_line_snapshot rows.
-    expect(body).toContain("gr3.accounting_period = ge.period_code");
-    expect(body).toContain("gr3.branch_id = ccm.branch_id");
-    expect(body).toContain("a3.lifecycle_status IN ('consumed', 'reserved')");
-    // Both the ex-GST and the GST-inclusive total are compared, summed over the GRN's allocations.
-    expect(body).toContain("SELECT SUM(${grnAllocationExGstSql(\"a3\")})");
-    expect(body).toContain("SUM(COALESCE(a4.amount_with_tax, 0))");
-    // Small round amounts collide between unrelated bills, so they are exempt.
-    expect(body).toContain("l.amount >= ${LEGACY_TWIN_MIN_AMOUNT}");
-    expect(service).toMatch(/const LEGACY_TWIN_MIN_AMOUNT = \d+;/);
+    expect(body).not.toContain("grn_entry_line_snapshot");
+    expect(body).not.toContain("grn_entry_snapshot");
+    expect(body).not.toContain("LEGACY_TWIN_MIN_AMOUNT");
+    expect(body).not.toContain("l.amount");
   });
 
-  it("pnl-actuals.service.ts readGrnSpend is app-side-first, mirror fills gaps only, company-filtered on every leg", () => {
+  it("both app legs are restricted to HRMS-raised GRNs (no bill_source_id, no system-user rows)", () => {
+    const service = read("src/modules/process-pnl/pnl-actuals.service.ts");
+    expect(service).toContain(
+      "const HRMS_RAISED_GRN_SQL = `gr.bill_source_id IS NULL AND COALESCE(gr.created_by, '') NOT LIKE '00000000-%'`;",
+    );
+    const body = readerBody();
+    // Once per app leg: allocation rows, and ordinary GRNs without allocation rows.
+    expect(body.split("${HRMS_RAISED_GRN_SQL}").length - 1).toBe(2);
+  });
+
+  it("pnl-actuals.service.ts readGrnSpend reads ex-GST amounts and is company-filtered on both app legs", () => {
     const body = readerBody();
     expect(body).toContain("FROM grn_cost_allocation a");
     // Owner rule 2026-09-24: P&L GRN is EX-GST. Both app legs read amount_without_tax through
@@ -88,12 +57,8 @@ describe("GRN actual spend is not double-counted across the app and the db_bill 
     expect(body).toContain('${grnAllocationExGstSql("a")} AS amount');
     expect(body).toContain('${grnRequestExGstSql("gr")} AS amount');
     expect(body).not.toContain("pnl_cost_amount");
-    expect(body).toContain("FROM grn_entry_line_snapshot l");
-    expect(body).toContain("l.amount AS amount");
-    expect(body).not.toContain("l.total");
-    expectDedupGuard(body, "ge");
-    // OWN_COMPANY_SQL (via grnScope) on all three legs, not just the mirror.
-    expect(body.split("${scope.sql}").length - 1).toBe(3);
+    // OWN_COMPANY_SQL (via grnScope) on both legs.
+    expect(body.split("${scope.sql}").length - 1).toBe(2);
     expect(body).toContain("gr.accounting_period = ?");
   });
 

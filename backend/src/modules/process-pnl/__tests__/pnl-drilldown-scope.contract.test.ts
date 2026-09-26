@@ -241,13 +241,12 @@ describe("people drilldown — bucketed to one statement line", () => {
 });
 
 describe("drilldowns tie to the tiles they open from (audit item 17)", () => {
-  it("(a) indirect reads the shared GRN reader — app allocations, ordinary GRNs, mirror with the dedup guard", async () => {
+  it("(a) indirect reads the shared GRN reader — HRMS-raised app allocations and ordinary GRNs only, no legacy mirror", async () => {
     execute.mockImplementation(async (sql: string) => {
       const q = String(sql);
       if (q.includes("grn_cost_allocation a") && q.includes("'consumed'")) {
         return [[
           { branch_id: BRANCH_ID, cost_centre_id: COST_CENTRE_ID, process_id: null, source: "app_allocation", grn_ref: "GRN/1", label: "Vendor A — Rent", bill_date: "2026-08-02", amount: "5000" },
-          { branch_id: BRANCH_ID, cost_centre_id: COST_CENTRE_ID, process_id: null, source: "db_bill_mirror", grn_ref: "Mas/5/1", label: "Vendor B", bill_date: null, amount: "1200" },
           { branch_id: "other-branch", cost_centre_id: "cc-9", process_id: null, source: "app_grn", grn_ref: "GRN/9", label: "Elsewhere", bill_date: null, amount: "777" },
         ], []];
       }
@@ -261,10 +260,10 @@ describe("drilldowns tie to the tiles they open from (audit item 17)", () => {
     const consumedSql = sqlCalls().find((c) => c.sql.includes("'consumed'"))!.sql;
     expect(consumedSql).toContain("FROM grn_cost_allocation a");
     expect(consumedSql).toContain("FROM grn_request gr");
-    expect(consumedSql).toContain("FROM grn_entry_line_snapshot l");
-    expect(consumedSql, "mirror rows for a GRN the app already consumed are excluded").toContain("NOT EXISTS");
+    expect(consumedSql, "no legacy bill is added to HRMS figures (owner ruling 2026-09-26)").not.toContain("grn_entry_line_snapshot");
+    expect(consumedSql, "only HRMS-raised GRNs: no db_bill import, no system-user backfill").toContain("bill_source_id IS NULL");
     // Branch scope keeps only this branch's rows; reserved (committed) GRN is always included.
-    expect(result.total).toBe(5000 + 1200 + 300);
+    expect(result.total).toBe(5000 + 300);
     expect(result.hasEstimatedRows).toBe(true);
     expect(result.rows.find((r) => r.amount === 300)?.detail).toContain("not yet consumed");
   });

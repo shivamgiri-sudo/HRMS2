@@ -208,6 +208,7 @@ export async function getDailyTrend(
               SUM(${grnRequestExGstSql("g")}) AS amount
          FROM grn_request g
         WHERE g.status NOT IN ('draft','rejected','cancelled')
+          AND g.bill_source_id IS NULL AND COALESCE(g.created_by, '') NOT LIKE '00000000-%'
           AND g.bill_date >= ? AND g.bill_date < ?
           ${branchSql}
         GROUP BY d`,

@@ -34,10 +34,16 @@ try {
 function run(sql: string, params: unknown[] = []): unknown[] {
   const db = sqlite!;
   if (/information_schema\.tables/i.test(sql)) {
-    return db.prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = ?`).all(String(params[0]));
+    return db
+      .prepare(
+        `SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = ?`,
+      )
+      .all(String(params[0]));
   }
   const text = sql.replace(/COLLATE\s+utf8mb4_unicode_ci/gi, "");
-  return db.prepare(text).all(...params.map((p) => (p === undefined ? null : p)));
+  return db
+    .prepare(text)
+    .all(...params.map((p) => (p === undefined ? null : p)));
 }
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
@@ -82,6 +88,12 @@ INSERT INTO finance_budget_line_allocation VALUES ('BA1','L2','cc1', 3000, 540, 
 beforeAll(() => {
   if (!sqlite) return;
   sqlite.exec(SCHEMA);
+  // HRMS-raised marker columns (2026-09-26 owner ruling: no legacy bill in HRMS figures).
+  sqlite.exec(
+    "ALTER TABLE grn_request ADD COLUMN bill_source_id TEXT; ALTER TABLE grn_request ADD COLUMN created_by TEXT;",
+  );
+  sqlite.exec("UPDATE grn_request SET created_by = 'user-1'");
+
   // MySQL's DATE_FORMAT, for the two formats these readers use.
   sqlite.function("DATE_FORMAT", (value: unknown, format: unknown) => {
     const s = String(value ?? "");
@@ -89,36 +101,71 @@ beforeAll(() => {
     if (format === "%Y-%m") return s.slice(0, 7);
     throw new Error(`DATE_FORMAT format not modelled: ${String(format)}`);
   });
-  execute.mockImplementation(async (sql: string, params?: unknown[]) => [run(String(sql), params ?? []), []]);
+  execute.mockImplementation(async (sql: string, params?: unknown[]) => [
+    run(String(sql), params ?? []),
+    [],
+  ]);
 });
 
-describe.skipIf(!sqlite)("P&L GRN and budget are EX-GST (owner rule 2026-09-24)", () => {
-  it("the shared GRN reader books amount_without_tax, not pnl_cost_amount, when GST is 0% recoverable", async () => {
-    const { readGrnSpend } = await import("../pnl-actuals.service.js");
-    const rows = await readGrnSpend("2026-08", "consumed");
-    const total = rows.reduce((t, r) => t + r.amount, 0);
-    // 10,000 (G1) + 5,000 (G2's allocation) + 2,000 (legacy G3) — never 11,800 / 5,900.
-    expect(total).toBe(17000);
-  });
+describe.skipIf(!sqlite)(
+  "P&L GRN and budget are EX-GST (owner rule 2026-09-24)",
+  () => {
+    it("the shared GRN reader books amount_without_tax, not pnl_cost_amount, when GST is 0% recoverable", async () => {
+      const { readGrnSpend } = await import("../pnl-actuals.service.js");
+      const rows = await readGrnSpend("2026-08", "consumed");
+      const total = rows.reduce((t, r) => t + r.amount, 0);
+      // 10,000 (G1) + 5,000 (G2's allocation) + 2,000 (legacy G3) — never 11,800 / 5,900.
+      expect(total).toBe(17000);
+    });
 
-  it("the daily trend's GRN bars are ex-GST", async () => {
-    const { getDailyTrend } = await import("../pnl-daily-trend.service.js");
-    const trend = await getDailyTrend("2026-08");
-    const day = trend.points.find((p) => p.date === "2026-08-10");
-    expect(day?.grnCost).toBe(17000);
-  });
+    it("HRMS-raised GRNs only: bill_source_id and system-user (00000000-) GRNs are not counted", async () => {
+      const { readGrnSpend } = await import("../pnl-actuals.service.js");
+      sqlite!.exec(`
+      INSERT INTO grn_request (id, grn_number, branch_id, cost_centre_id, accounting_period, bill_date, budget_line_id, status, vendor_name, head, sub_head, recoverable_tax_pct, amount_without_tax, tax_amount, amount_with_tax, pnl_cost_amount, amount, bill_source_id, created_by) VALUES
+        ('G7','GRN-7','B1','cc1','2026-08','2026-08-10','L1','finance_head_approved','V','Admin','Rent',0,7000,0,7000,7000,7000,'DB-BILL-1','user-1'),
+        ('G8','GRN-8','B1','cc1','2026-08','2026-08-10','L1','finance_head_approved','V','Admin','Rent',0,8000,0,8000,8000,8000,NULL,'00000000-0000-0000-0000-000000000001'),
+        ('G9','GRN-9','B1','cc1','2026-08','2026-08-10','L1','finance_head_approved','V','Admin','Rent',0,9000,0,9000,9000,9000,'DB-BILL-2','user-1');
+      INSERT INTO grn_cost_allocation VALUES ('A9','G9','cc1',NULL,'consumed',0,9000,0,9000,9000);
+    `);
+      try {
+        const total = (await readGrnSpend("2026-08", "consumed")).reduce(
+          (t, r) => t + r.amount,
+          0,
+        );
+        // G7 (bill_source_id), G8 (system user) and G9 (allocation on a bill_source_id GRN) add nothing.
+        expect(total).toBe(17000);
+      } finally {
+        sqlite!.exec(
+          "DELETE FROM grn_cost_allocation WHERE id = 'A9'; DELETE FROM grn_request WHERE id IN ('G7','G8','G9');",
+        );
+      }
+    });
 
-  it("the budget source reads base_amount, so budget and GRN share one basis", async () => {
-    const { readBudgetEntries, sumAmount } = await import("../pnl-budget-source.js");
-    const entries = await readBudgetEntries("2026-08");
-    // L1 10,000 + L2's allocation 3,000 + legacy L3 falling back to its pnl_cost 700.
-    expect(sumAmount(entries)).toBe(13700);
-    expect(entries.find((e) => e.entryRef === "hrms-L1")?.amount).toBe(10000);
-  });
+    it("the daily trend's GRN bars are ex-GST", async () => {
+      const { getDailyTrend } = await import("../pnl-daily-trend.service.js");
+      const trend = await getDailyTrend("2026-08");
+      const day = trend.points.find((p) => p.date === "2026-08-10");
+      expect(day?.grnCost).toBe(17000);
+    });
 
-  it("vendor payables are ex-GST, and a legacy payable with no split keeps its due amount", async () => {
-    const { vendorPayableExGstSql } = await import("../pnl-ex-gst.js");
-    const rows = run(`SELECT vpt.id AS id, ${vendorPayableExGstSql("vpt")} AS v FROM vendor_payment_tracking vpt ORDER BY vpt.id`) as Array<{ id: string; v: number }>;
-    expect(rows).toEqual([{ id: "V0", v: 3000 }, { id: "V1", v: 10000 }]);
-  });
-});
+    it("the budget source reads base_amount, so budget and GRN share one basis", async () => {
+      const { readBudgetEntries, sumAmount } =
+        await import("../pnl-budget-source.js");
+      const entries = await readBudgetEntries("2026-08");
+      // L1 10,000 + L2's allocation 3,000 + legacy L3 falling back to its pnl_cost 700.
+      expect(sumAmount(entries)).toBe(13700);
+      expect(entries.find((e) => e.entryRef === "hrms-L1")?.amount).toBe(10000);
+    });
+
+    it("vendor payables are ex-GST, and a legacy payable with no split keeps its due amount", async () => {
+      const { vendorPayableExGstSql } = await import("../pnl-ex-gst.js");
+      const rows = run(
+        `SELECT vpt.id AS id, ${vendorPayableExGstSql("vpt")} AS v FROM vendor_payment_tracking vpt ORDER BY vpt.id`,
+      ) as Array<{ id: string; v: number }>;
+      expect(rows).toEqual([
+        { id: "V0", v: 3000 },
+        { id: "V1", v: 10000 },
+      ]);
+    });
+  },
+);

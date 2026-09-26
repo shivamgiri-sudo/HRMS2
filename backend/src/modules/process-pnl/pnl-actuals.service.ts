@@ -212,7 +212,7 @@ export interface GrnSpendRow {
   amount: number;
   /** Only populated when `withDetail` is asked for (the drilldown): which leg the row came from,
    *  the GRN's own number, a human label and the bill date. Null otherwise. */
-  source?: "app_allocation" | "app_grn" | "db_bill_mirror" | null;
+  source?: "app_allocation" | "app_grn" | null;
   grnRef?: string | null;
   label?: string | null;
   billDate?: string | null;
@@ -252,18 +252,18 @@ function grnScope(opts: GrnSpendOptions): { sql: string; params: unknown[] } {
 }
 
 /**
- * 2026-09-25: the same invoice keyed into BOTH the legacy billing system and HRMS. The two number
- * it differently (db_bill "Mas/9/26/127" vs HRMS "MAS/09/26/0009"), so the grn_number guard above
- * never fires and the P&L booked the invoice twice — measured live on NOIDA-2 Sep-26: 22 legacy
- * bills, Rs 9.14 L, each with an HRMS GRN of the same amount the P&L already counted.
+ * Owner ruling 2026-09-26: NO legacy bill is added to HRMS figures, anywhere. The P&L GRN cost is
+ * the GRNs raised and approved in HRMS and nothing else, so it can never disagree with the HRMS
+ * budget or count an invoice that was keyed into the legacy billing system.
  *
- * Second guard, keyed on amount: a legacy line is dropped when an HRMS GRN of the same branch and
- * period, already consumed or reserved, carries the same TOTAL (all its allocation rows summed, ex-GST or GST-inclusive, within
- * a rupee). Lines under LEGACY_TWIN_MIN_AMOUNT are exempt: small round amounts (Rs 100, Rs 500)
- * collide between unrelated bills far too often. Known limit: it is not one-to-one in SQL, so
- * two legacy bills of an identical amount would both go if a single HRMS GRN carries it.
+ * Two kinds of row are therefore out, on every app leg:
+ *   - GRNs imported from db_bill (bill_source_id set);
+ *   - rows a script wrote under a system user (created_by 00000000-…, e.g. "db_bill backfill
+ *     2026-27") — legacy bills carried into HRMS, not raised by anyone in HRMS.
+ * The old third leg, which filled gaps from the db_bill mirror (grn_entry_line_snapshot) and the
+ * twin-amount guard that de-duplicated it (2026-09-25), are removed with it.
  */
-const LEGACY_TWIN_MIN_AMOUNT = 1000;
+const HRMS_RAISED_GRN_SQL = `gr.bill_source_id IS NULL AND COALESCE(gr.created_by, '') NOT LIKE '00000000-%'`;
 
 export async function readGrnSpend(
   periodCode: string,
@@ -315,7 +315,7 @@ export async function readGrnSpend(
        JOIN grn_request gr ON gr.id = a.grn_request_id
        LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
        ${processJoin("pc1")}
-      WHERE a.lifecycle_status = '${lifecycle}' AND gr.accounting_period = ? AND ${scope.sql}`,
+      WHERE a.lifecycle_status = '${lifecycle}' AND gr.accounting_period = ? AND ${HRMS_RAISED_GRN_SQL} AND ${scope.sql}`,
   );
   params.push(periodCode, ...scope.params);
 
@@ -332,56 +332,11 @@ export async function readGrnSpend(
         WHERE gr.budget_line_id IS NOT NULL
           AND gr.status NOT IN ('draft', 'rejected', 'cancelled')
           AND gr.accounting_period = ?
+          AND ${HRMS_RAISED_GRN_SQL}
           AND NOT EXISTS (SELECT 1 FROM grn_cost_allocation x WHERE x.grn_request_id = gr.id)
           AND ${scope.sql}`,
     );
     params.push(periodCode, ...scope.params);
-
-    // Leg 3 — db_bill mirror, only for a GRN number the app has not consumed itself. Line level,
-    // because only the line carries the cost centre; branch from the cost centre because the
-    // mirror's branch ids are db_bill's, not branch_master's.
-    if (await tableExists("grn_entry_line_snapshot")) {
-      legs.push(
-        `SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
-                ${processCol(null, "pc3")} AS process_id, l.amount AS amount,
-                ${detailCols(
-                  "db_bill_mirror",
-                  "COALESCE(ge.grn_no, l.bill_source_id)",
-                  "CONCAT_WS(' — ', NULLIF(TRIM(ge.vendor), ''), NULLIF(TRIM(l.particular), ''))",
-                  "ge.bill_date",
-                )}
-           FROM grn_entry_line_snapshot l
-           JOIN grn_entry_snapshot ge ON ge.bill_source_id = l.grn_source_id
-           LEFT JOIN cost_centre_master ccm
-                  ON ccm.cost_centre_code
-                   = l.cost_centre_code COLLATE utf8mb4_unicode_ci
-           ${processJoin("pc3")}
-          WHERE ge.period_code = ? AND ge.is_rejected = 0 AND ${scope.sql}
-            AND NOT EXISTS (
-                  SELECT 1
-                    FROM grn_request gr2
-                    JOIN grn_cost_allocation a2 ON a2.grn_request_id = gr2.id
-                   WHERE gr2.grn_number = ge.grn_no
-                     AND a2.lifecycle_status = 'consumed'
-                )
-            AND NOT EXISTS (
-                  SELECT 1
-                    FROM grn_request gr3
-                   WHERE gr3.accounting_period = ge.period_code
-                     AND gr3.branch_id = ccm.branch_id
-                     AND l.amount >= ${LEGACY_TWIN_MIN_AMOUNT}
-                     AND (ABS((SELECT SUM(${grnAllocationExGstSql("a3")})
-                                 FROM grn_cost_allocation a3
-                                WHERE a3.grn_request_id = gr3.id
-                                  AND a3.lifecycle_status IN ('consumed', 'reserved')) - l.amount) <= 1
-                          OR ABS((SELECT SUM(COALESCE(a4.amount_with_tax, 0))
-                                    FROM grn_cost_allocation a4
-                                   WHERE a4.grn_request_id = gr3.id
-                                     AND a4.lifecycle_status IN ('consumed', 'reserved')) - l.amount) <= 1)
-                )`,
-      );
-      params.push(periodCode, ...scope.params);
-    }
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
