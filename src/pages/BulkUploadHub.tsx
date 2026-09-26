@@ -166,6 +166,11 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   CLOVIA_CHAT_DAILY: "import_clovia_chat_daily_batch",
   CLOVIA_CRM_DISPOSITION: "import_clovia_crm_disposition_batch",
   CLOVIA_FEEDBACK: "import_clovia_feedback_batch",
+  // GS1 India dashboard uploads (migration 1769). Backend import + dispatch already exist; without
+  // these entries the hub said "Import mapping for GS1_EMAIL_DAILY is not enabled yet." at the last step.
+  GS1_EMAIL_DAILY: "import_gs1_email_daily_batch",
+  GS1_DATAKART_DAILY: "import_gs1_datakart_daily_batch",
+  GS1_APPROVAL_AUDIT: "import_gs1_approval_audit_batch",
   // Bella / BVO / Neemans MASMIS — write into db_masmis tables used by My Dashboards
   BB_SALE_MASMIS: "import_bb_sale_masmis_batch",
   BB_APR_MASMIS: "import_bb_apr_masmis_batch",
