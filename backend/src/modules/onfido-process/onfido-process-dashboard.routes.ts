@@ -467,7 +467,7 @@ router.get("/gd-mcn-sla/detail", requireAuth, requireRole(...VIEWER_ROLES), h(as
   res.json({ success: true, data });
 }));
 
-const DOC_RAW_DIMENSIONS = new Set(["ims_client_name", "tl_name", "am_name", "task_type"]);
+const DOC_RAW_DIMENSIONS = new Set(["ims_client_name", "tl_name", "am_name", "task_type", "analyst_email"]);
 router.get("/doc-raw/overview", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const data = await svc.getDocRawOverview(readQueryFilters(req));
   res.json({ success: true, data });

@@ -1,5 +1,5 @@
-import type { ComponentType } from "react";
-import { Activity, CalendarRange, Users2 } from "lucide-react";
+import { useEffect, useState, type ComponentType } from "react";
+import { Activity, CalendarRange, Maximize2, Minimize2, Users2 } from "lucide-react";
 
 export interface OnfidoHeroTab<K extends string> {
   key: K;
@@ -11,6 +11,22 @@ const isoToShort = (iso: string): string => {
   const [y, m, d] = iso.split("-");
   return y && m && d ? `${d}/${m}/${y}` : iso;
 };
+
+/** Whole-page fullscreen (documentElement, so dialogs and side sheets still render on top). */
+function useFullscreen(): [boolean, () => void] {
+  const [active, setActive] = useState(false);
+  useEffect(() => {
+    const sync = () => setActive(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", sync);
+    sync();
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
+  const toggle = () => {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    else void document.documentElement.requestFullscreen().catch(() => undefined);
+  };
+  return [active, toggle];
+}
 
 /**
  * Gradient hero banner in the Process Performance V2 style: brand-blue gradient with the soft
@@ -36,8 +52,9 @@ export default function OnfidoHero<K extends string>({
   /** False on views that ignore the executive filters (Live, Analyst, Utilization, Name Mapping). */
   showFilters: boolean;
 }) {
+  const [fullscreen, toggleFullscreen] = useFullscreen();
   return (
-    <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#1b6ab5] via-[#2a7fd0] to-indigo-700 p-5 text-white shadow-lg sm:p-6">
+    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#1b6ab5] via-[#2a7fd0] to-indigo-700 p-3 text-white shadow-lg sm:p-4">
       <div
         className="pointer-events-none absolute inset-0 opacity-[0.15]"
         style={{
@@ -51,21 +68,13 @@ export default function OnfidoHero<K extends string>({
             <Activity className="h-5 w-5" />
           </span>
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-white/80">
-              Quality &amp; Operations
-            </p>
-            <h1 className="text-xl font-bold sm:text-2xl">
+            <h1 className="text-lg font-bold sm:text-xl">
               Onfido Process Dashboard
             </h1>
-            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-white/80 sm:text-[13px]">
-              DOC and POA queue volume, AHT, quality audits and client
-              escalations — built from the report files uploaded through Bulk
-              Upload Hub.
-            </p>
           </div>
         </div>
-        {showFilters && (
-          <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold">
+        <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold">
+          {showFilters && (<>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 backdrop-blur-sm">
               <CalendarRange className="h-3.5 w-3.5" /> {isoToShort(range.from)}{" "}
               → {isoToShort(range.to)}
@@ -76,14 +85,24 @@ export default function OnfidoHero<K extends string>({
             <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 backdrop-blur-sm">
               <Users2 className="h-3.5 w-3.5" /> AM: {amFilter || "All"}
             </span>
-          </div>
-        )}
+          </>)}
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            aria-pressed={fullscreen}
+            title={fullscreen ? "Exit full page" : "Open full page"}
+            className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 backdrop-blur-sm transition hover:bg-white/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+          >
+            {fullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+            {fullscreen ? "Exit full page" : "Full page"}
+          </button>
+        </div>
       </div>
 
       <div
         role="tablist"
         aria-label="Onfido dashboard views"
-        className="relative mt-4 flex flex-wrap gap-1 rounded-2xl bg-white/10 p-1 backdrop-blur-sm"
+        className="relative mt-3 flex flex-wrap gap-1 rounded-2xl bg-white/10 p-1 backdrop-blur-sm"
       >
         {tabs.map((t) => (
           <button

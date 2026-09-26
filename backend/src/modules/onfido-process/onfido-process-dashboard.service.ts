@@ -2681,7 +2681,7 @@ export async function getDocRawTrend(
   }));
 }
 
-export type DocRawDimension = "ims_client_name" | "tl_name" | "am_name" | "task_type";
+export type DocRawDimension = "ims_client_name" | "tl_name" | "am_name" | "task_type" | "analyst_email";
 export interface DocRawBreakdownRow { label: string; taskCount: number; avgAht: number | null; escalationRate: number | null }
 
 // "Task Type Short Name" isn't pulled into its own column (see onfido-report-configs.ts —
@@ -2695,6 +2695,7 @@ const DOC_RAW_DIMENSION_EXPR: Record<DocRawDimension, string> = {
   tl_name: "tl_name",
   am_name: "am_name",
   task_type: DOC_TASK_TYPE_LABEL_EXPR,
+  analyst_email: "analyst_email",
 };
 
 export async function getDocRawBreakdown(

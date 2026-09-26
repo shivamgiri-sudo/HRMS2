@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { csvCell, csvLine } from "../onfido-export.service";
+import { csvCell, csvLine, exportColumns } from "../onfido-export.service";
 
 describe("csvCell", () => {
   it("leaves plain text alone", () => {
@@ -27,5 +27,13 @@ describe("csvCell", () => {
 describe("csvLine", () => {
   it("joins cells and ends with CRLF", () => {
     expect(csvLine(["a", 1, null])).toBe("a,1,\r\n");
+  });
+});
+
+describe("exportColumns", () => {
+  it("drops internal-tool URLs and loader bookkeeping, keeps dashboard data", () => {
+    const cols = ["id", "report_date", "emp_name", "tl_name", "ims_url", "qc_tool_url", "ims_report_url",
+      "task_url", "raw_data", "uploaded_at", "upload_batch_id", "row_hash", "aht_seconds", "emp_id"];
+    expect(exportColumns(cols)).toEqual(["report_date", "emp_name", "tl_name", "aht_seconds", "emp_id"]);
   });
 });

@@ -96,7 +96,9 @@ export const fmtN = (v: number): string => Math.round(Number(v) || 0).toLocaleSt
 export const fmtPct = (v: number): string => `${(Number(v) || 0).toFixed(2)}%`;
 const fmtPctOrBlank = (v: number | null): string => (v === null ? "" : fmtPct(v));
 
-export const ERROR_PCT_GOOD_BELOW = 0.5;
+/** Error %: green <= 1, amber > 1 to 1.5, red > 1.5 (owner rule, all quality parameters). */
+export const ERROR_PCT_GOOD_MAX = 1;
+export const ERROR_PCT_WARN_MAX = 1.5;
 export const ACCURACY_TARGET = 99.5;
 
 interface Tone { color: string; background: string }
@@ -104,7 +106,7 @@ const GOOD: Tone = { color: "#166534", background: "#ecfdf5" };
 const BAD: Tone = { color: "#991b1b", background: "#fff1f2" };
 const WARN: Tone = { color: "#92400e", background: "#fffbeb" };
 
-const errorTone = (v: number): Tone => (v < ERROR_PCT_GOOD_BELOW ? GOOD : BAD);
+const errorTone = (v: number): Tone => (v <= ERROR_PCT_GOOD_MAX ? GOOD : v <= ERROR_PCT_WARN_MAX ? WARN : BAD);
 const accuracyTone = (v: number): Tone => (v >= ACCURACY_TARGET ? GOOD : BAD);
 /** Reference AHT rule: green <= 200s, amber 201-220s, red > 220s. */
 const ahtTone = (secs: number): Tone => (secs <= 200 ? GOOD : secs <= 220 ? WARN : BAD);

@@ -18,7 +18,7 @@ import OnfidoAnalystReport from "./OnfidoAnalystReport";
 import OnfidoNameMapping from "./OnfidoNameMapping";
 import OnfidoHero from "./OnfidoHero";
 import OnfidoUtilizationReport from "./OnfidoUtilizationReport";
-import { formatBucketTick, shiftDays } from "./onfidoReportShared";
+import { fmtDdMmmYy, formatBucketTick, shiftDays } from "./onfidoReportShared";
 import "./onfido-central-theme.css";
 
 /**
@@ -197,7 +197,7 @@ interface DocRawOverview {
   taskCount: KpiValue; avgAht: KpiValue; avgQueueTime: KpiValue; escalationRate: KpiValue;
 }
 interface DocRawTrendPoint { bucket: string; taskCount: number; avgAht: number | null }
-type DocRawDimension = "ims_client_name" | "tl_name" | "am_name" | "task_type";
+type DocRawDimension = "ims_client_name" | "tl_name" | "am_name" | "task_type" | "analyst_email";
 interface DocRawBreakdownRow { label: string; taskCount: number; avgAht: number | null; escalationRate: number | null }
 interface DocTaskTypeTrendPoint { bucket: string; byTaskType: Record<string, { taskCount: number; avgAht: number | null }> }
 
@@ -604,12 +604,12 @@ function AhtLineChart({ points, granularity = "monthly" }: { points: { bucket: s
 
 /**
  * Quality scorecard bar chart — mirrors the reference's buildScorecardBar().
- * Bars are threshold-colored: green (< 1%), orange (1–1.5%), red (≥ 1.5%).
+ * Bars are threshold-colored: green (≤ 1%), amber (> 1% to 1.5%), red (> 1.5%).
  * Each bar is one quality metric; the height is its error %.
  */
 function barColor(v: number): string {
-  if (v >= 1.5) return "var(--red)";
-  if (v >= 1.0) return "var(--orange)";
+  if (v > 1.5) return "var(--red)";
+  if (v > 1.0) return "var(--orange)";
   if (v > 0)    return "var(--green)";
   return "var(--muted)";
 }
@@ -668,7 +668,7 @@ function ScorecardBarChart({ metrics, title, hc }: { metrics: { name: string; va
         </BarChart>
       </ResponsiveContainer>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 4, fontSize: 11 }}>
-        {[{ c: "var(--green)", l: "< 1% (Good)" }, { c: "var(--orange)", l: "1–1.5% (Warning)" }, { c: "var(--red)", l: "≥ 1.5% (Breach)" }].map(({ c, l }) => (
+        {[{ c: "var(--green)", l: "≤ 1% (Good)" }, { c: "var(--orange)", l: "1–1.5% (Warning)" }, { c: "var(--red)", l: "> 1.5% (Breach)" }].map(({ c, l }) => (
           <span key={l} style={{ display: "flex", alignItems: "center", gap: 5, color: "var(--muted)" }}>
             <span style={{ width: 10, height: 10, borderRadius: 3, background: c, flexShrink: 0 }} /> {l}
           </span>
@@ -678,11 +678,11 @@ function ScorecardBarChart({ metrics, title, hc }: { metrics: { name: string; va
   );
 }
 
-/** Green < 1.0%, orange 1.0-1.5%, red >= 1.5%, muted for zero/no data — the
+/** Green <= 1.0%, amber > 1.0-1.5%, red > 1.5%, muted for zero/no data — the
  *  reference dashboard's own buildTrendTable() thresholds. */
 function metricCellColor(pct: number | null): string {
   if (pct === null || pct === 0) return "var(--muted)";
-  return pct >= 1.5 ? "var(--red)" : pct >= 1.0 ? "var(--orange)" : "var(--green)";
+  return pct > 1.5 ? "var(--red)" : pct > 1.0 ? "var(--orange)" : "var(--green)";
 }
 
 /** Metric-rows x time-bucket-columns table — mirrors the reference dashboard's
@@ -2967,7 +2967,7 @@ function DocRawView({
   const ov = overviewQuery.data?.data;
   const points = trendQuery.data?.data ?? [];
   const breakdown = breakdownQuery.data?.data ?? [];
-  const dimLabel = { ims_client_name: "Client", tl_name: "TL", am_name: "AM", task_type: "Task Type" }[dimension];
+  const dimLabel = { ims_client_name: "Client", tl_name: "TL", am_name: "AM", task_type: "Task Type", analyst_email: "Analyst" }[dimension];
 
   return (
     <div className="space-y-4">
@@ -3009,8 +3009,13 @@ function DocRawView({
       </div>
 
       <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
-        <h3>DOC Avg AHT Trend</h3>
-        <div className="oc-card-sub">Average handling time per bucket, excluding process_labelling_document_raw_extraction task type.</div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 style={{ marginBottom: 0 }}>DOC Avg AHT Trend</h3>
+          <PillGroup
+            value={granularity} onChange={setGranularity}
+            options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
+          />
+        </div>
         <TaskAhtTrendChart points={points} barLabel="DOC Tasks" lineLabel="DOC Avg AHT" barColor="var(--blue)" lineColor="var(--teal)" />
       </div>
 
@@ -3022,7 +3027,7 @@ function DocRawView({
             onChange={setDimension}
             options={[
               { key: "ims_client_name", label: "Client Wise" }, { key: "tl_name", label: "TL Wise" }, { key: "am_name", label: "AM Wise" },
-              { key: "task_type", label: "Task Type Wise" },
+              { key: "task_type", label: "Task Type Wise" }, { key: "analyst_email", label: "Analyst Wise" },
             ]}
           />
         </div>
@@ -3061,11 +3066,11 @@ function DocRawView({
   );
 }
 
-/** Green < 1.0%, orange 1.0-1.5%, red >= 1.5% — the reference dashboard's own
+/** Green <= 1.0%, amber > 1.0-1.5%, red > 1.5% — the reference dashboard's own
  *  POA quality thresholds (peCol/xpCol in buildGroupedTable). */
 function poaCellColor(pct: number | null): string {
   if (pct === null) return "var(--muted)";
-  return pct >= 1.5 ? "var(--red)" : pct >= 1.0 ? "var(--orange)" : "var(--green)";
+  return pct > 1.5 ? "var(--red)" : pct > 1.0 ? "var(--orange)" : "var(--green)";
 }
 
 /** Entity x month grouped table (AM/TL/Analyst Wise POA tables, 2026-09-17
@@ -3257,8 +3262,7 @@ function PoaView({
     queryFn: () => hrmsApi.get<{ data: PoaTrendPoint[] }>(`/api/onfido-process/poa/trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`),
   });
   // AHT companion to the Volume Trend chart directly below — same granularity toggle,
-  // same bucket keys, sourced from combined-trend (which already carries avgAht per
-  // bucket for the Month/Week/Day-wise POA Task & AHT cards above).
+  // same bucket keys, sourced from combined-trend (which carries avgAht per bucket).
   const ahtTrendQuery = useQuery({
     queryKey: ["onfido-process", "poa-aht-trend", range, tlFilter, amFilter, granularity],
     queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/poa/combined-trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`),
@@ -3272,18 +3276,6 @@ function PoaView({
   const poaExternalOverviewQuery = useQuery({
     queryKey: ["onfido-process", "poa-external-overview-for-poa", range, tlFilter, amFilter],
     queryFn: () => hrmsApi.get<{ data: PoaExternalOverview }>(`/api/onfido-process/poa-external/overview?from=${range.from}&to=${range.to}${qs}`),
-  });
-  const poaCombinedTrendQuery = useQuery({
-    queryKey: ["onfido-process", "poa-combined-trend", range, tlFilter, amFilter],
-    queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/poa/combined-trend?from=${range.from}&to=${range.to}${qs}&granularity=monthly`),
-  });
-  const poaWeeklyTrendQuery = useQuery({
-    queryKey: ["onfido-process", "poa-weekly-trend", range, tlFilter, amFilter],
-    queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/poa/combined-trend?from=${range.from}&to=${range.to}${qs}&granularity=weekly`),
-  });
-  const poaDailyTrendQuery = useQuery({
-    queryKey: ["onfido-process", "poa-daily-trend", range, tlFilter, amFilter],
-    queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/poa/combined-trend?from=${range.from}&to=${range.to}${qs}&granularity=daily`),
   });
   const poaQualityTrendQuery = useQuery({
     queryKey: ["onfido-process", "poa-quality-trend-for-poa", range, tlFilter, amFilter],
@@ -3321,9 +3313,6 @@ function PoaView({
   const ahtPoints = ahtTrendQuery.data?.data ?? [];
   const breakdown = breakdownQuery.data?.data ?? [];
   const dimLabel = { tl_name: "TL", am_name: "AM" }[dimension];
-  const poaCombinedTrend = poaCombinedTrendQuery.data?.data ?? [];
-  const poaWeeklyTrend = poaWeeklyTrendQuery.data?.data ?? [];
-  const poaDailyTrend = poaDailyTrendQuery.data?.data ?? [];
   const poaMonthlyErrPct = useMemo(() => {
     const byBucket = new Map<string, { bucket: string; intErrPct: number | null; extErrPct: number | null }>();
     for (const r of poaQualityTrendQuery.data?.data ?? []) {
@@ -3354,19 +3343,6 @@ function PoaView({
           <KpiPlain kpi={ov.dataComparisonErrorRate} kc="var(--purple)" />
         </div>
       )}
-
-      <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
-        <h3>Month-wise POA Task &amp; AHT</h3>
-        <TaskAhtTrendChart points={poaCombinedTrend} barLabel="POA Tasks" lineLabel="POA Avg AHT" barColor="var(--blue)" lineColor="var(--orange)" />
-      </div>
-      <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
-        <h3>Week-wise POA Task &amp; AHT</h3>
-        <TaskAhtTrendChart points={poaWeeklyTrend} barLabel="POA Tasks" lineLabel="POA Avg AHT" barColor="var(--teal)" lineColor="var(--orange)" />
-      </div>
-      <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
-        <h3>Day-wise POA Task &amp; AHT</h3>
-        <TaskAhtTrendChart points={poaDailyTrend} barLabel="POA Tasks" lineLabel="POA Avg AHT" barColor="var(--purple)" lineColor="var(--orange)" />
-      </div>
 
       {/* POA SLA Section */}
       {(() => {
@@ -3422,7 +3398,7 @@ function PoaView({
                             {sla.dailyTrend.length === 0 && <tr className="oc-empty-row"><td colSpan={4}>No data</td></tr>}
                             {sla.dailyTrend.map((r) => (
                               <tr key={r.date}>
-                                <td>{r.date}</td>
+                                <td>{fmtDdMmmYy(r.date)}</td>
                                 <td className="oc-right">{r.total.toLocaleString("en-IN")}</td>
                                 <td className="oc-right">{r.sla10Pct !== null ? `${r.sla10Pct}%` : "—"}</td>
                                 <td className="oc-right">{r.sla30Pct !== null ? `${r.sla30Pct}%` : "—"}</td>

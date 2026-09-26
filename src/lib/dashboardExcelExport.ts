@@ -11,6 +11,21 @@
  * the screen the user is looking at.
  */
 import * as XLSX from "xlsx";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
+
+/**
+ * SheetJS' community build cannot write `showGridLines="0"`, and the exports must open on a plain
+ * white sheet (owner rule), so the sheet XML is patched after the workbook is built.
+ */
+export function withoutGridlines(xlsx: Uint8Array): Uint8Array {
+  const files = unzipSync(xlsx);
+  for (const [path, bytes] of Object.entries(files)) {
+    if (!/^xl\/worksheets\/sheet\d+\.xml$/.test(path)) continue;
+    const xml = strFromU8(bytes).replace(/<sheetView(?![^>]*showGridLines)/g, '<sheetView showGridLines="0"');
+    files[path] = strToU8(xml);
+  }
+  return zipSync(files);
+}
 
 export interface ExcelSheetSpec {
   /** Sheet tab name. Excel caps this at 31 chars — longer names are truncated here. */
@@ -68,5 +83,15 @@ export function exportDashboardToExcel(fileNamePrefix: string, sheets: ExcelShee
   }
 
   const stamp = new Date().toISOString().slice(0, 10);
-  XLSX.writeFile(wb, `${fileNamePrefix}_${stamp}.xlsx`);
+  const bytes = withoutGridlines(new Uint8Array(XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer));
+  const url = URL.createObjectURL(
+    new Blob([bytes as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+  );
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${fileNamePrefix}_${stamp}.xlsx`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }

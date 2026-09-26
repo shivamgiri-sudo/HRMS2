@@ -92,6 +92,13 @@ export function fmtDate(iso: string | null | undefined): string {
   return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
 }
 
+/** 2026-07-31 -> 31-Jul-26 */
+export function fmtDdMmmYy(iso: string | null | undefined): string {
+  if (!iso || iso.length < 10) return DASH;
+  const month = MONTHS[Number(iso.slice(5, 7)) - 1];
+  return month ? `${iso.slice(8, 10)}-${month}-${iso.slice(2, 4)}` : DASH;
+}
+
 /** "2026-07 16:05:00" style timestamps -> DD/MM/YYYY HH:mm */
 export function fmtDateTime(value: string | null | undefined): string {
   if (!value) return DASH;

@@ -6,7 +6,21 @@ import { buildRecordFilter, resolveTable, tlAmFilter, type RecordListFilters } f
 /** Hard ceiling so one click can never pull a multi-GB table through the API process. */
 export const EXPORT_MAX_ROWS = 100_000;
 const CHUNK_ROWS = 2_000;
-const JSON_BLOB_COLUMN = "raw_data";
+
+/**
+ * The download carries the dashboard's own data only. Links back into Onfido's internal tools
+ * (IMS / QC / task URLs) and the loader's bookkeeping (row id, upload batch, hash, timestamps,
+ * the raw JSON blob) are not dashboard data and must not leave the system.
+ */
+const EXPORT_HIDDEN_COLUMNS = new Set([
+  "id", "raw_data", "uploaded_at", "uploaded_by", "upload_batch_id", "batch_id", "import_batch_id",
+  "row_hash", "dedup_key", "created_at", "updated_at",
+]);
+const URL_COLUMN = /(^|_)(url|urls|link|links)($|_)/i;
+
+export function exportColumns(columns: readonly string[]): string[] {
+  return columns.filter((c) => !EXPORT_HIDDEN_COLUMNS.has(c.toLowerCase()) && !URL_COLUMN.test(c));
+}
 
 function pad(n: number): string {
   return String(n).padStart(2, "0");
@@ -54,7 +68,7 @@ export async function streamRecordsCsv(res: Response, tableKey: string, filters:
     );
     if (rows.length === 0) break;
     if (!header) {
-      header = Object.keys(rows[0]).filter((c) => c !== JSON_BLOB_COLUMN);
+      header = exportColumns(Object.keys(rows[0]));
       startCsv(res, `${table}_${filters.from ?? "start"}_${filters.to ?? "end"}.csv`);
       res.write(csvLine(header));
     }
