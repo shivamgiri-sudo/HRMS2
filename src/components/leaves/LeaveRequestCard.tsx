@@ -72,7 +72,7 @@ const getLeaveTypeStyle = (type: string): string => {
 // then threw "onDiscard is not defined" instead of simply hiding the button.
 export function LeaveRequestCard({ request, onApprove, onReject, onDiscard }: LeaveRequestCardProps) {
   return (
-    <Card className="relative overflow-hidden border-white/10 bg-white/5 transition-all duration-200 hover:bg-white/8 hover:-translate-y-0.5">
+    <Card className="relative overflow-hidden border-slate-200 bg-white shadow-sm transition-all duration-200 hover:border-slate-300 hover:shadow-md">
       {/* Left accent — same color the type badge and the balance/chart tiles use, via the shared leaveColors map */}
       <span className={`absolute inset-y-0 left-0 w-1.5 ${getLeaveColor(request.type)}`} aria-hidden="true" />
       <CardContent className="p-5 pl-7">
@@ -80,13 +80,13 @@ export function LeaveRequestCard({ request, onApprove, onReject, onDiscard }: Le
           <div className="flex items-start gap-4">
             <Avatar className="h-11 w-11 rounded-lg">
               <AuthedAvatarImage src={normalizeMediaUrl(request.employee.avatar)} className="rounded-lg" />
-              <AvatarFallback className="rounded-lg bg-white/10 text-xs font-bold text-slate-200">
+              <AvatarFallback className="rounded-lg bg-slate-100 text-xs font-bold text-slate-700">
                 {request.employee.name.split(" ").map((n) => n[0]).join("")}
               </AvatarFallback>
             </Avatar>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-white">{request.employee.name}</h3>
+                <h3 className="font-semibold text-slate-900">{request.employee.name}</h3>
                 <Badge
                   variant="secondary"
                   className={getLeaveTypeStyle(request.type)}
@@ -94,18 +94,18 @@ export function LeaveRequestCard({ request, onApprove, onReject, onDiscard }: Le
                   {request.type}
                 </Badge>
                 {request.status === "pending_branch_head" && (
-                  <Badge variant="secondary" className="border-orange-500/20 bg-orange-500/10 text-orange-400">
+                  <Badge variant="secondary" className="border-orange-200 bg-orange-50 text-orange-700">
                     Escalated — Branch Head
                   </Badge>
                 )}
               </div>
-              <p className="text-sm text-slate-400">{request.employee.department}</p>
-              <div className="mt-2 flex items-center gap-2 text-sm text-slate-400">
+              <p className="text-sm text-slate-600">{request.employee.department}</p>
+              <div className="mt-2 flex items-center gap-2 text-sm text-slate-600">
                 <Calendar className="h-4 w-4" />
                 <span>
                   {formatDate(request.startDate)} - {formatDate(request.endDate)}
                 </span>
-                <span className="font-medium text-slate-200">({request.days} days)</span>
+                <span className="font-medium text-slate-800">({request.days} days)</span>
               </div>
               {request.submittedAt && (
                 <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
@@ -113,19 +113,19 @@ export function LeaveRequestCard({ request, onApprove, onReject, onDiscard }: Le
                   <span>Submitted: {formatDateTime(request.submittedAt)}</span>
                 </div>
               )}
-              {request.reason && <p className="mt-2 text-sm text-slate-400">{request.reason}</p>}
+              {request.reason && <p className="mt-2 text-sm text-slate-600">{request.reason}</p>}
               {request.status !== "pending" && request.reviewedBy && (
                 <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
                   <UserCheck className="h-3 w-3" />
                   <span>
                     {request.status === "approved" ? "Approved" : request.status === "rejected" ? "Rejected" : "Reviewed"} by{" "}
-                    <span className="font-medium text-slate-300">{request.reviewedBy.name}</span>
+                    <span className="font-medium text-slate-700">{request.reviewedBy.name}</span>
                     {request.reviewedAt && <span> on {formatDate(request.reviewedAt)}</span>}
                   </span>
                 </div>
               )}
               {request.reviewNotes && (
-                <p className="mt-1 text-xs italic text-slate-500">
+                <p className="mt-1 text-xs italic text-slate-600">
                   Note: {request.reviewNotes}
                 </p>
               )}

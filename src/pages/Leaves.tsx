@@ -989,7 +989,7 @@ const Leaves = () => {
               loaded — an older year would otherwise vanish from the dropdown with nothing to
               explain it, and the export would have quietly shrunk to match. */}
           {leaveLoad.truncated && (
-            <div className="relative mb-4 flex items-start gap-2 rounded-xl border border-[#f59e0b]/20 bg-[#f59e0b]/10 px-3 py-2 text-xs text-amber-200">
+            <div className="relative mb-4 flex items-start gap-2 rounded-xl border border-[#f59e0b]/20 bg-[#f59e0b]/10 px-3 py-2 text-xs text-amber-800">
               <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
               <span>
                 Showing the {leaveLoad.processedLoaded.toLocaleString("en-IN")} most recent processed
