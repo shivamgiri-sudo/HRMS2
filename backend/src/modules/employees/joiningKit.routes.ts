@@ -79,6 +79,16 @@ joiningKitRouter.get("/:employeeId/joining-kit/preview", h(async (req, res) => {
       WHERE employee_id = ? ORDER BY created_at DESC LIMIT 5`,
     [employeeId],
   );
+  // The page reads its open kit from this payload, not from GET /joining-kit, so
+  // liveness has to be here too — otherwise a dead session never shows the
+  // "Send a new kit" action and HR is left with a Resend that always declines.
+  const kits = await Promise.all(
+    existing.map(async (row) =>
+      String(row.status) === "sent"
+        ? { ...row, sessionAlive: await kitEsignSessionIsAlive(String(row.id)) }
+        : row,
+    ),
+  );
   return res.json({
     success: true,
     data: {
@@ -90,7 +100,7 @@ joiningKitRouter.get("/:employeeId/joining-kit/preview", h(async (req, res) => {
         hasFile: !!d.storage_path,
       })),
       hrFillPending: pending.map((p) => String(p.document_name)),
-      kits: existing,
+      kits,
     },
   });
 }));
