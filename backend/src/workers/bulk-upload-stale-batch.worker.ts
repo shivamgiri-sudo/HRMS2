@@ -16,18 +16,31 @@
  */
 
 import { reapStalledBatches, STALL_MINUTES } from "../modules/bulk-upload/stale-batch-reaper.service.js";
+import { runBatchAutoRecovery } from "../modules/bulk-upload/batch-auto-recovery.service.js";
 import { recordWorkerRun, withWorkerLock } from "./worker-utils.js";
 
 const WORKER_NAME = "bulk-upload-stale-batch";
 
 /** Often enough that nobody waits half a day to learn their import died. */
-const CHECK_INTERVAL_MS = 10 * 60 * 1000;
+const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const STARTUP_DELAY_MS = 2 * 60 * 1000;
 
 let startupRef: ReturnType<typeof setTimeout> | undefined;
 let intervalRef: ReturnType<typeof setInterval> | undefined;
 
 async function audit(): Promise<void> {
+  // Free locks held by a runaway upload_batch_row statement and re-queue retry-safe imports that
+  // failed on them, BEFORE the stalled-batch pass. A failure here must not stop the reaper.
+  try {
+    const rec = await runBatchAutoRecovery();
+    if (rec.killedSessions.length || rec.requeued.length || rec.needsHuman.length) {
+      console.warn(`[${WORKER_NAME}] auto-recovery`, JSON.stringify(rec));
+      await recordWorkerRun(`${WORKER_NAME}-recovery`, "completed", { ...rec });
+    }
+  } catch (error) {
+    console.error(`[${WORKER_NAME}] auto-recovery failed:`, error instanceof Error ? error.message : error);
+  }
+
   const r = await reapStalledBatches(STALL_MINUTES);
 
   if (r.scanned === 0) {
