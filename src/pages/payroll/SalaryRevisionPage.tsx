@@ -818,6 +818,11 @@ export default function SalaryRevisionPage() {
       {/* ── Reviewer Layout ── */}
       {isReviewer && (
         <>
+          {/* A branch admin / admin is a reviewer by role but is also a requester: without the form
+              they saw only the approval queue and could not raise a request (MAS50351). */}
+          {isFixer && (
+            <SubmitForm onSuccess={() => qc.invalidateQueries({ queryKey: ['salary-revision'] })} />
+          )}
           {/* KPI tiles */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <KpiTile label="Pending Approval" value={requests.filter((r) => r.status === 'pending').length} tone="amber" Icon={Clock3} />
