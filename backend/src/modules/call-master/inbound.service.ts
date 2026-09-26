@@ -58,7 +58,31 @@ type DailyRow = {
   unique_phones: number;
 };
 
-async function runProjectQuery(p: ProjectConfig, filters: InboundFilters): Promise<DailyRow[]> {
+/**
+ * Short-lived result cache with in-flight sharing for the slow remote dialer_db queries. A project's detail
+ * page asks for summary, trend, hourly and LOB at once, and summary and trend run the SAME daily query; on a
+ * multi-month range each such query takes 10-15 s, which added up past the browser's 30 s limit. Concurrent
+ * identical requests now share one query and repeats within the TTL are served from memory (dialer data is
+ * append-only within a day, so a minute of staleness is immaterial). A failure is never cached.
+ */
+const MEMO_TTL_MS = 60_000;
+const memoStore = new Map<string, { at: number; p: Promise<unknown> }>();
+function memo<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const hit = memoStore.get(key);
+  if (hit && Date.now() - hit.at < MEMO_TTL_MS) return hit.p as Promise<T>;
+  const p = fn();
+  memoStore.set(key, { at: Date.now(), p });
+  p.catch(() => { if (memoStore.get(key)?.p === p) memoStore.delete(key); });
+  if (memoStore.size > 200) for (const k of memoStore.keys()) { memoStore.delete(k); break; }
+  return p;
+}
+const memoKey = (name: string, projectKey: string, f: InboundFilters) => `${name}|${projectKey}|${f.startDate}|${f.endDate}`;
+
+function runProjectQuery(p: ProjectConfig, filters: InboundFilters): Promise<DailyRow[]> {
+  return memo(memoKey("daily", p.key, filters), () => runProjectQueryRaw(p, filters));
+}
+
+async function runProjectQueryRaw(p: ProjectConfig, filters: InboundFilters): Promise<DailyRow[]> {
   const { startDate, endDate } = filters;
   const pool = await getDialerPool();
   const ph   = p.campaigns.map(() => "?").join(",");
@@ -370,7 +394,7 @@ export async function getProjectHourlyByDate(filters: InboundFilters, projectKey
  * company (GNC/Bellavita/Clovia/Neemans/Dalmia/DU Bangladesh/Viega/Exicom),
  * so the fix benefits all of them, not just Clovia.
  */
-export async function getProjectHourly(filters: InboundFilters, projectKey: string) {
+async function getProjectHourlyRaw(filters: InboundFilters, projectKey: string) {
   const p = PROJECTS.find((x) => x.key === projectKey);
   if (!p) throw new Error(`Unknown project key: ${projectKey}`);
 
@@ -422,7 +446,7 @@ type LobRow = {
  * English/Hindi). Same Pattern A/B query shape as runProjectQuery, GROUP BY
  * CampaignName instead of date/hour.
  */
-export async function getProjectLobSummary(filters: InboundFilters, projectKey: string) {
+async function getProjectLobSummaryRaw(filters: InboundFilters, projectKey: string) {
   const p = PROJECTS.find((x) => x.key === projectKey);
   if (!p) throw new Error(`Unknown project key: ${projectKey}`);
 
@@ -475,4 +499,11 @@ export async function getProjectLobSummary(filters: InboundFilters, projectKey: 
       uniquePhones: n(r.unique_phones),
     };
   });
+}
+
+export function getProjectHourly(filters: InboundFilters, projectKey: string): ReturnType<typeof getProjectHourlyRaw> {
+  return memo(memoKey("hourly", projectKey, filters), () => getProjectHourlyRaw(filters, projectKey));
+}
+export function getProjectLobSummary(filters: InboundFilters, projectKey: string): ReturnType<typeof getProjectLobSummaryRaw> {
+  return memo(memoKey("lob", projectKey, filters), () => getProjectLobSummaryRaw(filters, projectKey));
 }

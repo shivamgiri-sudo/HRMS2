@@ -6,13 +6,13 @@ import {
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   Home, PhoneCall, PhoneOutgoing, PhoneOff, Percent, ShoppingBag, IndianRupee, Wallet, Target, TrendingUp,
-  Timer, Users, Lightbulb, Eye, RefreshCw, Layers, ArrowUp, ArrowDown, Search, ClipboardList, Award, PieChart as PieIcon, Filter, Check,
+  Timer, Users, Lightbulb, Eye, RefreshCw, X, Layers, ArrowUp, ArrowDown, Search, ClipboardList, Award, PieChart as PieIcon, Filter, Check,
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Spinner, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu,
+  Spinner, SectionCard, DashboardHero, DateRangeToolbar, DashboardExportMenu, TableExcelIconButton,
   currentMonthRange, formatINR, formatShortDate,
   KPI_TONES, type KpiTone, type ExportSlide,
 } from "./DashboardKit";
@@ -155,6 +155,7 @@ function calc(ctx: Ctx, pred: Pred, w: Win) {
     monthlyTarget: monthly,
     achPct: monthly > 0 ? r1((t.revenue / monthly) * 100) : 0,
     mtdTarget,
+    mtdRevenue,
     mtdPct: mtdTarget > 0 ? r1((mtdRevenue / mtdTarget) * 100) : 0,
     salePerAgent: agents.size > 0 ? r1(t.saleCount / agents.size) : 0,
   };
@@ -339,8 +340,10 @@ interface MatrixCol { key: string; label: string; m: M; onClick: () => void }
 function MetricMatrix({ columns, total, firstColLabel = "Metric" }: { columns: MatrixCol[]; total?: MatrixCol; firstColLabel?: string }) {
   const all = total ? [...columns, total] : columns;
   if (columns.length === 0) return <p className="py-6 text-center text-xs text-slate-400">No data for the current selection.</p>;
+  const sheet = () => [{ name: firstColLabel, columns: [firstColLabel, ...all.map((c) => c.label)], rows: MATRIX_ROWS.map((row) => [row.label, ...all.map((c) => row.cell(c.m).text)]) }];
   return (
     <div className="overflow-x-auto">
+      <div className="mb-1.5 flex justify-end"><TableExcelIconButton fileBase={`Housing_Owner_${firstColLabel}_wise`} getSheets={sheet} /></div>
       <table className="w-full min-w-max text-center text-xs">
         <thead>
           <tr className="sticky top-0 z-10 bg-slate-800 text-[11px] font-bold uppercase tracking-wide text-white">
@@ -397,6 +400,8 @@ export function HousingOwnerDashboard() {
   const [drawer, setDrawer] = useState<DrawerState | null>(null);
   const [dailyBar, setDailyBar] = useState<"calls" | "connected" | "notConnected">("calls");
   const [trendView, setTrendView] = useState<"calls" | "target">("calls");
+  const [pieView, setPieView] = useState<"calls" | "target">("calls");
+  const [activeOpen, setActiveOpen] = useState(false);
   const [trendAm, setTrendAm] = useState("all");
   const [revMode, setRevMode] = useState<"daily" | "weekly">("daily");
   const [talkMode, setTalkMode] = useState<"daily" | "weekly">("daily");
@@ -540,6 +545,15 @@ export function HousingOwnerDashboard() {
     }).filter((r) => r.m.hasData);
   }, [ctx, people, basePred, range]);
 
+  /** Active roster agents matching the current filters, each with their own window metrics -- the Active Agents tile's drawer. */
+  const activeAgents = useMemo(() => {
+    if (!ctx) return [];
+    return ctx.roster
+      .filter((r) => r.status === "Active" && basePred({ agent: r.name, tl: r.tl, am: r.am, vintage: r.vintage }))
+      .map((r) => { const pred: Pred = (f) => f.agent === r.name; return { agent: r.name, tl: r.tl, am: r.am, vintage: r.vintage, m: calc(ctx, pred, range), pred }; })
+      .sort((a, b) => b.m.revenue - a.m.revenue || a.agent.localeCompare(b.agent));
+  }, [ctx, basePred, range]);
+
   const topAgents = useMemo(
     () => [...agentRows].sort((a, b) => {
       const va = agentSort === "saleCount" ? a.m.saleCount : agentSort === "calls" ? a.m.calls : a.m.revenue;
@@ -563,6 +577,7 @@ export function HousingOwnerDashboard() {
       case "connectedPct": return r.m.connectedPct;
       case "saleCount": return r.m.saleCount;
       case "revenue": return r.m.revenue;
+      case "target": return r.m.monthlyTarget > 0 ? r.m.monthlyTarget : null;
       case "achPct": return r.m.monthlyTarget > 0 ? r.m.achPct : null;
       case "talk": return r.m.avgTalkSec;
       default: return null;
@@ -719,6 +734,10 @@ export function HousingOwnerDashboard() {
     { name: "Not Connected", value: cur.notConnected, color: COLORS.calls },
   ];
   const donutTotal = cur.connected + cur.notConnected;
+  const targetDonut = [
+    { name: "Achieved", value: Math.min(cur.revenue, cur.monthlyTarget), color: "#10b981" },
+    { name: cur.revenue >= cur.monthlyTarget ? "Above target" : "Remaining", value: cur.revenue >= cur.monthlyTarget ? cur.revenue - cur.monthlyTarget : cur.monthlyTarget - cur.revenue, color: cur.revenue >= cur.monthlyTarget ? "#0ea5e9" : "#e2e8f0" },
+  ];
   const dataNote = `Call data through ${data.cdrThrough ? formatShortDate(data.cdrThrough) : "—"} · Sale data through ${data.saleThrough ? formatShortDate(data.saleThrough) : "—"}`;
   const targetSub = cur.monthlyTarget > 0 ? `Target ${formatINR(cur.monthlyTarget)}` : "No target set";
 
@@ -734,7 +753,7 @@ export function HousingOwnerDashboard() {
       {error && <div className="rounded-xl border border-red-100 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
 
       {/* KPI row -- every card opens its own week/date drill-down */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-9">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-10">
         <StatTile icon={PhoneCall} tone="amber" label="Total Calls" value={int(cur.calls)} sub={prev?.hasData ? `vs previous ${int(prev.calls)}` : undefined} delta={pctDelta(cur.calls, prev?.calls)} onClick={() => openOverall("Total Calls", [S.calls])} />
         <StatTile icon={PhoneOutgoing} tone="sky" label="Connected Calls" value={int(cur.connected)} sub={prev?.hasData ? `vs previous ${int(prev.connected)}` : undefined} delta={pctDelta(cur.connected, prev?.connected)} onClick={() => openOverall("Connected Calls", [S.connected])} />
         <StatTile icon={PhoneOff} tone="rose" label="Not Connected Calls" value={int(cur.notConnected)} sub={prev?.hasData ? `vs previous ${int(prev.notConnected)}` : undefined} delta={pctDelta(cur.notConnected, prev?.notConnected)} onClick={() => openOverall("Not Connected Calls", [S.notConnected])} />
@@ -744,36 +763,89 @@ export function HousingOwnerDashboard() {
         <StatTile icon={Wallet} tone="cyan" label="AOV" value={cur.saleCount > 0 ? formatINR(cur.aov) : "—"} sub={prev?.hasData && prev.saleCount > 0 ? `vs previous ${formatINR(prev.aov)}` : undefined} delta={pctDelta(cur.aov, prev?.aov)} onClick={() => openOverall("AOV (Average Order Value)", [S.aov, S.saleCount, S.revenue])} />
         <StatTile icon={Target} tone="violet" label="Ach %" value={cur.monthlyTarget > 0 ? `${cur.achPct}%` : "—"} sub={targetSub} delta={cur.monthlyTarget > 0 ? ppDelta(cur.achPct, prev?.achPct) : null} deltaUnit="pp" onClick={() => openOverall("Ach % (vs daily share of monthly target)", [S.achPct, S.revenue])} />
         <StatTile icon={Target} tone="blue" label="MTD Ach %" value={cur.mtdTarget > 0 ? `${cur.mtdPct}%` : "—"} sub={cur.mtdTarget > 0 ? `MTD target ${formatINR(cur.mtdTarget)}` : "No target set"} delta={cur.mtdTarget > 0 ? ppDelta(cur.mtdPct, prev?.mtdPct) : null} deltaUnit="pp" onClick={() => openOverall("MTD Ach % (month-to-date revenue / target prorated to date)", [S.revenue, S.achPct])} />
+        <StatTile icon={Users} tone="indigo" label="Active Agents" value={String(activeAgents.length)} sub={`${activeAgents.filter((a) => a.m.calls > 0).length} dialled in range`} onClick={() => setActiveOpen(true)} />
       </div>
 
       {/* Call status + Daily performance */}
       <div className="grid gap-3 lg:grid-cols-3">
         <SectionCard
-          icon={PieIcon} title="Call Status Distribution" tone="amber"
-          action={<ViewDetailsBtn onClick={() => openOverall("Call Status Distribution", [S.connected, S.notConnected, S.connectedPct])} />}
-        >
-          <div className="relative">
-            <ResponsiveContainer width="100%" height={190}>
-              <PieChart>
-                <Pie data={donut} dataKey="value" nameKey="name" innerRadius={55} outerRadius={80} paddingAngle={2} stroke="none">
-                  {donut.map((d) => <Cell key={d.name} fill={d.color} />)}
-                </Pie>
-                <Tooltip {...TOOLTIP_PROPS} formatter={(v: number, n: string) => [`${int(v)} (${donutTotal > 0 ? r1((v / donutTotal) * 100) : 0}%)`, n]} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-              <p className="text-lg font-extrabold leading-tight text-slate-800">{int(donutTotal)}</p>
-              <p className="text-[10px] font-medium text-slate-400">Total Calls</p>
+          icon={PieIcon} title={pieView === "calls" ? "Call Status Distribution" : "Target vs Achievement"} tone="amber"
+          action={
+            <div className="flex flex-wrap items-center gap-2">
+              <Seg value={pieView} onChange={(v) => setPieView(v)} options={[{ key: "calls", label: "Calls" }, { key: "target", label: "Target vs Ach %" }]} />
+              <ViewDetailsBtn onClick={() => (pieView === "calls" ? openOverall("Call Status Distribution", [S.connected, S.notConnected, S.connectedPct]) : openOverall("Target vs Ach %", [S.revenue, S.achPct]))} />
             </div>
-          </div>
-          <div className="mt-1 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
-            {donut.map((d) => (
-              <span key={d.name} className="inline-flex items-center gap-1.5 text-[11px] text-slate-600">
-                <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: d.color }} />
-                {d.name} <span className="font-semibold text-slate-800">{donutTotal > 0 ? r1((d.value / donutTotal) * 100) : 0}%</span>
-              </span>
-            ))}
-          </div>
+          }
+        >
+          {pieView === "calls" ? (
+            <>
+              <div className="relative">
+                <ResponsiveContainer width="100%" height={190}>
+                  <PieChart>
+                    <Pie data={donut} dataKey="value" nameKey="name" innerRadius={55} outerRadius={80} paddingAngle={2} stroke="none">
+                      {donut.map((d) => <Cell key={d.name} fill={d.color} />)}
+                    </Pie>
+                    <Tooltip {...TOOLTIP_PROPS} formatter={(v: number, n: string) => [`${int(v)} (${donutTotal > 0 ? r1((v / donutTotal) * 100) : 0}%)`, n]} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                  <p className="text-lg font-extrabold leading-tight text-slate-800">{int(donutTotal)}</p>
+                  <p className="text-[10px] font-medium text-slate-400">Total Calls</p>
+                </div>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+                {donut.map((d) => (
+                  <span key={d.name} className="inline-flex items-center gap-1.5 text-[11px] text-slate-600">
+                    <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: d.color }} />
+                    {d.name} <span className="font-semibold text-slate-800">{donutTotal > 0 ? r1((d.value / donutTotal) * 100) : 0}%</span>
+                  </span>
+                ))}
+              </div>
+            </>
+          ) : cur.monthlyTarget > 0 ? (
+            <>
+              <div className="relative">
+                <ResponsiveContainer width="100%" height={190}>
+                  <PieChart>
+                    <Pie data={targetDonut} dataKey="value" nameKey="name" innerRadius={55} outerRadius={80} paddingAngle={2} stroke="none" startAngle={90} endAngle={-270}>
+                      {targetDonut.map((d) => <Cell key={d.name} fill={d.color} />)}
+                    </Pie>
+                    <Tooltip {...TOOLTIP_PROPS} formatter={(v: number, n: string) => [formatINR(v), n]} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                  <p className="text-lg font-extrabold leading-tight text-slate-800">{cur.achPct}%</p>
+                  <p className="text-[10px] font-medium text-slate-400">of monthly target</p>
+                </div>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+                {targetDonut.map((d) => (
+                  <span key={d.name} className="inline-flex items-center gap-1.5 text-[11px] text-slate-600">
+                    <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: d.color }} />
+                    {d.name} <span className="font-semibold text-slate-800">{formatINR(d.value)}</span>
+                  </span>
+                ))}
+              </div>
+              <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                {([
+                  ["Monthly target", cur.monthlyTarget, cur.revenue, cur.achPct],
+                  ...(cur.mtdTarget > 0 ? [["MTD target", cur.mtdTarget, cur.mtdRevenue, cur.mtdPct] as const] : []),
+                ] as Array<readonly [string, number, number, number]>).map(([label, tgt, ach, p]) => {
+                  const tone = p >= 100 ? { bar: "bg-emerald-500", text: "text-emerald-600" } : p >= 60 ? { bar: "bg-amber-500", text: "text-amber-600" } : { bar: "bg-rose-500", text: "text-rose-600" };
+                  return (
+                    <div key={label}>
+                      <div className="mb-1 flex items-baseline justify-between gap-2 text-[11px]">
+                        <span className="font-semibold text-slate-600">{label} <span className="font-bold text-slate-800">{formatINR(tgt)}</span></span>
+                        <span className={`text-sm font-extrabold ${tone.text}`}>{p}%</span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${tone.bar}`} style={{ width: `${Math.min(100, Math.max(0, p))}%` }} /></div>
+                      <p className="mt-0.5 text-[10px] text-slate-400">Achieved {formatINR(ach)}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : <p className="rounded-lg bg-slate-50 px-3 py-10 text-center text-[11px] text-slate-400">No target set for this selection</p>}
         </SectionCard>
 
         <div className="lg:col-span-2">
@@ -938,6 +1010,16 @@ export function HousingOwnerDashboard() {
                     options={[{ key: "saleCount", label: "Sale Count" }, { key: "calls", label: "Total Calls" }, { key: "revenue", label: "Revenue" }]}
                   />
                 )}
+                {agentView === "table" && (
+                  <TableExcelIconButton
+                    fileBase="Housing_Owner_agent_wise"
+                    getSheets={() => [{
+                      name: "Agent-wise",
+                      columns: ["Agent", "TL", "AM", "Vintage", "Calls", "Connected", "Conn %", "Sales", "Revenue", "Target", "Ach %", "MTD Target", "MTD %", "Avg Talk"],
+                      rows: tableSort.sorted.map((r) => [r.agent, r.tl, r.am, r.vintage, r.m.calls, r.m.connected, `${r.m.connectedPct}%`, r.m.saleCount, Math.round(r.m.revenue), Math.round(r.m.monthlyTarget), r.m.monthlyTarget > 0 ? `${r.m.achPct}%` : "—", Math.round(r.m.mtdTarget), r.m.mtdTarget > 0 ? `${r.m.mtdPct}%` : "—", r.m.avgTalkSec > 0 ? fmtHms(r.m.avgTalkSec) : "—"]),
+                    }]}
+                  />
+                )}
                 <Seg value={agentView} onChange={(v) => setAgentView(v)} options={[{ key: "chart", label: "Top 10" }, { key: "table", label: "All agents" }]} />
               </div>
             }
@@ -982,6 +1064,7 @@ export function HousingOwnerDashboard() {
                         <SortTh label="Conn %" sortKey="connectedPct" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
                         <SortTh label="Sales" sortKey="saleCount" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
                         <SortTh label="Revenue" sortKey="revenue" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
+                        <SortTh label="Target" sortKey="target" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
                         <SortTh label="Ach %" sortKey="achPct" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="px-2 py-2 font-bold text-white" />
                         <SortTh label="Avg Talk" sortKey="talk" activeKey={tableSort.sortKey} dir={tableSort.sortDir} onSort={tableSort.toggleSort} className="rounded-r-lg px-2 py-2 font-bold text-white" />
                       </tr>
@@ -1001,11 +1084,12 @@ export function HousingOwnerDashboard() {
                           <td className="px-2 py-1.5 font-semibold text-sky-700">{r.m.connectedPct}%</td>
                           <td className="px-2 py-1.5 text-slate-700">{int(r.m.saleCount)}</td>
                           <td className="px-2 py-1.5 font-bold text-emerald-700">{formatINR(r.m.revenue)}</td>
+                          <td className="px-2 py-1.5 text-slate-600">{r.m.monthlyTarget > 0 ? formatINR(r.m.monthlyTarget) : "—"}</td>
                           <td className={`px-2 py-1.5 font-bold ${pctTone(r.m.achPct, r.m.monthlyTarget > 0)}`}>{r.m.monthlyTarget > 0 ? `${r.m.achPct}%` : "—"}</td>
                           <td className="px-2 py-1.5 text-slate-600">{r.m.avgTalkSec > 0 ? fmtHms(r.m.avgTalkSec) : "—"}</td>
                         </tr>
                       ))}
-                      {tableRows.length === 0 && <tr><td colSpan={10} className="py-6 text-center text-slate-400">No agents match.</td></tr>}
+                      {tableRows.length === 0 && <tr><td colSpan={11} className="py-6 text-center text-slate-400">No agents match.</td></tr>}
                     </tbody>
                   </table>
                 </div>
@@ -1027,6 +1111,60 @@ export function HousingOwnerDashboard() {
           )}
         </SectionCard>
       </div>
+
+      {activeOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label="Active agents">
+          <button type="button" aria-label="Close" onClick={() => setActiveOpen(false)} className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px]" />
+          <aside className="relative flex h-full w-full max-w-2xl flex-col overflow-hidden bg-white shadow-2xl">
+            <header className="flex items-start justify-between gap-3 bg-gradient-to-br from-orange-600 via-amber-600 to-orange-700 px-5 py-4 text-white">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-white/75">Housing Owner · Active agents</p>
+                <h3 className="text-lg font-bold">{activeAgents.length} active agents</h3>
+                <p className="mt-0.5 text-[11px] text-white/80">{formatShortDate(range.from)} to {formatShortDate(range.to)} · click an agent for their week-wise and date-wise details</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <TableExcelIconButton
+                  fileBase="Housing_Owner_active_agents"
+                  getSheets={() => [{
+                    name: "Active agents",
+                    columns: ["Agent", "TL", "AM", "Vintage", "Calls", "Connected", "Conn %", "Sales", "Revenue", "Target", "Ach %", "Avg Talk"],
+                    rows: activeAgents.map((a) => [a.agent, a.tl, a.am, a.vintage, a.m.calls, a.m.connected, `${a.m.connectedPct}%`, a.m.saleCount, Math.round(a.m.revenue), Math.round(a.m.monthlyTarget), a.m.monthlyTarget > 0 ? `${a.m.achPct}%` : "—", a.m.avgTalkSec > 0 ? fmtHms(a.m.avgTalkSec) : "—"]),
+                  }]}
+                />
+                <button type="button" onClick={() => setActiveOpen(false)} aria-label="Close" className="rounded-lg p-1.5 text-white/85 hover:bg-white/15"><X className="h-5 w-5" /></button>
+              </div>
+            </header>
+            <div className="flex-1 overflow-auto p-4">
+              <table className="w-full text-center text-xs">
+                <thead>
+                  <tr className="sticky top-0 z-10 bg-slate-800 text-[11px] font-bold uppercase tracking-wide text-white">
+                    {["Agent", "TL", "AM", "Vintage", "Calls", "Conn %", "Sales", "Revenue", "Target", "Ach %"].map((h, i) => <th key={h} className={`whitespace-nowrap px-2 py-2 font-bold text-white ${i === 0 ? "rounded-l-lg text-left" : ""} ${i === 9 ? "rounded-r-lg" : ""}`}>{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeAgents.map((a, i) => (
+                    <tr key={a.agent} role="button" tabIndex={0} onClick={() => { setActiveOpen(false); openEntity(a.agent, a.pred); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") { setActiveOpen(false); openEntity(a.agent, a.pred); } }}
+                      className={`cursor-pointer transition-colors hover:bg-orange-50 ${i % 2 === 1 ? "bg-slate-50/70" : "bg-white"}`}>
+                      <td className="whitespace-nowrap px-2 py-1.5 text-left font-semibold text-orange-700">{a.agent}</td>
+                      <td className="px-2 py-1.5 text-slate-500">{a.tl}</td>
+                      <td className="px-2 py-1.5 text-slate-500">{a.am}</td>
+                      <td className="px-2 py-1.5 text-slate-500">{a.vintage}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{int(a.m.calls)}</td>
+                      <td className="px-2 py-1.5 font-semibold text-sky-700">{a.m.calls > 0 ? `${a.m.connectedPct}%` : "—"}</td>
+                      <td className="px-2 py-1.5 text-slate-700">{int(a.m.saleCount)}</td>
+                      <td className="px-2 py-1.5 font-bold text-emerald-700">{formatINR(a.m.revenue)}</td>
+                      <td className="px-2 py-1.5 text-slate-600">{a.m.monthlyTarget > 0 ? formatINR(a.m.monthlyTarget) : "—"}</td>
+                      <td className={`px-2 py-1.5 font-bold ${pctTone(a.m.achPct, a.m.monthlyTarget > 0)}`}>{a.m.monthlyTarget > 0 ? `${a.m.achPct}%` : "—"}</td>
+                    </tr>
+                  ))}
+                  {activeAgents.length === 0 && <tr><td colSpan={10} className="py-8 text-center text-slate-400">None</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </aside>
+        </div>
+      )}
 
       {drawer && (
         <GncDetailDrawer

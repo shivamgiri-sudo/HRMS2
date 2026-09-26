@@ -487,7 +487,7 @@ export function HousingPremiumOutboundDashboard({
         <Panel title={`Overall Performance (${activeLabel})`} action={<ViewDetails onClick={() => setDrill({ kind: "matrix", title: `Overall Performance (${activeLabel})` })} />}>
           <div className="overflow-x-auto rounded-xl border border-slate-200">
             <table className="w-full text-center text-xs">
-              <thead><tr className="bg-slate-700 text-[11px] font-bold text-white"><th className="px-3 py-2 text-left">Metric</th><th className="px-3 py-2">{activeLabel}</th></tr></thead>
+              <thead><tr className="bg-slate-700 text-[11px] font-bold text-white"><th className="px-3 py-2 text-left text-white">Metric</th><th className="px-3 py-2 text-white">{activeLabel}</th></tr></thead>
               <tbody>
                 {METRICS.map((m, i) => (
                   <tr key={m.key} onClick={() => openMetric(m.key)} className={`cursor-pointer transition-colors hover:bg-indigo-50/60 ${i % 2 ? "bg-slate-50/70" : "bg-white"}`}>
@@ -508,10 +508,10 @@ export function HousingPremiumOutboundDashboard({
               <table className="w-full text-center text-xs">
                 <thead>
                   <tr className="bg-slate-700 text-[11px] font-bold text-white">
-                    <th className="px-3 py-2 text-left">Metric</th>
+                    <th className="px-3 py-2 text-left text-white">Metric</th>
                     {tlBlocks.map((t) => (
-                      <th key={t.tlName} className="px-3 py-2">
-                        <button type="button" onClick={() => setDrill({ kind: "tl", tlName: t.tlName })} className="font-bold underline-offset-2 hover:underline" title={`${t.tlName} — weeks, days and agents`}>{t.tlName}</button>
+                      <th key={t.tlName} className="px-3 py-2 text-white">
+                        <button type="button" onClick={() => setDrill({ kind: "tl", tlName: t.tlName })} className="font-bold text-white underline-offset-2 hover:underline" title={`${t.tlName} — weeks, days and agents`}>{t.tlName}</button>
                       </th>
                     ))}
                   </tr>
@@ -539,7 +539,7 @@ export function HousingPremiumOutboundDashboard({
             <table className="w-full text-center text-[11px]">
               <thead>
                 <tr className="bg-slate-700 font-bold text-white">
-                  {[tableGran === "week" || dayCols.length === 0 ? "Week" : "Day", "Connected Calls", "Not Connected", "Unique Connected", "Total Calls", "Connected %", "Sale Count", "Revenue (₹)", "Ach%", "AOV"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-2">{h}</th>)}
+                  {[tableGran === "week" || dayCols.length === 0 ? "Week" : "Day", "Connected Calls", "Not Connected", "Unique Connected", "Total Calls", "Connected %", "Sale Count", "Revenue (₹)", "Ach%", "AOV"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-2 text-white">{h}</th>)}
                 </tr>
               </thead>
               <tbody>

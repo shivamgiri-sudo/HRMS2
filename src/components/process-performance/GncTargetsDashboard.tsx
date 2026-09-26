@@ -366,7 +366,7 @@ export function GncTargetsDashboard() {
         footnote="A row applies from its month until a later row for the same LOB replaces it. Months before the first row have no target.">
         <div className="overflow-x-auto rounded-lg border border-slate-100">
           <table className="w-full text-center text-xs">
-            <thead><tr className="bg-slate-800 text-white">{["LOB", "Effective from", "Basis", "Per agent", "Agents", "Monthly target", "Updated by", "Updated at"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2 font-semibold">{h}</th>)}</tr></thead>
+            <thead><tr className="bg-slate-800 text-white">{["LOB", "Effective from", "Basis", "Per agent", "Agents", "Monthly target", "Updated by", "Updated at"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2 font-semibold text-white">{h}</th>)}</tr></thead>
             <tbody>
               {list.rows.map((r, i) => (
                 <tr key={r.id} onClick={() => setDrawer({ lob: r.lob, seed: r })} className={`cursor-pointer hover:bg-emerald-50 ${i % 2 ? "bg-slate-50/60" : "bg-white"}`}>
@@ -390,7 +390,7 @@ export function GncTargetsDashboard() {
         footnote="An agent's target is the per-agent target of the LOB they sold most in (Abandon Cart shows a target only when its agent count is set). Revenue is all their GNC sales in the month.">
         <div className="max-h-[420px] overflow-auto rounded-lg border border-slate-100">
           <table className="w-full text-center text-xs">
-            <thead><tr className="sticky top-0 bg-slate-800 text-white">{["Agent", "LOB", "TL", "Sale count", "Revenue", "Target", "Ach %"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2 font-semibold">{h}</th>)}</tr></thead>
+            <thead><tr className="sticky top-0 bg-slate-800 text-white">{["Agent", "LOB", "TL", "Sale count", "Revenue", "Target", "Ach %"].map((h) => <th key={h} className="whitespace-nowrap px-3 py-2 font-semibold text-white">{h}</th>)}</tr></thead>
             <tbody>
               {agents.map((a, i) => (
                 <tr key={a.empId + a.lob} onClick={() => setAgentDrawer(a.empId)} className={`cursor-pointer hover:bg-violet-50 ${i % 2 ? "bg-slate-50/60" : "bg-white"}`}>

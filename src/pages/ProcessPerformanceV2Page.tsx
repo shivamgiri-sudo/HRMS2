@@ -6,6 +6,8 @@ import { BellavitaSaleDashboard } from "@/components/process-performance/Bellavi
 import { GncSaleDashboard } from "@/components/process-performance/GncSaleDashboard";
 import { GncChatDashboard } from "@/components/process-performance/GncChatDashboard";
 import { GncTargetsDashboard } from "@/components/process-performance/GncTargetsDashboard";
+import { ProcessTargetsPage } from "@/components/process-performance/ProcessTargetsPage";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { GncAbandonCartDashboard } from "@/components/process-performance/GncAbandonCartDashboard";
 import { InboundInsightsDashboard, type InboundInsightProject } from "@/components/process-performance/InboundInsightsDashboard";
 import { NeemansCartDashboard } from "@/components/process-performance/NeemansCartDashboard";
@@ -96,7 +98,7 @@ const COMPANY_META: Record<CompanyKey, { icon: React.ComponentType<{ className?:
  * separate mapping. "stub" entries are the pre-existing "nothing built
  * yet" placeholders (Neemans' Sale/Allocation cards) -- unchanged.
  */
-const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" }>>> = {
+const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; label: string; description: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" }>>> = {
   bellavita: [
     { key: "sale_performance", label: "Overall Dashboard", description: "Turn over, RTO%, prepaid%, top performers — live from uploaded sale data", kind: "bellavita_sale" },
     { key: "chat_performance", label: "Chat Sale Performance", description: "Tickets, resolved%, repeat%, TL & agent-wise — live from uploaded chat data", kind: "bellavita_chat" },
@@ -105,9 +107,11 @@ const DASHBOARDS_BY_COMPANY: Partial<Record<CompanyKey, Array<{ key: string; lab
   ],
   housing_owner: [
     { key: "sale_performance", label: "Sale Performance", description: "Revenue vs target, AM/TL/agent-wise, call connect% — live from uploaded owner sale/CDR/roster data", kind: "housing_owner_sale" },
+    { key: "process_details", label: "Process Details", description: "Change the monthly target agent-wise, TL-wise and AM-wise — every Housing Owner dashboard uses it", kind: "housing_owner_targets" },
   ],
   housing_premium: [
     { key: "sale_performance", label: "Sale Performance", description: "Revenue vs target, TL/agent-wise, call connect% — live from uploaded Premium sale/CDR/roster data", kind: "housing_premium_sale" },
+    { key: "process_details", label: "Process Details", description: "Change the monthly target agent-wise, TL-wise and Center-wise — every Housing Premium dashboard uses it", kind: "housing_premium_targets" },
   ],
   lp_feedback: [
     { key: "call_performance", label: "Feedback Call Performance", description: "Login/calls/connectivity, lead-source, week-wise & agent-wise — live from uploaded APR/CDR data", kind: "lp_feedback" },
@@ -534,7 +538,7 @@ export default function ProcessPerformanceV2Page() {
   const [company, setCompany] = useState<CompanyKey | null>(null);
   const [section, setSection] = useState<SectionKey | null>(null);
   const [selectedUploader, setSelectedUploader] = useState<{ code: string; label: string } | null>(null);
-  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" } | null>(null);
+  const [selectedDashboard, setSelectedDashboard] = useState<{ key: string; label: string; kind: "inbound" | "stub" | "bellavita_sale" | "gnc_sale" | "gnc_chat" | "gnc_abandon_cart" | "gnc_targets" | "housing_owner_targets" | "housing_premium_targets" | "neemans_cart" | "neemans_chat" | "housing_owner_sale" | "housing_premium_sale" | "lp_feedback" | "lp_onboarding" | "satya_retail_dashboard" | "satya_retail_report" | "clovia_dashboard" | "birlanu_dashboard" | "neemans_performance" | "bellavita_chat" | "bellavita_cart" | "appreciate_wealth" | "dalmia_dashboard" } | null>(null);
   const [stats, setStats] = useState({ totalFilesUploaded: 0, activeUsers: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
 
@@ -567,7 +571,12 @@ export default function ProcessPerformanceV2Page() {
   const companyLabel = COMPANIES.find((c) => c.key === company)?.label ?? "";
   // Companies with exactly one dashboard tile (Housing Owner, Housing Premium, Clovia, ...)
   // skip the pointless one-tile grid: "Dashboards" opens the dashboard directly.
-  const dashboardsForCompany = company ? DASHBOARDS_BY_COMPANY[company] : undefined;
+  // Process Details (targets / add agent) is by explicit per-user grant only (page codes below, assigned in Access Control); everyone else
+  // does not see the card. The API enforces the same grant.
+  const workforce = useWorkforceAccess();
+  const PROCESS_DETAILS_CODE: Record<string, string> = { housing_owner_targets: "PP_HOUSING_OWNER_PROCESS_DETAILS", housing_premium_targets: "PP_HOUSING_PREMIUM_PROCESS_DETAILS" };
+  const dashboardAllowed = (kind: string): boolean => { const code = PROCESS_DETAILS_CODE[kind]; return !code || (workforce.isResolved && workforce.canViewPage(code)); };
+  const dashboardsForCompany = company ? DASHBOARDS_BY_COMPANY[company]?.filter((d) => dashboardAllowed(d.kind)) : undefined;
   const singleDashboard = dashboardsForCompany && dashboardsForCompany.length === 1 ? dashboardsForCompany[0] : null;
 
   const reset = () => { setCompany(null); setSection(null); setSelectedUploader(null); setSelectedDashboard(null); };
@@ -668,7 +677,7 @@ export default function ProcessPerformanceV2Page() {
           <div className="space-y-4">
             <Breadcrumb parts={[companyLabel, "Dashboards"]} onBack={backToCompany} />
             <BoxGrid>
-              {DASHBOARDS_BY_COMPANY[company]!.map((d) => (
+              {(dashboardsForCompany ?? []).map((d) => (
                 <Box
                   key={d.key}
                   icon={d.kind === "inbound" ? PhoneIncoming : d.kind === "bellavita_sale" || d.kind === "gnc_sale" || d.kind === "housing_owner_sale" || d.kind === "housing_premium_sale" || d.kind === "neemans_performance" ? TrendingUp : d.kind === "neemans_cart" || d.kind === "bellavita_cart" ? ShoppingCart : d.kind === "clovia_dashboard" ? LayoutGrid : d.kind === "lp_feedback" || d.kind === "lp_onboarding" || d.kind === "satya_retail_dashboard" || d.kind === "satya_retail_report" ? PhoneCall : d.kind === "bellavita_chat" || d.kind === "neemans_chat" || d.kind === "gnc_chat" ? MessageSquare : LayoutDashboard}
@@ -702,6 +711,10 @@ export default function ProcessPerformanceV2Page() {
               />
             ) : selectedDashboard.kind === "gnc_sale" ? (
               <GncSaleDashboard />
+            ) : selectedDashboard.kind === "housing_owner_targets" ? (
+              <ProcessTargetsPage api="/api/process-performance/housing-owner-targets" topLevel="am" topLabel="AM" title="Housing Owner — Process Details (Targets)" pageCode="PP_HOUSING_OWNER_PROCESS_DETAILS" />
+            ) : selectedDashboard.kind === "housing_premium_targets" ? (
+              <ProcessTargetsPage api="/api/process-performance/housing-premium-targets" topLevel="center" topLabel="Center" title="Housing Premium — Process Details (Targets)" pageCode="PP_HOUSING_PREMIUM_PROCESS_DETAILS" />
             ) : selectedDashboard.kind === "gnc_targets" ? (
               <GncTargetsDashboard />
             ) : selectedDashboard.kind === "gnc_abandon_cart" ? (

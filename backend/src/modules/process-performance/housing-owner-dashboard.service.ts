@@ -1,4 +1,5 @@
 import { db } from "../../db/mysql.js";
+import { applyOverridesToItems, loadManualAgentsForRange, dojForOwner, ownerBucket } from "./process-targets.service.js";
 
 export interface HousingOwnerHeadline {
   totalRevenue: number;
@@ -235,6 +236,13 @@ export async function getHousingOwnerDashboard(
       mtdReported: num(r.mtd),
     });
   }
+  for (const m of await loadManualAgentsForRange("housing_owner", to)) {
+    const name = normalizeName(m.name);
+    if (name && !roster.has(name)) roster.set(name, { empId: m.empId, name, tlName: m.tl, am: m.group, doj: dojForOwner(m.doj), tenureDays: null, bucket: ownerBucket(m.doj), status: m.status, target: m.monthlyTarget, mtdReported: 0 });
+  }
+  // Targets changed on the Process Details page (agent / TL / AM level) replace the uploaded ones here, so every
+  // figure below -- headline, TL/AM rows, agent rows, TQ/MQ/BQ -- uses the same effective targets.
+  await applyOverridesToItems("housing_owner", [...roster.values()], to, { name: (r) => r.name, tl: (r) => r.tlName, group: (r) => r.am, active: (r) => r.status === "Active", get: (r) => r.target, set: (r, v) => { r.target = v; } });
 
   // An agent's TL / AM comes from the roster when they are on it, otherwise from the
   // row itself -- the same precedence the agent table uses, so a TL / AM filter keeps
@@ -622,6 +630,11 @@ export async function getHousingOwnerEntityTrend(
       mtdReported: num(r.mtd),
     });
   }
+    for (const m of await loadManualAgentsForRange("housing_owner", to)) {
+    const name = normalizeName(m.name);
+    if (name && !roster.has(name)) roster.set(name, { empId: m.empId, name, tlName: m.tl, am: m.group, doj: dojForOwner(m.doj), tenureDays: null, bucket: ownerBucket(m.doj), status: m.status, target: m.monthlyTarget, mtdReported: 0 });
+  }
+  await applyOverridesToItems("housing_owner", [...roster.values()], to, { name: (r) => r.name, tl: (r) => r.tlName, group: (r) => r.am, active: (r) => r.status === "Active", get: (r) => r.target, set: (r, v) => { r.target = v; } });
 
   // Same roster-first precedence as getHousingOwnerDashboard's rowMatches: an
   // agent's TL/AM comes from the roster when they're on it, else from the row itself.
@@ -818,6 +831,15 @@ export async function getHousingOwnerOutbound(fromInput: string, toInput: string
     });
     vintageOf.set(name, vintage);
   }
+  for (const m of await loadManualAgentsForRange("housing_owner", to)) {
+    const name = normalizeName(m.name);
+    if (name && !roster.has(name)) {
+      const vintage = ownerBucket(m.doj) ?? "Unmapped";
+      roster.set(name, { name, empId: m.empId, tl: m.tl, am: m.group, vintage, status: m.status, monthlyTarget: m.monthlyTarget });
+      vintageOf.set(name, vintage);
+    }
+  }
+  await applyOverridesToItems("housing_owner", [...roster.values()], to, { name: (r) => r.name, tl: (r) => r.tl, group: (r) => r.am, active: (r) => r.status === "Active", get: (r) => r.monthlyTarget, set: (r, v) => { r.monthlyTarget = v; } });
   // Roster first, else the row's own TL / AM -- the precedence the existing endpoints use.
   // Uploaded rows carry placeholder values ("0", "-", "--") for a missing AM / TL.
   const label = (v: unknown) => {

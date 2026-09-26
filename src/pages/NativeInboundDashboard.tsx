@@ -253,10 +253,11 @@ export function ProjectDetailView({ projectKey, from, to }: { projectKey: string
     const qs = `startDate=${from}&endDate=${to}`;
     try {
       const [summRes, trendRes, hourlyRes, lobRes] = await Promise.all([
-        hrmsApi.get<{ data: ProjectSummary }>(`/api/inbound/project/${projectKey}?${qs}`),
-        hrmsApi.get<{ data: ProjectTrend[] }>(`/api/inbound/project/${projectKey}/trend?${qs}`),
-        hrmsApi.get<{ data: HourlyPoint[] }>(`/api/inbound/project/${projectKey}/hourly?${qs}`),
-        hrmsApi.get<{ data: LobRow[] }>(`/api/inbound/project/${projectKey}/lob?${qs}`),
+        // These query the remote dialer, which is slow on multi-month ranges; allow far longer than the default 30 s.
+        hrmsApi.get<{ data: ProjectSummary }>(`/api/inbound/project/${projectKey}?${qs}`, 120000),
+        hrmsApi.get<{ data: ProjectTrend[] }>(`/api/inbound/project/${projectKey}/trend?${qs}`, 120000),
+        hrmsApi.get<{ data: HourlyPoint[] }>(`/api/inbound/project/${projectKey}/hourly?${qs}`, 120000),
+        hrmsApi.get<{ data: LobRow[] }>(`/api/inbound/project/${projectKey}/lob?${qs}`, 120000),
       ]);
       setSummary(summRes.data);
       setTrend(trendRes.data ?? []);

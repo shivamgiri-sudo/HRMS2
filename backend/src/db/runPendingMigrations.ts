@@ -1056,6 +1056,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1782_tpz_access.sql", // Registered 2026-09-26. Creates mas_hrms.tpz_user_access + tpz_access_grant (per-user TPZ Process grants: which processes/branches a user may open, plus separate uploader and MIS switches). Additive: two new tables, no existing row touched; until rows exist nobody's access changes.
   "1870_gnc_lob_target.sql", // Registered 2026-09-25. Creates mas_hrms.gnc_lob_target (editable, effective-dated monthly revenue targets for GNC Inbound / Chat / Abandon Cart) and seeds the three business-supplied targets from 2026-09. CREATE TABLE IF NOT EXISTS + INSERT IGNORE, purely additive.
   "1871_bb_chat_template_new_table_columns.sql", // Registered 2026-09-26. Updates the single BB_CHAT_MASMIS upload_template_master row so the uploader's required/optional columns and downloadable template match db_masmis.new_bb_chat (Unique ID key + the 23 other sheet columns) instead of the old bb_chat ticket-export headers. UPDATE of one row; no DDL.
+  "1874_process_details_page_access.sql", // Registered 2026-09-26. Adds the two page_catalog codes (PP_HOUSING_OWNER_PROCESS_DETAILS / PP_HOUSING_PREMIUM_PROCESS_DETAILS) that gate the Process Details pages. No role grants -- access is by explicit per-user grant only. INSERT IGNORE, purely additive.
   ];
 
 export type MigrationHealth = {

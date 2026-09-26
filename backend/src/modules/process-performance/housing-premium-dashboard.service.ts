@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { withDeadlockRetry } from "../../shared/deadlockRetry.js";
+import { applyOverridesToItems, loadManualAgentsForRange, dojForPremium } from "./process-targets.service.js";
 
 /**
  * Housing Premium's full MIS dashboard -- a like-for-like rebuild of the
@@ -141,16 +142,29 @@ interface RosterAgent {
   empId: string; name: string; tlName: string; center: string; doj: string | null;
   status: string; target: number; uploadedAchievement: number; uploadedAchPct: string;
 }
-async function loadRoster(): Promise<RosterAgent[]> {
+async function loadRoster(refIso?: string): Promise<RosterAgent[]> {
   const [rows] = await readRows(
     `SELECT emp_id, agent_name, tl_name, center, doj, status, target, achievement, ach_pct FROM db_masmis.pre_agent_details`,
   );
-  return rows.map((r) => ({
+  const roster = rows.map((r) => ({
     empId: normalizeName(r.emp_id), name: normalizeName(r.agent_name), tlName: normalizeName(r.tl_name) || "Unassigned",
     center: normalizeName(r.center) || "Unknown", doj: r.doj ? String(r.doj) : null,
     status: normalizeName(r.status) || "Unknown", target: num(r.target),
     uploadedAchievement: num(r.achievement), uploadedAchPct: String(r.ach_pct ?? ""),
   })).filter((r) => r.name);
+  // Agents added on the Process Details page join the roster (an uploaded agent with the same name wins).
+  for (const m of await loadManualAgentsForRange("housing_premium", refIso ?? todayLocal())) {
+    const name = normalizeName(m.name);
+    if (name && !roster.some((r) => r.name === name)) {
+      roster.push({ empId: m.empId ?? "", name, tlName: m.tl, center: m.group, doj: dojForPremium(m.doj), status: m.status, target: m.monthlyTarget, uploadedAchievement: 0, uploadedAchPct: "" });
+    }
+  }
+  // Targets changed on the Process Details page (agent / TL / Center level) replace the uploaded ones, so every figure built
+  // from the roster below uses the same effective targets. The month is the range's end month (default: this month).
+  await applyOverridesToItems("housing_premium", roster, refIso ?? todayLocal(), {
+    name: (r) => r.name, tl: (r) => r.tlName, group: (r) => r.center, active: (r) => r.status === "Active", get: (r) => r.target, set: (r, v) => { r.target = v; },
+  });
+  return roster;
 }
 
 /* ================================ 1. OVERVIEW =============================== */
@@ -249,7 +263,7 @@ function rollUpOverview(
 export async function getHousingPremiumOverview(fromInput: string, toInput: string, agentInput?: string): Promise<HousingPremiumOverviewData> {
   const { from, to } = resolveRange(fromInput, toInput);
   const columns = buildOverviewColumns(from, to);
-  const roster = await loadRoster();
+  const roster = await loadRoster(to);
   const agent = agentInput && agentInput.trim() && agentInput.trim().toLowerCase() !== "overall" ? agentInput.trim() : null;
   if (agent) {
     // Agent scope: the same day/week/MTD columns for one agent, with that agent's own roster target (same convention getHousingPremiumDayWise uses). No per-TL blocks -- they would not describe one agent.
@@ -293,7 +307,7 @@ export interface HousingPremiumDayWiseData { from: string; to: string; agent: st
 export async function getHousingPremiumDayWise(fromInput: string, toInput: string, agentInput?: string): Promise<HousingPremiumDayWiseData> {
   const { from, to } = resolveRange(fromInput, toInput);
   const agent = agentInput && agentInput.trim() && agentInput.trim().toLowerCase() !== "overall" ? agentInput.trim() : null;
-  const roster = await loadRoster();
+  const roster = await loadRoster(to);
   const monthlyTarget = agent
     ? roster.find((r) => r.name.toLowerCase() === agent.toLowerCase())?.target ?? 0
     : roster.filter((r) => r.status === "Active").reduce((s, r) => s + r.target, 0);
@@ -346,7 +360,7 @@ export interface HousingPremiumAgentWiseData { from: string; to: string; agents:
 
 export async function getHousingPremiumAgentWise(fromInput: string, toInput: string): Promise<HousingPremiumAgentWiseData> {
   const { from, to } = resolveRange(fromInput, toInput);
-  const roster = await loadRoster();
+  const roster = await loadRoster(to);
   const rangeDays = daysInMonth(from.slice(0, 7));
   const daysSpan = Math.max(1, eachDay(from, to).length);
 
@@ -447,7 +461,7 @@ export async function getHousingPremiumTqMqBqAgents(monthInput: string): Promise
   const asOfDate = (latest?.d && String(latest.d) < today) ? String(latest.d) : (monthTo < today ? monthTo : today);
   const elapsedDays = Math.max(1, eachDay(monthFrom, asOfDate).length);
 
-  const roster = await loadRoster();
+  const roster = await loadRoster(`${month}-01`);
   const [saleRows] = await readRows(
     `SELECT agent_name AS a, SUM(amount) AS rev, COUNT(*) AS n FROM db_masmis.pre_sale WHERE report_date BETWEEN ? AND ? GROUP BY agent_name`,
     [monthFrom, monthTo],
@@ -513,7 +527,7 @@ export async function getHousingPremiumTqMqBqTl(monthInput: string): Promise<Hou
   const asOfDate = (latest?.d && String(latest.d) < today) ? String(latest.d) : (monthTo < today ? monthTo : today);
   const dayOfMonth = Number(asOfDate.slice(8, 10));
 
-  const roster = await loadRoster();
+  const roster = await loadRoster(`${month}-01`);
   const targetByTl = new Map<string, number>(); const countByTl = new Map<string, number>();
   // Target sums Active agents only, same convention as getHousingPremiumOverview's org-wide
   // Target -- countByTl stays a full roster headcount (an InActive agent is still on the team).
@@ -653,7 +667,7 @@ export async function getHousingPremiumAgentDetail(nameRaw: string, fromInput: s
   const { from, to } = resolveRange(fromInput, toInput);
   const today = todayLocal();
 
-  const roster = await loadRoster();
+  const roster = await loadRoster(to);
   const ro = roster.find((r) => r.name === name);
 
   const [saleDaily] = await readRows(
