@@ -241,7 +241,7 @@ export default function PayrollHeadSalaryReviewDetail() {
   }
 
   // A date before today / before joining needs a written reason (server: REASON_REQUIRED).
-  const needsBackdateReason = backdateNeedsReason(effectiveDate, journey?.employee?.date_of_joining);
+  const needsBackdateReason = backdateNeedsReason(effectiveDate, journey?.employee?.date_of_joining, loadedSalaryStartDate);
   const reasonBlocks = needsBackdateReason && backdateReason.trim().length < MIN_BACKDATE_REASON_LENGTH;
   const reasonPart = needsBackdateReason ? { reason: backdateReason.trim() } : {};
 
@@ -584,7 +584,7 @@ export default function PayrollHeadSalaryReviewDetail() {
                         const newDate = e.target.value;
                         if (!newDate || newDate === loadedSalaryStartDate) return;
                         // A backdated date needs its reason first; it is saved with the package below.
-                        if (!journey?.salary_assignment?.effective_from && backdateNeedsReason(newDate, journey?.employee?.date_of_joining) && backdateReason.trim().length < MIN_BACKDATE_REASON_LENGTH) {
+                        if (!journey?.salary_assignment?.effective_from && backdateNeedsReason(newDate, journey?.employee?.date_of_joining, loadedSalaryStartDate) && backdateReason.trim().length < MIN_BACKDATE_REASON_LENGTH) {
                           setNotice('Enter the reason for backdating - the date is saved together with the package.');
                           return;
                         }
@@ -601,7 +601,7 @@ export default function PayrollHeadSalaryReviewDetail() {
                           try {
                             await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/salary-start-date`, {
                               salary_start_date: newDate,
-                              ...(backdateNeedsReason(newDate, journey?.employee?.date_of_joining) ? { reason: backdateReason.trim() } : {}),
+                              ...(backdateNeedsReason(newDate, journey?.employee?.date_of_joining, loadedSalaryStartDate) ? { reason: backdateReason.trim() } : {}),
                             });
                             setLoadedSalaryStartDate(newDate);
                             setNotice('Salary start date updated.');
@@ -627,6 +627,7 @@ export default function PayrollHeadSalaryReviewDetail() {
               <BackdateReasonField
                 date={effectiveDate}
                 joiningDate={journey?.employee?.date_of_joining}
+                unchangedFrom={loadedSalaryStartDate}
                 value={backdateReason}
                 onChange={setBackdateReason}
               />

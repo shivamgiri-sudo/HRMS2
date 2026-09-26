@@ -9,6 +9,8 @@ interface BackdateReasonFieldProps {
   date: string;
   /** Date of joining (YYYY-MM-DD), when known. */
   joiningDate?: string | null;
+  /** The already-saved date; picking it again needs no reason. */
+  unchangedFrom?: string | null;
   value: string;
   onChange: (value: string) => void;
 }
@@ -21,10 +23,11 @@ interface BackdateReasonFieldProps {
 export function BackdateReasonField({
   date,
   joiningDate,
+  unchangedFrom,
   value,
   onChange,
 }: BackdateReasonFieldProps) {
-  if (!backdateNeedsReason(date, joiningDate)) return null;
+  if (!backdateNeedsReason(date, joiningDate, unchangedFrom)) return null;
   const tooShort = value.trim().length < MIN_BACKDATE_REASON_LENGTH;
   return (
     <div className="mt-2 max-w-sm">

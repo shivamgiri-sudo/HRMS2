@@ -19,10 +19,18 @@ export function useDateLockMin(): string | undefined {
  * A salary date before today or before the date of joining can only be picked by payroll_head /
  * super_admin (see useDateLockMin) and the server then requires a written reason (REASON_REQUIRED).
  * Both dates are YYYY-MM-DD; a missing joining date only leaves the before-today rule.
+ * `unchangedFrom` is the already-saved date; picking it again never needs a reason.
  */
-export function backdateNeedsReason(date: string, joiningDate?: string | null): boolean {
+export function backdateNeedsReason(
+  date: string,
+  joiningDate?: string | null,
+  unchangedFrom?: string | null,
+): boolean {
   const d = (date ?? '').slice(0, 10);
   if (!d) return false;
+  // Accepting the date Payroll HR already saved is not backdating by the approver (the server
+  // treats a re-used stored date the same way), even if it has since slipped into the past.
+  if (unchangedFrom && d === unchangedFrom.slice(0, 10)) return false;
   const doj = (joiningDate ?? '').slice(0, 10);
   return d < todayIst() || (!!doj && d < doj);
 }
