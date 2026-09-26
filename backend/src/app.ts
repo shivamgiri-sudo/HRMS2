@@ -144,6 +144,7 @@ import { rtaRouter } from "./modules/rta/rta.routes.js";
 import { accountControlRouter } from "./modules/account-control/account.control.routes.js";
 import { workforceMandateRouter } from "./modules/workforce-mandate/workforce.mandate.routes.js";
 import { manpowerRiskRouter } from "./modules/workforce-mandate/manpower-risk.routes.js";
+import { lmsCoachingRouter } from "./modules/lms/lms-coaching.routes.js";
 import { lmsRouter } from "./modules/lms/lms.routes.js";
 import { lmsIntegrationRouter } from "./modules/lms-integration/lms-integration.routes.js";
 import { benefitsRouter } from "./modules/benefits/benefits.routes.js";
@@ -783,6 +784,7 @@ app.use("/api/manpower-risk", manpowerRiskRouter);
 // Credential-guessing surface (verifies caller-supplied LMS admin password) - scoped limiter
 // ahead of the routers blanket requireAuth, same precedent as publicRegistrationLimiter above.
 app.use("/api/lms/admin-link", lmsAdminLinkLimiter);
+app.use("/api/lms", lmsCoachingRouter); // team coaching roll-up + per-employee coaching view (reads synced LMS data)
 app.use("/api/lms", lmsIntegrationRouter);
 app.use("/api/lms", lmsRouter);
 app.use("/api/benefits", benefitsRouter);
