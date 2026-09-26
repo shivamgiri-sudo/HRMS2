@@ -8,7 +8,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * type is selectable in the Hub but 501s (or is open to the wrong roles) at import time.
  */
 
-const read = (rel: string) => readFileSync(path.resolve(__dirname, rel), "utf8");
+const read = (rel: string) =>
+  readFileSync(path.resolve(__dirname, rel), "utf8");
 const ROUTES = read("../bulk-upload.routes.ts");
 const DISPATCH = read("../bulk-dispatch.ts");
 const HUB = read("../../../../../src/pages/BulkUploadHub.tsx");
@@ -27,35 +28,72 @@ describe("Employee LOB Mapping uploader registry", () => {
     expect(ROUTES).toContain('"import_employee_lob_batch"');
     expect(DISPATCH).toContain('rpc_name === "import_employee_lob_batch"');
     expect(HUB).toContain('EMPLOYEE_LOB_MAPPING: "import_employee_lob_batch"');
-    expect(MANIFEST).toContain('"1854_employee_lob_mapping_upload_template.sql"');
+    expect(MANIFEST).toContain(
+      '"1854_employee_lob_mapping_upload_template.sql"',
+    );
   });
 
   it("the route runs the role gate before queueing the import", () => {
-    expect(ROUTES).toContain("await assertEmployeeLobUploader(rpc_name, req.authUser!.id);");
+    expect(ROUTES).toContain(
+      "await assertEmployeeLobUploader(rpc_name, req.authUser!.id);",
+    );
   });
 
   it("the template migration registers the two required columns only", () => {
-    const sql = read("../../../../sql/1854_employee_lob_mapping_upload_template.sql");
+    const sql = read(
+      "../../../../sql/1854_employee_lob_mapping_upload_template.sql",
+    );
     expect(sql).toContain("'EMPLOYEE_LOB_MAPPING'");
     expect(sql).toContain("JSON_ARRAY('employee_code', 'lob_code')");
     expect(sql).not.toMatch(/^\s*(DELETE|DROP|TRUNCATE|UPDATE)\b/im);
   });
 });
 
+describe("Employee Process / Cost Centre / LOB template (1897)", () => {
+  const sql = read("../../../../sql/1897_employee_org_mapping_upload_template.sql");
+
+  it("is in the migration manifest", () => {
+    expect(MANIFEST).toContain('"1897_employee_org_mapping_upload_template.sql"');
+  });
+
+  it("requires exactly the four columns and only updates the existing template row", () => {
+    expect(sql).toContain(
+      "JSON_ARRAY('employee_code', 'cost_centre_code', 'process_code', 'lob_code')",
+    );
+    expect(sql).toContain("WHERE upload_type_code = 'EMPLOYEE_LOB_MAPPING'");
+    expect(sql).not.toMatch(/^\s*(DELETE|DROP|TRUNCATE|ALTER|INSERT)/im);
+  });
+});
+
 describe("assertEmployeeLobUploader", () => {
   it("does nothing for other upload types", async () => {
-    await expect(assertEmployeeLobUploader("import_lob_upload_batch", "u1")).resolves.toBeUndefined();
+    await expect(
+      assertEmployeeLobUploader("import_lob_upload_batch", "u1"),
+    ).resolves.toBeUndefined();
     expect(hasAnyRole).not.toHaveBeenCalled();
   });
 
   it("allows a WFM-LOB role", async () => {
     hasAnyRole.mockResolvedValue(true);
-    await expect(assertEmployeeLobUploader("import_employee_lob_batch", "u1")).resolves.toBeUndefined();
-    expect(hasAnyRole).toHaveBeenCalledWith("u1", "wfm", "wfm_spoc", "branch_wfm", "ho_wfm", "admin", "hr", "super_admin");
+    await expect(
+      assertEmployeeLobUploader("import_employee_lob_batch", "u1"),
+    ).resolves.toBeUndefined();
+    expect(hasAnyRole).toHaveBeenCalledWith(
+      "u1",
+      "wfm",
+      "wfm_spoc",
+      "branch_wfm",
+      "ho_wfm",
+      "admin",
+      "hr",
+      "super_admin",
+    );
   });
 
   it("refuses other bulk-upload roles (e.g. payroll) with 403", async () => {
     hasAnyRole.mockResolvedValue(false);
-    await expect(assertEmployeeLobUploader("import_employee_lob_batch", "u1")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(
+      assertEmployeeLobUploader("import_employee_lob_batch", "u1"),
+    ).rejects.toMatchObject({ statusCode: 403 });
   });
 });
