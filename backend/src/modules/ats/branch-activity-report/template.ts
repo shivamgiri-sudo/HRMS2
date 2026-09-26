@@ -216,6 +216,11 @@ const METRIC_LINES: MetricLine[] = [
     get: (s) =>
       `${n(s.formsSubmitted)}${s.formsFromEarlier ? ` (${n(s.formsFromEarlier)} old)` : ""}`,
   },
+  {
+    label: "No interview feedback submitted (no form filed, excl. no-show / walk-out)",
+    get: (s) => n(s.noFeedback),
+    tone: (s) => (s.noFeedback > 0 ? C.red : C.green),
+  },
   { label: "Interviewed", get: (s) => n(s.interviewed) },
   {
     label: "Selected",

@@ -471,3 +471,18 @@ describe("report insights", () => {
     expect(i.recruiterQuality[0].instantClosures).toBe(1);
   });
 });
+
+describe("no interview feedback count", () => {
+  it("counts tokens with no interview form, but not no-shows or walk-outs", () => {
+    const facts = [
+      fact({ token_id: "1", candidate_id: "a", decision_text: "Selected", sub_id: "s", queue_status: "completed" }),
+      fact({ token_id: "2", candidate_id: "b", decision_text: "Waiting", queue_status: "completed" }),
+      fact({ token_id: "3", candidate_id: "c", decision_text: "Waiting", queue_status: "waiting" }),
+      fact({ token_id: "4", candidate_id: "d", decision_text: "No Show", queue_status: "no_show" }),
+      fact({ token_id: "5", candidate_id: "e", decision_text: "Walkout", queue_status: "walked_out" }),
+    ];
+    const s = summarize(facts);
+    expect(s.noShow).toBe(1);
+    expect(s.noFeedback).toBe(2);
+  });
+});
