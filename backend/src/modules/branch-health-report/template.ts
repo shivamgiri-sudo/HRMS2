@@ -725,7 +725,7 @@ export function renderEmail(
   };
   const hcProcessRows = [
     ...hc.byProcess.map((r) => [
-      r.process,
+      r.mandateSource === "db_bill" ? `${r.process} *` : r.process,
       r.mandateSeats == null ? "—" : String(r.mandateSeats),
       {
         raw: mandateGapCell(
@@ -816,7 +816,7 @@ export function renderEmail(
       true,
     ) +
     note(
-      "Mandate seats = the process's mandated headcount at this branch (workforce mandate in force today). Active vs mandate = active headcount minus mandate; negative = short of the mandate. The total covers only processes that have a mandate.",
+      "Mandate seats = the process's mandated headcount at this branch (workforce mandate in force today; a * marks a mandate taken from the latest db_bill mandate-seat history because the process has no HRMS mandate). Active vs mandate = active headcount minus mandate; negative = short of the mandate. The total covers only processes that have a mandate.",
     ) +
     namesLine("Joined today:", hc.joinedNames, C.success) +
     namesLine("Left today:", hc.leftNames, C.warn) +
