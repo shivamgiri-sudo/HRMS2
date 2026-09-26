@@ -47,6 +47,7 @@ import {
 } from "./reconciliation.executor.js";
 
 // ─── Attendance ──────────────────────────────────────────────────────────────
+import { attendanceSourceSheet } from "./attendance-source-sheet.executor.js";
 import {
   attendanceDaily,
   dailyHcShift,
@@ -263,6 +264,7 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
 
   // Attendance
   "attendance-daily":          attendanceDaily,
+  "attendance-source-sheet":   attendanceSourceSheet,
   "daily-hc-shift":            dailyHcShift,
   "shift-adherence-detail":    shiftAdherenceDetail,
   "attendance-summary":        attendanceSummary,

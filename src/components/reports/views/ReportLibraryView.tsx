@@ -283,6 +283,7 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "shift-adherence-detail": [...dateFilters, ...branchProcess],
     "attendance-summary": [...monthFilter, ...branchProcess],
     "attendance-register-monthly": [...monthFilter, ...branchProcess],
+    "attendance-source-sheet": [...monthFilter, ...branchProcess],
     "attendance-register-grid": [...monthFilter, ...branchProcess],
     "late-arrival-summary": [...monthFilter, ...branchProcess],
     "overtime-summary": [...monthFilter, ...branchProcess],
