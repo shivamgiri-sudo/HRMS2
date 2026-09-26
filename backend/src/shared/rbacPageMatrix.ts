@@ -207,6 +207,9 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "TEAM_KPI_SCORECARD",
   ],
   wfm: [
+    // Business Command Center (migration 1900): WFM sets Required HC (mandate seats) for processes
+    // in their own branch; the POST /workforce-mandates endpoint enforces that scope.
+    "BUSINESS_COMMAND_CENTER",
     // Team Roster (migration 1860): the door only; every endpoint scopes to the reporting tree / WFM scope.
     "WFM_TEAM_ROSTER",
     "BULK_UPLOAD_APPROVALS",
@@ -780,6 +783,7 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "SALARY_CERTIFICATE",
   ],
   branch_wfm: [
+    "BUSINESS_COMMAND_CENTER",
     "WFM_TEAM_ROSTER",
     "WFM_PROCESS_LOB_MAP",
     "WFM_ROSTER_OFFDAY_POLICY",

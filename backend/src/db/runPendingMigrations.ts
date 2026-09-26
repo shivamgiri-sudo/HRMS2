@@ -1175,6 +1175,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1897_employee_org_mapping_upload_template.sql", // Registered 2026-09-26. Turns the EMPLOYEE_LOB_MAPPING upload template into the single Employee Process / Cost Centre / LOB Mapping upload (employee_code, cost_centre_code, process_code, lob_code). Updates that one template row only; no batch of this type existed. Idempotent.
   "1898_tpz_access.sql", // Registered 2026-09-26 (ported from tausif-mis, renumbered from 1782). Creates mas_hrms.tpz_user_access + tpz_access_grant (per-user TPZ Process grants: which processes/branches a user may open). Additive, idempotent.
   "1899_gnc_lob_target.sql", // Registered 2026-09-26 (ported from tausif-mis, renumbered from 1870). Creates gnc_lob_target (effective-dated GNC LOB monthly revenue targets) + seeds the business-supplied targets with INSERT IGNORE. Additive, idempotent.
+  "1900_wfm_business_command_access.sql", // Registered 2026-09-26. Grants wfm + branch_wfm can_view on BUSINESS_COMMAND_CENTER so WFM can set Required HC (mandate seats) for processes in their own branch; the API enforces branch scope. Additive, replay-safe.
 ];
 
 export type MigrationHealth = {
