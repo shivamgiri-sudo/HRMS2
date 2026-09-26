@@ -925,6 +925,7 @@ export async function fetchHeadcountMovement(
   const lastDay = `COALESCE(e.date_of_leaving, e.date_of_exit, er.lwd)`;
   const leaverBase = `FROM employees e
        LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
        LEFT JOIN (SELECT employee_id,
                          MAX(COALESCE(last_working_day_confirmed, last_working_day_proposed)) AS lwd
                     FROM exit_request
@@ -932,24 +933,26 @@ export async function fetchHeadcountMovement(
                    GROUP BY employee_id) er ON er.employee_id = e.id
       WHERE e.branch_id = ?`;
   const [activeRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(pm.process_name, 'Unassigned') AS process, COUNT(*) AS cnt
+    `SELECT COALESCE(pm.process_name, NULLIF(TRIM(ccm.cost_centre_name), ''), 'Unassigned') AS process, COUNT(*) AS cnt
        FROM employees e LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
       WHERE e.branch_id = ? AND e.active_status = 1
       GROUP BY process`,
     [branchId],
   );
   const [joinRows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(NULLIF(TRIM(e.full_name), ''), e.first_name) AS name,
-            COALESCE(pm.process_name, 'Unassigned')               AS process,
+            COALESCE(pm.process_name, NULLIF(TRIM(ccm.cost_centre_name), ''), 'Unassigned')               AS process,
             e.date_of_joining = ?                                 AS is_today
        FROM employees e LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
       WHERE e.branch_id = ? AND e.date_of_joining BETWEEN ? AND ?`,
     [today, branchId, monthStart, today],
   );
   const [leaveRows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT e.id,
             COALESCE(NULLIF(TRIM(e.full_name), ''), e.first_name) AS name,
-            COALESCE(pm.process_name, 'Unassigned')               AS process,
+            COALESCE(pm.process_name, NULLIF(TRIM(ccm.cost_centre_name), ''), 'Unassigned')               AS process,
             ${lastDay} = ?                                         AS is_today
        ${leaverBase}
         AND e.active_status = 0
