@@ -85,9 +85,16 @@ export function extractDobFromText(text: string): string | null {
       (m) => `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`],
   ];
 
+  // A date printed next to "issued", "generated", "downloaded" etc. is a document date, never a
+  // birth date (an Aadhaar back page reads "Aadhaar no. issued: 19/11/2011").
+  const DOCUMENT_DATE_LABEL = /(issued?|issue date|date of issue|generated|downloaded|printed|valid(ity)?|dated?)\W{0,12}$/i;
+  const isDocumentDate = (m: RegExpMatchArray) =>
+    DOCUMENT_DATE_LABEL.test(text.slice(Math.max(0, (m.index ?? 0) - 30), m.index ?? 0));
+
   for (const [re, build] of patterns) {
     const m = text.match(re);
     if (!m) continue;
+    if (isDocumentDate(m)) continue;
     const iso = build(m);
     const d = new Date(`${iso}T12:00:00+05:30`);
     if (Number.isNaN(d.getTime())) continue;
