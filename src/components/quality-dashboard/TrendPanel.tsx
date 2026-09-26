@@ -1,5 +1,7 @@
 import React from 'react';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+// CartesianGrid intentionally not imported — clean plain background, no gridlines.
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { qualityScoreBarClass, qualityScoreTextClass, qualityScoreTone } from '@/lib/qualityScoreFormatting';
 
 interface WeeklyData {
   day: string;
@@ -102,7 +104,6 @@ export const TrendPanel: React.FC<TrendPanelProps> = ({
             <div style={{ maxHeight: '350px', width: '100%' }}>
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={lineChartData} margin={{ top: 5, right: 30, left: 0, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis dataKey="day" />
                   <YAxis domain={[0, 100]} label={{ value: 'Score (%)', angle: -90, position: 'insideLeft' }} />
                   <Tooltip formatter={(value) => `${Number(value).toFixed(1)}%`} />
@@ -122,13 +123,7 @@ export const TrendPanel: React.FC<TrendPanelProps> = ({
                       <div className="w-24">
                         <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
                           <div
-                            className={`h-full rounded-full ${
-                              day.avg >= 80
-                                ? 'bg-green-500'
-                                : day.avg >= 70
-                                ? 'bg-yellow-500'
-                                : 'bg-red-500'
-                            }`}
+                            className={`h-full rounded-full ${qualityScoreBarClass(day.avg)}`}
                             style={{ width: `${day.avg}%` }}
                           ></div>
                         </div>
@@ -172,7 +167,6 @@ export const TrendPanel: React.FC<TrendPanelProps> = ({
             <div style={{ maxHeight: '350px', width: '100%' }}>
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={barChartData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                   <XAxis dataKey="label" />
                   <YAxis domain={[0, 100]} label={{ value: 'Score (%)', angle: -90, position: 'insideLeft' }} />
                   <Tooltip formatter={(value) => `${Number(value).toFixed(1)}%`} />
@@ -200,16 +194,8 @@ export const TrendPanel: React.FC<TrendPanelProps> = ({
                   </li>
                   <li className="flex justify-between pt-2 border-t border-gray-200">
                     <span className="text-gray-700 font-medium">Current Status</span>
-                    <span
-                      className={`font-bold ${
-                        cq_7day_avg >= 80
-                          ? 'text-green-600'
-                          : cq_7day_avg >= 70
-                          ? 'text-yellow-600'
-                          : 'text-red-600'
-                      }`}
-                    >
-                      {cq_7day_avg >= 80 ? 'On Track' : cq_7day_avg >= 70 ? 'Below Target' : 'Risk'}
+                    <span className={`font-bold ${qualityScoreTextClass(cq_7day_avg)}`}>
+                      {qualityScoreTone(cq_7day_avg) === "good" ? 'On Track' : qualityScoreTone(cq_7day_avg) === "bad" ? 'Risk' : 'Below Target'}
                     </span>
                   </li>
                 </ul>

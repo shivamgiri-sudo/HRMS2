@@ -1,7 +1,11 @@
 import React from 'react';
-import { BarChart, Bar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+// CartesianGrid intentionally not imported — clean plain background, no gridlines.
+// PolarGrid (radar chart) is left as-is: it is the chart's own axis structure,
+// not an Excel-style gridline overlay.
+import { BarChart, Bar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { X, Play, Volume2 } from 'lucide-react';
 import { formatISTDate,formatISTTime } from "@/lib/utils";
+import { qualityScoreHex, qualityScoreCellClass } from "@/lib/qualityScoreFormatting";
 
 interface SubScores {
   opening: number;
@@ -47,7 +51,8 @@ export const CallDetailModal: React.FC<CallDetailModalProps> = ({
   if (!isOpen || !call) return null;
 
   const MiniGauge = ({ title, value }: { title: string; value: number }) => {
-    const gaugeColor = value >= 70 ? '#10b981' : value >= 50 ? '#f59e0b' : '#ef4444';
+    // Conditional formatting matches the shared bands in qualityScoreFormatting.ts.
+    const gaugeColor = qualityScoreHex(value);
     const radius = 55;
     const circumference = 2 * Math.PI * radius;
     const strokeDashoffset = circumference - (Math.min(value / 100, 1) * circumference);
@@ -86,11 +91,11 @@ export const CallDetailModal: React.FC<CallDetailModalProps> = ({
     );
   };
 
+  // Conditional formatting matches the shared bands in qualityScoreFormatting.ts;
+  // a fatal call always renders red regardless of the numeric score.
   const getStatusColor = (hasFatal: boolean, cq: number) => {
     if (hasFatal) return 'text-red-600 bg-red-50';
-    if (cq >= 80) return 'text-green-600 bg-green-50';
-    if (cq >= 70) return 'text-yellow-600 bg-yellow-50';
-    return 'text-orange-600 bg-orange-50';
+    return qualityScoreCellClass(cq);
   };
 
   const comparisonChartData = [
@@ -234,7 +239,6 @@ export const CallDetailModal: React.FC<CallDetailModalProps> = ({
                   <div style={{ maxHeight: '300px', width: '100%' }}>
                     <ResponsiveContainer width="100%" height={280}>
                       <BarChart data={comparisonChartData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                         <XAxis dataKey="label" />
                         <YAxis domain={[0, 100]} />
                         <Tooltip formatter={(value) => `${value}%`} />

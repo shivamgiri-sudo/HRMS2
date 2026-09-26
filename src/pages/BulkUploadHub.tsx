@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge";
 import { AprBulkUpload } from "@/components/attendance/AprBulkUpload";
+import { OnfidoUtilizationBulkUpload } from "@/components/quality-dashboard/OnfidoUtilizationBulkUpload";
 import {
   ProductivityUpload,
   canUseProductivityTab,
@@ -568,7 +569,7 @@ function csvHealthHasBlockingError(health: CsvHealth | null) {
   );
 }
 
-type HubTab = "master" | "apr" | "productivity";
+type HubTab = "master" | "apr" | "productivity" | "onfido_utilization";
 
 export default function BulkUploadHub() {
   const { user } = useAuth();
@@ -588,6 +589,11 @@ export default function BulkUploadHub() {
   // role query refetches), and a tab left active would then render a panel they may not see.
   const effectiveTab: HubTab =
     activeTab === "productivity" && !canUploadProductivity ? "master" : activeTab;
+
+  // No section-level grant of its own (like "apr") — anyone who reached this page's own
+  // roles gate (admin/hr/super_admin/wfm/payroll/payroll_hr) can see this tab, matching the
+  // backend route's own requireRole list (wfm, hr, operations_manager, process_manager,
+  // super_admin, admin).
 
   const [templates, setTemplates] = useState<UploadTemplate[]>([]);
   const [batches, setBatches] = useState<UploadBatch[]>([]);
@@ -1018,6 +1024,18 @@ export default function BulkUploadHub() {
                   WFM Productivity Upload
                 </button>
               )}
+              <button
+                type="button"
+                onClick={() => setActiveTab("onfido_utilization")}
+                aria-pressed={effectiveTab === "onfido_utilization"}
+                className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                  effectiveTab === "onfido_utilization"
+                    ? "bg-white text-slate-950 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                Onfido Utilization
+              </button>
             </div>
           </section>
 
@@ -1030,6 +1048,12 @@ export default function BulkUploadHub() {
           {canUploadProductivity && effectiveTab === "productivity" && (
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <ProductivityUpload />
+            </section>
+          )}
+
+          {effectiveTab === "onfido_utilization" && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <OnfidoUtilizationBulkUpload />
             </section>
           )}
 
