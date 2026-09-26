@@ -146,10 +146,10 @@ router.get("/users", requireRole("admin", "hr", "super_admin"), h(async (req: Au
 
   const blockFilter = includeBlocked ? "" : "AND au.is_blocked = 0 AND (au.locked_until IS NULL OR au.locked_until < NOW())";
   const searchFilter = search
-    ? `AND (au.email LIKE ? OR e.full_name LIKE ? OR e.employee_code LIKE ?)`
+    ? `AND (au.email LIKE ? OR e.official_email LIKE ? OR e.full_name LIKE ? OR e.employee_code LIKE ?)`
     : "";
   // Arm 1 params: auth_user search (email, full_name, employee_code)
-  const arm1Params: unknown[] = search ? [like, like, like] : [];
+  const arm1Params: unknown[] = search ? [like, like, like, like] : [];
   // Arm 2: active employees with no auth account — only included when there is a search term
   const arm2SearchFilter = search ? `AND (e.full_name LIKE ? OR e.employee_code LIKE ?)` : "";
   const arm2Params: unknown[] = search ? [like, like] : [];
@@ -157,7 +157,7 @@ router.get("/users", requireRole("admin", "hr", "super_admin"), h(async (req: Au
   const unionSql = `
     SELECT
        au.id,
-       au.email,
+       COALESCE(NULLIF(TRIM(e.official_email), ''), au.email) AS email,
        au.is_blocked,
        au.locked_until,
        au.failed_login_attempts,
@@ -173,7 +173,7 @@ router.get("/users", requireRole("admin", "hr", "super_admin"), h(async (req: Au
      LEFT JOIN user_roles ur ON ur.user_id = au.id AND ur.active_status = 1
      WHERE 1=1 ${blockFilter} ${searchFilter}
      GROUP BY au.id, au.email, au.is_blocked, au.locked_until, au.failed_login_attempts,
-              au.last_login_at, e.id, e.full_name, e.employee_code, e.employment_status
+              au.last_login_at, e.id, e.full_name, e.official_email, e.employee_code, e.employment_status
      ${search ? `UNION ALL
      SELECT
        NULL AS id,

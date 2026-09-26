@@ -418,6 +418,7 @@ async function refreshDuplicateMatches(connection: PoolConnection, grn: any) {
         WHERE id <> ? AND vendor_id = ?
           AND UPPER(REPLACE(COALESCE(invoice_number,''), ' ', '')) = ?
           AND status NOT IN ('rejected','cancelled')
+          AND bill_source_id IS NULL
         LIMIT 20`,
       [grn.id, grn.vendor_id, invoiceNumber]
     );
@@ -444,6 +445,7 @@ async function refreshDuplicateMatches(connection: PoolConnection, grn: any) {
        JOIN grn_document d ON d.sha256 = current_doc.sha256 AND d.id <> current_doc.id
        JOIN grn_request g ON g.id = d.grn_request_id
       WHERE current_doc.grn_request_id = ? AND d.grn_request_id <> ?
+        AND g.bill_source_id IS NULL
       LIMIT 20`,
     [grn.id, grn.id]
   );
@@ -464,6 +466,7 @@ async function refreshDuplicateMatches(connection: PoolConnection, grn: any) {
         WHERE id <> ? AND vendor_id = ? AND bill_date = ?
           AND ABS(COALESCE(amount_with_tax, amount, 0) - ?) <= 1
           AND status NOT IN ('rejected','cancelled')
+          AND bill_source_id IS NULL
         LIMIT 20`,
       [grn.id, grn.vendor_id, grn.bill_date, Number(grn.amount_with_tax || grn.amount)]
     );

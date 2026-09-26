@@ -797,7 +797,7 @@ export function BudgetLinkedGrnForm({
         // (`row.included && ...`) treats undefined as excluded — so whenever the re-seed effect
         // did not happen to run after this prefill, editing a saved GRN dropped every
         // cost-centre allocation on save. The re-seed effect's own default is
-        // `existing?.included ?? hasBudgetLine`, which preserves whatever is set here.
+        // `existing?.included ?? false`, which preserves whatever is set here.
         [...ccMap.entries()].map(([ccKey, data]) => ({
           key: crypto.randomUUID(),
           costCentreKey: ccKey,
@@ -1164,16 +1164,10 @@ export function BudgetLinkedGrnForm({
   useEffect(() => {
     setCostCentreSplits((current) => {
       if (!vendorCostCentreGroups.length) return current.length ? [] : current;
-      // Only count cost centres WITH budget lines for the equal split
-      const groupsWithBudgetLines = vendorCostCentreGroups.filter((g) => g.lines.length > 0);
-      const equalPct = groupsWithBudgetLines.length > 0
-        ? Math.round((100 / groupsWithBudgetLines.length) * 1_000_000) / 1_000_000
-        : 0;
       return vendorCostCentreGroups.map((group) => {
         const existing = current.find((row) => row.costCentreKey === group.costCentreKey);
         // For branch-common expenses, lines may not have a specific budget line ID per CC
         const firstLineId = group.lines[0]?.id ?? "";
-        const hasBudgetLine = group.lines.length > 0;
         // Only preserve an existing selection when the group still has budget lines AND the
         // previously chosen line is still among them. When lines.length === 0 the old ID is stale
         // (the line was depleted or the head/subhead no longer matches) and must be cleared.
@@ -1182,9 +1176,9 @@ export function BudgetLinkedGrnForm({
           key: existing?.key ?? crypto.randomUUID(),
           costCentreKey: group.costCentreKey,
           budgetLineId: stillValid ? existing!.budgetLineId : firstLineId,
-          percentage: existing?.percentage ?? (hasBudgetLine ? equalPct : 0),
-          // Auto-exclude cost centres without budget lines; preserve user choice for existing rows
-          included: existing?.included ?? hasBudgetLine,
+          // No cost centre is pre-selected: the raiser must tick each one themselves.
+          percentage: existing?.percentage ?? 0,
+          included: existing?.included ?? false,
         };
       });
     });
@@ -1213,7 +1207,20 @@ export function BudgetLinkedGrnForm({
   }, [invoiceComponents, form.amount]);
 
   function updateCostCentreSplit(key: string, patch: Partial<CostCentreSplitDraft>) {
-    setCostCentreSplits((current) => current.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+    setCostCentreSplits((current) => {
+      const next = current.map((row) => (row.key === key ? { ...row, ...patch } : row));
+      if (patch.included === undefined) return next;
+      // Ticking/unticking keeps an untouched (all-equal or all-zero) split at equal shares of the
+      // ticked rows; a split the raiser has already hand-edited is left exactly as they set it.
+      const previouslyIncluded = current.filter((row) => row.included);
+      const untouched = previouslyIncluded.every((row) => row.percentage === previouslyIncluded[0].percentage);
+      if (!untouched) return next;
+      const includedNow = next.filter((row) => row.included);
+      const equalPct = includedNow.length
+        ? Math.round((100 / includedNow.length) * 1_000_000) / 1_000_000
+        : 0;
+      return next.map((row) => ({ ...row, percentage: row.included ? equalPct : 0 }));
+    });
   }
 
   /** Resets every INCLUDED row to an equal percentage share — the common case, and a one-click

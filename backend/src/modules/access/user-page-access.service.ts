@@ -46,7 +46,7 @@ export async function listPageCatalog(includeDisabled = false): Promise<PageCata
  */
 export async function listUsersForAccess(): Promise<Array<{ id: string; email: string; employee_code: string | null; full_name: string | null }>> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT u.id, u.email,
+    `SELECT u.id, COALESCE(NULLIF(TRIM(e.official_email), ''), u.email) AS email,
             e.employee_code,
             TRIM(CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,''))) AS full_name
        FROM auth_user u

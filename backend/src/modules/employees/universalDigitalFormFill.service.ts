@@ -1003,22 +1003,14 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
 
   const attendanceSource = await resolveAttendanceSource(employee);
 
-  // The gross monthly salary (salary_package_master.gross) is what the
-  // employment-agreement appendix prints. It is the take-home before income tax
-  // but after employer statutory contributions are excluded — the figure that
-  // matches the employee's payslip gross.
-  //
-  // Previously this used p.ctc, which overstates the remuneration by the
-  // employer's EPF/ESIC share (~10% on a ₹20k package). The contract text says
-  // "inclusive of all expenses" (reimbursements, not statutory contributions),
-  // so gross is the correct number to print.
-  //
-  // Source is exclusively the Payroll Head approved package to avoid printing a
-  // figure nobody signed off on. salary_component_assignments is NOT consulted
-  // for amounts: an active row may exist without an approved review
-  // (264 employees measured 2026-09-08).
+  // The appendix prints the CTC the Payroll Head assigned and approved
+  // (salary_package_master.ctc, monthly). Owner ruling 2026-09-26: it must be that
+  // figure for every employee, not the payslip gross. Source is exclusively the
+  // approved + accepted package review so no unapproved figure is ever printed.
+  // salary_component_assignments is NOT consulted for amounts: an active row may
+  // exist without an approved review (264 employees measured 2026-09-08).
   const [[packageRow]] = await db.execute<RowDataPacket[]>(
-    `SELECT p.gross AS package_gross
+    `SELECT p.ctc AS package_gross
        FROM employee_payroll_head_review r
        JOIN salary_package_master p ON p.id = r.salary_package_id
       WHERE r.employee_id = ?
