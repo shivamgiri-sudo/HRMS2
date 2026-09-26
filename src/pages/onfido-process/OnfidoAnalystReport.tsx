@@ -203,7 +203,7 @@ function CoachingSection({ email }: { email: string }) {
   return (
     <details className="rounded-xl border border-slate-200 p-3" onToggle={(e) => { if ((e.currentTarget as HTMLDetailsElement).open) setOpened(true); }}>
       <summary className="cursor-pointer text-sm font-semibold text-[color:var(--text)]">Coaching &amp; training (LMS)</summary>
-      <div className="mt-3">{opened && <CoachingDetail source={{ email }} />}</div>
+      <div className="mt-3">{opened && <CoachingDetail source={{ onfidoAnalyst: email }} />}</div>
     </details>
   );
 }

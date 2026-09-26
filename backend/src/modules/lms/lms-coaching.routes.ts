@@ -8,6 +8,7 @@
 import { Router, type NextFunction, type Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { getOnfidoPool } from "../../db/onfidoDb.js";
 import {
   requireAuth,
   type AuthenticatedRequest,
@@ -305,6 +306,33 @@ lmsCoachingRouter.get(
           success: false,
           message: "You cannot view this person's coaching record.",
         });
+    return res.json({ success: true, data: await coachingDetail(employeeId) });
+  }),
+);
+
+/**
+ * Onfido analysts carry a client-issued address (@mas.onfido.partners), never a MAS official email, so an email
+ * lookup cannot find them. The Onfido roster feed carries each analyst's MAS employee code (emp_id); that exact
+ * code is the link. No name or partial matching: no exact active employee, no record.
+ */
+lmsCoachingRouter.get(
+  "/coaching/onfido-analyst",
+  wrap(async (req, res) => {
+    const email = String(req.query.email ?? "").trim().toLowerCase().slice(0, 255);
+    if (!email) return res.status(400).json({ success: false, message: "email is required" });
+    const pool = await getOnfidoPool();
+    const [feed] = await pool.query<RowDataPacket[]>(
+      `SELECT emp_id FROM onfido_agent_daily_raw
+        WHERE LOWER(analyst_email) = ? AND emp_id IS NOT NULL AND TRIM(emp_id) <> ''
+        ORDER BY work_date DESC LIMIT 1`,
+      [email],
+    );
+    const code = String(feed[0]?.emp_id ?? "").trim();
+    if (!code) return res.status(404).json({ success: false, message: "This analyst has no MAS employee code in the Onfido roster feed." });
+    const [rows] = await db.execute<RowDataPacket[]>("SELECT id FROM employees WHERE active_status = 1 AND UPPER(employee_code) = UPPER(?) LIMIT 2", [code]);
+    if (rows.length !== 1) return res.status(404).json({ success: false, message: `No active HRMS employee has the code ${code}.` });
+    const employeeId = String(rows[0].id);
+    if (!(await canSeeCoaching(req, employeeId))) return res.status(403).json({ success: false, message: "You cannot view this person's coaching record." });
     return res.json({ success: true, data: await coachingDetail(employeeId) });
   }),
 );

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 
-export type CoachingSource = { employeeId: string } | { email: string };
+export type CoachingSource = { employeeId: string } | { email: string } | { onfidoAnalyst: string };
 
 interface CoachingData {
   employee: { id: string; code: string | null; name: string } | null;
@@ -101,16 +101,15 @@ function Section({
  * Onfido analyst drill-down (which knows analysts by email).
  */
 export function CoachingDetail({ source }: { source: CoachingSource }) {
-  const isEmail = "email" in source;
-  const key = isEmail ? source.email : source.employeeId;
+  const [kind, key, url] =
+    "onfidoAnalyst" in source
+      ? (["onfido", source.onfidoAnalyst, `/api/lms/coaching/onfido-analyst?email=${encodeURIComponent(source.onfidoAnalyst)}`] as const)
+      : "email" in source
+        ? (["email", source.email, `/api/lms/coaching/by-email?email=${encodeURIComponent(source.email)}`] as const)
+        : (["id", source.employeeId, `/api/lms/coaching/employee/${source.employeeId}`] as const);
   const query = useQuery({
-    queryKey: ["coaching", isEmail ? "email" : "id", key],
-    queryFn: () =>
-      hrmsApi.get<{ data: CoachingData }>(
-        isEmail
-          ? `/api/lms/coaching/by-email?email=${encodeURIComponent(source.email)}`
-          : `/api/lms/coaching/employee/${source.employeeId}`,
-      ),
+    queryKey: ["coaching", kind, key],
+    queryFn: () => hrmsApi.get<{ data: CoachingData }>(url),
     staleTime: 60_000,
     retry: false,
   });
