@@ -789,7 +789,7 @@ export default function AttendanceRegularization() {
     enabled: canReviewRequests && debouncedOnBehalfSearch.trim().length >= 2,
     queryFn: async () => {
       const res = await hrmsApi.get<any>(
-        `/api/employees?limit=30&q=${encodeURIComponent(debouncedOnBehalfSearch.trim())}&status=active`
+        `/api/employees?limit=30&search=${encodeURIComponent(debouncedOnBehalfSearch.trim())}&status=active`
       );
       return (res?.data ?? res?.rows ?? []) as Array<{ id: string; first_name: string; last_name?: string; employee_code?: string }>;
     },
