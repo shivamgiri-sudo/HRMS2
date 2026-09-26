@@ -115,6 +115,31 @@ export interface GrnStats {
   totalRaisedAmount: number;
   bridge: GrnBridge;
   unbudgeted: UnbudgetedGrns;
+  /** The open GRNs (same population as `pending`) split by the stage they are stuck at. */
+  pendingByStage: GrnPendingStage[];
+  /** Vendor vs imprest split: raised this month, plus the open pending backlog per type. */
+  byType: GrnTypeSplit[];
+}
+
+export interface GrnPendingStage {
+  status: string;
+  /** Who has to act next. */
+  stage: string;
+  count: number;
+  amountInclGst: number;
+  oldestDays: number;
+}
+
+export interface GrnTypeSplit {
+  type: string;
+  label: string;
+  raised: number;
+  raisedInclGst: number;
+  raisedExGst: number;
+  approved: number;
+  /** Open GRNs awaiting approval, all-time (the same backlog as `pending`). */
+  pending: number;
+  pendingInclGst: number;
 }
 
 /**
@@ -265,6 +290,116 @@ async function fetchUnbudgeted(branchId: string): Promise<UnbudgetedGrns> {
   };
 }
 
+const GRN_STAGE_LABELS: Record<string, string> = {
+  submitted: "With Branch Head (submitted)",
+  branch_head_approved: "With Accounts Head (Branch Head approved)",
+  accounts_head_approved: "With Finance Head (Accounts Head approved)",
+  returned_to_branch_head: "Returned to Branch Head",
+  returned_to_raiser: "Returned to raiser",
+};
+const GRN_TYPE_LABELS: Record<string, string> = {
+  vendor: "Vendor GRN",
+  imprest: "Imprest GRN",
+};
+const HRMS_GRN_SCOPE = `bill_source_id IS NULL AND COALESCE(created_by, '') NOT LIKE '00000000-%'`;
+
+async function fetchGrnPendingByStage(
+  branchId: string,
+  today: string,
+): Promise<GrnPendingStage[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT status, COUNT(*) AS cnt, COALESCE(SUM(amount_with_tax), 0) AS amt,
+            COALESCE(MAX(DATEDIFF(?, DATE(created_at))), 0) AS oldest
+       FROM grn_request
+      WHERE branch_id = ? AND ${HRMS_GRN_SCOPE}
+        AND status IN (${GRN_PENDING_STATUSES.map(() => "?").join(",")})
+      GROUP BY status`,
+    [today, branchId, ...GRN_PENDING_STATUSES],
+  );
+  return (rows as any[])
+    .map((r) => ({
+      status: String(r.status),
+      stage: GRN_STAGE_LABELS[String(r.status)] ?? String(r.status),
+      count: Number(r.cnt),
+      amountInclGst: Number(r.amt),
+      oldestDays: Number(r.oldest),
+    }))
+    .sort(
+      (a, b) =>
+        GRN_PENDING_STATUSES.indexOf(a.status) -
+        GRN_PENDING_STATUSES.indexOf(b.status),
+    );
+}
+
+async function fetchGrnByType(
+  branchId: string,
+  today: string,
+): Promise<GrnTypeSplit[]> {
+  const monthStart = today.slice(0, 7) + "-01";
+  const [raised] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(grn_type, ''), 'other') AS type,
+            COUNT(*) AS raised,
+            COALESCE(SUM(amount_with_tax), 0) AS incl_gst,
+            COALESCE(SUM(COALESCE(NULLIF(pnl_cost_amount, 0), amount_without_tax, 0)), 0) AS ex_gst,
+            SUM(status IN (${GRN_APPROVED_STATUSES.map(() => "?").join(",")})) AS approved
+       FROM grn_request
+      WHERE branch_id = ? AND ${HRMS_GRN_SCOPE}
+        AND status NOT IN (${GRN_NOT_RAISED_STATUSES.map(() => "?").join(",")})
+        AND DATE(created_at) >= ?
+      GROUP BY type`,
+    [
+      ...GRN_APPROVED_STATUSES,
+      branchId,
+      ...GRN_NOT_RAISED_STATUSES,
+      monthStart,
+    ],
+  );
+  const [pending] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(NULLIF(grn_type, ''), 'other') AS type, COUNT(*) AS cnt,
+            COALESCE(SUM(amount_with_tax), 0) AS amt
+       FROM grn_request
+      WHERE branch_id = ? AND ${HRMS_GRN_SCOPE}
+        AND status IN (${GRN_PENDING_STATUSES.map(() => "?").join(",")})
+      GROUP BY type`,
+    [branchId, ...GRN_PENDING_STATUSES],
+  );
+  const byType = new Map<string, GrnTypeSplit>();
+  const row = (type: string): GrnTypeSplit => {
+    const found = byType.get(type);
+    if (found) return found;
+    const fresh = {
+      type,
+      label: GRN_TYPE_LABELS[type] ?? `Other (${type})`,
+      raised: 0,
+      raisedInclGst: 0,
+      raisedExGst: 0,
+      approved: 0,
+      pending: 0,
+      pendingInclGst: 0,
+    };
+    byType.set(type, fresh);
+    return fresh;
+  };
+  for (const r of raised as any[]) {
+    const x = row(String(r.type));
+    x.raised = Number(r.raised);
+    x.raisedInclGst = Number(r.incl_gst);
+    x.raisedExGst = Number(r.ex_gst);
+    x.approved = Number(r.approved);
+  }
+  for (const r of pending as any[]) {
+    const x = row(String(r.type));
+    x.pending = Number(r.cnt);
+    x.pendingInclGst = Number(r.amt);
+  }
+  const order = ["vendor", "imprest"];
+  return [...byType.values()].sort(
+    (a, b) =>
+      (order.indexOf(a.type) === -1 ? 9 : order.indexOf(a.type)) -
+      (order.indexOf(b.type) === -1 ? 9 : order.indexOf(b.type)),
+  );
+}
+
 export async function fetchGrnStats(
   branchId: string,
   today: string,
@@ -308,6 +443,8 @@ export async function fetchGrnStats(
     totalRaisedAmount: Number(r?.total_amount ?? 0),
     bridge: await fetchGrnBridge(branchId, today),
     unbudgeted: await fetchUnbudgeted(branchId),
+    pendingByStage: await fetchGrnPendingByStage(branchId, today),
+    byType: await fetchGrnByType(branchId, today),
   };
 }
 
@@ -369,6 +506,8 @@ export interface AtsStats {
   otherClosed: number;
   /** Tokens with no interview outcome yet (closure pending). */
   open: number;
+  /** Tokens with no interview feedback form filed (excludes no-show and walk-out). */
+  noFeedback: number;
   /** …of which marked completed in the queue but the candidate is still waiting. */
   openQueueCompleted: number;
   slaBreaches: number;
@@ -386,6 +525,7 @@ const NO_ATS_ACTIVITY: AtsStats = {
   hold: 0,
   otherClosed: 0,
   open: 0,
+  noFeedback: 0,
   openQueueCompleted: 0,
   slaBreaches: 0,
   slaTotal: 0,
@@ -415,6 +555,7 @@ export async function fetchAtsStats(
     hold: s.hold,
     otherClosed: s.otherClosed,
     open: s.open,
+    noFeedback: s.noFeedback,
     openQueueCompleted: s.openQueueCompleted,
     slaBreaches: s.sla1.breached,
     slaTotal: s.sla1.met + s.sla1.breached,
@@ -685,6 +826,8 @@ export interface HeadcountProcessRow {
   joinedMtd: number;
   leftToday: number;
   leftMtd: number;
+  /** Mandated seats for this process at this branch (workforce mandate); null when none is set. */
+  mandateSeats: number | null;
 }
 
 export interface HeadcountMovement {
@@ -699,6 +842,8 @@ export interface HeadcountMovement {
   upcomingExits: number;
   /** Exit requests whose last working day has passed but the employee is still active. */
   exitsNotClosed: number;
+  /** Sum of the mandated seats of the processes that have one. */
+  mandateSeatsTotal: number | null;
   totalActive: number;
 }
 
@@ -770,17 +915,34 @@ export async function fetchHeadcountMovement(
   const row = (process: string): HeadcountProcessRow => {
     const found = perProcess.get(process);
     if (found) return found;
-    const fresh = {
+    const fresh: HeadcountProcessRow = {
       process,
       active: 0,
       joinedToday: 0,
       joinedMtd: 0,
       leftToday: 0,
       leftMtd: 0,
+      mandateSeats: null,
     };
     perProcess.set(process, fresh);
     return fresh;
   };
+  // Mandated seats per process: the workforce mandate in force today (Capacity Dashboard's source).
+  const [mandateRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(pm.process_name, 'Unassigned') AS process, SUM(wm.mandated_hc) AS seats
+       FROM workforce_mandate wm
+       LEFT JOIN process_master pm ON pm.id = wm.process_id
+      WHERE wm.branch_id = ? AND wm.active_status = 1
+        AND wm.effective_from <= ? AND (wm.effective_to IS NULL OR wm.effective_to >= ?)
+      GROUP BY process`,
+    [branchId, today, today],
+  );
+  let mandateSeatsTotal: number | null = null;
+  for (const r of mandateRows as any[]) {
+    const seats = Number(r.seats);
+    row(String(r.process)).mandateSeats = seats;
+    mandateSeatsTotal = (mandateSeatsTotal ?? 0) + seats;
+  }
   let totalActive = 0;
   for (const r of activeRows as any[]) {
     row(String(r.process)).active = Number(r.cnt);
@@ -812,6 +974,7 @@ export async function fetchHeadcountMovement(
     leftMtd: left.length,
     upcomingExits: Number((upcomingRows[0] as any)?.cnt ?? 0),
     exitsNotClosed: Number((notClosedRows[0] as any)?.cnt ?? 0),
+    mandateSeatsTotal,
     totalActive,
   };
 }
@@ -1137,6 +1300,13 @@ export interface OfferConversion {
   conversionPct: number | null;
   /** Approved offers with a joining date in the next 7 days. */
   joiningNext7Days: number;
+  /** The same measures for offers whose joining date falls in the month so far. */
+  mtd: {
+    offered: number;
+    joined: number;
+    notJoined: number;
+    conversionPct: number | null;
+  };
 }
 
 const OFFER_WINDOW_DAYS = 30;
@@ -1145,25 +1315,51 @@ export async function fetchOfferConversion(
   branchId: string,
   today: string,
 ): Promise<OfferConversion> {
+  const monthStart = today.slice(0, 7) + "-01";
+  const joinedFlag =
+    "EXISTS (SELECT 1 FROM employees e WHERE e.candidate_id = o.candidate_id)";
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(SUM(o.date_of_joining BETWEEN DATE_SUB(?, INTERVAL ${OFFER_WINDOW_DAYS} DAY) AND ?), 0) AS offered,
-            COALESCE(SUM(o.date_of_joining BETWEEN DATE_SUB(?, INTERVAL ${OFFER_WINDOW_DAYS} DAY) AND ?
-                         AND EXISTS (SELECT 1 FROM employees e WHERE e.candidate_id = o.candidate_id)), 0) AS joined,
+            COALESCE(SUM(o.date_of_joining BETWEEN DATE_SUB(?, INTERVAL ${OFFER_WINDOW_DAYS} DAY) AND ? AND ${joinedFlag}), 0) AS joined,
+            COALESCE(SUM(o.date_of_joining BETWEEN ? AND ?), 0) AS offered_mtd,
+            COALESCE(SUM(o.date_of_joining BETWEEN ? AND ? AND ${joinedFlag}), 0) AS joined_mtd,
             COALESCE(SUM(o.date_of_joining > ? AND o.date_of_joining <= DATE_ADD(?, INTERVAL 7 DAY)), 0) AS next7
        FROM ats_employment_offer o
        JOIN ats_onboarding_request r ON r.id = o.onboarding_request_id
       WHERE r.branch_id = ? AND o.status = 'bh_approved'`,
-    [today, today, today, today, today, today, branchId],
+    [
+      today,
+      today,
+      today,
+      today,
+      monthStart,
+      today,
+      monthStart,
+      today,
+      today,
+      today,
+      branchId,
+    ],
   );
   const r = rows[0] as any;
+  const pctOf = (joined: number, offered: number) =>
+    offered > 0 ? Math.round((joined / offered) * 100) : null;
   const offered = Number(r?.offered ?? 0);
   const joined = Number(r?.joined ?? 0);
+  const offeredMtd = Number(r?.offered_mtd ?? 0);
+  const joinedMtd = Number(r?.joined_mtd ?? 0);
   return {
     offered,
     joined,
     notJoined: offered - joined,
-    conversionPct: offered > 0 ? Math.round((joined / offered) * 100) : null,
+    conversionPct: pctOf(joined, offered),
     joiningNext7Days: Number(r?.next7 ?? 0),
+    mtd: {
+      offered: offeredMtd,
+      joined: joinedMtd,
+      notJoined: offeredMtd - joinedMtd,
+      conversionPct: pctOf(joinedMtd, offeredMtd),
+    },
   };
 }
 
@@ -1334,6 +1530,8 @@ export async function fetchAllBranchHealthData(
         pendingOver3Days: 0,
         totalRaisedAmount: 0,
         unbudgeted: { count: 0, amountExGst: 0, rows: [] },
+        pendingByStage: [],
+        byType: [],
         bridge: {
           raisedExGst: 0,
           awaitingApproval: 0,
@@ -1369,6 +1567,7 @@ export async function fetchAllBranchHealthData(
         leftMtd: 0,
         upcomingExits: 0,
         exitsNotClosed: 0,
+        mandateSeatsTotal: null,
         totalActive: 0,
       },
       openHiring: {
@@ -1427,6 +1626,7 @@ export async function fetchAllBranchHealthData(
         notJoined: 0,
         conversionPct: null,
         joiningNext7Days: 0,
+        mtd: { offered: 0, joined: 0, notJoined: 0, conversionPct: null },
       },
       pnlGrnTieOut: {
         budgetConsumed: 0,

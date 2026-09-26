@@ -290,6 +290,57 @@ export function renderEmail(
     g.pending > 0
       ? `Open GRNs: ${g.pending} awaiting approval, oldest ${g.oldestPendingDays} day${g.oldestPendingDays === 1 ? "" : "s"}${g.pendingOver3Days > 0 ? `, ${g.pendingOver3Days} older than 3 days` : ""}.`
       : "No GRNs awaiting approval.";
+  const typeTotals = g.byType.reduce(
+    (x, r) => ({
+      raised: x.raised + r.raised,
+      incl: x.incl + r.raisedInclGst,
+      ex: x.ex + r.raisedExGst,
+      approved: x.approved + r.approved,
+      pending: x.pending + r.pending,
+      pendingInclGst: x.pendingInclGst + r.pendingInclGst,
+    }),
+    { raised: 0, incl: 0, ex: 0, approved: 0, pending: 0, pendingInclGst: 0 },
+  );
+  const typeTable =
+    g.byType.length > 0
+      ? dataTable(
+          ["GRN type", "Raised (MTD)", "Value incl. GST", "Value ex-GST", "Approved (MTD)", "Open pending (all-time)", "Pending value incl. GST"],
+          [
+            ...g.byType.map((r) => [r.label, String(r.raised), inr(r.raisedInclGst), inr(r.raisedExGst), String(r.approved), String(r.pending), inr(r.pendingInclGst)]),
+            [
+              { raw: "<strong>Total</strong>" },
+              { raw: `<strong>${typeTotals.raised}</strong>` },
+              { raw: `<strong>${inr(typeTotals.incl)}</strong>` },
+              { raw: `<strong>${inr(typeTotals.ex)}</strong>` },
+              { raw: `<strong>${typeTotals.approved}</strong>` },
+              { raw: `<strong>${typeTotals.pending}</strong>` },
+              { raw: `<strong>${inr(typeTotals.pendingInclGst)}</strong>` },
+            ],
+          ],
+          true,
+        )
+      : "";
+  const stageTotals = g.pendingByStage.reduce(
+    (x, r) => ({ count: x.count + r.count, amt: x.amt + r.amountInclGst }),
+    { count: 0, amt: 0 },
+  );
+  const stageTable =
+    g.pendingByStage.length > 0
+      ? dataTable(
+          ["Pending GRNs — by stage (who acts next)", "GRNs", "Value incl. GST", "Oldest"],
+          [
+            ...g.pendingByStage.map((r) => [r.stage, String(r.count), inr(r.amountInclGst), `${r.oldestDays}d`]),
+            [
+              { raw: "<strong>Total open pending</strong>" },
+              { raw: `<strong>${stageTotals.count}</strong>` },
+              { raw: `<strong>${inr(stageTotals.amt)}</strong>` },
+              "",
+            ],
+          ],
+          true,
+        )
+      : "";
+
   const grnStatsBody =
     kpiStrip([
       { label: "Raised (MTD)", value: String(g.raised), color: C.primary },
@@ -312,6 +363,10 @@ export function renderEmail(
       },
     ]) +
     dataTable(["Tie-out to Section 1 (ex-GST)", "Amount"], tieRows, true) +
+    `<div style="height:8px;line-height:8px;font-size:1px">&nbsp;</div>` +
+    typeTable +
+    `<div style="height:8px;line-height:8px;font-size:1px">&nbsp;</div>` +
+    stageTable +
     note(
       `${staleNote} Excludes draft, cancelled and rejected GRNs; HRMS-raised only.`,
     );
@@ -338,7 +393,7 @@ export function renderEmail(
           true,
         ) +
         note(
-          "Allowed by design: a Head/Sub-head with no approved budget line can be raised against the cost centre. Finance Head cannot approve it until a budget line is attached (link-budget step), so it cannot be paid unbudgeted.",
+          "A Head/Sub-head with no approved budget line can be raised against the cost centre, and Finance Head can approve it without linking a budget line (linking is optional). The cost still lands in the P&L in full, but no budget line covers it — this list is how such spend is spotted.",
         )
       : note(
           "✓ No unbudgeted GRNs: every HRMS-raised GRN sits on a budget line.",
@@ -379,6 +434,12 @@ export function renderEmail(
       },
       { label: "Rejected", value: String(raw.ats.rejected), color: C.danger },
       { label: "No-show", value: String(raw.ats.noShow), color: C.muted },
+      {
+        label: "No interview feedback",
+        value: String(raw.ats.noFeedback),
+        color: raw.ats.noFeedback > 0 ? C.danger : C.success,
+        subtext: "no form filed",
+      },
       {
         label: "Client round / Hold",
         value: `${raw.ats.clientRound} / ${raw.ats.hold}`,
@@ -623,9 +684,26 @@ export function renderEmail(
     { active: 0, joinedToday: 0, joinedMtd: 0, leftToday: 0, leftMtd: 0 },
   );
   const signed = (n: number) => (n > 0 ? `+${n}` : String(n));
+  const mandatedActive = hc.byProcess
+    .filter((r) => r.mandateSeats != null)
+    .reduce((n, r) => n + r.active, 0);
+  const mandateGapCell = (gap: number, hasMandate: boolean, strong: boolean): string => {
+    if (!hasMandate) return "—";
+    const text = `${gap > 0 ? "+" : ""}${gap}`;
+    const html = `<span style="color:${gap < 0 ? C.danger : C.success};font-weight:700;">${text}</span>`;
+    return strong ? `<strong>${html}</strong>` : html;
+  };
   const hcProcessRows = [
     ...hc.byProcess.map((r) => [
       r.process,
+      r.mandateSeats == null ? "—" : String(r.mandateSeats),
+      {
+        raw: mandateGapCell(
+          r.active - (r.mandateSeats ?? 0),
+          r.mandateSeats != null,
+          false,
+        ),
+      },
       String(r.active),
       String(r.joinedToday),
       String(r.joinedMtd),
@@ -637,6 +715,14 @@ export function renderEmail(
     ]),
     [
       { raw: "<strong>Total</strong>" },
+      { raw: `<strong>${hc.mandateSeatsTotal ?? "—"}</strong>` },
+      {
+        raw: mandateGapCell(
+          mandatedActive - (hc.mandateSeatsTotal ?? 0),
+          hc.mandateSeatsTotal != null,
+          true,
+        ),
+      },
       { raw: `<strong>${hcTotals.active}</strong>` },
       { raw: `<strong>${hcTotals.joinedToday}</strong>` },
       { raw: `<strong>${hcTotals.joinedMtd}</strong>` },
@@ -687,6 +773,8 @@ export function renderEmail(
     dataTable(
       [
         "Process",
+        "Mandate seats",
+        "Active vs mandate",
         "Active",
         "Joined today",
         "Joined MTD",
@@ -696,6 +784,9 @@ export function renderEmail(
       ],
       hcProcessRows,
       true,
+    ) +
+    note(
+      "Mandate seats = the process's mandated headcount at this branch (workforce mandate in force today). Active vs mandate = active headcount minus mandate; negative = short of the mandate. The total covers only processes that have a mandate.",
     ) +
     namesLine("Joined today:", hc.joinedNames, C.success) +
     namesLine("Left today:", hc.leftNames, C.warn) +
@@ -753,14 +844,14 @@ export function renderEmail(
         value: String(off.offered),
         color: C.primary,
       },
-      { label: "Joined", value: String(off.joined), color: C.success },
+      { label: "Joined (30d)", value: String(off.joined), color: C.success },
       {
-        label: "Not joined",
+        label: "Not joined (30d)",
         value: String(off.notJoined),
         color: off.notJoined > 0 ? C.warn : C.muted,
       },
       {
-        label: "Offer → Join",
+        label: "Offer → Join (30d)",
         value: off.conversionPct != null ? `${off.conversionPct}%` : "—",
         color:
           off.conversionPct != null && off.conversionPct < 70
@@ -771,6 +862,27 @@ export function renderEmail(
         label: "Joining next 7 days",
         value: String(off.joiningNext7Days),
         color: C.accent,
+      },
+    ]) +
+    kpiStrip([
+      {
+        label: "Offers due to join (MTD)",
+        value: String(off.mtd.offered),
+        color: C.primary,
+      },
+      { label: "Joined (MTD)", value: String(off.mtd.joined), color: C.success },
+      {
+        label: "Not joined (MTD)",
+        value: String(off.mtd.notJoined),
+        color: off.mtd.notJoined > 0 ? C.warn : C.muted,
+      },
+      {
+        label: "Offer → Join (MTD)",
+        value: off.mtd.conversionPct != null ? `${off.mtd.conversionPct}%` : "—",
+        color:
+          off.mtd.conversionPct != null && off.mtd.conversionPct < 70
+            ? C.danger
+            : C.success,
       },
       {
         label: `Absent ${CONSECUTIVE_ABSENCE_DAYS_LABEL}+ days running`,
@@ -795,7 +907,7 @@ export function renderEmail(
           `✓ Nobody has been absent for ${CONSECUTIVE_ABSENCE_DAYS_LABEL} rostered working days in a row.`,
         )) +
     note(
-      "Offer → Join: approved offers whose joining date fell in the last 30 days, and how many of those candidates now exist as employees. Absence = rostered working day with no punch and no approved leave, on the last 3 completed days.",
+      "Offer → Join: approved offers whose joining date fell in the last 30 days (top strip) or in the month so far (second strip), and how many of those candidates now exist as employees. Absence = rostered working day with no punch and no approved leave, on the last 3 completed days.",
     );
 
   // ── 7. Open hiring: batches whose delivery date is still ahead ──

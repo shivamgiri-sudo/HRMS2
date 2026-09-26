@@ -141,6 +141,8 @@ export interface TokenFact {
   inInterview: boolean;
   /** Queue says completed, but no interview form / outcome exists — the candidate is still waiting. */
   queueCompletedNoOutcome: boolean;
+  /** An interview form (ats_interview_submission) exists for this token. */
+  formFiled: boolean;
   /** Selected candidate who has already submitted the online onboarding profile. */
   profileSubmitted: boolean;
   /** Normalised sourcing channel. */
@@ -173,6 +175,8 @@ export interface Summary {
   open: number;
   /** Closed with a form filed but a status that is none of the named outcomes. */
   otherClosed: number;
+  /** Tokens with no interview feedback form filed, excluding no-show and walk-out (nobody to interview). */
+  noFeedback: number;
   /** Selected candidates whose onboarding profile is already submitted (part of `selected`). */
   profileSubmitted: number;
   /** The open tokens split by where they are stuck (sums to `open`). */
@@ -495,6 +499,7 @@ export function toFact(
     joined: stage === "joined" || stage === "onboarded",
     inInterview: qs === "in_interview",
     queueCompletedNoOutcome: qs === "completed" && !closed,
+    formFiled: !!row.sub_id,
     source: normaliseSource(row.source_channel),
     weekday: weekdayOf(row.arrival_date),
     pipelineStage: pipelineStageOf(
@@ -608,6 +613,9 @@ export function summarize(facts: TokenFact[]): Summary {
     clientRound: c("client_round"),
     open: c("open"),
     otherClosed: c("other_closed"),
+    noFeedback: facts.filter(
+      (f) => f.tokenGenerated && !f.formFiled && f.outcome !== "no_show" && f.outcome !== "walkout",
+    ).length,
     profileSubmitted: facts.filter((f) => f.profileSubmitted).length,
     openWaiting: open.filter((f) => !f.called && !f.queueCompletedNoOutcome)
       .length,

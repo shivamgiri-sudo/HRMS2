@@ -32,6 +32,8 @@ import {
   businessMonth,
 } from "./leave-balance-format.js";
 import { buildCatalogWorkbook } from "./catalog-workbook.js";
+import { ATTENDANCE_SOURCE_SHEET_CODE, loadAttendanceSourceSheet } from "./executors/attendance-source-sheet.executor.js";
+import { buildAttendanceSourceWorkbook } from "../wfm/attendance-source-sheet.xlsx.js";
 import type { CatalogWorkbookColumn } from "./catalog-workbook.js";
 import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from "./report-audit.service.js";
 import { readLobFilter } from "../../shared/lobFilter.js";
@@ -284,6 +286,55 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
     includeTotal: false,
     mode: 'export',
   };
+
+  // ── Attendance Source Sheet: colour-coded Status / Cosec / APR per date ──────
+  // A flat one-row-per-employee export cannot carry the per-day colours or the three columns
+  // per date, so this code builds its own workbook (same builder as the Attendance page's
+  // Source Sheet download) from the complete filtered population.
+  if (code === ATTENDANCE_SOURCE_SHEET_CODE) {
+    let sheet;
+    try {
+      sheet = await loadAttendanceSourceSheet(filters, scope, EXPORT_ROW_CAP);
+    } catch (err) {
+      res.status(500).json({
+        error: 'REPORT_GENERATION_FAILED',
+        message: 'Report generation failed. Please try again or request the report by email.',
+      });
+      return;
+    }
+    if (sheet.total > EXPORT_ROW_CAP) {
+      res.status(422).json({
+        error: 'TOO_LARGE',
+        message: 'Result exceeds download limit. Narrow by branch or process, or request the report by email.',
+        rowCount: sheet.total,
+        limit: EXPORT_ROW_CAP,
+      });
+      return;
+    }
+    const wb = buildAttendanceSourceWorkbook(sheet.month, sheet.days, sheet.employees);
+    const buffer = Buffer.from(await wb.xlsx.writeBuffer());
+    if (buffer.length > EXPORT_BYTE_CAP) {
+      res.status(422).json({
+        error: 'FILE_TOO_LARGE',
+        message: 'Generated file exceeds size limit. Narrow by branch or process, or request the report by email.',
+      });
+      return;
+    }
+    await recordReportAuditEvent({
+      reportRequestId: `export-${userId}-${code}-${Date.now()}`,
+      eventType: REPORT_AUDIT_EVENTS.EXPORT_DOWNLOAD ?? 'EXPORT_DOWNLOAD',
+      actorType: 'user',
+      reportCode: code,
+      message: `Immediate XLSX export: ${sheet.employees.length} employees, ${buffer.length} bytes`,
+      metadataJson: { userId, rowCount: sheet.employees.length, fileSizeBytes: buffer.length, code, month: sheet.month },
+    }).catch(() => {});
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="attendance-source-sheet-${sheet.month}.xlsx"`);
+    res.setHeader('Cache-Control', 'no-store, no-cache');
+    res.setHeader('Content-Length', buffer.length);
+    res.send(buffer);
+    return;
+  }
 
   let result;
   try {

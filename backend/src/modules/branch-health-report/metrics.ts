@@ -211,7 +211,7 @@ export function classifySignals(raw: BranchHealthRawData): {
     criticalPoints.push({
       label: `${unbudgeted.count} unbudgeted GRN${unbudgeted.count > 1 ? "s" : ""} (₹${fmt(unbudgeted.amountExGst)} ex-GST)`,
       detail:
-        "Raised without a budget line — Finance Head must attach one before approval",
+        "Raised without a budget line — approval does not need one, so this spend is on record but no budget line covers it",
       severity: "warning",
     });
   }
