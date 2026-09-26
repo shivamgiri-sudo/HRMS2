@@ -569,10 +569,10 @@ function EscalationCountChart({ points }: { points: EscalationTrendPoint[] }) {
         <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
         <Legend wrapperStyle={{ fontSize: 11, color: "var(--muted)" }} />
         <Bar dataKey="creCount" name="CRE" fill="var(--red)" radius={[4, 4, 0, 0]} maxBarSize={28}>
-          <LabelList dataKey="creCount" position="top" fontSize={10} fill="var(--muted)" />
+          <LabelList dataKey="creCount" position="top" fontSize={10} fontWeight={700} fill="var(--muted-strong)" />
         </Bar>
         <Bar dataKey="crqCount" name="CRQ" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={28}>
-          <LabelList dataKey="crqCount" position="top" fontSize={10} fill="var(--muted)" />
+          <LabelList dataKey="crqCount" position="top" fontSize={10} fontWeight={700} fill="var(--muted-strong)" />
         </Bar>
       </BarChart>
     </ResponsiveContainer>
@@ -753,7 +753,7 @@ function QualityAreaChart({ points, title, hc, granularity = "monthly" }: { poin
             dot={{ r: 3, fill: "var(--red)", stroke: "var(--card)", strokeWidth: 2 }}
             activeDot={{ r: 6 }}
           >
-            <LabelList dataKey="errorRate" position="top" fontSize={10} fill="var(--red)"
+            <LabelList dataKey="errorRate" position="top" fontSize={10} fontWeight={700} fill="var(--red)"
               formatter={(v: number) => v > 0 ? `${v.toFixed(2)}%` : "–"} />
           </Area>
         </AreaChart>
@@ -872,10 +872,10 @@ function TrendsView({ range, tlFilter, amFilter, analystFilter = "" }: { range: 
                 <YAxis tickLine={false} axisLine={false} width={44} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
                 <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
                 <Bar dataKey="doc" name="DOC" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                  <LabelList dataKey="doc" position="inside" fill="#fff" fontSize={10} />
+                  <LabelList dataKey="doc" position="inside" fill="#fff" fontSize={10} fontWeight={700} />
                 </Bar>
                 <Bar dataKey="poa" name="POA" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                  <LabelList dataKey="poa" position="inside" fill="#fff" fontSize={10} />
+                  <LabelList dataKey="poa" position="inside" fill="#fff" fontSize={10} fontWeight={700} />
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
@@ -1109,7 +1109,7 @@ function AnalystPerformanceView({ range }: { range: { from: string; to: string }
                   <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
                   <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
                   <Bar dataKey="tasks" name="Tasks" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                    <LabelList dataKey="tasks" position="top" fontSize={10} fill="var(--muted)" />
+                    <LabelList dataKey="tasks" position="top" fontSize={10} fontWeight={700} fill="var(--muted-strong)" />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -2073,10 +2073,10 @@ function EtmView({
               <YAxis tickLine={false} axisLine={false} width={44} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
               <Bar dataKey="doc" name="DOC" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                <LabelList dataKey="doc" position="inside" fill="#fff" fontSize={10} />
+                <LabelList dataKey="doc" position="inside" fill="#fff" fontSize={10} fontWeight={700} />
               </Bar>
               <Bar dataKey="poa" name="POA" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                <LabelList dataKey="poa" position="inside" fill="#fff" fontSize={10} />
+                <LabelList dataKey="poa" position="inside" fill="#fff" fontSize={10} fontWeight={700} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -2264,7 +2264,7 @@ function TaskSkipView({
               <YAxis tickLine={false} axisLine={false} width={44} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
               <Bar dataKey="count" name="Task Skip" fill="var(--orange)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                <LabelList dataKey="count" position="top" fontSize={10} fill="var(--muted)" />
+                <LabelList dataKey="count" position="top" fontSize={10} fontWeight={700} fill="var(--muted-strong)" />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -2548,7 +2548,7 @@ function QualityView({
                 dot={{ r: 3, fill: "var(--red)", stroke: "var(--card)", strokeWidth: 2 }}
                 activeDot={{ r: 6 }}
               >
-                <LabelList dataKey="errorRate" position="top" fontSize={12} fill="var(--red)"
+                <LabelList dataKey="errorRate" position="top" fontSize={12} fontWeight={700} fill="var(--red)"
                   formatter={(v: number) => v > 0 ? `${v.toFixed(2)}%` : "–"} />
               </Area>
             </AreaChart>
@@ -2806,12 +2806,12 @@ function EscalationsView({
               <Legend wrapperStyle={{ fontSize: 11, color: "var(--muted)" }} />
               {source !== "CRQ" && (
                 <Bar dataKey="creCount" name="CRE" fill="var(--red)" radius={[4, 4, 0, 0]}>
-                  <LabelList dataKey="creCount" position="top" fontSize={10} fill="var(--muted)" />
+                  <LabelList dataKey="creCount" position="top" fontSize={10} fontWeight={700} fill="var(--muted-strong)" />
                 </Bar>
               )}
               {source !== "CRE" && (
                 <Bar dataKey="crqCount" name="CRQ" fill="var(--teal)" radius={[4, 4, 0, 0]}>
-                  <LabelList dataKey="crqCount" position="top" fontSize={10} fill="var(--muted)" />
+                  <LabelList dataKey="crqCount" position="top" fontSize={10} fontWeight={700} fill="var(--muted-strong)" />
                 </Bar>
               )}
             </BarChart>
@@ -3000,7 +3000,7 @@ function DocRawView({
               <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
               <Bar dataKey="taskCount" name="Tasks" fill="var(--blue)" radius={[4, 4, 0, 0]}>
-                <LabelList dataKey="taskCount" position="top" fontSize={10} fill="var(--muted)" />
+                <LabelList dataKey="taskCount" position="top" fontSize={10} fontWeight={700} fill="var(--muted-strong)" />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -3255,6 +3255,13 @@ function PoaView({
     queryKey: ["onfido-process", "poa-trend", range, tlFilter, amFilter, granularity],
     queryFn: () => hrmsApi.get<{ data: PoaTrendPoint[] }>(`/api/onfido-process/poa/trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`),
   });
+  // AHT companion to the Volume Trend chart directly below — same granularity toggle,
+  // same bucket keys, sourced from combined-trend (which already carries avgAht per
+  // bucket for the Month/Week/Day-wise POA Task & AHT cards above).
+  const ahtTrendQuery = useQuery({
+    queryKey: ["onfido-process", "poa-aht-trend", range, tlFilter, amFilter, granularity],
+    queryFn: () => hrmsApi.get<{ data: DocRawTrendPoint[] }>(`/api/onfido-process/poa/combined-trend?from=${range.from}&to=${range.to}${qs}&granularity=${granularity}`),
+  });
   const breakdownQuery = useQuery({
     queryKey: ["onfido-process", "poa-breakdown", range, dimension, tlFilter, amFilter],
     queryFn: () => hrmsApi.get<{ data: PoaBreakdownRow[] }>(`/api/onfido-process/poa/breakdown/${dimension}?from=${range.from}&to=${range.to}${qs}`),
@@ -3310,6 +3317,7 @@ function PoaView({
 
   const ov = overviewQuery.data?.data;
   const points = trendQuery.data?.data ?? [];
+  const ahtPoints = ahtTrendQuery.data?.data ?? [];
   const breakdown = breakdownQuery.data?.data ?? [];
   const dimLabel = { tl_name: "TL", am_name: "AM" }[dimension];
   const poaCombinedTrend = poaCombinedTrendQuery.data?.data ?? [];
@@ -3397,7 +3405,7 @@ function PoaView({
                         <YAxis tickLine={false} axisLine={false} width={36} allowDecimals={false} tick={{ fontSize: 10, fill: "var(--muted)" }} />
                         <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
                         <Bar dataKey="count" name="Count" fill="var(--teal)" radius={[4, 4, 0, 0]}>
-                          <LabelList dataKey="count" position="top" fontSize={10} fill="var(--muted)" />
+                          <LabelList dataKey="count" position="top" fontSize={10} fontWeight={700} fill="var(--muted-strong)" />
                         </Bar>
                       </BarChart>
                     </ResponsiveContainer>
@@ -3514,9 +3522,35 @@ function PoaView({
               <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
               <Bar dataKey="taskCount" name="Reports" fill="var(--blue)" radius={[4, 4, 0, 0]}>
-                <LabelList dataKey="taskCount" position="top" fontSize={10} fill="var(--muted)" />
+                <LabelList dataKey="taskCount" position="top" fontSize={10} fontWeight={700} fill="var(--muted-strong)" />
               </Bar>
             </BarChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      <div className="oc-card" style={{ "--hc": "var(--orange)" } as React.CSSProperties}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 style={{ marginBottom: 0 }}>POA AHT Trend</h3>
+          <PillGroup
+            value={granularity} onChange={setGranularity}
+            options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
+          />
+        </div>
+        <div className="oc-card-sub">POA Raw + POA Trial reports combined — average handle time per bucket.</div>
+        {ahtPoints.length === 0 ? (
+          <div style={{ padding: "24px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No data in this range.</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={240}>
+            <LineChart data={ahtPoints} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
+              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+              <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+              <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+              <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
+              <Line type="monotone" dataKey="avgAht" name="Avg AHT" stroke="var(--orange)" strokeWidth={2} dot={{ r: 3 }} connectNulls>
+                <LabelList dataKey="avgAht" position="top" fontSize={10} fontWeight={700} fill="var(--orange)" formatter={(v: number | null) => (v == null ? "" : `${v}s`)} />
+              </Line>
+            </LineChart>
           </ResponsiveContainer>
         )}
       </div>
@@ -3643,7 +3677,7 @@ function PoaTrialView({
               <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
               <Bar dataKey="taskCount" name="Reports" fill="var(--blue)" radius={[4, 4, 0, 0]}>
-                <LabelList dataKey="taskCount" position="top" fontSize={10} fill="var(--muted)" />
+                <LabelList dataKey="taskCount" position="top" fontSize={10} fontWeight={700} fill="var(--muted-strong)" />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -3990,10 +4024,10 @@ function PoaExternalView({
               <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
               <Bar dataKey="taskCount" name="Reports" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                <LabelList dataKey="taskCount" position="top" fontSize={10} fill="var(--muted)" />
+                <LabelList dataKey="taskCount" position="top" fontSize={10} fontWeight={700} fill="var(--muted-strong)" />
               </Bar>
               <Bar dataKey="errorCount" name="Errors" fill="var(--red)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                <LabelList dataKey="errorCount" position="top" fontSize={10} fill="var(--muted)" />
+                <LabelList dataKey="errorCount" position="top" fontSize={10} fontWeight={700} fill="var(--muted-strong)" />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -4187,13 +4221,13 @@ function GdMcnSlaView({
               <YAxis tickLine={false} axisLine={false} width={40} unit="%" tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
               <Bar dataKey="slaPct" name="SLA %" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={30}>
-                <LabelList dataKey="slaPct" position="top" fontSize={9} fill="var(--muted)" />
+                <LabelList dataKey="slaPct" position="top" fontSize={9} fontWeight={700} fill="var(--muted-strong)" />
               </Bar>
               <Bar dataKey="gdPct" name="GD %" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={30}>
-                <LabelList dataKey="gdPct" position="top" fontSize={9} fill="var(--muted)" />
+                <LabelList dataKey="gdPct" position="top" fontSize={9} fontWeight={700} fill="var(--muted-strong)" />
               </Bar>
               <Bar dataKey="mcnPct" name="MCN %" fill="var(--purple)" radius={[4, 4, 0, 0]} maxBarSize={30}>
-                <LabelList dataKey="mcnPct" position="top" fontSize={9} fill="var(--muted)" />
+                <LabelList dataKey="mcnPct" position="top" fontSize={9} fontWeight={700} fill="var(--muted-strong)" />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -4307,7 +4341,7 @@ function LiveView() {
             <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
             <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
             <Bar dataKey="taskCount" name="Task" fill="var(--teal)" radius={[4, 4, 0, 0]}>
-              <LabelList dataKey="taskCount" position="top" fontSize={10} fill="var(--muted)" />
+              <LabelList dataKey="taskCount" position="top" fontSize={10} fontWeight={700} fill="var(--muted-strong)" />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
