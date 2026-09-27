@@ -1177,6 +1177,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1898_tpz_access.sql", // Registered 2026-09-26 (ported from tausif-mis, renumbered from 1782). Creates mas_hrms.tpz_user_access + tpz_access_grant (per-user TPZ Process grants: which processes/branches a user may open). Additive, idempotent.
   "1899_gnc_lob_target.sql", // Registered 2026-09-26 (ported from tausif-mis, renumbered from 1870). Creates gnc_lob_target (effective-dated GNC LOB monthly revenue targets) + seeds the business-supplied targets with INSERT IGNORE. Additive, idempotent.
   "1900_wfm_business_command_access.sql", // Registered 2026-09-26. Grants wfm + branch_wfm can_view on BUSINESS_COMMAND_CENTER so WFM can set Required HC (mandate seats) for processes in their own branch; the API enforces branch scope. Additive, replay-safe.
+  "migrations/1901_loan_active_status_completed_cleanup.sql", // Registered 2026-09-27. Marks employee_loans rows status='completed' where they are still 'active' but pending_amount=0 — legacy-import artifacts from db_bill.LoanMaster, which never tracked open/closed, only PendingAmount. Run via scripts/loan-active-status-completed-cleanup.ts --apply (writes a logSensitiveAction row per loan first), not this raw UPDATE directly. Idempotent (WHERE status='active' AND pending_amount=0 matches nothing once applied). Applied against production 2026-09-27 with explicit user approval, same pattern as 1602/1603/1605.
 ];
 
 export type MigrationHealth = {
