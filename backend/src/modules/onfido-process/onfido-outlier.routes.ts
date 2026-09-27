@@ -64,9 +64,13 @@ export function mountOutlierRoutes(
   router: Router,
   guard: RequestHandler[],
 ): void {
-  router.get("/data-freshness", ...guard, wrap(async (_req, res) => {
-    res.json({ success: true, data: await getDataFreshness() });
-  }));
+  router.get(
+    "/data-freshness",
+    ...guard,
+    wrap(async (_req, res) => {
+      res.json({ success: true, data: await getDataFreshness() });
+    }),
+  );
 
   router.get(
     "/outliers",

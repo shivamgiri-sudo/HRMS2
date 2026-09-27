@@ -1,7 +1,12 @@
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { getOnfidoPool } from "../../db/onfidoDb.js";
-import { buildRecordFilter, resolveTable, tlAmFilter, type RecordListFilters } from "./onfido-process-dashboard.service.js";
+import {
+  buildRecordFilter,
+  resolveTable,
+  tlAmFilter,
+  type RecordListFilters,
+} from "./onfido-process-dashboard.service.js";
 
 /** Hard ceiling so one click can never pull a multi-GB table through the API process. */
 export const EXPORT_MAX_ROWS = 100_000;
@@ -13,13 +18,24 @@ const CHUNK_ROWS = 2_000;
  * the raw JSON blob) are not dashboard data and must not leave the system.
  */
 const EXPORT_HIDDEN_COLUMNS = new Set([
-  "id", "raw_data", "uploaded_at", "uploaded_by", "upload_batch_id", "batch_id", "import_batch_id",
-  "row_hash", "dedup_key", "created_at", "updated_at",
+  "id",
+  "raw_data",
+  "uploaded_at",
+  "uploaded_by",
+  "upload_batch_id",
+  "batch_id",
+  "import_batch_id",
+  "row_hash",
+  "dedup_key",
+  "created_at",
+  "updated_at",
 ]);
 const URL_COLUMN = /(^|_)(url|urls|link|links)($|_)/i;
 
 export function exportColumns(columns: readonly string[]): string[] {
-  return columns.filter((c) => !EXPORT_HIDDEN_COLUMNS.has(c.toLowerCase()) && !URL_COLUMN.test(c));
+  return columns.filter(
+    (c) => !EXPORT_HIDDEN_COLUMNS.has(c.toLowerCase()) && !URL_COLUMN.test(c),
+  );
 }
 
 function pad(n: number): string {
@@ -33,8 +49,11 @@ export function csvCell(value: unknown): string {
   let text: string;
   if (value instanceof Date) {
     const day = `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
-    const hasTime = value.getHours() + value.getMinutes() + value.getSeconds() > 0;
-    text = hasTime ? `${day} ${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}` : day;
+    const hasTime =
+      value.getHours() + value.getMinutes() + value.getSeconds() > 0;
+    text = hasTime
+      ? `${day} ${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`
+      : day;
   } else {
     text = String(value);
   }
@@ -48,28 +67,43 @@ export function csvLine(cells: unknown[]): string {
 
 function startCsv(res: Response, filename: string): void {
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename.replace(/[^A-Za-z0-9_.-]/g, "_")}"`);
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${filename.replace(/[^A-Za-z0-9_.-]/g, "_")}"`,
+  );
   res.setHeader("Cache-Control", "no-store");
   res.write("\uFEFF"); // BOM so Excel reads UTF-8 names correctly
 }
 
 /** Streams a raw table, honouring the same date / TL / AM / drill-down filters as the on-screen list. */
-export async function streamRecordsCsv(res: Response, tableKey: string, filters: RecordListFilters): Promise<void> {
+export async function streamRecordsCsv(
+  res: Response,
+  tableKey: string,
+  filters: RecordListFilters,
+): Promise<void> {
   const table = resolveTable(tableKey);
   const pool = await getOnfidoPool();
-  const { whereSql, params } = await buildRecordFilter(pool, table, null, filters);
+  const { whereSql, params } = await buildRecordFilter(
+    pool,
+    table,
+    null,
+    filters,
+  );
 
   let header: string[] | null = null;
   let written = 0;
   while (written < EXPORT_MAX_ROWS) {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT * FROM ${table} ${whereSql} ORDER BY id ASC LIMIT ? OFFSET ?`,
-      [...params, Math.min(CHUNK_ROWS, EXPORT_MAX_ROWS - written), written]
+      [...params, Math.min(CHUNK_ROWS, EXPORT_MAX_ROWS - written), written],
     );
     if (rows.length === 0) break;
     if (!header) {
       header = exportColumns(Object.keys(rows[0]));
-      startCsv(res, `${table}_${filters.from ?? "start"}_${filters.to ?? "end"}.csv`);
+      startCsv(
+        res,
+        `${table}_${filters.from ?? "start"}_${filters.to ?? "end"}.csv`,
+      );
       res.write(csvLine(header));
     }
     for (const row of rows) res.write(csvLine(header.map((c) => row[c])));
@@ -85,7 +119,8 @@ export async function streamRecordsCsv(res: Response, tableKey: string, filters:
 
 /** Analyst-wise attrition: one line per exited analyst in range (same source as the on-screen list, no 500-row cap). */
 export async function streamAttritionExitsCsv(
-  res: Response, filters: { from?: string; to?: string; tlName?: string; amName?: string }
+  res: Response,
+  filters: { from?: string; to?: string; tlName?: string; amName?: string },
 ): Promise<void> {
   const pool = await getOnfidoPool();
   const { clause, params } = tlAmFilter(filters.tlName, filters.amName);
@@ -93,12 +128,42 @@ export async function streamAttritionExitsCsv(
     `SELECT emp_id, emp_name, analyst_email, tl_name, am_name, work_date AS exit_date, attrition_type, attrition_reason
        FROM onfido_agent_daily_raw WHERE attrition_flag = 1 AND work_date BETWEEN ? AND ? ${clause}
        ORDER BY work_date DESC LIMIT ?`,
-    [filters.from ?? "1970-01-01", filters.to ?? "2999-12-31", ...params, EXPORT_MAX_ROWS]
+    [
+      filters.from ?? "1970-01-01",
+      filters.to ?? "2999-12-31",
+      ...params,
+      EXPORT_MAX_ROWS,
+    ],
   );
-  startCsv(res, `onfido_attrition_${filters.from ?? "start"}_${filters.to ?? "end"}.csv`);
-  res.write(csvLine(["Emp ID", "Employee", "Analyst email", "TL", "AM", "Exit date", "Type", "Reason"]));
+  startCsv(
+    res,
+    `onfido_attrition_${filters.from ?? "start"}_${filters.to ?? "end"}.csv`,
+  );
+  res.write(
+    csvLine([
+      "Emp ID",
+      "Employee",
+      "Analyst email",
+      "TL",
+      "AM",
+      "Exit date",
+      "Type",
+      "Reason",
+    ]),
+  );
   for (const r of rows) {
-    res.write(csvLine([r.emp_id, r.emp_name, r.analyst_email, r.tl_name, r.am_name, r.exit_date, r.attrition_type, r.attrition_reason]));
+    res.write(
+      csvLine([
+        r.emp_id,
+        r.emp_name,
+        r.analyst_email,
+        r.tl_name,
+        r.am_name,
+        r.exit_date,
+        r.attrition_type,
+        r.attrition_reason,
+      ]),
+    );
   }
   res.end();
 }

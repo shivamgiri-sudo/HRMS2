@@ -19,7 +19,10 @@ import type { NextFunction, Request, Response } from "express";
 const TTL_MS = 30 * 60_000;
 const MAX_ENTRIES = 800;
 
-interface CacheEntry { body: unknown; expiresAt: number }
+interface CacheEntry {
+  body: unknown;
+  expiresAt: number;
+}
 
 const store = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<unknown>>();
@@ -36,7 +39,13 @@ export function primeOnfidoResponseCache(key: string, body: unknown): void {
 
 function isCacheable(req: Request): boolean {
   // /wfm-inputs is hand-entered and can differ per viewer (can-edit), so it is never shared.
-  return req.method === "GET" && !req.path.startsWith("/live/") && !req.path.startsWith("/live") && !req.path.startsWith("/wfm-inputs") && !req.path.endsWith("/export.csv");
+  return (
+    req.method === "GET" &&
+    !req.path.startsWith("/live/") &&
+    !req.path.startsWith("/live") &&
+    !req.path.startsWith("/wfm-inputs") &&
+    !req.path.endsWith("/export.csv")
+  );
 }
 
 function remember(key: string, body: unknown): void {
@@ -47,8 +56,15 @@ function remember(key: string, body: unknown): void {
   store.set(key, { body, expiresAt: Date.now() + TTL_MS });
 }
 
-export function onfidoResponseCache(req: Request, res: Response, next: NextFunction): void {
-  if (!isCacheable(req)) { next(); return; }
+export function onfidoResponseCache(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  if (!isCacheable(req)) {
+    next();
+    return;
+  }
   const key = req.originalUrl;
 
   const hit = store.get(key);
@@ -61,13 +77,22 @@ export function onfidoResponseCache(req: Request, res: Response, next: NextFunct
 
   const waiting = inFlight.get(key);
   if (waiting) {
-    waiting.then((body) => { res.setHeader("X-Onfido-Cache", "shared"); res.json(body); }, () => next());
+    waiting.then(
+      (body) => {
+        res.setHeader("X-Onfido-Cache", "shared");
+        res.json(body);
+      },
+      () => next(),
+    );
     return;
   }
 
   let settle: (body: unknown) => void = () => undefined;
   let fail: () => void = () => undefined;
-  const mine = new Promise<unknown>((resolve, reject) => { settle = resolve; fail = () => reject(new Error("uncached")); });
+  const mine = new Promise<unknown>((resolve, reject) => {
+    settle = resolve;
+    fail = () => reject(new Error("uncached"));
+  });
   // A rejected in-flight promise with no waiter must not surface as an unhandled rejection.
   mine.catch(() => undefined);
   inFlight.set(key, mine);
@@ -75,12 +100,20 @@ export function onfidoResponseCache(req: Request, res: Response, next: NextFunct
   const originalJson = res.json.bind(res);
   res.json = (body: unknown): Response => {
     if (inFlight.get(key) === mine) inFlight.delete(key);
-    if (res.statusCode >= 200 && res.statusCode < 300) { remember(key, body); settle(body); } else { fail(); }
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      remember(key, body);
+      settle(body);
+    } else {
+      fail();
+    }
     return originalJson(body);
   };
   res.on("close", () => {
     // Request aborted or errored before res.json ran: release waiters so they recompute themselves.
-    if (inFlight.get(key) === mine) { inFlight.delete(key); fail(); }
+    if (inFlight.get(key) === mine) {
+      inFlight.delete(key);
+      fail();
+    }
   });
   next();
 }

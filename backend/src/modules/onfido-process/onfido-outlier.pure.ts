@@ -84,7 +84,10 @@ export function previousPeriods(
 export const WEEKLY_LOOKBACK = 4;
 
 /** The latest `count` rolling 7-day windows ending at `to`, newest first. Independent of the range length. */
-export function recentWeeks(to: string, count: number = WEEKLY_LOOKBACK): { from: string; to: string }[] {
+export function recentWeeks(
+  to: string,
+  count: number = WEEKLY_LOOKBACK,
+): { from: string; to: string }[] {
   if (!ISO_DAY.test(to)) return [];
   const weeks: { from: string; to: string }[] = [];
   for (let i = 0; i < count; i += 1) {
@@ -97,7 +100,10 @@ export function recentWeeks(to: string, count: number = WEEKLY_LOOKBACK): { from
 export type OutlierPattern = "repeat" | "intermittent" | "new" | "recovering";
 
 /** repeat = over target in the latest 2+ weeks running; recovering = over target earlier but fine in the latest week. */
-export function patternOf(streak: number, flaggedWeeks: number): OutlierPattern {
+export function patternOf(
+  streak: number,
+  flaggedWeeks: number,
+): OutlierPattern {
   if (streak >= 2) return "repeat";
   if (streak === 0) return "recovering";
   return flaggedWeeks > 1 ? "intermittent" : "new";

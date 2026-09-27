@@ -14,14 +14,14 @@ async function ensureColumn(): Promise<void> {
   const pool = await getOnfidoPool();
   const [rows] = await pool.query(
     `SELECT 1 FROM information_schema.columns
-      WHERE table_schema = DATABASE() AND table_name = 'onfido_doc_raw' AND column_name = 'doc_task_type_old'`
+      WHERE table_schema = DATABASE() AND table_name = 'onfido_doc_raw' AND column_name = 'doc_task_type_old'`,
   );
   if ((rows as unknown[]).length > 0) return;
   try {
     await pool.query(
       `ALTER TABLE onfido_doc_raw ADD COLUMN doc_task_type_old VARCHAR(100)
          GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(raw_data, '$."Task Information Task Type Old"'))) VIRTUAL,
-         ALGORITHM = INSTANT`
+         ALGORITHM = INSTANT`,
     );
   } catch (err) {
     // Another process may have added it between the check and the ALTER (errno 1060).
@@ -29,7 +29,14 @@ async function ensureColumn(): Promise<void> {
   }
 }
 
-export function ensureDocTaskTypeColumn(_req: Request, _res: Response, next: NextFunction): void {
-  ready ??= ensureColumn().catch((err) => { ready = null; throw err; });
+export function ensureDocTaskTypeColumn(
+  _req: Request,
+  _res: Response,
+  next: NextFunction,
+): void {
+  ready ??= ensureColumn().catch((err) => {
+    ready = null;
+    throw err;
+  });
   ready.then(() => next(), next);
 }

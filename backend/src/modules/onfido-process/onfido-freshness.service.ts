@@ -10,15 +10,60 @@ interface FreshnessSource {
 
 /** Every source table a dashboard tab reads, with the date column its own filters use. */
 export const FRESHNESS_SOURCES: readonly FreshnessSource[] = [
-  { key: "doc", label: "DOC tasks", table: "onfido_doc_raw", dateColumn: "report_date" },
-  { key: "poa", label: "POA tasks", table: "onfido_poa_raw", dateColumn: "report_completed_date" },
-  { key: "doc_audit", label: "DOC audits", table: "onfido_doc_external_audit_raw", dateColumn: "report_date" },
-  { key: "doc_quality", label: "DOC internal quality", table: "onfido_doc_quality_raw", dateColumn: "task_complete_date" },
-  { key: "poa_quality", label: "POA quality", table: "onfido_poa_quality_raw", dateColumn: "report_completed_date" },
-  { key: "cre", label: "CRE", table: "onfido_doc_escalation_cre_raw", dateColumn: "qc_updated_date" },
-  { key: "etm", label: "ETM", table: "onfido_doc_etm_raw", dateColumn: "report_date" },
-  { key: "task_skip", label: "Task skip", table: "onfido_task_skip_raw", dateColumn: "skip_date" },
-  { key: "agent_daily", label: "Attrition / shrinkage", table: "onfido_agent_daily_raw", dateColumn: "work_date" },
+  {
+    key: "doc",
+    label: "DOC tasks",
+    table: "onfido_doc_raw",
+    dateColumn: "report_date",
+  },
+  {
+    key: "poa",
+    label: "POA tasks",
+    table: "onfido_poa_raw",
+    dateColumn: "report_completed_date",
+  },
+  {
+    key: "doc_audit",
+    label: "DOC audits",
+    table: "onfido_doc_external_audit_raw",
+    dateColumn: "report_date",
+  },
+  {
+    key: "doc_quality",
+    label: "DOC internal quality",
+    table: "onfido_doc_quality_raw",
+    dateColumn: "task_complete_date",
+  },
+  {
+    key: "poa_quality",
+    label: "POA quality",
+    table: "onfido_poa_quality_raw",
+    dateColumn: "report_completed_date",
+  },
+  {
+    key: "cre",
+    label: "CRE",
+    table: "onfido_doc_escalation_cre_raw",
+    dateColumn: "qc_updated_date",
+  },
+  {
+    key: "etm",
+    label: "ETM",
+    table: "onfido_doc_etm_raw",
+    dateColumn: "report_date",
+  },
+  {
+    key: "task_skip",
+    label: "Task skip",
+    table: "onfido_task_skip_raw",
+    dateColumn: "skip_date",
+  },
+  {
+    key: "agent_daily",
+    label: "Attrition / shrinkage",
+    table: "onfido_agent_daily_raw",
+    dateColumn: "work_date",
+  },
 ];
 
 export interface FreshnessRow {
@@ -35,9 +80,15 @@ export function findGapMonths(months: string[]): string[] {
   const present = new Set(months);
   const sorted = [...present].sort();
   const [firstYear, firstMonth] = sorted[0].split("-").map(Number);
-  const [lastYear, lastMonth] = sorted[sorted.length - 1].split("-").map(Number);
+  const [lastYear, lastMonth] = sorted[sorted.length - 1]
+    .split("-")
+    .map(Number);
   const gaps: string[] = [];
-  for (let y = firstYear, m = firstMonth; y < lastYear || (y === lastYear && m <= lastMonth); m += 1) {
+  for (
+    let y = firstYear, m = firstMonth;
+    y < lastYear || (y === lastYear && m <= lastMonth);
+    m += 1
+  ) {
     if (m === 13) {
       y += 1;
       m = 1;
@@ -69,7 +120,12 @@ export async function getDataFreshness(): Promise<FreshnessRow[]> {
         };
       } catch (err: unknown) {
         console.error(`[onfido] freshness failed for ${source.table}:`, err);
-        return { key: source.key, label: source.label, latestDate: null, gapMonths: [] };
+        return {
+          key: source.key,
+          label: source.label,
+          latestDate: null,
+          gapMonths: [],
+        };
       }
     }),
   );

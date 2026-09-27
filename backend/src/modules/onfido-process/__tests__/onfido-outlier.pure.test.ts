@@ -72,25 +72,66 @@ describe("buildOutlierRows", () => {
 
   it("marks an analyst over target in consecutive latest weeks as a repeat outlier", () => {
     const a = alert("a@x.com", "Overall Error %", 3);
-    const rows = buildOutlierRows([a, alert("b@x.com", "Overall Error %", 2)], [week(a), week(a), week(a), week()], []);
-    expect(rows[0]).toMatchObject({ analystEmail: "a@x.com", streak: 3, repeat: true, flaggedWeeks: 3, pattern: "repeat", variance: 1.5 });
-    expect(rows[1]).toMatchObject({ analystEmail: "b@x.com", streak: 0, repeat: false, pattern: "recovering" });
+    const rows = buildOutlierRows(
+      [a, alert("b@x.com", "Overall Error %", 2)],
+      [week(a), week(a), week(a), week()],
+      [],
+    );
+    expect(rows[0]).toMatchObject({
+      analystEmail: "a@x.com",
+      streak: 3,
+      repeat: true,
+      flaggedWeeks: 3,
+      pattern: "repeat",
+      variance: 1.5,
+    });
+    expect(rows[1]).toMatchObject({
+      analystEmail: "b@x.com",
+      streak: 0,
+      repeat: false,
+      pattern: "recovering",
+    });
   });
 
   it("does not call a gap a streak", () => {
     const a = alert("a@x.com", "Overall Error %", 3);
     const [row] = buildOutlierRows([a], [week(a), week(), week(a), week()], []);
-    expect(row).toMatchObject({ streak: 1, repeat: false, flaggedWeeks: 2, pattern: "intermittent" });
+    expect(row).toMatchObject({
+      streak: 1,
+      repeat: false,
+      flaggedWeeks: 2,
+      pattern: "intermittent",
+    });
   });
 
   it("ignores metrics that carry no dashboard target", () => {
-    expect(buildOutlierRows([alert("a@x.com", "Manual FAR %", 9, 2)], [], [])).toEqual([]);
+    expect(
+      buildOutlierRows([alert("a@x.com", "Manual FAR %", 9, 2)], [], []),
+    ).toEqual([]);
   });
 
   it("attaches the open action, preferring it over a closed one", () => {
-    const closed: ActionSummary = { id: "1", analystEmail: "A@x.com", metric: "Overall Error %", status: "closed", dueDate: null, ownerName: null };
-    const open: ActionSummary = { id: "2", analystEmail: "a@x.com", metric: "Overall Error %", status: "open", dueDate: "2026-09-30", ownerName: "TL A" };
-    const [row] = buildOutlierRows([alert("a@x.com", "Overall Error %", 3)], [], [closed, open]);
+    const closed: ActionSummary = {
+      id: "1",
+      analystEmail: "A@x.com",
+      metric: "Overall Error %",
+      status: "closed",
+      dueDate: null,
+      ownerName: null,
+    };
+    const open: ActionSummary = {
+      id: "2",
+      analystEmail: "a@x.com",
+      metric: "Overall Error %",
+      status: "open",
+      dueDate: "2026-09-30",
+      ownerName: "TL A",
+    };
+    const [row] = buildOutlierRows(
+      [alert("a@x.com", "Overall Error %", 3)],
+      [],
+      [closed, open],
+    );
     expect(row.action?.id).toBe("2");
   });
 });

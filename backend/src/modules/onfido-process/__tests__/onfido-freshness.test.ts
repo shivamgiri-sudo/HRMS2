@@ -7,7 +7,10 @@ describe("findGapMonths", () => {
   });
 
   it("handles a year boundary and several gaps", () => {
-    expect(findGapMonths(["2025-11", "2026-02"])).toEqual(["2025-12", "2026-01"]);
+    expect(findGapMonths(["2025-11", "2026-02"])).toEqual([
+      "2025-12",
+      "2026-01",
+    ]);
   });
 
   it("reports nothing for contiguous months or fewer than two", () => {

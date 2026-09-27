@@ -22,8 +22,19 @@ import {
   type AuditMatrixInput,
 } from "../onfido-poa-pages.service.js";
 
-const input = (label: string, totalQc: number, errors: number, extra: Partial<AuditMatrixInput> = {}): AuditMatrixInput => ({
-  label, totalQc, errors, classificationError: 0, extractionError: 0, comparisonError: 0, ...extra,
+const input = (
+  label: string,
+  totalQc: number,
+  errors: number,
+  extra: Partial<AuditMatrixInput> = {},
+): AuditMatrixInput => ({
+  label,
+  totalQc,
+  errors,
+  classificationError: 0,
+  extractionError: 0,
+  comparisonError: 0,
+  ...extra,
 });
 
 describe("buildMatrixRows", () => {
@@ -47,7 +58,11 @@ describe("buildMatrixRows", () => {
   });
 
   it("uses errorBase (error + no-error) for Total Error % but Total QC for sub-error %", () => {
-    const [row] = buildMatrixRows([input("A", 200, 4, { errorBase: 100, classificationError: 2 })], "ranked", false);
+    const [row] = buildMatrixRows(
+      [input("A", 200, 4, { errorBase: 100, classificationError: 2 })],
+      "ranked",
+      false,
+    );
     expect(row.errorPct).toBeCloseTo(4, 10);
     expect(row.classificationPct).toBeCloseTo(1, 10);
   });
@@ -60,32 +75,59 @@ describe("buildMatrixRows", () => {
 
   it("sorts Date/WC tables chronologically by sortKey", () => {
     const rows = buildMatrixRows(
-      [input("06-Jul-26", 1, 0, { sortKey: "2026-07-06" }), input("29-Jun-26", 1, 0, { sortKey: "2026-06-29" })],
+      [
+        input("06-Jul-26", 1, 0, { sortKey: "2026-07-06" }),
+        input("29-Jun-26", 1, 0, { sortKey: "2026-06-29" }),
+      ],
       "chronological",
     );
-    expect(rows.map((r) => r.particular)).toEqual(["29-Jun-26", "06-Jul-26", "Grand Total"]);
+    expect(rows.map((r) => r.particular)).toEqual([
+      "29-Jun-26",
+      "06-Jul-26",
+      "Grand Total",
+    ]);
   });
 
   it("ranks other tables by errors desc, then error % desc, then volume desc, then name", () => {
     const rows = buildMatrixRows(
-      [input("low", 1000, 2), input("high", 10, 5), input("mid-a", 100, 2), input("mid-b", 100, 2)],
+      [
+        input("low", 1000, 2),
+        input("high", 10, 5),
+        input("mid-a", 100, 2),
+        input("mid-b", 100, 2),
+      ],
       "ranked",
       false,
     );
-    expect(rows.map((r) => r.particular)).toEqual(["high", "mid-a", "mid-b", "low"]);
+    expect(rows.map((r) => r.particular)).toEqual([
+      "high",
+      "mid-a",
+      "mid-b",
+      "low",
+    ]);
   });
 
   it("drops rows with an empty label and no data", () => {
-    const rows = buildMatrixRows([input("", 0, 0), input("A", 5, 0)], "ranked", false);
+    const rows = buildMatrixRows(
+      [input("", 0, 0), input("A", 5, 0)],
+      "ranked",
+      false,
+    );
     expect(rows.map((r) => r.particular)).toEqual(["A"]);
   });
 });
 
 describe("topAnalysts", () => {
   const analysts = [
-    input("a@x", 100, 0), input("b@x", 50, 0), input("c@x", 100, 5), input("d@x", 100, 1),
-    input("Blank", 500, 0), input("zero@x", 0, 0),
-    ...Array.from({ length: 12 }, (_, i) => input(`filler${i}@x`, 10, 1 + (i % 3))),
+    input("a@x", 100, 0),
+    input("b@x", 50, 0),
+    input("c@x", 100, 5),
+    input("d@x", 100, 1),
+    input("Blank", 500, 0),
+    input("zero@x", 0, 0),
+    ...Array.from({ length: 12 }, (_, i) =>
+      input(`filler${i}@x`, 10, 1 + (i % 3)),
+    ),
   ];
 
   it("Top Analyst lists lowest error % first, excludes Blank/zero volume and caps at 10", () => {
@@ -93,7 +135,9 @@ describe("topAnalysts", () => {
     expect(top).toHaveLength(10);
     expect(top[0].particular).toBe("a@x"); // 0 errors, larger volume beats b@x on tie
     expect(top[1].particular).toBe("b@x");
-    expect(top.some((r) => r.particular === "Blank" || r.particular === "zero@x")).toBe(false);
+    expect(
+      top.some((r) => r.particular === "Blank" || r.particular === "zero@x"),
+    ).toBe(false);
     expect(top.some((r) => r.isGrandTotal)).toBe(false);
   });
 
@@ -154,12 +198,28 @@ describe("region", () => {
       { date: "2026-07-01", country: "CAN", qc: 5, errors: 1 },
       { date: "2026-07-01", country: "FRA", qc: 5, errors: 0 },
     ]);
-    expect(rows.map((r) => r.dateLabel)).toEqual(["01-Jul-26", "02-Jul-26", "Grand Total"]);
-    expect(rows[0]).toMatchObject({ euQc: 5, caQc: 5, caError: 1, usQc: 20, totalQc: 30, totalError: 1 });
+    expect(rows.map((r) => r.dateLabel)).toEqual([
+      "01-Jul-26",
+      "02-Jul-26",
+      "Grand Total",
+    ]);
+    expect(rows[0]).toMatchObject({
+      euQc: 5,
+      caQc: 5,
+      caError: 1,
+      usQc: 20,
+      totalQc: 30,
+      totalError: 1,
+    });
     expect(rows[0].caErrorPct).toBeCloseTo(20, 10);
     const grand = rows[2];
     expect(grand.isGrandTotal).toBe(true);
-    expect(grand).toMatchObject({ euQc: 15, euError: 1, totalQc: 40, totalError: 2 });
+    expect(grand).toMatchObject({
+      euQc: 15,
+      euError: 1,
+      totalQc: 40,
+      totalError: 2,
+    });
     expect(grand.totalErrorPct).toBeCloseTo(5, 10);
     expect(buildRegionRows([])).toEqual([]);
   });
@@ -184,14 +244,42 @@ describe("classifyExternalError", () => {
 
   it("merges SQL groups per label, counting error buckets only on error rows", () => {
     const merged = buildExternalInputs([
-      { label: "Acme", reason: "Supported Document", secondLevel: "Correctly Processed", audits: 90, errors: 0 },
-      { label: "Acme", reason: "Extraction Error", secondLevel: "Address", audits: 3, errors: 3 },
-      { label: "Acme", reason: "Data Comparison", secondLevel: "Address", audits: 1, errors: 1 },
-      { label: "Acme", reason: "Possible fraud", secondLevel: "Specimen Document", audits: 1, errors: 1 },
+      {
+        label: "Acme",
+        reason: "Supported Document",
+        secondLevel: "Correctly Processed",
+        audits: 90,
+        errors: 0,
+      },
+      {
+        label: "Acme",
+        reason: "Extraction Error",
+        secondLevel: "Address",
+        audits: 3,
+        errors: 3,
+      },
+      {
+        label: "Acme",
+        reason: "Data Comparison",
+        secondLevel: "Address",
+        audits: 1,
+        errors: 1,
+      },
+      {
+        label: "Acme",
+        reason: "Possible fraud",
+        secondLevel: "Specimen Document",
+        audits: 1,
+        errors: 1,
+      },
     ]);
     expect(merged).toHaveLength(1);
     expect(merged[0]).toMatchObject({
-      totalQc: 95, errors: 5, classificationError: 0, extractionError: 3, comparisonError: 1,
+      totalQc: 95,
+      errors: 5,
+      classificationError: 0,
+      extractionError: 3,
+      comparisonError: 1,
     });
   });
 });
@@ -214,13 +302,38 @@ describe("trail SLA", () => {
 
   it("aggregates per day and derives card totals and Miss SLA %", () => {
     const daily = buildTrailDaily([
-      { date: "2026-07-09", slaStatus: "Greater than 30 Min", tasks: 1, audits: 1, errors: 0 },
-      { date: "2026-07-08", slaStatus: "Less Then 10 Min", tasks: 1, audits: 1, errors: 1 },
-      { date: "2026-07-08", slaStatus: "Less Then 30 Min", tasks: 1, audits: 1, errors: 0 },
+      {
+        date: "2026-07-09",
+        slaStatus: "Greater than 30 Min",
+        tasks: 1,
+        audits: 1,
+        errors: 0,
+      },
+      {
+        date: "2026-07-08",
+        slaStatus: "Less Then 10 Min",
+        tasks: 1,
+        audits: 1,
+        errors: 1,
+      },
+      {
+        date: "2026-07-08",
+        slaStatus: "Less Then 30 Min",
+        tasks: 1,
+        audits: 1,
+        errors: 0,
+      },
       { date: "2026-07-08", slaStatus: "", tasks: 1, audits: 0, errors: 0 },
     ]);
     expect(daily.map((d) => d.date)).toEqual(["2026-07-08", "2026-07-09"]);
-    expect(daily[0]).toMatchObject({ miss: 0, notMiss: 2, total: 2, tasks: 3, audits: 2, errors: 1 });
+    expect(daily[0]).toMatchObject({
+      miss: 0,
+      notMiss: 2,
+      total: 2,
+      tasks: 3,
+      audits: 2,
+      errors: 1,
+    });
     expect(daily[0].errorPct).toBeCloseTo(50, 10);
     const cards = computeTrailCards(daily);
     expect(cards).toMatchObject({ total: 3, miss: 1, notMiss: 2 });
@@ -231,8 +344,18 @@ describe("trail SLA", () => {
 
 describe("resolveFilters", () => {
   it("keeps valid ISO dates and trims TL/AM, blanking empties", () => {
-    expect(resolveFilters({ from: "2026-07-01", to: "2026-07-31", tlName: " X ", amName: " " })).toEqual({
-      from: "2026-07-01", to: "2026-07-31", tlName: "X", amName: null,
+    expect(
+      resolveFilters({
+        from: "2026-07-01",
+        to: "2026-07-31",
+        tlName: " X ",
+        amName: " ",
+      }),
+    ).toEqual({
+      from: "2026-07-01",
+      to: "2026-07-31",
+      tlName: "X",
+      amName: null,
     });
   });
 

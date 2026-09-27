@@ -68,6 +68,41 @@ type Drill = { kind: "total" } | { kind: "queue"; queue: QueueRow } | { kind: "a
 
 const N = (v: number | null): CSSProperties => (v !== null && v < 0 ? { color: "var(--red)" } : {});
 
+/** Manpower straight from the mandate count database (cost_center_billing_config) and the live
+ *  employee roster, scoped to the Onfido NOIDA cost centre and its DOC/POA/Encord LOBs — distinct
+ *  from the Queue Wise card above, which is manually entered via the Approved HC sheet. Active HC
+ *  here excludes anyone currently in an active NHT (New Hire Training) batch in the LMS. */
+function MandateManpowerCard() {
+  const query = useQuery({
+    queryKey: ["onfido-process", "mandate-manpower"],
+    queryFn: () => hrmsApi.get<{ data: {
+      costCenterCode: string; approvedHc: number | null; activeHc: number; inTrainingHc: number; bufferPct: number | null;
+    } }>("/api/onfido-process/overview-report/mandate-manpower"),
+  });
+  const d = query.data?.data;
+  return (
+    <SectionCard title="Manpower — Mandate Count" accent="var(--purple)" subtitle={d ? `Cost centre ${d.costCenterCode} · DOC + POA + Encord, NHT trainees excluded from Active HC` : undefined}>
+      <SectionState loading={query.isLoading} error={query.isError ? "Could not load mandate manpower." : null} empty={!d} emptyText="No mandate data for this cost centre.">
+        {d && (
+          <div style={{ overflowX: "auto" }}>
+            <table className="oc-table">
+              <thead><tr><th className="oc-right">Approved HC (Mandate)</th><th className="oc-right">Active HC</th><th className="oc-right">In NHT Training</th><th className="oc-right">Buffer %</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td className="oc-right">{d.approvedHc ?? "—"}</td>
+                  <td className="oc-right">{d.activeHc}</td>
+                  <td className="oc-right">{d.inTrainingHc}</td>
+                  <td className="oc-right">{d.bufferPct !== null ? `${d.bufferPct}%` : "—"}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </SectionState>
+    </SectionCard>
+  );
+}
+
 export default function OnfidoOverviewReport({ range, tlFilter, amFilter }: { range: DateRange; tlFilter: string; amFilter: string }) {
   const [fallback, setFallback] = useState<Granularity>("monthly");
   const [overrides, setOverrides] = useState<Partial<Record<string, Granularity>>>({});

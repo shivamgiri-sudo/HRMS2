@@ -2,8 +2,14 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
-import type { ManpowerPlanRow, ProcessQueue } from "./onfido-overview-report.pure.js";
-import type { ManpowerPlanInput, UtilizationInputRow } from "./onfido-wfm-inputs.validation.js";
+import type {
+  ManpowerPlanRow,
+  ProcessQueue,
+} from "./onfido-overview-report.pure.js";
+import type {
+  ManpowerPlanInput,
+  UtilizationInputRow,
+} from "./onfido-wfm-inputs.validation.js";
 
 /**
  * Manual WFM inputs for the Onfido Overview / Utilization formats (migration 1845):
@@ -13,7 +19,8 @@ import type { ManpowerPlanInput, UtilizationInputRow } from "./onfido-wfm-inputs
 
 const AUDIT_MODULE = "onfido-process";
 
-const numOrNull = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
+const numOrNull = (v: unknown): number | null =>
+  v === null || v === undefined ? null : Number(v);
 
 export interface ManpowerPlanRecord extends ManpowerPlanRow {
   id: string;
@@ -45,13 +52,25 @@ export async function listManpowerPlan(): Promise<ManpowerPlanRecord[]> {
   }));
 }
 
-export async function upsertManpowerPlan(input: ManpowerPlanInput, actorUserId: string): Promise<void> {
+export async function upsertManpowerPlan(
+  input: ManpowerPlanInput,
+  actorUserId: string,
+): Promise<void> {
   await db.execute(
     `INSERT INTO onfido_manpower_plan (id, process_queue, effective_from, approved_hc, active_hc, remarks, created_by)
      VALUES (?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE approved_hc = VALUES(approved_hc), active_hc = VALUES(active_hc),
                              remarks = VALUES(remarks), updated_by = ?`,
-    [randomUUID(), input.processQueue, input.effectiveFrom, input.approvedHc, input.activeHc, input.remarks, actorUserId, actorUserId],
+    [
+      randomUUID(),
+      input.processQueue,
+      input.effectiveFrom,
+      input.approvedHc,
+      input.activeHc,
+      input.remarks,
+      actorUserId,
+      actorUserId,
+    ],
   );
   await writeAuditLog({
     actor_user_id: actorUserId,
@@ -70,7 +89,10 @@ export interface UtilizationInputRecord extends UtilizationInputRow {
   createdAt: string | null;
 }
 
-export async function listUtilizationInputs(from: string, to: string): Promise<UtilizationInputRecord[]> {
+export async function listUtilizationInputs(
+  from: string,
+  to: string,
+): Promise<UtilizationInputRecord[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DATE_FORMAT(input_date, '%Y-%m-%d') AS input_date, forecast_task, forecast_task_poa, manual_far_cases,
             adhoc_time, analyst_qc, facial_checks, cross_training_task_poa, poa_live_audits_pq, remarks,
@@ -98,7 +120,10 @@ export async function listUtilizationInputs(from: string, to: string): Promise<U
 }
 
 /** Inserts or overwrites one row per date. The caller has already validated every row. */
-export async function upsertUtilizationInputs(rows: readonly UtilizationInputRow[], actorUserId: string): Promise<number> {
+export async function upsertUtilizationInputs(
+  rows: readonly UtilizationInputRow[],
+  actorUserId: string,
+): Promise<number> {
   for (const r of rows) {
     await db.execute(
       `INSERT INTO onfido_utilization_daily_input
@@ -110,8 +135,18 @@ export async function upsertUtilizationInputs(rows: readonly UtilizationInputRow
          facial_checks = VALUES(facial_checks), cross_training_task_poa = VALUES(cross_training_task_poa),
          poa_live_audits_pq = VALUES(poa_live_audits_pq), remarks = VALUES(remarks), updated_by = ?`,
       [
-        r.inputDate, r.forecastTask, r.forecastTaskPoa, r.manualFarCases, r.adhocTime, r.analystQc, r.facialChecks,
-        r.crossTrainingTaskPoa, r.poaLiveAuditsPq, r.remarks, actorUserId, actorUserId,
+        r.inputDate,
+        r.forecastTask,
+        r.forecastTaskPoa,
+        r.manualFarCases,
+        r.adhocTime,
+        r.analystQc,
+        r.facialChecks,
+        r.crossTrainingTaskPoa,
+        r.poaLiveAuditsPq,
+        r.remarks,
+        actorUserId,
+        actorUserId,
       ],
     );
   }
@@ -121,8 +156,13 @@ export async function upsertUtilizationInputs(rows: readonly UtilizationInputRow
     action_type: "ONFIDO_UTILIZATION_INPUT_UPSERT",
     module_key: AUDIT_MODULE,
     entity_type: "onfido_utilization_daily_input",
-    entity_id: dates.length === 1 ? dates[0] : `${dates[0]}..${dates[dates.length - 1]}`,
-    metadata: { rowCount: rows.length, firstDate: dates[0], lastDate: dates[dates.length - 1] },
+    entity_id:
+      dates.length === 1 ? dates[0] : `${dates[0]}..${dates[dates.length - 1]}`,
+    metadata: {
+      rowCount: rows.length,
+      firstDate: dates[0],
+      lastDate: dates[dates.length - 1],
+    },
   });
   return rows.length;
 }

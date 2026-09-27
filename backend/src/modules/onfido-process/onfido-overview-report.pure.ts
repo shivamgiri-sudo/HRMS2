@@ -26,8 +26,12 @@ export function isIsoDay(value: unknown): value is string {
 }
 
 /** from/to must be real dates in order; returns an error message otherwise. */
-export function validateRange(from: string | undefined, to: string | undefined): string | null {
-  if (!from || !to || !isIsoDay(from) || !isIsoDay(to)) return "from and to must be valid dates (YYYY-MM-DD).";
+export function validateRange(
+  from: string | undefined,
+  to: string | undefined,
+): string | null {
+  if (!from || !to || !isIsoDay(from) || !isIsoDay(to))
+    return "from and to must be valid dates (YYYY-MM-DD).";
   if (from > to) return "from must not be after to.";
   return null;
 }
@@ -48,7 +52,10 @@ export function bucketKeyForDay(day: string, granularity: Granularity): string {
 }
 
 /** First and last day of the bucket that contains `day`. */
-export function bucketBounds(day: string, granularity: Granularity): { start: string; end: string } {
+export function bucketBounds(
+  day: string,
+  granularity: Granularity,
+): { start: string; end: string } {
   if (granularity === "daily") return { start: day, end: day };
   if (granularity === "weekly") {
     const start = weekCommencing(day);
@@ -58,15 +65,22 @@ export function bucketBounds(day: string, granularity: Granularity): { start: st
   }
   const [y, m] = day.split("-").map(Number);
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  return { start: `${day.slice(0, 7)}-01`, end: `${day.slice(0, 7)}-${String(last).padStart(2, "0")}` };
+  return {
+    start: `${day.slice(0, 7)}-01`,
+    end: `${day.slice(0, 7)}-${String(last).padStart(2, "0")}`,
+  };
 }
 
 export const round1 = (v: number): number => Math.round(v * 10) / 10;
 export const round2 = (v: number): number => Math.round(v * 100) / 100;
 
 /** Percentage to one decimal; null when the denominator is missing or zero. */
-export function pct1(numerator: number | null, denominator: number | null): number | null {
-  if (numerator === null || denominator === null || denominator <= 0) return null;
+export function pct1(
+  numerator: number | null,
+  denominator: number | null,
+): number | null {
+  if (numerator === null || denominator === null || denominator <= 0)
+    return null;
   return round1((numerator / denominator) * 100);
 }
 
@@ -82,20 +96,34 @@ export interface ManpowerFigures {
   shortfall: number | null;
 }
 
-export function computeManpower(approvedHc: number | null, activeHc: number | null): ManpowerFigures {
+export function computeManpower(
+  approvedHc: number | null,
+  activeHc: number | null,
+): ManpowerFigures {
   const approved = approvedHc !== null && approvedHc > 0 ? approvedHc : null;
-  const requiredHc = approved === null ? null : round2(approved * REQUIRED_HC_FACTOR);
+  const requiredHc =
+    approved === null ? null : round2(approved * REQUIRED_HC_FACTOR);
   return {
     approvedHc: approved,
     requiredHc,
     activeHc,
-    bufferPct: approved === null || activeHc === null ? null : round1(((activeHc - approved) / approved) * 100),
-    shortfall: requiredHc === null || activeHc === null ? null : round2(requiredHc - activeHc),
+    bufferPct:
+      approved === null || activeHc === null
+        ? null
+        : round1(((activeHc - approved) / approved) * 100),
+    shortfall:
+      requiredHc === null || activeHc === null
+        ? null
+        : round2(requiredHc - activeHc),
   };
 }
 
 export type ProcessQueue = "EXTRACTION" | "POA" | "ENCORD";
-export const PROCESS_QUEUES: readonly ProcessQueue[] = ["EXTRACTION", "POA", "ENCORD"];
+export const PROCESS_QUEUES: readonly ProcessQueue[] = [
+  "EXTRACTION",
+  "POA",
+  "ENCORD",
+];
 export const QUEUE_LABELS: Record<ProcessQueue, string> = {
   EXTRACTION: "EWYS Queue",
   POA: "POA Queue",
@@ -111,7 +139,11 @@ export interface ManpowerPlanRow {
 }
 
 /** The plan row in force on `day`: the latest effective_from on or before it. */
-export function planAsOf(rows: readonly ManpowerPlanRow[], queue: ProcessQueue, day: string): ManpowerPlanRow | null {
+export function planAsOf(
+  rows: readonly ManpowerPlanRow[],
+  queue: ProcessQueue,
+  day: string,
+): ManpowerPlanRow | null {
   let best: ManpowerPlanRow | null = null;
   for (const r of rows) {
     if (r.processQueue !== queue || r.effectiveFrom > day) continue;
@@ -121,7 +153,10 @@ export function planAsOf(rows: readonly ManpowerPlanRow[], queue: ProcessQueue, 
 }
 
 /** Queues that have no approved-HC entry in force on `day`. */
-export function queuesMissingPlan(rows: readonly ManpowerPlanRow[], day: string): ProcessQueue[] {
+export function queuesMissingPlan(
+  rows: readonly ManpowerPlanRow[],
+  day: string,
+): ProcessQueue[] {
   return PROCESS_QUEUES.filter((q) => planAsOf(rows, q, day) === null);
 }
 
@@ -130,14 +165,28 @@ export function queuesMissingPlan(rows: readonly ManpowerPlanRow[], day: string)
  * entry (0 is a valid entry for a queue with no approved staff). A partial sum would be set
  * against the whole floor's Active HC and show a false shortfall, so it stays null instead.
  */
-export function totalApprovedAsOf(rows: readonly ManpowerPlanRow[], day: string): number | null {
+export function totalApprovedAsOf(
+  rows: readonly ManpowerPlanRow[],
+  day: string,
+): number | null {
   if (queuesMissingPlan(rows, day).length > 0) return null;
-  return PROCESS_QUEUES.reduce((sum, q) => sum + (planAsOf(rows, q, day)?.approvedHc ?? 0), 0);
+  return PROCESS_QUEUES.reduce(
+    (sum, q) => sum + (planAsOf(rows, q, day)?.approvedHc ?? 0),
+    0,
+  );
 }
 
 // ── AON (tenure) ─────────────────────────────────────────────────────────────
 
-export const AON_LABELS = ["0-30", "31-60", "61-90", "91-120", "121-180", "181-363", "Above 1 Year"] as const;
+export const AON_LABELS = [
+  "0-30",
+  "31-60",
+  "61-90",
+  "91-120",
+  "121-180",
+  "181-363",
+  "Above 1 Year",
+] as const;
 export type AonLabel = (typeof AON_LABELS)[number];
 
 /** Overview sheet buckets, on live days. */
@@ -155,9 +204,15 @@ export function aonBucketForLiveDays(days: number | null): AonLabel | null {
 /** Label the drill-down uses for staff whose live days are not in the upload. */
 export const UNCLASSIFIED_AON_LABEL = "Unclassified";
 
-export interface AonRow { label: string; activeHc: number; contributionPct: number | null }
+export interface AonRow {
+  label: string;
+  activeHc: number;
+  contributionPct: number | null;
+}
 
-export function buildAonRows(byLiveDays: readonly { liveDays: number | null; hc: number }[]): { rows: AonRow[]; unclassifiedHc: number; totalHc: number } {
+export function buildAonRows(
+  byLiveDays: readonly { liveDays: number | null; hc: number }[],
+): { rows: AonRow[]; unclassifiedHc: number; totalHc: number } {
   const counts = new Map<AonLabel, number>(AON_LABELS.map((l) => [l, 0]));
   let unclassifiedHc = 0;
   for (const r of byLiveDays) {
@@ -168,7 +223,9 @@ export function buildAonRows(byLiveDays: readonly { liveDays: number | null; hc:
   const classified = [...counts.values()].reduce((a, b) => a + b, 0);
   return {
     rows: AON_LABELS.map((label) => ({
-      label, activeHc: counts.get(label) ?? 0, contributionPct: pct1(counts.get(label) ?? 0, classified),
+      label,
+      activeHc: counts.get(label) ?? 0,
+      contributionPct: pct1(counts.get(label) ?? 0, classified),
     })),
     unclassifiedHc,
     totalHc: classified + unclassifiedHc,
@@ -208,7 +265,10 @@ export interface StaffingBucket {
  * actual UL / scheduled. Both are period ratios: a weekly figure is that week's rate,
  * not an annualised one.
  */
-export function aggregateStaffing(days: readonly StaffingDay[], granularity: Granularity): StaffingBucket[] {
+export function aggregateStaffing(
+  days: readonly StaffingDay[],
+  granularity: Granularity,
+): StaffingBucket[] {
   const sorted = [...days].sort((a, b) => a.day.localeCompare(b.day));
   const groups = new Map<string, StaffingDay[]>();
   for (const d of sorted) {
@@ -224,7 +284,11 @@ export function aggregateStaffing(days: readonly StaffingDay[], granularity: Gra
     const actualUl = rows.reduce((s, r) => s + r.actualUl, 0);
     const ul = rows.reduce((s, r) => s + r.unplannedLeave, 0);
     return {
-      bucket, activeHc: last.hc, openingHc: first.hc, avgHc, attrition,
+      bucket,
+      activeHc: last.hc,
+      openingHc: first.hc,
+      avgHc,
+      attrition,
       attritionPct: avgHc > 0 ? round2((attrition / avgHc) * 100) : null,
       scheduled,
       shrinkagePct: scheduled > 0 ? round2((actualUl / scheduled) * 100) : null,
@@ -236,7 +300,15 @@ export function aggregateStaffing(days: readonly StaffingDay[], granularity: Gra
 
 // ── Task-type grouping ───────────────────────────────────────────────────────
 
-export const DOC_TASK_GROUPS = ["Classification", "EWYS Address", "Consistency", "Extraction", "EWYS", "Labelling", "Other"] as const;
+export const DOC_TASK_GROUPS = [
+  "Classification",
+  "EWYS Address",
+  "Consistency",
+  "Extraction",
+  "EWYS",
+  "Labelling",
+  "Other",
+] as const;
 export type DocTaskGroup = (typeof DOC_TASK_GROUPS)[number];
 
 /**
@@ -249,7 +321,8 @@ export function classifyTaskType(raw: string | null | undefined): DocTaskGroup {
   const t = String(raw ?? "").toLowerCase();
   // Raw extraction IS EWYS (business decision 2026-09-26); it must be tested before "label",
   // because the task type reads process_labelling_document_raw_extraction.
-  if (t.includes("raw_extraction") || t.includes("raw extraction")) return "EWYS";
+  if (t.includes("raw_extraction") || t.includes("raw extraction"))
+    return "EWYS";
   if (t.includes("label")) return "Labelling";
   if (t.includes("address")) return "EWYS Address";
   if (t.includes("consist")) return "Consistency";
@@ -295,7 +368,10 @@ export interface UtilizationDerived {
 type Num = number | null;
 
 /** Evaluates `fn` only when every argument is a number; otherwise the result is unknown. */
-function whenKnown(args: readonly Num[], fn: (v: number[]) => number): number | null {
+function whenKnown(
+  args: readonly Num[],
+  fn: (v: number[]) => number,
+): number | null {
   if (args.some((a) => a === null || !Number.isFinite(a))) return null;
   const out = fn(args as number[]);
   return Number.isFinite(out) ? out : null;
@@ -307,12 +383,33 @@ function ratioPct(n: Num, d: Num): number | null {
 }
 
 export function computeUtilization(i: UtilizationInputs): UtilizationDerived {
-  const F = whenKnown([i.forecastTask, i.forecastTaskPoa], ([d, e]) => d + e * POA_TASK_FACTOR);
-  const U = whenKnown(
-    [i.actualTask, i.manualFarCases, i.poaLive, i.adhocTime, i.analystQc, i.crossTrainingTaskPoa, i.poaLiveAuditsPq],
-    ([g, h, poa, j, k, m, n]) => g + h + poa * POA_TASK_FACTOR + j + k * ANALYST_QC_FACTOR + m * POA_TASK_FACTOR + n * POA_TASK_FACTOR,
+  const F = whenKnown(
+    [i.forecastTask, i.forecastTaskPoa],
+    ([d, e]) => d + e * POA_TASK_FACTOR,
   );
-  const V = whenKnown([i.actualTask, i.poaLive], ([g, poa]) => g + poa * POA_TASK_FACTOR);
+  const U = whenKnown(
+    [
+      i.actualTask,
+      i.manualFarCases,
+      i.poaLive,
+      i.adhocTime,
+      i.analystQc,
+      i.crossTrainingTaskPoa,
+      i.poaLiveAuditsPq,
+    ],
+    ([g, h, poa, j, k, m, n]) =>
+      g +
+      h +
+      poa * POA_TASK_FACTOR +
+      j +
+      k * ANALYST_QC_FACTOR +
+      m * POA_TASK_FACTOR +
+      n * POA_TASK_FACTOR,
+  );
+  const V = whenKnown(
+    [i.actualTask, i.poaLive],
+    ([g, poa]) => g + poa * POA_TASK_FACTOR,
+  );
   return {
     utilizationForecast: F,
     utilizationWithAdhoc: U,
@@ -333,47 +430,77 @@ export function sumComplete(values: readonly Num[]): number | null {
 /** Excel AVERAGE: blanks are ignored. */
 export function averageKnown(values: readonly Num[]): number | null {
   const known = values.filter((v): v is number => v !== null);
-  return known.length === 0 ? null : known.reduce((a, b) => a + b, 0) / known.length;
+  return known.length === 0
+    ? null
+    : known.reduce((a, b) => a + b, 0) / known.length;
 }
 
 // ── Chart / table matrices ───────────────────────────────────────────────────
 
 /** One labelled series across the shared bucket axis; null = no data for that bucket. */
-export interface MatrixRow { label: string; values: (number | null)[] }
-export interface Matrix { buckets: string[]; rows: MatrixRow[] }
+export interface MatrixRow {
+  label: string;
+  values: (number | null)[];
+}
+export interface Matrix {
+  buckets: string[];
+  rows: MatrixRow[];
+}
 
 /**
  * Aligns several sparse series onto one sorted bucket axis. A series with no point for a
  * bucket gets null there (a gap in the line), never 0.
  */
-export function buildMatrix(series: readonly { label: string; points: ReadonlyMap<string, number | null> }[]): Matrix {
-  const buckets = [...new Set(series.flatMap((s) => [...s.points.keys()]))].sort();
+export function buildMatrix(
+  series: readonly {
+    label: string;
+    points: ReadonlyMap<string, number | null>;
+  }[],
+): Matrix {
+  const buckets = [
+    ...new Set(series.flatMap((s) => [...s.points.keys()])),
+  ].sort();
   return {
     buckets,
-    rows: series.map((s) => ({ label: s.label, values: buckets.map((b) => s.points.get(b) ?? null) })),
+    rows: series.map((s) => ({
+      label: s.label,
+      values: buckets.map((b) => s.points.get(b) ?? null),
+    })),
   };
 }
 
-export interface TaskTypeAccumulator { taskCount: number; ahtWeighted: number; ahtCount: number }
+export interface TaskTypeAccumulator {
+  taskCount: number;
+  ahtWeighted: number;
+  ahtCount: number;
+}
 
 /** Sums counts and count-weights AHTs per task-type group for one bucket's raw task types. */
 export function groupTaskTypes(
-  byTaskType: Readonly<Record<string, { taskCount: number; avgAht: number | null }>>,
+  byTaskType: Readonly<
+    Record<string, { taskCount: number; avgAht: number | null }>
+  >,
 ): Map<DocTaskGroup, TaskTypeAccumulator> {
   const out = new Map<DocTaskGroup, TaskTypeAccumulator>();
   for (const [raw, v] of Object.entries(byTaskType)) {
     const group = classifyTaskType(raw);
     const acc = out.get(group) ?? { taskCount: 0, ahtWeighted: 0, ahtCount: 0 };
     acc.taskCount += v.taskCount;
-    if (v.avgAht !== null) { acc.ahtWeighted += v.avgAht * v.taskCount; acc.ahtCount += v.taskCount; }
+    if (v.avgAht !== null) {
+      acc.ahtWeighted += v.avgAht * v.taskCount;
+      acc.ahtCount += v.taskCount;
+    }
     out.set(group, acc);
   }
   return out;
 }
 
 /** MTD inputs = per-column complete sums over the days shown. */
-export function sumInputs(rows: readonly UtilizationInputs[]): UtilizationInputs {
-  const col = (pick: (r: UtilizationInputs) => Num): Num => sumComplete(rows.map(pick));
+export function sumInputs(
+  rows: readonly UtilizationInputs[],
+): UtilizationInputs {
+  const col = (pick: (r: UtilizationInputs) => Num): Num =>
+    sumComplete(rows.map(pick));
   return {
     forecastTask: col((r) => r.forecastTask),
     forecastTaskPoa: col((r) => r.forecastTaskPoa),

@@ -5,14 +5,17 @@ const onfidoQuery = vi.fn();
 const hrmsExecute = vi.fn();
 
 vi.mock("../../../db/onfidoDb.js", () => ({
-  getOnfidoPool: vi.fn().mockResolvedValue({ query: (...args: unknown[]) => onfidoQuery(...args) }),
+  getOnfidoPool: vi
+    .fn()
+    .mockResolvedValue({ query: (...args: unknown[]) => onfidoQuery(...args) }),
 }));
 
 vi.mock("../../../db/mysql.js", () => ({
   db: { execute: (...args: unknown[]) => hrmsExecute(...args) },
 }));
 
-const { runNameMappingSeed } = await import("../onfido-name-mapping.service.js");
+const { runNameMappingSeed } =
+  await import("../onfido-name-mapping.service.js");
 
 beforeEach(() => {
   onfidoQuery.mockReset();
@@ -96,7 +99,9 @@ describe("runNameMappingSeed", () => {
 
   it("records a per-name error instead of throwing when upsertMapping fails for one name", async () => {
     onfidoQuery
-      .mockResolvedValueOnce([[{ name: "Priya Sharma" }, { name: "Rahul Verma" }]])
+      .mockResolvedValueOnce([
+        [{ name: "Priya Sharma" }, { name: "Rahul Verma" }],
+      ])
       .mockResolvedValueOnce([[]]);
 
     hrmsExecute.mockResolvedValueOnce([

@@ -185,7 +185,12 @@ export async function runNameMappingSeed(): Promise<SeedResult> {
     getEmployeeCandidates(),
   ]);
 
-  const result: SeedResult = { matched: 0, ambiguous: 0, unmatched: 0, errors: [] };
+  const result: SeedResult = {
+    matched: 0,
+    ambiguous: 0,
+    unmatched: 0,
+    errors: [],
+  };
 
   for (const { rawName, rawRole } of rawNames) {
     const match = matchNameToEmployees(rawName, candidates);
@@ -219,7 +224,9 @@ export async function runNameMappingSeed(): Promise<SeedResult> {
  * which looks up by the natural key raw_name/raw_role). Used by the PATCH review
  * route to confirm a row exists before writing, and to return the post-write state.
  */
-export async function getMappingRowById(id: string): Promise<MappingListRow | null> {
+export async function getMappingRowById(
+  id: string,
+): Promise<MappingListRow | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT m.id, m.raw_name, m.raw_role, m.employee_id, m.match_confidence, m.match_method, m.verified_by_hr,
             e.full_name AS employee_name, e.employee_code AS employee_code
@@ -251,7 +258,9 @@ export async function getMappingRowById(id: string): Promise<MappingListRow | nu
  * with no cross-database restriction). Optionally narrowed to only rows HR
  * still needs to review (verified: false) or has already actioned (verified: true).
  */
-export async function listMappings(filters: ListMappingsFilters = {}): Promise<MappingListRow[]> {
+export async function listMappings(
+  filters: ListMappingsFilters = {},
+): Promise<MappingListRow[]> {
   const where =
     filters.verified === true
       ? "WHERE m.verified_by_hr = 1"
@@ -290,7 +299,10 @@ export async function listMappings(filters: ListMappingsFilters = {}): Promise<M
  * employeeId: null is a legitimate HR decision — "no employee matches this name" —
  * not an error case, so it is accepted and written as-is.
  */
-export async function verifyMapping(mappingId: string, input: VerifyMappingInput): Promise<void> {
+export async function verifyMapping(
+  mappingId: string,
+  input: VerifyMappingInput,
+): Promise<void> {
   await db.execute(
     `UPDATE onfido_name_employee_map
         SET employee_id = ?, verified_by_hr = 1, verified_by_user_id = ?, verified_at = NOW()

@@ -1,9 +1,16 @@
 import type { NextFunction, Request, Response } from "express";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { clearOnfidoResponseCache, onfidoResponseCache } from "../onfido-response-cache.js";
+import {
+  clearOnfidoResponseCache,
+  onfidoResponseCache,
+} from "../onfido-response-cache.js";
 
 function fakeReq(url: string, method = "GET"): Request {
-  return { method, originalUrl: url, path: url.split("?")[0] } as unknown as Request;
+  return {
+    method,
+    originalUrl: url,
+    path: url.split("?")[0],
+  } as unknown as Request;
 }
 
 function fakeRes() {
@@ -11,8 +18,13 @@ function fakeRes() {
   const headers: Record<string, string> = {};
   const res = {
     statusCode: 200,
-    json(body: unknown) { sent.push(body); return this; },
-    setHeader(name: string, value: string) { headers[name] = value; },
+    json(body: unknown) {
+      sent.push(body);
+      return this;
+    },
+    setHeader(name: string, value: string) {
+      headers[name] = value;
+    },
     on: vi.fn(),
   };
   return { res: res as unknown as Response, sent, headers };
@@ -45,18 +57,29 @@ describe("onfidoResponseCache", () => {
 
   it("never caches non-GET, /live or error responses", () => {
     run("/overview", (res) => res.json({ n: 1 }), "POST");
-    expect(run("/overview", (res) => res.json({ n: 2 })).sent).toEqual([{ n: 2 }]);
+    expect(run("/overview", (res) => res.json({ n: 2 })).sent).toEqual([
+      { n: 2 },
+    ]);
 
     run("/live/overview", (res) => res.json({ n: 1 }));
-    expect(run("/live/overview", (res) => res.json({ n: 2 })).sent).toEqual([{ n: 2 }]);
+    expect(run("/live/overview", (res) => res.json({ n: 2 })).sent).toEqual([
+      { n: 2 },
+    ]);
 
-    run("/trend", (res) => { res.statusCode = 500; res.json({ error: true }); });
-    expect(run("/trend", (res) => res.json({ ok: true })).sent).toEqual([{ ok: true }]);
+    run("/trend", (res) => {
+      res.statusCode = 500;
+      res.json({ error: true });
+    });
+    expect(run("/trend", (res) => res.json({ ok: true })).sent).toEqual([
+      { ok: true },
+    ]);
   });
 
   it("drops everything when an import clears the cache", () => {
     run("/overview", (res) => res.json({ n: 1 }));
     clearOnfidoResponseCache();
-    expect(run("/overview", (res) => res.json({ n: 2 })).sent).toEqual([{ n: 2 }]);
+    expect(run("/overview", (res) => res.json({ n: 2 })).sent).toEqual([
+      { n: 2 },
+    ]);
   });
 });

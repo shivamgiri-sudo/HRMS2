@@ -106,7 +106,10 @@ async function loadTargetTiles(
 }
 
 /** Latest tenure (AON) bucket per analyst from the roster feed, looked back 120 days from the range end. */
-async function loadTenure(emails: string[], to: string): Promise<Map<string, string>> {
+async function loadTenure(
+  emails: string[],
+  to: string,
+): Promise<Map<string, string>> {
   const tenure = new Map<string, string>();
   if (emails.length === 0) return tenure;
   const pool = await getOnfidoPool();
@@ -121,7 +124,7 @@ async function loadTenure(emails: string[], to: string): Promise<Map<string, str
     [to, to, unique],
   );
   for (const r of rows) {
-    const raw = String(r.bucket ?? '').trim();
+    const raw = String(r.bucket ?? "").trim();
     if (raw) tenure.set(String(r.a), aonDisplayLabel(raw) ?? raw);
   }
   return tenure;
@@ -146,11 +149,15 @@ export async function getOutlierReport(
     loadTargetTiles(filters, f.from, f.to),
   ]);
   const outliers = buildOutlierRows(current, priorAlerts, actions);
-  const tenure = await loadTenure(outliers.map((o) => o.analystEmail), f.to).catch((err: unknown) => {
+  const tenure = await loadTenure(
+    outliers.map((o) => o.analystEmail),
+    f.to,
+  ).catch((err: unknown) => {
     console.error("[onfido] tenure lookup failed:", err);
     return new Map<string, string>();
   });
-  for (const row of outliers) row.tenureBucket = tenure.get(row.analystEmail.toLowerCase()) ?? null;
+  for (const row of outliers)
+    row.tenureBucket = tenure.get(row.analystEmail.toLowerCase()) ?? null;
   return {
     from: f.from,
     to: f.to,

@@ -5,7 +5,9 @@ const onfidoQuery = vi.fn();
 const hrmsExecute = vi.fn();
 
 vi.mock("../../../db/onfidoDb.js", () => ({
-  getOnfidoPool: vi.fn().mockResolvedValue({ query: (...args: unknown[]) => onfidoQuery(...args) }),
+  getOnfidoPool: vi
+    .fn()
+    .mockResolvedValue({ query: (...args: unknown[]) => onfidoQuery(...args) }),
 }));
 
 vi.mock("../../../db/mysql.js", () => ({
@@ -30,7 +32,9 @@ beforeEach(() => {
 describe("getDistinctOnfidoNames", () => {
   it("returns distinct raw names tagged with their role, sourced from the onfido pool", async () => {
     onfidoQuery
-      .mockResolvedValueOnce([[{ name: "Priya Sharma" }, { name: "Rahul Verma" }]]) // tl_name query
+      .mockResolvedValueOnce([
+        [{ name: "Priya Sharma" }, { name: "Rahul Verma" }],
+      ]) // tl_name query
       .mockResolvedValueOnce([[{ name: "Amit Kumar" }]]); // am_name query
 
     const result = await getDistinctOnfidoNames();
@@ -221,7 +225,10 @@ describe("verifyMapping", () => {
   it("sets employee_id, verified_by_hr = 1, verified_by_user_id and verified_at", async () => {
     hrmsExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
 
-    await verifyMapping("map-1", { employeeId: "emp-2", verifiedByUserId: "user-9" });
+    await verifyMapping("map-1", {
+      employeeId: "emp-2",
+      verifiedByUserId: "user-9",
+    });
 
     expect(hrmsExecute).toHaveBeenCalledTimes(1);
     const [sql, params] = hrmsExecute.mock.calls[0];
@@ -234,7 +241,10 @@ describe("verifyMapping", () => {
   it("allows HR to explicitly clear a match by verifying with employeeId: null", async () => {
     hrmsExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
 
-    await verifyMapping("map-1", { employeeId: null, verifiedByUserId: "user-9" });
+    await verifyMapping("map-1", {
+      employeeId: null,
+      verifiedByUserId: "user-9",
+    });
 
     const [, params] = hrmsExecute.mock.calls[0];
     expect(params).toEqual([null, "user-9", "map-1"]);

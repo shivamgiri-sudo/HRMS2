@@ -7,7 +7,7 @@ describe("csvCell", () => {
   });
 
   it("quotes commas, quotes and newlines", () => {
-    expect(csvCell('a,b')).toBe('"a,b"');
+    expect(csvCell("a,b")).toBe('"a,b"');
     expect(csvCell('say "hi"')).toBe('"say ""hi"""');
     expect(csvCell("line1\nline2")).toBe('"line1\nline2"');
   });
@@ -32,8 +32,28 @@ describe("csvLine", () => {
 
 describe("exportColumns", () => {
   it("drops internal-tool URLs and loader bookkeeping, keeps dashboard data", () => {
-    const cols = ["id", "report_date", "emp_name", "tl_name", "ims_url", "qc_tool_url", "ims_report_url",
-      "task_url", "raw_data", "uploaded_at", "upload_batch_id", "row_hash", "aht_seconds", "emp_id"];
-    expect(exportColumns(cols)).toEqual(["report_date", "emp_name", "tl_name", "aht_seconds", "emp_id"]);
+    const cols = [
+      "id",
+      "report_date",
+      "emp_name",
+      "tl_name",
+      "ims_url",
+      "qc_tool_url",
+      "ims_report_url",
+      "task_url",
+      "raw_data",
+      "uploaded_at",
+      "upload_batch_id",
+      "row_hash",
+      "aht_seconds",
+      "emp_id",
+    ];
+    expect(exportColumns(cols)).toEqual([
+      "report_date",
+      "emp_name",
+      "tl_name",
+      "aht_seconds",
+      "emp_id",
+    ]);
   });
 });

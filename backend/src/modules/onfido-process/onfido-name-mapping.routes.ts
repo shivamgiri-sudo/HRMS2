@@ -1,5 +1,8 @@
 import { Router, type NextFunction, type Response } from "express";
-import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import {
+  requireAuth,
+  type AuthenticatedRequest,
+} from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import * as svc from "./onfido-name-mapping.service.js";
 
@@ -21,7 +24,10 @@ import * as svc from "./onfido-name-mapping.service.js";
  */
 export const onfidoNameMappingRouter = Router();
 
-type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
+type AsyncHandler = (
+  req: AuthenticatedRequest,
+  res: Response,
+) => Promise<unknown>;
 const h =
   (fn: AsyncHandler) =>
   (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
@@ -39,7 +45,8 @@ onfidoNameMappingRouter.get(
   "/",
   h(async (req, res) => {
     const q = req.query as Record<string, string | undefined>;
-    const verified = q.verified === "true" ? true : q.verified === "false" ? false : undefined;
+    const verified =
+      q.verified === "true" ? true : q.verified === "false" ? false : undefined;
     const data = await svc.listMappings({ verified });
     res.json({ success: true, data });
   }),
@@ -59,20 +66,24 @@ onfidoNameMappingRouter.patch(
   h(async (req, res) => {
     const employeeId = req.body?.employeeId;
     if (employeeId !== null && typeof employeeId !== "string") {
-      return res
-        .status(400)
-        .json({ success: false, message: "employeeId must be a string or null" });
+      return res.status(400).json({
+        success: false,
+        message: "employeeId must be a string or null",
+      });
     }
 
     const existing = await svc.getMappingRowById(req.params.id);
     if (!existing) {
-      return res.status(404).json({ success: false, message: "Mapping row not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Mapping row not found" });
     }
 
     if (employeeId !== null && !(await svc.employeeExists(employeeId))) {
-      return res
-        .status(400)
-        .json({ success: false, message: "employeeId does not match any employee" });
+      return res.status(400).json({
+        success: false,
+        message: "employeeId does not match any employee",
+      });
     }
 
     await svc.verifyMapping(req.params.id, {

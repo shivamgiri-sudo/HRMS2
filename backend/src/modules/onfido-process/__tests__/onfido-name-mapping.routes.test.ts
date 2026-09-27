@@ -2,17 +2,13 @@ import express from "express";
 import request from "supertest";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const {
-  listMappings,
-  verifyMapping,
-  getMappingRowById,
-  employeeExists,
-} = vi.hoisted(() => ({
-  listMappings: vi.fn(),
-  verifyMapping: vi.fn(),
-  getMappingRowById: vi.fn(),
-  employeeExists: vi.fn(),
-}));
+const { listMappings, verifyMapping, getMappingRowById, employeeExists } =
+  vi.hoisted(() => ({
+    listMappings: vi.fn(),
+    verifyMapping: vi.fn(),
+    getMappingRowById: vi.fn(),
+    employeeExists: vi.fn(),
+  }));
 
 vi.mock("../onfido-name-mapping.service.js", () => ({
   listMappings,
@@ -26,7 +22,10 @@ vi.mock("../onfido-name-mapping.service.js", () => ({
 // couple of tests specifically probe the 403 boundary.
 vi.mock("../../../middleware/authMiddleware.js", () => ({
   requireAuth: (req: any, _res: any, next: any) => {
-    req.authUser = { id: "user-9", role: String(req.headers["x-test-role"] ?? "admin") };
+    req.authUser = {
+      id: "user-9",
+      role: String(req.headers["x-test-role"] ?? "admin"),
+    };
     next();
   },
 }));
@@ -46,7 +45,8 @@ let onfidoNameMappingRouter: (typeof import("../onfido-name-mapping.routes.js"))
 let app: express.Express;
 
 beforeAll(async () => {
-  ({ onfidoNameMappingRouter } = await import("../onfido-name-mapping.routes.js"));
+  ({ onfidoNameMappingRouter } =
+    await import("../onfido-name-mapping.routes.js"));
   app = express();
   app.use(express.json());
   app.use("/api/onfido-process/name-mapping", onfidoNameMappingRouter);
@@ -62,7 +62,9 @@ beforeEach(() => {
 
 describe("GET /api/onfido-process/name-mapping", () => {
   it("returns every mapping row when no ?verified filter is given", async () => {
-    listMappings.mockResolvedValueOnce([{ id: "map-1", rawName: "Priya Sharma" }]);
+    listMappings.mockResolvedValueOnce([
+      { id: "map-1", rawName: "Priya Sharma" },
+    ]);
 
     const res = await request(app).get("/api/onfido-process/name-mapping");
 
@@ -112,7 +114,11 @@ describe("PATCH /api/onfido-process/name-mapping/:id", () => {
   it("verifies the mapping with the caller's own id, never a body-supplied one", async () => {
     getMappingRowById
       .mockResolvedValueOnce({ id: "map-1", employeeId: "emp-1" }) // existence check
-      .mockResolvedValueOnce({ id: "map-1", employeeId: "emp-2", verifiedByHr: true }); // post-write read
+      .mockResolvedValueOnce({
+        id: "map-1",
+        employeeId: "emp-2",
+        verifiedByHr: true,
+      }); // post-write read
     verifyMapping.mockResolvedValueOnce(undefined);
 
     const res = await request(app)
@@ -130,7 +136,11 @@ describe("PATCH /api/onfido-process/name-mapping/:id", () => {
   it("accepts employeeId: null as a valid HR decision (no employee matches)", async () => {
     getMappingRowById
       .mockResolvedValueOnce({ id: "map-1", employeeId: "emp-1" })
-      .mockResolvedValueOnce({ id: "map-1", employeeId: null, verifiedByHr: true });
+      .mockResolvedValueOnce({
+        id: "map-1",
+        employeeId: null,
+        verifiedByHr: true,
+      });
     verifyMapping.mockResolvedValueOnce(undefined);
 
     const res = await request(app)
@@ -155,7 +165,10 @@ describe("PATCH /api/onfido-process/name-mapping/:id", () => {
   });
 
   it("rejects an employeeId that matches no employee with 400 and writes nothing", async () => {
-    getMappingRowById.mockResolvedValueOnce({ id: "map-1", employeeId: "emp-1" });
+    getMappingRowById.mockResolvedValueOnce({
+      id: "map-1",
+      employeeId: "emp-1",
+    });
     employeeExists.mockResolvedValueOnce(false);
 
     const res = await request(app)
@@ -163,7 +176,9 @@ describe("PATCH /api/onfido-process/name-mapping/:id", () => {
       .send({ employeeId: "00000000-0000-0000-0000-000000000000" });
 
     expect(res.status).toBe(400);
-    expect(employeeExists).toHaveBeenCalledWith("00000000-0000-0000-0000-000000000000");
+    expect(employeeExists).toHaveBeenCalledWith(
+      "00000000-0000-0000-0000-000000000000",
+    );
     expect(verifyMapping).not.toHaveBeenCalled();
   });
 

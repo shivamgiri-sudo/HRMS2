@@ -28,7 +28,9 @@ function buildBroadOnfidoRouterThatAlwaysRejects() {
   // worst case, proving the more specific router truly runs first rather
   // than merely "usually" winning a race.
   router.use((_req, res) => {
-    res.status(403).json({ success: false, message: "Outside Onfido dashboard scope" });
+    res
+      .status(403)
+      .json({ success: false, message: "Outside Onfido dashboard scope" });
   });
   return router;
 }
