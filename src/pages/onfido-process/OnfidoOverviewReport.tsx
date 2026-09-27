@@ -179,6 +179,8 @@ export default function OnfidoOverviewReport({ range, tlFilter, amFilter }: { ra
         </SectionState>
       </SectionCard>
 
+      <MandateManpowerCard />
+
       <SectionCard title="Queue Wise" accent="var(--teal)" subtitle="Required HC = Approved HC x 120%. Click a row for its approved-HC history.">
         <SectionState loading={loadingFor("manpower")} error={errorFor("manpower") ?? manpowerSection?.error} empty={!mp} emptyText="No manpower data in this range.">
           {mp && (
