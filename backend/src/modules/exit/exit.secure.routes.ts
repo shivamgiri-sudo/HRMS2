@@ -3,15 +3,32 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
-import { hasDirectReports, reportingSpanClause } from "../../shared/reportingSpan.js";
-import { buildScopeWhereClause, hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
+import {
+  hasDirectReports,
+  reportingSpanClause,
+} from "../../shared/reportingSpan.js";
+import {
+  buildScopeWhereClause,
+  hasAnyRole,
+  hasScopedAccess,
+} from "../../shared/scopeAccess.js";
 import { exitService } from "./exit.service.js";
 
 export const exitSecureRouter = Router();
 exitSecureRouter.use(requireAuth);
 
-const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
-const EXIT_SCOPE_ROLES = ["manager", "assistant_manager", "tl", "branch_head", "process_manager", "hr"];
+const h =
+  (fn: (req: any, res: any) => Promise<unknown>) =>
+  (req: any, res: any, next: any) =>
+    fn(req, res).catch(next);
+const EXIT_SCOPE_ROLES = [
+  "manager",
+  "assistant_manager",
+  "tl",
+  "branch_head",
+  "process_manager",
+  "hr",
+];
 
 /**
  * FSM transitions for exit_request.status.
@@ -115,7 +132,18 @@ function normalizeExitStatus(status: unknown): string {
 }
 
 async function exitListScope(userId: string) {
-  if (await hasAnyRole(userId, "admin", "super_admin", "hr", "finance", "payroll", "ceo")) return { sql: "1=1", params: [] as unknown[] };
+  if (
+    await hasAnyRole(
+      userId,
+      "admin",
+      "super_admin",
+      "hr",
+      "finance",
+      "payroll",
+      "ceo",
+    )
+  )
+    return { sql: "1=1", params: [] as unknown[] };
   const scoped = await buildScopeWhereClause(
     userId,
     EXIT_SCOPE_ROLES,
@@ -132,19 +160,28 @@ async function exitListScope(userId: string) {
   // 2026-09-25). View only: canActOnExit below still requires the direct manager.
   const span = await reportingSpanClause(userId);
   if (scoped.sql !== "1=0") {
-    return span ? { sql: `(${scoped.sql}) OR ${span.sql}`, params: [...scoped.params, ...span.params] as unknown[] } : scoped;
+    return span
+      ? {
+          sql: `(${scoped.sql}) OR ${span.sql}`,
+          params: [...scoped.params, ...span.params] as unknown[],
+        }
+      : scoped;
   }
   const emp = await getEmployeeForUser(userId);
   if (emp?.id) {
     return span
-      ? { sql: `e.id = ? OR ${span.sql}`, params: [emp.id, ...span.params] as unknown[] }
+      ? {
+          sql: `e.id = ? OR ${span.sql}`,
+          params: [emp.id, ...span.params] as unknown[],
+        }
       : { sql: "e.id = ?", params: [emp.id] as unknown[] };
   }
   return { sql: "1=0", params: [] as unknown[] };
 }
 
 async function canActOnExit(userId: string, exitRequestId: string) {
-  if (await hasAnyRole(userId, "admin", "super_admin", "hr", "ceo")) return true;
+  if (await hasAnyRole(userId, "admin", "super_admin", "hr", "ceo"))
+    return true;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT er.employee_id,
             e.branch_id,
@@ -178,62 +215,149 @@ async function canActOnExit(userId: string, exitRequestId: string) {
   );
 }
 
-exitSecureRouter.get("/stats", h(async (req: any, res: any) => {
-  const scope = await exitListScope(req.authUser!.id);
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT er.status, COUNT(*) AS cnt
+exitSecureRouter.get(
+  "/stats",
+  h(async (req: any, res: any) => {
+    const scope = await exitListScope(req.authUser!.id);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT er.status, COUNT(*) AS cnt
        FROM exit_request er
        LEFT JOIN employees e ON e.id = er.employee_id
       WHERE ${scope.sql}
       GROUP BY er.status`,
-    scope.params,
-  );
-  const counts: Record<string, number> = {};
-  for (const row of rows as any[]) counts[String(row.status)] = Number(row.cnt ?? 0);
-  const statuses = ["draft", "submitted", "manager_review", "accepted", "rejected", "revoked", "withdrawn", "notice_serving", "clearance_pending", "fnf_pending", "closed", "exited"];
-  const detailed = Object.fromEntries(statuses.map((s) => [s, counts[s] ?? 0])) as Record<string, number>;
-  const total = Object.values(detailed).reduce((a, b) => a + b, 0);
-  const pending = detailed.submitted + detailed.manager_review;
-  return res.json({ success: true, data: { ...detailed, total, pending, completed: detailed.exited + detailed.closed, active_notice: detailed.accepted + detailed.notice_serving + detailed.clearance_pending + detailed.fnf_pending } });
-}));
+      scope.params,
+    );
+    const counts: Record<string, number> = {};
+    for (const row of rows as any[])
+      counts[String(row.status)] = Number(row.cnt ?? 0);
+    const statuses = [
+      "draft",
+      "submitted",
+      "manager_review",
+      "accepted",
+      "rejected",
+      "revoked",
+      "withdrawn",
+      "notice_serving",
+      "clearance_pending",
+      "fnf_pending",
+      "closed",
+      "exited",
+    ];
+    const detailed = Object.fromEntries(
+      statuses.map((s) => [s, counts[s] ?? 0]),
+    ) as Record<string, number>;
+    const total = Object.values(detailed).reduce((a, b) => a + b, 0);
+    const pending = detailed.submitted + detailed.manager_review;
+    return res.json({
+      success: true,
+      data: {
+        ...detailed,
+        total,
+        pending,
+        completed: detailed.exited + detailed.closed,
+        active_notice:
+          detailed.accepted +
+          detailed.notice_serving +
+          detailed.clearance_pending +
+          detailed.fnf_pending,
+      },
+    });
+  }),
+);
 
-exitSecureRouter.get("/", h(async (req: any, res: any) => {
-  const privileged = await hasAnyRole(req.authUser!.id, "admin", "super_admin", "hr", "finance", "payroll", "ceo", ...EXIT_SCOPE_ROLES);
-  if (!privileged && !(await hasDirectReports(req.authUser!.id))) {
-    const emp = await getEmployeeForUser(req.authUser!.id);
-    if (!emp || !req.query.employeeId || String(req.query.employeeId) !== emp.id) {
-      return res.status(403).json({ success: false, message: "Forbidden: employee collection access is not allowed" });
+exitSecureRouter.get(
+  "/",
+  h(async (req: any, res: any) => {
+    const privileged = await hasAnyRole(
+      req.authUser!.id,
+      "admin",
+      "super_admin",
+      "hr",
+      "finance",
+      "payroll",
+      "ceo",
+      ...EXIT_SCOPE_ROLES,
+    );
+    if (!privileged && !(await hasDirectReports(req.authUser!.id))) {
+      const emp = await getEmployeeForUser(req.authUser!.id);
+      if (
+        !emp ||
+        !req.query.employeeId ||
+        String(req.query.employeeId) !== emp.id
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: "Forbidden: employee collection access is not allowed",
+        });
+      }
     }
-  }
-  const scope = await exitListScope(req.authUser!.id);
-  const page = Math.max(1, Number(req.query.page ?? 1) || 1);
-  const limit = Math.min(Math.max(1, Number(req.query.limit ?? 100) || 100), 500);
-  const offset = (page - 1) * limit;
-  const conds: string[] = [`(${scope.sql})`];
-  const params: unknown[] = [...scope.params];
-  if (req.query.status) { conds.push("er.status = ?"); params.push(String(req.query.status === "exit_confirmed" ? "exited" : req.query.status)); }
-  if (req.query.statuses) {
-    // Comma list, e.g. the notice-period view: every status in which the person is still working out notice.
-    const statuses = String(req.query.statuses).split(",").map((v) => normalizeExitStatus(v)).filter((v) => /^[a-z_]{3,30}$/.test(v));
-    if (statuses.length > 0) { conds.push(`er.status IN (${statuses.map(() => "?").join(",")})`); params.push(...statuses); }
-  }
-  if (req.query.employeeId) { conds.push("er.employee_id = ?"); params.push(String(req.query.employeeId)); }
-  if (req.query.branchId) { conds.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
-  if (req.query.processId) { conds.push("e.process_id = ?"); params.push(String(req.query.processId)); }
-  if (req.query.search) {
-    const q = `%${String(req.query.search)}%`;
-    conds.push("(e.employee_code LIKE ? OR e.full_name LIKE ? OR er.resignation_reason LIKE ? OR er.exit_reason_category LIKE ?)");
-    params.push(q, q, q, q);
-  }
-  const where = `WHERE ${conds.join(" AND ")}`;
-  const fromSql = `FROM exit_request er LEFT JOIN employees e ON e.id = er.employee_id LEFT JOIN branch_master b ON b.id = e.branch_id LEFT JOIN process_master p ON p.id = e.process_id LEFT JOIN exit_employee_health_snapshot hs ON hs.exit_request_id = er.id LEFT JOIN (SELECT exit_request_id, COUNT(*) AS total_tasks, SUM(CASE WHEN status IN ('cleared','waived') THEN 1 ELSE 0 END) AS cleared_tasks FROM exit_clearance_task GROUP BY exit_request_id) clearance ON clearance.exit_request_id = er.id`;
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT er.*, e.employee_code, COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name, b.branch_name, p.process_name, hs.engagement_score, hs.regrettable_exit, hs.risk_label, COALESCE(clearance.total_tasks, 0) AS clearance_total, COALESCE(clearance.cleared_tasks, 0) AS clearance_cleared ${fromSql} ${where} ORDER BY er.created_at DESC LIMIT ${limit} OFFSET ${offset}`,
-    params,
-  );
-  const [countRows] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total ${fromSql} ${where}`, params);
-  return res.json({ success: true, data: rows, total: Number(countRows[0]?.total ?? 0), page, limit });
-}));
+    const scope = await exitListScope(req.authUser!.id);
+    const page = Math.max(1, Number(req.query.page ?? 1) || 1);
+    const limit = Math.min(
+      Math.max(1, Number(req.query.limit ?? 100) || 100),
+      500,
+    );
+    const offset = (page - 1) * limit;
+    const conds: string[] = [`(${scope.sql})`];
+    const params: unknown[] = [...scope.params];
+    if (req.query.status) {
+      conds.push("er.status = ?");
+      params.push(
+        String(
+          req.query.status === "exit_confirmed" ? "exited" : req.query.status,
+        ),
+      );
+    }
+    if (req.query.statuses) {
+      // Comma list, e.g. the notice-period view: every status in which the person is still working out notice.
+      const statuses = String(req.query.statuses)
+        .split(",")
+        .map((v) => normalizeExitStatus(v))
+        .filter((v) => /^[a-z_]{3,30}$/.test(v));
+      if (statuses.length > 0) {
+        conds.push(`er.status IN (${statuses.map(() => "?").join(",")})`);
+        params.push(...statuses);
+      }
+    }
+    if (req.query.employeeId) {
+      conds.push("er.employee_id = ?");
+      params.push(String(req.query.employeeId));
+    }
+    if (req.query.branchId) {
+      conds.push("e.branch_id = ?");
+      params.push(String(req.query.branchId));
+    }
+    if (req.query.processId) {
+      conds.push("e.process_id = ?");
+      params.push(String(req.query.processId));
+    }
+    if (req.query.search) {
+      const q = `%${String(req.query.search)}%`;
+      conds.push(
+        "(e.employee_code LIKE ? OR e.full_name LIKE ? OR er.resignation_reason LIKE ? OR er.exit_reason_category LIKE ?)",
+      );
+      params.push(q, q, q, q);
+    }
+    const where = `WHERE ${conds.join(" AND ")}`;
+    const fromSql = `FROM exit_request er LEFT JOIN employees e ON e.id = er.employee_id LEFT JOIN branch_master b ON b.id = e.branch_id LEFT JOIN process_master p ON p.id = e.process_id LEFT JOIN exit_employee_health_snapshot hs ON hs.exit_request_id = er.id LEFT JOIN (SELECT exit_request_id, COUNT(*) AS total_tasks, SUM(CASE WHEN status IN ('cleared','waived') THEN 1 ELSE 0 END) AS cleared_tasks FROM exit_clearance_task GROUP BY exit_request_id) clearance ON clearance.exit_request_id = er.id`;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT er.*, e.employee_code, COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name, b.branch_name, p.process_name, hs.engagement_score, hs.regrettable_exit, hs.risk_label, COALESCE(clearance.total_tasks, 0) AS clearance_total, COALESCE(clearance.cleared_tasks, 0) AS clearance_cleared ${fromSql} ${where} ORDER BY er.created_at DESC LIMIT ${limit} OFFSET ${offset}`,
+      params,
+    );
+    const [countRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total ${fromSql} ${where}`,
+      params,
+    );
+    return res.json({
+      success: true,
+      data: rows,
+      total: Number(countRows[0]?.total ?? 0),
+      page,
+      limit,
+    });
+  }),
+);
 
 /**
  * Consolidated status-update handler — the sole implementation of PATCH/POST
@@ -248,7 +372,10 @@ exitSecureRouter.get("/", h(async (req: any, res: any) => {
  */
 async function handleExitStatusUpdate(req: any, res: any) {
   if (!(await canActOnExit(req.authUser!.id, req.params.id))) {
-    return res.status(403).json({ success: false, message: "Forbidden: exit request is outside your action scope" });
+    return res.status(403).json({
+      success: false,
+      message: "Forbidden: exit request is outside your action scope",
+    });
   }
 
   const nextStatus = normalizeExitStatus(req.body?.status);
@@ -261,8 +388,21 @@ async function handleExitStatusUpdate(req: any, res: any) {
   //   exited                              : HR or admin
   //   revoked / withdrawn                 : HR, admin, or the employee themselves
   {
-    const isAdminOrHr = await hasAnyRole(req.authUser!.id, "admin", "hr", "ceo", "super_admin", "branch_admin");
-    const isManager   = await hasAnyRole(req.authUser!.id, "manager", "process_manager", "operations_manager", "branch_head");
+    const isAdminOrHr = await hasAnyRole(
+      req.authUser!.id,
+      "admin",
+      "hr",
+      "ceo",
+      "super_admin",
+      "branch_admin",
+    );
+    const isManager = await hasAnyRole(
+      req.authUser!.id,
+      "manager",
+      "process_manager",
+      "operations_manager",
+      "branch_head",
+    );
 
     // Check if caller IS the employee's actual reporting manager (not just any manager-role user)
     let isReportingManager = false;
@@ -283,7 +423,10 @@ async function handleExitStatusUpdate(req: any, res: any) {
       // Only the employee's actual reporting manager (or pure admin/super_admin/ceo) may move these.
       // HR role is deliberately excluded: HR's involvement during the notice period happens through
       // clearance tasks and exit interview, not through advancing the manager-stage statuses.
-      if (!isReportingManager && !await hasAnyRole(req.authUser!.id, "admin", "super_admin", "ceo")) {
+      if (
+        !isReportingManager &&
+        !(await hasAnyRole(req.authUser!.id, "admin", "super_admin", "ceo"))
+      ) {
         return res.status(403).json({
           success: false,
           message: `Only the employee's reporting manager may move an exit to '${nextStatus}'. HR's role is via clearance tasks and exit interview, not this status gate.`,
@@ -303,7 +446,15 @@ async function handleExitStatusUpdate(req: any, res: any) {
   // disagrees records an objection via POST /:id/objection, which leaves the request active and
   // the notice period running. Refused here as well as in the FSM map so the API answers the
   // policy question directly instead of reporting a transition error.
-  const allowed = ["submitted", "manager_review", "accepted", "notice_serving", "exited", "revoked", "withdrawn"];
+  const allowed = [
+    "submitted",
+    "manager_review",
+    "accepted",
+    "notice_serving",
+    "exited",
+    "revoked",
+    "withdrawn",
+  ];
   if (!allowed.includes(nextStatus)) {
     return res.status(400).json({
       success: false,
@@ -317,7 +468,9 @@ async function handleExitStatusUpdate(req: any, res: any) {
   const remarks = String(req.body?.remarks ?? "").trim();
   const remarksOptionalFor = ["revoked", "withdrawn"];
   if (!remarks && !remarksOptionalFor.includes(nextStatus)) {
-    return res.status(400).json({ success: false, message: "Remarks are required" });
+    return res
+      .status(400)
+      .json({ success: false, message: "Remarks are required" });
   }
 
   // Notice terms. Both were already being SENT by NativeExitManagement's "Confirm & Advance"
@@ -326,7 +479,8 @@ async function handleExitStatusUpdate(req: any, res: any) {
   // got a success toast, and nothing was persisted. Validated here rather than trusted:
   // last_working_day_confirmed feeds payroll's employment-end-date resolver, so a malformed
   // value would propagate into who gets paid and through what date.
-  const rawLwd = req.body?.lastWorkingDayConfirmed ?? req.body?.last_working_day_confirmed;
+  const rawLwd =
+    req.body?.lastWorkingDayConfirmed ?? req.body?.last_working_day_confirmed;
   let lastWorkingDayConfirmed: string | null = null;
   if (rawLwd !== undefined && rawLwd !== null && String(rawLwd).trim() !== "") {
     const candidate = String(rawLwd).trim().slice(0, 10);
@@ -340,15 +494,21 @@ async function handleExitStatusUpdate(req: any, res: any) {
     ) {
       return res.status(400).json({
         success: false,
-        message: "lastWorkingDayConfirmed must be a real calendar date in YYYY-MM-DD format",
+        message:
+          "lastWorkingDayConfirmed must be a real calendar date in YYYY-MM-DD format",
       });
     }
     lastWorkingDayConfirmed = candidate;
   }
 
-  const rawNoticeDays = req.body?.noticePeriodDays ?? req.body?.notice_period_days;
+  const rawNoticeDays =
+    req.body?.noticePeriodDays ?? req.body?.notice_period_days;
   let noticePeriodDays: number | null = null;
-  if (rawNoticeDays !== undefined && rawNoticeDays !== null && String(rawNoticeDays).trim() !== "") {
+  if (
+    rawNoticeDays !== undefined &&
+    rawNoticeDays !== null &&
+    String(rawNoticeDays).trim() !== ""
+  ) {
     const n = Number(rawNoticeDays);
     // 0..365 matches the modal's max attribute. The bound is not cosmetic: this number is
     // multiplied by a per-day salary rate in ff-compute.service.ts to produce a notice-shortfall
@@ -357,7 +517,8 @@ async function handleExitStatusUpdate(req: any, res: any) {
     if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0 || n > 365) {
       return res.status(400).json({
         success: false,
-        message: "noticePeriodDays must be a whole number of days between 0 and 365",
+        message:
+          "noticePeriodDays must be a whole number of days between 0 and 365",
       });
     }
     noticePeriodDays = n;
@@ -368,7 +529,10 @@ async function handleExitStatusUpdate(req: any, res: any) {
     [req.params.id],
   );
   const current = rows[0];
-  if (!current) return res.status(404).json({ success: false, message: "Exit request not found" });
+  if (!current)
+    return res
+      .status(404)
+      .json({ success: false, message: "Exit request not found" });
 
   const currentStatus = normalizeExitStatus(current.status);
   const allowedNext = ALLOWED_EXIT_TRANSITIONS[currentStatus] ?? [];
@@ -379,7 +543,8 @@ async function handleExitStatusUpdate(req: any, res: any) {
     });
   }
 
-  const pendingAtExit = nextStatus === "exited" ? await openClearanceAtExit(req.params.id) : 0;
+  const pendingAtExit =
+    nextStatus === "exited" ? await openClearanceAtExit(req.params.id) : 0;
 
   // currentStatus is the value the FSM check above was decided on. Handing it to the
   // service lets the transaction there refuse the write if another approver moved the
@@ -393,6 +558,25 @@ async function handleExitStatusUpdate(req: any, res: any) {
     currentStatus,
     { lastWorkingDayConfirmed, noticePeriodDays },
   );
+
+  // Clearance no longer blocks "exited" (2026-09-26 ruling), so an exit with open clearance
+  // is now a normal outcome, not an error — but it must still be visible on the employee's
+  // journey. Same table/shape as the objection log above so journeyLog.service.ts's existing
+  // exit_approval_log reader picks it up for free.
+  if (pendingAtExit > 0) {
+    await db.execute(
+      `INSERT INTO exit_approval_log
+         (id, exit_request_id, stage, action, action_by, action_by_role, discussion_remarks, created_at)
+       VALUES (UUID(), ?, 'exited', 'exited_with_open_clearance', ?, ?, ?, NOW())`,
+      [
+        req.params.id,
+        req.authUser!.id,
+        req.authUser!.role ?? null,
+        `${pendingAtExit} clearance task(s) still open at exit. F&F approval is blocked until they clear.`,
+      ],
+    );
+  }
+
   return res.json({
     success: true,
     data,
@@ -427,51 +611,75 @@ exitSecureRouter.post("/:id/status", h(handleExitStatusUpdate));
  * dispute, and this is written into the same exit_approval_log the rest of the timeline comes
  * from — so it surfaces on the employee's journey and in the exit drill-down for free.
  */
-exitSecureRouter.post("/:id/objection", h(async (req: any, res: any) => {
-  if (!(await canActOnExit(req.authUser!.id, req.params.id))) {
-    return res.status(403).json({ success: false, message: "Forbidden: exit request is outside your action scope" });
-  }
+exitSecureRouter.post(
+  "/:id/objection",
+  h(async (req: any, res: any) => {
+    if (!(await canActOnExit(req.authUser!.id, req.params.id))) {
+      return res.status(403).json({
+        success: false,
+        message: "Forbidden: exit request is outside your action scope",
+      });
+    }
 
-  const reason = String(req.body?.reason ?? req.body?.remarks ?? "").trim();
-  if (!reason) {
-    return res.status(400).json({
-      success: false,
-      message: "A reason is required to record an objection — it is the only record of why the manager disagreed",
-    });
-  }
+    const reason = String(req.body?.reason ?? req.body?.remarks ?? "").trim();
+    if (!reason) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "A reason is required to record an objection — it is the only record of why the manager disagreed",
+      });
+    }
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT status FROM exit_request WHERE id = ? LIMIT 1`,
-    [req.params.id],
-  );
-  const current = rows[0];
-  if (!current) return res.status(404).json({ success: false, message: "Exit request not found" });
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT status FROM exit_request WHERE id = ? LIMIT 1`,
+      [req.params.id],
+    );
+    const current = rows[0];
+    if (!current)
+      return res
+        .status(404)
+        .json({ success: false, message: "Exit request not found" });
 
-  const currentStatus = normalizeExitStatus(current.status);
-  // Pointless — and misleading on the timeline — once the exit is over. The employee has either
-  // already left or the request was cancelled; an objection logged now reads as though it were
-  // considered during the process.
-  if (["exited", "closed", "revoked", "withdrawn", "rejected"].includes(currentStatus)) {
-    return res.status(409).json({
-      success: false,
-      message: `This exit request is already '${currentStatus}' — an objection can only be recorded while it is still in progress`,
-    });
-  }
+    const currentStatus = normalizeExitStatus(current.status);
+    // Pointless — and misleading on the timeline — once the exit is over. The employee has either
+    // already left or the request was cancelled; an objection logged now reads as though it were
+    // considered during the process.
+    if (
+      ["exited", "closed", "revoked", "withdrawn", "rejected"].includes(
+        currentStatus,
+      )
+    ) {
+      return res.status(409).json({
+        success: false,
+        message: `This exit request is already '${currentStatus}' — an objection can only be recorded while it is still in progress`,
+      });
+    }
 
-  await db.execute(
-    `INSERT INTO exit_approval_log
+    await db.execute(
+      `INSERT INTO exit_approval_log
        (id, exit_request_id, stage, action, action_by, action_by_role, discussion_remarks, created_at)
      VALUES (UUID(), ?, ?, 'objection_recorded', ?, ?, ?, NOW())`,
-    [req.params.id, currentStatus, req.authUser!.id, req.authUser!.role ?? null, reason],
-  );
+      [
+        req.params.id,
+        currentStatus,
+        req.authUser!.id,
+        req.authUser!.role ?? null,
+        reason,
+      ],
+    );
 
-  return res.status(201).json({
-    success: true,
-    message:
-      "Objection recorded. The resignation remains active and the notice period continues — only the employee can withdraw it.",
-    data: { exit_request_id: req.params.id, status: currentStatus, objection_reason: reason },
-  });
-}));
+    return res.status(201).json({
+      success: true,
+      message:
+        "Objection recorded. The resignation remains active and the notice period continues — only the employee can withdraw it.",
+      data: {
+        exit_request_id: req.params.id,
+        status: currentStatus,
+        objection_reason: reason,
+      },
+    });
+  }),
+);
 
 /**
  * Test-only export. openClearanceAtExit is module-private on purpose — it is not a second

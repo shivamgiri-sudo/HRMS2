@@ -1,0 +1,31 @@
+-- Migration 1901: Mark fully-repaid legacy employee_loans rows 'completed'
+--
+-- 185 of 219 employee_loans rows currently carry status='active' but already
+-- have pending_amount = 0 — all legacy-import artifacts. The source system,
+-- db_bill.LoanMaster, only ever recorded PendingAmount and a TransationStatus
+-- flag ('YES'/blank) meaning "on file", never a real open/closed distinction;
+-- the one-time import into employee_loans stamped every row 'active'
+-- regardless of whether PendingAmount was already 0. Verified live 2026-09-27
+-- against both mas_hrms.employee_loans and the db_bill.LoanMaster source rows
+-- (matched by legacy_loan_id = LoanMaster.Id).
+--
+-- This is why /payroll/loans shows employees with 2+ "active" loans: most of
+-- the extra rows are stale, already-repaid history, not real concurrent debt.
+-- Multiple simultaneous active loans per employee ARE legitimate and are left
+-- untouched here — payroll/loans.service.ts's applyPayrollDeductions already
+-- deducts several active loans oldest-first by design. This migration only
+-- clears rows that are already fully repaid.
+--
+-- Use scripts/loan-active-status-completed-cleanup.ts instead of running this
+-- raw UPDATE directly — it does the same UPDATE but first writes one
+-- logSensitiveAction row per affected loan capturing the pre-cleanup value, so
+-- the change is traceable the same way any other loan mutation in this app is.
+-- Dry-run by default; pass --apply to actually flip the status + write the
+-- audit rows. This .sql file is kept for the migration manifest/history, not
+-- meant to be run standalone.
+--
+-- Idempotent: WHERE status='active' AND pending_amount=0 matches nothing once
+-- applied.
+
+UPDATE employee_loans SET status = 'completed'
+ WHERE status = 'active' AND pending_amount = 0;

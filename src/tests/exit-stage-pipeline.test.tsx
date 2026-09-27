@@ -25,11 +25,29 @@ describe("exitStageOf", () => {
 
 describe("isPendingAtExit", () => {
   it("flags an exited employee with open clearance", () => {
-    expect(isPendingAtExit({ status: "exited", clearance_total: 4, clearance_cleared: 2 })).toBe(true);
+    expect(
+      isPendingAtExit({
+        status: "exited",
+        clearance_total: 4,
+        clearance_cleared: 2,
+      }),
+    ).toBe(true);
   });
   it("does not flag a fully cleared exit or one still serving notice", () => {
-    expect(isPendingAtExit({ status: "exited", clearance_total: 4, clearance_cleared: 4 })).toBe(false);
-    expect(isPendingAtExit({ status: "notice_serving", clearance_total: 4, clearance_cleared: 0 })).toBe(false);
+    expect(
+      isPendingAtExit({
+        status: "exited",
+        clearance_total: 4,
+        clearance_cleared: 4,
+      }),
+    ).toBe(false);
+    expect(
+      isPendingAtExit({
+        status: "notice_serving",
+        clearance_total: 4,
+        clearance_cleared: 0,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -53,7 +71,11 @@ describe("ExitStagePipeline", () => {
 
   it("omits the banner when nothing is pending", () => {
     const html = renderToStaticMarkup(
-      <ExitStagePipeline rows={[{ status: "notice_serving" }]} active="notice" onSelect={() => {}} />,
+      <ExitStagePipeline
+        rows={[{ status: "notice_serving" }]}
+        active="notice"
+        onSelect={() => {}}
+      />,
     );
     expect(html).not.toContain("still have open clearance");
     expect(html).toContain("Show all stages");
