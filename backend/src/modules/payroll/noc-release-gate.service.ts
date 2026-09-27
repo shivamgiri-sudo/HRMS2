@@ -122,19 +122,44 @@ export interface NocReleaseStatus {
 }
 
 /** Per-employee decision, for single-employee paths (F&F release, an employee drill-down). */
-export async function nocReleaseStatusForEmployee(employeeId: string): Promise<NocReleaseStatus> {
+export async function nocReleaseStatusForEmployee(
+  employeeId: string,
+): Promise<NocReleaseStatus> {
   if (!(await isNocReleaseGateEnabled())) {
-    return { blocked: false, reason: null, caseStatus: null, hasCase: false, overridden: false };
+    return {
+      blocked: false,
+      reason: null,
+      caseStatus: null,
+      hasCase: false,
+      overridden: false,
+    };
   }
 
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT employment_status FROM employees WHERE id = ? LIMIT 1`, [employeeId]);
+    `SELECT employment_status FROM employees WHERE id = ? LIMIT 1`,
+    [employeeId],
+  );
   if (!empRows.length) {
-    return { blocked: false, reason: null, caseStatus: null, hasCase: false, overridden: false };
+    return {
+      blocked: false,
+      reason: null,
+      caseStatus: null,
+      hasCase: false,
+      overridden: false,
+    };
   }
-  const isActive = String(empRows[0].employment_status ?? "active").trim().toLowerCase() === "active";
+  const isActive =
+    String(empRows[0].employment_status ?? "active")
+      .trim()
+      .toLowerCase() === "active";
   if (isActive) {
-    return { blocked: false, reason: null, caseStatus: null, hasCase: false, overridden: false };
+    return {
+      blocked: false,
+      reason: null,
+      caseStatus: null,
+      hasCase: false,
+      overridden: false,
+    };
   }
 
   const [caseRows] = await db.execute<RowDataPacket[]>(
@@ -145,27 +170,45 @@ export async function nocReleaseStatusForEmployee(employeeId: string): Promise<N
 
   if (!nocCase) {
     return {
-      blocked: true, hasCase: false, overridden: false, caseStatus: null,
+      blocked: true,
+      hasCase: false,
+      overridden: false,
+      caseStatus: null,
       reason: "No NOC clearance has been raised for this inactive employee.",
     };
   }
   if (nocCase.override_at) {
     return {
-      blocked: false, hasCase: true, overridden: true,
-      caseStatus: String(nocCase.status), reason: null,
+      blocked: false,
+      hasCase: true,
+      overridden: true,
+      caseStatus: String(nocCase.status),
+      reason: null,
     };
   }
   if (String(nocCase.status) === "completed") {
-    return { blocked: false, hasCase: true, overridden: false, caseStatus: "completed", reason: null };
+    return {
+      blocked: false,
+      hasCase: true,
+      overridden: false,
+      caseStatus: "completed",
+      reason: null,
+    };
   }
   if (String(nocCase.status) === "declined") {
     return {
-      blocked: true, hasCase: true, overridden: false, caseStatus: "declined",
+      blocked: true,
+      hasCase: true,
+      overridden: false,
+      caseStatus: "declined",
       reason: `NOC was declined at the ${nocCase.declined_stage_key ?? "clearance"} stage and is awaiting HR resolution.`,
     };
   }
   return {
-    blocked: true, hasCase: true, overridden: false, caseStatus: String(nocCase.status),
+    blocked: true,
+    hasCase: true,
+    overridden: false,
+    caseStatus: String(nocCase.status),
     reason: `NOC clearance is ${String(nocCase.status).replace(/_/g, " ")} — not all signatories have responded.`,
   };
 }
@@ -189,7 +232,9 @@ export interface NocBlockedEmployee {
  *
  * Returns [] when the gate is off, so callers need no separate flag check.
  */
-export async function nocBlockedEmployeesForRuns(runIds: string[]): Promise<NocBlockedEmployee[]> {
+export async function nocBlockedEmployeesForRuns(
+  runIds: string[],
+): Promise<NocBlockedEmployee[]> {
   if (!runIds.length) return [];
   if (!(await isNocReleaseGateEnabled())) return [];
 
@@ -231,19 +276,27 @@ export async function overrideNocRelease(params: {
   employeeId: string;
   reason: string;
   actorUserId: string;
+  documentPath?: string | null;
+  documentOriginalName?: string | null;
 }): Promise<{ caseId: string }> {
   if (!params.reason?.trim()) {
     throw Object.assign(
-      new Error("An override reason is required — it is the only record of why salary was released without a completed NOC."),
+      new Error(
+        "An override reason is required — it is the only record of why salary was released without a completed NOC.",
+      ),
       { statusCode: 400, code: "NOC_OVERRIDE_REASON_REQUIRED" },
     );
   }
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, status, override_at FROM noc_case WHERE employee_id = ? LIMIT 1`, [params.employeeId]);
+    `SELECT id, status, override_at FROM noc_case WHERE employee_id = ? LIMIT 1`,
+    [params.employeeId],
+  );
   const nocCase = rows[0];
   if (!nocCase) {
     throw Object.assign(
-      new Error("This employee has no NOC clearance to override. Raise the NOC first, then override it if the release genuinely cannot wait."),
+      new Error(
+        "This employee has no NOC clearance to override. Raise the NOC first, then override it if the release genuinely cannot wait.",
+      ),
       { statusCode: 404, code: "NOC_CASE_NOT_FOUND" },
     );
   }
@@ -255,8 +308,17 @@ export async function overrideNocRelease(params: {
   }
 
   await db.execute(
-    `UPDATE noc_case SET override_by = ?, override_at = NOW(), override_reason = ? WHERE id = ?`,
-    [params.actorUserId, params.reason.trim(), nocCase.id],
+    `UPDATE noc_case
+        SET override_by = ?, override_at = NOW(), override_reason = ?,
+            override_document_path = ?, override_document_original_name = ?
+      WHERE id = ?`,
+    [
+      params.actorUserId,
+      params.reason.trim(),
+      params.documentPath ?? null,
+      params.documentOriginalName ?? null,
+      nocCase.id,
+    ],
   );
   return { caseId: String(nocCase.id) };
 }

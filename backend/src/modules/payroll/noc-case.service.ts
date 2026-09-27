@@ -52,10 +52,17 @@ const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
 const INVITE_TTL_DAYS = 14;
 
 function frontendBaseUrl(): string {
-  return String(env.FRONTEND_URL ?? "https://mcnhrms.teammas.in").replace(/\/+$/, "");
+  return String(env.FRONTEND_URL ?? "https://mcnhrms.teammas.in").replace(
+    /\/+$/,
+    "",
+  );
 }
 
-function refuse(statusCode: number, code: string, message: string): Error & { statusCode: number; code: string } {
+function refuse(
+  statusCode: number,
+  code: string,
+  message: string,
+): Error & { statusCode: number; code: string } {
   return Object.assign(new Error(message), { statusCode, code });
 }
 
@@ -64,14 +71,21 @@ function refuse(statusCode: number, code: string, message: string): Error & { st
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export type NocCaseStatus =
-  | "invited" | "employee_submitted" | "in_progress" | "declined" | "completed" | "cancelled";
-export type SignatoryStatus = "pending" | "accepted" | "acknowledged" | "declined";
+  | "invited"
+  | "employee_submitted"
+  | "in_progress"
+  | "declined"
+  | "completed"
+  | "cancelled";
+export type SignatoryStatus =
+  "pending" | "accepted" | "acknowledged" | "declined";
 export type SignatoryDecision = "accepted" | "acknowledged" | "declined";
 export type AssetStatus = "returned" | "not_returned" | "na";
 export type FnfOption = "current_payroll" | "45_days" | "both";
 
 /** The roles the escalation matrix recognises as having started a case. */
-export type InitiatorRole = "agent" | "tl" | "manager" | "hr" | "it" | "admin_mis";
+export type InitiatorRole =
+  "agent" | "tl" | "manager" | "hr" | "it" | "admin_mis";
 
 export interface NocSignatoryRow {
   id: string;
@@ -139,6 +153,8 @@ export interface NocCaseRow {
   override_by: string | null;
   override_at: string | null;
   override_reason: string | null;
+  override_document_path: string | null;
+  override_document_original_name: string | null;
   created_at: string;
 }
 
@@ -168,12 +184,12 @@ export type StageBlockReason =
  * be ambiguous about which row applies.
  */
 export const INITIATOR_ESCALATION: Record<InitiatorRole, string[]> = {
-  agent:    ["tl", "process_manager", "hr", "branch_it", "branch_admin"],
-  tl:       ["process_manager", "hr", "branch_it", "branch_admin"],
-  manager:  ["branch_head", "hr", "branch_it", "branch_admin"],
-  hr:       ["hr", "branch_it", "branch_admin"],
-  it:       ["hr", "it_head", "branch_admin"],
-  admin_mis:["hr", "branch_it", "branch_admin"],
+  agent: ["tl", "process_manager", "hr", "branch_it", "branch_admin"],
+  tl: ["process_manager", "hr", "branch_it", "branch_admin"],
+  manager: ["branch_head", "hr", "branch_it", "branch_admin"],
+  hr: ["hr", "branch_it", "branch_admin"],
+  it: ["hr", "it_head", "branch_admin"],
+  admin_mis: ["hr", "branch_it", "branch_admin"],
 };
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -182,34 +198,48 @@ export const INITIATOR_ESCALATION: Record<InitiatorRole, string[]> = {
 
 export async function getCase(caseId: string): Promise<NocCaseRow | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM noc_case WHERE id = ? LIMIT 1`, [caseId]);
+    `SELECT * FROM noc_case WHERE id = ? LIMIT 1`,
+    [caseId],
+  );
   return (rows[0] as NocCaseRow) ?? null;
 }
 
-export async function getCaseByEmployee(employeeId: string): Promise<NocCaseRow | null> {
+export async function getCaseByEmployee(
+  employeeId: string,
+): Promise<NocCaseRow | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM noc_case WHERE employee_id = ? LIMIT 1`, [employeeId]);
+    `SELECT * FROM noc_case WHERE employee_id = ? LIMIT 1`,
+    [employeeId],
+  );
   return (rows[0] as NocCaseRow) ?? null;
 }
 
-export async function getSignatories(caseId: string): Promise<NocSignatoryRow[]> {
+export async function getSignatories(
+  caseId: string,
+): Promise<NocSignatoryRow[]> {
   // Ordered by display_no so every surface â€” screen, certificate, export â€” reproduces the
   // paper form's numbering. tier drives behaviour, never presentation.
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM noc_signatory WHERE noc_case_id = ? ORDER BY display_no`, [caseId]);
+    `SELECT * FROM noc_signatory WHERE noc_case_id = ? ORDER BY display_no`,
+    [caseId],
+  );
   return rows as NocSignatoryRow[];
 }
 
 export async function getAssets(caseId: string): Promise<NocAssetRow[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT * FROM noc_asset_return WHERE noc_case_id = ? ORDER BY item_no`, [caseId]);
+    `SELECT * FROM noc_asset_return WHERE noc_case_id = ? ORDER BY item_no`,
+    [caseId],
+  );
   return rows as NocAssetRow[];
 }
 
 export async function getEvents(caseId: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT stage_key, action, actor_role, actor_name, actor_type, reason, created_at
-       FROM noc_case_event WHERE noc_case_id = ? ORDER BY created_at DESC, id`, [caseId]);
+       FROM noc_case_event WHERE noc_case_id = ? ORDER BY created_at DESC, id`,
+    [caseId],
+  );
   return rows as RowDataPacket[];
 }
 
@@ -220,13 +250,21 @@ export async function getCaseDetail(caseId: string): Promise<{
   assets: NocAssetRow[];
   events: RowDataPacket[];
   assetGate: { satisfied: boolean; outstanding: string[] };
-  progress: { total: number; responded: number; accepted: number; declined: number; pending: number };
+  progress: {
+    total: number;
+    responded: number;
+    accepted: number;
+    declined: number;
+    pending: number;
+  };
 }> {
   const nocCase = await getCase(caseId);
   if (!nocCase) throw refuse(404, "NOC_CASE_NOT_FOUND", "NOC case not found");
 
   const [signatories, assets, events] = await Promise.all([
-    getSignatories(caseId), getAssets(caseId), getEvents(caseId),
+    getSignatories(caseId),
+    getAssets(caseId),
+    getEvents(caseId),
   ]);
 
   const assetGate = evaluateAssetGate(assets);
@@ -245,7 +283,9 @@ export async function getCaseDetail(caseId: string): Promise<{
     progress: {
       total: signatories.length,
       responded,
-      accepted: signatories.filter((s) => s.status === "accepted" || s.status === "acknowledged").length,
+      accepted: signatories.filter(
+        (s) => s.status === "accepted" || s.status === "acknowledged",
+      ).length,
       declined: signatories.filter((s) => s.status === "declined").length,
       pending: signatories.filter((s) => s.status === "pending").length,
     },
@@ -280,8 +320,14 @@ export async function listCases(
   const conds: string[] = [`(${scope.sql})`];
   const params: unknown[] = [...scope.params];
 
-  if (filters.status)   { conds.push("c.status = ?");    params.push(filters.status); }
-  if (filters.branchId) { conds.push("c.branch_id = ?"); params.push(filters.branchId); }
+  if (filters.status) {
+    conds.push("c.status = ?");
+    params.push(filters.status);
+  }
+  if (filters.branchId) {
+    conds.push("c.branch_id = ?");
+    params.push(filters.branchId);
+  }
   if (filters.search) {
     conds.push("(c.employee_code LIKE ? OR c.employee_name LIKE ?)");
     params.push(`%${filters.search}%`, `%${filters.search}%`);
@@ -340,7 +386,10 @@ export async function listCases(
  * this been positively accounted for", and an untouched row has not been. Only 'returned' or an
  * explicit Admin/IT waiver clears an item.
  */
-export function evaluateAssetGate(assets: NocAssetRow[]): { satisfied: boolean; outstanding: string[] } {
+export function evaluateAssetGate(assets: NocAssetRow[]): {
+  satisfied: boolean;
+  outstanding: string[];
+} {
   const outstanding = assets
     .filter((a) => Number(a.is_mandatory_for_finance) === 1)
     .filter((a) => a.status !== "returned" && !a.waived_at)
@@ -361,7 +410,10 @@ export function stageBlockReason(
   assetGate: { satisfied: boolean; outstanding: string[] },
 ): StageBlockReason | null {
   if (target.status !== "pending") {
-    return { code: "ALREADY_ACTIONED", message: `${target.stage_label} already recorded ${target.status}.` };
+    return {
+      code: "ALREADY_ACTIONED",
+      message: `${target.stage_label} already recorded ${target.status}.`,
+    };
   }
   if (nocCase.status === "declined") {
     return {
@@ -377,13 +429,17 @@ export function stageBlockReason(
   if (nocCase.status === "invited") {
     return {
       code: "EMPLOYEE_FORM_PENDING",
-      message: "The employee has not submitted the NOC form yet. HR can record it on their behalf if the employee is unreachable.",
+      message:
+        "The employee has not submitted the NOC form yet. HR can record it on their behalf if the employee is unreachable.",
     };
   }
 
   // Tier gate. Equal tiers are independent; every LOWER tier must have responded positively.
   const blockingLower = all.filter(
-    (s) => s.tier < target.tier && s.status !== "accepted" && s.status !== "acknowledged",
+    (s) =>
+      s.tier < target.tier &&
+      s.status !== "accepted" &&
+      s.status !== "acknowledged",
   );
   if (blockingLower.length > 0) {
     return {
@@ -398,7 +454,8 @@ export function stageBlockReason(
   if (target.stage_key === "hr" && !nocCase.last_working_day) {
     return {
       code: "LWD_NOT_SET",
-      message: "Record the confirmed Last Working Day before clearing the HR stage.",
+      message:
+        "Record the confirmed Last Working Day before clearing the HR stage.",
     };
   }
 
@@ -434,7 +491,9 @@ interface EmployeeSnapshot extends RowDataPacket {
   mobile: string | null;
 }
 
-async function loadEmployeeSnapshot(employeeId: string): Promise<EmployeeSnapshot | null> {
+async function loadEmployeeSnapshot(
+  employeeId: string,
+): Promise<EmployeeSnapshot | null> {
   const [rows] = await db.execute<EmployeeSnapshot[]>(
     `SELECT e.id, e.employee_code, e.full_name, e.branch_id, e.process_id,
             b.branch_name, p.process_name, d.designation_name,
@@ -481,7 +540,9 @@ export async function openCase(params: {
   if (!exitRequestId) {
     const [er] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM exit_request WHERE employee_id = ?
-        ORDER BY created_at DESC LIMIT 1`, [params.employeeId]);
+        ORDER BY created_at DESC LIMIT 1`,
+      [params.employeeId],
+    );
     exitRequestId = (er[0]?.id as string) ?? null;
   }
 
@@ -499,14 +560,16 @@ export async function openCase(params: {
   const lwd = lwdRows[0]?.lwd as string | null | undefined;
   if (!lwd) {
     throw refuse(
-      409, "NOC_LWD_NOT_KNOWN",
+      409,
+      "NOC_LWD_NOT_KNOWN",
       "This employee has no confirmed or proposed last working day yet. NOC can only be initiated once the last working day is known.",
     );
   }
   const today = new Date().toISOString().slice(0, 10);
   if (lwd > today) {
     throw refuse(
-      409, "NOC_LWD_NOT_REACHED",
+      409,
+      "NOC_LWD_NOT_REACHED",
       `NOC can only be initiated on or after the last working day (${lwd}).`,
     );
   }
@@ -523,9 +586,18 @@ export async function openCase(params: {
           initiator_role, initiated_by_user_id, initiated_at, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'invited')`,
       [
-        caseId, params.employeeId, exitRequestId, emp.branch_id, emp.process_id,
-        emp.employee_code, emp.full_name, emp.branch_name, emp.process_name, emp.designation_name,
-        params.initiatorRole, params.initiatedByUserId,
+        caseId,
+        params.employeeId,
+        exitRequestId,
+        emp.branch_id,
+        emp.process_id,
+        emp.employee_code,
+        emp.full_name,
+        emp.branch_name,
+        emp.process_name,
+        emp.designation_name,
+        params.initiatorRole,
+        params.initiatedByUserId,
       ],
     );
 
@@ -554,8 +626,11 @@ export async function openCase(params: {
     );
 
     await writeEvent(conn, {
-      caseId, action: "case_opened", actorUserId: params.initiatedByUserId,
-      actorRole: params.actorRole ?? params.initiatorRole, actorName: params.actorName ?? null,
+      caseId,
+      action: "case_opened",
+      actorUserId: params.initiatedByUserId,
+      actorRole: params.actorRole ?? params.initiatorRole,
+      actorName: params.actorName ?? null,
       reason: `Initiated by ${params.initiatorRole}`,
     });
 
@@ -586,23 +661,38 @@ export async function openCase(params: {
  * Superseding rather than leaving the old row active matters for the reminder worker, which
  * joins on token_status='active' and would otherwise mail twice.
  */
-export async function mintInvite(caseId: string, actorUserId: string | null): Promise<{
-  inviteId: string; url: string; expiresAt: string; email: string | null; mobile: string | null;
+export async function mintInvite(
+  caseId: string,
+  actorUserId: string | null,
+): Promise<{
+  inviteId: string;
+  url: string;
+  expiresAt: string;
+  email: string | null;
+  mobile: string | null;
 }> {
   const nocCase = await getCase(caseId);
   if (!nocCase) throw refuse(404, "NOC_CASE_NOT_FOUND", "NOC case not found");
   if (nocCase.status === "completed" || nocCase.status === "cancelled") {
-    throw refuse(409, "NOC_CASE_CLOSED", `This NOC is ${nocCase.status}; there is no form to send.`);
+    throw refuse(
+      409,
+      "NOC_CASE_CLOSED",
+      `This NOC is ${nocCase.status}; there is no form to send.`,
+    );
   }
 
   const emp = await loadEmployeeSnapshot(nocCase.employee_id);
-  const email = [emp?.official_email, emp?.email, emp?.personal_email]
-    .find((e) => typeof e === "string" && e.includes("@")) ?? null;
+  const email =
+    [emp?.official_email, emp?.email, emp?.personal_email].find(
+      (e) => typeof e === "string" && e.includes("@"),
+    ) ?? null;
   const mobile = emp?.mobile ?? null;
 
   await db.execute(
     `UPDATE noc_invite SET token_status = 'superseded'
-      WHERE noc_case_id = ? AND token_status = 'active'`, [caseId]);
+      WHERE noc_case_id = ? AND token_status = 'active'`,
+    [caseId],
+  );
 
   const token = randomBytes(24).toString("hex");
   const inviteId = randomUUID();
@@ -611,11 +701,22 @@ export async function mintInvite(caseId: string, actorUserId: string | null): Pr
        (id, noc_case_id, employee_id, token_hash, token_status, sent_to_email, sent_to_mobile,
         expires_at, created_by)
      VALUES (?, ?, ?, ?, 'active', ?, ?, DATE_ADD(NOW(), INTERVAL ? DAY), ?)`,
-    [inviteId, caseId, nocCase.employee_id, sha256(token), email, mobile, INVITE_TTL_DAYS, actorUserId],
+    [
+      inviteId,
+      caseId,
+      nocCase.employee_id,
+      sha256(token),
+      email,
+      mobile,
+      INVITE_TTL_DAYS,
+      actorUserId,
+    ],
   );
 
   const [row] = await db.execute<RowDataPacket[]>(
-    `SELECT expires_at FROM noc_invite WHERE id = ? LIMIT 1`, [inviteId]);
+    `SELECT expires_at FROM noc_invite WHERE id = ? LIMIT 1`,
+    [inviteId],
+  );
 
   return {
     inviteId,
@@ -627,26 +728,44 @@ export async function mintInvite(caseId: string, actorUserId: string | null): Pr
 }
 
 /** Resolve a public token. Every failure mode is a flat message that leaks no employee data. */
-export async function resolveInvite(token: string): Promise<{ inviteId: string; caseId: string }> {
+export async function resolveInvite(
+  token: string,
+): Promise<{ inviteId: string; caseId: string }> {
   if (!token || token.length < 20) {
     throw refuse(404, "NOC_LINK_INVALID", "This NOC form link is not valid.");
   }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, noc_case_id, token_status, expires_at FROM noc_invite
-      WHERE token_hash = ? LIMIT 1`, [sha256(token)]);
+      WHERE token_hash = ? LIMIT 1`,
+    [sha256(token)],
+  );
   const row = rows[0];
-  if (!row) throw refuse(404, "NOC_LINK_INVALID", "This NOC form link is not valid.");
+  if (!row)
+    throw refuse(404, "NOC_LINK_INVALID", "This NOC form link is not valid.");
 
   if (String(row.token_status) === "consumed") {
-    throw refuse(410, "NOC_ALREADY_SUBMITTED",
-      "This NOC form has already been submitted. No further action is needed.");
+    throw refuse(
+      410,
+      "NOC_ALREADY_SUBMITTED",
+      "This NOC form has already been submitted. No further action is needed.",
+    );
   }
   if (String(row.token_status) !== "active") {
-    throw refuse(410, "NOC_LINK_SUPERSEDED",
-      "This NOC form link is no longer active. Please use the most recent link, or ask HR to resend it.");
+    throw refuse(
+      410,
+      "NOC_LINK_SUPERSEDED",
+      "This NOC form link is no longer active. Please use the most recent link, or ask HR to resend it.",
+    );
   }
-  if (row.expires_at && new Date(String(row.expires_at)).getTime() < Date.now()) {
-    throw refuse(410, "NOC_LINK_EXPIRED", "This NOC form link has expired. Please ask HR to resend it.");
+  if (
+    row.expires_at &&
+    new Date(String(row.expires_at)).getTime() < Date.now()
+  ) {
+    throw refuse(
+      410,
+      "NOC_LINK_EXPIRED",
+      "This NOC form link has expired. Please ask HR to resend it.",
+    );
   }
   return { inviteId: String(row.id), caseId: String(row.noc_case_id) };
 }
@@ -658,22 +777,39 @@ export async function resolveInvite(token: string): Promise<{ inviteId: string; 
  */
 export async function getPublicFormView(token: string): Promise<{
   caseId: string;
-  employeeCode: string | null; employeeName: string | null;
-  location: string | null; portfolio: string | null; designation: string | null;
-  resignationDate: string | null; lastWorkingDay: string | null;
+  employeeCode: string | null;
+  employeeName: string | null;
+  location: string | null;
+  portfolio: string | null;
+  designation: string | null;
+  resignationDate: string | null;
+  lastWorkingDay: string | null;
   reasonForLeaving: string | null;
   submitted: boolean;
-  assets: Array<{ itemNo: number; itemCode: string; itemLabel: string; quantity: number | null; status: AssetStatus }>;
+  assets: Array<{
+    itemNo: number;
+    itemCode: string;
+    itemLabel: string;
+    quantity: number | null;
+    status: AssetStatus;
+  }>;
 }> {
   const { caseId } = await resolveInvite(token);
   const nocCase = await getCase(caseId);
-  if (!nocCase) throw refuse(404, "NOC_LINK_INVALID", "This NOC form link is not valid.");
+  if (!nocCase)
+    throw refuse(404, "NOC_LINK_INVALID", "This NOC form link is not valid.");
 
-  await db.execute(
-    `UPDATE noc_invite SET opened_at = COALESCE(opened_at, NOW())
-      WHERE noc_case_id = ? AND token_status = 'active'`, [caseId]).catch(() => undefined);
+  await db
+    .execute(
+      `UPDATE noc_invite SET opened_at = COALESCE(opened_at, NOW())
+      WHERE noc_case_id = ? AND token_status = 'active'`,
+      [caseId],
+    )
+    .catch(() => undefined);
 
-  const assets = (await getAssets(caseId)).filter((a) => Number(a.shown_on_form) === 1);
+  const assets = (await getAssets(caseId)).filter(
+    (a) => Number(a.shown_on_form) === 1,
+  );
   return {
     caseId,
     employeeCode: nocCase.employee_code,
@@ -686,8 +822,11 @@ export async function getPublicFormView(token: string): Promise<{
     reasonForLeaving: nocCase.reason_for_leaving,
     submitted: Boolean(nocCase.employee_submitted_at),
     assets: assets.map((a) => ({
-      itemNo: a.item_no, itemCode: a.item_code, itemLabel: a.item_label,
-      quantity: a.quantity, status: a.status,
+      itemNo: a.item_no,
+      itemCode: a.item_code,
+      itemLabel: a.item_label,
+      quantity: a.quantity,
+      status: a.status,
     })),
   };
 }
@@ -699,34 +838,61 @@ export async function getPublicFormView(token: string): Promise<{
 export interface EmployeeFormSubmission {
   resignationDate: string;
   reasonForLeaving?: string | null;
-  assets?: Array<{ itemCode: string; quantity?: number | null; status: AssetStatus; remarks?: string | null }>;
+  assets?: Array<{
+    itemCode: string;
+    quantity?: number | null;
+    status: AssetStatus;
+    remarks?: string | null;
+  }>;
 }
 
 /** Shared by the public token path and HR's record-on-behalf path. */
 async function applyEmployeeSubmission(
   caseId: string,
   input: EmployeeFormSubmission,
-  actor: { userId: string | null; role: string | null; name: string | null; actorType: string },
+  actor: {
+    userId: string | null;
+    role: string | null;
+    name: string | null;
+    actorType: string;
+  },
   request: { ip?: string | null; userAgent?: string | null },
   consumeInvite: boolean,
 ): Promise<void> {
   const nocCase = await getCase(caseId);
   if (!nocCase) throw refuse(404, "NOC_CASE_NOT_FOUND", "NOC case not found");
   if (nocCase.employee_submitted_at) {
-    throw refuse(409, "NOC_ALREADY_SUBMITTED", "This NOC form has already been submitted.");
+    throw refuse(
+      409,
+      "NOC_ALREADY_SUBMITTED",
+      "This NOC form has already been submitted.",
+    );
   }
   if (nocCase.status === "cancelled" || nocCase.status === "completed") {
     throw refuse(409, "NOC_CASE_CLOSED", `This NOC is ${nocCase.status}.`);
   }
 
-  if (!input.resignationDate || !/^\d{4}-\d{2}-\d{2}$/.test(input.resignationDate)) {
-    throw refuse(400, "NOC_RESIGNATION_DATE_REQUIRED", "Resignation Date is required (YYYY-MM-DD).");
+  if (
+    !input.resignationDate ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(input.resignationDate)
+  ) {
+    throw refuse(
+      400,
+      "NOC_RESIGNATION_DATE_REQUIRED",
+      "Resignation Date is required (YYYY-MM-DD).",
+    );
   }
   // Validated here rather than only in the browser: this is reachable by an unauthenticated
   // caller, so a client-side date picker constraint is a suggestion, not a rule.
-  const todayIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const todayIst = new Date(Date.now() + 5.5 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
   if (input.resignationDate > todayIst) {
-    throw refuse(400, "NOC_RESIGNATION_DATE_FUTURE", "Resignation Date cannot be later than today.");
+    throw refuse(
+      400,
+      "NOC_RESIGNATION_DATE_FUTURE",
+      "Resignation Date cannot be later than today.",
+    );
   }
 
   const conn = await db.getConnection();
@@ -741,8 +907,13 @@ async function applyEmployeeSubmission(
               employee_user_agent = COALESCE(employee_user_agent, ?),
               status = CASE WHEN status = 'invited' THEN 'employee_submitted' ELSE status END
         WHERE id = ?`,
-      [input.resignationDate, input.reasonForLeaving ?? null,
-       request.ip ?? null, (request.userAgent ?? null)?.slice(0, 512) ?? null, caseId],
+      [
+        input.resignationDate,
+        input.reasonForLeaving ?? null,
+        request.ip ?? null,
+        (request.userAgent ?? null)?.slice(0, 512) ?? null,
+        caseId,
+      ],
     );
 
     // Asset rows are UPDATEd by item_code, never inserted: the row set is fixed by the template
@@ -755,23 +926,38 @@ async function applyEmployeeSubmission(
             SET quantity = ?, status = ?, remarks = ?, updated_by = ?, updated_by_role = ?,
                 status_updated_at = NOW()
           WHERE noc_case_id = ? AND item_code = ?`,
-        [a.quantity ?? null, a.status, a.remarks ?? null, actor.userId, actor.role, caseId, a.itemCode],
+        [
+          a.quantity ?? null,
+          a.status,
+          a.remarks ?? null,
+          actor.userId,
+          actor.role,
+          caseId,
+          a.itemCode,
+        ],
       );
     }
 
     if (consumeInvite) {
       await conn.execute(
         `UPDATE noc_invite SET token_status = 'consumed', consumed_at = NOW()
-          WHERE noc_case_id = ? AND token_status = 'active'`, [caseId]);
+          WHERE noc_case_id = ? AND token_status = 'active'`,
+        [caseId],
+      );
     }
 
     await writeEvent(conn, {
       caseId,
-      action: consumeInvite ? "employee_form_submitted" : "employee_form_recorded_by_hr",
-      actorUserId: actor.userId, actorRole: actor.role, actorName: actor.name,
+      action: consumeInvite
+        ? "employee_form_submitted"
+        : "employee_form_recorded_by_hr",
+      actorUserId: actor.userId,
+      actorRole: actor.role,
+      actorName: actor.name,
       actorType: actor.actorType,
       reason: consumeInvite ? null : "Recorded on the employee's behalf",
-      ip: request.ip ?? null, userAgent: request.userAgent ?? null,
+      ip: request.ip ?? null,
+      userAgent: request.userAgent ?? null,
     });
 
     // Tier 1 becomes actionable now, so its SLA clock starts. Started here rather than at case
@@ -795,7 +981,8 @@ export async function submitEmployeeForm(params: {
 }): Promise<{ caseId: string }> {
   const { caseId } = await resolveInvite(params.token);
   await applyEmployeeSubmission(
-    caseId, params.input,
+    caseId,
+    params.input,
     { userId: null, role: "employee", name: null, actorType: "public_token" },
     { ip: params.ip, userAgent: params.userAgent },
     true,
@@ -822,8 +1009,14 @@ export async function recordEmployeeFormOnBehalf(params: {
   userAgent?: string | null;
 }): Promise<void> {
   await applyEmployeeSubmission(
-    params.caseId, params.input,
-    { userId: params.actorUserId, role: params.actorRole, name: params.actorName, actorType: "user" },
+    params.caseId,
+    params.input,
+    {
+      userId: params.actorUserId,
+      role: params.actorRole,
+      name: params.actorName,
+      actorType: "user",
+    },
     { ip: params.ip, userAgent: params.userAgent },
     true,
   );
@@ -834,19 +1027,32 @@ export async function recordEmployeeFormOnBehalf(params: {
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function setLastWorkingDay(params: {
-  caseId: string; lastWorkingDay: string;
-  actorUserId: string; actorRole: string | null; actorName: string | null;
+  caseId: string;
+  lastWorkingDay: string;
+  actorUserId: string;
+  actorRole: string | null;
+  actorName: string | null;
 }): Promise<void> {
   const nocCase = await getCase(params.caseId);
   if (!nocCase) throw refuse(404, "NOC_CASE_NOT_FOUND", "NOC case not found");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(params.lastWorkingDay)) {
-    throw refuse(400, "NOC_LWD_INVALID", "Last Working Day must be a valid date (YYYY-MM-DD).");
+    throw refuse(
+      400,
+      "NOC_LWD_INVALID",
+      "Last Working Day must be a valid date (YYYY-MM-DD).",
+    );
   }
   // The form's own rule. Enforced server-side because it changes the FNF route and the 45-day
   // window, both of which are money.
-  if (nocCase.resignation_date && params.lastWorkingDay < nocCase.resignation_date) {
-    throw refuse(400, "NOC_LWD_BEFORE_RESIGNATION",
-      `Last Working Day (${params.lastWorkingDay}) cannot be earlier than the Resignation Date (${nocCase.resignation_date}).`);
+  if (
+    nocCase.resignation_date &&
+    params.lastWorkingDay < nocCase.resignation_date
+  ) {
+    throw refuse(
+      400,
+      "NOC_LWD_BEFORE_RESIGNATION",
+      `Last Working Day (${params.lastWorkingDay}) cannot be earlier than the Resignation Date (${nocCase.resignation_date}).`,
+    );
   }
 
   await db.execute(
@@ -854,8 +1060,12 @@ export async function setLastWorkingDay(params: {
     [params.lastWorkingDay, params.actorUserId, params.caseId],
   );
   await writeEvent(null, {
-    caseId: params.caseId, stageKey: "hr", action: "lwd_set",
-    actorUserId: params.actorUserId, actorRole: params.actorRole, actorName: params.actorName,
+    caseId: params.caseId,
+    stageKey: "hr",
+    action: "lwd_set",
+    actorUserId: params.actorUserId,
+    actorRole: params.actorRole,
+    actorName: params.actorName,
     reason: `Last Working Day set to ${params.lastWorkingDay}`,
   });
   await refreshFnfSuggestion(params.caseId);
@@ -866,27 +1076,50 @@ export async function setLastWorkingDay(params: {
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function updateAssetReturn(params: {
-  caseId: string; itemCode: string; status: AssetStatus;
-  quantity?: number | null; remarks?: string | null;
-  actorUserId: string; actorRole: string | null; actorName: string | null;
+  caseId: string;
+  itemCode: string;
+  status: AssetStatus;
+  quantity?: number | null;
+  remarks?: string | null;
+  actorUserId: string;
+  actorRole: string | null;
+  actorName: string | null;
 }): Promise<void> {
   if (!["returned", "not_returned", "na"].includes(params.status)) {
-    throw refuse(400, "NOC_ASSET_STATUS_INVALID", "Status must be Returned, Not Returned or NA.");
+    throw refuse(
+      400,
+      "NOC_ASSET_STATUS_INVALID",
+      "Status must be Returned, Not Returned or NA.",
+    );
   }
   const [res] = await db.execute(
     `UPDATE noc_asset_return
         SET status = ?, quantity = COALESCE(?, quantity), remarks = ?,
             updated_by = ?, updated_by_role = ?, status_updated_at = NOW()
       WHERE noc_case_id = ? AND item_code = ?`,
-    [params.status, params.quantity ?? null, params.remarks ?? null,
-     params.actorUserId, params.actorRole, params.caseId, params.itemCode],
+    [
+      params.status,
+      params.quantity ?? null,
+      params.remarks ?? null,
+      params.actorUserId,
+      params.actorRole,
+      params.caseId,
+      params.itemCode,
+    ],
   );
   if ((res as { affectedRows?: number }).affectedRows === 0) {
-    throw refuse(404, "NOC_ASSET_ITEM_NOT_FOUND", "That asset item is not on this NOC.");
+    throw refuse(
+      404,
+      "NOC_ASSET_ITEM_NOT_FOUND",
+      "That asset item is not on this NOC.",
+    );
   }
   await writeEvent(null, {
-    caseId: params.caseId, action: "asset_status_updated",
-    actorUserId: params.actorUserId, actorRole: params.actorRole, actorName: params.actorName,
+    caseId: params.caseId,
+    action: "asset_status_updated",
+    actorUserId: params.actorUserId,
+    actorRole: params.actorRole,
+    actorName: params.actorName,
     reason: `${params.itemCode} marked ${params.status}`,
   });
 }
@@ -899,11 +1132,19 @@ export async function updateAssetReturn(params: {
  * the gate exists to prevent.
  */
 export async function waiveAsset(params: {
-  caseId: string; itemCode: string; reason: string;
-  actorUserId: string; actorRole: string | null; actorName: string | null;
+  caseId: string;
+  itemCode: string;
+  reason: string;
+  actorUserId: string;
+  actorRole: string | null;
+  actorName: string | null;
 }): Promise<void> {
   if (!params.reason?.trim()) {
-    throw refuse(400, "NOC_WAIVER_REASON_REQUIRED", "A waiver reason is required.");
+    throw refuse(
+      400,
+      "NOC_WAIVER_REASON_REQUIRED",
+      "A waiver reason is required.",
+    );
   }
   const [res] = await db.execute(
     `UPDATE noc_asset_return
@@ -912,11 +1153,18 @@ export async function waiveAsset(params: {
     [params.actorUserId, params.reason.trim(), params.caseId, params.itemCode],
   );
   if ((res as { affectedRows?: number }).affectedRows === 0) {
-    throw refuse(404, "NOC_ASSET_ITEM_NOT_FOUND", "That asset item is not on this NOC.");
+    throw refuse(
+      404,
+      "NOC_ASSET_ITEM_NOT_FOUND",
+      "That asset item is not on this NOC.",
+    );
   }
   await writeEvent(null, {
-    caseId: params.caseId, action: "asset_waived",
-    actorUserId: params.actorUserId, actorRole: params.actorRole, actorName: params.actorName,
+    caseId: params.caseId,
+    action: "asset_waived",
+    actorUserId: params.actorUserId,
+    actorRole: params.actorRole,
+    actorName: params.actorName,
     reason: `${params.itemCode} waived: ${params.reason.trim()}`,
   });
 }
@@ -957,12 +1205,19 @@ export async function actOnSignatory(params: {
   userAgent?: string | null;
 }): Promise<ActOnSignatoryResult> {
   if (!["accepted", "acknowledged", "declined"].includes(params.decision)) {
-    throw refuse(400, "NOC_DECISION_INVALID", "Decision must be Accepted, Acknowledged or Declined.");
+    throw refuse(
+      400,
+      "NOC_DECISION_INVALID",
+      "Decision must be Accepted, Acknowledged or Declined.",
+    );
   }
   if (params.decision === "declined" && !params.remarks?.trim()) {
     // A decline stops a person's salary. It does not get to be unexplained.
-    throw refuse(400, "NOC_DECLINE_REASON_REQUIRED",
-      "A reason is required when declining a NOC clearance.");
+    throw refuse(
+      400,
+      "NOC_DECLINE_REASON_REQUIRED",
+      "A reason is required when declining a NOC clearance.",
+    );
   }
 
   const nocCase = await getCase(params.caseId);
@@ -970,14 +1225,22 @@ export async function actOnSignatory(params: {
 
   const signatories = await getSignatories(params.caseId);
   const target = signatories.find((s) => s.stage_key === params.stageKey);
-  if (!target) throw refuse(404, "NOC_STAGE_NOT_FOUND", "That signatory stage is not on this NOC.");
+  if (!target)
+    throw refuse(
+      404,
+      "NOC_STAGE_NOT_FOUND",
+      "That signatory stage is not on this NOC.",
+    );
 
   const assetGate = evaluateAssetGate(await getAssets(params.caseId));
   const blocked = stageBlockReason(nocCase, signatories, target, assetGate);
   // A decline is allowed to bypass the asset gate: "I cannot clear this because the laptop is
   // missing" is exactly the decline Finance needs to be able to record, and refusing it because
   // the laptop is missing would be circular. Every other block still applies.
-  if (blocked && !(params.decision === "declined" && blocked.code === "ASSETS_OUTSTANDING")) {
+  if (
+    blocked &&
+    !(params.decision === "declined" && blocked.code === "ASSETS_OUTSTANDING")
+  ) {
     throw refuse(409, `NOC_${blocked.code}`, blocked.message);
   }
 
@@ -991,20 +1254,36 @@ export async function actOnSignatory(params: {
               acted_by_role = ?, acted_at = NOW(), remarks = ?,
               ip_address = ?, user_agent = ?
         WHERE id = ? AND status = 'pending'`,
-      [params.decision, params.actorUserId, params.actorEmployeeId ?? null, params.actorName,
-       params.actorRole, params.remarks?.trim() ?? null,
-       params.ip ?? null, (params.userAgent ?? null)?.slice(0, 512) ?? null, target.id],
+      [
+        params.decision,
+        params.actorUserId,
+        params.actorEmployeeId ?? null,
+        params.actorName,
+        params.actorRole,
+        params.remarks?.trim() ?? null,
+        params.ip ?? null,
+        (params.userAgent ?? null)?.slice(0, 512) ?? null,
+        target.id,
+      ],
     );
     if ((res as { affectedRows?: number }).affectedRows !== 1) {
-      throw refuse(409, "NOC_STAGE_ALREADY_ACTIONED",
-        "This stage was actioned by someone else â€” reload and check before acting again.");
+      throw refuse(
+        409,
+        "NOC_STAGE_ALREADY_ACTIONED",
+        "This stage was actioned by someone else â€” reload and check before acting again.",
+      );
     }
 
     await writeEvent(conn, {
-      caseId: params.caseId, stageKey: params.stageKey, action: `signatory_${params.decision}`,
-      actorUserId: params.actorUserId, actorRole: params.actorRole, actorName: params.actorName,
+      caseId: params.caseId,
+      stageKey: params.stageKey,
+      action: `signatory_${params.decision}`,
+      actorUserId: params.actorUserId,
+      actorRole: params.actorRole,
+      actorName: params.actorName,
       reason: params.remarks?.trim() ?? null,
-      ip: params.ip ?? null, userAgent: params.userAgent ?? null,
+      ip: params.ip ?? null,
+      userAgent: params.userAgent ?? null,
     });
 
     let caseStatus: NocCaseStatus = nocCase.status;
@@ -1018,32 +1297,51 @@ export async function actOnSignatory(params: {
             SET status = 'declined', declined_stage_key = ?, declined_by = ?, declined_at = NOW(),
                 decline_reason = ?
           WHERE id = ?`,
-        [params.stageKey, params.actorUserId, params.remarks?.trim() ?? null, params.caseId],
+        [
+          params.stageKey,
+          params.actorUserId,
+          params.remarks?.trim() ?? null,
+          params.caseId,
+        ],
       );
       caseStatus = "declined";
       declined = true;
     } else {
       const after = signatories.map((s) =>
-        s.id === target.id ? { ...s, status: params.decision as SignatoryStatus } : s);
+        s.id === target.id
+          ? { ...s, status: params.decision as SignatoryStatus }
+          : s,
+      );
       // Accounts and Finance are real, trackable signatory stages, but not mandatory for the
       // case to reach 'completed' (1764_noc_signatory_not_mandatory.sql, per the business owner
       // 2026-09-12) — a non-mandatory stage still pending does not hold the case open.
-      const allCleared = after.every((s) =>
-        Number(s.is_mandatory) === 0 || s.status === "accepted" || s.status === "acknowledged");
+      const allCleared = after.every(
+        (s) =>
+          Number(s.is_mandatory) === 0 ||
+          s.status === "accepted" ||
+          s.status === "acknowledged",
+      );
 
       if (allCleared) {
         await conn.execute(
           `UPDATE noc_case SET status = 'completed', completed_at = NOW() WHERE id = ?`,
-          [params.caseId]);
+          [params.caseId],
+        );
         caseStatus = "completed";
         completed = true;
         await writeEvent(conn, {
-          caseId: params.caseId, action: "case_completed",
-          actorUserId: params.actorUserId, actorRole: params.actorRole, actorName: params.actorName,
+          caseId: params.caseId,
+          action: "case_completed",
+          actorUserId: params.actorUserId,
+          actorRole: params.actorRole,
+          actorName: params.actorName,
           reason: "All signatories responded",
         });
       } else if (nocCase.status === "employee_submitted") {
-        await conn.execute(`UPDATE noc_case SET status = 'in_progress' WHERE id = ?`, [params.caseId]);
+        await conn.execute(
+          `UPDATE noc_case SET status = 'in_progress' WHERE id = ?`,
+          [params.caseId],
+        );
         caseStatus = "in_progress";
       }
     }
@@ -1052,7 +1350,8 @@ export async function actOnSignatory(params: {
     await conn.commit();
 
     // Recomputed after commit so the caller notifies exactly the stages that are now open.
-    const newlyActionable = completed || declined ? [] : await actionableStages(params.caseId);
+    const newlyActionable =
+      completed || declined ? [] : await actionableStages(params.caseId);
     return { caseStatus, completed, declined, newlyActionable };
   } catch (err) {
     await conn.rollback();
@@ -1063,12 +1362,16 @@ export async function actOnSignatory(params: {
 }
 
 /** Pending stages that are not blocked â€” i.e. someone can act on them right now. */
-export async function actionableStages(caseId: string): Promise<NocSignatoryRow[]> {
+export async function actionableStages(
+  caseId: string,
+): Promise<NocSignatoryRow[]> {
   const nocCase = await getCase(caseId);
   if (!nocCase) return [];
   const signatories = await getSignatories(caseId);
   const assetGate = evaluateAssetGate(await getAssets(caseId));
-  return signatories.filter((s) => stageBlockReason(nocCase, signatories, s, assetGate) === null);
+  return signatories.filter(
+    (s) => stageBlockReason(nocCase, signatories, s, assetGate) === null,
+  );
 }
 
 /**
@@ -1081,10 +1384,12 @@ export async function actionableStages(caseId: string): Promise<NocSignatoryRow[
  * COALESCE on sla_due_at makes this idempotent â€” re-running never pushes an existing deadline
  * out, which would let a stage escape its SLA by having the function called again.
  */
-async function startSlaForActionableStages(conn: NocTxConnection | null, caseId: string): Promise<void> {
+async function startSlaForActionableStages(
+  conn: NocTxConnection | null,
+  caseId: string,
+): Promise<void> {
   const open = await actionableStages(caseId);
-  const sql =
-    `UPDATE noc_signatory ns
+  const sql = `UPDATE noc_signatory ns
         JOIN noc_signatory_template t ON t.stage_key = ns.stage_key
         SET ns.sla_due_at = COALESCE(ns.sla_due_at, DATE_ADD(NOW(), INTERVAL t.sla_hours HOUR))
       WHERE ns.id = ?`;
@@ -1106,16 +1411,27 @@ async function startSlaForActionableStages(conn: NocTxConnection | null, caseId:
  * original decline stays in noc_case_event, so reopening does not erase that it happened.
  */
 export async function reopenDeclinedCase(params: {
-  caseId: string; reason: string;
-  actorUserId: string; actorRole: string | null; actorName: string | null;
+  caseId: string;
+  reason: string;
+  actorUserId: string;
+  actorRole: string | null;
+  actorName: string | null;
 }): Promise<void> {
   if (!params.reason?.trim()) {
-    throw refuse(400, "NOC_REOPEN_REASON_REQUIRED", "A resolution note is required to reopen a declined NOC.");
+    throw refuse(
+      400,
+      "NOC_REOPEN_REASON_REQUIRED",
+      "A resolution note is required to reopen a declined NOC.",
+    );
   }
   const nocCase = await getCase(params.caseId);
   if (!nocCase) throw refuse(404, "NOC_CASE_NOT_FOUND", "NOC case not found");
   if (nocCase.status !== "declined") {
-    throw refuse(409, "NOC_NOT_DECLINED", `This NOC is ${nocCase.status}, not declined.`);
+    throw refuse(
+      409,
+      "NOC_NOT_DECLINED",
+      `This NOC is ${nocCase.status}, not declined.`,
+    );
   }
 
   const conn = await db.getConnection();
@@ -1137,8 +1453,12 @@ export async function reopenDeclinedCase(params: {
       [params.caseId],
     );
     await writeEvent(conn, {
-      caseId: params.caseId, stageKey: nocCase.declined_stage_key, action: "case_reopened",
-      actorUserId: params.actorUserId, actorRole: params.actorRole, actorName: params.actorName,
+      caseId: params.caseId,
+      stageKey: nocCase.declined_stage_key,
+      action: "case_reopened",
+      actorUserId: params.actorUserId,
+      actorRole: params.actorRole,
+      actorName: params.actorName,
       reason: params.reason.trim(),
     });
     await startSlaForActionableStages(conn, params.caseId);
@@ -1169,7 +1489,9 @@ export async function reopenDeclinedCase(params: {
  * is no Last Working Day, because every branch of this depends on it and guessing the settlement
  * route for an unknown exit date would be a confident wrong answer about someone's money.
  */
-export async function computeFnfSuggestion(caseId: string): Promise<FnfOption | null> {
+export async function computeFnfSuggestion(
+  caseId: string,
+): Promise<FnfOption | null> {
   const nocCase = await getCase(caseId);
   if (!nocCase?.last_working_day) return null;
 
@@ -1187,7 +1509,11 @@ export async function computeFnfSuggestion(caseId: string): Promise<FnfOption | 
   );
   const run = runRows[0];
   const runOpen = run
-    ? !["locked", "disbursed", "finalized"].includes(String(run.status ?? "").trim().toLowerCase())
+    ? !["locked", "disbursed", "finalized"].includes(
+        String(run.status ?? "")
+          .trim()
+          .toLowerCase(),
+      )
     : false;
   const withinWindow = run?.window_close_date
     ? new Date(String(run.window_close_date)).getTime() >= Date.now()
@@ -1220,16 +1546,24 @@ async function refreshFnfSuggestion(caseId: string): Promise<void> {
   const suggestion = await computeFnfSuggestion(caseId);
   if (!suggestion) return;
   await db.execute(
-    `UPDATE noc_case SET fnf_option_suggested = ? WHERE id = ?`, [suggestion, caseId]);
+    `UPDATE noc_case SET fnf_option_suggested = ? WHERE id = ?`,
+    [suggestion, caseId],
+  );
 }
 
 export async function setFnfOption(params: {
-  caseId: string; option: FnfOption;
-  actorUserId: string; actorRole: string | null; actorName: string | null;
+  caseId: string;
+  option: FnfOption;
+  actorUserId: string;
+  actorRole: string | null;
+  actorName: string | null;
 }): Promise<void> {
   if (!["current_payroll", "45_days", "both"].includes(params.option)) {
-    throw refuse(400, "NOC_FNF_OPTION_INVALID",
-      "Option must be Current Payroll, 45 Days of Leaving Date, or Both.");
+    throw refuse(
+      400,
+      "NOC_FNF_OPTION_INVALID",
+      "Option must be Current Payroll, 45 Days of Leaving Date, or Both.",
+    );
   }
   const nocCase = await getCase(params.caseId);
   if (!nocCase) throw refuse(404, "NOC_CASE_NOT_FOUND", "NOC case not found");
@@ -1239,11 +1573,16 @@ export async function setFnfOption(params: {
     [params.option, params.actorUserId, params.caseId],
   );
   await writeEvent(null, {
-    caseId: params.caseId, action: "fnf_option_set",
-    actorUserId: params.actorUserId, actorRole: params.actorRole, actorName: params.actorName,
-    reason: nocCase.fnf_option_suggested && nocCase.fnf_option_suggested !== params.option
-      ? `Set to ${params.option}, overriding the suggested ${nocCase.fnf_option_suggested}`
-      : `Set to ${params.option}`,
+    caseId: params.caseId,
+    action: "fnf_option_set",
+    actorUserId: params.actorUserId,
+    actorRole: params.actorRole,
+    actorName: params.actorName,
+    reason:
+      nocCase.fnf_option_suggested &&
+      nocCase.fnf_option_suggested !== params.option
+        ? `Set to ${params.option}, overriding the suggested ${nocCase.fnf_option_suggested}`
+        : `Set to ${params.option}`,
   });
 }
 
@@ -1254,21 +1593,34 @@ export async function setFnfOption(params: {
 async function writeEvent(
   conn: NocTxConnection | null,
   e: {
-    caseId: string; stageKey?: string | null; action: string;
-    actorUserId?: string | null; actorRole?: string | null; actorName?: string | null;
-    actorType?: string; reason?: string | null; ip?: string | null; userAgent?: string | null;
+    caseId: string;
+    stageKey?: string | null;
+    action: string;
+    actorUserId?: string | null;
+    actorRole?: string | null;
+    actorName?: string | null;
+    actorType?: string;
+    reason?: string | null;
+    ip?: string | null;
+    userAgent?: string | null;
   },
 ): Promise<void> {
-  const sql =
-    `INSERT INTO noc_case_event
+  const sql = `INSERT INTO noc_case_event
        (id, noc_case_id, stage_key, action, actor_user_id, actor_role, actor_name,
         actor_type, reason, ip_address, user_agent)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
   const params = [
-    randomUUID(), e.caseId, e.stageKey ?? null, e.action,
-    e.actorUserId ?? null, e.actorRole ?? null, e.actorName ?? null,
-    e.actorType ?? "user", e.reason?.slice(0, 700) ?? null,
-    e.ip ?? null, (e.userAgent ?? null)?.slice(0, 512) ?? null,
+    randomUUID(),
+    e.caseId,
+    e.stageKey ?? null,
+    e.action,
+    e.actorUserId ?? null,
+    e.actorRole ?? null,
+    e.actorName ?? null,
+    e.actorType ?? "user",
+    e.reason?.slice(0, 700) ?? null,
+    e.ip ?? null,
+    (e.userAgent ?? null)?.slice(0, 512) ?? null,
   ];
   try {
     // Branched rather than `(conn ?? db).execute(...)`: a union of two call signatures yields a
@@ -1278,7 +1630,10 @@ async function writeEvent(
   } catch (err) {
     // The timeline is a record of an action that has already happened. Losing a row here must
     // not roll back the action itself; a failure is logged so it is visible rather than silent.
-    console.error(`[noc-case] event write failed (${e.action}):`, (err as Error).message);
+    console.error(
+      `[noc-case] event write failed (${e.action}):`,
+      (err as Error).message,
+    );
   }
 }
 

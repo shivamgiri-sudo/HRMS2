@@ -18,8 +18,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
-  AlertTriangle, CheckCircle2, Clock, FileCheck, Loader2, Lock, Printer, RefreshCw, Search,
-  ShieldAlert, XCircle,
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  FileCheck,
+  Loader2,
+  Lock,
+  Printer,
+  RefreshCw,
+  Search,
+  ShieldAlert,
+  XCircle,
 } from "lucide-react";
 
 import { hrmsApi } from "../../lib/hrmsApi";
@@ -29,17 +38,31 @@ import { Card, CardContent } from "../ui/card";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "../ui/dialog";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "../ui/select";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type SignatoryStatus = "pending" | "accepted" | "acknowledged" | "declined";
 type AssetStatus = "returned" | "not_returned" | "na";
-type CaseStatus = "invited" | "employee_submitted" | "in_progress" | "declined" | "completed" | "cancelled";
+type CaseStatus =
+  | "invited"
+  | "employee_submitted"
+  | "in_progress"
+  | "declined"
+  | "completed"
+  | "cancelled";
 
 interface CaseListRow {
   id: string;
@@ -124,6 +147,8 @@ interface CaseDetail {
     fnf_option_suggested: string | null;
     override_at: string | null;
     override_reason: string | null;
+    override_document_path: string | null;
+    override_document_original_name: string | null;
     employee_submitted_at: string | null;
     completed_at: string | null;
   };
@@ -131,7 +156,13 @@ interface CaseDetail {
   assets: AssetRow[];
   events: CaseEvent[];
   assetGate: { satisfied: boolean; outstanding: string[] };
-  progress: { total: number; responded: number; accepted: number; declined: number; pending: number };
+  progress: {
+    total: number;
+    responded: number;
+    accepted: number;
+    declined: number;
+    pending: number;
+  };
 }
 
 const FNF_LABELS: Record<string, string> = {
@@ -142,7 +173,11 @@ const FNF_LABELS: Record<string, string> = {
 
 function fmt(v: string | null | undefined): string {
   if (!v) return "—";
-  try { return new Date(v).toLocaleString(); } catch { return v; }
+  try {
+    return new Date(v).toLocaleString();
+  } catch {
+    return v;
+  }
 }
 
 /**
@@ -155,8 +190,11 @@ function fmt(v: string | null | undefined): string {
  */
 function esc(v: unknown): string {
   return String(v ?? "")
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 /**
@@ -176,9 +214,14 @@ function openCertificate(d: CaseDetail): void {
     .slice()
     .sort((a, b) => a.display_no - b.display_no)
     .map((s) => {
-      const label = s.status === "pending" ? "Pending"
-        : s.status === "accepted" ? "Accepted"
-        : s.status === "acknowledged" ? "Acknowledged" : "Declined";
+      const label =
+        s.status === "pending"
+          ? "Pending"
+          : s.status === "accepted"
+            ? "Accepted"
+            : s.status === "acknowledged"
+              ? "Acknowledged"
+              : "Declined";
       return `<tr>
         <td class="n">${s.display_no}</td>
         <td>${esc(s.stage_label)}</td>
@@ -187,13 +230,23 @@ function openCertificate(d: CaseDetail): void {
         <td>${s.acted_at ? esc(new Date(s.acted_at).toLocaleString()) : "—"}</td>
         <td class="rm">${esc(s.remarks ?? "")}</td>
       </tr>`;
-    }).join("");
+    })
+    .join("");
 
   const assetRows = d.assets
-    .filter((a) => Number(a.shown_on_form) === 1 || Number(a.is_mandatory_for_finance) === 1)
+    .filter(
+      (a) =>
+        Number(a.shown_on_form) === 1 ||
+        Number(a.is_mandatory_for_finance) === 1,
+    )
     .map((a) => {
-      const st = a.waived_at ? "Waived" : a.status === "returned" ? "Returned"
-        : a.status === "not_returned" ? "Not Returned" : "N/A";
+      const st = a.waived_at
+        ? "Waived"
+        : a.status === "returned"
+          ? "Returned"
+          : a.status === "not_returned"
+            ? "Not Returned"
+            : "N/A";
       return `<tr>
         <td class="n">${a.item_no}</td>
         <td>${esc(a.item_label)}</td>
@@ -201,16 +254,18 @@ function openCertificate(d: CaseDetail): void {
         <td>${st}</td>
         <td class="rm">${esc(a.waiver_reason ?? a.remarks ?? "")}</td>
       </tr>`;
-    }).join("");
+    })
+    .join("");
 
   const overrideNote = c.override_at
     ? `<div class="warn"><strong>Payroll Head override recorded.</strong> Salary/F&amp;F release was
         unblocked without a completed clearance. Reason: ${esc(c.override_reason)}</div>`
     : "";
-  const declineNote = c.status === "declined"
-    ? `<div class="warn"><strong>Declined at ${esc(c.declined_stage_key)}.</strong>
+  const declineNote =
+    c.status === "declined"
+      ? `<div class="warn"><strong>Declined at ${esc(c.declined_stage_key)}.</strong>
         ${esc(c.decline_reason)}</div>`
-    : "";
+      : "";
 
   // Absolute origin, not a bare "/mcn-logo.png" — this HTML is written into a blank popup
   // window via document.write(), which has no base URI of its own to resolve a relative path
@@ -295,7 +350,9 @@ function openCertificate(d: CaseDetail): void {
 
   const w = window.open("", "_blank", "width=900,height=1000");
   if (!w) {
-    toast.error("Your browser blocked the print window. Allow pop-ups for this site and try again.");
+    toast.error(
+      "Your browser blocked the print window. Allow pop-ups for this site and try again.",
+    );
     return;
   }
   w.document.write(html);
@@ -304,25 +361,47 @@ function openCertificate(d: CaseDetail): void {
 
 function caseStatusClass(s: string): string {
   switch (s) {
-    case "completed": return "bg-emerald-100 text-emerald-800 border-emerald-200";
-    case "declined": return "bg-red-100 text-red-800 border-red-200";
-    case "in_progress": return "bg-blue-100 text-blue-800 border-blue-200";
-    case "employee_submitted": return "bg-amber-100 text-amber-800 border-amber-200";
-    case "invited": return "bg-slate-100 text-slate-700 border-slate-200";
-    default: return "bg-slate-100 text-slate-600 border-slate-200";
+    case "completed":
+      return "bg-emerald-100 text-emerald-800 border-emerald-200";
+    case "declined":
+      return "bg-red-100 text-red-800 border-red-200";
+    case "in_progress":
+      return "bg-blue-100 text-blue-800 border-blue-200";
+    case "employee_submitted":
+      return "bg-amber-100 text-amber-800 border-amber-200";
+    case "invited":
+      return "bg-slate-100 text-slate-700 border-slate-200";
+    default:
+      return "bg-slate-100 text-slate-600 border-slate-200";
   }
 }
 
 function sigStatusBadge(s: SignatoryStatus) {
-  if (s === "accepted") return { cls: "bg-emerald-100 text-emerald-800 border-emerald-200", label: "Accepted" };
-  if (s === "acknowledged") return { cls: "bg-teal-100 text-teal-800 border-teal-200", label: "Acknowledged" };
-  if (s === "declined") return { cls: "bg-red-100 text-red-800 border-red-200", label: "Declined" };
-  return { cls: "bg-slate-100 text-slate-600 border-slate-200", label: "Pending" };
+  if (s === "accepted")
+    return {
+      cls: "bg-emerald-100 text-emerald-800 border-emerald-200",
+      label: "Accepted",
+    };
+  if (s === "acknowledged")
+    return {
+      cls: "bg-teal-100 text-teal-800 border-teal-200",
+      label: "Acknowledged",
+    };
+  if (s === "declined")
+    return { cls: "bg-red-100 text-red-800 border-red-200", label: "Declined" };
+  return {
+    cls: "bg-slate-100 text-slate-600 border-slate-200",
+    label: "Pending",
+  };
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export default function NocClearanceChain({ canOverride }: { canOverride: boolean }) {
+export default function NocClearanceChain({
+  canOverride,
+}: {
+  canOverride: boolean;
+}) {
   const [rows, setRows] = useState<CaseListRow[]>([]);
   const [summary, setSummary] = useState<SummaryRoleRow[]>([]);
   const [listLoading, setListLoading] = useState(false);
@@ -338,12 +417,21 @@ export default function NocClearanceChain({ canOverride }: { canOverride: boolea
   const [busy, setBusy] = useState<string | null>(null);
 
   // Action dialogs
-  const [decision, setDecision] = useState<{ stageKey: string; label: string; kind: "accepted" | "acknowledged" | "declined" } | null>(null);
+  const [decision, setDecision] = useState<{
+    stageKey: string;
+    label: string;
+    kind: "accepted" | "acknowledged" | "declined";
+  } | null>(null);
   const [decisionRemarks, setDecisionRemarks] = useState("");
-  const [waive, setWaive] = useState<{ itemCode: string; label: string } | null>(null);
+  const [waive, setWaive] = useState<{
+    itemCode: string;
+    label: string;
+  } | null>(null);
   const [waiveReason, setWaiveReason] = useState("");
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [overrideReason, setOverrideReason] = useState("");
+  const [overrideFile, setOverrideFile] = useState<File | null>(null);
+  const [viewingOverrideDoc, setViewingOverrideDoc] = useState(false);
   const [lwd, setLwd] = useState("");
 
   const loadList = useCallback(async () => {
@@ -353,7 +441,8 @@ export default function NocClearanceChain({ canOverride }: { canOverride: boolea
       // "open" is not a backend status — it means "not finished", which the API expresses by the
       // absence of a status filter plus client-side exclusion would be wrong (it paginates).
       // Sent as-is only for the real statuses; 'open' just omits the filter.
-      if (statusFilter && statusFilter !== "open" && statusFilter !== "all") params.set("status", statusFilter);
+      if (statusFilter && statusFilter !== "open" && statusFilter !== "all")
+        params.set("status", statusFilter);
       if (search.trim()) params.set("search", search.trim());
       if (slaOnly) params.set("slaBreachedOnly", "true");
       if (stageFilter) {
@@ -362,10 +451,14 @@ export default function NocClearanceChain({ canOverride }: { canOverride: boolea
         params.set("stageKey", stageFilter);
         params.set("stageStatus", "pending");
       }
-      const res = await hrmsApi.get<{ data: CaseListRow[] }>(`/api/payroll/noc-cases?${params.toString()}`);
+      const res = await hrmsApi.get<{ data: CaseListRow[] }>(
+        `/api/payroll/noc-cases?${params.toString()}`,
+      );
       let data = res.data ?? [];
       if (statusFilter === "open") {
-        data = data.filter((r) => r.status !== "completed" && r.status !== "cancelled");
+        data = data.filter(
+          (r) => r.status !== "completed" && r.status !== "cancelled",
+        );
       }
       setRows(data);
     } catch (err) {
@@ -378,7 +471,9 @@ export default function NocClearanceChain({ canOverride }: { canOverride: boolea
   const loadDetail = useCallback(async (id: string) => {
     setDetailLoading(true);
     try {
-      const res = await hrmsApi.get<{ data: CaseDetail }>(`/api/payroll/noc-cases/${id}`);
+      const res = await hrmsApi.get<{ data: CaseDetail }>(
+        `/api/payroll/noc-cases/${id}`,
+      );
       setDetail(res.data ?? null);
       setLwd(res.data?.nocCase?.last_working_day ?? "");
     } catch (err) {
@@ -396,7 +491,9 @@ export default function NocClearanceChain({ canOverride }: { canOverride: boolea
    */
   const loadSummary = useCallback(async () => {
     try {
-      const res = await hrmsApi.get<{ data: { byRole: SummaryRoleRow[] } }>("/api/payroll/noc-cases/summary");
+      const res = await hrmsApi.get<{ data: { byRole: SummaryRoleRow[] } }>(
+        "/api/payroll/noc-cases/summary",
+      );
       setSummary(res.data?.byRole ?? []);
     } catch {
       // The board is a headline, not the workspace. If it fails the list below still works, and
@@ -405,9 +502,15 @@ export default function NocClearanceChain({ canOverride }: { canOverride: boolea
     }
   }, []);
 
-  useEffect(() => { void loadList(); }, [loadList]);
-  useEffect(() => { void loadSummary(); }, [loadSummary]);
-  useEffect(() => { if (selectedId) void loadDetail(selectedId); }, [selectedId, loadDetail]);
+  useEffect(() => {
+    void loadList();
+  }, [loadList]);
+  useEffect(() => {
+    void loadSummary();
+  }, [loadSummary]);
+  useEffect(() => {
+    if (selectedId) void loadDetail(selectedId);
+  }, [selectedId, loadDetail]);
 
   const refreshBoth = useCallback(async () => {
     await loadList();
@@ -435,77 +538,112 @@ export default function NocClearanceChain({ canOverride }: { canOverride: boolea
       await refreshBoth();
     } catch (err) {
       toast.error((err as Error)?.message ?? "Could not record the decision");
-    } finally { setBusy(null); }
+    } finally {
+      setBusy(null);
+    }
   };
 
   const setAsset = async (itemCode: string, status: AssetStatus) => {
     if (!selectedId) return;
     setBusy(`asset:${itemCode}`);
     try {
-      await hrmsApi.patch(`/api/payroll/noc-cases/${selectedId}/assets/${itemCode}`, { status });
+      await hrmsApi.patch(
+        `/api/payroll/noc-cases/${selectedId}/assets/${itemCode}`,
+        { status },
+      );
       await loadDetail(selectedId);
     } catch (err) {
       toast.error((err as Error)?.message ?? "Could not update the asset");
-    } finally { setBusy(null); }
+    } finally {
+      setBusy(null);
+    }
   };
 
   const submitWaive = async () => {
     if (!selectedId || !waive) return;
-    if (!waiveReason.trim()) { toast.warning("A waiver reason is required."); return; }
+    if (!waiveReason.trim()) {
+      toast.warning("A waiver reason is required.");
+      return;
+    }
     setBusy("waive");
     try {
-      await hrmsApi.post(`/api/payroll/noc-cases/${selectedId}/assets/${waive.itemCode}/waive`, { reason: waiveReason.trim() });
+      await hrmsApi.post(
+        `/api/payroll/noc-cases/${selectedId}/assets/${waive.itemCode}/waive`,
+        { reason: waiveReason.trim() },
+      );
       toast.success("Waiver recorded");
       setWaive(null);
       setWaiveReason("");
       await loadDetail(selectedId);
     } catch (err) {
       toast.error((err as Error)?.message ?? "Could not record the waiver");
-    } finally { setBusy(null); }
+    } finally {
+      setBusy(null);
+    }
   };
 
   const saveLwd = async () => {
     if (!selectedId || !lwd) return;
     setBusy("lwd");
     try {
-      await hrmsApi.patch(`/api/payroll/noc-cases/${selectedId}/last-working-day`, { lastWorkingDay: lwd });
+      await hrmsApi.patch(
+        `/api/payroll/noc-cases/${selectedId}/last-working-day`,
+        { lastWorkingDay: lwd },
+      );
       toast.success("Last Working Day recorded");
       await refreshBoth();
     } catch (err) {
-      toast.error((err as Error)?.message ?? "Could not save the Last Working Day");
-    } finally { setBusy(null); }
+      toast.error(
+        (err as Error)?.message ?? "Could not save the Last Working Day",
+      );
+    } finally {
+      setBusy(null);
+    }
   };
 
   const sendInvite = async () => {
     if (!selectedId) return;
     setBusy("invite");
     try {
-      const res = await hrmsApi.post<{ data: { url: string }; message?: string }>(
-        `/api/payroll/noc-cases/${selectedId}/invite`, {},
-      );
+      const res = await hrmsApi.post<{
+        data: { url: string };
+        message?: string;
+      }>(`/api/payroll/noc-cases/${selectedId}/invite`, {});
       toast.success(res.message ?? "Form link sent");
       // Shown, not just sent. SMS and WhatsApp have never delivered from this system, so copying
       // the link by hand is the only reliable non-email channel.
       if (res.data?.url) {
-        await navigator.clipboard.writeText(res.data.url).catch(() => undefined);
-        toast.info("Link copied to your clipboard — you can paste it into WhatsApp if needed.");
+        await navigator.clipboard
+          .writeText(res.data.url)
+          .catch(() => undefined);
+        toast.info(
+          "Link copied to your clipboard — you can paste it into WhatsApp if needed.",
+        );
       }
       await refreshBoth();
     } catch (err) {
       toast.error((err as Error)?.message ?? "Could not send the form link");
-    } finally { setBusy(null); }
+    } finally {
+      setBusy(null);
+    }
   };
 
   const setFnf = async (option: string) => {
     if (!selectedId) return;
     setBusy("fnf");
     try {
-      await hrmsApi.patch(`/api/payroll/noc-cases/${selectedId}/fnf-option`, { option });
+      await hrmsApi.patch(`/api/payroll/noc-cases/${selectedId}/fnf-option`, {
+        option,
+      });
       toast.success("Settlement route recorded");
       await loadDetail(selectedId);
     } catch (err) {
-      toast.error((err as Error)?.message ?? "Could not set the settlement route");
-    } finally { setBusy(null); }
+      toast.error(
+        (err as Error)?.message ?? "Could not set the settlement route",
+      );
+    } finally {
+      setBusy(null);
+    }
   };
 
   const submitOverride = async () => {
@@ -515,38 +653,79 @@ export default function NocClearanceChain({ canOverride }: { canOverride: boolea
     }
     setBusy("override");
     try {
-      await hrmsApi.post(
-        `/api/payroll/noc-cases/employee/${detail.nocCase.employee_id}/override`,
-        { reason: overrideReason.trim() },
+      const url = `/api/payroll/noc-cases/employee/${detail.nocCase.employee_id}/override`;
+      if (overrideFile) {
+        const form = new FormData();
+        form.append("reason", overrideReason.trim());
+        form.append("noc_document", overrideFile);
+        await hrmsApi.postForm(url, form);
+      } else {
+        await hrmsApi.post(url, { reason: overrideReason.trim() });
+      }
+      toast.success(
+        overrideFile
+          ? "Override recorded with the signed paper NOC attached — salary release is unblocked"
+          : "Override recorded — salary release is unblocked for this employee",
       );
-      toast.success("Override recorded — salary release is unblocked for this employee");
       setOverrideOpen(false);
       setOverrideReason("");
+      setOverrideFile(null);
       await refreshBoth();
     } catch (err) {
       toast.error((err as Error)?.message ?? "Could not record the override");
-    } finally { setBusy(null); }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const viewOverrideDocument = async (
+    employeeId: string,
+    originalName?: string | null,
+  ) => {
+    setViewingOverrideDoc(true);
+    try {
+      const blob = await hrmsApi.getBlob(
+        `/api/payroll/noc-cases/employee/${employeeId}/override/document`,
+      );
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      toast.error(`Failed to open ${originalName ?? "the signed paper NOC"}`);
+    } finally {
+      setViewingOverrideDoc(false);
+    }
   };
 
   const reopen = async () => {
     if (!selectedId) return;
-    const reason = window.prompt("How was the decline resolved? This is recorded against the reopening.");
+    const reason = window.prompt(
+      "How was the decline resolved? This is recorded against the reopening.",
+    );
     if (!reason?.trim()) return;
     setBusy("reopen");
     try {
-      await hrmsApi.post(`/api/payroll/noc-cases/${selectedId}/reopen`, { reason: reason.trim() });
+      await hrmsApi.post(`/api/payroll/noc-cases/${selectedId}/reopen`, {
+        reason: reason.trim(),
+      });
       toast.success("NOC reopened");
       await refreshBoth();
     } catch (err) {
       toast.error((err as Error)?.message ?? "Could not reopen this NOC");
-    } finally { setBusy(null); }
+    } finally {
+      setBusy(null);
+    }
   };
 
   const c = detail?.nocCase;
   const overdue = useMemo(
-    () => (detail?.signatories ?? []).filter(
-      (s) => s.status === "pending" && s.sla_due_at && new Date(s.sla_due_at).getTime() < Date.now(),
-    ).length,
+    () =>
+      (detail?.signatories ?? []).filter(
+        (s) =>
+          s.status === "pending" &&
+          s.sla_due_at &&
+          new Date(s.sla_due_at).getTime() < Date.now(),
+      ).length,
     [detail],
   );
 
@@ -572,7 +751,8 @@ export default function NocClearanceChain({ canOverride }: { canOverride: boolea
             </h4>
             <div className="grid gap-2 sm:grid-cols-4 lg:grid-cols-8">
               {summary.map((r) => {
-                const active = statusFilter !== "completed" && stageFilter === r.stage_key;
+                const active =
+                  statusFilter !== "completed" && stageFilter === r.stage_key;
                 return (
                   <button
                     key={r.stage_key}
@@ -580,23 +760,34 @@ export default function NocClearanceChain({ canOverride }: { canOverride: boolea
                     aria-pressed={active}
                     onClick={() => setStageFilter(active ? "" : r.stage_key)}
                     className={`rounded-lg border px-2.5 py-2 text-left transition ${
-                      active ? "border-blue-400 bg-blue-50 ring-1 ring-blue-200" : "border-slate-200 hover:bg-slate-50"
+                      active
+                        ? "border-blue-400 bg-blue-50 ring-1 ring-blue-200"
+                        : "border-slate-200 hover:bg-slate-50"
                     }`}
                   >
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 truncate"
-                      title={r.stage_label}>
+                    <div
+                      className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 truncate"
+                      title={r.stage_label}
+                    >
                       {r.display_no}. {r.stage_label}
                     </div>
                     <div className="mt-1 flex items-baseline gap-1.5">
-                      <span className="text-lg font-bold tabular-nums text-slate-900">{r.pending}</span>
-                      <span className="text-[10px] text-slate-500">pending</span>
+                      <span className="text-lg font-bold tabular-nums text-slate-900">
+                        {r.pending}
+                      </span>
+                      <span className="text-[10px] text-slate-500">
+                        pending
+                      </span>
                     </div>
                     <div className="mt-0.5 flex items-center gap-2 text-[10px] font-medium">
                       <span className="text-emerald-700">{r.accepted} ok</span>
-                      {Number(r.declined) > 0 && <span className="text-red-700">{r.declined} dec</span>}
+                      {Number(r.declined) > 0 && (
+                        <span className="text-red-700">{r.declined} dec</span>
+                      )}
                       {Number(r.sla_breached) > 0 && (
                         <span className="text-amber-700" title="Past SLA">
-                          <Clock className="inline h-2.5 w-2.5" /> {r.sla_breached}
+                          <Clock className="inline h-2.5 w-2.5" />{" "}
+                          {r.sla_breached}
                         </span>
                       )}
                     </div>
@@ -606,8 +797,21 @@ export default function NocClearanceChain({ canOverride }: { canOverride: boolea
             </div>
             {stageFilter && (
               <p className="mt-2 text-xs text-slate-500">
-                Filtered to pending <strong>{summary.find((s) => s.stage_key === stageFilter)?.stage_label}</strong> clearances.{" "}
-                <button type="button" className="underline" onClick={() => setStageFilter("")}>Clear</button>
+                Filtered to pending{" "}
+                <strong>
+                  {
+                    summary.find((s) => s.stage_key === stageFilter)
+                      ?.stage_label
+                  }
+                </strong>{" "}
+                clearances.{" "}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => setStageFilter("")}
+                >
+                  Clear
+                </button>
               </p>
             )}
           </CardContent>
@@ -615,470 +819,763 @@ export default function NocClearanceChain({ canOverride }: { canOverride: boolea
       )}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(320px,380px)_1fr]">
-      {/* ── Tracking list ── */}
-      <Card className="h-fit">
-        <CardContent className="pt-5 space-y-3">
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
-              <Input
-                className="pl-9"
-                placeholder="Name or employee code…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
+        {/* ── Tracking list ── */}
+        <Card className="h-fit">
+          <CardContent className="pt-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+                <Input
+                  className="pl-9"
+                  placeholder="Name or employee code…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => void loadList()}
+                aria-label="Refresh list"
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${listLoading ? "animate-spin" : ""}`}
+                />
+              </Button>
             </div>
-            <Button variant="outline" size="icon" onClick={() => void loadList()} aria-label="Refresh list">
-              <RefreshCw className={`h-4 w-4 ${listLoading ? "animate-spin" : ""}`} />
-            </Button>
-          </div>
 
-          <div className="flex items-center gap-2">
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="flex-1"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="open">Open</SelectItem>
-                <SelectItem value="all">All</SelectItem>
-                <SelectItem value="invited">Awaiting employee</SelectItem>
-                <SelectItem value="employee_submitted">Form submitted</SelectItem>
-                <SelectItem value="in_progress">In progress</SelectItem>
-                <SelectItem value="declined">Declined</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button
-              variant={slaOnly ? "default" : "outline"}
-              size="sm"
-              onClick={() => setSlaOnly((v) => !v)}
-              className={slaOnly ? "bg-amber-600 hover:bg-amber-700" : ""}
-            >
-              <Clock className="h-3.5 w-3.5 mr-1" /> Overdue
-            </Button>
-          </div>
+            <div className="flex items-center gap-2">
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="flex-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="open">Open</SelectItem>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="invited">Awaiting employee</SelectItem>
+                  <SelectItem value="employee_submitted">
+                    Form submitted
+                  </SelectItem>
+                  <SelectItem value="in_progress">In progress</SelectItem>
+                  <SelectItem value="declined">Declined</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                variant={slaOnly ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSlaOnly((v) => !v)}
+                className={slaOnly ? "bg-amber-600 hover:bg-amber-700" : ""}
+              >
+                <Clock className="h-3.5 w-3.5 mr-1" /> Overdue
+              </Button>
+            </div>
 
-          <div className="space-y-2 max-h-[62vh] overflow-y-auto pr-1">
-            {listLoading && (
-              <div className="py-10 text-center text-sm text-slate-400">
-                <Loader2 className="mx-auto h-5 w-5 animate-spin" />
-              </div>
-            )}
-            {!listLoading && rows.length === 0 && (
-              <div className="py-10 text-center text-sm text-slate-500">
-                {slaOnly
-                  ? "No clearance is past its SLA. Clear the Overdue filter to see the rest."
-                  : search.trim()
-                    ? `Nothing matches “${search.trim()}”.`
-                    : "No NOC clearances in this view."}
-              </div>
-            )}
-            {!listLoading && rows.map((r) => {
-              const active = r.id === selectedId;
-              return (
-                <button
-                  key={r.id}
-                  type="button"
-                  onClick={() => setSelectedId(r.id)}
-                  className={`w-full text-left rounded-lg border px-3 py-2.5 transition ${
-                    active ? "border-blue-400 bg-blue-50" : "border-slate-200 hover:bg-slate-50"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="font-medium text-sm text-slate-900 truncate">
-                        {r.employee_name ?? "—"}
+            <div className="space-y-2 max-h-[62vh] overflow-y-auto pr-1">
+              {listLoading && (
+                <div className="py-10 text-center text-sm text-slate-400">
+                  <Loader2 className="mx-auto h-5 w-5 animate-spin" />
+                </div>
+              )}
+              {!listLoading && rows.length === 0 && (
+                <div className="py-10 text-center text-sm text-slate-500">
+                  {slaOnly
+                    ? "No clearance is past its SLA. Clear the Overdue filter to see the rest."
+                    : search.trim()
+                      ? `Nothing matches “${search.trim()}”.`
+                      : "No NOC clearances in this view."}
+                </div>
+              )}
+              {!listLoading &&
+                rows.map((r) => {
+                  const active = r.id === selectedId;
+                  return (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => setSelectedId(r.id)}
+                      className={`w-full text-left rounded-lg border px-3 py-2.5 transition ${
+                        active
+                          ? "border-blue-400 bg-blue-50"
+                          : "border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-medium text-sm text-slate-900 truncate">
+                            {r.employee_name ?? "—"}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {r.employee_code}{" "}
+                            {r.branch_name ? `· ${r.branch_name}` : ""}
+                          </div>
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className={`shrink-0 text-[10px] ${caseStatusClass(r.status)}`}
+                        >
+                          {r.status.replace(/_/g, " ")}
+                        </Badge>
                       </div>
-                      <div className="text-xs text-slate-500">
-                        {r.employee_code} {r.branch_name ? `· ${r.branch_name}` : ""}
-                      </div>
-                    </div>
-                    <Badge variant="outline" className={`shrink-0 text-[10px] ${caseStatusClass(r.status)}`}>
-                      {r.status.replace(/_/g, " ")}
-                    </Badge>
-                  </div>
-                  <div className="mt-2 flex items-center gap-2">
-                    {/* Progress out of the real signatory count, not a hardcoded 8 — the template
+                      <div className="mt-2 flex items-center gap-2">
+                        {/* Progress out of the real signatory count, not a hardcoded 8 — the template
                         is configurable and a stage could be deactivated. */}
-                    <div className="h-1.5 flex-1 rounded-full bg-slate-200 overflow-hidden">
-                      <div
-                        className="h-full bg-emerald-500"
-                        style={{ width: `${r.signatory_total ? (r.signatory_accepted / r.signatory_total) * 100 : 0}%` }}
-                      />
-                    </div>
-                    <span className="text-[11px] font-medium text-slate-600 tabular-nums">
-                      {r.signatory_accepted}/{r.signatory_total}
-                    </span>
-                    {Number(r.signatory_sla_breached) > 0 && (
-                      <span className="text-[11px] font-semibold text-amber-700" title="Signatories past SLA">
-                        <Clock className="inline h-3 w-3" /> {r.signatory_sla_breached}
-                      </span>
-                    )}
-                    {Number(r.signatory_declined) > 0 && (
-                      <XCircle className="h-3.5 w-3.5 text-red-600" aria-label="Declined" />
-                    )}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
+                        <div className="h-1.5 flex-1 rounded-full bg-slate-200 overflow-hidden">
+                          <div
+                            className="h-full bg-emerald-500"
+                            style={{
+                              width: `${r.signatory_total ? (r.signatory_accepted / r.signatory_total) * 100 : 0}%`,
+                            }}
+                          />
+                        </div>
+                        <span className="text-[11px] font-medium text-slate-600 tabular-nums">
+                          {r.signatory_accepted}/{r.signatory_total}
+                        </span>
+                        {Number(r.signatory_sla_breached) > 0 && (
+                          <span
+                            className="text-[11px] font-semibold text-amber-700"
+                            title="Signatories past SLA"
+                          >
+                            <Clock className="inline h-3 w-3" />{" "}
+                            {r.signatory_sla_breached}
+                          </span>
+                        )}
+                        {Number(r.signatory_declined) > 0 && (
+                          <XCircle
+                            className="h-3.5 w-3.5 text-red-600"
+                            aria-label="Declined"
+                          />
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+            </div>
+          </CardContent>
+        </Card>
 
-      {/* ── Case detail ── */}
-      <div className="space-y-4">
-        {!selectedId && (
-          <Card><CardContent className="py-16 text-center text-sm text-slate-500">
-            <FileCheck className="mx-auto mb-3 h-10 w-10 text-slate-300" />
-            Select a leaver on the left to see their clearance chain.
-          </CardContent></Card>
-        )}
-
-        {selectedId && detailLoading && !detail && (
-          <Card><CardContent className="py-16 text-center">
-            <Loader2 className="mx-auto h-6 w-6 animate-spin text-slate-400" />
-          </CardContent></Card>
-        )}
-
-        {c && detail && (
-          <>
-            {/* Header + identity */}
+        {/* ── Case detail ── */}
+        <div className="space-y-4">
+          {!selectedId && (
             <Card>
-              <CardContent className="pt-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900">{c.employee_name}</h3>
-                    <p className="text-xs text-slate-500">
-                      {c.employee_code} · {c.location ?? "—"} · {c.designation ?? "—"}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className={caseStatusClass(c.status)}>
-                      {c.status.replace(/_/g, " ")}
-                    </Badge>
-                    {c.override_at && (
-                      <Badge variant="outline" className="bg-purple-100 text-purple-800 border-purple-200">
-                        <ShieldAlert className="h-3 w-3 mr-1" /> Overridden
+              <CardContent className="py-16 text-center text-sm text-slate-500">
+                <FileCheck className="mx-auto mb-3 h-10 w-10 text-slate-300" />
+                Select a leaver on the left to see their clearance chain.
+              </CardContent>
+            </Card>
+          )}
+
+          {selectedId && detailLoading && !detail && (
+            <Card>
+              <CardContent className="py-16 text-center">
+                <Loader2 className="mx-auto h-6 w-6 animate-spin text-slate-400" />
+              </CardContent>
+            </Card>
+          )}
+
+          {c && detail && (
+            <>
+              {/* Header + identity */}
+              <Card>
+                <CardContent className="pt-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900">
+                        {c.employee_name}
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        {c.employee_code} · {c.location ?? "—"} ·{" "}
+                        {c.designation ?? "—"}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant="outline"
+                        className={caseStatusClass(c.status)}
+                      >
+                        {c.status.replace(/_/g, " ")}
                       </Badge>
-                    )}
-                    {/*
+                      {c.override_at && (
+                        <Badge
+                          variant="outline"
+                          className="bg-purple-100 text-purple-800 border-purple-200"
+                        >
+                          <ShieldAlert className="h-3 w-3 mr-1" /> Overridden
+                        </Badge>
+                      )}
+                      {/*
                       Available on any case, not only completed ones. A part-signed certificate is
                       exactly what someone needs to print and walk to a signatory who is holding it
                       up — restricting it to completed would remove the one use that needs paper.
                     */}
-                    <Button size="sm" variant="outline" className="h-7 text-xs"
-                      onClick={() => openCertificate(detail)}>
-                      <Printer className="h-3.5 w-3.5 mr-1" /> Print record
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="mt-4 grid gap-3 sm:grid-cols-4 text-xs">
-                  <Field label="Portfolio" value={c.portfolio} />
-                  <Field label="Resignation date" value={c.resignation_date} />
-                  <Field label="Form submitted" value={c.employee_submitted_at ? fmt(c.employee_submitted_at) : "Not yet"} />
-                  <Field label="Signatories cleared" value={`${detail.progress.accepted} of ${detail.progress.total}`} />
-                </div>
-
-                {c.reason_for_leaving && (
-                  <div className="mt-3 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Reason for leaving</div>
-                    <p className="mt-0.5 text-sm text-slate-700">{c.reason_for_leaving}</p>
-                  </div>
-                )}
-
-                {c.status === "declined" && (
-                  <div role="alert" className="mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5">
-                    <Lock className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
-                    <div className="flex-1">
-                      <p className="text-sm font-semibold text-red-900">
-                        Declined at {c.declined_stage_key?.replace(/_/g, " ")} — locked pending HR resolution
-                      </p>
-                      <p className="text-xs text-red-800 mt-0.5">{c.decline_reason}</p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                        onClick={() => openCertificate(detail)}
+                      >
+                        <Printer className="h-3.5 w-3.5 mr-1" /> Print record
+                      </Button>
                     </div>
-                    <Button size="sm" variant="outline" onClick={() => void reopen()} disabled={busy === "reopen"}>
-                      Reopen
-                    </Button>
                   </div>
-                )}
 
-                {c.override_at && (
-                  <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2">
-                    <p className="text-xs font-semibold text-purple-900">
-                      Payroll Head override — salary release is unblocked without a completed clearance
-                    </p>
-                    <p className="text-xs text-purple-800 mt-0.5">{c.override_reason}</p>
-                  </div>
-                )}
-
-                {/* HR: Last Working Day, and the invite */}
-                <div className="mt-4 flex flex-wrap items-end gap-3 border-t pt-4">
-                  <div>
-                    <label htmlFor="noc-lwd" className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                      Last Working Day (HR)
-                    </label>
-                    <Input
-                      id="noc-lwd"
-                      type="date"
-                      className="mt-1 w-44"
-                      value={lwd}
-                      min={c.resignation_date ?? undefined}
-                      onChange={(e) => setLwd(e.target.value)}
+                  <div className="mt-4 grid gap-3 sm:grid-cols-4 text-xs">
+                    <Field label="Portfolio" value={c.portfolio} />
+                    <Field
+                      label="Resignation date"
+                      value={c.resignation_date}
+                    />
+                    <Field
+                      label="Form submitted"
+                      value={
+                        c.employee_submitted_at
+                          ? fmt(c.employee_submitted_at)
+                          : "Not yet"
+                      }
+                    />
+                    <Field
+                      label="Signatories cleared"
+                      value={`${detail.progress.accepted} of ${detail.progress.total}`}
                     />
                   </div>
-                  <Button size="sm" variant="outline" onClick={() => void saveLwd()} disabled={!lwd || busy === "lwd"}>
-                    Save LWD
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => void sendInvite()} disabled={busy === "invite"}>
-                    {c.employee_submitted_at ? "Resend form link" : "Send form link"}
-                  </Button>
 
-                  <div className="ml-auto">
-                    <label htmlFor="noc-fnf" className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                      Settlement route {c.fnf_option_suggested && !c.fnf_option && (
-                        <span className="font-normal normal-case text-slate-400">
-                          (suggested: {FNF_LABELS[c.fnf_option_suggested] ?? c.fnf_option_suggested})
-                        </span>
-                      )}
-                    </label>
-                    <Select value={c.fnf_option ?? ""} onValueChange={(v) => void setFnf(v)}>
-                      <SelectTrigger id="noc-fnf" className="mt-1 w-56">
-                        <SelectValue placeholder="Not set — Finance decides" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Object.entries(FNF_LABELS).map(([k, v]) => (
-                          <SelectItem key={k} value={k}>{v}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Signatory clearance */}
-            <Card>
-              <CardContent className="pt-5">
-                <div className="mb-3 flex items-center justify-between">
-                  <h4 className="text-sm font-bold text-slate-900">
-                    Signatory Clearance
-                    <span className="ml-2 font-normal text-xs text-slate-500">
-                      digitally captured — role, name, status, date
-                    </span>
-                  </h4>
-                  {overdue > 0 && (
-                    <Badge variant="outline" className="bg-amber-100 text-amber-800 border-amber-200">
-                      <Clock className="h-3 w-3 mr-1" /> {overdue} overdue
-                    </Badge>
+                  {c.reason_for_leaving && (
+                    <div className="mt-3 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2">
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                        Reason for leaving
+                      </div>
+                      <p className="mt-0.5 text-sm text-slate-700">
+                        {c.reason_for_leaving}
+                      </p>
+                    </div>
                   )}
-                </div>
 
-                <div className="overflow-x-auto rounded-lg border border-slate-200">
-                  <table className="w-full text-sm">
-                    <caption className="sr-only">
-                      The eight NOC signatories in the order printed on the certificate, with each decision and timestamp
-                    </caption>
-                    <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                      <tr>
-                        <th scope="col" className="px-3 py-2 w-10">#</th>
-                        <th scope="col" className="px-3 py-2">Role</th>
-                        <th scope="col" className="px-3 py-2">Name</th>
-                        <th scope="col" className="px-3 py-2 w-32">Status</th>
-                        <th scope="col" className="px-3 py-2 w-40">Date</th>
-                        <th scope="col" className="px-3 py-2 text-right w-56">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {detail.signatories.map((s) => {
-                        const badge = sigStatusBadge(s.status);
-                        return (
-                          <tr key={s.id} className={s.status === "declined" ? "bg-red-50/50" : undefined}>
-                            <td className="px-3 py-2 text-slate-500">{s.display_no}</td>
-                            <td className="px-3 py-2">
-                              <div className="font-medium text-slate-900">{s.stage_label}</div>
-                              <div className="text-[11px] text-slate-400">{s.role_key}</div>
+                  {c.status === "declined" && (
+                    <div
+                      role="alert"
+                      className="mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5"
+                    >
+                      <Lock className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold text-red-900">
+                          Declined at {c.declined_stage_key?.replace(/_/g, " ")}{" "}
+                          — locked pending HR resolution
+                        </p>
+                        <p className="text-xs text-red-800 mt-0.5">
+                          {c.decline_reason}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void reopen()}
+                        disabled={busy === "reopen"}
+                      >
+                        Reopen
+                      </Button>
+                    </div>
+                  )}
+
+                  {c.override_at && (
+                    <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2">
+                      <p className="text-xs font-semibold text-purple-900">
+                        Payroll Head override — salary release is unblocked
+                        without a completed clearance
+                      </p>
+                      <p className="text-xs text-purple-800 mt-0.5">
+                        {c.override_reason}
+                      </p>
+                      {c.override_document_path && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void viewOverrideDocument(
+                              c.employee_id,
+                              c.override_document_original_name,
+                            )
+                          }
+                          disabled={viewingOverrideDoc}
+                          className="mt-1.5 min-h-[44px] text-xs font-bold text-purple-700 underline underline-offset-2 hover:text-purple-900 sm:min-h-0"
+                        >
+                          {viewingOverrideDoc
+                            ? "Opening…"
+                            : `View signed paper NOC${c.override_document_original_name ? ` (${c.override_document_original_name})` : ""}`}
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* HR: Last Working Day, and the invite */}
+                  <div className="mt-4 flex flex-wrap items-end gap-3 border-t pt-4">
+                    <div>
+                      <label
+                        htmlFor="noc-lwd"
+                        className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500"
+                      >
+                        Last Working Day (HR)
+                      </label>
+                      <Input
+                        id="noc-lwd"
+                        type="date"
+                        className="mt-1 w-44"
+                        value={lwd}
+                        min={c.resignation_date ?? undefined}
+                        onChange={(e) => setLwd(e.target.value)}
+                      />
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void saveLwd()}
+                      disabled={!lwd || busy === "lwd"}
+                    >
+                      Save LWD
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void sendInvite()}
+                      disabled={busy === "invite"}
+                    >
+                      {c.employee_submitted_at
+                        ? "Resend form link"
+                        : "Send form link"}
+                    </Button>
+
+                    <div className="ml-auto">
+                      <label
+                        htmlFor="noc-fnf"
+                        className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500"
+                      >
+                        Settlement route{" "}
+                        {c.fnf_option_suggested && !c.fnf_option && (
+                          <span className="font-normal normal-case text-slate-400">
+                            (suggested:{" "}
+                            {FNF_LABELS[c.fnf_option_suggested] ??
+                              c.fnf_option_suggested}
+                            )
+                          </span>
+                        )}
+                      </label>
+                      <Select
+                        value={c.fnf_option ?? ""}
+                        onValueChange={(v) => void setFnf(v)}
+                      >
+                        <SelectTrigger id="noc-fnf" className="mt-1 w-56">
+                          <SelectValue placeholder="Not set — Finance decides" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(FNF_LABELS).map(([k, v]) => (
+                            <SelectItem key={k} value={k}>
+                              {v}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Signatory clearance */}
+              <Card>
+                <CardContent className="pt-5">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h4 className="text-sm font-bold text-slate-900">
+                      Signatory Clearance
+                      <span className="ml-2 font-normal text-xs text-slate-500">
+                        digitally captured — role, name, status, date
+                      </span>
+                    </h4>
+                    {overdue > 0 && (
+                      <Badge
+                        variant="outline"
+                        className="bg-amber-100 text-amber-800 border-amber-200"
+                      >
+                        <Clock className="h-3 w-3 mr-1" /> {overdue} overdue
+                      </Badge>
+                    )}
+                  </div>
+
+                  <div className="overflow-x-auto rounded-lg border border-slate-200">
+                    <table className="w-full text-sm">
+                      <caption className="sr-only">
+                        The eight NOC signatories in the order printed on the
+                        certificate, with each decision and timestamp
+                      </caption>
+                      <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        <tr>
+                          <th scope="col" className="px-3 py-2 w-10">
+                            #
+                          </th>
+                          <th scope="col" className="px-3 py-2">
+                            Role
+                          </th>
+                          <th scope="col" className="px-3 py-2">
+                            Name
+                          </th>
+                          <th scope="col" className="px-3 py-2 w-32">
+                            Status
+                          </th>
+                          <th scope="col" className="px-3 py-2 w-40">
+                            Date
+                          </th>
+                          <th scope="col" className="px-3 py-2 text-right w-56">
+                            Action
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {detail.signatories.map((s) => {
+                          const badge = sigStatusBadge(s.status);
+                          return (
+                            <tr
+                              key={s.id}
+                              className={
+                                s.status === "declined"
+                                  ? "bg-red-50/50"
+                                  : undefined
+                              }
+                            >
+                              <td className="px-3 py-2 text-slate-500">
+                                {s.display_no}
+                              </td>
+                              <td className="px-3 py-2">
+                                <div className="font-medium text-slate-900">
+                                  {s.stage_label}
+                                </div>
+                                <div className="text-[11px] text-slate-400">
+                                  {s.role_key}
+                                </div>
+                              </td>
+                              <td className="px-3 py-2 text-slate-700">
+                                {s.acted_by_name ?? "—"}
+                              </td>
+                              <td className="px-3 py-2">
+                                <Badge
+                                  variant="outline"
+                                  className={`text-[10px] ${badge.cls}`}
+                                >
+                                  {badge.label}
+                                </Badge>
+                              </td>
+                              <td className="px-3 py-2 text-xs text-slate-500 whitespace-nowrap">
+                                {s.acted_at
+                                  ? fmt(s.acted_at)
+                                  : s.sla_due_at
+                                    ? `Due ${fmt(s.sla_due_at)}`
+                                    : "—"}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {s.status !== "pending" ? (
+                                  s.remarks ? (
+                                    <span className="text-xs text-slate-500 italic">
+                                      {s.remarks}
+                                    </span>
+                                  ) : (
+                                    <CheckCircle2 className="inline h-4 w-4 text-emerald-500" />
+                                  )
+                                ) : s.blocked ? (
+                                  // The server's reason, verbatim. A generic "not your turn" would
+                                  // hide the actionable cases — outstanding assets, missing LWD.
+                                  <span
+                                    className="text-xs text-slate-400"
+                                    title={s.blocked.message}
+                                  >
+                                    {s.blocked.code === "ASSETS_OUTSTANDING"
+                                      ? "Blocked — property outstanding"
+                                      : s.blocked.code === "LWD_NOT_SET"
+                                        ? "Blocked — set the LWD"
+                                        : s.blocked.code ===
+                                            "EMPLOYEE_FORM_PENDING"
+                                          ? "Waiting on the employee"
+                                          : "Waiting on earlier stages"}
+                                  </span>
+                                ) : (
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <Button
+                                      size="sm"
+                                      className="h-7 bg-emerald-600 hover:bg-emerald-700 text-xs"
+                                      onClick={() => {
+                                        setDecision({
+                                          stageKey: s.stage_key,
+                                          label: s.stage_label,
+                                          kind: "accepted",
+                                        });
+                                        setDecisionRemarks("");
+                                      }}
+                                    >
+                                      Accept
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 text-xs"
+                                      onClick={() => {
+                                        setDecision({
+                                          stageKey: s.stage_key,
+                                          label: s.stage_label,
+                                          kind: "acknowledged",
+                                        });
+                                        setDecisionRemarks("");
+                                      }}
+                                    >
+                                      Ack
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 text-xs border-red-300 text-red-700 hover:bg-red-50"
+                                      onClick={() => {
+                                        setDecision({
+                                          stageKey: s.stage_key,
+                                          label: s.stage_label,
+                                          kind: "declined",
+                                        });
+                                        setDecisionRemarks("");
+                                      }}
+                                    >
+                                      Decline
+                                    </Button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Assets */}
+              <Card>
+                <CardContent className="pt-5">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h4 className="text-sm font-bold text-slate-900">
+                      Company Property
+                    </h4>
+                    {detail.assetGate.satisfied ? (
+                      <Badge
+                        variant="outline"
+                        className="bg-emerald-100 text-emerald-800 border-emerald-200"
+                      >
+                        <CheckCircle2 className="h-3 w-3 mr-1" /> Finance not
+                        blocked
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className="bg-amber-100 text-amber-800 border-amber-200"
+                      >
+                        <AlertTriangle className="h-3 w-3 mr-1" />
+                        Finance blocked — {
+                          detail.assetGate.outstanding.length
+                        }{" "}
+                        item(s)
+                      </Badge>
+                    )}
+                  </div>
+
+                  <div className="overflow-x-auto rounded-lg border border-slate-200">
+                    <table className="w-full text-sm">
+                      <caption className="sr-only">
+                        Company property, return status, and any waiver
+                      </caption>
+                      <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        <tr>
+                          <th scope="col" className="px-3 py-2 w-10">
+                            #
+                          </th>
+                          <th scope="col" className="px-3 py-2">
+                            Item
+                          </th>
+                          <th scope="col" className="px-3 py-2 w-16">
+                            Qty
+                          </th>
+                          <th scope="col" className="px-3 py-2 w-64">
+                            Status
+                          </th>
+                          <th scope="col" className="px-3 py-2 text-right w-28">
+                            Waiver
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {detail.assets.map((a) => (
+                          <tr key={a.id}>
+                            <td className="px-3 py-2 text-slate-500">
+                              {a.item_no}
                             </td>
-                            <td className="px-3 py-2 text-slate-700">{s.acted_by_name ?? "—"}</td>
                             <td className="px-3 py-2">
-                              <Badge variant="outline" className={`text-[10px] ${badge.cls}`}>{badge.label}</Badge>
+                              <span className="font-medium text-slate-900">
+                                {a.item_label}
+                              </span>
+                              {Number(a.is_mandatory_for_finance) === 1 && (
+                                <span
+                                  className="ml-2 text-[10px] font-semibold uppercase text-amber-700"
+                                  title="Blocks Finance sign-off until returned or waived"
+                                >
+                                  required
+                                </span>
+                              )}
                             </td>
-                            <td className="px-3 py-2 text-xs text-slate-500 whitespace-nowrap">
-                              {s.acted_at ? fmt(s.acted_at) : s.sla_due_at ? `Due ${fmt(s.sla_due_at)}` : "—"}
+                            <td className="px-3 py-2 text-slate-600">
+                              {a.quantity ?? "—"}
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="flex gap-1">
+                                {(
+                                  [
+                                    "returned",
+                                    "not_returned",
+                                    "na",
+                                  ] as AssetStatus[]
+                                ).map((st) => (
+                                  <Button
+                                    key={st}
+                                    size="sm"
+                                    variant={
+                                      a.status === st ? "default" : "outline"
+                                    }
+                                    className={`h-6 px-2 text-[11px] ${a.status === st && st === "returned" ? "bg-emerald-600 hover:bg-emerald-700" : ""}`}
+                                    disabled={busy === `asset:${a.item_code}`}
+                                    onClick={() =>
+                                      void setAsset(a.item_code, st)
+                                    }
+                                  >
+                                    {st === "returned"
+                                      ? "Returned"
+                                      : st === "not_returned"
+                                        ? "Not returned"
+                                        : "N/A"}
+                                  </Button>
+                                ))}
+                              </div>
                             </td>
                             <td className="px-3 py-2 text-right">
-                              {s.status !== "pending" ? (
-                                s.remarks
-                                  ? <span className="text-xs text-slate-500 italic">{s.remarks}</span>
-                                  : <CheckCircle2 className="inline h-4 w-4 text-emerald-500" />
-                              ) : s.blocked ? (
-                                // The server's reason, verbatim. A generic "not your turn" would
-                                // hide the actionable cases — outstanding assets, missing LWD.
-                                <span className="text-xs text-slate-400" title={s.blocked.message}>
-                                  {s.blocked.code === "ASSETS_OUTSTANDING"
-                                    ? "Blocked — property outstanding"
-                                    : s.blocked.code === "LWD_NOT_SET"
-                                      ? "Blocked — set the LWD"
-                                      : s.blocked.code === "EMPLOYEE_FORM_PENDING"
-                                        ? "Waiting on the employee"
-                                        : "Waiting on earlier stages"}
+                              {a.waived_at ? (
+                                <span
+                                  className="text-[11px] text-purple-700 font-medium"
+                                  title={a.waiver_reason ?? ""}
+                                >
+                                  Waived
                                 </span>
+                              ) : Number(a.is_mandatory_for_finance) === 1 &&
+                                a.status !== "returned" ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-6 px-2 text-[11px]"
+                                  onClick={() => {
+                                    setWaive({
+                                      itemCode: a.item_code,
+                                      label: a.item_label,
+                                    });
+                                    setWaiveReason("");
+                                  }}
+                                >
+                                  Waive
+                                </Button>
                               ) : (
-                                <div className="flex items-center justify-end gap-1.5">
-                                  <Button size="sm" className="h-7 bg-emerald-600 hover:bg-emerald-700 text-xs"
-                                    onClick={() => { setDecision({ stageKey: s.stage_key, label: s.stage_label, kind: "accepted" }); setDecisionRemarks(""); }}>
-                                    Accept
-                                  </Button>
-                                  <Button size="sm" variant="outline" className="h-7 text-xs"
-                                    onClick={() => { setDecision({ stageKey: s.stage_key, label: s.stage_label, kind: "acknowledged" }); setDecisionRemarks(""); }}>
-                                    Ack
-                                  </Button>
-                                  <Button size="sm" variant="outline" className="h-7 text-xs border-red-300 text-red-700 hover:bg-red-50"
-                                    onClick={() => { setDecision({ stageKey: s.stage_key, label: s.stage_label, kind: "declined" }); setDecisionRemarks(""); }}>
-                                    Decline
-                                  </Button>
-                                </div>
+                                "—"
                               )}
                             </td>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Assets */}
-            <Card>
-              <CardContent className="pt-5">
-                <div className="mb-3 flex items-center justify-between">
-                  <h4 className="text-sm font-bold text-slate-900">Company Property</h4>
-                  {detail.assetGate.satisfied ? (
-                    <Badge variant="outline" className="bg-emerald-100 text-emerald-800 border-emerald-200">
-                      <CheckCircle2 className="h-3 w-3 mr-1" /> Finance not blocked
-                    </Badge>
-                  ) : (
-                    <Badge variant="outline" className="bg-amber-100 text-amber-800 border-amber-200">
-                      <AlertTriangle className="h-3 w-3 mr-1" />
-                      Finance blocked — {detail.assetGate.outstanding.length} item(s)
-                    </Badge>
-                  )}
-                </div>
-
-                <div className="overflow-x-auto rounded-lg border border-slate-200">
-                  <table className="w-full text-sm">
-                    <caption className="sr-only">Company property, return status, and any waiver</caption>
-                    <thead className="bg-slate-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                      <tr>
-                        <th scope="col" className="px-3 py-2 w-10">#</th>
-                        <th scope="col" className="px-3 py-2">Item</th>
-                        <th scope="col" className="px-3 py-2 w-16">Qty</th>
-                        <th scope="col" className="px-3 py-2 w-64">Status</th>
-                        <th scope="col" className="px-3 py-2 text-right w-28">Waiver</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {detail.assets.map((a) => (
-                        <tr key={a.id}>
-                          <td className="px-3 py-2 text-slate-500">{a.item_no}</td>
-                          <td className="px-3 py-2">
-                            <span className="font-medium text-slate-900">{a.item_label}</span>
-                            {Number(a.is_mandatory_for_finance) === 1 && (
-                              <span className="ml-2 text-[10px] font-semibold uppercase text-amber-700" title="Blocks Finance sign-off until returned or waived">
-                                required
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-slate-600">{a.quantity ?? "—"}</td>
-                          <td className="px-3 py-2">
-                            <div className="flex gap-1">
-                              {(["returned", "not_returned", "na"] as AssetStatus[]).map((st) => (
-                                <Button
-                                  key={st}
-                                  size="sm"
-                                  variant={a.status === st ? "default" : "outline"}
-                                  className={`h-6 px-2 text-[11px] ${a.status === st && st === "returned" ? "bg-emerald-600 hover:bg-emerald-700" : ""}`}
-                                  disabled={busy === `asset:${a.item_code}`}
-                                  onClick={() => void setAsset(a.item_code, st)}
-                                >
-                                  {st === "returned" ? "Returned" : st === "not_returned" ? "Not returned" : "N/A"}
-                                </Button>
-                              ))}
-                            </div>
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            {a.waived_at ? (
-                              <span className="text-[11px] text-purple-700 font-medium" title={a.waiver_reason ?? ""}>
-                                Waived
-                              </span>
-                            ) : Number(a.is_mandatory_for_finance) === 1 && a.status !== "returned" ? (
-                              <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]"
-                                onClick={() => { setWaive({ itemCode: a.item_code, label: a.item_label }); setWaiveReason(""); }}>
-                                Waive
-                              </Button>
-                            ) : "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Override + timeline */}
-            <div className="grid gap-4 lg:grid-cols-2">
-              {canOverride && c.status !== "completed" && !c.override_at && (
-                <Card className="border-purple-200">
-                  <CardContent className="pt-5">
-                    <h4 className="text-sm font-bold text-slate-900">Payroll Head override</h4>
-                    <p className="mt-1 text-xs text-slate-600 leading-relaxed">
-                      Releases this employee's salary without a completed clearance. Recorded against
-                      your name with the reason, and the case still shows as not signed — an override
-                      is never presented as a clearance.
-                    </p>
-                    <Button size="sm" variant="outline" className="mt-3 border-purple-300 text-purple-700 hover:bg-purple-50"
-                      onClick={() => setOverrideOpen(true)}>
-                      <ShieldAlert className="h-3.5 w-3.5 mr-1" /> Override release
-                    </Button>
-                  </CardContent>
-                </Card>
-              )}
-
-              <Card>
-                <CardContent className="pt-5">
-                  <h4 className="text-sm font-bold text-slate-900 mb-2">Timeline</h4>
-                  <ol className="space-y-2 max-h-64 overflow-y-auto">
-                    {detail.events.length === 0 && (
-                      <li className="text-xs text-slate-400">No activity recorded yet.</li>
-                    )}
-                    {detail.events.map((ev, i) => (
-                      <li key={`${ev.created_at}-${i}`} className="text-xs border-l-2 border-slate-200 pl-3">
-                        <div className="font-medium text-slate-800">
-                          {ev.action.replace(/_/g, " ")}
-                          {ev.stage_key ? ` · ${ev.stage_key.replace(/_/g, " ")}` : ""}
-                        </div>
-                        <div className="text-slate-500">
-                          {ev.actor_name ?? ev.actor_role ?? "system"} · {fmt(ev.created_at)}
-                        </div>
-                        {ev.reason && <div className="text-slate-600 italic mt-0.5">{ev.reason}</div>}
-                      </li>
-                    ))}
-                  </ol>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </CardContent>
               </Card>
-            </div>
-          </>
-        )}
-      </div>
 
+              {/* Override + timeline */}
+              <div className="grid gap-4 lg:grid-cols-2">
+                {canOverride && c.status !== "completed" && !c.override_at && (
+                  <Card className="border-purple-200">
+                    <CardContent className="pt-5">
+                      <h4 className="text-sm font-bold text-slate-900">
+                        Payroll Head override
+                      </h4>
+                      <p className="mt-1 text-xs text-slate-600 leading-relaxed">
+                        Releases this employee's salary without a completed
+                        clearance. Recorded against your name with the reason,
+                        and the case still shows as not signed — an override is
+                        never presented as a clearance.
+                      </p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="mt-3 border-purple-300 text-purple-700 hover:bg-purple-50"
+                        onClick={() => setOverrideOpen(true)}
+                      >
+                        <ShieldAlert className="h-3.5 w-3.5 mr-1" /> Override
+                        release
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
+
+                <Card>
+                  <CardContent className="pt-5">
+                    <h4 className="text-sm font-bold text-slate-900 mb-2">
+                      Timeline
+                    </h4>
+                    <ol className="space-y-2 max-h-64 overflow-y-auto">
+                      {detail.events.length === 0 && (
+                        <li className="text-xs text-slate-400">
+                          No activity recorded yet.
+                        </li>
+                      )}
+                      {detail.events.map((ev, i) => (
+                        <li
+                          key={`${ev.created_at}-${i}`}
+                          className="text-xs border-l-2 border-slate-200 pl-3"
+                        >
+                          <div className="font-medium text-slate-800">
+                            {ev.action.replace(/_/g, " ")}
+                            {ev.stage_key
+                              ? ` · ${ev.stage_key.replace(/_/g, " ")}`
+                              : ""}
+                          </div>
+                          <div className="text-slate-500">
+                            {ev.actor_name ?? ev.actor_role ?? "system"} ·{" "}
+                            {fmt(ev.created_at)}
+                          </div>
+                          {ev.reason && (
+                            <div className="text-slate-600 italic mt-0.5">
+                              {ev.reason}
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ol>
+                  </CardContent>
+                </Card>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* ── Decision dialog ── */}
-      <Dialog open={decision !== null} onOpenChange={(o) => { if (!o) setDecision(null); }}>
+      <Dialog
+        open={decision !== null}
+        onOpenChange={(o) => {
+          if (!o) setDecision(null);
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>
-              {decision?.kind === "declined" ? "Decline" : decision?.kind === "acknowledged" ? "Acknowledge" : "Accept"}
-              {" — "}{decision?.label}
+              {decision?.kind === "declined"
+                ? "Decline"
+                : decision?.kind === "acknowledged"
+                  ? "Acknowledge"
+                  : "Accept"}
+              {" — "}
+              {decision?.label}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-2">
@@ -1089,17 +1586,34 @@ export default function NocClearanceChain({ canOverride }: { canOverride: boolea
             </p>
             <Textarea
               rows={3}
-              placeholder={decision?.kind === "declined" ? "Why can this not be cleared? (required)" : "Remarks (optional)"}
+              placeholder={
+                decision?.kind === "declined"
+                  ? "Why can this not be cleared? (required)"
+                  : "Remarks (optional)"
+              }
               value={decisionRemarks}
               onChange={(e) => setDecisionRemarks(e.target.value)}
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDecision(null)} disabled={busy === "decision"}>Cancel</Button>
             <Button
-              className={decision?.kind === "declined" ? "bg-red-600 hover:bg-red-700" : "bg-emerald-600 hover:bg-emerald-700"}
+              variant="outline"
+              onClick={() => setDecision(null)}
+              disabled={busy === "decision"}
+            >
+              Cancel
+            </Button>
+            <Button
+              className={
+                decision?.kind === "declined"
+                  ? "bg-red-600 hover:bg-red-700"
+                  : "bg-emerald-600 hover:bg-emerald-700"
+              }
               onClick={() => void submitDecision()}
-              disabled={busy === "decision" || (decision?.kind === "declined" && !decisionRemarks.trim())}
+              disabled={
+                busy === "decision" ||
+                (decision?.kind === "declined" && !decisionRemarks.trim())
+              }
             >
               {busy === "decision" ? "Recording…" : "Confirm"}
             </Button>
@@ -1108,20 +1622,41 @@ export default function NocClearanceChain({ canOverride }: { canOverride: boolea
       </Dialog>
 
       {/* ── Waiver dialog ── */}
-      <Dialog open={waive !== null} onOpenChange={(o) => { if (!o) setWaive(null); }}>
+      <Dialog
+        open={waive !== null}
+        onOpenChange={(o) => {
+          if (!o) setWaive(null);
+        }}
+      >
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Waive — {waive?.label}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Waive — {waive?.label}</DialogTitle>
+          </DialogHeader>
           <div className="space-y-2">
             <p className="text-sm text-slate-600">
-              A waiver lets Finance sign off on property the company has not got back. It is recorded
-              against your name, so the reason needs to stand on its own later.
+              A waiver lets Finance sign off on property the company has not got
+              back. It is recorded against your name, so the reason needs to
+              stand on its own later.
             </p>
-            <Textarea rows={3} placeholder="Why is this item being waived? (required)"
-              value={waiveReason} onChange={(e) => setWaiveReason(e.target.value)} />
+            <Textarea
+              rows={3}
+              placeholder="Why is this item being waived? (required)"
+              value={waiveReason}
+              onChange={(e) => setWaiveReason(e.target.value)}
+            />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setWaive(null)} disabled={busy === "waive"}>Cancel</Button>
-            <Button onClick={() => void submitWaive()} disabled={busy === "waive" || !waiveReason.trim()}>
+            <Button
+              variant="outline"
+              onClick={() => setWaive(null)}
+              disabled={busy === "waive"}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void submitWaive()}
+              disabled={busy === "waive" || !waiveReason.trim()}
+            >
               {busy === "waive" ? "Saving…" : "Record waiver"}
             </Button>
           </DialogFooter>
@@ -1131,20 +1666,60 @@ export default function NocClearanceChain({ canOverride }: { canOverride: boolea
       {/* ── Override dialog ── */}
       <Dialog open={overrideOpen} onOpenChange={setOverrideOpen}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Override NOC release</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Override NOC release</DialogTitle>
+          </DialogHeader>
           <div className="space-y-2">
             <p className="text-sm text-slate-600">
-              This releases <strong>{c?.employee_name}</strong>'s salary without a completed
-              clearance. The reason below is the only record of why, so write it for whoever reads
-              it in an audit rather than for yourself today.
+              This releases <strong>{c?.employee_name}</strong>'s salary without
+              a completed clearance. The reason below is the only record of why,
+              so write it for whoever reads it in an audit rather than for
+              yourself today.
             </p>
-            <Textarea rows={3} placeholder="Why can this release not wait for the clearance? (required)"
-              value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} />
+            <Textarea
+              rows={3}
+              placeholder="Why can this release not wait for the clearance? (required)"
+              value={overrideReason}
+              onChange={(e) => setOverrideReason(e.target.value)}
+            />
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                Signed paper NOC (optional)
+              </label>
+              <p className="text-xs text-slate-500">
+                If the employee's NOC was signed on paper instead of through the
+                digital chain, attach a photo or scan of it here — PDF, JPG or
+                PNG, up to 10 MB.
+              </p>
+              <input
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png"
+                onChange={(e) => setOverrideFile(e.target.files?.[0] ?? null)}
+                className="block w-full min-h-[44px] text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-bold file:text-slate-700 hover:file:bg-slate-200"
+              />
+              {overrideFile && (
+                <p className="text-xs text-emerald-700">
+                  Attached: {overrideFile.name}
+                </p>
+              )}
+            </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOverrideOpen(false)} disabled={busy === "override"}>Cancel</Button>
-            <Button className="bg-purple-600 hover:bg-purple-700"
-              onClick={() => void submitOverride()} disabled={busy === "override" || !overrideReason.trim()}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setOverrideOpen(false);
+                setOverrideFile(null);
+              }}
+              disabled={busy === "override"}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="bg-purple-600 hover:bg-purple-700"
+              onClick={() => void submitOverride()}
+              disabled={busy === "override" || !overrideReason.trim()}
+            >
               {busy === "override" ? "Recording…" : "Record override"}
             </Button>
           </DialogFooter>
@@ -1154,11 +1729,21 @@ export default function NocClearanceChain({ canOverride }: { canOverride: boolea
   );
 }
 
-function Field({ label, value }: { label: string; value: string | null | undefined }) {
+function Field({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | null | undefined;
+}) {
   return (
     <div>
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-0.5 font-medium text-slate-900">{value?.toString().trim() || "—"}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+        {label}
+      </div>
+      <div className="mt-0.5 font-medium text-slate-900">
+        {value?.toString().trim() || "—"}
+      </div>
     </div>
   );
 }
