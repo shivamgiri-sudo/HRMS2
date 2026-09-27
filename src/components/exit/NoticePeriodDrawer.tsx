@@ -1,12 +1,31 @@
 import { useCallback, useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
-  AlertTriangle, Briefcase, Building2, Calendar, CheckCircle2,
-  Clock, Loader2, MessageSquare, Paperclip, Shield, ShieldCheck, User, X,
+  AlertTriangle,
+  Briefcase,
+  Building2,
+  Calendar,
+  CheckCircle2,
+  Clock,
+  Loader2,
+  MessageSquare,
+  Paperclip,
+  Shield,
+  ShieldCheck,
+  User,
+  X,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
-import { CLEARANCE_STATUS_COLORS, NOC_STATUS_COLORS, NOC_STATUS_LABELS } from "@/lib/exitClearance";
+import {
+  CLEARANCE_OWNER_GROUPS,
+  CLEARANCE_STATUS_COLORS,
+  NOC_STATUS_COLORS,
+  NOC_STATUS_LABELS,
+  clearanceOwnerGroupOf,
+} from "@/lib/exitClearance";
+
+const CLEARANCE_GROUP_ORDER = ["manager", "it_admin", "hr", "payroll", "other"];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -67,7 +86,8 @@ type ExitFullDetail = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const fmtDate = (v?: string | null) => v ? v.slice(0, 10).split("-").reverse().join("/") : "—";
+const fmtDate = (v?: string | null) =>
+  v ? v.slice(0, 10).split("-").reverse().join("/") : "—";
 const fmtDateTime = (v?: string | null) => {
   if (!v) return "—";
   const d = new Date(v);
@@ -77,8 +97,12 @@ const fmtDateTime = (v?: string | null) => {
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</span>
-      <span className="text-sm font-semibold text-slate-800 capitalize">{value}</span>
+      <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+        {label}
+      </span>
+      <span className="text-sm font-semibold text-slate-800 capitalize">
+        {value}
+      </span>
     </div>
   );
 }
@@ -110,7 +134,9 @@ export function NoticePeriodDrawer({
   const loadDetail = useCallback(() => {
     setLoading(true);
     return hrmsApi
-      .get<{ success: boolean; data: ExitFullDetail }>(`/api/exit/${exitId}/full`)
+      .get<{ success: boolean; data: ExitFullDetail }>(
+        `/api/exit/${exitId}/full`,
+      )
       .then((res) => setDetail(res.data))
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -121,46 +147,82 @@ export function NoticePeriodDrawer({
   }, [loadDetail]);
 
   const clearanceMutation = useMutation({
-    mutationFn: ({ taskId, status, remarks }: { taskId: string; status: "cleared" | "waived"; remarks: string }) =>
-      hrmsApi.patch(`/api/exit/${exitId}/clearance/${taskId}`, { status, remarks }),
+    mutationFn: ({
+      taskId,
+      status,
+      remarks,
+    }: {
+      taskId: string;
+      status: "cleared" | "waived";
+      remarks: string;
+    }) =>
+      hrmsApi.patch(`/api/exit/${exitId}/clearance/${taskId}`, {
+        status,
+        remarks,
+      }),
     onSuccess: (_data, variables) => {
-      toast({ title: variables.status === "cleared" ? "Task cleared" : "Task waived" });
+      toast({
+        title: variables.status === "cleared" ? "Task cleared" : "Task waived",
+      });
       loadDetail();
       onTaskUpdated?.();
     },
     onError: (err: any) => {
-      toast({ title: "Could not update task", description: err?.message ?? "Please try again.", variant: "destructive" });
+      toast({
+        title: "Could not update task",
+        description: err?.message ?? "Please try again.",
+        variant: "destructive",
+      });
     },
   });
 
-  const handleClearanceAction = (taskId: string, status: "cleared" | "waived") => {
-    const remarks = window.prompt(status === "cleared" ? "Remarks for clearing this task:" : "Reason for waiving this task:");
+  const handleClearanceAction = (
+    taskId: string,
+    status: "cleared" | "waived",
+  ) => {
+    const remarks = window.prompt(
+      status === "cleared"
+        ? "Remarks for clearing this task:"
+        : "Reason for waiving this task:",
+    );
     if (remarks === null) return; // cancelled
     clearanceMutation.mutate({ taskId, status, remarks });
   };
 
-  const managerFeedback = detail?.timeline.filter(
-    (t) => t.stage === "manager_review" && t.discussion_remarks
-  ) ?? [];
-  const hrFeedback = detail?.timeline.filter(
-    (t) => t.stage === "hr_review" && (t.discussion_remarks || t.internal_notes)
-  ) ?? [];
+  const managerFeedback =
+    detail?.timeline.filter(
+      (t) => t.stage === "manager_review" && t.discussion_remarks,
+    ) ?? [];
+  const hrFeedback =
+    detail?.timeline.filter(
+      (t) =>
+        t.stage === "hr_review" && (t.discussion_remarks || t.internal_notes),
+    ) ?? [];
 
-  const clearedCount = detail?.clearance_tasks.filter((t) => t.status === "cleared").length ?? 0;
+  const clearedCount =
+    detail?.clearance_tasks.filter((t) => t.status === "cleared").length ?? 0;
   const totalClearance = detail?.clearance_tasks.length ?? 0;
 
-  const noticePct = detail?.notice_period_days && detail.notice_days_served != null
-    ? Math.min(100, Math.round((detail.notice_days_served / detail.notice_period_days) * 100))
-    : null;
+  const noticePct =
+    detail?.notice_period_days && detail.notice_days_served != null
+      ? Math.min(
+          100,
+          Math.round(
+            (detail.notice_days_served / detail.notice_period_days) * 100,
+          ),
+        )
+      : null;
 
   return (
     <>
       {/* Backdrop */}
-      <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div
+        className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm"
+        onClick={onClose}
+      />
 
       {/* Drawer */}
       <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col bg-white shadow-2xl overflow-hidden">
-
         {/* Header */}
         <div className="shrink-0 border-b bg-gradient-to-r from-cyan-600 to-blue-600 px-6 py-4">
           <div className="flex items-start justify-between gap-4">
@@ -181,7 +243,8 @@ export function NoticePeriodDrawer({
                     {detail.status.replace(/_/g, " ")}
                   </span>
                   <span className="rounded-full bg-white/20 px-2.5 py-0.5 text-xs font-bold text-white capitalize">
-                    {(detail.exit_type ?? "").replace(/_/g, " ")} · {(detail.exit_sub_type ?? "").replace(/_/g, " ")}
+                    {(detail.exit_type ?? "").replace(/_/g, " ")} ·{" "}
+                    {(detail.exit_sub_type ?? "").replace(/_/g, " ")}
                   </span>
                 </div>
               )}
@@ -213,32 +276,50 @@ export function NoticePeriodDrawer({
                 <section className="rounded-2xl border-2 border-cyan-200 bg-gradient-to-r from-cyan-50 to-blue-50 p-5">
                   <div className="flex items-center gap-2 mb-3">
                     <Clock className="h-4 w-4 text-cyan-600" />
-                    <h3 className="text-sm font-black text-cyan-800 uppercase tracking-wide">Notice Period Progress</h3>
+                    <h3 className="text-sm font-black text-cyan-800 uppercase tracking-wide">
+                      Notice Period Progress
+                    </h3>
                   </div>
                   <div className="grid grid-cols-3 gap-4 mb-4">
                     <div className="rounded-xl bg-white/70 p-3 text-center">
-                      <p className="text-xs font-semibold text-slate-500">Total Notice</p>
-                      <p className="mt-1 text-2xl font-black text-slate-800">{detail.notice_period_days}</p>
+                      <p className="text-xs font-semibold text-slate-500">
+                        Total Notice
+                      </p>
+                      <p className="mt-1 text-2xl font-black text-slate-800">
+                        {detail.notice_period_days}
+                      </p>
                       <p className="text-xs text-slate-400">days</p>
                     </div>
                     <div className="rounded-xl bg-white/70 p-3 text-center">
-                      <p className="text-xs font-semibold text-slate-500">Days Served</p>
-                      <p className="mt-1 text-2xl font-black text-blue-700">{detail.notice_days_served ?? "—"}</p>
+                      <p className="text-xs font-semibold text-slate-500">
+                        Days Served
+                      </p>
+                      <p className="mt-1 text-2xl font-black text-blue-700">
+                        {detail.notice_days_served ?? "—"}
+                      </p>
                       <p className="text-xs text-slate-400">days</p>
                     </div>
-                    <div className={`rounded-xl p-3 text-center ${
-                      (detail.notice_days_remaining ?? 0) <= 7
-                        ? "bg-red-100"
-                        : (detail.notice_days_remaining ?? 0) <= 14
-                        ? "bg-amber-100"
-                        : "bg-white/70"
-                    }`}>
-                      <p className="text-xs font-semibold text-slate-500">Days Remaining</p>
-                      <p className={`mt-1 text-2xl font-black ${
-                        (detail.notice_days_remaining ?? 0) <= 7 ? "text-red-700"
-                        : (detail.notice_days_remaining ?? 0) <= 14 ? "text-amber-700"
-                        : "text-slate-800"
-                      }`}>
+                    <div
+                      className={`rounded-xl p-3 text-center ${
+                        (detail.notice_days_remaining ?? 0) <= 7
+                          ? "bg-red-100"
+                          : (detail.notice_days_remaining ?? 0) <= 14
+                            ? "bg-amber-100"
+                            : "bg-white/70"
+                      }`}
+                    >
+                      <p className="text-xs font-semibold text-slate-500">
+                        Days Remaining
+                      </p>
+                      <p
+                        className={`mt-1 text-2xl font-black ${
+                          (detail.notice_days_remaining ?? 0) <= 7
+                            ? "text-red-700"
+                            : (detail.notice_days_remaining ?? 0) <= 14
+                              ? "text-amber-700"
+                              : "text-slate-800"
+                        }`}
+                      >
                         {detail.notice_days_remaining ?? "—"}
                       </p>
                       <p className="text-xs text-slate-400">days</p>
@@ -261,11 +342,21 @@ export function NoticePeriodDrawer({
                   <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
                     <div className="flex items-center gap-1.5 text-cyan-800">
                       <Calendar className="h-3 w-3" />
-                      <span>Start: <b>{fmtDate(detail.notice_start_date)}</b></span>
+                      <span>
+                        Start: <b>{fmtDate(detail.notice_start_date)}</b>
+                      </span>
                     </div>
                     <div className="flex items-center gap-1.5 text-cyan-800">
                       <Calendar className="h-3 w-3" />
-                      <span>LWD: <b>{fmtDate(detail.last_working_day_confirmed ?? detail.last_working_day_proposed)}</b></span>
+                      <span>
+                        LWD:{" "}
+                        <b>
+                          {fmtDate(
+                            detail.last_working_day_confirmed ??
+                              detail.last_working_day_proposed,
+                          )}
+                        </b>
+                      </span>
                     </div>
                   </div>
                 </section>
@@ -275,15 +366,29 @@ export function NoticePeriodDrawer({
               <section>
                 <div className="flex items-center gap-2 mb-3">
                   <User className="h-4 w-4 text-slate-400" />
-                  <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">Employee Details</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                    Employee Details
+                  </h3>
                 </div>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                  <InfoRow label="Employee Code" value={detail.employee_code ?? "—"} />
+                  <InfoRow
+                    label="Employee Code"
+                    value={detail.employee_code ?? "—"}
+                  />
                   <InfoRow label="Branch" value={detail.branch_name ?? "—"} />
                   <InfoRow label="Process" value={detail.process_name ?? "—"} />
-                  <InfoRow label="Department" value={detail.department_name ?? "—"} />
-                  <InfoRow label="Designation" value={detail.designation_name ?? "—"} />
-                  <InfoRow label="Joining Date" value={fmtDate(detail.date_of_joining)} />
+                  <InfoRow
+                    label="Department"
+                    value={detail.department_name ?? "—"}
+                  />
+                  <InfoRow
+                    label="Designation"
+                    value={detail.designation_name ?? "—"}
+                  />
+                  <InfoRow
+                    label="Joining Date"
+                    value={fmtDate(detail.date_of_joining)}
+                  />
                 </div>
               </section>
 
@@ -291,16 +396,22 @@ export function NoticePeriodDrawer({
               <section>
                 <div className="flex items-center gap-2 mb-3">
                   <Briefcase className="h-4 w-4 text-slate-400" />
-                  <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">Manager</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                    Manager
+                  </h3>
                 </div>
                 <div className="rounded-xl bg-slate-50 p-4 flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 text-blue-700 font-black text-sm shrink-0">
                     {(detail.manager_name ?? "?").charAt(0).toUpperCase()}
                   </div>
                   <div>
-                    <p className="font-bold text-slate-800">{detail.manager_name ?? "—"}</p>
+                    <p className="font-bold text-slate-800">
+                      {detail.manager_name ?? "—"}
+                    </p>
                     {detail.manager_code && (
-                      <p className="text-xs font-mono text-slate-500">{detail.manager_code}</p>
+                      <p className="text-xs font-mono text-slate-500">
+                        {detail.manager_code}
+                      </p>
                     )}
                   </div>
                   <div className="ml-auto text-xs text-slate-400">
@@ -313,16 +424,31 @@ export function NoticePeriodDrawer({
               <section>
                 <div className="flex items-center gap-2 mb-3">
                   <Building2 className="h-4 w-4 text-slate-400" />
-                  <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">Resignation Details</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                    Resignation Details
+                  </h3>
                 </div>
                 <div className="grid grid-cols-2 gap-3 mb-3">
-                  <InfoRow label="Raised On" value={fmtDate(detail.submitted_at ?? detail.created_at)} />
-                  <InfoRow label="Exit Reason Category" value={(detail.exit_reason_category ?? "—").replace(/_/g, " ")} />
+                  <InfoRow
+                    label="Raised On"
+                    value={fmtDate(detail.submitted_at ?? detail.created_at)}
+                  />
+                  <InfoRow
+                    label="Exit Reason Category"
+                    value={(detail.exit_reason_category ?? "—").replace(
+                      /_/g,
+                      " ",
+                    )}
+                  />
                 </div>
                 {detail.resignation_reason && (
                   <div className="rounded-xl bg-slate-50 border p-4">
-                    <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-1">Employee's Reason</p>
-                    <p className="text-sm text-slate-700 leading-relaxed">{detail.resignation_reason}</p>
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-1">
+                      Employee's Reason
+                    </p>
+                    <p className="text-sm text-slate-700 leading-relaxed">
+                      {detail.resignation_reason}
+                    </p>
                   </div>
                 )}
               </section>
@@ -332,18 +458,28 @@ export function NoticePeriodDrawer({
                 <section>
                   <div className="flex items-center gap-2 mb-3">
                     <MessageSquare className="h-4 w-4 text-blue-500" />
-                    <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">Manager Feedback</h3>
+                    <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                      Manager Feedback
+                    </h3>
                   </div>
                   <div className="space-y-3">
                     {managerFeedback.map((entry) => (
-                      <div key={entry.id} className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                      <div
+                        key={entry.id}
+                        className="rounded-xl border border-blue-100 bg-blue-50 p-4"
+                      >
                         <div className="flex items-center justify-between gap-2 mb-2">
                           <span className="text-xs font-bold text-blue-700">
-                            {entry.actioned_by_name ?? "Manager"} · {entry.action.replace(/_/g, " ")}
+                            {entry.actioned_by_name ?? "Manager"} ·{" "}
+                            {entry.action.replace(/_/g, " ")}
                           </span>
-                          <span className="text-xs text-blue-400">{fmtDateTime(entry.created_at)}</span>
+                          <span className="text-xs text-blue-400">
+                            {fmtDateTime(entry.created_at)}
+                          </span>
                         </div>
-                        <p className="text-sm text-slate-700 leading-relaxed">{entry.discussion_remarks}</p>
+                        <p className="text-sm text-slate-700 leading-relaxed">
+                          {entry.discussion_remarks}
+                        </p>
                       </div>
                     ))}
                   </div>
@@ -355,24 +491,38 @@ export function NoticePeriodDrawer({
                 <section>
                   <div className="flex items-center gap-2 mb-3">
                     <MessageSquare className="h-4 w-4 text-violet-500" />
-                    <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">HR Feedback</h3>
+                    <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                      HR Feedback
+                    </h3>
                   </div>
                   <div className="space-y-3">
                     {hrFeedback.map((entry) => (
-                      <div key={entry.id} className="rounded-xl border border-violet-100 bg-violet-50 p-4">
+                      <div
+                        key={entry.id}
+                        className="rounded-xl border border-violet-100 bg-violet-50 p-4"
+                      >
                         <div className="flex items-center justify-between gap-2 mb-2">
                           <span className="text-xs font-bold text-violet-700">
-                            {entry.actioned_by_name ?? "HR"} · {entry.action.replace(/_/g, " ")}
+                            {entry.actioned_by_name ?? "HR"} ·{" "}
+                            {entry.action.replace(/_/g, " ")}
                           </span>
-                          <span className="text-xs text-violet-400">{fmtDateTime(entry.created_at)}</span>
+                          <span className="text-xs text-violet-400">
+                            {fmtDateTime(entry.created_at)}
+                          </span>
                         </div>
                         {entry.discussion_remarks && (
-                          <p className="text-sm text-slate-700 leading-relaxed mb-2">{entry.discussion_remarks}</p>
+                          <p className="text-sm text-slate-700 leading-relaxed mb-2">
+                            {entry.discussion_remarks}
+                          </p>
                         )}
                         {entry.internal_notes && (
                           <div className="mt-2 rounded-lg bg-violet-100 px-3 py-2">
-                            <p className="text-xs font-bold text-violet-600 mb-1">Internal Note (HR only)</p>
-                            <p className="text-sm text-violet-800">{entry.internal_notes}</p>
+                            <p className="text-xs font-bold text-violet-600 mb-1">
+                              Internal Note (HR only)
+                            </p>
+                            <p className="text-sm text-violet-800">
+                              {entry.internal_notes}
+                            </p>
                           </div>
                         )}
                       </div>
@@ -386,38 +536,56 @@ export function NoticePeriodDrawer({
                 <section>
                   <div className="flex items-center gap-2 mb-3">
                     <Clock className="h-4 w-4 text-slate-400" />
-                    <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">Approval Timeline</h3>
+                    <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                      Approval Timeline
+                    </h3>
                   </div>
                   <div className="relative pl-4 space-y-0">
                     <div className="absolute left-1.5 top-2 bottom-2 w-0.5 bg-slate-200 rounded-full" />
                     {detail.timeline.map((entry, i) => (
                       <div key={entry.id} className="relative flex gap-3 pb-4">
-                        <div className={`absolute -left-2.5 mt-0.5 h-4 w-4 rounded-full border-2 border-white flex items-center justify-center ${
-                          entry.action === "approved" || entry.action === "notice_confirmed" ? "bg-emerald-500"
-                          : entry.action === "rejected" ? "bg-red-500"
-                          : "bg-blue-400"
-                        }`}>
-                          {(entry.action === "approved" || entry.action === "notice_confirmed") && (
+                        <div
+                          className={`absolute -left-2.5 mt-0.5 h-4 w-4 rounded-full border-2 border-white flex items-center justify-center ${
+                            entry.action === "approved" ||
+                            entry.action === "notice_confirmed"
+                              ? "bg-emerald-500"
+                              : entry.action === "rejected"
+                                ? "bg-red-500"
+                                : "bg-blue-400"
+                          }`}
+                        >
+                          {(entry.action === "approved" ||
+                            entry.action === "notice_confirmed") && (
                             <CheckCircle2 className="h-2.5 w-2.5 text-white" />
                           )}
                         </div>
-                        <div className={`flex-1 rounded-xl border p-3 ${i === detail.timeline.length - 1 ? "bg-slate-50 border-slate-200" : "bg-white"}`}>
+                        <div
+                          className={`flex-1 rounded-xl border p-3 ${i === detail.timeline.length - 1 ? "bg-slate-50 border-slate-200" : "bg-white"}`}
+                        >
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2">
-                              <span className={`rounded-full px-2 py-0.5 text-xs font-bold capitalize ${STAGE_COLORS[entry.stage] ?? "bg-slate-100 text-slate-600"}`}>
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-xs font-bold capitalize ${STAGE_COLORS[entry.stage] ?? "bg-slate-100 text-slate-600"}`}
+                              >
                                 {entry.stage.replace(/_/g, " ")}
                               </span>
                               <span className="text-xs font-bold text-slate-600 capitalize">
                                 {entry.action.replace(/_/g, " ")}
                               </span>
                             </div>
-                            <span className="text-xs text-slate-400">{fmtDateTime(entry.created_at)}</span>
+                            <span className="text-xs text-slate-400">
+                              {fmtDateTime(entry.created_at)}
+                            </span>
                           </div>
                           {entry.actioned_by_name && (
-                            <p className="mt-1 text-xs text-slate-500">By {entry.actioned_by_name}</p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              By {entry.actioned_by_name}
+                            </p>
                           )}
                           {entry.discussion_remarks && (
-                            <p className="mt-2 text-sm text-slate-700 italic">"{entry.discussion_remarks}"</p>
+                            <p className="mt-2 text-sm text-slate-700 italic">
+                              "{entry.discussion_remarks}"
+                            </p>
                           )}
                         </div>
                       </div>
@@ -432,78 +600,152 @@ export function NoticePeriodDrawer({
                   <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                     <div className="flex items-center gap-2">
                       <Shield className="h-4 w-4 text-slate-400" />
-                      <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">Clearance Tasks</h3>
+                      <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                        Clearance Tasks
+                      </h3>
                     </div>
                     <div className="flex items-center gap-2">
                       {detail.noc_case_status && (
-                        <span className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-0.5 rounded-full ${
-                          NOC_STATUS_COLORS[detail.noc_case_status] ?? "bg-slate-100 text-slate-600"
-                        }`}>
+                        <span
+                          className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                            NOC_STATUS_COLORS[detail.noc_case_status] ??
+                            "bg-slate-100 text-slate-600"
+                          }`}
+                        >
                           <ShieldCheck className="h-3 w-3" />
-                          NOC: {NOC_STATUS_LABELS[detail.noc_case_status] ?? detail.noc_case_status}
+                          NOC:{" "}
+                          {NOC_STATUS_LABELS[detail.noc_case_status] ??
+                            detail.noc_case_status}
                         </span>
                       )}
-                      <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
-                        clearedCount === totalClearance ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
-                      }`}>
+                      <span
+                        className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                          clearedCount === totalClearance
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-amber-100 text-amber-700"
+                        }`}
+                      >
                         {clearedCount}/{totalClearance} cleared
                       </span>
                     </div>
                   </div>
                   <div className="space-y-2">
-                    {detail.clearance_tasks.map((task, i) => (
-                      <div
-                        key={i}
-                        className={`flex items-start gap-3 rounded-xl p-3 ${
-                          task.status === "cleared" ? "bg-emerald-50 border border-emerald-100" : "bg-slate-50 border border-slate-100"
-                        }`}
-                      >
-                        <div className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white ${
-                          task.status === "cleared" ? "bg-emerald-500" : "bg-slate-300"
-                        }`}>
-                          {task.status === "cleared" && <CheckCircle2 className="h-3 w-3" />}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="text-sm font-semibold text-slate-700">{task.task_title}</p>
-                            <span className={`rounded-full px-2 py-0.5 text-xs font-bold capitalize ${CLEARANCE_STATUS_COLORS[task.status] ?? "bg-slate-100 text-slate-600"}`}>
-                              {task.status}
-                            </span>
-                          </div>
-                          <p className="text-xs text-slate-400 capitalize mt-0.5">{task.clearance_area.replace(/_/g, " ")}</p>
-                          {task.remarks && <p className="text-xs text-slate-500 mt-1">{task.remarks}</p>}
-                          {task.attachment_url && (
-                            <a href={task.attachment_url} target="_blank" rel="noopener noreferrer"
-                              className="mt-1 inline-flex items-center gap-1 text-xs text-blue-600 hover:underline">
-                              <Paperclip className="h-3 w-3" />View attachment
-                            </a>
-                          )}
-                        </div>
-                        <div className="flex shrink-0 flex-col items-end gap-1.5">
-                          {task.due_date && (
-                            <span className="text-xs text-slate-400">{fmtDate(task.due_date)}</span>
-                          )}
-                          {["pending", "in_progress", "blocked"].includes(task.status) && (
-                            <div className="flex gap-1.5">
-                              <button
-                                onClick={() => handleClearanceAction(task.id, "cleared")}
-                                disabled={clearanceMutation.isPending}
-                                className="cursor-pointer rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    {[...detail.clearance_tasks]
+                      .sort(
+                        (a, b) =>
+                          CLEARANCE_GROUP_ORDER.indexOf(
+                            clearanceOwnerGroupOf(a.clearance_area),
+                          ) -
+                          CLEARANCE_GROUP_ORDER.indexOf(
+                            clearanceOwnerGroupOf(b.clearance_area),
+                          ),
+                      )
+                      .map((task, i, sorted) => {
+                        const group = clearanceOwnerGroupOf(
+                          task.clearance_area,
+                        );
+                        const prevGroup =
+                          i > 0
+                            ? clearanceOwnerGroupOf(
+                                sorted[i - 1].clearance_area,
+                              )
+                            : null;
+                        const groupLabel =
+                          CLEARANCE_OWNER_GROUPS[group]?.label ?? "Other";
+                        return (
+                          <div key={task.id ?? i}>
+                            {group !== prevGroup && (
+                              <p className="mb-1.5 mt-3 text-[10px] font-bold uppercase tracking-wide text-slate-400 first:mt-0">
+                                {groupLabel}
+                              </p>
+                            )}
+                            <div
+                              className={`flex items-start gap-3 rounded-xl p-3 ${
+                                task.status === "cleared"
+                                  ? "bg-emerald-50 border border-emerald-100"
+                                  : "bg-slate-50 border border-slate-100"
+                              }`}
+                            >
+                              <div
+                                className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-white ${
+                                  task.status === "cleared"
+                                    ? "bg-emerald-500"
+                                    : "bg-slate-300"
+                                }`}
                               >
-                                Clear
-                              </button>
-                              <button
-                                onClick={() => handleClearanceAction(task.id, "waived")}
-                                disabled={clearanceMutation.isPending}
-                                className="cursor-pointer rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                Waive
-                              </button>
+                                {task.status === "cleared" && (
+                                  <CheckCircle2 className="h-3 w-3" />
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className="text-sm font-semibold text-slate-700">
+                                    {task.task_title}
+                                  </p>
+                                  <span
+                                    className={`rounded-full px-2 py-0.5 text-xs font-bold capitalize ${CLEARANCE_STATUS_COLORS[task.status] ?? "bg-slate-100 text-slate-600"}`}
+                                  >
+                                    {task.status}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-slate-400 capitalize mt-0.5">
+                                  {task.clearance_area.replace(/_/g, " ")}
+                                </p>
+                                {task.remarks && (
+                                  <p className="text-xs text-slate-500 mt-1">
+                                    {task.remarks}
+                                  </p>
+                                )}
+                                {task.attachment_url && (
+                                  <a
+                                    href={task.attachment_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="mt-1 inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
+                                  >
+                                    <Paperclip className="h-3 w-3" />
+                                    View attachment
+                                  </a>
+                                )}
+                              </div>
+                              <div className="flex shrink-0 flex-col items-end gap-1.5">
+                                {task.due_date && (
+                                  <span className="text-xs text-slate-400">
+                                    {fmtDate(task.due_date)}
+                                  </span>
+                                )}
+                                {["pending", "in_progress", "blocked"].includes(
+                                  task.status,
+                                ) && (
+                                  <div className="flex gap-1.5">
+                                    <button
+                                      onClick={() =>
+                                        handleClearanceAction(
+                                          task.id,
+                                          "cleared",
+                                        )
+                                      }
+                                      disabled={clearanceMutation.isPending}
+                                      className="cursor-pointer rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-bold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                      Clear
+                                    </button>
+                                    <button
+                                      onClick={() =>
+                                        handleClearanceAction(task.id, "waived")
+                                      }
+                                      disabled={clearanceMutation.isPending}
+                                      className="cursor-pointer rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                      Waive
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                          </div>
+                        );
+                      })}
                   </div>
                 </section>
               )}

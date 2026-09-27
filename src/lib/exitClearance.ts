@@ -46,8 +46,38 @@ export const NOC_STATUS_COLORS: Record<string, string> = {
 // 'it' added 2026-09-15 — "IT access closure" moved from owner_role='admin' to 'it'
 // (owner ruling; migration 1772 backfilled existing rows). 'trainer' removed same day —
 // trainer clearance dropped from the exit process entirely (migration 1774).
-export const CLEARANCE_OWNER_ROLES = ["manager", "hr", "admin", "wfm", "payroll", "it"] as const;
-export type ClearanceOwnerRole = typeof CLEARANCE_OWNER_ROLES[number];
+export const CLEARANCE_OWNER_ROLES = [
+  "manager",
+  "hr",
+  "admin",
+  "wfm",
+  "payroll",
+  "it",
+] as const;
+export type ClearanceOwnerRole = (typeof CLEARANCE_OWNER_ROLES)[number];
+
+/**
+ * Display-only grouping of the 8 clearance_area values into 4 owner groups (owner ruling
+ * 2026-09-26: fewer visible steps). This does NOT change clearance_area, owner_role, the
+ * DB enum, or who can clear a task — canClearTask() below still checks the real area against
+ * CLEARANCE_ROLE_MAP. It only controls how the Task Board groups and counts tasks on screen.
+ */
+export const CLEARANCE_OWNER_GROUPS: Record<
+  string,
+  { label: string; areas: string[] }
+> = {
+  manager: { label: "Manager", areas: ["manager"] },
+  it_admin: { label: "IT / Admin", areas: ["assets", "it"] },
+  hr: { label: "HR", areas: ["hr", "compliance"] },
+  payroll: { label: "Payroll", areas: ["payroll", "wfm"] },
+};
+
+export function clearanceOwnerGroupOf(area: string): string {
+  const hit = Object.entries(CLEARANCE_OWNER_GROUPS).find(([, g]) =>
+    g.areas.includes(area),
+  );
+  return hit?.[0] ?? "other";
+}
 
 export interface ExitClearanceTaskRow {
   id: string;

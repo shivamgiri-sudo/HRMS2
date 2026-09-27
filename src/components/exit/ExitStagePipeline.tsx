@@ -89,7 +89,10 @@ type PipelineRow = {
 
 /** Open clearance work on an employee who has already left: it now gates F&F only. */
 export function isPendingAtExit(row: PipelineRow): boolean {
-  if (exitStageOf(row.status) !== "exit" && exitStageOf(row.status) !== "settle")
+  if (
+    exitStageOf(row.status) !== "exit" &&
+    exitStageOf(row.status) !== "settle"
+  )
     return false;
   return Number(row.clearance_total ?? 0) > Number(row.clearance_cleared ?? 0);
 }
