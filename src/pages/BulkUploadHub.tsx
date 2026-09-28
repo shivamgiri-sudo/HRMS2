@@ -11,7 +11,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge";
 import { AprBulkUpload } from "@/components/attendance/AprBulkUpload";
-import { OnfidoUtilizationBulkUpload } from "@/components/quality-dashboard/OnfidoUtilizationBulkUpload";
 import {
   ProductivityUpload,
   canUseProductivityTab,
@@ -167,44 +166,6 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   CLOVIA_CHAT_DAILY: "import_clovia_chat_daily_batch",
   CLOVIA_CRM_DISPOSITION: "import_clovia_crm_disposition_batch",
   CLOVIA_FEEDBACK: "import_clovia_feedback_batch",
-  // GS1 India dashboard uploads (migration 1769). Backend import + dispatch already exist; without
-  // these entries the hub said "Import mapping for GS1_EMAIL_DAILY is not enabled yet." at the last step.
-  GS1_EMAIL_DAILY: "import_gs1_email_daily_batch",
-  GS1_DATAKART_DAILY: "import_gs1_datakart_daily_batch",
-  GS1_APPROVAL_AUDIT: "import_gs1_approval_audit_batch",
-  // Active templates whose backend import + dispatch exist but that had no entry here, so they
-  // stopped at the last step with "Import mapping for X is not enabled yet." Each rpc below is
-  // handled in backend bulk-dispatch.ts and listed in KNOWN_IMPORT_RPCS.
-  AW_CHAT_MASMIS: "import_aw_chat_batch",
-  BIRLANU_SALE_MASMIS: "import_birlanu_sale_batch",
-  BIRLANU_APR_MASMIS: "import_birlanu_apr_batch",
-  CL_APR_MASMIS: "import_cl_apr_batch",
-  CL_CHAT_MASMIS: "import_cl_chat_batch",
-  CL_DISPO_MASMIS: "import_cl_dispo_batch",
-  CL_EMAIL_RAW_MASMIS: "import_cl_email_raw_batch",
-  CL_FEEDBACK_MASMIS: "import_cl_feedback_batch",
-  CL_IB_CDR_MASMIS: "import_cl_ib_cdr_batch",
-  CL_OUTBOUND_MASMIS: "import_cl_outbound_batch",
-  CL_QUALITY_MASMIS: "import_cl_quality_batch",
-  CL_RECHURN_CALL_MASMIS: "import_cl_rechurn_call_batch",
-  DALMIA_APR: "import_dalmia_apr_batch",
-  DOMESTIC_BILLING_APPROVED_HC: "import_domestic_billing_approved_hc_batch",
-  GNC_CHAT_MASMIS: "import_gnc_chat_batch",
-  LP_FEEDBACK_APR_MASMIS: "import_lp_feedback_apr_batch",
-  LP_FEEDBACK_CDR_MASMIS: "import_lp_feedback_cdr_batch",
-  LP_ONBOARDING_APR_MASMIS: "import_lp_onboarding_apr_batch",
-  LP_ONBOARDING_CDR_MASMIS: "import_lp_onboarding_cdr_batch",
-  NEEMANS_AGENT_DETAILS_MASMIS: "import_neemans_agent_details_batch",
-  NEEMANS_CHAT_MASMIS: "import_neemans_chat_batch",
-  NEEMANS_MONTH_TARGET_MASMIS: "import_neemans_month_target_batch",
-  OWNER_SALE_MASMIS: "import_owner_sale_batch",
-  OWNER_CDR_MASMIS: "import_owner_cdr_batch",
-  OWNER_AGENT_DETAILS_MASMIS: "import_owner_agent_details_batch",
-  PRE_SALE_MASMIS: "import_pre_sale_batch",
-  PRE_CDR_MASMIS: "import_pre_cdr_batch",
-  PRE_AGENT_DETAILS_MASMIS: "import_pre_agent_details_batch",
-  SATYA_ALLOCATION_MASMIS: "import_satya_allocation_batch",
-  SATYA_CDR_MASMIS: "import_satya_cdr_batch",
   // Bella / BVO / Neemans MASMIS — write into db_masmis tables used by My Dashboards
   BB_SALE_MASMIS: "import_bb_sale_masmis_batch",
   BB_APR_MASMIS: "import_bb_apr_masmis_batch",
@@ -385,6 +346,22 @@ function formatDateTime(value?: string | null) {
 
   return new Intl.DateTimeFormat("en-IN", {
     dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Kolkata",
+  }).format(new Date(value));
+}
+
+function formatDateOnly(value?: string | null) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("en-IN", {
+    dateStyle: "medium",
+    timeZone: "Asia/Kolkata",
+  }).format(new Date(value));
+}
+
+function formatTimeOnly(value?: string | null) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("en-IN", {
     timeStyle: "short",
     timeZone: "Asia/Kolkata",
   }).format(new Date(value));
@@ -975,16 +952,11 @@ function getUploadTypeAllowedValues(uploadTypeCode: string): string[] {
         "── ALLOWED VALUES ──────────────────────────────────────────────",
         "",
         "employee_code: an ACTIVE employee inside your branch/process scope (e.g. MAS00001)",
-        "cost_centre_code: an OPEN MAS Callnet cost centre in the employee's branch",
-        "process_code: an ACTIVE process in your scope and in the employee's branch",
-        "lob_code: an ACTIVE LOB code from LOB Master (e.g. POA)",
+        "lob_code: an ACTIVE LOB code from LOB Master (e.g. ONF_KYC)",
         "",
-        "cost_centre_code, process_code and lob_code accept the master's code, or its exact",
-        "name when that name is unique (a shared name is rejected — use the code).",
-        "The LOB must already be mapped to the process. If a row is rejected with",
+        "The LOB must already be mapped to the employee's process. If a row is rejected with",
         "\"LOB X is not mapped to process Y\", add it first under WFM > Process LOB Mapping.",
-        "A row is applied only if EVERY check passes; otherwise the whole row is rejected.",
-        "All four cells are required on every row; this upload cannot clear a value.",
+        "Both cells are required on every row; this upload cannot clear a LOB.",
         "Only the first row for an employee_code is processed; repeats are rejected.",
       ];
     case "SHIFT_ROTATION_TYPE_UPDATE":
@@ -1381,7 +1353,7 @@ function TdsUploadTab() {
 
 // ── Main BulkUploadHub ─────────────────────────────────────────────────────────
 
-type HubTab = "master" | "apr" | "productivity" | "deduction-types" | "tds-upload" | "onfido_utilization";
+type HubTab = "master" | "apr" | "productivity" | "deduction-types" | "tds-upload";
 
 export default function BulkUploadHub() {
   const { user } = useAuth();
@@ -2009,7 +1981,7 @@ export default function BulkUploadHub() {
   return (
     <DashboardLayout>
       <div className="min-h-screen bg-slate-50 p-4 sm:p-6">
-        <div className="mx-auto max-w-7xl space-y-5">
+        <div className="space-y-5">
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
@@ -2101,18 +2073,6 @@ export default function BulkUploadHub() {
                   TDS Upload
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => setActiveTab("onfido_utilization")}
-                aria-pressed={effectiveTab === "onfido_utilization"}
-                className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-                  effectiveTab === "onfido_utilization"
-                    ? "bg-white text-slate-950 shadow-sm"
-                    : "text-slate-500 hover:text-slate-700"
-                }`}
-              >
-                Onfido Utilization
-              </button>
             </div>
           </section>
 
@@ -2136,12 +2096,6 @@ export default function BulkUploadHub() {
 
           {canUploadTds && effectiveTab === "tds-upload" && (
             <TdsUploadTab />
-          )}
-
-          {effectiveTab === "onfido_utilization" && (
-            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <OnfidoUtilizationBulkUpload />
-            </section>
           )}
 
           {effectiveTab === "master" && activeImportBatchId && (
@@ -2596,7 +2550,10 @@ export default function BulkUploadHub() {
                               </div>
                             )}
                           </Td>
-                          <Td>{formatDateTime(batch.uploaded_at)}</Td>
+                          <Td>
+                            <div className="font-medium text-slate-800">{formatDateOnly(batch.uploaded_at)}</div>
+                            <div className="mt-0.5 text-xs text-slate-400">{formatTimeOnly(batch.uploaded_at)}</div>
+                          </Td>
                           <Td className="sticky right-0 bg-white shadow-[-4px_0_8px_-2px_rgba(0,0,0,0.06)] group-hover:bg-slate-50">
                             <div className="flex flex-wrap gap-2">
                               <button
