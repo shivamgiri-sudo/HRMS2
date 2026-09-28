@@ -50,7 +50,9 @@ describe("resolvePendingWith — the cases that could mislead", () => {
   it("treats a dead finance_head_approved top-up as completed, not stuck", () => {
     // Declared on the enum but never written: the service goes straight to 'applied'. A legacy
     // row carrying it must not appear to be waiting on somebody who has already acted.
-    expect(resolvePendingWith("finance_head_approved", "topup").isPending).toBe(false);
+    expect(resolvePendingWith("finance_head_approved", "topup").isPending).toBe(
+      false,
+    );
   });
 
   it("treats a dead finance_head_approved budget as completed too, not stuck on Accounts Head", () => {
@@ -90,7 +92,15 @@ describe("resolvePendingWith — the cases that could mislead", () => {
   });
 
   it("never returns an empty label", () => {
-    for (const status of ["submitted", "branch_head_approved", "applied", "rejected", "draft", "", "nonsense"]) {
+    for (const status of [
+      "submitted",
+      "branch_head_approved",
+      "applied",
+      "rejected",
+      "draft",
+      "",
+      "nonsense",
+    ]) {
       expect(resolvePendingWith(status).label.length).toBeGreaterThan(0);
     }
   });
@@ -153,6 +163,21 @@ describe("resolveFinanceStageRole — GRN's 3-stage chain (owner ruling, 2026-09
         userRoles: ["finance_head"],
         currentStatus: "accounts_head_approved",
         workflow: "grn",
+      }),
+    ).toBe("finance_head");
+  });
+
+  it("still routes an imprest GRN already at accounts_head_approved to Finance Head (pre-carve-out history)", () => {
+    // The imprest carve-out (2026-09-28) only skips Accounts Head going forward. A voucher that
+    // reached accounts_head_approved before it deployed must not get stranded with no valid
+    // stage role.
+    expect(
+      resolveFinanceStageRole({
+        primaryRole: "finance_head",
+        userRoles: ["finance_head"],
+        currentStatus: "accounts_head_approved",
+        workflow: "grn",
+        grnType: "imprest",
       }),
     ).toBe("finance_head");
   });

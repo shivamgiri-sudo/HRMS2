@@ -43,11 +43,14 @@ export function resolveFinanceStageRole(input: {
   // /allocations/:id/review is finance_head-only) — so an imprest voucher raised as a GRN
   // shouldn't be either. Every other grn_type (vendor, and future types) stays 3-stage.
   const isImprestGrn = input.workflow === "grn" && String(input.grnType ?? "").toLowerCase() === "imprest";
+  // A row already at accounts_head_approved reached that status BEFORE the imprest carve-out
+  // deployed (this ruling only stops NEW imprest vouchers entering Accounts Head; it does not
+  // rewrite history), so it still resolves to finance_head regardless of grn_type.
   const expectedRole = input.currentStatus === "submitted"
     ? "branch_head"
     : input.currentStatus === "branch_head_approved"
       ? (input.workflow === "grn" && !isImprestGrn ? "accounts_head" : "finance_head")
-      : (input.workflow === "grn" && !isImprestGrn && input.currentStatus === "accounts_head_approved")
+      : (input.workflow === "grn" && input.currentStatus === "accounts_head_approved")
         ? "finance_head"
         : null;
 
