@@ -24,7 +24,7 @@ import {
   Bar,
   BarChart,
 } from "recharts";
-import { CalendarClock, Send, TrendingDown, TrendingUp, Users } from "lucide-react";
+import { CalendarClock, ChevronRight, Send, TrendingDown, TrendingUp, Users, X } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   AXIS_TICK,
@@ -49,6 +49,7 @@ import { useRosterConsoleFilters, type RosterConsoleFilters as Filters } from ".
 
 const SECTIONS = [
   { value: "shrinkage", label: "Shrinkage Trend" },
+  { value: "team-shrinkage", label: "Team Shrinkage" },
   { value: "publish", label: "Publish & Acknowledge" },
   { value: "attrition", label: "Attrition" },
   { value: "lateness", label: "Lateness" },
@@ -465,6 +466,232 @@ function LatenessSection({ filters }: { filters: Filters }) {
   );
 }
 
+/* ── Section 5: Team Shrinkage ─────────────────────────────────────────────── */
+
+interface ProcessShrinkageRow {
+  processId: string;
+  processName: string;
+  rostered: number;
+  present: number;
+  late: number;
+  absent: number;
+  onLeave: number;
+  shrinkagePct: number;
+  unplannedPct: number;
+  lateRatePct: number;
+}
+
+interface MemberMtdRow {
+  employeeId: string;
+  employeeCode: string;
+  employeeName: string;
+  branchName: string | null;
+  rostered: number;
+  present: number;
+  late: number;
+  absent: number;
+  leaveDays: number;
+  avgLateMinutes: number;
+  shrinkagePct: number;
+  lateRatePct: number;
+}
+
+function TeamShrinkageSection({ filters }: { filters: Filters }) {
+  const [drawerProcess, setDrawerProcess] = useState<ProcessShrinkageRow | null>(null);
+
+  const processQ = useQuery({
+    queryKey: ["process-shrinkage-mtd", filters.from, filters.to, filters.branchId, filters.processId],
+    queryFn: async () => {
+      const params = new URLSearchParams({ fromDate: filters.from, toDate: filters.to });
+      if (filters.branchId) params.set("branchId", filters.branchId);
+      if (filters.processId) params.set("processId", filters.processId);
+      const res = await hrmsApi.get<{ from: string; to: string; processes: ProcessShrinkageRow[] }>(
+        `/api/roster-analytics/process-shrinkage-mtd?${params}`,
+      );
+      return res.processes ?? [];
+    },
+    staleTime: 5 * 60_000,
+  });
+
+  const memberQ = useQuery({
+    queryKey: ["process-member-mtd", drawerProcess?.processId, filters.from, filters.to, filters.branchId],
+    enabled: !!drawerProcess,
+    queryFn: async () => {
+      if (!drawerProcess) return [];
+      const params = new URLSearchParams({
+        processId: drawerProcess.processId,
+        fromDate: filters.from,
+        toDate: filters.to,
+      });
+      if (filters.branchId) params.set("branchId", filters.branchId);
+      const res = await hrmsApi.get<{ processId: string; from: string; to: string; members: MemberMtdRow[] }>(
+        `/api/roster-analytics/process-member-mtd?${params}`,
+      );
+      return res.members ?? [];
+    },
+    staleTime: 5 * 60_000,
+  });
+
+  const processes = processQ.data ?? [];
+  const totalRostered = processes.reduce((a, r) => a + r.rostered, 0);
+  const totalPresent = processes.reduce((a, r) => a + r.present, 0);
+  const totalLate = processes.reduce((a, r) => a + r.late, 0);
+  const overallShrinkage = totalRostered > 0
+    ? Math.round(((totalRostered - totalPresent) / totalRostered) * 1000) / 10
+    : 0;
+
+  const shrinkageColor = (pct: number) =>
+    pct > 20 ? "text-rose-600 font-semibold" : pct > 10 ? "text-amber-600 font-semibold" : "text-emerald-600";
+
+  if (processQ.isLoading) return <ChartSkeleton height={320} />;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatTile label="Total rostered (MTD)" value={num(totalRostered)} icon={<Users className="h-4 w-4" />} />
+        <StatTile label="Total present (MTD)" value={num(totalPresent)}
+          denominator={totalRostered > 0 ? pct(ratio(totalPresent, totalRostered) ?? 0) + " attendance" : "—"}
+          intent="good" />
+        <StatTile label="Overall shrinkage" value={pct(overallShrinkage)}
+          intent={overallShrinkage > 20 ? "critical" : overallShrinkage > 10 ? "warning" : "good"}
+          icon={<TrendingDown className="h-4 w-4" />} />
+        <StatTile label="Total late (MTD)" value={num(totalLate)}
+          intent={totalLate > 0 ? "warning" : "neutral"} />
+      </div>
+
+      <ChartCard
+        title="Process-wise shrinkage"
+        subtitle={`${filters.from} → ${filters.to}. Click any row to drill into per-analyst attendance detail.`}
+      >
+        {processes.length === 0 ? (
+          <EmptyState label="No rostered data in this range/scope" hint="Try a wider date range or clear filters." height={180} />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-100 text-left text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                  <th className="py-2 pr-3">Process</th>
+                  <th className="py-2 pr-3 text-right">Rostered</th>
+                  <th className="py-2 pr-3 text-right">Present</th>
+                  <th className="py-2 pr-3 text-right">Late</th>
+                  <th className="py-2 pr-3 text-right">Absent</th>
+                  <th className="py-2 pr-3 text-right">On Leave</th>
+                  <th className="py-2 pr-3 text-right">Shrinkage %</th>
+                  <th className="py-2 pr-3 text-right">Unplanned %</th>
+                  <th className="py-2 pr-2 text-right">Late Rate %</th>
+                  <th className="py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {processes.map((p) => (
+                  <tr
+                    key={p.processId}
+                    className="cursor-pointer border-b border-slate-50 hover:bg-slate-50 transition-colors"
+                    onClick={() => setDrawerProcess(p)}
+                  >
+                    <td className="py-2 pr-3 font-medium text-slate-800">{p.processName}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums text-slate-600">{num(p.rostered)}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums text-emerald-600">{num(p.present)}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums text-amber-600">{num(p.late)}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums text-rose-500">{num(p.absent)}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums text-blue-500">{num(p.onLeave)}</td>
+                    <td className={`py-2 pr-3 text-right tabular-nums ${shrinkageColor(p.shrinkagePct)}`}>{pct(p.shrinkagePct)}</td>
+                    <td className={`py-2 pr-3 text-right tabular-nums ${shrinkageColor(p.unplannedPct)}`}>{pct(p.unplannedPct)}</td>
+                    <td className="py-2 pr-2 text-right tabular-nums text-slate-600">{pct(p.lateRatePct)}</td>
+                    <td className="py-2 pl-1"><ChevronRight className="h-3.5 w-3.5 text-slate-300" /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </ChartCard>
+
+      {/* Employee drill-down drawer */}
+      {drawerProcess && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/30"
+            onClick={() => setDrawerProcess(null)}
+          />
+          <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Team Shrinkage — Analyst View</p>
+                <p className="text-base font-semibold text-slate-900">{drawerProcess.processName}</p>
+                <p className="text-[11px] text-slate-500">{filters.from} → {filters.to}</p>
+              </div>
+              <button
+                onClick={() => setDrawerProcess(null)}
+                className="rounded-md p-1.5 hover:bg-slate-100 transition-colors"
+              >
+                <X className="h-4 w-4 text-slate-500" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              <p className="mb-3 text-[10px] font-bold uppercase tracking-wide text-slate-400">Process summary</p>
+              <div className="mb-4 grid grid-cols-3 gap-2 rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs">
+                <div><span className="text-slate-400">Rostered</span><br /><span className="font-semibold tabular-nums">{num(drawerProcess.rostered)}</span></div>
+                <div><span className="text-slate-400">Present</span><br /><span className="font-semibold tabular-nums text-emerald-600">{num(drawerProcess.present)}</span></div>
+                <div><span className="text-slate-400">Shrinkage</span><br /><span className={`font-semibold tabular-nums ${shrinkageColor(drawerProcess.shrinkagePct)}`}>{pct(drawerProcess.shrinkagePct)}</span></div>
+                <div><span className="text-slate-400">Late</span><br /><span className="font-semibold tabular-nums text-amber-600">{num(drawerProcess.late)}</span></div>
+                <div><span className="text-slate-400">Absent</span><br /><span className="font-semibold tabular-nums text-rose-500">{num(drawerProcess.absent)}</span></div>
+                <div><span className="text-slate-400">On Leave</span><br /><span className="font-semibold tabular-nums text-blue-500">{num(drawerProcess.onLeave)}</span></div>
+              </div>
+
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Per-analyst detail</p>
+              {memberQ.isLoading ? (
+                <ChartSkeleton height={200} />
+              ) : (memberQ.data ?? []).length === 0 ? (
+                <EmptyState label="No analyst data found" height={120} />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-left text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                        <th className="py-2 pr-3">Analyst</th>
+                        <th className="py-2 pr-3">Branch</th>
+                        <th className="py-2 pr-2 text-right">Rostered</th>
+                        <th className="py-2 pr-2 text-right">Present</th>
+                        <th className="py-2 pr-2 text-right">Late</th>
+                        <th className="py-2 pr-2 text-right">Absent</th>
+                        <th className="py-2 pr-2 text-right">Leave</th>
+                        <th className="py-2 pr-2 text-right">Shrink %</th>
+                        <th className="py-2 pr-2 text-right">Late %</th>
+                        <th className="py-2 text-right">Avg Late</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(memberQ.data ?? []).map((m) => (
+                        <tr key={m.employeeId} className="border-b border-slate-50">
+                          <td className="py-1.5 pr-3">
+                            <span className="font-medium text-slate-800">{m.employeeName}</span>
+                            <span className="ml-1 text-slate-400">({m.employeeCode})</span>
+                          </td>
+                          <td className="py-1.5 pr-3 text-slate-500">{m.branchName ?? "—"}</td>
+                          <td className="py-1.5 pr-2 text-right tabular-nums text-slate-600">{m.rostered}</td>
+                          <td className="py-1.5 pr-2 text-right tabular-nums text-emerald-600">{m.present}</td>
+                          <td className="py-1.5 pr-2 text-right tabular-nums text-amber-600">{m.late}</td>
+                          <td className="py-1.5 pr-2 text-right tabular-nums text-rose-500">{m.absent}</td>
+                          <td className="py-1.5 pr-2 text-right tabular-nums text-blue-500">{m.leaveDays}</td>
+                          <td className={`py-1.5 pr-2 text-right tabular-nums ${shrinkageColor(m.shrinkagePct)}`}>{pct(m.shrinkagePct)}</td>
+                          <td className="py-1.5 pr-2 text-right tabular-nums text-slate-600">{pct(m.lateRatePct)}</td>
+                          <td className="py-1.5 text-right tabular-nums text-slate-500">{m.avgLateMinutes > 0 ? `${m.avgLateMinutes}m` : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ── Root panel ────────────────────────────────────────────────────────────── */
 
 export default function TrendsPanel() {
@@ -485,6 +712,7 @@ export default function TrendsPanel() {
       />
       <SectionSwitcher active={section} onChange={setSection} />
       {section === "shrinkage" && <ShrinkageTrendSection filters={filters} />}
+      {section === "team-shrinkage" && <TeamShrinkageSection filters={filters} />}
       {section === "publish" && <PublishSection filters={filters} />}
       {section === "attrition" && <AttritionSection filters={filters} />}
       {section === "lateness" && <LatenessSection filters={filters} />}

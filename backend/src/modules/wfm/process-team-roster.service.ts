@@ -8,21 +8,22 @@
  * 4: WEEK_OFF_HOLIDAY (a day the employee was never scheduled to work) and UPCOMING
  * (today, shift scheduled but not yet due — reuses the isShiftDueYet guard shared with
  * roster-analytics.service.ts and roster-intelligence.service.ts, see shift-due.util.ts).
+ *
+ * Clock-in time: TIME_FORMAT(COALESCE(att.clock_in_time, bal.first_punch_in), '%H:%i:%s')
+ * — biometric_attendance_log is the raw COSEC punch record and is tried first; the
+ * attendance_daily_record.clock_in_time column stores the same value after the engine
+ * processes it but is also a DATETIME. dateStrings:true makes both return as
+ * "YYYY-MM-DD HH:MM:SS" strings; slicing to HH:MM requires TIME_FORMAT at SQL level.
  */
-import { db } from '../../db/mysql.js';
-import type { RowDataPacket } from 'mysql2';
-import { isShiftDueYet } from './shift-due.util.js';
-import { lobAnd, type LobFilter } from '../../shared/lobFilter.js';
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
+import { isShiftDueYet } from "./shift-due.util.js";
+import { lobAnd, type LobFilter } from "../../shared/lobFilter.js";
 
 const GRACE_MINUTES = 5;
 
 export type ProcessTeamRosterStatus =
-  | 'ON_TIME'
-  | 'LATE'
-  | 'ABSENT'
-  | 'ON_LEAVE'
-  | 'WEEK_OFF_HOLIDAY'
-  | 'UPCOMING';
+  "ON_TIME" | "LATE" | "ABSENT" | "ON_LEAVE" | "WEEK_OFF_HOLIDAY" | "UPCOMING";
 
 export interface ProcessTeamRosterMember {
   employeeId: string;
@@ -58,55 +59,67 @@ export interface ProcessTeamRosterView {
 }
 
 function timeToMinutes(t: string): number {
-  const parts = t.split(':').map(Number);
+  const parts = t.split(":").map(Number);
   return (parts[0] ?? 0) * 60 + (parts[1] ?? 0);
 }
 
 export async function getProcessTeamRosterView(
   processId: string,
   date: string,
-  lob: LobFilter = { kind: 'none' }
+  lob: LobFilter = { kind: "none" },
 ): Promise<ProcessTeamRosterView> {
   const lobSql = lobAnd(lob);
-  const [processRows] = await db.execute<RowDataPacket[]>(
-    `SELECT process_name FROM process_master WHERE id = ?`,
-    [processId]
-  );
-  const processName = processRows[0]?.process_name ? String(processRows[0].process_name) : null;
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       e.id AS employee_id,
-       e.employee_code,
-       e.full_name AS employee_name,
-       e.branch_id,
-       e.lob_id,
-       b.branch_name,
-       ra.assignment_type,
-       ra.shift_start_time,
-       ra.shift_end_time,
-       st.shift_name,
-       st.start_time AS template_start,
-       st.end_time AS template_end,
-       att.clock_in_time AS first_in,
-       att.clock_out_time AS last_out,
-       lr.leave_type_id,
-       lt.leave_name
-     FROM employees e
-     JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = ?
-     LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id
-     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ?
-     LEFT JOIN branch_master b ON b.id = e.branch_id
-     LEFT JOIN leave_request lr ON lr.employee_id = e.id
-       AND lr.status IN ('approved', 'branch_head_approved')
-       AND ? BETWEEN lr.from_date AND lr.to_date
-     LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
-     WHERE e.process_id = ?
-       AND e.active_status = 1
-       AND e.employment_status = 'Active'${lobSql.sql}
-     ORDER BY e.full_name`,
-    [date, date, date, processId, ...lobSql.params]
-  );
+  // Run process-name lookup and the main employee query in parallel — previously sequential.
+  const [processResult, employeeResult] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT process_name FROM process_master WHERE id = ?`,
+      [processId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT
+         e.id AS employee_id,
+         e.employee_code,
+         e.full_name AS employee_name,
+         e.branch_id,
+         e.lob_id,
+         b.branch_name,
+         lm.lob_name,
+         ra.assignment_type,
+         ra.shift_start_time,
+         ra.shift_end_time,
+         st.shift_name,
+         st.start_time AS template_start,
+         st.end_time AS template_end,
+         TIME_FORMAT(COALESCE(att.clock_in_time, bal.first_punch_in),  '%H:%i:%s') AS first_in,
+         TIME_FORMAT(COALESCE(att.clock_out_time, bal.last_punch_out), '%H:%i:%s') AS last_out,
+         lr.leave_type_id,
+         lt.leave_name
+       FROM employees e
+       JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = ?
+       LEFT JOIN wfm_shift_template st  ON st.id = ra.shift_template_id
+       LEFT JOIN attendance_daily_record att
+              ON att.employee_id = e.id AND att.record_date = ?
+       LEFT JOIN biometric_attendance_log bal
+              ON bal.employee_id = e.id AND bal.punch_date = ?
+       LEFT JOIN branch_master b  ON b.id = e.branch_id
+       LEFT JOIN lob_master    lm ON lm.id = e.lob_id
+       LEFT JOIN leave_request lr ON lr.employee_id = e.id
+         AND lr.status IN ('approved', 'branch_head_approved')
+         AND ? BETWEEN lr.from_date AND lr.to_date
+       LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
+       WHERE e.process_id = ?
+         AND e.active_status = 1
+         AND e.employment_status = 'Active'${lobSql.sql}
+       ORDER BY e.full_name`,
+      [date, date, date, date, processId, ...lobSql.params],
+    ),
+  ]);
+
+  const processName = processResult[0][0]?.process_name
+    ? String(processResult[0][0].process_name)
+    : null;
+  const rows = employeeResult[0];
 
   const counts = {
     onTime: 0,
@@ -119,38 +132,50 @@ export async function getProcessTeamRosterView(
   };
 
   const members: ProcessTeamRosterMember[] = rows.map((r: RowDataPacket) => {
-    const type = String(r.assignment_type ?? '').toUpperCase();
+    const type = String(r.assignment_type ?? "").toUpperCase();
     const shiftStart = r.template_start || r.shift_start_time;
     const shiftEnd = r.template_end || r.shift_end_time;
-    const shiftTime = shiftStart && shiftEnd
-      ? `${String(shiftStart).slice(0, 5)}-${String(shiftEnd).slice(0, 5)}`
-      : null;
+    const shiftTime =
+      shiftStart && shiftEnd
+        ? `${String(shiftStart).slice(0, 5)}-${String(shiftEnd).slice(0, 5)}`
+        : null;
+
+    // first_in is now "HH:MM:SS" (TIME_FORMAT ensures this); timeToMinutes is safe.
+    const firstIn: string | null = r.first_in ? String(r.first_in) : null;
 
     let status: ProcessTeamRosterStatus;
     let minutesLate: number | null = null;
 
-    if (type === 'WEEK_OFF' || type === 'HOLIDAY') {
-      status = 'WEEK_OFF_HOLIDAY';
+    if (type === "WEEK_OFF" || type === "HOLIDAY") {
+      status = "WEEK_OFF_HOLIDAY";
       counts.weekOffHoliday++;
-    } else if (type === 'LEAVE') {
-      status = 'ON_LEAVE';
+    } else if (type === "LEAVE") {
+      status = "ON_LEAVE";
       counts.onLeave++;
-    } else if (r.first_in) {
-      const loginMin = timeToMinutes(String(r.first_in));
-      const shiftStartMin = shiftStart ? timeToMinutes(String(shiftStart)) : 0;
+    } else if (firstIn) {
+      const loginMin = timeToMinutes(firstIn);
+      const shiftStartMin = shiftStart
+        ? timeToMinutes(String(shiftStart).slice(0, 8))
+        : 0;
       if (shiftStart && loginMin > shiftStartMin + GRACE_MINUTES) {
-        status = 'LATE';
+        status = "LATE";
         minutesLate = loginMin - shiftStartMin;
         counts.late++;
       } else {
-        status = 'ON_TIME';
+        status = "ON_TIME";
         counts.onTime++;
       }
-    } else if (!isShiftDueYet(shiftStart ? String(shiftStart) : null, date, GRACE_MINUTES)) {
-      status = 'UPCOMING';
+    } else if (
+      !isShiftDueYet(
+        shiftStart ? String(shiftStart) : null,
+        date,
+        GRACE_MINUTES,
+      )
+    ) {
+      status = "UPCOMING";
       counts.upcoming++;
     } else {
-      status = 'ABSENT';
+      status = "ABSENT";
       counts.absent++;
     }
 
@@ -163,28 +188,20 @@ export async function getProcessTeamRosterView(
       branchId: r.branch_id ? String(r.branch_id) : null,
       branchName: r.branch_name ? String(r.branch_name) : null,
       lobId: r.lob_id ? String(r.lob_id) : null,
-      lobName: null,
+      lobName: r.lob_name ? String(r.lob_name) : null,
       status,
       shiftName: r.shift_name ? String(r.shift_name) : null,
       shiftTime,
-      clockInTime: r.first_in ? String(r.first_in) : null,
+      clockInTime: firstIn,
       clockOutTime: r.last_out ? String(r.last_out) : null,
       minutesLate,
-      leaveType: r.leave_name ? String(r.leave_name) : (type === 'LEAVE' ? 'Leave' : null),
+      leaveType: r.leave_name
+        ? String(r.leave_name)
+        : type === "LEAVE"
+          ? "Leave"
+          : null,
     };
   });
-
-  // LOB names by parameter (not a join): employees.lob_id and lob_master.id may not share a collation.
-  const lobIds = [...new Set(members.map((m) => m.lobId).filter((v): v is string => !!v))];
-  if (lobIds.length) {
-    const [lobRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, lob_name FROM lob_master WHERE id IN (${lobIds.map(() => '?').join(', ')})`,
-      lobIds
-    );
-    const lobNames = new Map<string, string>();
-    for (const l of lobRows ?? []) lobNames.set(String(l.id), String(l.lob_name));
-    for (const m of members) m.lobName = m.lobId ? (lobNames.get(m.lobId) ?? null) : null;
-  }
 
   return { processId, processName, date, members, counts };
 }

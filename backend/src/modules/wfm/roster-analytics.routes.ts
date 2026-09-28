@@ -3,19 +3,19 @@
  *
  * APIs for shrinkage intelligence, quality correlation, and cost impact.
  */
-import { Router } from 'express';
-import { requireAuth } from '../../middleware/authMiddleware.js';
-import { requireRole } from '../../middleware/requireRole.js';
+import { Router } from "express";
+import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import {
   getWeeklyShrinkageIntelligence,
   getQualityAdherenceCorrelation,
   getCostOfNonAdherence,
   getShrinkageForecast,
-} from './roster-analytics.service.js';
-import { getProcessTeamRosterView } from './process-team-roster.service.js';
-import { todayLocalDateStr } from './shift-due.util.js';
-import { lobAnd, readLobFilter } from '../../shared/lobFilter.js';
-import { analyticsCache } from '../../shared/analyticsCache.js';
+} from "./roster-analytics.service.js";
+import { getProcessTeamRosterView } from "./process-team-roster.service.js";
+import { todayLocalDateStr } from "./shift-due.util.js";
+import { lobAnd, readLobFilter } from "../../shared/lobFilter.js";
+import { analyticsCache } from "../../shared/analyticsCache.js";
 
 const router = Router();
 
@@ -37,124 +37,190 @@ const realRoster = (alias: string) =>
   `NOT (${alias}.import_batch_id IS NULL AND ${alias}.cycle_id IS NULL ` +
   `AND ${alias}.assignment_type IS NULL AND ${alias}.shift_template_id IS NULL)`;
 
-const ANALYTICS_ROLES = ['super_admin', 'admin', 'hr', 'wfm', 'branch_head', 'operations_manager', 'ceo', 'coo'];
+const ANALYTICS_ROLES = [
+  "super_admin",
+  "admin",
+  "hr",
+  "wfm",
+  "branch_head",
+  "operations_manager",
+  "ceo",
+  "coo",
+];
 
 // Same role set as roster-intelligence.routes.ts's MANAGER_ROLES (not exported from
 // there, so mirrored here) — WFM Roster Console merge Phase C, matches the
 // WFM_ROSTER_TEAM_ROSTER page code's grant list in the console's SQL migration.
-const TEAM_ROSTER_ROLES = ['super_admin', 'admin', 'hr', 'wfm', 'branch_head', 'manager', 'operations_manager', 'process_manager'];
+const TEAM_ROSTER_ROLES = [
+  "super_admin",
+  "admin",
+  "hr",
+  "wfm",
+  "branch_head",
+  "manager",
+  "operations_manager",
+  "process_manager",
+];
 
 /**
  * GET /api/roster-analytics/shrinkage-intelligence/:branchId
  * Weekly shrinkage breakdown with cost impact, patterns, and manager ranking
  */
-router.get('/shrinkage-intelligence/:branchId', requireRole(...ANALYTICS_ROLES), async (req, res) => {
-  try {
-    const { branchId } = req.params;
-    const lob = readLobFilter(req, res);
-    if (!lob) return;
+router.get(
+  "/shrinkage-intelligence/:branchId",
+  requireRole(...ANALYTICS_ROLES),
+  async (req, res) => {
+    try {
+      const { branchId } = req.params;
+      const lob = readLobFilter(req, res);
+      if (!lob) return;
 
-    // Default to start of current week (Monday)
-    let weekStart = req.query.weekStart ? String(req.query.weekStart) : undefined;
-    if (!weekStart) {
-      const d = new Date();
-      const day = (d.getDay() + 6) % 7;
-      d.setDate(d.getDate() - day);
-      weekStart = d.toISOString().slice(0, 10);
+      // Default to start of current week (Monday)
+      let weekStart = req.query.weekStart
+        ? String(req.query.weekStart)
+        : undefined;
+      if (!weekStart) {
+        const d = new Date();
+        const day = (d.getDay() + 6) % 7;
+        d.setDate(d.getDate() - day);
+        weekStart = d.toISOString().slice(0, 10);
+      }
+
+      const data = await getWeeklyShrinkageIntelligence(
+        branchId,
+        weekStart,
+        lob,
+      );
+      res.json(data);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[roster-analytics] shrinkage-intelligence error:", msg);
+      res
+        .status(500)
+        .json({ error: `Failed to get shrinkage intelligence: ${msg}` });
     }
-
-    const data = await getWeeklyShrinkageIntelligence(branchId, weekStart, lob);
-    res.json(data);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[roster-analytics] shrinkage-intelligence error:', msg);
-    res.status(500).json({ error: `Failed to get shrinkage intelligence: ${msg}` });
-  }
-});
+  },
+);
 
 /**
  * GET /api/roster-analytics/quality-correlation
  * Correlation between attendance and quality scores
  */
-router.get('/quality-correlation', requireRole(...ANALYTICS_ROLES), analyticsCache('roster-analytics-quality-correlation'), async (req, res) => {
-  try {
-    const lob = readLobFilter(req, res);
-    if (!lob) return;
-    // Default to previous month
-    let period = req.query.period ? String(req.query.period) : undefined;
-    if (!period) {
-      const d = new Date();
-      d.setMonth(d.getMonth() - 1);
-      period = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+router.get(
+  "/quality-correlation",
+  requireRole(...ANALYTICS_ROLES),
+  analyticsCache("roster-analytics-quality-correlation"),
+  async (req, res) => {
+    try {
+      const lob = readLobFilter(req, res);
+      if (!lob) return;
+      // Default to previous month
+      let period = req.query.period ? String(req.query.period) : undefined;
+      if (!period) {
+        const d = new Date();
+        d.setMonth(d.getMonth() - 1);
+        period = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      }
+
+      const branchId = req.query.branchId
+        ? String(req.query.branchId)
+        : undefined;
+      const processId = req.query.processId
+        ? String(req.query.processId)
+        : undefined;
+
+      const data = await getQualityAdherenceCorrelation(
+        period,
+        branchId,
+        processId,
+        lob,
+      );
+      res.json(data);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[roster-analytics] quality-correlation error:", msg);
+      res
+        .status(500)
+        .json({ error: `Failed to get quality correlation: ${msg}` });
     }
-
-    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
-    const processId = req.query.processId ? String(req.query.processId) : undefined;
-
-    const data = await getQualityAdherenceCorrelation(period, branchId, processId, lob);
-    res.json(data);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[roster-analytics] quality-correlation error:', msg);
-    res.status(500).json({ error: `Failed to get quality correlation: ${msg}` });
-  }
-});
+  },
+);
 
 /**
  * GET /api/roster-analytics/cost-impact
  * Cost of non-adherence with breakdown and projections
  */
-router.get('/cost-impact', requireRole(...ANALYTICS_ROLES), analyticsCache('roster-analytics-cost-impact'), async (req, res) => {
-  try {
-    const lob = readLobFilter(req, res);
-    if (!lob) return;
-    // Default to previous month
-    let period = req.query.period ? String(req.query.period) : undefined;
-    if (!period) {
-      const d = new Date();
-      d.setMonth(d.getMonth() - 1);
-      period = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+router.get(
+  "/cost-impact",
+  requireRole(...ANALYTICS_ROLES),
+  analyticsCache("roster-analytics-cost-impact"),
+  async (req, res) => {
+    try {
+      const lob = readLobFilter(req, res);
+      if (!lob) return;
+      // Default to previous month
+      let period = req.query.period ? String(req.query.period) : undefined;
+      if (!period) {
+        const d = new Date();
+        d.setMonth(d.getMonth() - 1);
+        period = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      }
+
+      const branchId = req.query.branchId
+        ? String(req.query.branchId)
+        : undefined;
+      const processId = req.query.processId
+        ? String(req.query.processId)
+        : undefined;
+
+      const data = await getCostOfNonAdherence(
+        period,
+        branchId,
+        processId,
+        lob,
+      );
+      res.json(data);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[roster-analytics] cost-impact error:", msg);
+      res.status(500).json({ error: `Failed to get cost impact: ${msg}` });
     }
-
-    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
-    const processId = req.query.processId ? String(req.query.processId) : undefined;
-
-    const data = await getCostOfNonAdherence(period, branchId, processId, lob);
-    res.json(data);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[roster-analytics] cost-impact error:', msg);
-    res.status(500).json({ error: `Failed to get cost impact: ${msg}` });
-  }
-});
+  },
+);
 
 /**
  * GET /api/roster-analytics/forecast/:branchId
  * Shrinkage forecast for next week based on historical patterns
  */
-router.get('/forecast/:branchId', requireRole(...ANALYTICS_ROLES), async (req, res) => {
-  try {
-    const { branchId } = req.params;
-    const lob = readLobFilter(req, res);
-    if (!lob) return;
-    const data = await getShrinkageForecast(branchId, lob);
-    res.json(data);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[roster-analytics] forecast error:', msg);
-    res.status(500).json({ error: `Failed to get forecast: ${msg}` });
-  }
-});
+router.get(
+  "/forecast/:branchId",
+  requireRole(...ANALYTICS_ROLES),
+  async (req, res) => {
+    try {
+      const { branchId } = req.params;
+      const lob = readLobFilter(req, res);
+      if (!lob) return;
+      const data = await getShrinkageForecast(branchId, lob);
+      res.json(data);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[roster-analytics] forecast error:", msg);
+      res.status(500).json({ error: `Failed to get forecast: ${msg}` });
+    }
+  },
+);
 
 /**
  * GET /api/roster-analytics/summary
  * High-level summary for dashboard cards
  */
-router.get('/summary', requireRole(...ANALYTICS_ROLES), async (req, res) => {
+router.get("/summary", requireRole(...ANALYTICS_ROLES), async (req, res) => {
   try {
     const lob = readLobFilter(req, res);
     if (!lob) return;
-    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const branchId = req.query.branchId
+      ? String(req.query.branchId)
+      : undefined;
 
     // Current week shrinkage
     const d = new Date();
@@ -165,12 +231,16 @@ router.get('/summary', requireRole(...ANALYTICS_ROLES), async (req, res) => {
     // Previous month for cost
     const pm = new Date();
     pm.setMonth(pm.getMonth() - 1);
-    const period = `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, '0')}`;
+    const period = `${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, "0")}`;
 
     const results: Record<string, unknown> = {};
 
     if (branchId) {
-      const shrinkage = await getWeeklyShrinkageIntelligence(branchId, weekStart, lob);
+      const shrinkage = await getWeeklyShrinkageIntelligence(
+        branchId,
+        weekStart,
+        lob,
+      );
       results.currentWeekShrinkage = {
         pct: shrinkage.breakdown.total.pct,
         budgetPct: shrinkage.budgetPct,
@@ -178,7 +248,12 @@ router.get('/summary', requireRole(...ANALYTICS_ROLES), async (req, res) => {
         trend: shrinkage.trendVsPrevWeek,
       };
 
-      const cost = await getCostOfNonAdherence(period, branchId, undefined, lob);
+      const cost = await getCostOfNonAdherence(
+        period,
+        branchId,
+        undefined,
+        lob,
+      );
       results.monthCostImpact = {
         hoursLost: cost.metrics.hoursLost,
         costINR: cost.metrics.directCostLossINR,
@@ -193,7 +268,12 @@ router.get('/summary', requireRole(...ANALYTICS_ROLES), async (req, res) => {
       };
     }
 
-    const quality = await getQualityAdherenceCorrelation(period, branchId, undefined, lob);
+    const quality = await getQualityAdherenceCorrelation(
+      period,
+      branchId,
+      undefined,
+      lob,
+    );
     results.qualityCorrelation = {
       coefficient: quality.correlation.coefficient,
       interpretation: quality.correlation.interpretation,
@@ -202,8 +282,8 @@ router.get('/summary', requireRole(...ANALYTICS_ROLES), async (req, res) => {
 
     res.json(results);
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[roster-analytics] summary error:', msg);
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    console.error("[roster-analytics] summary error:", msg);
     res.status(500).json({ error: `Failed to get summary: ${msg}` });
   }
 });
@@ -214,15 +294,18 @@ router.get('/summary', requireRole(...ANALYTICS_ROLES), async (req, res) => {
  * GET /api/roster-analytics/employee-profile/:employeeId
  * Individual employee's roster adherence history and patterns
  */
-router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'manager', 'process_manager'), async (req, res) => {
-  try {
-    const { employeeId } = req.params;
-    const period = req.query.period ? String(req.query.period) : undefined;
+router.get(
+  "/employee-profile/:employeeId",
+  requireRole(...ANALYTICS_ROLES, "manager", "process_manager"),
+  async (req, res) => {
+    try {
+      const { employeeId } = req.params;
+      const period = req.query.period ? String(req.query.period) : undefined;
 
-    // Get employee basic info
-    const { db } = await import('../../db/mysql.js');
-    const [empRows] = await db.execute<any[]>(
-      `SELECT e.id, e.employee_code, e.full_name,
+      // Get employee basic info
+      const { db } = await import("../../db/mysql.js");
+      const [empRows] = await db.execute<any[]>(
+        `SELECT e.id, e.employee_code, e.full_name,
               COALESCE(dm.designation_name, '') AS designation,
               p.process_name, b.branch_name, e.reporting_manager_id,
               m.full_name AS manager_name, e.date_of_joining,
@@ -233,20 +316,20 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
        LEFT JOIN branch_master b ON e.branch_id = b.id
        LEFT JOIN employees m ON e.reporting_manager_id = m.id
        WHERE e.id = ?`,
-      [employeeId]
-    );
+        [employeeId],
+      );
 
-    if (empRows.length === 0) {
-      res.status(404).json({ error: 'Employee not found' });
-      return;
-    }
+      if (empRows.length === 0) {
+        res.status(404).json({ error: "Employee not found" });
+        return;
+      }
 
-    const emp = empRows[0];
+      const emp = empRows[0];
 
-    // Get current month adherence
-    const currentMonth = period || new Date().toISOString().slice(0, 7);
-    const [adherenceRows] = await db.execute<any[]>(
-      `SELECT
+      // Get current month adherence
+      const currentMonth = period || new Date().toISOString().slice(0, 7);
+      const [adherenceRows] = await db.execute<any[]>(
+        `SELECT
          COUNT(*) AS planned,
          SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS present,
          SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') AND adr.late_mark = 0 THEN 1 ELSE 0 END) AS on_time,
@@ -256,26 +339,29 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
        FROM wfm_roster_assignment ra
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        WHERE ra.employee_id = ? AND DATE_FORMAT(ra.roster_date, '%Y-%m') = ?
-         AND ${realRoster('ra')}`,
-      [employeeId, currentMonth]
-    );
+         AND ${realRoster("ra")}`,
+        [employeeId, currentMonth],
+      );
 
-    const currentPeriod = {
-      month: currentMonth,
-      planned: adherenceRows[0]?.planned ?? 0,
-      present: adherenceRows[0]?.present ?? 0,
-      adherencePct: adherenceRows[0]?.planned > 0
-        ? Math.round((adherenceRows[0].present / adherenceRows[0].planned) * 100)
-        : 0,
-      onTime: adherenceRows[0]?.on_time ?? 0,
-      late: adherenceRows[0]?.late ?? 0,
-      absent: adherenceRows[0]?.absent ?? 0,
-      incomplete: adherenceRows[0]?.incomplete ?? 0,
-    };
+      const currentPeriod = {
+        month: currentMonth,
+        planned: adherenceRows[0]?.planned ?? 0,
+        present: adherenceRows[0]?.present ?? 0,
+        adherencePct:
+          adherenceRows[0]?.planned > 0
+            ? Math.round(
+                (adherenceRows[0].present / adherenceRows[0].planned) * 100,
+              )
+            : 0,
+        onTime: adherenceRows[0]?.on_time ?? 0,
+        late: adherenceRows[0]?.late ?? 0,
+        absent: adherenceRows[0]?.absent ?? 0,
+        incomplete: adherenceRows[0]?.incomplete ?? 0,
+      };
 
-    // Get 6-month trend
-    const [trendRows] = await db.execute<any[]>(
-      `SELECT
+      // Get 6-month trend
+      const [trendRows] = await db.execute<any[]>(
+        `SELECT
          DATE_FORMAT(ra.roster_date, '%Y-%m') AS month,
          COUNT(*) AS planned,
          SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS present,
@@ -286,23 +372,25 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        WHERE ra.employee_id = ?
          AND ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
-         AND ${realRoster('ra')}
+         AND ${realRoster("ra")}
        GROUP BY DATE_FORMAT(ra.roster_date, '%Y-%m')
        ORDER BY month`,
-      [employeeId]
-    );
+        [employeeId],
+      );
 
-    const trend = trendRows.map((r: any) => ({
-      month: r.month,
-      adherencePct: r.planned > 0 ? Math.round((r.present / r.planned) * 100) : 0,
-      onTimePct: r.present > 0 ? Math.round((r.on_time / r.present) * 100) : 0,
-      latePct: r.present > 0 ? Math.round((r.late / r.present) * 100) : 0,
-      absentPct: r.planned > 0 ? Math.round((r.absent / r.planned) * 100) : 0,
-    }));
+      const trend = trendRows.map((r: any) => ({
+        month: r.month,
+        adherencePct:
+          r.planned > 0 ? Math.round((r.present / r.planned) * 100) : 0,
+        onTimePct:
+          r.present > 0 ? Math.round((r.on_time / r.present) * 100) : 0,
+        latePct: r.present > 0 ? Math.round((r.late / r.present) * 100) : 0,
+        absentPct: r.planned > 0 ? Math.round((r.absent / r.planned) * 100) : 0,
+      }));
 
-    // Day-of-week pattern
-    const [dayRows] = await db.execute<any[]>(
-      `SELECT
+      // Day-of-week pattern
+      const [dayRows] = await db.execute<any[]>(
+        `SELECT
          DAYNAME(ra.roster_date) AS day_name,
          COUNT(*) AS total,
          SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS present
@@ -310,29 +398,35 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        WHERE ra.employee_id = ?
          AND ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
-         AND ${realRoster('ra')}
+         AND ${realRoster("ra")}
        GROUP BY DAYNAME(ra.roster_date), DAYOFWEEK(ra.roster_date)
        ORDER BY DAYOFWEEK(ra.roster_date)`,
-      [employeeId]
-    );
+        [employeeId],
+      );
 
-    const avgAdherence = dayRows.length > 0
-      ? dayRows.reduce((s: number, r: any) => s + (r.total > 0 ? (r.present / r.total) * 100 : 0), 0) / dayRows.length
-      : 0;
+      const avgAdherence =
+        dayRows.length > 0
+          ? dayRows.reduce(
+              (s: number, r: any) =>
+                s + (r.total > 0 ? (r.present / r.total) * 100 : 0),
+              0,
+            ) / dayRows.length
+          : 0;
 
-    const dayOfWeekPattern = dayRows.map((r: any) => {
-      const adherencePct = r.total > 0 ? Math.round((r.present / r.total) * 100) : 0;
-      return {
-        day: r.day_name,
-        totalRostered: r.total,
-        adherencePct,
-        isWeakDay: adherencePct < avgAdherence - 5,
-      };
-    });
+      const dayOfWeekPattern = dayRows.map((r: any) => {
+        const adherencePct =
+          r.total > 0 ? Math.round((r.present / r.total) * 100) : 0;
+        return {
+          day: r.day_name,
+          totalRostered: r.total,
+          adherencePct,
+          isWeakDay: adherencePct < avgAdherence - 5,
+        };
+      });
 
-    // Shift pattern
-    const [shiftRows] = await db.execute<any[]>(
-      `SELECT
+      // Shift pattern
+      const [shiftRows] = await db.execute<any[]>(
+        `SELECT
          sm.shift_name,
          COUNT(*) AS total,
          SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS present
@@ -341,20 +435,20 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        WHERE ra.employee_id = ?
          AND ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
-         AND ${realRoster('ra')}
+         AND ${realRoster("ra")}
        GROUP BY sm.id, sm.shift_name`,
-      [employeeId]
-    );
+        [employeeId],
+      );
 
-    const shiftPattern = shiftRows.map((r: any) => ({
-      shiftName: r.shift_name,
-      totalRostered: r.total,
-      adherencePct: r.total > 0 ? Math.round((r.present / r.total) * 100) : 0,
-    }));
+      const shiftPattern = shiftRows.map((r: any) => ({
+        shiftName: r.shift_name,
+        totalRostered: r.total,
+        adherencePct: r.total > 0 ? Math.round((r.present / r.total) * 100) : 0,
+      }));
 
-    // Team and branch comparison
-    const [compRows] = await db.execute<any[]>(
-      `SELECT
+      // Team and branch comparison
+      const [compRows] = await db.execute<any[]>(
+        `SELECT
          (SELECT AVG(CASE WHEN adr2.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) * 100
           FROM attendance_daily_record adr2
           JOIN employees et ON et.id = adr2.employee_id
@@ -365,86 +459,106 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
           JOIN employees eb ON eb.id = adr3.employee_id
           WHERE eb.branch_id = (SELECT branch_id FROM employees WHERE id = ?)
             AND DATE_FORMAT(adr3.record_date, '%Y-%m') = ?) AS branch_avg`,
-      [emp.reporting_manager_id || employeeId, currentMonth, employeeId, currentMonth]
-    );
+        [
+          emp.reporting_manager_id || employeeId,
+          currentMonth,
+          employeeId,
+          currentMonth,
+        ],
+      );
 
-    const comparison = {
-      teamAvg: Math.round(compRows[0]?.team_avg ?? currentPeriod.adherencePct),
-      branchAvg: Math.round(compRows[0]?.branch_avg ?? currentPeriod.adherencePct),
-      employeePct: currentPeriod.adherencePct,
-      vsTeam: currentPeriod.adherencePct - Math.round(compRows[0]?.team_avg ?? currentPeriod.adherencePct),
-      vsBranch: currentPeriod.adherencePct - Math.round(compRows[0]?.branch_avg ?? currentPeriod.adherencePct),
-    };
+      const comparison = {
+        teamAvg: Math.round(
+          compRows[0]?.team_avg ?? currentPeriod.adherencePct,
+        ),
+        branchAvg: Math.round(
+          compRows[0]?.branch_avg ?? currentPeriod.adherencePct,
+        ),
+        employeePct: currentPeriod.adherencePct,
+        vsTeam:
+          currentPeriod.adherencePct -
+          Math.round(compRows[0]?.team_avg ?? currentPeriod.adherencePct),
+        vsBranch:
+          currentPeriod.adherencePct -
+          Math.round(compRows[0]?.branch_avg ?? currentPeriod.adherencePct),
+      };
 
-    // Risk signals (simplified)
-    const riskSignals: { tier: string | null; score: number | null; signals: string[] } = {
-      tier: null,
-      score: null,
-      signals: [],
-    };
+      // Risk signals (simplified)
+      const riskSignals: {
+        tier: string | null;
+        score: number | null;
+        signals: string[];
+      } = {
+        tier: null,
+        score: null,
+        signals: [],
+      };
 
-    if (currentPeriod.adherencePct < 75) {
-      riskSignals.signals.push('Low attendance adherence (<75%)');
-    }
-    if (currentPeriod.late > 5) {
-      riskSignals.signals.push(`Frequent late arrivals (${currentPeriod.late} in current month)`);
-    }
-    if (emp.aon_days <= 30) {
-      riskSignals.signals.push('New joiner (< 30 days)');
-    }
+      if (currentPeriod.adherencePct < 75) {
+        riskSignals.signals.push("Low attendance adherence (<75%)");
+      }
+      if (currentPeriod.late > 5) {
+        riskSignals.signals.push(
+          `Frequent late arrivals (${currentPeriod.late} in current month)`,
+        );
+      }
+      if (emp.aon_days <= 30) {
+        riskSignals.signals.push("New joiner (< 30 days)");
+      }
 
-    if (riskSignals.signals.length >= 2) {
-      riskSignals.tier = 'HIGH';
-      riskSignals.score = 65;
-    } else if (riskSignals.signals.length === 1) {
-      riskSignals.tier = 'MEDIUM';
-      riskSignals.score = 45;
-    }
+      if (riskSignals.signals.length >= 2) {
+        riskSignals.tier = "HIGH";
+        riskSignals.score = 65;
+      } else if (riskSignals.signals.length === 1) {
+        riskSignals.tier = "MEDIUM";
+        riskSignals.score = 45;
+      }
 
-    // Recent interventions
-    const [interventionRows] = await db.execute<any[]>(
-      `SELECT id, generated_at AS date,
+      // Recent interventions
+      const [interventionRows] = await db.execute<any[]>(
+        `SELECT id, generated_at AS date,
               JSON_UNQUOTE(JSON_EXTRACT(recommendations, '$[0].action')) AS action,
               outcome
        FROM employee_retention_recommendation
        WHERE employee_id = ?
        ORDER BY generated_at DESC
        LIMIT 5`,
-      [employeeId]
-    );
+        [employeeId],
+      );
 
-    res.json({
-      employee: {
-        id: emp.id,
-        employeeCode: emp.employee_code,
-        fullName: emp.full_name,
-        designation: emp.designation,
-        processName: emp.process_name,
-        branchName: emp.branch_name,
-        managerId: emp.reporting_manager_id,
-        managerName: emp.manager_name,
-        dateOfJoining: emp.date_of_joining,
-        aonDays: emp.aon_days,
-      },
-      currentPeriod,
-      trend,
-      dayOfWeekPattern,
-      shiftPattern,
-      comparison,
-      riskSignals,
-      recentInterventions: interventionRows.map((r: any) => ({
-        id: r.id,
-        date: r.date,
-        action: r.action || 'Retention intervention',
-        outcome: r.outcome || 'pending',
-      })),
-    });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[roster-analytics] employee-profile error:', msg);
-    res.status(500).json({ error: `Failed to get employee profile: ${msg}` });
-  }
-});
+      res.json({
+        employee: {
+          id: emp.id,
+          employeeCode: emp.employee_code,
+          fullName: emp.full_name,
+          designation: emp.designation,
+          processName: emp.process_name,
+          branchName: emp.branch_name,
+          managerId: emp.reporting_manager_id,
+          managerName: emp.manager_name,
+          dateOfJoining: emp.date_of_joining,
+          aonDays: emp.aon_days,
+        },
+        currentPeriod,
+        trend,
+        dayOfWeekPattern,
+        shiftPattern,
+        comparison,
+        riskSignals,
+        recentInterventions: interventionRows.map((r: any) => ({
+          id: r.id,
+          date: r.date,
+          action: r.action || "Retention intervention",
+          outcome: r.outcome || "pending",
+        })),
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[roster-analytics] employee-profile error:", msg);
+      res.status(500).json({ error: `Failed to get employee profile: ${msg}` });
+    }
+  },
+);
 
 // ── Phase 5: Shift Effectiveness & Break Compliance ──────────────────────────
 
@@ -452,31 +566,39 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
  * GET /api/roster-analytics/shift-effectiveness
  * Shift-wise adherence comparison with break compliance
  */
-router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), analyticsCache('roster-analytics-shift-effectiveness'), async (req, res) => {
-  try {
-    const lob = readLobFilter(req, res);
-    if (!lob) return;
-    const { db } = await import('../../db/mysql.js');
-    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
-    const processId = req.query.processId ? String(req.query.processId) : undefined;
+router.get(
+  "/shift-effectiveness",
+  requireRole(...ANALYTICS_ROLES),
+  analyticsCache("roster-analytics-shift-effectiveness"),
+  async (req, res) => {
+    try {
+      const lob = readLobFilter(req, res);
+      if (!lob) return;
+      const { db } = await import("../../db/mysql.js");
+      const branchId = req.query.branchId
+        ? String(req.query.branchId)
+        : undefined;
+      const processId = req.query.processId
+        ? String(req.query.processId)
+        : undefined;
 
-    let whereClause = `WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ${realRoster('ra')}`;
-    const params: string[] = [];
+      let whereClause = `WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ${realRoster("ra")}`;
+      const params: string[] = [];
 
-    if (branchId) {
-      whereClause += ' AND e.branch_id = ?';
-      params.push(branchId);
-    }
-    if (processId) {
-      whereClause += ' AND e.process_id = ?';
-      params.push(processId);
-    }
-    const lobSql = lobAnd(lob);
-    whereClause += lobSql.sql;
-    params.push(...lobSql.params);
+      if (branchId) {
+        whereClause += " AND e.branch_id = ?";
+        params.push(branchId);
+      }
+      if (processId) {
+        whereClause += " AND e.process_id = ?";
+        params.push(processId);
+      }
+      const lobSql = lobAnd(lob);
+      whereClause += lobSql.sql;
+      params.push(...lobSql.params);
 
-    const [rows] = await db.execute<any[]>(
-      `SELECT
+      const [rows] = await db.execute<any[]>(
+        `SELECT
          sm.id AS shift_id,
          sm.shift_name,
          CONCAT(TIME_FORMAT(sm.start_time, '%H:%i'), ' - ', TIME_FORMAT(sm.end_time, '%H:%i')) AS shift_time,
@@ -522,68 +644,90 @@ router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), analyticsCac
        ${whereClause}
        GROUP BY sm.id, sm.shift_name, sm.start_time, sm.end_time
        ORDER BY adherence_pct DESC`,
-      params
-    );
+        params,
+      );
 
-    const shifts = rows.map((r: any, i: number) => ({
-      shiftId: r.shift_id,
-      shiftName: r.shift_name,
-      shiftTime: r.shift_time,
-      shiftType: r.shift_type || 'MORNING',
-      totalEmployees: r.total_employees,
-      metrics: {
-        adherencePct: Math.round(r.adherence_pct ?? 0),
-        onTimePct: Math.round(r.on_time_pct ?? 0),
-        qualityAvg: Math.round(r.quality_avg ?? 0),
-        breakCompliancePct: r.break_budget > 0
-          ? Math.round(Math.min(100, (r.break_budget / Math.max(r.avg_break_minutes, 1)) * 100))
-          : 100,
-        avgBreakMinutes: Math.round(r.avg_break_minutes ?? r.break_budget ?? 30),
-        breakBudget: r.break_budget ?? 30,
-        productivityScore: Math.round(((r.adherence_pct ?? 0) * 0.4 + (r.quality_avg ?? 0) * 0.4 + (r.on_time_pct ?? 0) * 0.2)),
-      },
-      trend: { adherence: 0, quality: 0 },
-      rank: i + 1,
-      isOptimal: i === 0,
-    }));
+      const shifts = rows.map((r: any, i: number) => ({
+        shiftId: r.shift_id,
+        shiftName: r.shift_name,
+        shiftTime: r.shift_time,
+        shiftType: r.shift_type || "MORNING",
+        totalEmployees: r.total_employees,
+        metrics: {
+          adherencePct: Math.round(r.adherence_pct ?? 0),
+          onTimePct: Math.round(r.on_time_pct ?? 0),
+          qualityAvg: Math.round(r.quality_avg ?? 0),
+          breakCompliancePct:
+            r.break_budget > 0
+              ? Math.round(
+                  Math.min(
+                    100,
+                    (r.break_budget / Math.max(r.avg_break_minutes, 1)) * 100,
+                  ),
+                )
+              : 100,
+          avgBreakMinutes: Math.round(
+            r.avg_break_minutes ?? r.break_budget ?? 30,
+          ),
+          breakBudget: r.break_budget ?? 30,
+          productivityScore: Math.round(
+            (r.adherence_pct ?? 0) * 0.4 +
+              (r.quality_avg ?? 0) * 0.4 +
+              (r.on_time_pct ?? 0) * 0.2,
+          ),
+        },
+        trend: { adherence: 0, quality: 0 },
+        rank: i + 1,
+        isOptimal: i === 0,
+      }));
 
-    res.json({ shifts });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[roster-analytics] shift-effectiveness error:', msg);
-    res.status(500).json({ error: `Failed to get shift effectiveness: ${msg}` });
-  }
-});
+      res.json({ shifts });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[roster-analytics] shift-effectiveness error:", msg);
+      res
+        .status(500)
+        .json({ error: `Failed to get shift effectiveness: ${msg}` });
+    }
+  },
+);
 
 /**
  * GET /api/roster-analytics/break-compliance
  * Break compliance tracking
  */
-router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res) => {
-  try {
-    const lob = readLobFilter(req, res);
-    if (!lob) return;
-    const { db } = await import('../../db/mysql.js');
-    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
-    const processId = req.query.processId ? String(req.query.processId) : undefined;
+router.get(
+  "/break-compliance",
+  requireRole(...ANALYTICS_ROLES),
+  async (req, res) => {
+    try {
+      const lob = readLobFilter(req, res);
+      if (!lob) return;
+      const { db } = await import("../../db/mysql.js");
+      const branchId = req.query.branchId
+        ? String(req.query.branchId)
+        : undefined;
+      const processId = req.query.processId
+        ? String(req.query.processId)
+        : undefined;
 
-    let branchFilter = '';
-    const params: string[] = [];
-    if (branchId) {
-      branchFilter = 'AND e.branch_id = ?';
-      params.push(branchId);
-    }
-    if (processId) {
-      branchFilter += ' AND e.process_id = ?';
-      params.push(processId);
-    }
-    const lobSql = lobAnd(lob);
-    branchFilter += lobSql.sql;
-    params.push(...lobSql.params);
+      let branchFilter = "";
+      const params: string[] = [];
+      if (branchId) {
+        branchFilter = "AND e.branch_id = ?";
+        params.push(branchId);
+      }
+      if (processId) {
+        branchFilter += " AND e.process_id = ?";
+        params.push(processId);
+      }
+      const lobSql = lobAnd(lob);
+      branchFilter += lobSql.sql;
+      params.push(...lobSql.params);
 
-    // Overall break compliance
-    const [overallRows] = await db.execute<any[]>(
-      `SELECT
+      // Overall break compliance
+      const [overallRows] = await db.execute<any[]>(
+        `SELECT
          COUNT(*) AS total_sessions,
          AVG(wb.total_break) AS avg_break,
          30 AS budget,
@@ -604,22 +748,30 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
        JOIN employees e ON wb.employee_id = e.id
        JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
        WHERE 1=1 ${branchFilter}`,
-      params
-    );
+        params,
+      );
 
-    const overall = {
-      compliancePct: overallRows[0]?.budget > 0
-        ? Math.round(Math.min(100, (overallRows[0].budget / Math.max(overallRows[0].avg_break, 1)) * 100))
-        : 90,
-      avgBreakMinutes: Math.round(overallRows[0]?.avg_break ?? 30),
-      budgetMinutes: Math.round(overallRows[0]?.budget ?? 30),
-      overBreakCount: overallRows[0]?.over_break ?? 0,
-      underBreakCount: overallRows[0]?.under_break ?? 0,
-    };
+      const overall = {
+        compliancePct:
+          overallRows[0]?.budget > 0
+            ? Math.round(
+                Math.min(
+                  100,
+                  (overallRows[0].budget /
+                    Math.max(overallRows[0].avg_break, 1)) *
+                    100,
+                ),
+              )
+            : 90,
+        avgBreakMinutes: Math.round(overallRows[0]?.avg_break ?? 30),
+        budgetMinutes: Math.round(overallRows[0]?.budget ?? 30),
+        overBreakCount: overallRows[0]?.over_break ?? 0,
+        underBreakCount: overallRows[0]?.under_break ?? 0,
+      };
 
-    // By shift
-    const [shiftRows] = await db.execute<any[]>(
-      `SELECT
+      // By shift
+      const [shiftRows] = await db.execute<any[]>(
+        `SELECT
          sm.id AS shift_id,
          sm.shift_name,
          AVG(wb.total_break) AS avg_break,
@@ -635,21 +787,26 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
        JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id
        WHERE 1=1 ${branchFilter}
        GROUP BY sm.id, sm.shift_name`,
-      params
-    );
+        params,
+      );
 
-    const byShift = shiftRows.map((r: any) => ({
-      shiftId: r.shift_id,
-      shiftName: r.shift_name,
-      compliancePct: r.budget > 0 ? Math.round(Math.min(100, (r.budget / Math.max(r.avg_break, 1)) * 100)) : 90,
-      avgBreakMinutes: Math.round(r.avg_break ?? r.budget ?? 30),
-      budgetMinutes: r.budget ?? 30,
-      trend: 0,
-    }));
+      const byShift = shiftRows.map((r: any) => ({
+        shiftId: r.shift_id,
+        shiftName: r.shift_name,
+        compliancePct:
+          r.budget > 0
+            ? Math.round(
+                Math.min(100, (r.budget / Math.max(r.avg_break, 1)) * 100),
+              )
+            : 90,
+        avgBreakMinutes: Math.round(r.avg_break ?? r.budget ?? 30),
+        budgetMinutes: r.budget ?? 30,
+        trend: 0,
+      }));
 
-    // Top violators
-    const [violatorRows] = await db.execute<any[]>(
-      `SELECT
+      // Top violators
+      const [violatorRows] = await db.execute<any[]>(
+        `SELECT
          e.id AS employee_id,
          e.employee_code,
          e.full_name AS employee_name,
@@ -668,13 +825,13 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
        HAVING AVG(wb.total_break - 30) > 5
        ORDER BY avg_excess DESC
        LIMIT 10`,
-      params
-    );
+        params,
+      );
 
-    // Merge-plan Phase B bug #13: byProcess was hardcoded to [] — implement it
-    // the same way byShift already works, grouped by process instead of shift.
-    const [processRows] = await db.execute<any[]>(
-      `SELECT
+      // Merge-plan Phase B bug #13: byProcess was hardcoded to [] — implement it
+      // the same way byShift already works, grouped by process instead of shift.
+      const [processRows] = await db.execute<any[]>(
+        `SELECT
          p.id AS process_id,
          p.process_name,
          AVG(wb.total_break) AS avg_break,
@@ -690,36 +847,42 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
        JOIN process_master p ON e.process_id = p.id
        WHERE 1=1 ${branchFilter}
        GROUP BY p.id, p.process_name`,
-      params
-    );
+        params,
+      );
 
-    const byProcess = processRows.map((r: any) => ({
-      processId: r.process_id,
-      processName: r.process_name,
-      compliancePct: r.budget > 0 ? Math.round(Math.min(100, (r.budget / Math.max(r.avg_break, 1)) * 100)) : 90,
-      avgBreakMinutes: Math.round(r.avg_break ?? r.budget ?? 30),
-      budgetMinutes: r.budget ?? 30,
-      trend: 0,
-    }));
+      const byProcess = processRows.map((r: any) => ({
+        processId: r.process_id,
+        processName: r.process_name,
+        compliancePct:
+          r.budget > 0
+            ? Math.round(
+                Math.min(100, (r.budget / Math.max(r.avg_break, 1)) * 100),
+              )
+            : 90,
+        avgBreakMinutes: Math.round(r.avg_break ?? r.budget ?? 30),
+        budgetMinutes: r.budget ?? 30,
+        trend: 0,
+      }));
 
-    res.json({
-      overall,
-      byShift,
-      byProcess,
-      topViolators: violatorRows.map((r: any) => ({
-        employeeId: r.employee_id,
-        employeeCode: r.employee_code,
-        employeeName: r.employee_name,
-        avgExcessMinutes: Math.round(r.avg_excess),
-        occurrences: r.occurrences,
-      })),
-    });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[roster-analytics] break-compliance error:', msg);
-    res.status(500).json({ error: `Failed to get break compliance: ${msg}` });
-  }
-});
+      res.json({
+        overall,
+        byShift,
+        byProcess,
+        topViolators: violatorRows.map((r: any) => ({
+          employeeId: r.employee_id,
+          employeeCode: r.employee_code,
+          employeeName: r.employee_name,
+          avgExcessMinutes: Math.round(r.avg_excess),
+          occurrences: r.occurrences,
+        })),
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[roster-analytics] break-compliance error:", msg);
+      res.status(500).json({ error: `Failed to get break compliance: ${msg}` });
+    }
+  },
+);
 
 /**
  * GET /api/roster-analytics/shift-recommendations
@@ -736,32 +899,40 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
  * employee's own adherence and the target shift's cohort average, and
  * `confidence` is derived from the employee's own sample size (scheduled days).
  */
-router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), analyticsCache('roster-analytics-shift-recommendations'), async (req, res) => {
-  try {
-    const lob = readLobFilter(req, res);
-    if (!lob) return;
-    const { db } = await import('../../db/mysql.js');
-    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
-    const processId = req.query.processId ? String(req.query.processId) : undefined;
+router.get(
+  "/shift-recommendations",
+  requireRole(...ANALYTICS_ROLES),
+  analyticsCache("roster-analytics-shift-recommendations"),
+  async (req, res) => {
+    try {
+      const lob = readLobFilter(req, res);
+      if (!lob) return;
+      const { db } = await import("../../db/mysql.js");
+      const branchId = req.query.branchId
+        ? String(req.query.branchId)
+        : undefined;
+      const processId = req.query.processId
+        ? String(req.query.processId)
+        : undefined;
 
-    let whereClause = `WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ${realRoster('ra')}`;
-    const params: string[] = [];
-    if (branchId) {
-      whereClause += ' AND e.branch_id = ?';
-      params.push(branchId);
-    }
-    if (processId) {
-      whereClause += ' AND e.process_id = ?';
-      params.push(processId);
-    }
-    const lobSql = lobAnd(lob);
-    whereClause += lobSql.sql;
-    params.push(...lobSql.params);
+      let whereClause = `WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ${realRoster("ra")}`;
+      const params: string[] = [];
+      if (branchId) {
+        whereClause += " AND e.branch_id = ?";
+        params.push(branchId);
+      }
+      if (processId) {
+        whereClause += " AND e.process_id = ?";
+        params.push(processId);
+      }
+      const lobSql = lobAnd(lob);
+      whereClause += lobSql.sql;
+      params.push(...lobSql.params);
 
-    // Per-shift cohort adherence (same shape as /shift-effectiveness, minimal fields).
-    // Both queries are independent (same filters), so they run concurrently: 2 in flight max.
-    const shiftRowsPromise = db.execute<any[]>(
-      `SELECT
+      // Per-shift cohort adherence (same shape as /shift-effectiveness, minimal fields).
+      // Both queries are independent (same filters), so they run concurrently: 2 in flight max.
+      const shiftRowsPromise = db.execute<any[]>(
+        `SELECT
          sm.id AS shift_id,
          sm.shift_name,
          CONCAT(TIME_FORMAT(sm.start_time, '%H:%i'), ' - ', TIME_FORMAT(sm.end_time, '%H:%i')) AS shift_time,
@@ -773,12 +944,12 @@ router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), analyticsC
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        ${whereClause}
        GROUP BY sm.id, sm.shift_name, sm.start_time, sm.end_time`,
-      params
-    );
+        params,
+      );
 
-    // Per-employee personal adherence + current shift, same 30-day window/filters.
-    const empRowsPromise = db.execute<any[]>(
-      `SELECT
+      // Per-employee personal adherence + current shift, same 30-day window/filters.
+      const empRowsPromise = db.execute<any[]>(
+        `SELECT
          ra.employee_id,
          e.employee_code,
          e.full_name,
@@ -794,49 +965,63 @@ router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), analyticsC
        ${whereClause}
        GROUP BY ra.employee_id, e.employee_code, e.full_name, sm.id, sm.shift_name, sm.start_time, sm.end_time
        HAVING scheduled_days >= 5`,
-      params
-    );
-    const [[shiftRows], [empRows]] = await Promise.all([shiftRowsPromise, empRowsPromise]);
+        params,
+      );
+      const [[shiftRows], [empRows]] = await Promise.all([
+        shiftRowsPromise,
+        empRowsPromise,
+      ]);
 
-    const eligibleShifts = shiftRows.filter((r: any) => Number(r.total_employees) >= 5);
-    if (eligibleShifts.length < 2) {
-      // Can't meaningfully recommend a move without at least 2 real cohorts to compare.
-      res.json({ recommendations: [] });
-      return;
+      const eligibleShifts = shiftRows.filter(
+        (r: any) => Number(r.total_employees) >= 5,
+      );
+      if (eligibleShifts.length < 2) {
+        // Can't meaningfully recommend a move without at least 2 real cohorts to compare.
+        res.json({ recommendations: [] });
+        return;
+      }
+
+      const bestShift = eligibleShifts.reduce((best: any, r: any) =>
+        Number(r.adherence_pct) > Number(best.adherence_pct) ? r : best,
+      );
+
+      const recommendations = empRows
+        .filter((r: any) => r.shift_id !== bestShift.shift_id)
+        .map((r: any) => {
+          const personalAdherence =
+            (Number(r.present_days) / Number(r.scheduled_days)) * 100;
+          const gap = Number(bestShift.adherence_pct) - personalAdherence;
+          return { r, personalAdherence, gap };
+        })
+        .filter(
+          ({ personalAdherence, gap }) => personalAdherence < 70 && gap >= 15,
+        )
+        .sort((a, b) => b.gap - a.gap)
+        .slice(0, 25)
+        .map(({ r, personalAdherence, gap }) => ({
+          employeeId: r.employee_id,
+          employeeCode: r.employee_code,
+          employeeName: r.full_name,
+          currentShift: `${r.shift_name} (${r.shift_time})`,
+          recommendedShift: `${bestShift.shift_name} (${bestShift.shift_time})`,
+          reason: `Personal adherence is ${Math.round(personalAdherence)}% over the last 30 days (${r.present_days}/${r.scheduled_days} scheduled days present), vs ${Math.round(Number(bestShift.adherence_pct))}% average for employees on ${bestShift.shift_name}.`,
+          expectedImprovement: Math.round(gap),
+          confidence:
+            Number(r.scheduled_days) >= 15
+              ? "HIGH"
+              : Number(r.scheduled_days) >= 8
+                ? "MEDIUM"
+                : "LOW",
+        }));
+
+      res.json({ recommendations });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[roster-analytics] shift-recommendations error:", msg);
+      res.status(500).json({ error: `Failed to get recommendations: ${msg}` });
     }
-
-    const bestShift = eligibleShifts.reduce((best: any, r: any) =>
-      Number(r.adherence_pct) > Number(best.adherence_pct) ? r : best
-    );
-
-    const recommendations = empRows
-      .filter((r: any) => r.shift_id !== bestShift.shift_id)
-      .map((r: any) => {
-        const personalAdherence = (Number(r.present_days) / Number(r.scheduled_days)) * 100;
-        const gap = Number(bestShift.adherence_pct) - personalAdherence;
-        return { r, personalAdherence, gap };
-      })
-      .filter(({ personalAdherence, gap }) => personalAdherence < 70 && gap >= 15)
-      .sort((a, b) => b.gap - a.gap)
-      .slice(0, 25)
-      .map(({ r, personalAdherence, gap }) => ({
-        employeeId: r.employee_id,
-        employeeCode: r.employee_code,
-        employeeName: r.full_name,
-        currentShift: `${r.shift_name} (${r.shift_time})`,
-        recommendedShift: `${bestShift.shift_name} (${bestShift.shift_time})`,
-        reason: `Personal adherence is ${Math.round(personalAdherence)}% over the last 30 days (${r.present_days}/${r.scheduled_days} scheduled days present), vs ${Math.round(Number(bestShift.adherence_pct))}% average for employees on ${bestShift.shift_name}.`,
-        expectedImprovement: Math.round(gap),
-        confidence: Number(r.scheduled_days) >= 15 ? 'HIGH' : Number(r.scheduled_days) >= 8 ? 'MEDIUM' : 'LOW',
-      }));
-
-    res.json({ recommendations });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[roster-analytics] shift-recommendations error:', msg);
-    res.status(500).json({ error: `Failed to get recommendations: ${msg}` });
-  }
-});
+  },
+);
 
 // ── Phase 6: Team Comparison ─────────────────────────────────────────────────
 
@@ -844,34 +1029,39 @@ router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), analyticsC
  * GET /api/roster-analytics/team-comparison
  * Compare adherence across managers, processes, and branches
  */
-router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res) => {
-  try {
-    const lob = readLobFilter(req, res);
-    if (!lob) return;
-    const { db } = await import('../../db/mysql.js');
-    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
-    const period = req.query.period ? String(req.query.period) : 'current';
+router.get(
+  "/team-comparison",
+  requireRole(...ANALYTICS_ROLES),
+  async (req, res) => {
+    try {
+      const lob = readLobFilter(req, res);
+      if (!lob) return;
+      const { db } = await import("../../db/mysql.js");
+      const branchId = req.query.branchId
+        ? String(req.query.branchId)
+        : undefined;
+      const period = req.query.period ? String(req.query.period) : "current";
 
-    let dateFilter = `ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ${realRoster('ra')}`;
-    if (period === 'last') {
-      dateFilter = `DATE_FORMAT(ra.roster_date, '%Y-%m') = DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m') AND ${realRoster('ra')}`;
-    } else if (period === 'quarter') {
-      dateFilter = `ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND ${realRoster('ra')}`;
-    }
+      let dateFilter = `ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ${realRoster("ra")}`;
+      if (period === "last") {
+        dateFilter = `DATE_FORMAT(ra.roster_date, '%Y-%m') = DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m') AND ${realRoster("ra")}`;
+      } else if (period === "quarter") {
+        dateFilter = `ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND ${realRoster("ra")}`;
+      }
 
-    let branchFilter = '';
-    const params: string[] = [];
-    if (branchId) {
-      branchFilter = 'AND e.branch_id = ?';
-      params.push(branchId);
-    }
-    const lobSql = lobAnd(lob);
-    branchFilter += lobSql.sql;
-    params.push(...lobSql.params);
+      let branchFilter = "";
+      const params: string[] = [];
+      if (branchId) {
+        branchFilter = "AND e.branch_id = ?";
+        params.push(branchId);
+      }
+      const lobSql = lobAnd(lob);
+      branchFilter += lobSql.sql;
+      params.push(...lobSql.params);
 
-    // Team rankings (by manager)
-    const [teamRows] = await db.execute<any[]>(
-      `SELECT
+      // Team rankings (by manager)
+      const [teamRows] = await db.execute<any[]>(
+        `SELECT
          m.id AS manager_id,
          m.full_name AS manager_name,
          p.process_name,
@@ -912,30 +1102,31 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
        HAVING team_size >= 3
        ORDER BY adherence_pct DESC
        LIMIT 50`,
-      params
-    );
+        params,
+      );
 
-    const teams = teamRows.map((r: any, i: number) => ({
-      managerId: r.manager_id,
-      managerName: r.manager_name,
-      processName: r.process_name,
-      branchName: r.branch_name,
-      teamSize: r.team_size,
-      metrics: {
-        adherencePct: Math.round(r.adherence_pct ?? 0),
-        onTimePct: Math.round(r.on_time_pct ?? 0),
-        qualityAvg: Math.round(r.quality_avg ?? 0),
-        shrinkagePct: Math.round(r.shrinkage_pct ?? 0),
-        breakCompliancePct: r.break_compliance_pct ?? 90,
-      },
-      trend: 0,
-      rank: i + 1,
-      badge: i === 0 ? 'GOLD' : i === 1 ? 'SILVER' : i === 2 ? 'BRONZE' : null,
-    }));
+      const teams = teamRows.map((r: any, i: number) => ({
+        managerId: r.manager_id,
+        managerName: r.manager_name,
+        processName: r.process_name,
+        branchName: r.branch_name,
+        teamSize: r.team_size,
+        metrics: {
+          adherencePct: Math.round(r.adherence_pct ?? 0),
+          onTimePct: Math.round(r.on_time_pct ?? 0),
+          qualityAvg: Math.round(r.quality_avg ?? 0),
+          shrinkagePct: Math.round(r.shrinkage_pct ?? 0),
+          breakCompliancePct: r.break_compliance_pct ?? 90,
+        },
+        trend: 0,
+        rank: i + 1,
+        badge:
+          i === 0 ? "GOLD" : i === 1 ? "SILVER" : i === 2 ? "BRONZE" : null,
+      }));
 
-    // Process rankings
-    const [processRows] = await db.execute<any[]>(
-      `SELECT
+      // Process rankings
+      const [processRows] = await db.execute<any[]>(
+        `SELECT
          p.id AS process_id,
          p.process_name,
          b.branch_name,
@@ -970,26 +1161,26 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
        WHERE ${dateFilter} ${branchFilter}
        GROUP BY p.id, p.process_name, b.branch_name
        ORDER BY adherence_pct DESC`,
-      params
-    );
+        params,
+      );
 
-    const processes = processRows.map((r: any, i: number) => ({
-      processId: r.process_id,
-      processName: r.process_name,
-      branchName: r.branch_name,
-      employeeCount: r.employee_count,
-      metrics: {
-        adherencePct: Math.round(r.adherence_pct ?? 0),
-        qualityAvg: Math.round(r.quality_avg ?? 0),
-        shrinkagePct: Math.round(r.shrinkage_pct ?? 0),
-      },
-      trend: 0,
-      rank: i + 1,
-    }));
+      const processes = processRows.map((r: any, i: number) => ({
+        processId: r.process_id,
+        processName: r.process_name,
+        branchName: r.branch_name,
+        employeeCount: r.employee_count,
+        metrics: {
+          adherencePct: Math.round(r.adherence_pct ?? 0),
+          qualityAvg: Math.round(r.quality_avg ?? 0),
+          shrinkagePct: Math.round(r.shrinkage_pct ?? 0),
+        },
+        trend: 0,
+        rank: i + 1,
+      }));
 
-    // Branch rankings
-    const [branchRows] = await db.execute<any[]>(
-      `SELECT
+      // Branch rankings
+      const [branchRows] = await db.execute<any[]>(
+        `SELECT
          b.id AS branch_id,
          b.branch_name,
          COUNT(DISTINCT ra.employee_id) AS employee_count,
@@ -1023,39 +1214,43 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
        WHERE ${dateFilter}
        GROUP BY b.id, b.branch_name
        ORDER BY adherence_pct DESC`,
-      []
-    );
+        [],
+      );
 
-    const branches = branchRows.map((r: any, i: number) => ({
-      branchId: r.branch_id,
-      branchName: r.branch_name,
-      employeeCount: r.employee_count,
-      managerCount: r.manager_count,
-      metrics: {
-        adherencePct: Math.round(r.adherence_pct ?? 0),
-        qualityAvg: Math.round(r.quality_avg ?? 0),
-        shrinkagePct: Math.round(r.shrinkage_pct ?? 0),
-      },
-      trend: 0,
-      rank: i + 1,
-    }));
+      const branches = branchRows.map((r: any, i: number) => ({
+        branchId: r.branch_id,
+        branchName: r.branch_name,
+        employeeCount: r.employee_count,
+        managerCount: r.manager_count,
+        metrics: {
+          adherencePct: Math.round(r.adherence_pct ?? 0),
+          qualityAvg: Math.round(r.quality_avg ?? 0),
+          shrinkagePct: Math.round(r.shrinkage_pct ?? 0),
+        },
+        trend: 0,
+        rank: i + 1,
+      }));
 
-    res.json({
-      teams,
-      processes,
-      branches,
-      insights: teams.length > 0 ? [
-        `Top performer ${teams[0]?.managerName} maintains ${teams[0]?.metrics.adherencePct}% adherence`,
-        'Consistent on-time arrivals correlate with higher quality scores',
-        'Early intervention on attendance patterns prevents attrition',
-      ] : [],
-    });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[roster-analytics] team-comparison error:', msg);
-    res.status(500).json({ error: `Failed to get team comparison: ${msg}` });
-  }
-});
+      res.json({
+        teams,
+        processes,
+        branches,
+        insights:
+          teams.length > 0
+            ? [
+                `Top performer ${teams[0]?.managerName} maintains ${teams[0]?.metrics.adherencePct}% adherence`,
+                "Consistent on-time arrivals correlate with higher quality scores",
+                "Early intervention on attendance patterns prevents attrition",
+              ]
+            : [],
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[roster-analytics] team-comparison error:", msg);
+      res.status(500).json({ error: `Failed to get team comparison: ${msg}` });
+    }
+  },
+);
 
 // ── Mobile PWA: Team Status ──────────────────────────────────────────────────
 
@@ -1063,24 +1258,27 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
  * GET /api/roster-analytics/team-status-mobile
  * Lightweight endpoint for mobile dashboard — returns team attendance summary
  */
-router.get('/team-status-mobile', requireRole(...ANALYTICS_ROLES, 'manager', 'process_manager', 'tl'), async (req, res) => {
-  try {
-    const lob = readLobFilter(req, res);
-    if (!lob) return;
-    const { db } = await import('../../db/mysql.js');
-    const authReq = req as any;
-    const managerId = authReq.authUser?.id;
+router.get(
+  "/team-status-mobile",
+  requireRole(...ANALYTICS_ROLES, "manager", "process_manager", "tl"),
+  async (req, res) => {
+    try {
+      const lob = readLobFilter(req, res);
+      if (!lob) return;
+      const { db } = await import("../../db/mysql.js");
+      const authReq = req as any;
+      const managerId = authReq.authUser?.id;
 
-    if (!managerId) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
+      if (!managerId) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
 
-    const today = new Date().toISOString().slice(0, 10);
+      const today = new Date().toISOString().slice(0, 10);
 
-    // Get team members under this manager
-    const [teamRows] = await db.execute<any[]>(
-      `SELECT e.id AS employee_id, e.employee_code, e.full_name AS employee_name,
+      // Get team members under this manager
+      const [teamRows] = await db.execute<any[]>(
+        `SELECT e.id AS employee_id, e.employee_code, e.full_name AS employee_name,
               sm.shift_name,
               CASE WHEN ra.is_week_off = 1 THEN 'WEEK_OFF' ELSE 'WORKING' END AS roster_status,
               adr.attendance_status,
@@ -1104,58 +1302,75 @@ router.get('/team-status-mobile', requireRole(...ANALYTICS_ROLES, 'manager', 'pr
          AND e.active_status = 1
          AND e.employment_status = 'Active'${lobAnd(lob).sql}
        ORDER BY e.full_name`,
-      [today, today, today, today, managerId, ...lobAnd(lob).params]
-    );
+        [today, today, today, today, managerId, ...lobAnd(lob).params],
+      );
 
-    const members = teamRows.map((r: any) => {
-      let status: string = 'pending';
-      if (r.roster_status === 'WEEK_OFF') status = 'week_off';
-      else if (r.attendance_status === 'on_leave') status = 'on_leave';
-      else if (r.attendance_status === 'present') status = r.late_minutes > 5 ? 'late' : 'present';
-      else if (r.attendance_status === 'absent') status = 'absent';
-      else if (r.attendance_status === 'half_day') status = 'present';
+      const members = teamRows.map((r: any) => {
+        let status: string = "pending";
+        if (r.roster_status === "WEEK_OFF") status = "week_off";
+        else if (r.attendance_status === "on_leave") status = "on_leave";
+        else if (r.attendance_status === "present")
+          status = r.late_minutes > 5 ? "late" : "present";
+        else if (r.attendance_status === "absent") status = "absent";
+        else if (r.attendance_status === "half_day") status = "present";
 
-      return {
-        employeeId: r.employee_id,
-        employeeCode: r.employee_code,
-        employeeName: r.employee_name,
-        status,
-        shiftName: r.shift_name || 'General',
-        loginTime: r.login_time ? new Date(r.login_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }) : undefined,
-        lateMinutes: r.late_minutes > 5 ? r.late_minutes : undefined,
-        breakStatus: r.on_break ? 'on_break' : 'available',
-      };
-    });
+        return {
+          employeeId: r.employee_id,
+          employeeCode: r.employee_code,
+          employeeName: r.employee_name,
+          status,
+          shiftName: r.shift_name || "General",
+          loginTime: r.login_time
+            ? new Date(r.login_time).toLocaleTimeString("en-IN", {
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+              })
+            : undefined,
+          lateMinutes: r.late_minutes > 5 ? r.late_minutes : undefined,
+          breakStatus: r.on_break ? "on_break" : "available",
+        };
+      });
 
-    const teamSize = members.length;
-    const present = members.filter((m: any) => m.status === 'present' || m.status === 'late').length;
-    const absent = members.filter((m: any) => m.status === 'absent').length;
-    const late = members.filter((m: any) => m.status === 'late').length;
-    const onLeave = members.filter((m: any) => m.status === 'on_leave').length;
-    const weekOff = members.filter((m: any) => m.status === 'week_off').length;
-    const onBreak = members.filter((m: any) => m.breakStatus === 'on_break').length;
+      const teamSize = members.length;
+      const present = members.filter(
+        (m: any) => m.status === "present" || m.status === "late",
+      ).length;
+      const absent = members.filter((m: any) => m.status === "absent").length;
+      const late = members.filter((m: any) => m.status === "late").length;
+      const onLeave = members.filter(
+        (m: any) => m.status === "on_leave",
+      ).length;
+      const weekOff = members.filter(
+        (m: any) => m.status === "week_off",
+      ).length;
+      const onBreak = members.filter(
+        (m: any) => m.breakStatus === "on_break",
+      ).length;
 
-    const rostered = teamSize - onLeave - weekOff;
-    const adherencePct = rostered > 0 ? Math.round((present / rostered) * 100) : 100;
+      const rostered = teamSize - onLeave - weekOff;
+      const adherencePct =
+        rostered > 0 ? Math.round((present / rostered) * 100) : 100;
 
-    res.json({
-      date: today,
-      teamSize,
-      present,
-      absent,
-      late,
-      onLeave,
-      weekOff,
-      onBreak,
-      adherencePct,
-      members,
-    });
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[roster-analytics] team-status-mobile error:', msg);
-    res.status(500).json({ error: `Failed to get team status: ${msg}` });
-  }
-});
+      res.json({
+        date: today,
+        teamSize,
+        present,
+        absent,
+        late,
+        onLeave,
+        weekOff,
+        onBreak,
+        adherencePct,
+        members,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[roster-analytics] team-status-mobile error:", msg);
+      res.status(500).json({ error: `Failed to get team status: ${msg}` });
+    }
+  },
+);
 
 /**
  * GET /api/roster-analytics/process-roster?processId=<uuid>&date=YYYY-MM-DD
@@ -1164,29 +1379,232 @@ router.get('/team-status-mobile', requireRole(...ANALYTICS_ROLES, 'manager', 'pr
  * date is rejected since a roster for a day that hasn't happened yet would be all
  * UPCOMING/meaningless (the frontend's date control is separately capped at today).
  */
-router.get('/process-roster', requireRole(...TEAM_ROSTER_ROLES), async (req, res) => {
-  try {
-    const lob = readLobFilter(req, res);
-    if (!lob) return;
-    const processId = req.query.processId ? String(req.query.processId) : undefined;
-    if (!processId) {
-      res.status(400).json({ error: 'processId is required' });
-      return;
-    }
-    const today = todayLocalDateStr();
-    const date = req.query.date ? String(req.query.date) : today;
-    if (date > today) {
-      res.status(400).json({ error: 'date cannot be in the future' });
-      return;
-    }
+router.get(
+  "/process-roster",
+  requireRole(...TEAM_ROSTER_ROLES),
+  async (req, res) => {
+    try {
+      const lob = readLobFilter(req, res);
+      if (!lob) return;
+      const processId = req.query.processId
+        ? String(req.query.processId)
+        : undefined;
+      if (!processId) {
+        res.status(400).json({ error: "processId is required" });
+        return;
+      }
+      const today = todayLocalDateStr();
+      const date = req.query.date ? String(req.query.date) : today;
+      if (date > today) {
+        res.status(400).json({ error: "date cannot be in the future" });
+        return;
+      }
 
-    const view = await getProcessTeamRosterView(processId, date, lob);
-    res.json(view);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[roster-analytics] process-roster error:', msg);
-    res.status(500).json({ error: `Failed to get process team roster: ${msg}` });
-  }
-});
+      const view = await getProcessTeamRosterView(processId, date, lob);
+      res.json(view);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[roster-analytics] process-roster error:", msg);
+      res
+        .status(500)
+        .json({ error: `Failed to get process team roster: ${msg}` });
+    }
+  },
+);
+
+/**
+ * GET /api/roster-analytics/process-shrinkage-mtd
+ * Process-level shrinkage summary for a date range.
+ * Returns: processId, processName, rostered, present, late, absent, onLeave,
+ *          shrinkagePct, unplannedPct, lateRatePct
+ * Used by the "Team Shrinkage" section in the Roster Trends panel.
+ */
+router.get(
+  "/process-shrinkage-mtd",
+  requireRole(...ANALYTICS_ROLES),
+  async (req, res) => {
+    try {
+      const { db } = await import("../../db/mysql.js");
+      const now = new Date();
+      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+      const today = todayLocalDateStr();
+      const fromDate = req.query.fromDate
+        ? String(req.query.fromDate)
+        : monthStart;
+      const toDate = req.query.toDate ? String(req.query.toDate) : today;
+      const branchId = req.query.branchId ? String(req.query.branchId) : null;
+      const processId = req.query.processId
+        ? String(req.query.processId)
+        : null;
+
+      const params: unknown[] = [fromDate, toDate];
+      let extraWhere = "";
+      if (branchId) {
+        extraWhere += " AND e.branch_id = ?";
+        params.push(branchId);
+      }
+      if (processId) {
+        extraWhere += " AND e.process_id = ?";
+        params.push(processId);
+      }
+
+      // One aggregate row per process using the same presence signal as branch-health-report:
+      // a punch exists when att.clock_in_time OR bal.first_punch_in is non-null.
+      const [rows] = await db.execute<any[]>(
+        `SELECT
+         pm.id   AS process_id,
+         pm.process_name,
+         COUNT(CASE WHEN ra.assignment_type NOT IN ('WEEK_OFF','HOLIDAY','LEAVE') THEN 1 END) AS rostered,
+         COUNT(CASE WHEN ra.assignment_type NOT IN ('WEEK_OFF','HOLIDAY','LEAVE')
+                     AND (att.clock_in_time IS NOT NULL OR bal.first_punch_in IS NOT NULL) THEN 1 END) AS present,
+         SUM(CASE WHEN att.late_mark = 1 THEN 1 ELSE 0 END) AS late_count,
+         COUNT(CASE WHEN ra.assignment_type NOT IN ('WEEK_OFF','HOLIDAY','LEAVE')
+                     AND att.clock_in_time IS NULL AND bal.first_punch_in IS NULL THEN 1 END) AS absent,
+         COUNT(CASE WHEN ra.assignment_type = 'LEAVE' THEN 1 END) AS on_leave
+       FROM wfm_roster_assignment ra
+       JOIN employees e  ON e.id = ra.employee_id AND e.active_status = 1
+       JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN attendance_daily_record att
+              ON att.employee_id = ra.employee_id AND att.record_date = ra.roster_date
+       LEFT JOIN biometric_attendance_log bal
+              ON bal.employee_id = ra.employee_id AND bal.punch_date = ra.roster_date
+       WHERE ra.roster_date BETWEEN ? AND ?
+         AND ${realRoster("ra")}${extraWhere}
+       GROUP BY pm.id, pm.process_name
+       ORDER BY pm.process_name`,
+        params,
+      );
+
+      const data = (rows as any[]).map((r) => {
+        const rostered = Number(r.rostered ?? 0);
+        const present = Number(r.present ?? 0);
+        const absent = Number(r.absent ?? 0);
+        const late = Number(r.late_count ?? 0);
+        return {
+          processId: String(r.process_id),
+          processName: String(r.process_name),
+          rostered,
+          present,
+          late,
+          absent,
+          onLeave: Number(r.on_leave ?? 0),
+          shrinkagePct:
+            rostered > 0
+              ? Math.round(((rostered - present) / rostered) * 1000) / 10
+              : 0,
+          unplannedPct:
+            rostered > 0 ? Math.round((absent / rostered) * 1000) / 10 : 0,
+          lateRatePct:
+            present > 0 ? Math.round((late / present) * 1000) / 10 : 0,
+        };
+      });
+
+      res.json({ from: fromDate, to: toDate, processes: data });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[roster-analytics] process-shrinkage-mtd error:", msg);
+      res
+        .status(500)
+        .json({ error: `Failed to get process shrinkage: ${msg}` });
+    }
+  },
+);
+
+/**
+ * GET /api/roster-analytics/process-member-mtd
+ * Per-employee attendance/shrinkage summary for a process over a date range.
+ * Returns an array of employees with present, late, absent, leaveDays,
+ * shrinkagePct, lateRatePct — the "drill-down" for a single process row.
+ */
+router.get(
+  "/process-member-mtd",
+  requireRole(...ANALYTICS_ROLES, "manager", "process_manager"),
+  async (req, res) => {
+    try {
+      const { db } = await import("../../db/mysql.js");
+      const now = new Date();
+      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+      const today = todayLocalDateStr();
+      const fromDate = req.query.fromDate
+        ? String(req.query.fromDate)
+        : monthStart;
+      const toDate = req.query.toDate ? String(req.query.toDate) : today;
+      const processId = req.query.processId
+        ? String(req.query.processId)
+        : null;
+      const branchId = req.query.branchId ? String(req.query.branchId) : null;
+
+      if (!processId) {
+        res.status(400).json({ error: "processId is required" });
+        return;
+      }
+
+      const correctParams: unknown[] = [processId, fromDate, toDate];
+      if (branchId) correctParams.push(branchId);
+
+      const [rows2] = await db.execute<any[]>(
+        `SELECT
+         e.id AS employee_id,
+         e.employee_code,
+         COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+         b.branch_name,
+         COUNT(CASE WHEN ra.assignment_type NOT IN ('WEEK_OFF','HOLIDAY','LEAVE') THEN 1 END) AS rostered,
+         COUNT(CASE WHEN ra.assignment_type NOT IN ('WEEK_OFF','HOLIDAY','LEAVE')
+                     AND (att.clock_in_time IS NOT NULL OR bal.first_punch_in IS NOT NULL) THEN 1 END) AS present,
+         SUM(CASE WHEN att.late_mark = 1 THEN 1 ELSE 0 END) AS late_count,
+         SUM(CASE WHEN att.late_mark = 1 THEN COALESCE(att.late_by_minutes, 0) ELSE 0 END) AS total_late_minutes,
+         COUNT(CASE WHEN ra.assignment_type NOT IN ('WEEK_OFF','HOLIDAY','LEAVE')
+                     AND att.clock_in_time IS NULL AND bal.first_punch_in IS NULL THEN 1 END) AS absent,
+         COUNT(CASE WHEN ra.assignment_type = 'LEAVE' THEN 1 END) AS leave_days
+       FROM wfm_roster_assignment ra
+       JOIN employees e ON e.id = ra.employee_id AND e.active_status = 1 AND e.process_id = ?
+       LEFT JOIN branch_master b ON b.id = e.branch_id
+       LEFT JOIN attendance_daily_record att
+              ON att.employee_id = ra.employee_id AND att.record_date = ra.roster_date
+       LEFT JOIN biometric_attendance_log bal
+              ON bal.employee_id = ra.employee_id AND bal.punch_date = ra.roster_date
+       WHERE ra.roster_date BETWEEN ? AND ?
+         AND ${realRoster("ra")}${branchId ? " AND e.branch_id = ?" : ""}
+       GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, b.branch_name
+       ORDER BY employee_name`,
+        correctParams,
+      );
+
+      const data = (rows2 as any[]).map((r) => {
+        const rostered = Number(r.rostered ?? 0);
+        const present = Number(r.present ?? 0);
+        const absent = Number(r.absent ?? 0);
+        const late = Number(r.late_count ?? 0);
+        const totalLateMin = Number(r.total_late_minutes ?? 0);
+        return {
+          employeeId: String(r.employee_id),
+          employeeCode: String(r.employee_code),
+          employeeName: String(r.employee_name),
+          branchName: r.branch_name ? String(r.branch_name) : null,
+          rostered,
+          present,
+          late,
+          absent,
+          leaveDays: Number(r.leave_days ?? 0),
+          avgLateMinutes: late > 0 ? Math.round(totalLateMin / late) : 0,
+          shrinkagePct:
+            rostered > 0
+              ? Math.round(((rostered - present) / rostered) * 1000) / 10
+              : 0,
+          lateRatePct:
+            present > 0 ? Math.round((late / present) * 1000) / 10 : 0,
+        };
+      });
+
+      res.json({ processId, from: fromDate, to: toDate, members: data });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[roster-analytics] process-member-mtd error:", msg);
+      res
+        .status(500)
+        .json({ error: `Failed to get process member MTD: ${msg}` });
+    }
+  },
+);
 
 export const rosterAnalyticsRouter = router;

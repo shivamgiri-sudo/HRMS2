@@ -12,7 +12,12 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../../db/mysql.js";
-import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+import type {
+  ExecFilters,
+  ExecScope,
+  ExecOptions,
+  ExecResult,
+} from "./types.js";
 import { calculateWeekoffEligibility } from "../../payroll/weekoff-eligibility.service.js";
 import {
   ATTENDANCE_STATUS_CODE,
@@ -92,7 +97,7 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
 async function count(baseSql: string, params: unknown[]): Promise<number> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
-    params
+    params,
   );
   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
 }
@@ -143,13 +148,13 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 export async function attendanceRegisterMonthly(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const month = monthParam(filters.month);
   const [yr, mo] = month.split("-").map(Number);
   const daysInMonth = new Date(yr, mo, 0).getDate();
   const firstDay = `${month}-01`;
-  const lastDay  = `${month}-${String(daysInMonth).padStart(2, "0")}`;
+  const lastDay = `${month}-${String(daysInMonth).padStart(2, "0")}`;
 
   // Scope and filter conditions apply to the employees table (alias "e").
   // The attendance date range moves to the LEFT JOIN ON clause so employees
@@ -167,7 +172,11 @@ export async function attendanceRegisterMonthly(
   // fast pre-pagination path and the worker path both carry it.
   if (Array.isArray(filters.employeeIds)) {
     const teamIds = filters.employeeIds.map((id) => String(id)).filter(Boolean);
-    clauses.push(teamIds.length ? `e.id IN (${teamIds.map(() => "?").join(",")})` : "1 = 0");
+    clauses.push(
+      teamIds.length
+        ? `e.id IN (${teamIds.map(() => "?").join(",")})`
+        : "1 = 0",
+    );
     params.push(...teamIds);
   }
   // Capture scope/filter params BEFORE the JOIN binds are unshifted below.
@@ -199,24 +208,33 @@ export async function attendanceRegisterMonthly(
   // EXISTS binds appended after all other WHERE params.
   clauses.push(
     "(e.active_status = 1" +
-    // Arm 2: inactive employee with attendance records in period who hasn't exited before the period.
-    // Catches employees incorrectly marked inactive (bulk-import issue) who still have biometric/import
-    // records generated for them. The exit-date guard prevents genuinely gone ex-employees (whose
-    // date_of_exit was never backfilled) from re-appearing if they somehow have stale records.
-    " OR ((e.date_of_exit IS NULL OR e.date_of_exit >= ?) AND" +
-    "      EXISTS (SELECT 1 FROM attendance_daily_record _x WHERE _x.employee_id = e.id AND _x.record_date BETWEEN ? AND ?))" +
-    // Arm 3: employee whose DOJ falls within the report period and who has not exited before it.
-    // These employees have joined recently and the attendance pipeline may not have generated
-    // records for them yet — they should still appear so their post-DOJ days are filled in.
-    " OR (DATE(e.date_of_joining) BETWEEN ? AND ? AND (e.date_of_exit IS NULL OR e.date_of_exit >= ?))" +
-    ")"
+      // Arm 2: inactive employee with attendance records in period who hasn't exited before the period.
+      // Catches employees incorrectly marked inactive (bulk-import issue) who still have biometric/import
+      // records generated for them. The exit-date guard prevents genuinely gone ex-employees (whose
+      // date_of_exit was never backfilled) from re-appearing if they somehow have stale records.
+      " OR ((e.date_of_exit IS NULL OR e.date_of_exit >= ?) AND" +
+      "      EXISTS (SELECT 1 FROM attendance_daily_record _x WHERE _x.employee_id = e.id AND _x.record_date BETWEEN ? AND ?))" +
+      // Arm 3: employee whose DOJ falls within the report period and who has not exited before it.
+      // These employees have joined recently and the attendance pipeline may not have generated
+      // records for them yet — they should still appear so their post-DOJ days are filled in.
+      " OR (DATE(e.date_of_joining) BETWEEN ? AND ? AND (e.date_of_exit IS NULL OR e.date_of_exit >= ?))" +
+      ")",
   );
   // Exclude employees at inactive branches unless no branch is assigned.
-  clauses.push("(e.branch_id IS NULL OR EXISTS (SELECT 1 FROM branch_master _bm WHERE _bm.id = e.branch_id AND _bm.active_status = 1))");
+  clauses.push(
+    "(e.branch_id IS NULL OR EXISTS (SELECT 1 FROM branch_master _bm WHERE _bm.id = e.branch_id AND _bm.active_status = 1))",
+  );
   // WHERE binds — positional order matches the three arms above:
   //   Arm 2: date_of_exit guard (firstDay), EXISTS BETWEEN (firstDay, lastDay)
   //   Arm 3: DATE(date_of_joining) BETWEEN (firstDay, lastDay), date_of_exit guard (firstDay)
-  const armBinds = [firstDay, firstDay, lastDay, firstDay, lastDay, firstDay] as const;
+  const armBinds = [
+    firstDay,
+    firstDay,
+    lastDay,
+    firstDay,
+    lastDay,
+    firstDay,
+  ] as const;
   // WHERE-only params (no JOIN binds) — used by the pre-pagination count/page queries.
   const whereOnlyParams: unknown[] = [...preJoinParams, ...armBinds];
   // JOIN ON binds go to the front (positional order: JOIN before WHERE).
@@ -258,17 +276,24 @@ export async function attendanceRegisterMonthly(
 
     const [[countRow]] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(DISTINCT e.id) AS total FROM employees e WHERE ${fastWhere.join(" AND ")}`,
-      fastParams
+      fastParams,
     );
     grandTotal = (countRow as RowDataPacket).total as number;
-    if (grandTotal === 0) return { rows: [], rowCount: 0, isTruncated: false, nextCursor: null };
+    if (grandTotal === 0)
+      return { rows: [], rowCount: 0, isTruncated: false, nextCursor: null };
 
     const [pageRows] = await db.execute<RowDataPacket[]>(
       `SELECT e.id FROM employees e WHERE ${fastWhere.join(" AND ")} ORDER BY e.employee_code LIMIT ${options.limit} OFFSET ${options.offset}`,
-      fastParams
+      fastParams,
     );
-    pagedEmployeeIds = (pageRows as RowDataPacket[]).map(r => r.id as string);
-    if (pagedEmployeeIds.length === 0) return { rows: [], rowCount: grandTotal, isTruncated: false, nextCursor: null };
+    pagedEmployeeIds = (pageRows as RowDataPacket[]).map((r) => r.id as string);
+    if (pagedEmployeeIds.length === 0)
+      return {
+        rows: [],
+        rowCount: grandTotal,
+        isTruncated: false,
+        nextCursor: null,
+      };
   }
 
   // Shared SELECT + FROM + JOIN block for both screen and worker paths.
@@ -346,22 +371,22 @@ export async function attendanceRegisterMonthly(
   for (const row of attRows) {
     if (!empMap.has(row.employee_id)) {
       empMap.set(row.employee_id, {
-        employee_id:     row.employee_id,
-        emp_code:        row.employee_code,
-        bio_code:        row.bio_code,
-        emp_name:        row.emp_name,
-        department:      row.department,
-        designation:     row.designation,
-        profile:         row.profile,
-        cost_center:     row.cost_center,
-        emp_location:    row.emp_location,
-        process_name:    row.process_name,
+        employee_id: row.employee_id,
+        emp_code: row.employee_code,
+        bio_code: row.bio_code,
+        emp_name: row.emp_name,
+        department: row.department,
+        designation: row.designation,
+        profile: row.profile,
+        cost_center: row.cost_center,
+        emp_location: row.emp_location,
+        process_name: row.process_name,
         process_lob_name: row.process_lob_name,
-        billable:        row.billable,
+        billable: row.billable,
         employee_status: row.employee_status,
         date_of_joining: row.date_of_joining,
-        date_of_exit:    row.date_of_exit,
-        doj_display:              row.doj_display,
+        date_of_exit: row.date_of_exit,
+        doj_display: row.doj_display,
         salary_start_date_display: row.salary_start_date_display,
       });
     }
@@ -369,7 +394,8 @@ export async function attendanceRegisterMonthly(
     if (row.day_num == null) continue;
 
     const emp = empMap.get(row.employee_id);
-    const code = statusCode[row.attendance_status] ?? row.attendance_status ?? "";
+    const code =
+      statusCode[row.attendance_status] ?? row.attendance_status ?? "";
     emp[`day_${row.day_num}`] = code;
     if (row.is_regularized) emp[`day_${row.day_num}_reg`] = true;
   }
@@ -378,95 +404,125 @@ export async function attendanceRegisterMonthly(
   const todayTs = new Date();
   todayTs.setHours(0, 0, 0, 0);
 
-  const pivotRows = await Promise.all(Array.from(empMap.values()).map(async (emp, idx) => {
-    // Normalise date_of_joining and date_of_exit to midnight for day-boundary comparisons.
-    const dojRaw = emp.date_of_joining;
-    const doj = dojRaw ? new Date(dojRaw) : null;
-    if (doj) doj.setHours(0, 0, 0, 0);
+  const pivotRows = await Promise.all(
+    Array.from(empMap.values()).map(async (emp, idx) => {
+      // Normalise date_of_joining and date_of_exit to midnight for day-boundary comparisons.
+      const dojRaw = emp.date_of_joining;
+      const doj = dojRaw ? new Date(dojRaw) : null;
+      if (doj) doj.setHours(0, 0, 0, 0);
 
-    const exitRaw = emp.date_of_exit;
-    const exitDate = exitRaw ? new Date(exitRaw) : null;
-    if (exitDate) exitDate.setHours(0, 0, 0, 0);
+      const exitRaw = emp.date_of_exit;
+      const exitDate = exitRaw ? new Date(exitRaw) : null;
+      if (exitDate) exitDate.setHours(0, 0, 0, 0);
 
-    // Fill in cells that have no attendance record (rule in shared/attendanceDayCounts.ts:
-    // blank only for pre-joining and future dates, every other empty date → A).
-    // Post-exit days are also blanked regardless of whether a record exists — the biometric
-    // pipeline may generate absent/missing_punch rows for employees after their last day, and
-    // those should not count as absences against someone who has already exited.
-    // Week-off days come from actual attendance_daily_record rows (status = week_off).
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dayDate = new Date(yr, mo - 1, d);
-      if (exitDate && dayDate > exitDate) {
-        emp[`day_${d}`] = ""; // after exit date → blank, overrides any record
-        continue;
+      // Fill in cells that have no attendance record (rule in shared/attendanceDayCounts.ts:
+      // blank only for pre-joining and future dates, every other empty date → A).
+      // Post-exit days are also blanked regardless of whether a record exists — the biometric
+      // pipeline may generate absent/missing_punch rows for employees after their last day, and
+      // those should not count as absences against someone who has already exited.
+      // Week-off days come from actual attendance_daily_record rows (status = week_off).
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dayDate = new Date(yr, mo - 1, d);
+        if (exitDate && dayDate > exitDate) {
+          emp[`day_${d}`] = ""; // after exit date → blank, overrides any record
+          continue;
+        }
+        if (emp[`day_${d}`] !== undefined) continue; // already populated
+        emp[`day_${d}`] = resolveMissingDayCell(dayDate, doj, todayTs);
       }
-      if (emp[`day_${d}`] !== undefined) continue; // already populated
-      emp[`day_${d}`] = resolveMissingDayCell(dayDate, doj, todayTs);
-    }
 
-    const counts = countDayCodes((d) => emp[`day_${d}`], daysInMonth);
-    const { absent, present, od, hd, leave, holiday } = counts;
+      const counts = countDayCodes((d) => emp[`day_${d}`], daysInMonth);
+      const { absent, present, od, hd, leave, holiday } = counts;
 
-    // Straight from the payroll engine — same function the payslip uses, same policy-backed
-    // slabs, same month-relative "worked every available day" rule.
-    const paidBase   = computePaidBase(counts);
-    // Holiday count passed for the same reason as the sign-off grid: the eligibility test
-    // measures paid base against (days - weekoffs - holidays), and this report is an add-on to
-    // that engine, not a second implementation of it.
-    const eligibleWO = await calculateWeekoffEligibility(emp.employee_id, paidBase, month, holiday);
+      // Straight from the payroll engine — same function the payslip uses, same policy-backed
+      // slabs, same month-relative "worked every available day" rule.
+      const paidBase = computePaidBase(counts);
+      // Holiday count passed for the same reason as the sign-off grid: the eligibility test
+      // measures paid base against (days - weekoffs - holidays), and this report is an add-on to
+      // that engine, not a second implementation of it.
+      const eligibleWO = await calculateWeekoffEligibility(
+        emp.employee_id,
+        paidBase,
+        month,
+        holiday,
+      );
 
-    // Uncapped — the same raw sum salDays below ceilings at daysInMonth, kept here as-is so it
-    // can legitimately exceed the calendar month. This is what surfaces who worked extra days
-    // (week-offs worked on top of a full month), not what payroll pays for. See
-    // computeTotalWorkingDays() in shared/attendanceDayCounts.ts.
-    const totalWorkingDays = computeTotalWorkingDays(paidBase, eligibleWO, holiday);
+      // Uncapped — the same raw sum salDays below ceilings at daysInMonth, kept here as-is so it
+      // can legitimately exceed the calendar month. This is what surfaces who worked extra days
+      // (week-offs worked on top of a full month), not what payroll pays for. See
+      // computeTotalWorkingDays() in shared/attendanceDayCounts.ts.
+      const totalWorkingDays = computeTotalWorkingDays(
+        paidBase,
+        eligibleWO,
+        holiday,
+      );
 
-    // Capped at the length of the month — see computeSalDays() in shared/attendanceDayCounts.ts
-    // for why the sum is a ceiling and not a running total.
-    const salDays = computeSalDays(paidBase, eligibleWO, holiday, daysInMonth);
+      // Capped at the length of the month — see computeSalDays() in shared/attendanceDayCounts.ts
+      // for why the sum is a ceiling and not a running total.
+      const salDays = computeSalDays(
+        paidBase,
+        eligibleWO,
+        holiday,
+        daysInMonth,
+      );
 
-    return {
-      sno:             idx + 1,
-      emp_code:        emp.emp_code,
-      bio_code:        emp.bio_code,
-      emp_name:        emp.emp_name.trim(),
-      department:      emp.department,
-      designation:     emp.designation,
-      profile:         emp.profile,
-      cost_center:     emp.cost_center,
-      emp_location:    emp.emp_location,
-      process_name:    emp.process_name,
-      process_lob_name: emp.process_lob_name,
-      date_of_joining: emp.doj_display,
-      salary_start_date: emp.salary_start_date_display,
-      billable:        emp.billable,
-      employee_status: emp.employee_status,
-      ...Object.fromEntries(
-        Array.from({ length: daysInMonth }, (_, i) => [`day_${i + 1}`, emp[`day_${i + 1}`] ?? ""])
-      ),
-      ...Object.fromEntries(
-        Array.from({ length: daysInMonth }, (_, i) => [`day_${i + 1}_reg`, emp[`day_${i + 1}_reg`] ?? false])
-      ),
-      absent_count:  absent,
-      present_count: present,
-      od_count:      od,
-      hd_count:      hd,
-      leave_count:   leave,
-      holiday_count: holiday,
-      weekoff_count: eligibleWO,
-      total_working_days: totalWorkingDays,
-      sal_days:      salDays,
-      total:         daysInMonth,
-    };
-  }));
+      return {
+        sno: idx + 1,
+        emp_code: emp.emp_code,
+        bio_code: emp.bio_code,
+        emp_name: emp.emp_name.trim(),
+        department: emp.department,
+        designation: emp.designation,
+        profile: emp.profile,
+        cost_center: emp.cost_center,
+        emp_location: emp.emp_location,
+        process_name: emp.process_name,
+        process_lob_name: emp.process_lob_name,
+        date_of_joining: emp.doj_display,
+        salary_start_date: emp.salary_start_date_display,
+        billable: emp.billable,
+        employee_status: emp.employee_status,
+        ...Object.fromEntries(
+          Array.from({ length: daysInMonth }, (_, i) => [
+            `day_${i + 1}`,
+            emp[`day_${i + 1}`] ?? "",
+          ]),
+        ),
+        ...Object.fromEntries(
+          Array.from({ length: daysInMonth }, (_, i) => [
+            `day_${i + 1}_reg`,
+            emp[`day_${i + 1}_reg`] ?? false,
+          ]),
+        ),
+        absent_count: absent,
+        present_count: present,
+        od_count: od,
+        hd_count: hd,
+        leave_count: leave,
+        holiday_count: holiday,
+        weekoff_count: eligibleWO,
+        total_working_days: totalWorkingDays,
+        sal_days: salDays,
+        total: daysInMonth,
+      };
+    }),
+  );
 
   // Screen mode: already paginated via the pre-pagination query — return all pivot rows.
   // Worker mode: applies legacy slice (the workbook builder calls with mode="worker"
   // and expects the full register in one shot; its own total/offset is irrelevant here).
   if (isWorker) {
     const total = pivotRows.length;
-    const page = pivotRows.slice(options.offset, options.offset + options.limit);
-    return { rows: page, rowCount: total, isTruncated: total > options.offset + page.length, nextCursor: null };
+    const page = pivotRows.slice(
+      options.offset,
+      options.offset + options.limit,
+    );
+    return {
+      rows: page,
+      rowCount: total,
+      isTruncated: total > options.offset + page.length,
+      nextCursor: null,
+    };
   }
   return {
     rows: pivotRows,
@@ -506,10 +562,10 @@ export async function attendanceRegisterMonthly(
 export async function attendanceDaily(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
-  const to   = dateParam(filters.to, from);
+  const to = dateParam(filters.to, from);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -519,12 +575,14 @@ export async function attendanceDaily(
   // always, inactive employees only if they have a record in the date range.
   clauses.push(
     "(e.active_status = 1 OR EXISTS (" +
-    "  SELECT 1 FROM attendance_daily_record _x" +
-    "  WHERE _x.employee_id = e.id AND _x.record_date BETWEEN ? AND ?" +
-    "))"
+      "  SELECT 1 FROM attendance_daily_record _x" +
+      "  WHERE _x.employee_id = e.id AND _x.record_date BETWEEN ? AND ?" +
+      "))",
   );
   // Exclude employees at inactive branches.
-  clauses.push("(e.branch_id IS NULL OR EXISTS (SELECT 1 FROM branch_master _bm WHERE _bm.id = e.branch_id AND _bm.active_status = 1))");
+  clauses.push(
+    "(e.branch_id IS NULL OR EXISTS (SELECT 1 FROM branch_master _bm WHERE _bm.id = e.branch_id AND _bm.active_status = 1))",
+  );
   // JOIN ON (adr + session subquery) binds go to the front; EXISTS binds follow.
   params.unshift(from, to, from, to);
   params.push(from, to);
@@ -591,8 +649,13 @@ export async function attendanceDaily(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+    nextCursor: null,
+  };
 }
 
 /**
@@ -610,10 +673,10 @@ export async function attendanceDaily(
 export async function dailyHcShift(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
-  const to   = dateParam(filters.to, from);
+  const to = dateParam(filters.to, from);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -662,8 +725,13 @@ export async function dailyHcShift(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+    nextCursor: null,
+  };
 }
 
 /**
@@ -686,10 +754,10 @@ export async function dailyHcShift(
 export async function shiftAdherenceDetail(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
-  const to   = dateParam(filters.to, from);
+  const to = dateParam(filters.to, from);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -767,10 +835,21 @@ export async function shiftAdherenceDetail(
               ORDER BY adr.record_date DESC, adherence_status DESC, employee_name`;
 
   // subquery params (from, to) must precede WHERE params in positional binding
-  const paged = await fetchPageWithTotal(base, [from, to, ...params], options, query, count);
+  const paged = await fetchPageWithTotal(
+    base,
+    [from, to, ...params],
+    options,
+    query,
+    count,
+  );
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+    nextCursor: null,
+  };
 }
 
 /**
@@ -793,7 +872,7 @@ export async function shiftAdherenceDetail(
 export async function attendanceSummary(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const month = monthParam(filters.month);
 
@@ -838,8 +917,13 @@ export async function attendanceSummary(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+    nextCursor: null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -876,14 +960,17 @@ export async function attendanceSummary(
 export async function lateArrivalSummary(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const now = new Date();
-  const from = dateParam(filters.from, `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`);
-  const to   = dateParam(filters.to, now.toISOString().slice(0, 10));
+  const from = dateParam(
+    filters.from,
+    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`,
+  );
+  const to = dateParam(filters.to, now.toISOString().slice(0, 10));
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("adr.record_date BETWEEN ? AND ?");
@@ -914,7 +1001,7 @@ export async function lateArrivalSummary(
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            ${ROSTER_SHIFT_NAME_SQL} AS roster_shift,
            COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)) AS scheduled_start,
-           was.login_time AS punch_in,
+           COALESCE(was.login_time, TIME_FORMAT(bal.first_punch_in, '%H:%i:%s')) AS punch_in,
            adr.late_by_minutes AS late_minutes,
            COALESCE(arc.grace_minutes, 15) AS grace_minutes,
            GREATEST(0, adr.late_by_minutes - COALESCE(arc.grace_minutes, 15)) AS net_late_minutes,
@@ -937,10 +1024,13 @@ export async function lateArrivalSummary(
       LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
       LEFT JOIN wfm_shift_template wst ON wst.id = wra.shift_template_id
       LEFT JOIN (
-        SELECT employee_id, session_date, MIN(login_time) AS login_time
+        SELECT employee_id, session_date,
+               TIME_FORMAT(MIN(login_time), '%H:%i:%s') AS login_time
         FROM wfm_attendance_session
         GROUP BY employee_id, session_date
       ) was ON was.employee_id = adr.employee_id AND was.session_date = adr.record_date
+      LEFT JOIN biometric_attendance_log bal
+             ON bal.employee_id = adr.employee_id AND bal.punch_date = adr.record_date
       LEFT JOIN attendance_rule_config arc ON arc.id = adr.rule_config_id
       LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
@@ -951,11 +1041,18 @@ export async function lateArrivalSummary(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -990,12 +1087,12 @@ export async function lateArrivalSummary(
 export async function overtimeSummary(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const month = monthParam(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   {
@@ -1071,9 +1168,22 @@ export async function overtimeSummary(
   // One execution instead of two wherever the result fits the probe — see COUNT_FREE_PROBE.
   // This report takes about 250s for a full month and the COUNT it used to force doubled that,
   // to produce a number the same scan already knew. Identical rows; fewer round trips.
-  const { rows, total } = await fetchPageWithTotal(base, params, options, query, count);
-  const out = (rows as Record<string, unknown>[]).map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : out.length, isTruncated: total > out.length, nextCursor: null };
+  const { rows, total } = await fetchPageWithTotal(
+    base,
+    params,
+    options,
+    query,
+    count,
+  );
+  const out = (rows as Record<string, unknown>[]).map(
+    ({ _cursor: _, ...rest }) => rest,
+  );
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : out.length,
+    isTruncated: total > out.length,
+    nextCursor: null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1102,15 +1212,18 @@ export async function overtimeSummary(
 export async function regularizationSummary(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const month = monthParam(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  if (filters.status) { clauses.push("arr.status = ?"); params.push(String(filters.status)); }
+  if (filters.status) {
+    clauses.push("arr.status = ?");
+    params.push(String(filters.status));
+  }
   clauses.push("DATE_FORMAT(arr.session_date,'%Y-%m') = ?");
   params.push(month);
 
@@ -1157,11 +1270,18 @@ export async function regularizationSummary(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1191,15 +1311,18 @@ export async function regularizationSummary(
 export async function attendanceDisputeSummary(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const month = monthParam(filters.month);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  if (filters.status) { clauses.push("arr.status = ?"); params.push(String(filters.status)); }
+  if (filters.status) {
+    clauses.push("arr.status = ?");
+    params.push(String(filters.status));
+  }
   clauses.push("arr.dispute_type IS NOT NULL");
   clauses.push("DATE_FORMAT(arr.session_date,'%Y-%m') = ?");
   params.push(month);
@@ -1253,11 +1376,18 @@ export async function attendanceDisputeSummary(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1295,19 +1425,26 @@ export async function attendanceDisputeSummary(
 export async function regularizationAuditReport(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const from = dateParam(filters.from, "1900-01-01");
-  const to   = dateParam(filters.to,   "9999-12-31");
+  const to = dateParam(filters.to, "9999-12-31");
 
   // Filter by created_at (submission date) not session_date (attendance date) so that
   // "show me today's regularizations" matches requests submitted today, not attendance
   // dates that happen to fall today. session_date remains a visible output column.
-  const clauses: string[] = ["e.id IS NOT NULL", "DATE(arr.created_at) >= ?", "DATE(arr.created_at) <= ?"];
-  const params: unknown[]  = [from, to];
+  const clauses: string[] = [
+    "e.id IS NOT NULL",
+    "DATE(arr.created_at) >= ?",
+    "DATE(arr.created_at) <= ?",
+  ];
+  const params: unknown[] = [from, to];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  if (filters.status) { clauses.push("arr.status = ?"); params.push(String(filters.status)); }
+  if (filters.status) {
+    clauses.push("arr.status = ?");
+    params.push(String(filters.status));
+  }
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("arr.id > ?");
@@ -1355,11 +1492,18 @@ export async function regularizationAuditReport(
 
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1374,16 +1518,23 @@ export async function regularizationAuditReport(
 export async function attendanceDirectEditLog(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const from = dateParam(filters.from, "1900-01-01");
-  const to   = dateParam(filters.to,   "9999-12-31");
+  const to = dateParam(filters.to, "9999-12-31");
 
-  const clauses: string[] = ["e.id IS NOT NULL", "DATE(amo.created_at) >= ?", "DATE(amo.created_at) <= ?"];
-  const params: unknown[]  = [from, to];
+  const clauses: string[] = [
+    "e.id IS NOT NULL",
+    "DATE(amo.created_at) >= ?",
+    "DATE(amo.created_at) <= ?",
+  ];
+  const params: unknown[] = [from, to];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  if (filters.status)  { clauses.push("amo.approval_status = ?"); params.push(String(filters.status)); }
+  if (filters.status) {
+    clauses.push("amo.approval_status = ?");
+    params.push(String(filters.status));
+  }
 
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("amo.id > ?");
@@ -1428,11 +1579,18 @@ export async function attendanceDirectEditLog(
 
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as string) : null;
+  const rows = paged.rows as Record<string, unknown>[];
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as string)
+      : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
-  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+  return {
+    rows: out,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > out.length,
+    nextCursor,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1441,17 +1599,20 @@ export async function attendanceDirectEditLog(
 export async function habitualAbsenteeList(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
-  const month      = monthParam(filters.month);
-  const threshold  = Number(filters.minAbsentDays ?? 3);
+  const month = monthParam(filters.month);
+  const threshold = Number(filters.minAbsentDays ?? 3);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
-  clauses.push("adr.record_date >= ? AND adr.record_date < ?", "adr.attendance_status = 'absent'");
+  clauses.push(
+    "adr.record_date >= ? AND adr.record_date < ?",
+    "adr.attendance_status = 'absent'",
+  );
   params.push(monthRange(month).start, monthRange(month).endExclusive);
 
   if (options.mode === "worker" && options.cursor != null) {
@@ -1484,17 +1645,20 @@ export async function habitualAbsenteeList(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
+  const rows = paged.rows as Record<string, unknown>[];
 
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
 
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
+    isTruncated: options.includeTotal
+      ? total > out.length
+      : rows.length === options.limit,
     nextCursor,
   };
 }
@@ -1505,14 +1669,14 @@ export async function habitualAbsenteeList(
 export async function dailyShrinkageReport(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, today);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, today);
+  const to = dateParam(filters.to, today);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -1557,8 +1721,12 @@ export async function dailyShrinkageReport(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+  };
 }
 
 /**
@@ -1580,10 +1748,10 @@ export async function dailyShrinkageReport(
 export async function monthlyShrinkageTrend(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const from = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
-  const to   = dateParam(filters.to, new Date().toISOString().slice(0, 10));
+  const to = dateParam(filters.to, new Date().toISOString().slice(0, 10));
 
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
@@ -1627,8 +1795,19 @@ export async function monthlyShrinkageTrend(
   // conclusion. Timings also depend heavily on which DB address you reached: the public route is
   // 3-4x slower than the office LAN for the same statement on the same server.
   // See docs/reports-slow-queries-root-cause.md before spending time here.
-  const { rows, total } = await fetchPageWithTotal(base, params, options, query, count);
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
+  const { rows, total } = await fetchPageWithTotal(
+    base,
+    params,
+    options,
+    query,
+    count,
+  );
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+    nextCursor: null,
+  };
 }
 
 /**
@@ -1652,10 +1831,10 @@ export async function monthlyShrinkageTrend(
 export async function biometricReconciliation(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
-  const to   = dateParam(filters.to, from);
+  const to = dateParam(filters.to, from);
 
   const RECONCILIATION_CASE = `CASE WHEN ibd.first_punch IS NULL AND adr.attendance_status IN ('present','half_day','week_off_worked') THEN 'NO_BIOMETRIC_FOR_PRESENT'
                           WHEN ibd.first_punch IS NOT NULL AND adr.attendance_status='absent' THEN 'PUNCHED_BUT_ABSENT'
@@ -1705,8 +1884,13 @@ export async function biometricReconciliation(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+    nextCursor: null,
+  };
 }
 
 /**
@@ -1723,10 +1907,10 @@ export async function biometricReconciliation(
 export async function punchRawExport(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const from = dateParam(filters.from, new Date().toISOString().slice(0, 10));
-  const to   = dateParam(filters.to, from);
+  const to = dateParam(filters.to, from);
 
   const clauses: string[] = ["1 = 1"];
   const params: unknown[] = [];
@@ -1762,8 +1946,13 @@ export async function punchRawExport(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+    nextCursor: null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1775,14 +1964,14 @@ export async function punchRawExport(
 export async function attendanceRegisterGrid(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, `${today.slice(0, 7)}-01`);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, `${today.slice(0, 7)}-01`);
+  const to = dateParam(filters.to, today);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -1824,17 +2013,20 @@ export async function attendanceRegisterGrid(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
+  const rows = paged.rows as Record<string, unknown>[];
 
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as number)
-    : null;
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as number)
+      : null;
 
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
+    isTruncated: options.includeTotal
+      ? total > out.length
+      : rows.length === options.limit,
     nextCursor,
   };
 }
@@ -1859,14 +2051,14 @@ export async function attendanceRegisterGrid(
 export async function breakDailySummary(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, today);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, today);
+  const to = dateParam(filters.to, today);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -1913,12 +2105,14 @@ export async function breakDailySummary(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
+  const rows = paged.rows as Record<string, unknown>[];
 
   return {
     rows,
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > rows.length : rows.length === options.limit,
+    isTruncated: options.includeTotal
+      ? total > rows.length
+      : rows.length === options.limit,
   };
 }
 
@@ -1935,14 +2129,14 @@ export async function breakDailySummary(
 export async function breakSessionLog(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const today = new Date().toISOString().slice(0, 10);
-  const from  = dateParam(filters.from, today);
-  const to    = dateParam(filters.to, today);
+  const from = dateParam(filters.from, today);
+  const to = dateParam(filters.to, today);
 
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
+  const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
 
@@ -1967,9 +2161,10 @@ export async function breakSessionLog(
   // Worker mode pages by bs.id, so it must order by bs.id for the cursor to be
   // monotonic. Preview/export order the way a human reads a log: newest day
   // first, then each employee's breaks in the order they were taken.
-  const orderBy = options.mode === "worker"
-    ? "bs.id ASC"
-    : "bs.shift_date DESC, e.employee_code ASC, bs.break_start_time ASC";
+  const orderBy =
+    options.mode === "worker"
+      ? "bs.id ASC"
+      : "bs.shift_date DESC, e.employee_code ASC, bs.break_start_time ASC";
 
   const base = `
     SELECT bs.id AS _cursor,
@@ -2006,21 +2201,24 @@ export async function breakSessionLog(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
+  const rows = paged.rows as Record<string, unknown>[];
 
   // break_sessions.id is a UUID, not an auto-increment. Keyset pagination still
   // works — ORDER BY bs.id ASC combined with bs.id > cursor is a stable total
   // order — but pages come out in id order rather than chronological order,
   // which is why worker mode sorts by bs.id instead of by date.
-  const nextCursor = (options.mode === "worker" && rows.length > 0)
-    ? (rows[rows.length - 1]._cursor as string)
-    : null;
+  const nextCursor =
+    options.mode === "worker" && rows.length > 0
+      ? (rows[rows.length - 1]._cursor as string)
+      : null;
 
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return {
     rows: out,
     rowCount: options.includeTotal ? total : rows.length,
-    isTruncated: options.includeTotal ? total > out.length : rows.length === options.limit,
+    isTruncated: options.includeTotal
+      ? total > out.length
+      : rows.length === options.limit,
     nextCursor,
   };
 }
@@ -2053,7 +2251,7 @@ export async function breakSessionLog(
 export async function productivityIndividualScorecard(
   filters: ExecFilters,
   scope: ExecScope,
-  options: ExecOptions
+  options: ExecOptions,
 ): Promise<ExecResult> {
   const month = monthParam(filters.month);
 
@@ -2103,6 +2301,10 @@ export async function productivityIndividualScorecard(
   // statement to learn a number the first run already knew.
   const paged = await fetchPageWithTotal(base, params, options, query, count);
   const total = paged.total;
-  const rows  = paged.rows as Record<string, unknown>[];
-  return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+  const rows = paged.rows as Record<string, unknown>[];
+  return {
+    rows,
+    rowCount: options.includeTotal ? total : rows.length,
+    isTruncated: total > rows.length,
+  };
 }
