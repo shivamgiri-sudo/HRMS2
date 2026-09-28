@@ -78,7 +78,7 @@ export function ExpenseHeadsTab() {
   return (
     <div className="rounded border bg-white overflow-hidden">
       {/* Header row */}
-      <div className="grid grid-cols-[80px_1fr_1fr_80px_70px_80px] gap-0 border-b bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+      <div className="grid grid-cols-[130px_1fr_1fr_80px_70px_80px] gap-0 border-b bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
         <div className="px-3 py-2">Code</div>
         <div className="px-3 py-2">Head Name</div>
         <div className="px-3 py-2">Description</div>
@@ -92,8 +92,8 @@ export function ExpenseHeadsTab() {
         const isCapex = h.subHeads.some(s => s.capexOpex === "capex");
         const isEditing = editingId === h.id;
         return (
-          <div key={h.id} className={`grid grid-cols-[80px_1fr_1fr_80px_70px_80px] gap-0 border-b text-sm hover:bg-slate-50 transition-colors ${!h.activeStatus ? "opacity-50" : ""}`}>
-            <div className="px-3 py-1.5 font-mono text-xs text-slate-500 self-center">
+          <div key={h.id} className={`grid grid-cols-[130px_1fr_1fr_80px_70px_80px] gap-0 border-b text-sm hover:bg-slate-50 transition-colors ${!h.activeStatus ? "opacity-50" : ""}`}>
+            <div className="px-3 py-1.5 font-mono text-xs text-slate-500 self-center truncate" title={h.headCode}>
               {h.headCode}
               {isCapex && <Badge variant="outline" className="ml-1 text-[9px] border-amber-300 text-amber-700 bg-amber-50 px-1 py-0">CAPEX</Badge>}
             </div>
@@ -130,7 +130,7 @@ export function ExpenseHeadsTab() {
 
       {/* Inline add row */}
       {addingNew && (
-        <div className="grid grid-cols-[80px_1fr_1fr_80px_70px_80px] gap-0 border-b bg-emerald-50/40 text-sm">
+        <div className="grid grid-cols-[130px_1fr_1fr_80px_70px_80px] gap-0 border-b bg-emerald-50/40 text-sm">
           <div className="px-3 py-1.5 text-xs text-slate-400 self-center italic">auto</div>
           <div className="px-2 py-1"><Input className="h-7 text-xs" placeholder="Head name *" value={newRow.headName} onChange={e => setNewRow(r => ({ ...r, headName: e.target.value }))} /></div>
           <div className="px-2 py-1"><Input className="h-7 text-xs" placeholder="Description" value={newRow.description} onChange={e => setNewRow(r => ({ ...r, description: e.target.value }))} /></div>
