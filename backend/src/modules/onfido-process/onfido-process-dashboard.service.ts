@@ -5517,7 +5517,7 @@ export async function getPoaSlaMetrics(rawFilters: {
     gt30Pct: pct(gt30),
     buckets,
     dailyTrend: dailyRows.map((r) => ({
-      date: String(r.date).split("T")[0],
+      date: dateBucketToIso(r.date),
       total: Number(r.total),
       sla10Pct: slaRow(Number(r.sla10), Number(r.total)),
       sla30Pct: slaRow(Number(r.sla30), Number(r.total)),
