@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { calculateEmployeeEngagementHealth } from "../engagement/engagement-health.service.js";
 import { scalar } from "../../shared/dbHelpers.js";
+import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 
 function riskLabel(score: number): "low" | "medium" | "high" | "critical" {
   if (score >= 75) return "critical";
@@ -34,8 +35,25 @@ export async function createExitHealthSnapshot(exitRequestId: string) {
     ? Math.max(0, Math.floor((Date.now() - new Date(rec.date_of_joining).getTime()) / (1000 * 60 * 60 * 24 * 30.4375)))
     : 0;
 
+  // pip_record, not pip_action_plan — that table does not exist in mas_hrms (the only PIP
+  // tables are pip_record and pip_checkpoint). scalar() swallows the resulting
+  // ER_NO_SUCH_TABLE and returns its fallback, so pendingDisciplinary was ALWAYS 0 and the
+  // regrettable-exit test below effectively had no disciplinary term at all: someone being
+  // terminated while on an open PIP could still be scored a regrettable exit purely on
+  // performance and attendance.
+  //
+  // The predicate is NOT a straight port of `NOT IN ('closed','cancelled')`. pip_record.status
+  // is ENUM('active','completed','extended','terminated') (sql/023_career_pip.sql) — neither
+  // 'closed' nor 'cancelled' is a member, so that condition would have matched every row
+  // including finished PIPs, counting a PIP someone completed two years ago as open
+  // discipline. 'active' and 'extended' are the two non-terminal states, so this expresses
+  // the original intent ("a PIP that has not finished") correctly against the real enum.
+  //
+  // Deliberately broader than the `status = 'active'` shorthand used by
+  // predictive-attrition.service.ts and employee-360.service.ts: an extended PIP is still an
+  // open one, and here the consequence is whether an exit is flagged regrettable.
   const pendingDisciplinary = await scalar(
-    `SELECT COUNT(*) AS cnt FROM pip_action_plan WHERE employee_id = ? AND status NOT IN ('closed','cancelled')`,
+    `SELECT COUNT(*) AS cnt FROM pip_record WHERE employee_id = ? AND status IN ('active','extended')`,
     [rec.employee_id]
   );
 
@@ -98,10 +116,16 @@ export async function createDefaultClearanceTasks(exitRequestId: string, employe
     ["manager", "Manager handover clearance", "Confirm KT, pending work handover, client dependency and system access handover.", "manager"],
     ["hr", "HR resignation and exit interview", "Confirm resignation acceptance, exit reason category and exit interview completion.", "hr"],
     ["assets", "Asset recovery clearance", "Recover laptop/desktop, headset, ID card, access card, SIM, and any company property.", "admin"],
-    ["it", "IT access closure", "Disable email, VPN, client tools and internal application access after last working day.", "admin"],
+    // owner_role retargeted 'admin' -> 'it' (owner ruling 2026-09-15): this is IT's own
+    // work (disabling email/VPN/app access), not admin's, and it was never reachable by a
+    // pure IT-only account — only 'admin' role held this task. Migration 1772 backfills the
+    // 8 currently-open rows created before this change; cleared/waived rows are left as-is.
+    ["it", "IT access closure", "Disable email, VPN, client tools and internal application access after last working day.", "it"],
     ["wfm", "Roster deactivation", "Remove future roster assignments and stop WFM scheduling after LWD.", "wfm"],
+    ["wfm", "Client ID deactivation", "Deactivate the employee's client system ID/login. Attach the confirmation screenshot or email received from Operations (subject: 'Update regarding analyst status in software'). Attachment is optional.", "wfm"],
     ["payroll", "Payroll hold and F&F readiness", "Check salary hold, advances, notice recovery, leave encashment and F&F readiness.", "payroll"],
-    ["lms", "LMS and certification closure", "Archive LMS status and training/certification records.", "trainer"],
+    // Trainer/LMS closure task removed (owner ruling 2026-09-15): trainer clearance dropped
+    // from the exit process entirely. Existing open rows were waived by migration 1774.
     ["compliance", "Compliance and NDA closure", "Confirm NDA/client confidentiality reminders and DPDP exit notice.", "hr"],
   ];
 
@@ -116,12 +140,25 @@ export async function createDefaultClearanceTasks(exitRequestId: string, employe
   return { created: tasks.length, skipped: false };
 }
 
-export async function getExitCommandCenter(filters: { managerEmployeeId?: string } = {}) {
-  const params: unknown[] = [];
-  const scopeWhere = filters.managerEmployeeId
-    ? `WHERE (e.reporting_manager_id = ? OR e.manager_id = ?)`
-    : "";
-  if (filters.managerEmployeeId) params.push(filters.managerEmployeeId, filters.managerEmployeeId);
+const BYPASS_SCOPE_ROLES = new Set(['super_admin', 'payroll_head']);
+
+export async function getExitCommandCenter(scope: { actorUserId: string; actorRoles: string[] }) {
+  const bypass = scope.actorRoles.some(r => BYPASS_SCOPE_ROLES.has(r));
+
+  let scopeWhere = '1=1';
+  let scopeParams: unknown[] = [];
+
+  if (!bypass) {
+    const SCOPED_ROLES = ['admin','hr','finance','payroll','ceo','manager','branch_head',
+                         'process_manager','assistant_manager','tl','wfm','it'];
+    const clause = await buildScopeWhereClause(
+      scope.actorUserId,
+      SCOPED_ROLES,
+      { branchId: 'e.branch_id', processId: 'e.process_id' }
+    );
+    scopeWhere = clause.sql;
+    scopeParams = clause.params;
+  }
 
   const [summary] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -133,8 +170,8 @@ export async function getExitCommandCenter(filters: { managerEmployeeId?: string
      FROM exit_request er
      JOIN employees e ON e.id = er.employee_id
      LEFT JOIN exit_employee_health_snapshot hs ON hs.exit_request_id = er.id
-     ${scopeWhere}`,
-    params,
+     WHERE (${scopeWhere})`,
+    [...scopeParams],
   );
 
   const [requests] = await db.execute<RowDataPacket[]>(
@@ -147,7 +184,10 @@ export async function getExitCommandCenter(filters: { managerEmployeeId?: string
             hs.regrettable_exit,
             hs.risk_label,
             COALESCE(clearance.total_tasks, 0) AS clearance_total,
-            COALESCE(clearance.cleared_tasks, 0) AS clearance_cleared
+            COALESCE(clearance.cleared_tasks, 0) AS clearance_cleared,
+            nc.status AS noc_case_status,
+            ff.status AS ff_status,
+            ff.is_ff_provisional
        FROM exit_request er
        JOIN employees e ON e.id = er.employee_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -159,27 +199,36 @@ export async function getExitCommandCenter(filters: { managerEmployeeId?: string
                 SUM(CASE WHEN status IN ('cleared','waived') THEN 1 ELSE 0 END) AS cleared_tasks
            FROM exit_clearance_task GROUP BY exit_request_id
        ) clearance ON clearance.exit_request_id = er.id
-      ${scopeWhere}
-      ORDER BY er.created_at DESC
-      LIMIT 100`,
-    params,
+       LEFT JOIN (
+         SELECT exit_request_id, status,
+                ROW_NUMBER() OVER (PARTITION BY exit_request_id ORDER BY created_at DESC) AS rn
+           FROM noc_case
+       ) nc ON nc.exit_request_id = er.id AND nc.rn = 1
+       -- No latest-row wrapper needed here (unlike noc_case above): live-verified 2026-09-15,
+       -- zero exit requests carry more than one full_final_calculation row.
+       LEFT JOIN full_final_calculation ff ON ff.exit_request_id = er.id
+      WHERE (${scopeWhere})
+      ORDER BY
+        FIELD(er.status,'submitted','manager_review','hr_review','admin_review','accepted','notice_serving') DESC,
+        er.created_at DESC
+      LIMIT 200`,
+    [...scopeParams],
   );
 
-  const clearanceParams: unknown[] = [];
-  const clearanceScope = filters.managerEmployeeId
-    ? `JOIN exit_request er ON er.id = ect.exit_request_id
-       JOIN employees e ON e.id = er.employee_id
-       WHERE (e.reporting_manager_id = ? OR e.manager_id = ?)`
-    : "";
-  if (filters.managerEmployeeId) clearanceParams.push(filters.managerEmployeeId, filters.managerEmployeeId);
+  const clearanceJoin = bypass
+    ? ""
+    : `JOIN exit_request er ON er.id = ect.exit_request_id
+       JOIN employees e ON e.id = er.employee_id`;
+  const clearanceWhere = bypass ? "" : `WHERE (${scopeWhere})`;
 
   const [clearance] = await db.execute<RowDataPacket[]>(
     `SELECT ect.clearance_area, ect.status, COUNT(*) AS count
        FROM exit_clearance_task ect
-       ${clearanceScope}
+       ${clearanceJoin}
+       ${clearanceWhere}
       GROUP BY ect.clearance_area, ect.status
       ORDER BY ect.clearance_area, ect.status`,
-    clearanceParams,
+    bypass ? [] : [...scopeParams],
   );
 
   // Attrition trend (last 6 months)
@@ -213,11 +262,14 @@ export async function getExitCommandCenter(filters: { managerEmployeeId?: string
            AND e2.date_of_joining <= LAST_DAY(MAX(er.created_at))
        ), 0), 2) AS rate
      FROM exit_request er
+     JOIN employees e ON e.id = er.employee_id
      WHERE er.created_at >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
        AND er.status NOT IN ('draft', 'rejected', 'revoked', 'withdrawn')
+       AND (${scopeWhere})
      GROUP BY DATE_FORMAT(er.created_at, '%Y-%m')
      ORDER BY month ASC
-     LIMIT 6`
+     LIMIT 6`,
+    [...scopeParams],
   );
 
   // Exit reason breakdown
@@ -226,11 +278,14 @@ export async function getExitCommandCenter(filters: { managerEmployeeId?: string
        COALESCE(er.exit_reason_category, 'other') AS reason,
        COUNT(*) AS count
      FROM exit_request er
+     JOIN employees e ON e.id = er.employee_id
      WHERE er.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
        AND er.status NOT IN ('draft', 'rejected', 'revoked', 'withdrawn')
+       AND (${scopeWhere})
      GROUP BY COALESCE(er.exit_reason_category, 'other')
      ORDER BY count DESC
-     LIMIT 12`
+     LIMIT 12`,
+    [...scopeParams],
   );
 
   // Branch breakdown
@@ -247,9 +302,11 @@ export async function getExitCommandCenter(filters: { managerEmployeeId?: string
      LEFT JOIN branch_master b ON b.id = e.branch_id
      WHERE er.created_at >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
        AND er.status NOT IN ('draft', 'rejected', 'revoked', 'withdrawn')
+       AND (${scopeWhere})
      GROUP BY e.branch_id, b.branch_name
      ORDER BY count DESC
-     LIMIT 10`
+     LIMIT 10`,
+    [...scopeParams],
   );
 
   return {

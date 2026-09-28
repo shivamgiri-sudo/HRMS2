@@ -11,6 +11,11 @@ const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: any, next: any) => fn(req, res).catch(next);
 
+/** First of the current month — matches the frontend's own monthStart() convention for a rule that governs a P&L period. */
+function monthStartDate(): string {
+  return `${new Date().toISOString().slice(0, 7)}-01`;
+}
+
 /**
  * Who may maintain billability, seat rates and cost splits.
  *
@@ -20,6 +25,100 @@ const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
  * both — it looks available and fails on save.
  */
 const BILLABILITY_ROLES = ["super_admin", "finance", "payroll_head", "payroll_branch"] as const;
+
+// ─── Employee search ────────────────────────────────────────────────────────
+
+/**
+ * GET /api/finance/billability/employee-lookup?q=
+ *
+ * Look up a specific employee and show their FULL resolved billability answer — not just
+ * whichever list (matrix row, split candidate) happens to already surface them. Reuses the
+ * exact same resolution functions the P&L engines call (billabilityService), so what this
+ * shows is provably what actually gets billed, not a second opinion that could drift from it.
+ *
+ * Also the fastest way to find one of the "unresolvable" employees the exceptions banner
+ * counts but does not name: searching them here shows exactly which of process/designation/
+ * cost centre is missing.
+ */
+router.get("/employee-lookup", requireRole(...BILLABILITY_ROLES), h(async (req, res) => {
+  const q = String(req.query.q ?? "").trim();
+  if (q.length < 2) {
+    return res.json({ success: true, data: [] });
+  }
+  const onDate = String(req.query.date ?? "").slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const like = `%${q}%`;
+
+  const [matches] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code, e.full_name, e.active_status,
+            e.process_id, p.process_name, p.client_name,
+            e.designation_id, dm.designation_name,
+            e.cost_centre_id, cc.cost_centre_name
+       FROM employees e
+       LEFT JOIN process_master p ON p.id = e.process_id
+       LEFT JOIN designation_master dm ON dm.id = e.designation_id
+       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+      WHERE e.employee_code LIKE ? OR e.full_name LIKE ?
+      ORDER BY e.active_status DESC, e.full_name
+      LIMIT 20`,
+    [like, like],
+  );
+
+  if (matches.length === 0) {
+    return res.json({ success: true, data: [] });
+  }
+
+  // Latest known P&L bucket per matched employee — the same default resolveBillability falls
+  // back to when no explicit rule reaches this person. One batched query for all matches
+  // rather than one per row.
+  const ids = matches.map((m) => String(m.id));
+  const [buckets] = await db.execute<RowDataPacket[]>(
+    `SELECT s.employee_id, s.pnl_bucket
+       FROM pnl_running_salary_snapshot s
+       INNER JOIN (
+         SELECT employee_id, MAX(period_code) AS max_period
+           FROM pnl_running_salary_snapshot
+          WHERE employee_id IN (${ids.map(() => "?").join(",")})
+          GROUP BY employee_id
+       ) latest ON latest.employee_id = s.employee_id AND latest.max_period = s.period_code`,
+    ids,
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const bucketByEmployee = new Map((buckets as RowDataPacket[]).map((b) => [String(b.employee_id), b.pnl_bucket as string | null]));
+
+  const periodCode = onDate.slice(0, 7);
+  const data = await Promise.all(matches.map(async (m) => {
+    const employeeId = String(m.id);
+    const context = {
+      employeeId,
+      processId: m.process_id ? String(m.process_id) : null,
+      designationId: m.designation_id ? String(m.designation_id) : null,
+      costCentreId: m.cost_centre_id ? String(m.cost_centre_id) : null,
+      pnlBucket: bucketByEmployee.get(employeeId) ?? null,
+    };
+    const billability = await billabilityService.resolveBillability(context, onDate);
+    const seatRate = billability.isBillable
+      ? await billabilityService.resolveSeatRate(context, onDate, periodCode)
+      : null;
+    const allocation = await billabilityService.getEmployeeAllocation(employeeId, onDate);
+    return {
+      employeeId,
+      employeeCode: m.employee_code,
+      fullName: m.full_name,
+      activeStatus: Number(m.active_status) === 1,
+      processId: context.processId,
+      processName: m.process_name,
+      clientName: m.client_name,
+      designationId: context.designationId,
+      designationName: m.designation_name,
+      costCentreId: context.costCentreId,
+      costCentreName: m.cost_centre_name,
+      billability,
+      seatRate,
+      allocation: allocation.rows.length > 0 ? allocation : null,
+    };
+  }));
+
+  res.json({ success: true, data });
+}));
 
 // ─── The (process x designation) matrix ───────────────────────────────────────
 
@@ -135,6 +234,109 @@ router.post("/matrix", requireRole(...BILLABILITY_ROLES), requireWriteAccess, h(
   } finally {
     conn.release();
   }
+}));
+
+/**
+ * POST /api/finance/billability/matrix/apply-defaults
+ *
+ * "Default" on the matrix is not a blank — it is an already-computed answer (billable exactly
+ * when the P&L already classifies this role as agent_salary) that nobody has bothered to save
+ * as an explicit rule yet. This persists that existing answer, in bulk, for every (process,
+ * designation) cell that still has no rule — turning an implicit assumption into an explicit,
+ * audited one. It changes NO number: the P&L already computed billability this way via
+ * resolveBillability's own default_bucket fallback. It only makes that answer visible and
+ * overridable per-cell going forward instead of silently re-derived every time.
+ *
+ * A cell is skipped, not guessed, when the employees currently in it disagree on their P&L
+ * bucket (some agent_salary, some not) or when none of them have a known bucket yet — those
+ * genuinely need a person to look at them, which is exactly what "exceptions" is for.
+ */
+router.post("/matrix/apply-defaults", requireRole(...BILLABILITY_ROLES), requireWriteAccess, h(async (req, res) => {
+  const effectiveFrom = monthStartDate();
+  const actorId = req.authUser!.id;
+
+  const [candidateRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.process_id, e.designation_id, p.process_name, dm.designation_name,
+            COUNT(*) AS headcount,
+            SUM(CASE WHEN s.pnl_bucket = 'agent_salary' THEN 1 ELSE 0 END) AS agent_count,
+            SUM(CASE WHEN s.pnl_bucket IS NOT NULL AND s.pnl_bucket <> 'agent_salary' THEN 1 ELSE 0 END) AS non_agent_count
+       FROM employees e
+       LEFT JOIN process_master p ON p.id = e.process_id
+       LEFT JOIN designation_master dm ON dm.id = e.designation_id
+       LEFT JOIN (
+              SELECT employee_id, MAX(period_code) AS max_period
+                FROM pnl_running_salary_snapshot GROUP BY employee_id
+            ) latest ON latest.employee_id = e.id
+       LEFT JOIN pnl_running_salary_snapshot s
+              ON s.employee_id = e.id AND s.period_code = latest.max_period
+       LEFT JOIN process_role_billability r
+              ON r.process_id = e.process_id AND r.designation_id = e.designation_id
+             AND r.employee_id IS NULL AND r.status = 'approved'
+             AND r.effective_from <= ? AND (r.effective_to IS NULL OR r.effective_to >= ?)
+      WHERE e.active_status = 1 AND e.process_id IS NOT NULL AND e.designation_id IS NOT NULL
+        AND r.id IS NULL
+      GROUP BY e.process_id, e.designation_id, p.process_name, dm.designation_name`,
+    [effectiveFrom, effectiveFrom],
+  );
+
+  const toApply: Array<{ processId: string; designationId: string; isBillable: boolean; headcount: number }> = [];
+  const skipped: Array<{ processId: string; processName: string | null; designationId: string; designationName: string | null; reason: string }> = [];
+
+  for (const row of candidateRows) {
+    const agentCount = Number(row.agent_count);
+    const nonAgentCount = Number(row.non_agent_count);
+    if (agentCount > 0 && nonAgentCount > 0) {
+      skipped.push({
+        processId: row.process_id, processName: row.process_name,
+        designationId: row.designation_id, designationName: row.designation_name,
+        reason: `Employees here disagree on P&L bucket (${agentCount} billable-shaped, ${nonAgentCount} not) — needs a person, not a bulk default.`,
+      });
+      continue;
+    }
+    if (agentCount === 0 && nonAgentCount === 0) {
+      skipped.push({
+        processId: row.process_id, processName: row.process_name,
+        designationId: row.designation_id, designationName: row.designation_name,
+        reason: "No P&L bucket known yet for anyone in this cell — nothing to apply.",
+      });
+      continue;
+    }
+    toApply.push({
+      processId: String(row.process_id),
+      designationId: String(row.designation_id),
+      isBillable: agentCount > 0,
+      headcount: Number(row.headcount),
+    });
+  }
+
+  if (toApply.length === 0) {
+    return res.json({ success: true, applied: 0, skipped });
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    for (const cell of toApply) {
+      await conn.execute(
+        `INSERT INTO process_role_billability
+           (id, rule_name, process_id, designation_id, is_billable, seat_rate_monthly,
+            source, effective_from, status, change_reason, created_by, approved_by, approved_at)
+         VALUES (?, ?, ?, ?, ?, NULL, 'manual', ?, 'approved', ?, ?, ?, NOW())`,
+        [randomUUID(), "Process x designation billability", cell.processId, cell.designationId,
+         cell.isBillable ? 1 : 0, effectiveFrom,
+         "Bulk-applied: matches the P&L bucket this role already carries (agent_salary = billable). No new information — this makes the existing default explicit and reviewable.",
+         actorId, actorId],
+      );
+    }
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+
+  res.json({ success: true, applied: toApply.length, skipped });
 }));
 
 // ─── Seat rates per cost centre ───────────────────────────────────────────────
@@ -368,6 +570,47 @@ router.get("/exceptions", requireRole(...BILLABILITY_ROLES), h(async (_req, res)
             SUM(process_id IS NULL OR designation_id IS NULL) AS unresolvable_by_matrix
        FROM employees WHERE active_status = 1`,
   );
+
+  // Named, not just counted — a person has to be findable to be fixed. Capped at 200: this is
+  // meant to be a short worklist, not a full-table dump; if it is ever this long the count above
+  // is the more useful number anyway.
+  const [unresolvableEmployees] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id AS employee_id, e.employee_code, e.full_name, b.branch_name,
+            (e.process_id IS NULL)     AS missing_process,
+            (e.designation_id IS NULL) AS missing_designation,
+            (e.cost_centre_id IS NULL) AS missing_cost_centre
+       FROM employees e
+       LEFT JOIN branch_master b ON b.id = e.branch_id
+      WHERE e.active_status = 1 AND (e.process_id IS NULL OR e.designation_id IS NULL)
+      ORDER BY e.employee_code
+      LIMIT 200`,
+  );
+  const [noCostCentreEmployees] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id AS employee_id, e.employee_code, e.full_name, b.branch_name
+       FROM employees e
+       LEFT JOIN branch_master b ON b.id = e.branch_id
+      WHERE e.active_status = 1 AND e.cost_centre_id IS NULL
+      ORDER BY e.employee_code
+      LIMIT 200`,
+  );
+
+  // Cost centres with staff but no current seat rate — named, plus a heuristic flag for the
+  // ones that are plainly internal overhead (Management/Finance/IT — cost_centre_code carries
+  // no "BSS/" delivery prefix) and will never have a client seat rate. Not a certainty, so
+  // labelled as a heuristic rather than silently dropped from the count.
+  const [costCentresWithoutRate] = await db.execute<RowDataPacket[]>(
+    `SELECT cc.id, cc.cost_centre_code, cc.cost_centre_name,
+            (SELECT COUNT(*) FROM employees e2
+              WHERE e2.cost_centre_id = cc.id AND e2.active_status = 1) AS staff_count
+       FROM cost_centre_master cc
+      WHERE EXISTS (SELECT 1 FROM employees e WHERE e.cost_centre_id = cc.id AND e.active_status = 1)
+        AND NOT EXISTS (
+              SELECT 1 FROM cost_centre_seat_rate r
+               WHERE r.cost_centre_id = cc.id AND r.status = 'approved'
+                 AND (r.effective_to IS NULL OR r.effective_to >= CURDATE()))
+      ORDER BY staff_count DESC`,
+  );
+
   const [[rates]] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(DISTINCT cc.id) AS cost_centres_with_staff,
             COUNT(DISTINCT CASE WHEN r.id IS NOT NULL THEN cc.id END) AS cost_centres_with_rate
@@ -385,6 +628,15 @@ router.get("/exceptions", requireRole(...BILLABILITY_ROLES), h(async (_req, res)
      HAVING ABS(SUM(allocation_pct) - 100) > 0.01`,
   );
 
+  const rateGapRows = (costCentresWithoutRate as RowDataPacket[]).map((r) => ({
+    costCentreId: String(r.id),
+    costCentreCode: r.cost_centre_code,
+    costCentreName: r.cost_centre_name,
+    staffCount: Number(r.staff_count),
+    // Heuristic, not a stored fact — see the comment on the query above.
+    likelyInternalOverhead: !String(r.cost_centre_code ?? "").toUpperCase().startsWith("BSS/"),
+  }));
+
   res.json({
     success: true,
     data: {
@@ -399,6 +651,25 @@ router.get("/exceptions", requireRole(...BILLABILITY_ROLES), h(async (_req, res)
         employeeId: String(u.employee_id),
         total: Number(u.total),
       })),
+      unresolvableEmployees: unresolvableEmployees.map((e) => ({
+        employeeId: String(e.employee_id),
+        employeeCode: e.employee_code,
+        fullName: e.full_name,
+        branchName: e.branch_name,
+        missingProcess: Number(e.missing_process) === 1,
+        missingDesignation: Number(e.missing_designation) === 1,
+        missingCostCentre: Number(e.missing_cost_centre) === 1,
+      })),
+      noCostCentreEmployees: noCostCentreEmployees.map((e) => ({
+        employeeId: String(e.employee_id),
+        employeeCode: e.employee_code,
+        fullName: e.full_name,
+        branchName: e.branch_name,
+      })),
+      costCentresWithoutRate: rateGapRows,
+      // The count Finance actually owes a rate for — the ones above that are not obviously
+      // internal overhead. Kept alongside the raw count so the banner can say both.
+      costCentresNeedingRealRate: rateGapRows.filter((r) => !r.likelyInternalOverhead).length,
     },
   });
 }));

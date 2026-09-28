@@ -22,6 +22,8 @@ interface RosterRecipientRow extends RowDataPacket {
   employee_id: string;
   employee_code: string | null;
   full_name: string | null;
+  process_name: string | null;
+  reporting_manager_name: string | null;
   /** Working days in the cycle — excludes week-offs and holidays. */
   shifts: number;
   week_offs: number;
@@ -47,6 +49,8 @@ async function loadRosterSummaries(cycleId: string): Promise<RosterRecipientRow[
     `SELECT rda.employee_id,
             e.employee_code,
             COALESCE(NULLIF(TRIM(e.full_name), ''), e.employee_code) AS full_name,
+            pm.process_name,
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name,
             SUM(CASE WHEN COALESCE(rda.is_week_off,0) = 0
                       AND COALESCE(rda.is_holiday,0) = 0 THEN 1 ELSE 0 END) AS shifts,
             SUM(COALESCE(rda.is_week_off, 0))                              AS week_offs,
@@ -59,8 +63,10 @@ async function loadRosterSummaries(cycleId: string): Promise<RosterRecipientRow[
        FROM roster_daily_assignment rda
        JOIN employees e            ON e.id = rda.employee_id AND e.active_status = 1
        LEFT JOIN wfm_shift_template t ON t.id = rda.shift_template_id
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
       WHERE rda.cycle_id = ?
-      GROUP BY rda.employee_id, e.employee_code, e.full_name
+      GROUP BY rda.employee_id, e.employee_code, e.full_name, pm.process_name, mgr.full_name, mgr.employee_code
       ORDER BY e.employee_code`,
     [cycleId],
   );
@@ -119,6 +125,8 @@ export async function notifyRosterPublished(cycle: RosterCycleContext): Promise<
         data: {
           employee_name: s.full_name,
           employee_code: s.employee_code,
+          process_name: s.process_name,
+          reporting_manager_name: s.reporting_manager_name,
           week: weekLabel,
           week_start: cycle.week_start_date,
           week_end: cycle.week_end_date,
@@ -150,6 +158,29 @@ export async function notifyRosterPublished(cycle: RosterCycleContext): Promise<
  * (roster.governance.service.ts:423), which is carried into the body so the employee is
  * told why, not just what.
  */
+async function loadEmployeeIdentity(employeeId: string): Promise<{
+  employee_code: string | null;
+  full_name: string | null;
+  process_name: string | null;
+  reporting_manager_name: string | null;
+} | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code,
+            COALESCE(NULLIF(TRIM(e.full_name), ''), e.employee_code) AS full_name,
+            pm.process_name,
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name
+       FROM employees e
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
+      WHERE e.id = ?
+      LIMIT 1`,
+    [employeeId],
+  );
+  return (rows[0] as typeof rows[0] & {
+    employee_code: string | null; full_name: string | null; process_name: string | null; reporting_manager_name: string | null;
+  }) ?? null;
+}
+
 export async function notifyShiftChanged(args: {
   cycle: RosterCycleContext;
   employeeId: string;
@@ -160,6 +191,7 @@ export async function notifyShiftChanged(args: {
   reason?: string | null;
 }): Promise<void> {
   try {
+    const identity = await loadEmployeeIdentity(args.employeeId);
     await notificationGateway.notify({
       eventCode: 'shift_changed',
       // Keyed on the change row, so each distinct change notifies exactly once.
@@ -173,6 +205,10 @@ export async function notifyShiftChanged(args: {
       entityId: args.changeId,
       correlationId: `roster:${args.cycle.id}`,
       data: {
+        employee_name: identity?.full_name ?? null,
+        employee_code: identity?.employee_code ?? null,
+        process_name: identity?.process_name ?? null,
+        reporting_manager_name: identity?.reporting_manager_name ?? null,
         roster_date: args.rosterDate,
         from_shift: args.fromShift ?? null,
         to_shift: args.toShift ?? null,

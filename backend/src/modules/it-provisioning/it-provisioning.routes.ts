@@ -78,9 +78,13 @@ async function persistStructuredFields(taskId: string, body: Record<string, unkn
   const evidenceFileUrl = clean(body.evidence_file_url) || null;
   const biometricDone   = body.biometric_enrolled != null ? (body.biometric_enrolled ? 1 : 0) : null;
   const idCardDone      = body.id_card_printed    != null ? (body.id_card_printed    ? 1 : 0) : null;
+  const bgvResult = clean(body.bgv_result) || null;
+  if (bgvResult && !["red", "green"].includes(bgvResult)) {
+    throw Object.assign(new Error("bgv_result must be 'red' or 'green'"), { statusCode: 400 });
+  }
 
   // Only UPDATE if at least one structured field was sent
-  if (!officialEmail && !domainAccount && !assetTag && !evidenceFileUrl && biometricDone == null && idCardDone == null) return;
+  if (!officialEmail && !domainAccount && !assetTag && !evidenceFileUrl && biometricDone == null && idCardDone == null && !bgvResult) return;
 
   const sets: string[] = [];
   const vals: unknown[] = [];
@@ -90,6 +94,7 @@ async function persistStructuredFields(taskId: string, body: Record<string, unkn
   if (evidenceFileUrl !== null) { sets.push('evidence_file_url = ?');   vals.push(evidenceFileUrl); }
   if (biometricDone   != null)  { sets.push('biometric_enrolled = ?'); vals.push(biometricDone); }
   if (idCardDone      != null)  { sets.push('id_card_printed = ?');    vals.push(idCardDone); }
+  if (bgvResult !== null) { sets.push('bgv_result = ?'); vals.push(bgvResult); }
 
   if (sets.length) {
     vals.push(taskId);
@@ -248,6 +253,25 @@ async function changeAppointmentStatus(
     conn.release();
   }
 }
+
+// ── GET /api/it-provisioning/wfm-shift-options ────────────────────────────────
+// Active shift templates for the WFM alignment dropdown (branch-specific + org-wide).
+router.get(
+  "/wfm-shift-options",
+  requireRole(...PROVISIONING_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const branchId = req.query.branch_id ? String(req.query.branch_id) : null;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, shift_code, shift_name, start_time, end_time
+         FROM wfm_shift_template
+        WHERE active_status = 1 AND (? IS NULL OR branch_id IS NULL OR branch_id = ?)
+        ORDER BY shift_name, shift_code
+        LIMIT 500`,
+      [branchId, branchId],
+    );
+    res.json({ data: rows });
+  }),
+);
 
 // ── GET /api/it-provisioning/requests ─────────────────────────────────────────
 // Functional teams default to their own queue; admin/hr/super_admin can inspect all.
@@ -430,6 +454,10 @@ router.post('/tasks/:id/complete', requireRole(...PROVISIONING_ROLES), h(async (
     throw Object.assign(new Error('Request is locked and cannot be modified'), { statusCode: 403 });
   }
 
+  if (taskRow.task_code === 'HR_BGV_INITIATION' && !['red', 'green'].includes(clean(body.bgv_result))) {
+    return res.status(400).json({ success: false, message: "bgv_result ('red' or 'green') is required to complete this task" });
+  }
+
   // Dispatch to role-specific handler that syncs master data
   // IT: syncs employees.official_email + creates auth_user
   // Admin: creates biometric + ID card records
@@ -583,8 +611,13 @@ router.post('/tasks/bulk-complete', requireRole('it', 'admin', 'super_admin', 'h
       const task = (taskRows as RowDataPacket[])[0];
       if (!task) { results.push({ employee_code: row.employee_code, status: 'error', message: 'No pending IT task found' }); continue; }
 
-      if (!row.official_email?.trim() || !row.domain_account?.trim()) {
-        results.push({ employee_code: row.employee_code, status: 'error', message: 'official_email and domain_account required' }); continue;
+      // official_email is optional (owner decision) — domain_account is the only hard
+      // requirement, matching completeItProvisioningTask's single-task path.
+      if (!row.domain_account?.trim()) {
+        results.push({ employee_code: row.employee_code, status: 'error', message: 'domain_account required' }); continue;
+      }
+      if (row.official_email?.trim() && !OFFICIAL_EMAIL_REGEX.test(row.official_email.trim().toLowerCase())) {
+        results.push({ employee_code: row.employee_code, status: 'error', message: 'official_email must end with @teammas.in or @teammas.co.in' }); continue;
       }
       await persistStructuredFields(task.id, row);
       await actionProvisioningRequest({ requestId: task.id, actionedBy: req.authUser!.id, evidenceNote: `Bulk completed: ${row.official_email}` });
@@ -856,10 +889,11 @@ router.post('/bulk-sync', requireRole('it', 'admin', 'super_admin', 'hr'), h(asy
           if (assetTag)      actions.push(`asset_tag set to ${assetTag}`);
         }
 
-        // If task is still pending, mark it actioned
+        // If task is still pending, mark it actioned. official_email is optional (owner
+        // decision) — domain_account is the only hard requirement here too.
         if (task.status === 'pending' || task.status === 'pending_unassigned') {
-          if (!officialEmail || !domainAccount) {
-            actions.push('task NOT completed — official_email and domain_account both required');
+          if (!domainAccount) {
+            actions.push('task NOT completed — domain_account required');
           } else {
             await actionProvisioningRequest({
               requestId: task.id,

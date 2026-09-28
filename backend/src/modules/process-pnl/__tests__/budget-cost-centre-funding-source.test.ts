@@ -55,8 +55,10 @@ function makeExecute(opts: {
       return [[...direct, ...allocated], []];
     }
 
-    // spendRows: grouped by (cost_centre_id, head, sub_head).
-    if (s.includes("SUM(CASE WHEN g.lifecycle_status = 'reserved' THEN g.pnl_cost_amount") && s.includes("GROUP BY g.cost_centre_id, l.head, l.sub_head")) {
+    // spendRows: grouped by (cost_centre_id, head, sub_head). Read EX-GST (amount_without_tax)
+    // since the 2026-09-24 owner rule; these fixtures carry no GST, so the fixture's
+    // pnl_cost_amount figure stands in for the ex-GST amount unchanged.
+    if (s.includes("SUM(CASE WHEN g.lifecycle_status = 'reserved' THEN COALESCE(NULLIF(g.amount_without_tax, 0)") && s.includes("GROUP BY g.cost_centre_id, l.head, l.sub_head")) {
       const groups = new Map<string, { cost_centre_id: string | null; head: string; sub_head: string | null; reserved: number; consumed: number }>();
       for (const a of allocations) {
         const line = lines.find((l) => l.id === a.budget_line_id)!;
@@ -93,7 +95,7 @@ function makeExecute(opts: {
     if (s.includes("CASE WHEN NOT EXISTS")) return [[], []];
 
     // unallocatedRows.
-    if (s.includes("AS cnt, COALESCE(SUM(l.gross_amount)")) return [[{ cnt: 0, total_budget: 0 }], []];
+    if (s.includes("AS cnt, COALESCE(SUM(")) return [[{ cnt: 0, total_budget: 0 }], []];
 
     // cost_centre_master name lookup.
     if (s.includes("FROM cost_centre_master")) {

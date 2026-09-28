@@ -8,8 +8,11 @@ import {
   listPendingApprovals, approveOffer, rejectOffer,
   sendOnboardingProgressReminder,
   markCandidateNotJoining, clearCandidateNotJoining,
+  changeCandidateBranch,
 } from './ats.onboarding.service.js';
 import { calculateSalary } from './salary.calculator.js';
+import { parseCtcInput } from './ctc-parser.js';
+import { resolveBandPct } from './band-package-ratio.service.js';
 import { buildScopeWhereClause, hasScopedAccess, hasAnyRole } from '../../shared/scopeAccess.js';
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2';
@@ -25,6 +28,15 @@ const h = (fn: AsyncHandler): RequestHandler =>
   (req: Request, res: Response, next: NextFunction) => {
     void fn(req, res).catch(next);
   };
+
+/** Resolves a branch's state name, for state-specific Professional Tax lookup. */
+async function resolveBranchState(branchId: string): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT state FROM branch_master WHERE id = ? LIMIT 1`,
+    [branchId],
+  ).catch(() => [[] as RowDataPacket[]] as [RowDataPacket[]]);
+  return (rows as RowDataPacket[])[0]?.state ?? null;
+}
 
 // ── Public ────────────────────────────────────────────────────────────────────
 
@@ -147,18 +159,127 @@ router.get(
   }),
 );
 
+// ── Offer audit: all submitted/draft offers with every field, for management review ──
+router.get(
+  '/offer-audit',
+  requireAuth,
+  requireRole('hr', 'hr_admin', 'hr_head', 'ho_hr', 'admin', 'super_admin', 'payroll_hr', 'branch_hr', 'payroll_head'),
+  h(async (req: AuthenticatedRequest, res) => {
+    const scopeFilter = await buildScopeWhereClause(
+      req.authUser!.id,
+      ['branch_hr', 'payroll_head', 'payroll_hr'],
+      { branchId: 'r.branch_id' },
+      { allowAdminBypass: true },
+    );
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (scopeFilter.sql && scopeFilter.sql !== '1=1') { conditions.push(scopeFilter.sql); params.push(...(scopeFilter.params ?? [])); }
+
+    const { branch_id, branch_name, status, from_date, to_date, search } = req.query;
+    if (branch_id)  { conditions.push('r.branch_id = ?');                               params.push(branch_id); }
+    if (branch_name) { conditions.push('b.branch_name = ?');                            params.push(branch_name); }
+    if (status)     { conditions.push('o.status = ?');                                  params.push(status); }
+    if (from_date)  { conditions.push('DATE(o.created_at) >= ?');                       params.push(from_date); }
+    if (to_date)    { conditions.push('DATE(o.created_at) <= ?');                       params.push(to_date); }
+    if (search)     { conditions.push('(c.full_name LIKE ? OR c.candidate_code LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         o.id AS offer_id,
+         o.status,
+         o.emp_type,
+         o.date_of_joining,
+         o.date_of_salary,
+         o.profile,
+         o.cost_centre,
+         o.role_type,
+         o.kpi,
+         o.work_status,
+         o.emp_location_type,
+         o.home_branch,
+         o.salary_band,
+         o.offered_ctc,
+         o.basic,
+         o.hra,
+         o.conveyance,
+         o.da,
+         o.special_allowance,
+         o.other_allowance,
+         o.bonus,
+         o.gross,
+         o.pf_employee,
+         o.pf_employer,
+         o.esic_employee,
+         o.esic_employer,
+         o.professional_tax,
+         o.gratuity,
+         o.admin_charges,
+         o.net_in_hand,
+         o.pli,
+         o.pay_mode,
+         o.salary_payment_mode,
+         o.pf_eligible,
+         o.esi_eligible,
+         o.pf_opt_out,
+         o.esic_opt_out,
+         o.is_proposed_exception,
+         o.proposed_exception_reason,
+         o.submitted_at,
+         o.created_at AS offer_created_at,
+         c.full_name    AS candidate_name,
+         c.candidate_code,
+         c.email        AS candidate_email,
+         c.mobile       AS candidate_mobile,
+         b.branch_name,
+         r.branch_id,
+         dm.dept_name        AS department_name,
+         desm.designation_name AS designation_name,
+         cc.cost_centre_name,
+         TRIM(CONCAT(COALESCE(rm.first_name,''), ' ', COALESCE(rm.last_name,''))) AS reporting_manager_name,
+         TRIM(CONCAT(COALESCE(cbe.first_name,''), ' ', COALESCE(cbe.last_name,''))) AS created_by_name
+       FROM ats_employment_offer o
+       JOIN ats_onboarding_request r   ON r.id = o.onboarding_request_id
+       JOIN ats_candidate c             ON c.id = o.candidate_id
+       LEFT JOIN branch_master b        ON b.id = r.branch_id
+       LEFT JOIN department_master dm   ON dm.id = o.department_id
+       LEFT JOIN designation_master desm ON desm.id = o.designation_id
+       LEFT JOIN cost_centre_master cc  ON (cc.id = o.cost_centre OR cc.cost_centre_code = o.cost_centre)
+       LEFT JOIN employees rm           ON rm.id = o.reporting_manager_id
+       LEFT JOIN employees cbe          ON cbe.user_id = o.created_by
+       ${where}
+       ORDER BY o.created_at DESC
+       LIMIT 1000`,
+      params,
+    );
+    res.json({ ok: true, data: rows });
+  }),
+);
+
 router.post(
   '/calculate-salary',
   requireAuth,
   requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
   h(async (req, res) => {
-    const { ctc, bandCode, isMetro } = req.body;
+    const { ctc, bandCode, isMetro, pf_eligible, esi_eligible, branch_id } = req.body;
     if (!ctc || !bandCode) { res.status(400).json({ error: 'ctc and bandCode required' }); return; }
-    const [bands] = await db.execute<RowDataPacket[]>(
-      `SELECT basic_pct, hra_pct FROM salary_band_master WHERE band_code = ?`, [bandCode],
-    ).catch(() => [[] as RowDataPacket[]]);
-    const band = (bands as RowDataPacket[])[0] ?? { basic_pct: 40, hra_pct: 40 };
-    const components = calculateSalary(Number(ctc), Number(band.basic_pct), Number(band.hra_pct), Boolean(isMetro));
+    // Defensive parse -- see ctc-parser.ts. The current frontend already sends a
+    // computed number, but a comma/period-grouped string reaching this endpoint
+    // directly must not silently corrupt the preview the way a bare Number() would.
+    const annualCtc = parseCtcInput(ctc);
+    if (annualCtc === null || annualCtc <= 0) { res.status(400).json({ error: `ctc "${ctc}" is not a valid amount` }); return; }
+    // Same source as saveOffer() -- see band-package-ratio.service.ts -- so this
+    // preview never disagrees with what actually gets saved a moment later.
+    const band = await resolveBandPct(String(bandCode), annualCtc / 12);
+    // Default true (deduct) to match the DB column default when the caller omits
+    // the field -- only an explicit false previews an opted-out candidate.
+    const pfEligible = pf_eligible !== false && pf_eligible !== 0;
+    const esiEligible = esi_eligible !== false && esi_eligible !== 0;
+    const stateCode = branch_id ? await resolveBranchState(String(branch_id)) : null;
+    const components = await calculateSalary(annualCtc, band.basicPct, band.hraPct, Boolean(isMetro), undefined, pfEligible, esiEligible, stateCode);
     res.json({ ok: true, components });
   }),
 );
@@ -174,7 +295,7 @@ router.post(
       res.status(400).json({ ok: false, error: 'Cost Centre is required to submit an offer' });
       return;
     }
-    const result = await saveOffer(req.params!.id, offerData, req.authUser!.id, Boolean(submit));
+    const result = await saveOffer(req.params!.id, offerData, req.authUser!.id, Boolean(submit), req.authUser!.roles);
     res.json({ ok: true, ...result });
   }),
 );
@@ -184,7 +305,7 @@ router.patch(
   requireAuth,
   requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
   h(async (req: AuthenticatedRequest, res) => {
-    const result = await saveOffer(req.params!.id, req.body, req.authUser!.id, false);
+    const result = await saveOffer(req.params!.id, req.body, req.authUser!.id, false, req.authUser!.roles);
     res.json({ ok: true, ...result });
   }),
 );
@@ -260,6 +381,27 @@ router.patch(
   requireRole('admin', 'super_admin', 'hr'),
   h(async (req: AuthenticatedRequest, res) => {
     const result = await clearCandidateNotJoining(req.params!.id, req.authUser!.id);
+    res.json({ ok: true, ...result });
+  }),
+);
+
+// ── Change a candidate's onboarding branch ────────────────────────────────────
+//
+// There was previously no update path for ats_onboarding_request.branch_id at
+// all (only written once, at request creation) — a branch entered wrong at
+// intake had no fix short of a direct DB UPDATE. Same role gate as
+// not-joining: this reassigns which Branch Head approves the offer and which
+// branch HR's queue the candidate appears in, so it stays admin/super_admin/hr
+// only, mandatory reason, audited via changeCandidateBranch().
+router.patch(
+  '/candidates/:id/branch',
+  requireAuth,
+  requireRole('admin', 'super_admin', 'hr'),
+  h(async (req: AuthenticatedRequest, res) => {
+    const branchId = String(req.body?.branchId ?? '');
+    const reason = String(req.body?.reason ?? '');
+    if (!branchId) { res.status(400).json({ ok: false, message: 'branchId is required' }); return; }
+    const result = await changeCandidateBranch(req.params!.id, branchId, req.authUser!.id, reason);
     res.json({ ok: true, ...result });
   }),
 );

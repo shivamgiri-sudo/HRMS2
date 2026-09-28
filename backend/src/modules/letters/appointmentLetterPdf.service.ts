@@ -50,11 +50,71 @@ export const RESERVE = { band: 180 };
 /** Ordinary bottom margin for body pages: enough for the footer, nothing more. */
 const BODY_BOTTOM = 70;
 
+/** A rectangle in pdfkit page space: top-left origin, y grows downward. */
+export type TopLeftRect = { x: number; y: number; w: number; h: number };
+
+/**
+ * The provider's employee-signature rectangle, exactly as measured from a real
+ * signed contract. This is in native PDF space: [x1, y1, x2, y2] with the origin
+ * at the page's BOTTOM-left, so y 100-160 is a strip near the foot of the page.
+ * Do not change these numbers — they describe what the provider does, not what
+ * we choose.
+ */
+export const PROVIDER_STAMP_RECT_PDF: readonly [number, number, number, number] = [425, 100, 545, 160];
+
+/** Convert a native PDF rect ([x1,y1,x2,y2], bottom-left origin) to pdfkit space. */
+export function pdfRectToTopLeft(
+  rect: readonly [number, number, number, number],
+  pageHeight: number,
+): TopLeftRect {
+  const [x1, y1, x2, y2] = rect;
+  return { x: x1, y: pageHeight - y2, w: x2 - x1, h: y2 - y1 };
+}
+
+/**
+ * A4 page height in PDF points, as pdfkit sizes it. Needed to place the box in
+ * pdfkit space from the provider's bottom-left rect at module load.
+ */
+const A4_HEIGHT = 841.89;
+
+/**
+ * The outline labelled "Aadhaar eSign area" is drawn EXACTLY on the provider's
+ * stamp rect, so what the employee sees is where their signature will land. The
+ * provider stamps the last page (the signature page), and the request carries no
+ * placement of its own (luckpay eSignWithURL sends only file + signer details).
+ */
+export const ESIGN_BOX: TopLeftRect = pdfRectToTopLeft(PROVIDER_STAMP_RECT_PDF, A4_HEIGHT);
+
+/**
+ * Verification QR: in the upper right of the signature page, beside the company
+ * signature block and just under the "SIGNATURES" rule (y~102), far from the foot
+ * band where the eSign box sits. The caption sits beneath it.
+ */
+const QR_SIZE = 76;
+const QR_CAPTION = "Scan to verify this letter";
+const QR_CAPTION_GAP = 3;
+const QR_CAPTION_HEIGHT = 9;
+export const QR_RECT: TopLeftRect = { x: 420, y: 112, w: QR_SIZE, h: QR_SIZE };
+/** QR plus its caption line. */
+export const QR_BLOCK_RECT: TopLeftRect = {
+  ...QR_RECT,
+  h: QR_SIZE + QR_CAPTION_GAP + QR_CAPTION_HEIGHT,
+};
+
+/** Left column of the signature page: the company signer text is drawn inside it. */
+const COMPANY_TEXT_X = PAGE.margin;
+export const COMPANY_TEXT_MAX_WIDTH = 340;
+
 export type AppointmentLetterInput = {
   employeeName: string;
   employeeCode: string;
   designation: string;
   dateOfJoining: Date | string | null;
+  /** employees.salary_start_date — defaults to dateOfJoining when the employee
+   *  record has none set (same fallback the column itself defines). Printed on
+   *  the Salary Date line and the closing reference date, which is what "date
+   *  of joining" on this letter actually meant when the two dates can differ. */
+  salaryStartDate: Date | string | null;
   issueDate?: Date;
   letterNumber: string;
   verificationUrl: string;
@@ -82,21 +142,32 @@ type Doc = PDFKit.PDFDocument;
 
 function drawLetterhead(doc: Doc, lh: BranchLetterhead) {
   const top = 34;
-  const width = doc.page.width - PAGE.margin * 2;
+  // Reserve the left 100pt for the logo so the right-aligned company name and
+  // address never overlap it, regardless of the logo's actual aspect ratio.
+  const logoMaxW = 100;
+  const textX = PAGE.margin + logoMaxW + 10; // 166pt from page edge
+  const textW = doc.page.width - PAGE.margin - textX; // ~373pt remaining
   const logo = logoPath();
   if (logo) {
-    try { doc.image(logo, PAGE.margin, top, { height: 26 }); } catch { /* text fallback below */ }
+    try { doc.image(logo, PAGE.margin, top, { fit: [logoMaxW, 26] }); } catch { /* text fallback below */ }
   }
   doc.font("Helvetica-Bold").fontSize(9).fillColor(INK)
-    .text(COMPANY_NAME, PAGE.margin, top, { width, align: "right" });
+    .text(COMPANY_NAME, textX, top, { width: textW, align: "right" });
 
   const addr = [lh.branchName, ...lh.addressLines].filter(Boolean).join(", ");
   doc.font("Helvetica").fontSize(7.5).fillColor(MUTED)
-    .text(addr, PAGE.margin, top + 12, { width, align: "right", height: 20, ellipsis: true });
+    .text(addr, textX, top + 12, { width: textW, align: "right", height: 20, ellipsis: true });
 
   const ruleY = top + 34;
   doc.moveTo(PAGE.margin, ruleY).lineTo(doc.page.width - PAGE.margin, ruleY)
     .lineWidth(1.2).strokeColor(ACCENT).stroke();
+  // The company-name/address lines above are right-aligned at textX (~166pt in from the
+  // margin), and pdfkit left doc.x sitting there afterwards — only doc.y was reset here.
+  // Confirmed by rendering a sample letter: every unpositioned .text() call from "Original
+  // Copy" through "With reference to..." inherited that ~110pt indent, misaligning the
+  // whole top block against the true left margin. Same fix salaryTable() already applies
+  // below, for the same reason.
+  doc.x = PAGE.margin;
   doc.y = ruleY + 16;
   doc.fillColor(INK);
 }
@@ -170,11 +241,13 @@ function salaryTable(doc: Doc, s: AppointmentLetterSalary) {
  * final page ever needs.
  *
  * The lower portion is left deliberately empty — the provider stamps the
- * employee's Aadhaar signature at Rect [425,100,545,160] on this page.
+ * employee's Aadhaar signature at PROVIDER_STAMP_RECT_PDF ([425,100,545,160],
+ * bottom-left origin, i.e. the foot strip) on this page; ESIGN_BOX is drawn on
+ * exactly that rect. The verification QR sits at the top right (see QR_RECT).
  */
 function signaturePage(doc: Doc, input: AppointmentLetterInput) {
   doc.addPage();
-  const left = PAGE.margin;
+  const left = COMPANY_TEXT_X;
   let y = doc.y;
 
   doc.font("Helvetica-Bold").fontSize(11).fillColor(INK).text("SIGNATURES", left, y);
@@ -196,26 +269,26 @@ function signaturePage(doc: Doc, input: AppointmentLetterInput) {
     doc.text(line, left, y, { width: 330 });
     y += 12;
   }
-  doc.fontSize(7).fillColor(MUTED).text(`Verify: ${input.verificationUrl}`, left, y, { width: 340 });
+  doc.fontSize(7).fillColor(MUTED).text(`Verify: ${input.verificationUrl}`, left, y, { width: COMPANY_TEXT_MAX_WIDTH });
   // Capture bottom of company block before drawing the eSign box (which resets doc.y to box coords).
   const companyBlockBottom = doc.y + 6;
 
-  // Aadhaar eSign box — fixed position matching the provider's stamp rect [425,100,545,160].
-  const boxTop = 94;
-  const boxHeight = 78;
-  doc.rect(420, boxTop, 130, boxHeight).lineWidth(0.8).strokeColor("#CBD5E1").stroke();
+  // Aadhaar eSign box: drawn on the provider stamp rect (foot of the page, inside the reserved band).
+  doc.rect(ESIGN_BOX.x, ESIGN_BOX.y, ESIGN_BOX.w, ESIGN_BOX.h).lineWidth(0.8).strokeColor("#CBD5E1").stroke();
   doc.fontSize(6.5).fillColor(MUTED)
-    .text("Aadhaar eSign area", 426, boxTop + boxHeight - 14, { width: 120 });
+    .text("Aadhaar eSign area", ESIGN_BOX.x + 6, ESIGN_BOX.y + ESIGN_BOX.h - 14, { width: ESIGN_BOX.w - 10 });
 
   if (input.qrPngDataUrl) {
     try {
       const b64 = input.qrPngDataUrl.replace(/^data:image\/png;base64,/, "");
-      doc.image(Buffer.from(b64, "base64"), doc.page.width - PAGE.margin - 78, boxTop - 6, { width: 78, height: 78 });
+      doc.image(Buffer.from(b64, "base64"), QR_RECT.x, QR_RECT.y, { width: QR_RECT.w, height: QR_RECT.h });
+      doc.font("Helvetica").fontSize(6.5).fillColor(MUTED)
+        .text(QR_CAPTION, QR_RECT.x, QR_RECT.y + QR_RECT.h + QR_CAPTION_GAP, { width: 130, lineBreak: false });
     } catch { /* a missing QR must never stop issuance */ }
   }
 
-  // Employee acceptance block — below whichever ends lower: company block or eSign box.
-  const acceptY = Math.max(companyBlockBottom, boxTop + boxHeight + 14);
+  // Employee acceptance block — below the company block, in the left column (the QR is to the right).
+  const acceptY = companyBlockBottom;
   doc.font("Helvetica-Bold").fontSize(9.5).fillColor(INK)
     .text("Accepted by the employee", left, acceptY, { width: 320 });
   doc.font("Helvetica").fontSize(8).fillColor(MUTED)
@@ -264,22 +337,6 @@ const TERMS: Array<[string, string[]]> = [
   ]],
 ];
 
-const ANNEXURE_DOCS = [
-  "Six recent passport-sized photographs.",
-  "A copy of your updated Curriculum Vitae.",
-  "A copy of this Appointment Letter.",
-  "Proof of Address (rent agreement, ration card, voter's ID, driving licence, electricity bill or landline bill).",
-  "Secondary School Certificate (10th) / 10th marksheet.",
-  "Senior Secondary School Certificate (12th) / 12th marksheet.",
-  "Bachelor's degree, all years' marksheets, graduation degree certificate, diploma or certification course.",
-  "Post-graduation certificate.",
-  "Additional qualifications.",
-  "Proof of Identity (passport, driving licence, voter's ID, bank passbook with photo or PAN card).",
-  "Appointment letter of last organisation served.",
-  "Last pay slip drawn.",
-  "Form 16 (Part A) from the previous employer, or salary certificate.",
-];
-
 /** Render the letter. Returns unsigned PDF bytes ready for the company DSC. */
 export async function renderAppointmentLetterPdf(input: AppointmentLetterInput): Promise<Buffer> {
   const issue = input.issueDate ?? new Date();
@@ -316,11 +373,12 @@ export async function renderAppointmentLetterPdf(input: AppointmentLetterInput):
 
     heading(doc, "ON THE FOLLOWING TERMS AND CONDITIONS");
     heading(doc, "1. APPOINTMENT DATE");
-    body(doc, `1.1 This appointment shall be effective from ${istDisplayDate(input.dateOfJoining)}.`);
+    body(doc, `1.1 This appointment shall be effective from ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}.`);
     heading(doc, "2. DESIGNATION");
     body(doc, `2.1 You will be designated as '${input.designation || "—"}' and you would be reporting to your Reporting Manager.`);
     heading(doc, "3. REMUNERATION");
-    body(doc, "3.1 Your monthly salary breakup would be as follows (in INR):");
+    body(doc, `3.1 Salary Date: ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}`);
+    body(doc, "3.2 Your monthly salary breakup would be as follows (in INR):");
     salaryTable(doc, input.salary);
 
     for (const [title, paras] of TERMS) {
@@ -329,26 +387,15 @@ export async function renderAppointmentLetterPdf(input: AppointmentLetterInput):
     }
 
     body(doc, "All terms and conditions will be governed by the Company's policies as stated from time to time, and the Company may at its sole discretion, as it deems fit, revoke or change such policies.");
-    body(doc, "The terms of this offer shall be kept strictly confidential. You shall execute all the documents indicated in Annexure-I so as to give effect to this offer.");
+    body(doc, "The terms of this offer shall be kept strictly confidential.");
     body(doc, "Please return the duplicate copy of this letter duly signed in token of your having accepted the offer, and initial each page in acceptance of the terms and conditions set out herein, within 10 days of the issuance of this letter, failing which this offer stands automatically withdrawn.");
     body(doc, `We welcome you and wish you every success in your career with ${COMPANY_NAME}`);
     // Keep the closing block together — ensureRoom for both lines prevents
-    // "Sincerely," landing alone at the bottom with "Date of Joining:" orphaned on the next page.
+    // "Sincerely," landing alone at the bottom with "Salary Start Date:" orphaned on the next page.
     ensureRoom(doc, 60);
     doc.moveDown(0.4);
     body(doc, "Sincerely,");
-    body(doc, `Date of Joining: ${istDisplayDate(input.dateOfJoining)}`);
-
-    doc.addPage();
-    heading(doc, "ANNEXURE-I");
-    doc.font("Helvetica-Bold").fontSize(9).text("DOCUMENTS / CREDENTIALS REQUIRED AT THE TIME OF JOINING");
-    doc.moveDown(0.3);
-    ANNEXURE_DOCS.forEach((t, i) => body(doc, `${i + 1}. ${t}`));
-    doc.moveDown(0.3);
-    doc.font("Helvetica-Bold").fontSize(9).text("DOCUMENTS TO BE DULY FILLED AND SIGNED AT THE TIME OF JOINING");
-    doc.moveDown(0.3);
-    ["Employee's Record Form", "Code of Conduct", "Phone Undertaking / Asset Undertaking", "ESI Form", "EPF Form"]
-      .forEach((t, i) => body(doc, `${i + 1}. ${t}`));
+    body(doc, `Salary Start Date: ${istDisplayDate(input.salaryStartDate ?? input.dateOfJoining)}`);
 
     // The company block goes on the final page, inside the reserved band.
     signaturePage(doc, { ...input, issueDate: issue });

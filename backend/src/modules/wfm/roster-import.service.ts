@@ -4,6 +4,7 @@
  * No roster assignments are committed here.
  */
 
+import { loadLobNames } from '../../shared/lobNames.js';
 import * as XLSX from 'xlsx';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
@@ -13,6 +14,7 @@ import { sqlLimitOffset } from '../../db/pagination.js';
 import { withEmployeeRosterLock, validateMinimumRest, applyRestDecision, isRestPolicyFeatureActive } from './rest-policy.service.js';
 import { checkEmployeeDateNotLocked } from '../roster/roster-lock-guard.js';
 import { parseShiftString } from './shift-parser.service.js';
+import { annotateImportPolicyWarnings, stampImportBatchRows } from './roster-offday-apply.js';
 
 // ── Public types ────────────────────────────────────────────────────────────
 
@@ -26,6 +28,8 @@ export interface BatchSummary {
   unassigned: number;
   dateRangeStart: string | null;
   dateRangeEnd: string | null;
+  /** Rows carrying an off-day policy warning (informational; only present when > 0). */
+  offdayPolicyWarnings?: number;
 }
 
 // ── Internal types ───────────────────────────────────────────────────────────
@@ -457,6 +461,9 @@ export async function createImportBatch(params: {
   // When the cross-check could not run, no warning is raised rather than a false one on every
   // LEAVE cell — but it is logged above, not swallowed.
 
+  // Off-day policy warnings (informational only; no-op when no policy is configured).
+  const offdayPolicyWarnings = await annotateImportPolicyWarnings(rowEntries);
+
   // ── Step 8: Insert rows into DB ─────────────────────────────────────────
   //
   // Chunked multi-row INSERT, not one statement per cell. A real roster is employees x dates —
@@ -529,6 +536,7 @@ export async function createImportBatch(params: {
     dateRangeStart,
     dateRangeEnd,
   };
+  if (offdayPolicyWarnings > 0) summary.offdayPolicyWarnings = offdayPolicyWarnings;
 
   // ── Step 10: Update batch record to PREVIEW ──────────────────────────────
   await db.execute(
@@ -586,6 +594,72 @@ export async function getImportBatch(
         dateRangeEnd: batch.date_range_end ?? null,
       };
   return { batch, summary };
+}
+
+// ── listImportBatches ────────────────────────────────────────────────────────
+
+export interface ImportBatchListItem {
+  id: number;
+  status: string;
+  file_name: string;
+  import_mode: string;
+  total_rows: number | null;
+  valid_rows: number | null;
+  warning_rows: number | null;
+  error_rows: number | null;
+  branch_id: string | null;
+  branch_name: string | null;
+  process_id: string | null;
+  process_name: string | null;
+  date_range_start: string | null;
+  date_range_end: string | null;
+  created_by: string | null;
+  created_by_email: string | null;
+  created_at: string;
+  committed_by: string | null;
+  committed_at: string | null;
+}
+
+/**
+ * List roster import batches so any WFM-role user can find one to open and commit — even a batch
+ * they did not upload themselves. There was previously no way to discover a batch's id at all
+ * except knowing it in advance (the frontend's "open by id" box), which meant a batch nobody
+ * remembered the id of was invisible to everyone, uploader and super_admin alike. Real gap: found
+ * live 2026-09-11 with 3 genuine pending batches (ids 51-53) sitting uncommitted with no way for
+ * any user to see them.
+ *
+ * Defaults to open (non-terminal) batches only: PARSING, PREVIEW, VALIDATING, READY. Pass
+ * `status` to see COMMITTED/FAILED/CANCELLED history instead.
+ */
+export async function listImportBatches(options: {
+  status?: string[];
+  limit?: number;
+}): Promise<ImportBatchListItem[]> {
+  const statuses =
+    options.status && options.status.length > 0
+      ? options.status
+      : ['PARSING', 'PREVIEW', 'VALIDATING', 'READY'];
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+  const placeholders = statuses.map(() => '?').join(',');
+  const [rows] = await db.query<RowDataPacket[]>(
+    `SELECT
+       b.id, b.status, b.file_name, b.import_mode,
+       b.total_rows, b.valid_rows, b.warning_rows, b.error_rows,
+       b.branch_id, br.branch_name,
+       b.process_id, p.process_name,
+       b.date_range_start, b.date_range_end,
+       b.created_by, u.email AS created_by_email,
+       b.created_at, b.committed_by, b.committed_at
+     FROM wfm_roster_import_batch b
+     LEFT JOIN branch_master br ON br.id = b.branch_id
+     LEFT JOIN process_master p ON p.id = b.process_id
+     LEFT JOIN auth_user u ON u.id = b.created_by
+     WHERE b.status IN (${placeholders})
+     ORDER BY b.created_at DESC
+     LIMIT ${limit}`,
+    statuses
+  );
+  return rows as unknown as ImportBatchListItem[];
 }
 
 // ── Commit types ─────────────────────────────────────────────────────────────
@@ -734,13 +808,11 @@ export async function commitImportBatch(
     throw new Error('Batch has warnings — pass overrideWarnings: true to proceed');
   }
 
-  // Step 5: Maker-checker. Owner ruling 2026-08-22: the rule protects against a plain WFM/team
-  // leader uploader waving their own roster through unreviewed — it was never meant to stop a
-  // super_admin, who has no separate WFM-head "checker" above them in this flow and is trusted to
-  // upload and approve in one step.
-  if (batch.created_by === committedBy && !options.committerIsSuperAdmin) {
-    throw new Error('Uploader cannot approve their own import (maker-checker policy)');
-  }
+  // Step 5: Maker-checker removed (owner ruling 2026-09-11) — the uploader is now allowed to
+  // commit their own import batch. Previously (owner ruling 2026-08-22) a plain WFM/team-leader
+  // uploader was blocked from approving their own batch unless committerIsSuperAdmin; that
+  // restriction is intentionally gone. `options.committerIsSuperAdmin` is kept as an accepted
+  // (now no-op) option so callers/tests passing it don't need to change.
 
   // Step 6: Fetch committable rows (exclude NO_CHANGE, NEEDS_MAPPING, ERROR when overrideWarnings)
   const [importRows] = await db.execute<RowDataPacket[]>(
@@ -981,6 +1053,9 @@ export async function commitImportBatch(
     });
   }
 
+  // File the written rows under their process/LOB (fills NULLs only; no-op before migration 1849).
+  await stampImportBatchRows(batchId, batch.process_id ? String(batch.process_id) : null);
+
   // Update batch status. Deliberately after every employee's lock scope has released, on the plain
   // pool — matches "partial success is still success" for the tallies above (unmatchedEmployees,
   // blockedByLeave, blockedByRest, blockedByLock never block the rest of the file, so they don't
@@ -1041,7 +1116,31 @@ export async function getImportRows(
     [batchId, ...stateParams]
   );
 
-  return { rows: rows as any[], total };
+  return { rows: await attachEmployeeLobNames(rows as any[]), total };
+}
+
+/**
+ * Adds `lob_name` (null = unassigned/unknown code) to each import row. Employees are matched by
+ * employee_code in JS, and the LOB name comes from a separate parameterised lookup, so no
+ * cross-table collation comparison is introduced.
+ */
+async function attachEmployeeLobNames(rows: any[]): Promise<any[]> {
+  const codes = [...new Set(rows.map((r) => String(r.employee_id_raw ?? '').trim()).filter(Boolean))];
+  if (!codes.length) return rows.map((r) => ({ ...r, lob_name: null }));
+  const codeToLobId = new Map<string, string>();
+  for (let i = 0; i < codes.length; i += 500) {
+    const chunk = codes.slice(i, i + 500);
+    const [emps] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_code, lob_id FROM employees WHERE employee_code IN (${chunk.map(() => '?').join(',')}) AND lob_id IS NOT NULL`,
+      chunk
+    );
+    for (const e of emps ?? []) codeToLobId.set(String(e.employee_code), String(e.lob_id));
+  }
+  const names = await loadLobNames(codeToLobId.values());
+  return rows.map((r) => {
+    const lobId = codeToLobId.get(String(r.employee_id_raw ?? '').trim());
+    return { ...r, lob_name: lobId ? (names.get(lobId) ?? null) : null };
+  });
 }
 
 // ── updateImportRow ────────────────────────────────────────────────────────────

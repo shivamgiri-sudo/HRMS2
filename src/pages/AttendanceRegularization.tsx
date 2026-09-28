@@ -14,6 +14,7 @@ import { DiscardDialog } from "@/components/discard/DiscardDialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { localISODate } from "@/lib/localDate";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge"; // kept for stage badges in DetailDialog
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -33,10 +34,13 @@ import {
   RefreshCw,
   Search,
   Send,
+  UserPlus,
+  Users,
   X,
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -606,6 +610,13 @@ export default function AttendanceRegularization() {
   const linkedEmployeeId = searchParams.get("employeeId");
   const linkedEmployeeNameParam = searchParams.get("employeeName");
   const linkedEmployeeCodeParam = searchParams.get("employeeCode");
+
+  // Managers can raise regularization on behalf of a direct report.
+  // effectiveEmployeeId = manually picked employee > URL param > null (self)
+  const [onBehalfEmployee, setOnBehalfEmployee] = useState<{ id: string; name: string; code: string } | null>(null);
+  const [onBehalfSearch, setOnBehalfSearch] = useState("");
+  const effectiveEmployeeId = onBehalfEmployee?.id ?? linkedEmployeeId ?? null;
+
   // Resolve display name: prefer URL param, fall back to fetched name, then code, then UUID truncated
   const [resolvedEmployeeName, setResolvedEmployeeName] = useState<string | null>(null);
   useEffect(() => {
@@ -625,7 +636,7 @@ export default function AttendanceRegularization() {
     resolver: zodResolver(regularizationSchema),
     defaultValues: {
       requestCategory: "punch_correction",
-      attendanceDate: new Date().toISOString().slice(0, 10),
+      attendanceDate: localISODate(),
       currentStatus: "",
       currentLoginTime: "",
       currentLogoutTime: "",
@@ -741,11 +752,11 @@ export default function AttendanceRegularization() {
     selectableOnPage.length > 0 && selectableOnPage.every((id) => selectedIds.includes(id));
 
   const attendancePreviewQuery = useQuery({
-    queryKey: ["regularization-attendance-preview", debouncedAttendanceDate, linkedEmployeeId],
+    queryKey: ["regularization-attendance-preview", debouncedAttendanceDate, effectiveEmployeeId],
     enabled: /^\d{4}-\d{2}-\d{2}$/.test(debouncedAttendanceDate ?? ""),
     queryFn: async () => {
       const params = new URLSearchParams({ date: debouncedAttendanceDate });
-      if (linkedEmployeeId) params.set("employeeId", linkedEmployeeId);
+      if (effectiveEmployeeId) params.set("employeeId", effectiveEmployeeId);
       const res = await hrmsApi.get<{ success: boolean; data: AttendancePreview }>(
         `/api/wfm/regularizations/attendance-preview?${params.toString()}`
       );
@@ -755,11 +766,11 @@ export default function AttendanceRegularization() {
   });
 
   const dateRangePreviewQuery = useQuery({
-    queryKey: ["regularization-date-range-preview", batchFromDate, batchToDate, linkedEmployeeId, batchRangeQueried],
+    queryKey: ["regularization-date-range-preview", batchFromDate, batchToDate, effectiveEmployeeId, batchRangeQueried],
     enabled: batchMode && batchRangeQueried && /^\d{4}-\d{2}-\d{2}$/.test(batchFromDate) && /^\d{4}-\d{2}-\d{2}$/.test(batchToDate) && batchFromDate <= batchToDate,
     queryFn: async () => {
       const params = new URLSearchParams({ fromDate: batchFromDate, toDate: batchToDate });
-      if (linkedEmployeeId) params.set("employeeId", linkedEmployeeId);
+      if (effectiveEmployeeId) params.set("employeeId", effectiveEmployeeId);
       const res = await hrmsApi.get<{ success: boolean; data: DateRangePreview }>(
         `/api/wfm/regularizations/date-range-preview?${params.toString()}`
       );
@@ -770,6 +781,26 @@ export default function AttendanceRegularization() {
     },
     retry: false,
   });
+
+  // Employee search for the on-behalf picker — only fires when managers type ≥2 chars
+  const debouncedOnBehalfSearch = useDebounce(onBehalfSearch, 300);
+  const onBehalfEmployeeQuery = useQuery({
+    queryKey: ["reg-on-behalf-employee-search", debouncedOnBehalfSearch],
+    enabled: canReviewRequests && debouncedOnBehalfSearch.trim().length >= 2,
+    queryFn: async () => {
+      const res = await hrmsApi.get<any>(
+        `/api/employees?limit=30&search=${encodeURIComponent(debouncedOnBehalfSearch.trim())}&status=active`
+      );
+      return (res?.data ?? res?.rows ?? []) as Array<{ id: string; first_name: string; last_name?: string; employee_code?: string }>;
+    },
+    staleTime: 60_000,
+  });
+  const onBehalfOptions = (onBehalfEmployeeQuery.data ?? []).map((e) => ({
+    value: e.id,
+    label: `${e.first_name}${e.last_name ? " " + e.last_name : ""} (${e.employee_code ?? e.id.slice(0, 6)})`,
+    code: e.employee_code ?? "",
+    name: `${e.first_name}${e.last_name ? " " + e.last_name : ""}`,
+  }));
 
   /**
    * This page used to call GET /api/wfm/regularizations with NO query parameters at
@@ -901,6 +932,7 @@ export default function AttendanceRegularization() {
         : (values.disputeType ?? null);
 
       return hrmsApi.post("/api/wfm/regularizations", {
+        ...(effectiveEmployeeId ? { employeeId: effectiveEmployeeId } : {}),
         sessionDate: values.attendanceDate,
         oldStatus: values.currentStatus || null,
         oldPunchIn: values.currentLoginTime || null,
@@ -922,7 +954,7 @@ export default function AttendanceRegularization() {
     onSuccess: () => {
       form.reset({
         requestCategory: form.getValues("requestCategory"),
-        attendanceDate: new Date().toISOString().slice(0, 10),
+        attendanceDate: localISODate(),
         currentStatus: "",
         currentLoginTime: "",
         currentLogoutTime: "",
@@ -933,7 +965,8 @@ export default function AttendanceRegularization() {
         exceptionType: null,
         reason: "",
       });
-      toast({ title: "Request submitted", description: "Your regularization request has been recorded. Your manager will receive a notification." });
+      const forWhom = onBehalfEmployee ? ` for ${onBehalfEmployee.name}` : "";
+      toast({ title: "Request submitted", description: `Regularization request${forWhom} has been recorded.` });
       loadRequests();
     },
     onError: (err: unknown) =>
@@ -980,6 +1013,7 @@ export default function AttendanceRegularization() {
       const isException = values.requestCategory === "exception";
       const disputeType = isException ? (values.exceptionType ?? null) : (values.disputeType ?? null);
       return hrmsApi.post<BatchSubmitResult>("/api/wfm/regularizations/batch", {
+        ...(effectiveEmployeeId ? { employeeId: effectiveEmployeeId } : {}),
         sessionDates: dates,
         requestedStatus: values.requestedStatus || null,
         disputeType,
@@ -1057,6 +1091,54 @@ export default function AttendanceRegularization() {
             {linkedEmployeeCodeParam && !linkedEmployeeNameParam && (
               <span className="text-blue-500">({decodeURIComponent(linkedEmployeeCodeParam)})</span>
             )}
+          </div>
+        )}
+
+        {/* Raise on behalf — shown to managers/approvers; hidden when URL already pins an employee */}
+        {canReviewRequests && !linkedEmployeeId && (
+          <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 shadow-sm">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2 text-xs font-semibold text-violet-800">
+                <Users className="h-4 w-4" />
+                Raise on behalf of a team member
+              </div>
+              <div className="flex flex-1 items-center gap-2 min-w-[260px]">
+                <SearchableSelect
+                  className="h-8 flex-1 text-xs"
+                  options={onBehalfOptions}
+                  value={onBehalfEmployee?.id ?? ""}
+                  onChange={(id) => {
+                    if (!id) { setOnBehalfEmployee(null); return; }
+                    const opt = onBehalfOptions.find((o) => o.value === id);
+                    if (opt) setOnBehalfEmployee({ id, name: opt.name, code: opt.code });
+                  }}
+                  placeholder="Select employee…"
+                  searchPlaceholder="Type name or code…"
+                  emptyText={debouncedOnBehalfSearch.length < 2 ? "Type 2+ chars to search" : "No match"}
+                  search={onBehalfSearch}
+                  onSearchChange={setOnBehalfSearch}
+                  loading={onBehalfEmployeeQuery.isFetching}
+                />
+                {onBehalfEmployee && (
+                  <button
+                    type="button"
+                    onClick={() => { setOnBehalfEmployee(null); setOnBehalfSearch(""); }}
+                    className="inline-flex items-center gap-1 rounded-md border border-violet-300 bg-white px-2 py-1 text-xs font-medium text-violet-700 hover:bg-violet-100"
+                  >
+                    <X className="h-3.5 w-3.5" /> Clear
+                  </button>
+                )}
+              </div>
+              {onBehalfEmployee && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2.5 py-0.5 text-xs font-semibold text-violet-800">
+                  <UserPlus className="h-3 w-3" />
+                  {onBehalfEmployee.name} ({onBehalfEmployee.code})
+                </span>
+              )}
+            </div>
+            <p className="mt-1.5 text-[11px] text-violet-600">
+              Form and preview below will load attendance data for the selected employee. Leave blank to raise for yourself.
+            </p>
           </div>
         )}
 
@@ -1421,7 +1503,7 @@ export default function AttendanceRegularization() {
                           value={batchFromDate}
                           onChange={(e) => { setBatchFromDate(e.target.value); setBatchRangeQueried(false); }}
                           className="mt-1 h-9 text-sm"
-                          max={new Date().toISOString().slice(0, 10)}
+                          max={localISODate()}
                         />
                       </div>
                       <div>
@@ -1431,7 +1513,7 @@ export default function AttendanceRegularization() {
                           value={batchToDate}
                           onChange={(e) => { setBatchToDate(e.target.value); setBatchRangeQueried(false); }}
                           className="mt-1 h-9 text-sm"
-                          max={new Date().toISOString().slice(0, 10)}
+                          max={localISODate()}
                         />
                       </div>
                       <div className="flex items-end">

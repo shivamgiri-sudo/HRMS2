@@ -83,12 +83,39 @@ export const PORTAL_HOWTO_CATALOG: PortalHowToEntry[] = [
     route: '/portal',
   },
   {
-    code: 'portal_governance',
-    title: 'View governance status',
-    aliases: [/\bgovernance\b/i],
+    // Replaces a stale 'portal_governance' entry: the Governance tab it described was
+    // removed from the client dashboard entirely per owner directive ("governance tab is
+    // useless remove that") -- governance_checklist_log had zero real rows and no live
+    // write path, so the tab was a permanent empty state. Operations/Quality (both real,
+    // reading process_metric_actual via process-operations.service.ts) and Workforce
+    // (headcount vs. mandate + hiring pipeline) are the current tabs this catalog was
+    // missing entirely, added here for whenever a client-facing chat surface is built.
+    code: 'portal_operations',
+    title: 'View operations metrics',
+    aliases: [/\boperations?\b/i, /\bshrinkage\b/i, /\bservice level\b/i],
     steps: [
       '1. Open your portal overview and select the process.',
-      '2. Governance checklist status is shown on that process\'s dashboard.',
+      '2. Open the Operations tab on that process\'s dashboard.',
+    ],
+    route: '/portal',
+  },
+  {
+    code: 'portal_quality',
+    title: 'View quality metrics',
+    aliases: [/\bquality\b/i, /\bfatal (call|error)s?\b/i],
+    steps: [
+      '1. Open your portal overview and select the process.',
+      '2. Open the Quality tab on that process\'s dashboard.',
+    ],
+    route: '/portal',
+  },
+  {
+    code: 'portal_workforce',
+    title: 'View workforce and hiring status',
+    aliases: [/\bworkforce\b/i, /\bheadcount\b/i, /\bhiring\b/i, /\bmandate\b/i],
+    steps: [
+      '1. Open your portal overview and select the process.',
+      '2. Open the Workforce tab on that process\'s dashboard for headcount vs. mandate and the hiring pipeline.',
     ],
     route: '/portal',
   },

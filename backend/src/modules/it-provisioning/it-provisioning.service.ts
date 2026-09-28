@@ -18,12 +18,18 @@ interface ResolvedUser {
   email: string | null;
 }
 
+interface JoinTaskInfo {
+  doj: string | null;
+  branchName: string | null;
+  processName: string | null;
+}
+
 interface ProvisioningTask {
   taskCode: string;
   assignedRole: string;
   actionUrl: string;
-  titleFn: (name: string, code: string, lwd?: string | null) => string;
-  descFn: (name: string, code: string, lwd?: string | null) => string;
+  titleFn: (name: string, code: string, lwd?: string | null, info?: JoinTaskInfo) => string;
+  descFn: (name: string, code: string, lwd?: string | null, info?: JoinTaskInfo) => string;
 }
 
 function frontendUrl(path: string) {
@@ -94,12 +100,18 @@ async function getUsersForBranchRole(roleKey: string, branchId: string): Promise
 
 async function getUsersForGlobalRole(roleKey: string): Promise<ResolvedUser[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
+    // Owner directive (2026-09-16): never email an employee who is not active in the
+    // system. ur.active_status only says the role grant is live, not whether the person
+    // still works here — the employees join (LEFT, so a role holder with no employee
+    // record at all is not dropped) closes that gap.
     `SELECT DISTINCT ur.user_id AS userId, au.email
      FROM user_roles ur
      JOIN auth_user au ON au.id = ur.user_id
+     LEFT JOIN employees e ON e.user_id = au.id
      WHERE ur.role_key = ?
        AND ur.active_status = 1
-       AND ur.user_id IS NOT NULL`,
+       AND ur.user_id IS NOT NULL
+       AND (e.id IS NULL OR e.active_status = 1)`,
     [roleKey],
   );
   return (rows as any[]).map((r) => ({ userId: r.userId, email: r.email ?? null }));
@@ -137,12 +149,17 @@ async function branchHrEmails(branchId: string | null): Promise<string[]> {
   const [scoped] = await db.execute<RowDataPacket[]>(
     // user_id, for the same reason as above — manager_employee_id is NULL on
     // every row, so this would have found no branch HR either.
+    // Owner directive (2026-09-16): never email an employee who is not active in the
+    // system — the employees join (LEFT, so a role holder with no employee record is not
+    // dropped) closes the same "role grant active, person has left" gap as above.
     `SELECT DISTINCT au.email
        FROM user_assignment_scope uas
        JOIN auth_user au ON au.id = uas.user_id
+       LEFT JOIN employees e ON e.user_id = au.id
       WHERE uas.role_key IN ('hr', 'branch_hr') AND uas.branch_id = ?
         AND uas.active_status = 1 AND au.email IS NOT NULL
-        AND COALESCE(au.is_blocked, 0) = 0`,
+        AND COALESCE(au.is_blocked, 0) = 0
+        AND (e.id IS NULL OR e.active_status = 1)`,
     [branchId],
   ).catch(() => [[]] as unknown as [RowDataPacket[]]);
   const emails = (scoped as RowDataPacket[]).map((r) => String(r.email));
@@ -416,7 +433,7 @@ async function createRequest(params: {
 
 // ── JOIN trigger ───────────────────────────────────────────────────────────────
 
-const JOIN_TASKS: ProvisioningTask[] = [
+export const JOIN_TASKS: ProvisioningTask[] = [
   {
     taskCode: 'WFM_PROCESS_ALIGNMENT',
     assignedRole: 'wfm',
@@ -438,8 +455,16 @@ const JOIN_TASKS: ProvisioningTask[] = [
     assignedRole: 'admin',
     actionUrl: '/provisioning/admin',
     titleFn: (name, code) => `Admin Action: Biometric and ID card for ${name} [${code}]`,
-    descFn: (name, code) =>
-      `New employee ${name} (${code}) has an employee code. Please enroll biometric attendance and issue the employee ID card.`,
+    descFn: (name, code, _lwd, info) => {
+      const details = [
+        `Employee Name: ${name}`,
+        `Employee Code: ${code}`,
+        info?.doj ? `DOJ: ${info.doj}` : null,
+        info?.branchName ? `Branch: ${info.branchName}` : null,
+        info?.processName ? `Process/Department: ${info.processName}` : null,
+      ].filter(Boolean).join(' | ');
+      return `New employee ${name} (${code}) has an employee code. Please enroll biometric attendance and issue the employee ID card.\n\n${details}`;
+    },
   },
   {
     taskCode: 'APPOINTMENT_LETTER_ESIGN',
@@ -448,6 +473,14 @@ const JOIN_TASKS: ProvisioningTask[] = [
     titleFn: (name, code) => `HR Action: Appointment letter e-sign for ${name} [${code}]`,
     descFn: (name, code) =>
       `New employee ${name} (${code}) has an employee code. Please generate the appointment letter and complete e-sign tracking.`,
+  },
+  {
+    taskCode: 'HR_BGV_INITIATION',
+    assignedRole: 'hr',
+    actionUrl: '/provisioning/hr-bgv',
+    titleFn: (name, code) => `HR Action: BGV initiation for ${name} [${code}]`,
+    descFn: (name, code) =>
+      `New employee ${name} (${code}) has an employee code. Please initiate background verification with the vendor and record the outcome (Red/Green) once received. This is separate from the candidate's own DigiLocker submission.`,
   },
 ];
 
@@ -471,6 +504,30 @@ export async function dispatchJoinProvisioningTasks(params: {
     tasksCount: JOIN_TASKS.length,
   });
 
+  // Branch/process names and DOJ for the biometric-creation admin notification
+  // (ADMIN_BIOMETRIC_ID_CARD). Best-effort: a lookup failure must not abort the
+  // whole provisioning dispatch, so tasks fall back to name/code-only text.
+  let taskInfo: JoinTaskInfo = { doj: joiningDate ?? null, branchName: null, processName: null };
+  try {
+    const [[infoRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT b.branch_name, p.process_name, e.date_of_joining
+         FROM employees e
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN process_master p ON p.id = e.process_id
+        WHERE e.id = ? LIMIT 1`,
+      [employeeId],
+    );
+    if (infoRow) {
+      taskInfo = {
+        doj: infoRow.date_of_joining ? String(infoRow.date_of_joining).slice(0, 10) : (joiningDate ?? null),
+        branchName: infoRow.branch_name ?? null,
+        processName: infoRow.process_name ?? null,
+      };
+    }
+  } catch (err) {
+    console.warn('[dispatchJoinProvisioningTasks] Non-fatal: failed to resolve branch/process for task notifications:', err);
+  }
+
   for (const task of JOIN_TASKS) {
     const recipients = await resolveTaskRecipients(task.assignedRole, branchId, task.taskCode);
     const users = recipients.to;
@@ -491,8 +548,8 @@ export async function dispatchJoinProvisioningTasks(params: {
       console.error(`[dispatchJoinProvisioningTasks] No users found for role ${task.assignedRole} - creating unassigned task for ${task.taskCode}`);
     }
 
-    const title = task.titleFn(employeeName, employeeCode);
-    const desc = task.descFn(employeeName, employeeCode);
+    const title = task.titleFn(employeeName, employeeCode, null, taskInfo);
+    const desc = task.descFn(employeeName, employeeCode, null, taskInfo);
 
     const requestId = await createRequest({
       employeeId,
@@ -533,7 +590,13 @@ export async function dispatchJoinProvisioningTasks(params: {
   // Notify employee to upload their profile photo if missing (required for ID card)
   try {
     const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT user_id, photo_url, personal_email, official_email, email FROM employees WHERE id = ? LIMIT 1`,
+      `SELECT e.user_id, e.photo_url, e.personal_email, e.official_email, e.email,
+              pm.process_name,
+              COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name
+         FROM employees e
+         LEFT JOIN process_master pm ON pm.id = e.process_id
+         LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
+        WHERE e.id = ? LIMIT 1`,
       [employeeId]
     );
     const emp = (empRows as any[])[0];
@@ -563,12 +626,17 @@ export async function dispatchJoinProvisioningTasks(params: {
         const toEmail = emp.personal_email || emp.official_email || emp.email;
         if (toEmail) {
           const photoUploadUrl = frontendUrl('/profile');
+          const identityLine = [
+            `Code: <strong>${employeeCode}</strong>`,
+            emp.process_name ? `Process: <strong>${emp.process_name}</strong>` : null,
+            emp.reporting_manager_name ? `Reporting Manager: <strong>${emp.reporting_manager_name}</strong>` : null,
+          ].filter(Boolean).join(' &nbsp;|&nbsp; ');
           await emailService.send({
             to: toEmail,
             subject: 'Action Required: Upload your profile photo — ID card pending',
             html: provisioningEmailHtml(
               'Upload Your Profile Photo',
-              `Dear ${employeeName},<br><br>Welcome to MAS Callnet! Your ID card is being prepared, but it cannot be printed until you upload a professional profile photo.<br><br>Please log in to HRMS and upload your photo from your Profile page at your earliest convenience.`,
+              `Dear ${employeeName},<br><span style="font-size:11.5px;color:#64748b">${identityLine}</span><br><br>Welcome to MAS Callnet! Your ID card is being prepared, but it cannot be printed until you upload a professional profile photo.<br><br>Please log in to HRMS and upload your photo from your Profile page at your earliest convenience.`,
               photoUploadUrl,
             ),
           });
@@ -847,9 +915,14 @@ export async function notifyOverdueProvisioning(limit = 25): Promise<{
     `SELECT r.id, r.employee_id, r.task_code, r.assigned_role, r.assigned_user_id,
             r.status, r.sla_due_at,
             TIMESTAMPDIFF(HOUR, r.sla_due_at, NOW()) AS hours_overdue,
-            e.employee_code, e.first_name, e.branch_id
+            e.employee_code, e.branch_id,
+            COALESCE(NULLIF(TRIM(e.full_name), ''), e.first_name, e.employee_code) AS employee_name,
+            pm.process_name,
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name
        FROM it_provisioning_request r
        JOIN employees e ON e.id = r.employee_id
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
       WHERE r.status IN ('pending', 'pending_unassigned')
         AND r.locked = 0
         AND r.sla_due_at IS NOT NULL
@@ -872,8 +945,15 @@ export async function notifyOverdueProvisioning(limit = 25): Promise<{
     try {
       const result = await notificationGateway.notify({
         eventCode: 'provisioning_overdue',
-        // One per request, ever. The cron rescans the same breached row every hour.
-        dedupeKey: `it_provisioning_request:${req.id}:overdue`,
+        // One per request per 4-hour overdue window, not once ever — the deck's requirement
+        // is a repeating nag until the task closes, not a single flag. Bucketing hours_overdue
+        // into 4-hour windows and folding the bucket into the dedupe key gives that for free
+        // through the existing unique-dedupe machinery: a fresh bucket is a fresh key, so
+        // notify() treats it as a new notification, while `status IN ('pending',
+        // 'pending_unassigned')` in the query above still stops everything the moment the
+        // task is actioned or waived. The cron polls hourly (it-provisioning.cron.ts), well
+        // inside the 4-hour bucket width, so no bucket boundary is ever skipped.
+        dedupeKey: `it_provisioning_request:${req.id}:overdue:${Math.floor(Number(req.hours_overdue ?? 0) / 4)}`,
         context: {
           employeeId: req.employee_id,
           userId: req.assigned_user_id ?? undefined,
@@ -883,7 +963,9 @@ export async function notifyOverdueProvisioning(limit = 25): Promise<{
         entityId: String(req.id),
         data: {
           employee_code: req.employee_code,
-          employee_name: req.first_name,
+          employee_name: req.employee_name,
+          process_name: req.process_name,
+          reporting_manager_name: req.reporting_manager_name,
           task_code: req.task_code,
           assigned_role: req.assigned_role,
           status: req.status,

@@ -74,26 +74,25 @@ const PNL_GOVERNANCE_READ_ROLES: RoleKey[] = [
   "payroll_head",
 ];
 /*
- * The GRN approval chain is two stages, not three.
+ * The GRN approval chain is three stages: Branch/Dept Head -> Accounts Head/Team -> Finance
+ * Head/CFO (owner ruling, 2026-09-12; see 1758_grn_accounts_head_approval_stage.sql).
  *
- * resolveFinanceStageRole(workflow: "grn") maps submitted -> branch_head and
- * branch_head_approved -> finance_head, and returns nothing else. The BUDGET workflow has a
- * third stage (finance_head_approved -> accounts_head); GRN does not. So accounts_head passed
- * this gate and then met "The current grn stage requires the finance_head role" from the
- * resolver — a grant the workflow could never honour, and a 400 where a 403 was the truth.
+ * It used to be two (Branch Head -> Finance Head only), with accounts_head's sole authority
+ * being the downstream PAYMENT step: a finance_head approval moves a vendor GRN to
+ * pending_accounts_payment, and PAYMENT_WRITE_ROLES in vendor-payment.routes.ts is exactly
+ * ["accounts_head", "super_admin"] — that authority is untouched by this change, it is simply
+ * no longer the ONLY authority accounts_head has here.
  *
- * accounts_head is not shut out of GRN; their authority is the PAYMENT step. A finance_head
- * approval moves a vendor GRN to pending_accounts_payment, and PAYMENT_WRITE_ROLES in
- * vendor-payment.routes.ts is exactly ["accounts_head", "super_admin"]. That is where the role
- * acts, and it is untouched.
+ * resolveFinanceStageRole(workflow: "grn") now maps submitted -> branch_head,
+ * branch_head_approved -> accounts_head, and accounts_head_approved -> finance_head. Getting
+ * this list and that resolver out of step is exactly the bug this comment used to warn about in
+ * the other direction: a role granted access at this gate that the resolver could never honour
+ * for meets a 403 ("requires the X role") rather than completing a review.
  *
- * SMART_REVIEW_ROLES in grn-smart.routes.ts already reads ["branch_head", "finance_head",
- * "super_admin"] — the newer router encodes the correct rule, and this one had not caught up.
- *
- * Nobody loses an ability they had: a user holding accounts_head ALONE could never complete a
- * review, and one who also holds finance_head still passes on that role.
+ * SMART_REVIEW_ROLES in grn-smart.routes.ts must list the same three roles — it is the newer
+ * router and handles every allocation-aware GRN, which is most of them.
  */
-const GRN_REVIEW_ROLES: RoleKey[] = ["branch_head", "finance_head", "super_admin"];
+const GRN_REVIEW_ROLES: RoleKey[] = ["branch_head", "accounts_head", "finance_head", "super_admin"];
 const GRN_REVERSAL_ROLES: RoleKey[] = ["finance_head", "super_admin"];
 const EXPENSE_MASTER_READ_ROLES: RoleKey[] = [
   "super_admin",
@@ -132,7 +131,7 @@ if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const upload = multer({
   dest: UPLOAD_DIR,
-  limits: { fileSize: 20 * 1024 * 1024 },
+  limits: { fileSize: 30 * 1024 * 1024 },
   fileFilter(_req, file, callback) {
     const allowedExtensions = [".pdf", ".jpg", ".jpeg", ".png", ".webp"];
     const allowedMimeTypes = [
@@ -798,7 +797,9 @@ function grnReportFiltersFrom(req: AuthenticatedRequest, branchScope: Awaited<Re
     grnNumber: str(req.query.grnNumber),
     vendorId: str(req.query.vendorId),
     status: str(req.query.status),
+    approvalStage: str(req.query.approvalStage),
     pendingWith: str(req.query.pendingWith),
+    source: str(req.query.source),
     limit: req.query.limit ? Number(req.query.limit) : undefined,
   };
 }
@@ -1080,7 +1081,8 @@ grnRouter.post(
         req.params.id,
         req.body,
         user.id,
-        user.role
+        user.role,
+        user.roles // Pass all roles for Head Office bypass detection
       );
       res.json(result);
     } catch (error: unknown) {
@@ -1103,6 +1105,7 @@ grnRouter.post(
         userRoles: user.roles,
         currentStatus: String(req.financeGrn?.status ?? ""),
         workflow: "grn",
+        grnType: req.financeGrn?.grn_type ?? null,
       });
       const result = await grnService.reviewGrn(
         req.params.id,

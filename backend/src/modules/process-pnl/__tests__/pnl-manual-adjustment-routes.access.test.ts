@@ -89,10 +89,14 @@ describe("POST /api/finance/pnl/manual-adjustments — role gate", () => {
     expect(res.status).toBe(403);
   });
 
-  it("allows branch_head to create", async () => {
+  it("allows branch_head to create for their own branch's process", async () => {
     execute.mockImplementation(async (sql: string) => {
       const q = String(sql);
       if (q.startsWith("SELECT id, branch_id FROM process_master")) return [[{ id: "proc-1", branch_id: "b1" }], []];
+      // F-01: createManualAdjustment now validates the process's branch against the actor's own
+      // branch (assertFinanceRecordBranch -> getUserBranchId), so a branch_head fixture needs
+      // an employees row placing them in the SAME branch as the process for this to succeed.
+      if (q.includes("FROM employees") && q.includes("branch_id")) return [[{ branch_id: "b1" }], []];
       if (q.startsWith("INSERT INTO pnl_manual_adjustment")) return [{ affectedRows: 1 }, []];
       if (q.includes("FROM pnl_manual_adjustment a")) return [[mockEntry()], []];
       return [[], []];
@@ -101,5 +105,22 @@ describe("POST /api/finance/pnl/manual-adjustments — role gate", () => {
       .post("/api/finance/pnl/manual-adjustments")
       .send({ processId: "proc-1", periodCode: "2026-07", adjustmentType: "reward", amount: 1000, reason: "x" });
     expect(res.status).toBe(201);
+  });
+
+  it("refuses a branch_head creating an adjustment for another branch's process", async () => {
+    execute.mockImplementation(async (sql: string) => {
+      const q = String(sql);
+      if (q.startsWith("SELECT id, branch_id FROM process_master")) return [[{ id: "proc-1", branch_id: "b1" }], []];
+      if (q.includes("FROM employees") && q.includes("branch_id")) return [[{ branch_id: "b2" }], []];
+      if (q.startsWith("INSERT INTO pnl_manual_adjustment")) return [{ affectedRows: 1 }, []];
+      return [[], []];
+    });
+    const res = await request(appAs("branch_head"))
+      .post("/api/finance/pnl/manual-adjustments")
+      .send({ processId: "proc-1", periodCode: "2026-07", adjustmentType: "reward", amount: 1000, reason: "x" });
+    expect(res.status).toBe(403);
+
+    const insertCall = execute.mock.calls.find(([sql]) => String(sql).includes("INSERT INTO pnl_manual_adjustment"));
+    expect(insertCall, "must not insert when the actor's branch differs from the process's branch").toBeFalsy();
   });
 });

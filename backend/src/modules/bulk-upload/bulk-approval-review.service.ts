@@ -543,7 +543,9 @@ export async function discardRows(params: {
         employeeName: line.employee_name,
         amount: line.total,
         reason,
-      });
+        // carried through only to resolve process/manager below, not part of DiscardedLine
+        __employeeId: line.employee_id,
+      } as DiscardedLine & { __employeeId: string });
     } catch (err) {
       await conn.rollback().catch(() => {
         /* connection already broken — nothing to undo */
@@ -551,6 +553,36 @@ export async function discardRows(params: {
       throw err;
     } finally {
       conn.release();
+    }
+  }
+
+  // Owner directive: every email naming an employee must show Process/LOB and
+  // Reporting Manager alongside their code — resolved once for the whole batch
+  // rather than per row.
+  const discardedEmployeeIds = [
+    ...new Set(
+      discarded
+        .map((d) => (d as DiscardedLine & { __employeeId?: string }).__employeeId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  if (discardedEmployeeIds.length > 0) {
+    const [identityRows] = await db.query<RowDataPacket[]>(
+      `SELECT e.id,
+              pm.process_name,
+              COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name
+         FROM employees e
+         LEFT JOIN process_master pm ON pm.id = e.process_id
+         LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
+        WHERE e.id IN (${discardedEmployeeIds.map(() => "?").join(",")})`,
+      discardedEmployeeIds,
+    );
+    const identityById = new Map(identityRows.map((r: any) => [String(r.id), r]));
+    for (const d of discarded as Array<DiscardedLine & { __employeeId?: string }>) {
+      const identity = d.__employeeId ? identityById.get(d.__employeeId) : null;
+      d.processName = identity?.process_name ?? null;
+      d.reportingManagerName = identity?.reporting_manager_name ?? null;
+      delete d.__employeeId;
     }
   }
 

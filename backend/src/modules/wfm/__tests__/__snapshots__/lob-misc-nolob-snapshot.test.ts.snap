@@ -1,0 +1,42 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`unfiltered SQL is unchanged > outcomes 1`] = `
+[
+  {
+    "params": [],
+    "sql": "SELECT COUNT(*) AS total_generated, SUM(action_taken) AS action_taken_count, SUM(CASE WHEN outcome = 'retained' THEN 1 ELSE 0 END) AS retained_count, SUM(CASE WHEN outcome = 'exited' THEN 1 ELSE 0 END) AS exited_count, SUM(CASE WHEN outcome = 'pending' THEN 1 ELSE 0 END) AS pending_count, ROUND( AVG( CASE WHEN action_taken = 1 AND action_taken_at IS NOT NULL THEN TIMESTAMPDIFF(DAY, generated_at, action_taken_at) END ) , 1) AS avg_days_to_action FROM mas_hrms.employee_retention_recommendation",
+  },
+]
+`;
+
+exports[`unfiltered SQL is unchanged > pending interventions 1`] = `
+[
+  {
+    "params": [
+      "manager",
+      20,
+    ],
+    "sql": "SELECT r.id, r.employee_id, e.employee_code, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name, COALESCE(bm.branch_name, '') AS branch_name, COALESCE(p.process_name, '') AS process_name, COALESCE(d.designation_name, '') AS designation_name, r.generated_at, DATEDIFF(NOW(), r.generated_at) AS days_since_generated, r.risk_tier, r.prediction_score, r.recommendations FROM mas_hrms.employee_retention_recommendation r JOIN mas_hrms.employees e ON e.id = r.employee_id LEFT JOIN mas_hrms.branch_master bm ON bm.id = e.branch_id LEFT JOIN mas_hrms.process_master p ON p.id = e.process_id LEFT JOIN mas_hrms.designation_master d ON d.id = e.designation_id WHERE r.action_taken = 0 AND r.outcome = 'pending' AND JSON_SEARCH(r.recommendations, 'one', ?, NULL, '$[*].owner') IS NOT NULL ORDER BY FIELD(r.risk_tier, 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'), r.generated_at ASC LIMIT ?",
+  },
+]
+`;
+
+exports[`unfiltered SQL is unchanged > process team roster 1`] = `
+[
+  {
+    "params": [
+      "p1",
+    ],
+    "sql": "SELECT process_name FROM process_master WHERE id = ?",
+  },
+  {
+    "params": [
+      "2026-09-01",
+      "2026-09-01",
+      "2026-09-01",
+      "p1",
+    ],
+    "sql": "SELECT e.id AS employee_id, e.employee_code, e.full_name AS employee_name, e.branch_id, b.branch_name, ra.assignment_type, ra.shift_start_time, ra.shift_end_time, st.shift_name, st.start_time AS template_start, st.end_time AS template_end, att.clock_in_time AS first_in, att.clock_out_time AS last_out, lr.leave_type_id, lt.leave_name FROM employees e JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = ? LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ? LEFT JOIN branch_master b ON b.id = e.branch_id LEFT JOIN leave_request lr ON lr.employee_id = e.id AND lr.status IN ('approved', 'branch_head_approved') AND ? BETWEEN lr.from_date AND lr.to_date LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id WHERE e.process_id = ? AND e.active_status = 1 AND e.employment_status = 'Active' ORDER BY e.full_name",
+  },
+]
+`;

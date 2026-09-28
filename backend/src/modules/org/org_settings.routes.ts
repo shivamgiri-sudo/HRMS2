@@ -21,18 +21,47 @@ router.get("/public/auto-logout-minutes", h(async (_req: any, res: Response) => 
 // All other routes require authentication
 router.use(requireAuth);
 
-router.get("/", h(async (_req: AuthenticatedRequest, res: Response) => {
+// SEC-03: org_settings can hold third-party secrets (API keys, client secrets —
+// see backend/sql/311_bgv_provider_config.sql, 320_bgv_missing_tables.sql,
+// 342_bgv_provider_config_labels.sql). A plain `requireAuth` on `SELECT *`
+// let any authenticated employee read those values. Secret-shaped keys are
+// now masked for everyone except admins, and admins get a "configured" flag
+// rather than the live value, so the value never leaves the server at all.
+const SECRET_KEY_PATTERN = /(secret|api_key|apikey|token|password|client_secret|private_key)/i;
+
+function isSecretKey(key: string): boolean {
+  return SECRET_KEY_PATTERN.test(key);
+}
+
+function maskRow(row: RowDataPacket, isAdmin: boolean): RowDataPacket {
+  if (!isSecretKey(String(row.setting_key ?? ""))) return row;
+  const hasValue = row.setting_value !== null && row.setting_value !== undefined && row.setting_value !== "";
+  return {
+    ...row,
+    setting_value: isAdmin ? (hasValue ? "***configured***" : null) : null,
+    is_secret: true,
+    configured: hasValue,
+  };
+}
+
+router.get("/", h(async (req: AuthenticatedRequest, res: Response) => {
+  const isAdmin = (req.authUser?.role === "admin" || req.authUser?.role === "super_admin" || req.authUser?.roles?.includes("admin") || req.authUser?.roles?.includes("super_admin")) ?? false;
   const [rows] = await db.execute<RowDataPacket[]>("SELECT * FROM org_settings ORDER BY setting_key LIMIT 500");
-  res.json({ success: true, data: rows });
+  const data = (rows as RowDataPacket[]).map((row) => maskRow(row, isAdmin));
+  res.json({ success: true, data });
 }));
 
 router.get("/:key", h(async (req: AuthenticatedRequest, res: Response) => {
+  const isAdmin = (req.authUser?.role === "admin" || req.authUser?.role === "super_admin" || req.authUser?.roles?.includes("admin") || req.authUser?.roles?.includes("super_admin")) ?? false;
   const [rows] = await db.execute<RowDataPacket[]>(
     "SELECT * FROM org_settings WHERE setting_key = ? LIMIT 1", [req.params.key]
   );
   const row = (rows as RowDataPacket[])[0];
   if (!row) return res.status(404).json({ error: "Setting not found" });
-  res.json({ success: true, data: row });
+  if (isSecretKey(String(row.setting_key ?? "")) && !isAdmin) {
+    return res.status(403).json({ success: false, error: "This setting is restricted to administrators" });
+  }
+  res.json({ success: true, data: maskRow(row, isAdmin) });
 }));
 
 router.put("/:key", requireRole("admin"), h(async (req: AuthenticatedRequest, res: Response) => {

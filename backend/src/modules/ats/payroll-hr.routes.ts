@@ -136,11 +136,25 @@ const salaryValidationSchema = z.object({
 payrollHRRouter.post('/validate', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
   try {
     const input = salaryValidationSchema.parse(req.body) as SalaryValidationInput;
+
+    // Salary start date cannot precede the joining date — that would mean paying an
+    // employee before they joined. Validated here (backend) because Payroll HR can
+    // type any date into both fields; we have confirmed 27 live employees where this
+    // was allowed to happen (salary_start_date < date_of_joining), causing incorrect
+    // active_calendar_days and underpayment in subsequent payroll runs.
+    if (input.salary_start_date && input.salary_start_date < input.joining_date) {
+      return res.status(400).json({
+        success: false,
+        message: `Salary start date (${input.salary_start_date}) cannot be before joining date (${input.joining_date}).`,
+      });
+    }
+
     const payrollHrId = await resolveEmployeeIdForAuthUser(req.authUser!.id);
 
     const result = await validateAndAssignSalary({
       ...input,
       payroll_hr_id: payrollHrId,
+      actor_roles: req.authUser!.roles,
     });
 
     return res.json(result);
@@ -196,7 +210,7 @@ payrollHRRouter.post('/submit-offer', h(async (req: AuthenticatedRequest, res: R
   try {
     const input = salaryValidationSchema.parse(req.body) as SalaryValidationInput;
     const payrollHrId = await resolveEmployeeIdForAuthUser(req.authUser!.id);
-    const result = await validateAndAssignSalary({ ...input, payroll_hr_id: payrollHrId });
+    const result = await validateAndAssignSalary({ ...input, payroll_hr_id: payrollHrId, actor_roles: req.authUser!.roles });
     return res.json(result);
   } catch (error: unknown) {
     if (error instanceof z.ZodError) return res.status(400).json({ success: false, message: 'Validation failed', errors: error.errors });

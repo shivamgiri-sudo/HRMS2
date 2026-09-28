@@ -294,7 +294,14 @@ describe("formatting helpers", () => {
     script(HEAD_OFFICE);
     const [june] = (await svc.salaryVoucherService.generate("run1")).vouchers;
     expect(june.lines.some((l) => l.ledger_name === "TDS SALARY 2026-27")).toBe(true);
-    expect(june.lines.some((l) => l.ledger_name === "Professional Tax 2026-27")).toBe(true);
+    // PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+    // company-wide, all states). The "Professional Tax {FY}" credit line is no
+    // longer emitted by buildVoucher() at all, even though the HEAD_OFFICE
+    // fixture above still carries real historical professional_tax: 200 values
+    // on three rows (that fixture is the real June-2026 salary_prep_line shape
+    // and is left unedited for reconciliation fidelity) — so this now asserts
+    // the line's absence rather than its presence.
+    expect(june.lines.some((l) => l.ledger_name === "Professional Tax 2026-27")).toBe(false);
   });
 
   it("dates the voucher on the last day of the payroll month", async () => {

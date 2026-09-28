@@ -53,6 +53,12 @@ describe("provider capability check", () => {
       "sms/msg91.provider.ts",
       "whatsapp/twilio-whatsapp.provider.ts",
       "whatsapp/meta.provider.ts",
+      // Added 2026-09-18 while wiring META campaign lead outreach through this provider. It was
+      // the one credentialed WhatsApp provider omitted from this list, and it was also the only
+      // one that read its credentials with `process.env.X!` at construction — so on every
+      // environment to date `endpoint` was the literal string "undefined" and every send POSTed
+      // to "undefined/send". Exactly the uncredentialed-attempt noise this file exists to stop.
+      "whatsapp/local-whatsapp.provider.ts",
     ];
     for (const rel of expected) {
       expect(read(rel), `${rel} does not report configuration`).toContain("isConfigured()");
@@ -64,6 +70,10 @@ describe("provider capability check", () => {
     expect(read("sms/smartping.provider.ts")).toContain("this.username && this.password");
     expect(read("sms/twilio-sms.provider.ts")).toContain("Boolean(sid && tok && this.sid)");
     expect(read("whatsapp/meta.provider.ts")).toContain("this.accessToken && this.phoneNumberId");
+    // The base URL is the gating credential for the self-hosted bridge, not the API key: a
+    // bridge on a private network legitimately runs unauthenticated, but there is no send
+    // without somewhere to send to.
+    expect(read("whatsapp/local-whatsapp.provider.ts")).toContain("Boolean(this.endpoint)");
   });
 });
 

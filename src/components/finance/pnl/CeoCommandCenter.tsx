@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { BpoPnlSummary } from "@/hooks/useBpoProcessPnl";
 import { PnlDataQualityPanel } from "./PnlDataQualityPanel";
 import { CeoProcessScorecard } from "./CeoProcessScorecard";
+import { pnlLabel } from "./pnlLabels";
 
 function compact(value: number | null | undefined) {
   return new Intl.NumberFormat("en-IN", {
@@ -57,7 +58,7 @@ function HeroPulse({ kpis }: { kpis: BpoPnlSummary["kpis"] }) {
 
   const tiles: HeroTile[] = [
     {
-      label: "Recognized Revenue",
+      label: pnlLabel("RECOGNISED_REVENUE"),
       value: compact(kpis.recognizedRevenue),
       tone: "good",
       sub: `Gross potential: ${compact(kpis.grossPotentialRevenue)}`,
@@ -176,7 +177,7 @@ function RevenueMixPanel({
         <Row label="Penalties / SLA" value={revenueMix.penaltiesAndSla} color="bg-rose-500" negative />
         <Row label="Credit notes" value={revenueMix.creditNotesAndOtherDeductions} color="bg-rose-400" negative />
         <hr className="border-slate-200" />
-        <Row label="Recognized revenue" value={kpis.recognizedRevenue} color="bg-emerald-600" bold />
+        <Row label={pnlLabel("RECOGNISED_REVENUE")} value={kpis.recognizedRevenue} color="bg-emerald-600" bold />
       </CardContent>
     </Card>
   );
@@ -334,7 +335,7 @@ function PortfolioHealthPanel({ summary }: { summary: BpoPnlSummary }) {
         <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-100 text-center">
           <div>
             <div className="text-lg font-black text-slate-900">{kpis.activeHeadcount}</div>
-            <div className="text-[10px] text-slate-400">Active HC</div>
+            <div className="text-[10px] text-slate-400">{pnlLabel("ACTIVE_HEADCOUNT")}</div>
           </div>
           <div>
             <div className="text-lg font-black text-slate-900">{kpis.agentHeadcount}</div>

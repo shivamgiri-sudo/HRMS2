@@ -164,6 +164,7 @@ export default function ExceptionsPanel() {
   const [rows, setRows] = useState<ExceptionRow[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [total, setTotal] = useState(0);
+  const [branches, setBranches] = useState<{ id: string; branch_name: string }[]>([]);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
@@ -178,11 +179,17 @@ export default function ExceptionsPanel() {
   const [toDate, setToDate] = useState(searchParams.get("toDate") ?? "");
   const [searchInput, setSearchInput] = useState(searchParams.get("search") ?? "");
   const [search, setSearch] = useState(searchParams.get("search") ?? "");
-  // Deep-link only (no dropdown — there's no branch-list endpoint loaded on this page).
-  // The Work Inbox ATTENDANCE_MISMATCH digest deep-links here with ?branchId=..., which
-  // the backend (attendance-exceptions.routes.ts) already accepts and filters emp.branch_id
-  // on; this page just wasn't reading it from the URL before.
+  // Was deep-link only (no dropdown, since no branch-list endpoint was loaded on this
+  // page) — now also user-selectable below. The Work Inbox ATTENDANCE_MISMATCH digest
+  // still deep-links here with ?branchId=..., which the backend
+  // (attendance-exceptions.routes.ts) already accepts and filters emp.branch_id on.
   const [branchId, setBranchId] = useState(searchParams.get("branchId") ?? "");
+
+  useEffect(() => {
+    hrmsApi.get<{ data: { id: string; branch_name: string }[] }>("/api/org/branches")
+      .then((res) => setBranches(res.data ?? []))
+      .catch(() => setBranches([]));
+  }, []);
 
   // Debounce the search box — it hits the server, unlike the mismatch queue's
   // current-page-only client filter.
@@ -334,17 +341,15 @@ export default function ExceptionsPanel() {
         </div>
       </div>
 
-        {/* Branch filter, active only when this page was reached via a branch deep-link
-            (e.g. the Work Inbox ATTENDANCE_MISMATCH digest item). No dropdown here — just
-            a visible indicator + a way to clear it, since there's no branch-list endpoint
-            loaded on this page. */}
+        {/* Confirms the active branch scope — set either from the dropdown below or a
+            deep-link (e.g. the Work Inbox ATTENDANCE_MISMATCH digest item). */}
         {branchId && (
           <Card className="border-blue-200 bg-blue-50">
             <CardContent className="flex items-center justify-between gap-3 p-4">
               <p className="text-sm font-semibold text-blue-900">
                 Filtered to branch:{" "}
                 <span className="font-black">
-                  {rows[0]?.branch_name ?? branchId}
+                  {branches.find((b) => b.id === branchId)?.branch_name ?? rows[0]?.branch_name ?? branchId}
                 </span>
               </p>
               <Button
@@ -422,7 +427,19 @@ export default function ExceptionsPanel() {
         {/* Filters */}
         {!isForbidden && (
           <Card>
-            <CardContent className="grid gap-4 p-5 md:grid-cols-2 xl:grid-cols-6">
+            <CardContent className="grid gap-4 p-5 md:grid-cols-2 xl:grid-cols-7">
+              <div>
+                <Label className="text-xs font-bold uppercase text-slate-500">Branch</Label>
+                <Select value={branchId || "all"} onValueChange={(v) => setBranchId(v === "all" ? "" : v)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All branches</SelectItem>
+                    {branches.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div>
                 <Label className="text-xs font-bold uppercase text-slate-500">From</Label>
                 <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />

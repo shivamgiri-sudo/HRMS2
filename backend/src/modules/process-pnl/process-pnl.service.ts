@@ -1,8 +1,13 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
-import { getInvoicedRevenueActuals, OWN_COMPANY_SQL } from "./pnl-actuals.service.js";
+import { getCurrentDateIST } from "../../shared/istDate.js";
+import { getInvoicedRevenueActuals, OWN_COMPANY_SQL, getApprovedCostCentreSplits } from "./pnl-actuals.service.js";
 import { resolveRevenueAtRisk } from "./canonical-pnl.service.js";
+import { notDialDeskProcessSql } from "../../shared/ownCompanyCostCentre.js";
+import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
+import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
+import { peopleCostExprsForColumns } from "./pnl-people-cost.js";
 import type {
   PnlQueryFilters,
   PnlSummaryResponse,
@@ -295,8 +300,41 @@ function effectiveProcessExpr(alias: string, costCentreProcessIdSupported: boole
     : `${alias}.process_id`;
 }
 
+/**
+ * Same rule as pnl-statement.service.ts's isOpenPeriod (current IST month or later), duplicated
+ * rather than imported because pnl-statement -> canonical-pnl -> bpo-pnl -> this module would make
+ * the import circular.
+ */
+function isCurrentOrFuturePeriod(periodCode: string | undefined): boolean {
+  if (!periodCode) return true;
+  return periodCode >= getCurrentDateIST().slice(0, 7);
+}
+
+/** Branch ids explicitly closed today (branch_master.active_status = 0). */
+export async function getClosedBranchIds(): Promise<Set<string>> {
+  const rows = await queryRows<RowDataPacket>(
+    "SELECT id FROM branch_master WHERE active_status = 0",
+    []
+  );
+  return new Set(rows.map((row) => String(row.id)));
+}
+
 async function getBaseProcesses(filters: PnlQueryFilters): Promise<ProcessBaseRow[]> {
-  const conds = ["COALESCE(p.active_status, 1) = 1"];
+  // COALESCE(bm.active_status, 1) = 1 keeps a process visible even when its branch link is NULL
+  // (unbranched process) or the joined branch has no active_status set, but drops any process
+  // still attached to a branch explicitly closed (active_status = 0) — otherwise that branch
+  // keeps surfacing in every "All branches" dropdown derived from this row set forever.
+  //
+  // PERIOD-AWARE (2026-09-23): this row set is also the base every money total is summed over
+  // (bpo-pnl.service.ts computeBranchRows -> getCachedAllocationSummary -> Statement columns,
+  // header KPIs, Full Waterfall). Filtering a CLOSED month by TODAY's branch status made closing a
+  // branch retroactively erase its real revenue/payroll/GRN from every past month. So the
+  // closed-branch filter applies only to the open (current/future) month; a past month keeps the
+  // closed branch's processes, and computeBranchRows then drops only those with no money at all
+  // (dropDormantClosedBranchRows) so a long-closed branch still does not reappear in dropdowns.
+  // DialDesk is an IDC entity, not MAS Callnet (owner rule 2026-09-24): never a P&L column.
+  const conds = ["COALESCE(p.active_status, 1) = 1", notDialDeskProcessSql("p", "bm")];
+  if (isCurrentOrFuturePeriod(filters.period)) conds.push("COALESCE(bm.active_status, 1) = 1");
   const params: unknown[] = [];
 
   if (filters.branchId) {
@@ -718,12 +756,14 @@ async function getPayrollMap(processIds: string[], period: string, end: string):
   }
 
   const salaryColumns = await listColumns("salary_prep_line");
-  const grossExpr = salaryColumns.has("gross_salary") ? "COALESCE(spl.gross_salary, 0)" : "0";
-  const pfExpr = salaryColumns.has("pf_employer") ? "COALESCE(spl.pf_employer, 0)" : "0";
-  const esicExpr = salaryColumns.has("esic_employer") ? "COALESCE(spl.esic_employer, 0)" : "0";
-  const gratuityExpr = salaryColumns.has("gratuity")
-    ? "COALESCE(spl.gratuity, 0)"
-    : (salaryColumns.has("basic") ? "COALESCE(spl.basic, 0) * 0.0481" : "0");
+  // People Cost rule (pnl-people-cost.ts): loaded_total / PayrollMeta.total is CTC paid less other,
+  // loan, advance and LWP deductions. The gross/PF/ESIC/gratuity breakdown stays the CTC components,
+  // so those four no longer add up to `total` when a line carries such deductions.
+  const cost = peopleCostExprsForColumns("spl", salaryColumns);
+  const grossExpr = cost.gross;
+  const pfExpr = cost.pfEmployer;
+  const esicExpr = cost.esicEmployer;
+  const gratuityExpr = cost.gratuity;
 
   /*
    * EVERY run in the month, not the most recent one.
@@ -755,31 +795,96 @@ async function getPayrollMap(processIds: string[], period: string, end: string):
 
   if (runRows.length > 0) {
     const runIds = runRows.map((row) => String(row.id));
-    const rows = await queryRows<RowDataPacket>(
-      `SELECT
-          e.process_id,
-          COUNT(DISTINCT spl.employee_id) AS headcount,
-          SUM(${grossExpr}) AS gross_total,
-          SUM(${pfExpr}) AS pf_employer_total,
-          SUM(${esicExpr}) AS esic_employer_total,
-          SUM(${gratuityExpr}) AS gratuity_total,
-          SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS loaded_total
-        FROM salary_prep_line spl
-        JOIN employees e ON e.id = spl.employee_id
-        WHERE spl.run_id IN (${placeholders(runIds)})
-          AND e.process_id IN (${placeholders(processIds)})
-        GROUP BY e.process_id`,
-      [...runIds, ...processIds]
-    );
 
-    for (const row of rows) {
-      map.set(String(row.process_id), {
-        total: toNumber(row.loaded_total),
-        gross: toNumber(row.gross_total),
-        pfEmployer: toNumber(row.pf_employer_total),
-        esicEmployer: toNumber(row.esic_employer_total),
-        gratuity: toNumber(row.gratuity_total),
-        headcount: toNumber(row.headcount),
+    // Per-employee, not pre-aggregated: a support employee approved for a cost-centre split
+    // (Finance > Billability > Support cost splits) must have their loaded cost divided across
+    // every process their split resolves to, not dumped 100% onto their home e.process_id. This
+    // mirrors bpo-pnl.service.ts's getActualPeopleCost exactly — the P&L statement tab already
+    // gets this right; the Revenue/Costs/GRN tabs (this function) did not, silently disagreeing
+    // with the statement whenever a split employee existed. Not restricted to `processIds` here
+    // because a split target can land outside the caller's current filter scope.
+    // "home_process_id" is the process the pay is ATTRIBUTED to (2026-09-23 owner rule, same as the
+    // Statement's getPayrollPeople): an employee mapped to a payroll cost centre
+    // (pnl_employee_cost_centre_override) counts under that cost centre's process, never their HR
+    // process as well; everyone else keeps e.process_id. One row per employee (both joins 1:1).
+    const attr = await payrollAttributionSql({
+      employeeIdExpr: "e.id", homeCostCentreExpr: "e.cost_centre_id",
+      homeBranchExpr: "e.branch_id", homeProcessExpr: "e.process_id",
+    });
+    const [employeeRows, splits] = await Promise.all([
+      queryRows<RowDataPacket>(
+        `SELECT
+            spl.employee_id,
+            MAX(${attr.effectiveProcessExpr}) AS home_process_id,
+            SUM(${grossExpr}) AS gross_total,
+            SUM(${pfExpr}) AS pf_employer_total,
+            SUM(${esicExpr}) AS esic_employer_total,
+            SUM(${gratuityExpr}) AS gratuity_total,
+            SUM(${cost.peopleCost}) AS loaded_total
+          FROM salary_prep_line spl
+          JOIN employees e ON e.id = spl.employee_id
+          ${attr.join}
+          WHERE spl.run_id IN (${placeholders(runIds)})
+            AND ${attr.effectiveProcessExpr} IS NOT NULL
+          GROUP BY spl.employee_id`,
+        runIds
+      ),
+      getApprovedCostCentreSplits(period),
+    ]);
+
+    interface Bucket { total: number; gross: number; pfEmployer: number; esicEmployer: number; gratuity: number; headcount: Set<string> }
+    const buckets = new Map<string, Bucket>();
+    const bucketFor = (processId: string): Bucket => {
+      let b = buckets.get(processId);
+      if (!b) { b = { total: 0, gross: 0, pfEmployer: 0, esicEmployer: 0, gratuity: 0, headcount: new Set() }; buckets.set(processId, b); }
+      return b;
+    };
+
+    for (const row of employeeRows) {
+      const employeeId = String(row.employee_id);
+      const homeProcessId = String(row.home_process_id);
+      const loaded = toNumber(row.loaded_total);
+      const gross = toNumber(row.gross_total);
+      const pf = toNumber(row.pf_employer_total);
+      const esic = toNumber(row.esic_employer_total);
+      const gratuity = toNumber(row.gratuity_total);
+
+      // Headcount is a staffing count, not a cost split — an employee posted to two processes
+      // via a split is still one person, counted once, on their home process (matches how
+      // activeHeadcount is computed elsewhere in this file: one row in `employees` per person).
+      bucketFor(homeProcessId).headcount.add(employeeId);
+
+      const split = splits.get(employeeId);
+      if (!split || split.length === 0) {
+        const b = bucketFor(homeProcessId);
+        b.total += loaded; b.gross += gross; b.pfEmployer += pf; b.esicEmployer += esic; b.gratuity += gratuity;
+        continue;
+      }
+      const splitTotalPct = split.reduce((sum, s) => sum + s.pct, 0);
+      if (splitTotalPct <= 0) {
+        const b = bucketFor(homeProcessId);
+        b.total += loaded; b.gross += gross; b.pfEmployer += pf; b.esicEmployer += esic; b.gratuity += gratuity;
+        continue;
+      }
+      for (const share of split) {
+        const fraction = share.pct / splitTotalPct;
+        const b = bucketFor(share.processId);
+        b.total += loaded * fraction;
+        b.gross += gross * fraction;
+        b.pfEmployer += pf * fraction;
+        b.esicEmployer += esic * fraction;
+        b.gratuity += gratuity * fraction;
+      }
+    }
+
+    for (const [processId, b] of buckets) {
+      map.set(processId, {
+        total: b.total,
+        gross: b.gross,
+        pfEmployer: b.pfEmployer,
+        esicEmployer: b.esicEmployer,
+        gratuity: b.gratuity,
+        headcount: b.headcount.size,
         status: "actual",
         // The newest run of the month still identifies the figure's provenance; runRows is
         // ordered created_at DESC so [0] is that one, as it was when only one was read.
@@ -911,6 +1016,22 @@ function actualVendorStatusExpr(alias: string, columns: Set<string>) {
   return `LOWER(COALESCE(${statusColumns.join(", ")}, '')) IN ('approved','finance_approved','posted','paid')`;
 }
 
+/*
+ * OWNER RULE 2026-09-24: on the Process P&L, "Revenue and GRN — all components — must be NON-GST
+ * amounts". Every vendor-payable and GRN amount this engine reads is therefore the taxable value:
+ *   - vendor_payment_tracking: amount_without_tax (was due_amount, the GST-INCLUSIVE payable, so
+ *     these figures fall by the FULL GST on each payable);
+ *   - grn_request: amount_without_tax (was amount, also GST-inclusive).
+ * Both go through pnl-ex-gst.ts, which guards legacy rows whose ex-GST column is still the 0
+ * default. A database without vendor_payment_tracking.amount_without_tax (pre-sql/411) keeps the
+ * old due_amount read rather than failing the whole P&L.
+ */
+function vendorPayableAmountExpr(columns: Set<string>): string {
+  return columns.has("amount_without_tax") ? vendorPayableExGstSql("vpt") : "COALESCE(vpt.due_amount, 0)";
+}
+
+const GRN_EX_GST_AMOUNT = grnRequestExGstSql("g");
+
 function actualGrnStatusExpr(alias: string) {
   return `LOWER(COALESCE(${alias}.status, '')) IN ('approved','posted','paid')`;
 }
@@ -926,7 +1047,7 @@ async function getVendorDirectCostMap(processIds: string[], start: string, end: 
     const rows = await queryRows<RowDataPacket>(
       `SELECT
           ${resolvedProcessExpr} AS process_id,
-          SUM(COALESCE(vpt.due_amount, 0)) AS approved_amount,
+          SUM(${vendorPayableAmountExpr(vendorPaymentColumns)}) AS approved_amount,
           COUNT(vpt.id) AS item_count,
           MAX(COALESCE(vpt.payment_date, vpt.due_date, vpt.updated_at, vpt.created_at)) AS freshness
         FROM vendor_payment_tracking vpt
@@ -953,7 +1074,7 @@ async function getVendorDirectCostMap(processIds: string[], start: string, end: 
     const rows = await queryRows<RowDataPacket>(
       `SELECT
           ${resolvedProcessExpr} AS process_id,
-          SUM(COALESCE(g.amount, 0)) AS approved_amount,
+          SUM(${GRN_EX_GST_AMOUNT}) AS approved_amount,
           COUNT(g.id) AS item_count,
           MAX(COALESCE(g.reviewed_at, g.due_date, g.bill_date, g.updated_at, g.created_at)) AS freshness
         FROM grn_request g
@@ -1007,10 +1128,22 @@ async function getIndirectAllocationMap(
   const branchIds = Array.from(branchProcessMap.keys()).filter((id) => id !== "unassigned");
   const poolByBranch = new Map<string, number>();
 
+  /*
+   * INTENTIONALLY NOT pnl-actuals.service.ts's readGrnSpend() (the shared GRN reader the Statement,
+   * CEO Overview and Live P&L use — see its banner, 2026-09-23). This pool answers a different
+   * question: vendor PAYABLES classified 'indirect' (directCostClassExpr) falling DUE in the month
+   * (vendor_payment_tracking by due_date, ex-GST since 2026-09-24), spread over a branch's processes by
+   * headcount — a payables/cash view for this legacy per-process engine, not accrual GRN
+   * consumption by accounting_period. The grn_request fallback below only runs when the payables
+   * table does not exist at all. Do not "reconcile" the two by editing one of them: a payable and
+   * the GRN it settles can sit in different months by design. Known consequence: bpo-pnl's
+   * bmcNonPeople reads this pool (base.indirectCost), so that one line is payables-based, while
+   * every GRN/IDC figure on Statement / CEO / Live comes from readGrnSpend().
+   */
   if (branchIds.length > 0 && await tableExists("vendor_payment_tracking")) {
     const resolvedProcessExpr = effectiveProcessExpr("vpt", costCentreProcessIdSupported);
     const rows = await queryRows<RowDataPacket>(
-      `SELECT vpt.branch_id, SUM(COALESCE(vpt.due_amount, 0)) AS pool_amount
+      `SELECT vpt.branch_id, SUM(${vendorPayableAmountExpr(vendorPaymentColumns)}) AS pool_amount
         FROM vendor_payment_tracking vpt
          LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
         WHERE vpt.branch_id IN (${placeholders(branchIds)})
@@ -1026,7 +1159,7 @@ async function getIndirectAllocationMap(
   } else if (branchIds.length > 0 && await tableExists("grn_request")) {
     const resolvedProcessExpr = effectiveProcessExpr("g", costCentreProcessIdSupported);
     const rows = await queryRows<RowDataPacket>(
-      `SELECT g.branch_id, SUM(COALESCE(g.amount, 0)) AS pool_amount
+      `SELECT g.branch_id, SUM(${GRN_EX_GST_AMOUNT}) AS pool_amount
         FROM grn_request g
          LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
         WHERE g.branch_id IN (${placeholders(branchIds)})
@@ -1423,12 +1556,8 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
   const hasGrnRequest = await tableExists("grn_request");
   const vendorPaymentColumns = await listColumns("vendor_payment_tracking").catch(() => new Set<string>());
 
-  const grossExpr = salaryColumns.has("gross_salary") ? "COALESCE(spl.gross_salary, 0)" : "0";
-  const pfExpr = salaryColumns.has("pf_employer") ? "COALESCE(spl.pf_employer, 0)" : "0";
-  const esicExpr = salaryColumns.has("esic_employer") ? "COALESCE(spl.esic_employer, 0)" : "0";
-  const gratuityExpr = salaryColumns.has("gratuity")
-    ? "COALESCE(spl.gratuity, 0)"
-    : (salaryColumns.has("basic") ? "COALESCE(spl.basic, 0) * 0.0481" : "0");
+  // People Cost rule (pnl-people-cost.ts): CTC paid less other/loan/advance/LWP deductions.
+  const peopleCostExpr = peopleCostExprsForColumns("spl", salaryColumns).peopleCost;
 
   const series: TrendPoint[] = [];
   const monthSeries = buildMonthSeries(months);
@@ -1476,7 +1605,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
     }
 
     const payrollRows = await queryRows<RowDataPacket>(
-      `SELECT ms.month_key, SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS total
+      `SELECT ms.month_key, SUM(${peopleCostExpr}) AS total
          FROM (${seriesSql}) ms
          LEFT JOIN salary_prep_run spr ON spr.run_month = ms.month_key
          LEFT JOIN salary_prep_line spl ON spl.run_id = spr.id
@@ -1510,7 +1639,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
 
     const indirectRows = hasVendorPayments
       ? await queryRows<RowDataPacket>(
-          `SELECT ms.month_key, SUM(COALESCE(vpt.due_amount, 0)) AS total
+          `SELECT ms.month_key, SUM(${vendorPayableAmountExpr(vendorPaymentColumns)}) AS total
              FROM (${seriesSql}) ms
              LEFT JOIN vendor_payment_tracking vpt
                ON COALESCE(vpt.due_date, vpt.created_at) BETWEEN ms.start_date AND ms.end_date
@@ -1522,7 +1651,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
         ).catch(() => [])
       : hasGrnRequest
       ? await queryRows<RowDataPacket>(
-          `SELECT ms.month_key, SUM(COALESCE(g.amount, 0)) AS total
+          `SELECT ms.month_key, SUM(${GRN_EX_GST_AMOUNT}) AS total
              FROM (${seriesSql}) ms
              LEFT JOIN grn_request g
                ON g.accounting_period = ms.month_key
@@ -1565,7 +1694,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
     }
 
     const payrollRows = await queryRows<RowDataPacket>(
-      `SELECT SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS total
+      `SELECT SUM(${peopleCostExpr}) AS total
          FROM salary_prep_line spl
          JOIN salary_prep_run spr ON spr.id = spl.run_id
          JOIN employees e ON e.id = spl.employee_id
@@ -1587,7 +1716,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
     if (hasVendorPayments) {
       const resolvedProcessExpr = effectiveProcessExpr("vpt", costCentreProcessIdSupported);
       const indirectRows = await queryRows<RowDataPacket>(
-        `SELECT SUM(COALESCE(vpt.due_amount, 0)) AS total
+        `SELECT SUM(${vendorPayableAmountExpr(vendorPaymentColumns)}) AS total
            FROM vendor_payment_tracking vpt
            LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
           WHERE ${directCostClassExpr("vpt", resolvedProcessExpr)} = 'indirect'
@@ -1599,7 +1728,7 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
     } else if (hasGrnRequest) {
       const resolvedProcessExpr = effectiveProcessExpr("g", costCentreProcessIdSupported);
       const indirectRows = await queryRows<RowDataPacket>(
-        `SELECT SUM(COALESCE(g.amount, 0)) AS total
+        `SELECT SUM(${GRN_EX_GST_AMOUNT}) AS total
            FROM grn_request g
            LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
           WHERE ${directCostClassExpr("g", resolvedProcessExpr)} = 'indirect'
@@ -1959,12 +2088,13 @@ export const processPnlService = {
     const hasRuns = await tableExists("salary_prep_run") && await tableExists("salary_prep_line");
     const columns = hasRuns ? await listColumns("salary_prep_line") : new Set<string>();
     const basicExpr = columns.has("basic") ? "COALESCE(spl.basic, 0)" : "0";
-    const grossExpr = columns.has("gross_salary") ? "COALESCE(spl.gross_salary, 0)" : "0";
-    const pfExpr = columns.has("pf_employer") ? "COALESCE(spl.pf_employer, 0)" : "0";
-    const esicExpr = columns.has("esic_employer") ? "COALESCE(spl.esic_employer, 0)" : "0";
-    const gratuityExpr = columns.has("gratuity")
-      ? "COALESCE(spl.gratuity, 0)"
-      : (columns.has("basic") ? "COALESCE(spl.basic, 0) * 0.0481" : "0");
+    // loaded_cost follows the People Cost rule (pnl-people-cost.ts) so these rows add up to the
+    // summary; other_deduction / leave_deduction are listed so the gap to CTC is explainable.
+    const cost = peopleCostExprsForColumns("spl", columns);
+    const grossExpr = cost.gross;
+    const pfExpr = cost.pfEmployer;
+    const esicExpr = cost.esicEmployer;
+    const gratuityExpr = cost.gratuity;
     const incentiveExpr = columns.has("incentive_total") ? "COALESCE(spl.incentive_total, 0)" : "0";
     const overtimeExpr = columns.has("overtime_pay") ? "COALESCE(spl.overtime_pay, 0)" : "0";
 
@@ -1998,7 +2128,9 @@ export const processPnlService = {
             ${gratuityExpr} AS gratuity,
             ${incentiveExpr} AS incentive,
             ${overtimeExpr} AS overtime,
-            (${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS loaded_cost
+            ${cost.otherDeduction} AS other_deduction,
+            ${cost.leaveDeduction} AS leave_deduction,
+            ${cost.peopleCost} AS loaded_cost
           FROM salary_prep_line spl
           JOIN employees e ON e.id = spl.employee_id
           LEFT JOIN designation_master d ON d.id = e.designation_id
@@ -2098,7 +2230,7 @@ export const processPnlService = {
             CASE WHEN grn.grn_type = 'imprest' THEN 'imprest_grn' ELSE 'vendor_grn' END AS source_type,
             COALESCE(vpt.grn_number, CONCAT('GRN-', vpt.id)) AS reference,
             COALESCE(vpt.due_date, grn.bill_date, vpt.created_at) AS entry_date,
-            vpt.due_amount AS amount,
+            ${vendorPayableAmountExpr(vendorPaymentColumns)} AS amount,
             NULL AS description,
             vpt.vendor_name,
            vpt.payment_status AS status,
@@ -2127,7 +2259,7 @@ export const processPnlService = {
             CASE WHEN g.grn_type = 'imprest' THEN 'imprest_grn' ELSE 'vendor_grn' END AS source_type,
             COALESCE(g.grn_number, CONCAT('GRN-', g.id)) AS reference,
             COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) AS entry_date,
-            g.amount,
+            ${GRN_EX_GST_AMOUNT} AS amount,
             g.remarks AS description,
             g.vendor_name,
             g.status,
@@ -2196,7 +2328,7 @@ export const processPnlService = {
           `SELECT
               vpt.head,
               vpt.sub_head,
-              SUM(COALESCE(vpt.due_amount, 0)) AS branch_pool_amount
+              SUM(${vendorPayableAmountExpr(vendorPaymentColumns)}) AS branch_pool_amount
             FROM vendor_payment_tracking vpt
             LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
            WHERE vpt.branch_id = ?
@@ -2212,7 +2344,7 @@ export const processPnlService = {
           `SELECT
               g.head,
               g.sub_head,
-              SUM(COALESCE(g.amount, 0)) AS branch_pool_amount
+              SUM(${GRN_EX_GST_AMOUNT}) AS branch_pool_amount
             FROM grn_request g
             LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
            WHERE g.branch_id = ?
@@ -2378,7 +2510,7 @@ export const processPnlService = {
         `SELECT
             COALESCE(vpt.grn_number, CONCAT('GRN-', vpt.id)) AS reference,
             COALESCE(vpt.due_date, grn.bill_date, vpt.created_at) AS entry_date,
-            vpt.due_amount AS amount,
+            ${vendorPayableAmountExpr(vendorPaymentColumns)} AS amount,
             vpt.payment_status AS status,
             NULLIF(TRIM(COALESCE(grn.description, '')), '') AS note
            FROM vendor_payment_tracking vpt
@@ -2409,7 +2541,7 @@ export const processPnlService = {
         `SELECT
             COALESCE(g.grn_number, CONCAT('GRN-', g.id)) AS reference,
             COALESCE(g.due_date, g.bill_date, g.reviewed_at, g.created_at) AS entry_date,
-            g.amount,
+            ${GRN_EX_GST_AMOUNT} AS amount,
             g.status,
             -- The Note column was empty on five of the ledger's six entry types because only
             -- adjustments supplied one. A GRN carries the raiser's own description of what was

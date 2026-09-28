@@ -2,6 +2,8 @@ import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
 import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import BranchActivityReportTab from '@/pages/ats/BranchActivityReportTab';
 import {
   TrendingUp, Users, UserCheck, UserX, Calendar, Award,
   Building2, Target, Clock, CheckCircle, BarChart3, PieChart,
@@ -145,6 +147,13 @@ export default function ATSCommandCentre() {
           </p>
         </div>
 
+        <Tabs defaultValue="overview">
+          <TabsList>
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="branch-activity">Branch Activity</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="overview" className="space-y-6 mt-4">
         {/* KPI Cards */}
         {metrics && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -391,6 +400,12 @@ export default function ATSCommandCentre() {
             </table>
           </div>
         </div>
+          </TabsContent>
+
+          <TabsContent value="branch-activity" className="mt-4">
+            <BranchActivityReportTab />
+          </TabsContent>
+        </Tabs>
       </div>
     </DashboardLayout>
   );

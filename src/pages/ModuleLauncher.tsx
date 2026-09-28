@@ -6,6 +6,7 @@ import { ArrowRight, Briefcase, GraduationCap, ShieldCheck, Users, BarChart3, Cl
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { PAGE_CODE_BY_ROUTE } from "@/lib/pageRoutePageCodes";
+import { MOUNTED_ROUTE_PATHS } from "@/lib/mountedRoutePaths";
 
 /**
  * page_code -> route, inverted from the frontend's own route map.
@@ -60,6 +61,31 @@ const KNOWN_ROUTES = new Set(Object.keys(PAGE_CODE_BY_ROUTE));
  */
 const ROUTE_OVERRIDE_BY_PAGE_CODE: Record<string, string> = {
   WFM_ATTENDANCE_EXCEPTIONS: "/wfm/attendance-integrity?tab=exceptions",
+  // Same reasoning, one console further on: the merged /wfm/roster-command-center console
+  // (RosterCommandCenter.tsx) covers 8 page codes, one per tab — see
+  // page-catalog-route-drift.contract.test.ts's KNOWN_UNMAPPED_PAGE_CODES entry for these
+  // and pageRoutePageCodes.ts's comment on "/wfm/roster-command-center" for why neither
+  // gets a PAGE_CODE_BY_ROUTE entry. Without these overrides, all 8 launcher tiles would
+  // silently fall through to "/dashboard" instead of the console.
+  WFM_ROSTER_LIVE_MONITORING: "/wfm/roster-command-center?tab=live",
+  WFM_ROSTER_TEAM_ROSTER: "/wfm/roster-command-center?tab=team-roster",
+  WFM_ROSTER_ANALYTICS: "/wfm/roster-command-center?tab=analytics",
+  WFM_ROSTER_TRENDS: "/wfm/roster-command-center?tab=trends",
+  WFM_ROSTER_COMPLIANCE: "/wfm/roster-command-center?tab=compliance",
+  WFM_ROSTER_SHIFT_EFFECTIVENESS: "/wfm/roster-command-center?tab=shifts",
+  WFM_ROSTER_INTERVENTIONS: "/wfm/roster-command-center?tab=interventions",
+  WFM_ROSTER_AUDIT_TRAIL: "/wfm/roster-command-center?tab=audit",
+  // Catalog codes whose stored page_path names a page that is not mounted (renamed or merged since the
+  // catalog row was written). Each lands on the closest mounted page instead of dead-ending on /dashboard.
+  // Audited 2026-09-26 against the live page_catalog; confirm the target with the page owner.
+  LEAVE_MANAGEMENT: "/leave-approvals",
+  SALARY_PREP: "/payroll/salary-review",
+  SALARY_BAND_MASTER: "/payroll/masters",
+  PAYROLL_ATTENDANCE_OVERRIDES: "/payroll/attendance-control-tower",
+  WFM_ROSTER_MANAGER_QUEUE: "/wfm/team-roster?tab=approvals",
+  META_INTEGRATION_SETTINGS: "/ats/meta-campaigns",
+  ONBOARDING_REVIEW: "/ats/onboarding",
+  ONBOARDING_SECTION_STATUS: "/ats/onboarding",
 };
 
 /**
@@ -80,7 +106,10 @@ export function resolveLaunchRoute(page: { page_code: string; route_path?: strin
 
   const dbPath = page.route_path ?? page.page_path ?? null;
   // Catalog paths sometimes carry a query string (?tab=…); the route is the part before it.
-  if (dbPath && KNOWN_ROUTES.has(dbPath.split("?")[0])) return dbPath;
+  // A path is trusted when the router mounts it - either it has a page-code mapping or it is one of the
+  // routes gated by a wrapper instead (finance, most payroll and WFM pages), which the map does not list.
+  const dbRoute = dbPath ? dbPath.split("?")[0] : null;
+  if (dbPath && dbRoute && (KNOWN_ROUTES.has(dbRoute) || MOUNTED_ROUTE_PATHS.has(dbRoute))) return dbPath;
 
   return "/dashboard";
 }

@@ -161,6 +161,32 @@ export class ExternalDbCredentialError extends Error {
   }
 }
 
+/**
+ * Where a connector's stored credentials disagree with the host its config
+ * SHOWS. Keyed by integration_key, populated as credentials are read.
+ *
+ * config_json is what the Integration Hub displays and what an administrator
+ * edits. encrypted_credentials is what actually dials, and it wins outright
+ * below. When the two disagree the only symptom is a connection error against
+ * an address that appears nowhere in the UI, which sends whoever is debugging
+ * to read a configuration that had no part in the attempt.
+ *
+ * Divergence is NOT proof of breakage. Nine of this database's fifteen database
+ * connectors diverge, and in every case the pattern is a public address on
+ * display and a private one stored (122.x on screen, 192.168.x dialled). On the
+ * server the LAN address is very likely the correct and faster route; from a
+ * developer machine outside that network it simply times out. So this is
+ * recorded and reported, never corrected automatically — and the message says
+ * which address was used rather than guessing which one is right.
+ */
+const hostDivergence = new Map<string, { shown: string; dialled: string }>();
+const divergenceWarned = new Set<string>();
+
+/** What the UI shows vs what is dialled, for every connector read so far. */
+export function getHostDivergences(): Array<{ key: string; shown: string; dialled: string }> {
+  return [...hostDivergence.entries()].map(([key, v]) => ({ key, ...v }));
+}
+
 export async function getCredentialsForKey(key: string): Promise<DbCredentials | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT encrypted_credentials, config_json FROM integration_config WHERE integration_key = ?`,
@@ -169,13 +195,86 @@ export async function getCredentialsForKey(key: string): Promise<DbCredentials |
   const row = (rows as any[])[0];
   if (!row) return null;
   if (row.encrypted_credentials) {
+    let creds: DbCredentials;
     try {
-      return decryptCredentials(row.encrypted_credentials);
+      creds = decryptCredentials(row.encrypted_credentials);
     } catch (error) {
       throw new ExternalDbCredentialError(key, error);
     }
+
+    // Recorded, never acted on: the credentials stay authoritative. Silently
+    // preferring the displayed host would repoint a live connector at whatever
+    // someone last typed into a form, which is a worse failure than a timeout.
+    let shownHost = '';
+    try {
+      const config = typeof row.config_json === 'string' ? JSON.parse(row.config_json) : (row.config_json ?? {});
+      shownHost = String(config?.host ?? '');
+    } catch {
+      shownHost = '';
+    }
+    const dialledHost = String(creds.host ?? '');
+    if (shownHost && dialledHost && shownHost !== dialledHost) {
+      hostDivergence.set(key, { shown: shownHost, dialled: dialledHost });
+      if (!divergenceWarned.has(key)) {
+        divergenceWarned.add(key);
+        console.warn(
+          `[integration:${key}] dialling ${dialledHost}, but this connector displays ${shownHost}. ` +
+            `The stored credentials win. If one of these is a LAN address, that is expected on the ` +
+            `server and will not resolve from outside it.`,
+        );
+      }
+    } else {
+      hostDivergence.delete(key);
+    }
+    return creds;
   }
   return null;
+}
+
+/**
+ * Makes a connection failure say WHICH host failed.
+ *
+ * "connect ETIMEDOUT" names nothing, so the natural next step is to read the
+ * connector's configuration — which shows a perfectly reachable host, because
+ * the configuration is not what dialled. That mismatch cost this session an
+ * hour and reads as a dead database rather than an address this machine cannot
+ * route to. The message now carries the address actually used, and says so
+ * explicitly when it differs from the one on screen.
+ */
+function wrapWithHostContext(key: string, pool: mysql.Pool): mysql.Pool {
+  const describe = () => {
+    const divergence = hostDivergence.get(key);
+    return divergence
+      ? ` (dialled ${divergence.dialled}, which is NOT the ${divergence.shown} this connector ` +
+          `displays — check which of the two this host can actually reach)`
+      : '';
+  };
+  const annotate = (error: unknown): unknown => {
+    const candidate = error as { message?: string; __hostAnnotated?: boolean };
+    if (candidate && typeof candidate.message === 'string' && !candidate.__hostAnnotated) {
+      candidate.__hostAnnotated = true;
+      candidate.message = `${candidate.message}${describe()}`;
+    }
+    return error;
+  };
+
+  return new Proxy(pool, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if ((property === 'query' || property === 'execute' || property === 'getConnection') && typeof value === 'function') {
+        return (...args: unknown[]) => {
+          let result: unknown;
+          try {
+            result = (value as (...a: unknown[]) => unknown).apply(target, args);
+          } catch (error) {
+            throw annotate(error);
+          }
+          return result instanceof Promise ? result.catch((error) => Promise.reject(annotate(error))) : result;
+        };
+      }
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as mysql.Pool;
 }
 
 export async function getPoolForKey(key: string): Promise<sql.ConnectionPool | mysql.Pool> {
@@ -220,7 +319,7 @@ export async function getPoolForKey(key: string): Promise<sql.ConnectionPool | m
       connectTimeout: 15000,
     });
     mysqlPools.set(key, pool);
-    return pool;
+    return wrapWithHostContext(key, pool);
   }
 }
 

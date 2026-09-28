@@ -442,35 +442,26 @@ export async function getBranchHeadStats(branchHeadId: string, authUserId?: stri
 
   const [stats] = [[ { total_pending: pendingCount } ]];
 
-  const [approved] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as total_approved
-    FROM ats_branch_head_approval bha
-    WHERE bha.branch_head_id = ? AND bha.approval_status = 'approved'`,
-    [branchHeadId]
+  // Merge three serial COUNT queries into one conditional aggregation —
+  // three round-trips to the DB become one.
+  const [combinedRows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       SUM(CASE WHEN bha.approval_status = 'approved' THEN 1 ELSE 0 END) AS total_approved,
+       SUM(CASE WHEN bha.approval_status = 'rejected' THEN 1 ELSE 0 END) AS total_rejected,
+       SUM(CASE WHEN bha.approval_status = 'approved'
+                 AND MONTH(bha.approved_at) = MONTH(CURRENT_DATE())
+                 AND YEAR(bha.approved_at)  = YEAR(CURRENT_DATE())  THEN 1 ELSE 0 END) AS this_month_approved
+     FROM ats_branch_head_approval bha
+     WHERE bha.branch_head_id = ?`,
+    [branchHeadId],
   );
-
-  const [rejected] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as total_rejected
-    FROM ats_branch_head_approval bha
-    WHERE bha.branch_head_id = ? AND bha.approval_status = 'rejected'`,
-    [branchHeadId]
-  );
-
-  const [thisMonth] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) as this_month_approved
-    FROM ats_branch_head_approval bha
-    WHERE bha.branch_head_id = ?
-      AND bha.approval_status = 'approved'
-      AND MONTH(bha.approved_at) = MONTH(CURRENT_DATE())
-      AND YEAR(bha.approved_at) = YEAR(CURRENT_DATE())`,
-    [branchHeadId]
-  );
+  const combined = (combinedRows as any[])[0] ?? {};
 
   return {
-    total_pending: stats[0]?.total_pending || 0,
-    total_approved: approved[0]?.total_approved || 0,
-    total_rejected: rejected[0]?.total_rejected || 0,
-    this_month_approved: thisMonth[0]?.this_month_approved || 0,
+    total_pending:       stats[0]?.total_pending || 0,
+    total_approved:      Number(combined.total_approved      ?? 0),
+    total_rejected:      Number(combined.total_rejected      ?? 0),
+    this_month_approved: Number(combined.this_month_approved ?? 0),
   };
 }
 

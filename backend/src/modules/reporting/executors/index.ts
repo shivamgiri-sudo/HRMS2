@@ -47,6 +47,7 @@ import {
 } from "./reconciliation.executor.js";
 
 // ─── Attendance ──────────────────────────────────────────────────────────────
+import { attendanceSourceSheet } from "./attendance-source-sheet.executor.js";
 import {
   attendanceDaily,
   dailyHcShift,
@@ -56,6 +57,8 @@ import {
   overtimeSummary,
   regularizationSummary,
   attendanceDisputeSummary,
+  regularizationAuditReport,
+  attendanceDirectEditLog,
   habitualAbsenteeList,
   dailyShrinkageReport,
   monthlyShrinkageTrend,
@@ -160,6 +163,7 @@ import {
   teamPerformanceSummary,
   qualityAuditLog,
   fatalErrorRegister,
+  reginaldAbandonedCartSalesReport,
 } from "./operations.executor.js";
 
 // ─── WFM & Roster ────────────────────────────────────────────────────────────
@@ -260,6 +264,7 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
 
   // Attendance
   "attendance-daily":          attendanceDaily,
+  "attendance-source-sheet":   attendanceSourceSheet,
   "daily-hc-shift":            dailyHcShift,
   "shift-adherence-detail":    shiftAdherenceDetail,
   "attendance-summary":        attendanceSummary,
@@ -269,6 +274,8 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "biometric-reconciliation":  biometricReconciliation,
   "regularization-summary":    regularizationSummary,
   "attendance-dispute-summary": attendanceDisputeSummary,
+  "regularization-audit":      regularizationAuditReport,
+  "attendance-direct-edit-log": attendanceDirectEditLog,
   "habitual-absentee-list":    habitualAbsenteeList,
   "daily-shrinkage-report":    dailyShrinkageReport,
   "monthly-shrinkage-trend":   monthlyShrinkageTrend,
@@ -356,6 +363,7 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "team-performance-summary":  teamPerformanceSummary,
   "quality-audit-log":         qualityAuditLog,
   "fatal-error-register":      fatalErrorRegister,
+  "reginald-abandoned-cart-sales-report": reginaldAbandonedCartSalesReport,
 
   // WFM & Roster
   "roster-published":          rosterPublished,

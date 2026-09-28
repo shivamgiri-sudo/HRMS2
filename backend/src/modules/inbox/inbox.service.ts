@@ -332,6 +332,7 @@ export interface PendingTask {
    * actioned. Faking a "complete" button here would mark nothing anywhere.
    */
   source: "tat" | "inbox" | "work_item" | "derived";
+  item_type?: string;
   module: string;
   title: string;
   description?: string;
@@ -581,9 +582,12 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
   // their real source table by getDerivedRegistryItems (work-inbox.service.ts) — see that
   // function's comment. primaryRole mirrors how work-inbox.routes.ts resolves it
   // (getUserRoleContext), computed here from the roles already fetched above instead of a
-  // second query.
+  // second query. `roles` (this caller's FULL role list) is passed alongside it — the
+  // exit-clearance branch alone checks membership across all of them (see that branch's own
+  // comment for why primaryRole undercounts a multi-role account); leave/BGV/GRN/Budget keep
+  // matching on primaryRole only, unchanged.
   const primaryRole = resolvePrimaryRole(roles);
-  const derivedRows = await getDerivedRegistryItems(userId, primaryRole).catch(() => []);
+  const derivedRows = await getDerivedRegistryItems(userId, primaryRole, roles).catch(() => []);
 
   const now = Date.now();
   const items: PendingTask[] = [
@@ -648,6 +652,7 @@ export async function getMyPending(userId: string): Promise<{ items: PendingTask
       return {
         id: String(row.id),
         source: "work_item",
+        item_type: row.item_type ? String(row.item_type) : undefined,
         module: String(row.module ?? "general"),
         title: String(row.title ?? ""),
         description: row.description ? String(row.description) : undefined,

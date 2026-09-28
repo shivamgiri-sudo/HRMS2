@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
+import { findSalaryStartDateMismatches, isSalaryStartDateGateEnforced } from "./salary-start-date.service.js";
 
 export type PayrollReadinessSeverity = "blocker" | "warning";
 
@@ -421,8 +422,10 @@ export const payrollGovernanceService = {
            FROM employees e
            JOIN (
              SELECT UserID, ReportDate AS report_date, ROUND(SUM(TIME_TO_SEC(Net_Login)) / 60) AS apr_minutes
-               FROM apr
-              WHERE ReportDate BETWEEN ? AND ?
+               FROM (
+                 SELECT DISTINCT UserID, ReportDate, Net_Login FROM apr
+                  WHERE ReportDate BETWEEN ? AND ?
+               ) apr_dedup
               GROUP BY UserID, ReportDate
            ) apr_days
              ON apr_days.UserID = e.employee_code
@@ -438,6 +441,16 @@ export const payrollGovernanceService = {
         "APR source rows exist but attendance_daily_record is missing for the employee/date",
         "attendance_payable_days",
       ),
+      // The apr table (upstream, read-only) carries literal duplicate rows for some
+      // employee/dates -- same UserID+ReportDate+Net_Login inserted more than once. Confirmed
+      // live 2026-09-07: 5,240 employee/date combos in August alone. A plain SUM(Net_Login) over
+      // those doubles apr_minutes and manufactures a false mismatch against a correctly-recorded
+      // attendance_daily_record row. The apr_dedup subquery below (SELECT DISTINCT before
+      // summing) collapses an exact repeat while still correctly adding together two genuinely
+      // different login-session rows that happen to share the same UserID+ReportDate (they
+      // differ on Net_Login, so DISTINCT does not merge them). This reads around the upstream
+      // defect in our own query only -- it does not touch db_bill's schema or data, which stays
+      // out of scope without separate approval.
       countIssue(
         `SELECT e.id, e.employee_code,
                 COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
@@ -450,8 +463,10 @@ export const payrollGovernanceService = {
            FROM employees e
            JOIN (
              SELECT UserID, ReportDate AS report_date, ROUND(SUM(TIME_TO_SEC(Net_Login)) / 60) AS apr_minutes
-               FROM apr
-              WHERE ReportDate BETWEEN ? AND ?
+               FROM (
+                 SELECT DISTINCT UserID, ReportDate, Net_Login FROM apr
+                  WHERE ReportDate BETWEEN ? AND ?
+               ) apr_dedup
               GROUP BY UserID, ReportDate
            ) apr_days
              ON apr_days.UserID = e.employee_code
@@ -1018,6 +1033,45 @@ export const payrollGovernanceService = {
       }
     } catch (noSalErr) {
       issues.push({ code: "NEW_JOINER_SALARY_STRUCTURE_CHECK_ERROR", severity: "warning", category: "employee_master", count: 0, message: "Could not check salary structure for new joiners.", sample: [] });
+    }
+
+    // ── NEW JOINER: salary start date must be identical everywhere ─────────────
+    // Payroll reads employees.salary_start_date to decide whether a month is paid and for how many
+    // days, and picks the salary assignment by effective_from. Where Payroll Head's assigned date
+    // sits on some copies and not others, pay is wrong by the difference - short or over. Live
+    // 2026-09-25: 73 of 213 HRMS-onboarded employees disagreed (395 backdated days). A warning until
+    // the existing mismatches are repaired; the salary_start_date_gate_enforced flag makes it a
+    // blocker. A check that cannot run is a blocker either way: missing evidence is not green.
+    try {
+      const mismatches = await findSalaryStartDateMismatches(db as any, where, params, 200);
+      if (mismatches.length > 0) {
+        const enforced = await isSalaryStartDateGateEnforced();
+        issues.push({
+          code: "SALARY_START_DATE_MISMATCH",
+          severity: enforced ? "blocker" : "warning",
+          category: "employee_master",
+          count: mismatches.length,
+          message: `${mismatches.length} employee(s) have a salary start date that differs between the employee record, the HR validation row, the package date or the salary assignment. Payroll Head must re-save the salary start date for each (this repairs every copy) before payroll is calculated.`,
+          sample: mismatches.slice(0, 5).map((m) => ({
+            employee_code: m.employee_code,
+            full_name: m.full_name,
+            payroll_date: m.payroll_date,
+            validation_date: m.validation_date,
+            package_date: m.package_date,
+            assignment_date: m.assignment_date,
+            reasons: m.reasons.join(", "),
+          })),
+        });
+      }
+    } catch (dateErr) {
+      issues.push({
+        code: "SALARY_START_DATE_CHECK_ERROR",
+        severity: "blocker",
+        category: "employee_master",
+        count: 1,
+        message: `Salary start date consistency check failed to execute (${dateErr instanceof Error ? dateErr.message : String(dateErr)}). Treated as a blocker: a check that could not run is not evidence the dates agree.`,
+        sample: [],
+      });
     }
 
     const [eligibleCountRows] = await db.execute<RowDataPacket[]>(

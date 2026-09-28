@@ -473,6 +473,118 @@ export async function applyRegularizationBatch(
   return { applied, failed, errors };
 }
 
+/**
+ * Re-process only the error rows from a partially_applied batch.
+ * Called after a root-cause fix (e.g. APR-bulk lock misclassification) so that rows
+ * blocked by a now-resolved error can be applied without re-uploading the whole file.
+ */
+export async function reapplyPartialBatch(
+  batch: BatchRecord,
+  approverUserId: string,
+  remarks: string | null,
+): Promise<ApplyOutcome> {
+  // Only retry rows that are still in error state with a pending AR
+  const [errorRows] = await db.execute<LinkedRow[]>(
+    `SELECT ubr.id, ubr.row_no, ubr.created_entity_id, ar.employee_id,
+            DATE_FORMAT(ar.session_date, '%Y-%m-%d') AS session_date
+       FROM upload_batch_row ubr
+       LEFT JOIN attendance_regularization ar ON ar.id = ubr.created_entity_id
+      WHERE ubr.upload_batch_id = ? AND ubr.created_entity_type = ?
+        AND ubr.row_status = 'error'
+        AND ar.status = 'pending'
+      ORDER BY ubr.row_no ASC`,
+    [batch.id, ENTITY_TYPE],
+  );
+  const rows = errorRows as LinkedRow[];
+
+  const errors: string[] = [];
+  let applied = 0;
+  let failed = 0;
+
+  const byEmployee = new Map<string, LinkedRow[]>();
+  for (const row of rows) {
+    const key = row.employee_id ? String(row.employee_id) : `__unresolved_${row.row_no}`;
+    if (!byEmployee.has(key)) byEmployee.set(key, []);
+    byEmployee.get(key)!.push(row);
+  }
+
+  const toLock: { entityId: string; employeeId: string | null }[] = [];
+
+  const groupResults = await mapWithConcurrency(
+    [...byEmployee.values()],
+    BULK_ROW_CONCURRENCY,
+    async (empRows) => {
+      let grpApplied = 0;
+      let grpFailed = 0;
+      const grpErrors: string[] = [];
+      const grpLocked: { entityId: string; employeeId: string | null }[] = [];
+      const grpApplied_: { employeeId: string; sessionDate: string; regularizationId: string }[] = [];
+
+      for (const row of empRows) {
+        try {
+          await withBulkLockRetry(() =>
+            wfmService.reviewRegularization(
+              row.created_entity_id,
+              {
+                status: "approved",
+                reviewerNote: remarks
+                  ? `Bulk re-apply (${batch.upload_batch_no}): ${remarks}`
+                  : `Bulk re-apply (${batch.upload_batch_no})`,
+              },
+              approverUserId,
+              { deferSideEffects: true },
+            )
+          );
+          grpLocked.push({ entityId: row.created_entity_id, employeeId: row.employee_id ? String(row.employee_id) : null });
+          if (row.employee_id && row.session_date) {
+            grpApplied_.push({
+              employeeId: String(row.employee_id),
+              sessionDate: String(row.session_date),
+              regularizationId: row.created_entity_id,
+            });
+          }
+          // Clear the error from this row so it shows as imported
+          await db.execute(
+            `UPDATE upload_batch_row SET row_status = 'imported', error_messages = NULL WHERE id = ?`,
+            [row.id],
+          );
+          grpApplied++;
+        } catch (err) {
+          const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
+          grpErrors.push(msg);
+          await markRowFailed(row.id, msg);
+          grpFailed++;
+        }
+      }
+      return { grpApplied, grpFailed, grpErrors, grpLocked, grpApplied_ };
+    },
+  );
+
+  const appliedRows: { employeeId: string; sessionDate: string; regularizationId: string }[] = [];
+  for (const r of groupResults) {
+    applied += r.grpApplied;
+    failed += r.grpFailed;
+    errors.push(...r.grpErrors);
+    toLock.push(...r.grpLocked);
+    appliedRows.push(...r.grpApplied_);
+  }
+
+  await lockEntities(
+    toLock.map((e) => ({
+      entityType: ENTITY_TYPE,
+      entityId: e.entityId,
+      batchId: batch.id,
+      batchNo: batch.upload_batch_no,
+      employeeId: e.employeeId,
+      lockedBy: approverUserId,
+    })),
+  );
+
+  await runDeferredSideEffects(appliedRows, approverUserId);
+
+  return { applied, failed, errors };
+}
+
 export async function rejectRegularizationBatch(
   batch: BatchRecord,
   approverUserId: string,

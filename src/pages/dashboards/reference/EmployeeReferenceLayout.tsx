@@ -5,6 +5,7 @@ import {
   CalendarDays,
   Clock,
   Clock3,
+  ExternalLink,
   FileText,
   FolderOpen,
   Headphones,
@@ -12,7 +13,9 @@ import {
   TrendingUp,
   TriangleAlert,
   UserCheck,
+  Zap,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import {
   ReferenceHeader,
@@ -32,6 +35,10 @@ import { WeeklyWinnersWidget } from "@/components/engagement/WeeklyWinnersWidget
 import { SocialFeedWidget } from "@/components/social/SocialFeedWidget";
 import { VideoModal } from "@/components/social/VideoModal";
 import { MyMeetingsWidget } from "@/components/mcnmeet/MyMeetingsWidget";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { LiveCallScoreStrip } from "@/components/my-kpi/LiveCallScoreStrip";
+import { AhtTrendChart } from "@/components/my-kpi/AhtTrendChart";
+import { HeroScoreDial } from "@/components/my-kpi/HeroScoreDial";
 import { useState } from "react";
 
 export function EmployeeReferenceLayout({ data, employeeName }: { data: ReferenceDashboardData; employeeName: string }) {
@@ -113,6 +120,28 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
   };
 
   return (
+    <div className="space-y-0">
+    {/* Dashboard tab bar */}
+    <Tabs defaultValue="home" className="w-full">
+      <TabsList className="bg-white border border-slate-200 rounded-xl p-1 h-auto gap-1 mb-5">
+        {([
+          { value: "home", label: "Home" },
+          { value: "my-kpi", label: "My KPI" },
+          { value: "live", label: "Live Performance", icon: Zap },
+        ] as Array<{ value: string; label: string; icon?: typeof Zap }>).map(({ value, label, icon: Icon }) => (
+          <TabsTrigger
+            key={value}
+            value={value}
+            className="flex items-center gap-1.5 text-xs font-semibold data-[state=active]:bg-blue-600 data-[state=active]:text-white data-[state=active]:shadow-sm rounded-lg px-3 py-2 transition-all"
+          >
+            {Icon && <Icon size={12} />}
+            {label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+
+      {/* ── Home tab — existing layout unchanged ── */}
+      <TabsContent value="home" className="focus-visible:outline-none">
     <div className="grid gap-4 md:gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
     <div className="reference-dashboard-page min-w-0">
       <ReferenceHeader title={`Welcome, ${employeeName}`} subtitle="Your personal dashboard" badge="Self Service" />
@@ -251,6 +280,75 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
         <CompanyFeedSidePanel />
       </div>
     </aside>
+    </div>
+      </TabsContent>
+
+      {/* ── My KPI tab — condensed KPI overview ── */}
+      <TabsContent value="my-kpi" className="focus-visible:outline-none space-y-5">
+        <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold text-blue-800">Your Performance Overview</p>
+            <p className="text-xs text-blue-600 mt-0.5">Condensed view — open the full hub for all 4 tabs, drill-downs and trends.</p>
+          </div>
+          <Link
+            to="/my-kpi"
+            className="flex items-center gap-1.5 text-xs font-bold text-blue-600 bg-white border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-600 hover:text-white transition-all whitespace-nowrap"
+          >
+            View Full Hub
+            <ExternalLink size={12} />
+          </Link>
+        </div>
+
+        {/* Hero score + KPI strip — uses live period=day data */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex items-center gap-5">
+            <HeroScoreDial score={0} rating={null} ratingColor={null} size={88} />
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Today's Score</p>
+              <p className="text-xs text-slate-400 mt-1">Open "View Full Hub" for live data.</p>
+              <Link to="/my-kpi" className="inline-flex items-center gap-1 mt-2 text-xs font-semibold text-blue-600 hover:underline">
+                Load live data <ExternalLink size={11} />
+              </Link>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Quick Actions</p>
+            <div className="space-y-2">
+              {[
+                { label: "Performance KPIs", href: "/my-kpi", color: "text-blue-600" },
+                { label: "Call Quality & CLAP", href: "/my-kpi?tab=quality", color: "text-emerald-600" },
+                { label: "Learning & TNI", href: "/my-kpi?tab=learning", color: "text-purple-600" },
+              ].map(({ label, href, color }) => (
+                <Link key={href} to={href} className={`flex items-center justify-between text-xs font-semibold ${color} hover:underline`}>
+                  {label}
+                  <ExternalLink size={11} />
+                </Link>
+              ))}
+            </div>
+          </div>
+        </div>
+        <LiveCallScoreStrip refetchInterval={60_000} />
+      </TabsContent>
+
+      {/* ── Live Performance tab ── */}
+      <TabsContent value="live" className="focus-visible:outline-none space-y-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <p className="text-xs font-bold text-slate-700 uppercase tracking-widest">Live Data — refreshes every 60s</p>
+          </div>
+          <Link
+            to="/my-kpi?tab=live"
+            className="flex items-center gap-1.5 text-xs font-bold text-blue-600 border border-blue-200 bg-white px-3 py-1.5 rounded-lg hover:bg-blue-600 hover:text-white transition-all"
+          >
+            Full Analysis <ExternalLink size={12} />
+          </Link>
+        </div>
+        <LiveCallScoreStrip refetchInterval={60_000} showLiveBadge />
+        <AhtTrendChart refetchInterval={60_000} compactMode />
+      </TabsContent>
+
+    </Tabs>
     </div>
   );
 }

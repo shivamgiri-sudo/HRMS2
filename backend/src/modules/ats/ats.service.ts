@@ -9,6 +9,7 @@ import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { excludeEmployeeShapedCandidatesSql } from "./ats-reporting-scope.js";
 import { JOINED_STAGE_PREDICATE, candidateBecameEmployee, getEmployeeMobileJoinMap } from "./analytics.unified.service.js";
 import { toStoredNameRequired } from "../../shared/nameFormat.js";
+import { nonReactivatableSqlList } from "../exit/exitEmploymentStatus.js";
 import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { maskPii } from "../../shared/piiMask.js";
 import type {
@@ -139,8 +140,15 @@ export const atsService = {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT c.*,
               scores.assessment_percentage,
-              scores.typing_net_wpm
+              scores.typing_net_wpm,
+              COALESCE(rw.rewalkin_count, 0) AS rewalkin_count,
+              rw.last_walkin_at
        FROM ats_candidate c
+       LEFT JOIN (
+         SELECT candidate_id, COUNT(*) AS rewalkin_count, MAX(walked_in_at) AS last_walkin_at
+         FROM ats_candidate_rewalkin
+         GROUP BY candidate_id
+       ) rw ON rw.candidate_id = c.id
        LEFT JOIN (
          SELECT aca.candidate_id,
                 MAX(aca.percentage) AS assessment_percentage,
@@ -193,6 +201,49 @@ export const atsService = {
     // stored value verbatim means one recruiter's placeholder blocks the next 538
     // candidates who share it as "already registered".
     const isRealMobile = /^[6-9]\d{9}$/.test(String(input.mobile ?? "").trim());
+
+    // A former employee coming back for an interview already has an old candidate row under
+    // the same mobile, which the duplicate guards below would refuse. When that mobile belongs
+    // only to employees who have left (none still active), the person is a rehire: re-open the
+    // existing row as a fresh registration instead of rejecting the form.
+    if (isRealMobile) {
+      const [reusable] = await db.execute<RowDataPacket[]>(
+        `SELECT c.id
+           FROM ats_candidate c
+          WHERE c.mobile = ?
+            AND EXISTS (SELECT 1 FROM employees e WHERE e.mobile = c.mobile
+                         AND LOWER(COALESCE(e.employment_status, '')) IN (${nonReactivatableSqlList()}))
+            AND NOT EXISTS (SELECT 1 FROM employees e2 WHERE e2.mobile = c.mobile
+                             AND LOWER(COALESCE(e2.employment_status, '')) NOT IN (${nonReactivatableSqlList()}))
+          LIMIT 1`,
+        [input.mobile]
+      );
+      const reuseId = (reusable as RowDataPacket[])[0]?.id as string | undefined;
+      if (reuseId) {
+        const rehireEmail = String(input.email ?? "").trim();
+        await db.execute(
+          `UPDATE ats_candidate
+              SET full_name = ?, email = COALESCE(NULLIF(?, ''), email), gender = ?, date_of_birth = ?,
+                  applied_for_process = ?, applied_for_branch = ?, sourcing_channel = ?, referred_by = ?,
+                  walk_in_date = ?, remarks = ?, address = ?, education = ?, experience = ?,
+                  rotational_shift = ?, preferred_shift = ?, night_shift_ok = ?, leaves_in_3months = ?,
+                  owns_two_wheeler = ?, id_proof_available = ?, education_proof_available = ?,
+                  recruiter_name = ?, profile_status = ?, current_stage = DEFAULT(current_stage),
+                  active_status = 1
+            WHERE id = ?`,
+          [toStoredNameRequired(input.fullName), rehireEmail, input.gender ?? null,
+           input.dateOfBirth ?? null, input.appliedForProcess ?? null, input.appliedForBranch ?? null,
+           normalizeSourceChannel(input.sourcingChannel), input.referredBy ?? null, input.walkInDate ?? null,
+           input.remarks ?? null, input.address ?? null, input.education ?? null, input.experience ?? null,
+           input.rotationalShift ?? null, input.preferredShift ?? null, input.nightShiftOk ?? null,
+           input.leavesIn3months ?? null, input.ownsTwoWheeler ?? null, input.idProofAvailable ?? null,
+           input.educationProofAvailable ?? null, input.recruiterName ?? null,
+           input.profileStatus ?? "registered", reuseId]
+        );
+        return this.getCandidate(reuseId);
+      }
+    }
+
     const [dupMobile] = isRealMobile
       ? await db.execute<RowDataPacket[]>(
           "SELECT id, current_stage, active_status FROM ats_candidate WHERE mobile = ? LIMIT 1",
@@ -700,15 +751,23 @@ export const atsService = {
               ob.bridge_date,
               ob.joining_date,
               c.current_stage,
-              (SELECT verification_status FROM ats_bgv_verification WHERE candidate_id = c.id ORDER BY created_at DESC LIMIT 1) AS bgv_status,
-              (SELECT overall_match_status FROM candidate_name_match_summary WHERE candidate_id = c.id LIMIT 1) AS name_status,
-              (SELECT validation_status FROM ats_payroll_hr_validation WHERE candidate_id = c.id LIMIT 1) AS payroll_hr_status,
+              bgv_latest.verification_status AS bgv_status,
+              cns.overall_match_status AS name_status,
+              phr.validation_status AS payroll_hr_status,
               ob.created_at
        FROM ats_onboarding_bridge ob
        JOIN ats_candidate c ON c.id = ob.candidate_id
        LEFT JOIN branch_master b_uuid ON b_uuid.id = c.applied_for_branch
        LEFT JOIN branch_master b_name ON b_uuid.id IS NULL AND LOWER(b_name.branch_name) = LOWER(c.applied_for_branch)
        LEFT JOIN process_master p ON p.id = c.applied_for_process
+       LEFT JOIN (
+         SELECT v1.candidate_id, v1.verification_status
+         FROM ats_bgv_verification v1
+         INNER JOIN (SELECT candidate_id, MAX(created_at) AS max_at FROM ats_bgv_verification GROUP BY candidate_id) v2
+           ON v1.candidate_id = v2.candidate_id AND v1.created_at = v2.max_at
+       ) bgv_latest ON bgv_latest.candidate_id = c.id
+       LEFT JOIN candidate_name_match_summary cns ON cns.candidate_id = c.id
+       LEFT JOIN ats_payroll_hr_validation phr ON phr.candidate_id = c.id
        WHERE ${where}
        ORDER BY ob.created_at DESC`,
       params

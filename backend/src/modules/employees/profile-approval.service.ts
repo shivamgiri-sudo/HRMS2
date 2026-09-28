@@ -32,14 +32,25 @@ async function findPendingApprovalId(employeeId: string, requestType: string): P
   return (rows[0] as any)?.id ?? null;
 }
 
-/** Fetch emails of all active payroll/payroll_hr/payroll_head users. */
+/**
+ * Fetch emails of all active payroll/payroll_hr/payroll_head users.
+ *
+ * `ur.active_status = 1` only says the role grant hasn't been revoked — it says nothing
+ * about whether the person holding it still works here. Owner directive (2026-09-16): never
+ * email an employee who is not active in the system. The employees join below is LEFT, and
+ * a NULL employees row (a role holder with no employee record at all) is let through rather
+ * than dropped — the exclusion is specifically for someone confirmed to have left, not for
+ * an account this table cannot identify.
+ */
 async function getPayrollEmails(): Promise<string[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT au.email
      FROM user_roles ur
      JOIN auth_user au ON au.id = ur.user_id
+     LEFT JOIN employees e ON e.user_id = au.id
      WHERE ur.role_key IN ('payroll', 'payroll_hr', 'payroll_head')
        AND ur.active_status = 1
+       AND (e.id IS NULL OR e.active_status = 1)
        AND au.email IS NOT NULL
        AND au.email != ''`
   );
@@ -49,6 +60,8 @@ async function getPayrollEmails(): Promise<string[]> {
 function buildPennyDropEmailHtml(opts: {
   employeeName: string;
   employeeCode: string;
+  processName: string | null;
+  reportingManagerName: string | null;
   bankName: string;
   ifscCode: string;
   accountType: string;
@@ -74,6 +87,14 @@ function buildPennyDropEmailHtml(opts: {
       <tr style="background:#f8fafc">
         <td style="padding:8px 12px;color:#64748b;border:1px solid #e2e8f0;font-weight:600">Employee</td>
         <td style="padding:8px 12px;border:1px solid #e2e8f0;font-weight:700;color:#0f172a">${opts.employeeName} (${opts.employeeCode})</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 12px;color:#64748b;border:1px solid #e2e8f0;font-weight:600">Process</td>
+        <td style="padding:8px 12px;border:1px solid #e2e8f0">${opts.processName || '—'}</td>
+      </tr>
+      <tr style="background:#f8fafc">
+        <td style="padding:8px 12px;color:#64748b;border:1px solid #e2e8f0;font-weight:600">Reporting manager</td>
+        <td style="padding:8px 12px;border:1px solid #e2e8f0">${opts.reportingManagerName || '—'}</td>
       </tr>
       <tr>
         <td style="padding:8px 12px;color:#64748b;border:1px solid #e2e8f0;font-weight:600">Bank</td>
@@ -131,12 +152,20 @@ export const profileApprovalService = {
 
     // Fetch employee details for email and name-match snapshot
     const [empRow] = await db.execute<RowDataPacket[]>(
-      `SELECT full_name, employee_code, mobile FROM employees WHERE id = ? LIMIT 1`,
+      `SELECT e.full_name, e.employee_code, e.mobile,
+              pm.process_name,
+              COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name
+         FROM employees e
+         LEFT JOIN process_master pm ON pm.id = e.process_id
+         LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
+        WHERE e.id = ? LIMIT 1`,
       [employeeId]
     );
     const emp = (empRow[0] as any) ?? {};
     const employeeName: string = emp.full_name ?? '';
     const employeeCode: string = emp.employee_code ?? '';
+    const processName: string | null = emp.process_name ?? null;
+    const reportingManagerName: string | null = emp.reporting_manager_name ?? null;
     const employeeMobile: string | null = emp.mobile ?? null;
 
     // Generate a secure one-time verification token for Payroll Branch
@@ -204,6 +233,8 @@ export const profileApprovalService = {
         html: buildPennyDropEmailHtml({
           employeeName,
           employeeCode,
+          processName,
+          reportingManagerName,
           bankName: newValues.bank_name ?? newValues.bankName ?? '—',
           ifscCode: (newValues.ifsc_code ?? newValues.ifscCode ?? '').toUpperCase(),
           accountType: newValues.account_type ?? newValues.accountType ?? 'savings',

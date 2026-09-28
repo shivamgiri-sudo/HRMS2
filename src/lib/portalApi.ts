@@ -62,7 +62,29 @@ export function clearPortalToken() {
   localStorage.removeItem("portal_token");
 }
 
-async function portalRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
+/**
+ * Reads the (unverified, client-side only) impersonatedBy claim off the current portal
+ * token, so the UI can show a persistent "you are viewing as X" banner. This is purely a
+ * UX signal -- it is never trusted for authorization. The server independently knows the
+ * same fact (requireClientAuth decodes and verifies the same JWT), and every data-changing
+ * request the client makes is checked there, not here. A tampered/forged token that claims
+ * NOT to be impersonating gains nothing: it must still pass server-side signature
+ * verification to be accepted at all, and a real client's token never carries this claim
+ * in the first place (see PortalTokenPayload.impersonatedBy's own comment).
+ */
+export function getImpersonationInfo(): { isImpersonating: boolean; adminUserId: string | null } {
+  const token = getPortalToken();
+  if (!token) return { isImpersonating: false, adminUserId: null };
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    const adminUserId = typeof payload.impersonatedBy === "string" ? payload.impersonatedBy : null;
+    return { isImpersonating: !!adminUserId, adminUserId };
+  } catch {
+    return { isImpersonating: false, adminUserId: null };
+  }
+}
+
+async function portalRequest<T>(method: string, path: string, body?: unknown, timeoutMs?: number): Promise<T> {
   const token = getPortalToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -71,10 +93,28 @@ async function portalRequest<T>(method: string, path: string, body?: unknown): P
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    // Only set when the caller opts in (see logout() below) -- a bare fetch() has no
+    // timeout at all by default, and most portal calls should keep waiting through a slow
+    // network rather than fail early. logout() is the one call where "must finish fast or
+    // give up" is an actual requirement (CP-09's "immediate exit"), not a UX preference.
+    signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
   });
   const json = await res.json();
   if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
   return json;
+}
+
+/** Set on a successful password login when the server reports mustChangePassword.
+ *  UX-only nag, not a security boundary -- the server does not restrict what a
+ *  must-change-password token can read (same trust model as the OTP flow), this only
+ *  routes the client to the change-password screen instead of the dashboard immediately
+ *  after login. Cleared once portalApi.changePassword succeeds. */
+export function setMustChangePasswordFlag(value: boolean) {
+  if (value) localStorage.setItem("portal_must_change_password", "1");
+  else localStorage.removeItem("portal_must_change_password");
+}
+export function getMustChangePasswordFlag(): boolean {
+  return localStorage.getItem("portal_must_change_password") === "1";
 }
 
 export const portalApi = {
@@ -82,6 +122,31 @@ export const portalApi = {
     portalRequest<{ ok: boolean }>("POST", "/api/portal/auth/request-otp", { email }),
   verifyOtp: (email: string, otp: string) =>
     portalRequest<{ token: string }>("POST", "/api/portal/auth/verify-otp", { email, otp }),
+  loginWithPassword: (loginId: string, password: string) =>
+    portalRequest<{ token: string; mustChangePassword: boolean }>("POST", "/api/portal/auth/login", { loginId, password }),
+  // Forgot-password recovery: usable right after a fresh OTP-issued token, no current
+  // password needed. See backend's resetClientPasswordSchema for the reasoning.
+  // loginId is always present in the response -- either the account's existing one, or a
+  // newly-minted one when the account never had one before (see resetPasswordAfterOtp).
+  resetPassword: (newPassword: string) =>
+    portalRequest<{ ok: boolean; loginId: string }>("POST", "/api/portal/auth/reset-password", { newPassword }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    portalRequest<{ ok: boolean }>("POST", "/api/portal/auth/change-password", { currentPassword, newPassword }),
+  // Revokes the current session server-side. Callers should still clear the local token
+  // themselves afterward (or on failure) -- this is the server-side half of sign-out, not
+  // a replacement for clearPortalToken.
+  //
+  // 5s timeout: every "Exit"/"Sign Out" caller wraps this in try/finally and clears the
+  // local token regardless of outcome, but before this fix the underlying fetch() had no
+  // timeout at all -- a genuinely hung (not fast-failing) backend request left the button's
+  // loading spinner stuck forever, since the awaited promise never settled and the finally
+  // block never ran. "Exit" is supposed to be immediate (CP-09); a slow revoke should not
+  // block the actual exit.
+  logout: () => portalRequest<{ ok: boolean }>("POST", "/api/portal/auth/logout", {}, 5000),
+  getProcessBySlug: (slug: string) =>
+    portalRequest<{ data: { process_id: string; process_name: string; client_name: string } }>(
+      "GET", `/api/portal/process-by-slug/${encodeURIComponent(slug)}`
+    ),
   getOverview: () =>
     portalRequest<{ data: any[] }>("GET", "/api/portal/overview"),
   getProcess: (processId: string) =>
@@ -96,8 +161,22 @@ export const portalApi = {
   },
   getGovernance: (processId: string, period?: string) =>
     portalRequest<{ data: any[] }>("GET", `/api/portal/processes/${processId}/governance${period ? `?period=${period}` : ""}`),
+  getOperations: (processId: string, period?: string) =>
+    portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/operations${period ? `?period=${period}` : ""}`),
+  getMetricDrilldown: (processId: string, metricKey: string, period?: string) =>
+    portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/metrics/${metricKey}/drilldown${period ? `?period=${period}` : ""}`),
+  getLiveDashboard: (processId: string, params?: { from?: string; to?: string }) => {
+    const q = new URLSearchParams(Object.entries(params ?? {}).filter(([, v]) => v) as [string, string][]).toString();
+    return portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/live-dashboard${q ? `?${q}` : ""}`);
+  },
+  getQuality: (processId: string, period?: string) =>
+    portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/quality${period ? `?period=${period}` : ""}`),
+  getWorkforce: (processId: string) =>
+    portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/workforce`),
   getAttrition: (processId: string, period?: string) =>
     portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/attrition${period ? `?period=${period}` : ""}`),
+  getTrainingCompliance: (processId: string, period?: string) =>
+    portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/training-compliance${period ? `?period=${period}` : ""}`),
   getCommentary: (processId: string, period?: string) =>
     portalRequest<{ data: any }>("GET", `/api/portal/processes/${processId}/commentary${period ? `?period=${period}` : ""}`),
   acknowledgeCommentary: (commentaryId: string) =>

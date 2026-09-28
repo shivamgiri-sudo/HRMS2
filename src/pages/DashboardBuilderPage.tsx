@@ -54,6 +54,11 @@ const DATE_RANGES = [
   { value: "last_month", label: "Last month" },
   { value: "last_7_days", label: "Last 7 days" },
   { value: "last_30_days", label: "Last 30 days" },
+  // Longer windows exist because a metric whose data ended months ago was
+  // invisible otherwise: the widget said "nothing supplied for this window",
+  // which reads as missing data rather than as a window that does not reach it.
+  { value: "last_90_days", label: "Last 90 days" },
+  { value: "last_365_days", label: "Last 12 months" },
 ] as const;
 
 const WIDTHS = [

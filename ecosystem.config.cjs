@@ -49,7 +49,7 @@ module.exports = {
       log_date_format: "YYYY-MM-DD HH:mm:ss Z",
     },
     {
-      name: "hrms-workers",
+      name: "hrms2-workers",
       script: "dist/src/workers/all-workers.js",
       cwd: "./backend",
       instances: 1, // Workers should NOT be clustered - they use distributed locks

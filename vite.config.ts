@@ -38,8 +38,13 @@ export default defineConfig(({ mode }) => ({
       // /api/* request through localhost:8080 hung 45s+ before this change,
       // and connecting to the backend directly on either address family always
       // worked, isolating the hang to this one DNS-resolution path.
+      // API_PROXY_TARGET overrides the port for one dev server without editing
+      // this shared file. Several sessions run against this same working tree,
+      // so port 5055 is often already held by someone else's backend — and the
+      // rule here is to work around a held port, not to kill the process that
+      // holds it. Unset, the behaviour is exactly as before.
       '/api': {
-        target: 'http://127.0.0.1:5055',
+        target: process.env.API_PROXY_TARGET ?? 'http://127.0.0.1:5055',
         changeOrigin: true,
       },
     },
@@ -47,6 +52,21 @@ export default defineConfig(({ mode }) => ({
   preview: {
     host: "0.0.0.0",
     port: 8080,
+    // Mirrors server.proxy above. Without it, `vite preview` is not actually usable against a
+    // local backend: apiBaseUrl() returns "" under import.meta.env.PROD, so the built bundle
+    // requests same-origin /api/*, which the preview server answers with the SPA index.html
+    // rather than JSON — every call then fails as "Backend returned invalid JSON" instead of
+    // as a connection error, which is a confusing way to discover the proxy is missing.
+    //
+    // Same explicit 127.0.0.1 and the same API_PROXY_TARGET override as the dev proxy, for the
+    // identical reasons documented there (Happy Eyeballs hang on 'localhost'; port 5055 is often
+    // already held by another session's backend on this working tree).
+    proxy: {
+      '/api': {
+        target: process.env.API_PROXY_TARGET ?? 'http://127.0.0.1:5055',
+        changeOrigin: true,
+      },
+    },
   },
   plugins: [
     react(),

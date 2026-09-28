@@ -359,8 +359,18 @@ manpowerRiskRouter.get(
        LEFT JOIN employees e    ON e.id  = er.employee_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
        LEFT JOIN process_master p ON p.id = e.process_id
-       LEFT JOIN departments d   ON d.id  = e.department_id
-       LEFT JOIN designations des ON des.id = e.designation_id
+       -- department_master / designation_master, NOT departments / designations.
+       -- Neither of those two tables has ever existed (confirmed against the live
+       -- mas_hrms schema: 1,155 tables, and the canonical names are the _master ones
+       -- declared in sql/001_core_org.sql). MySQL therefore raised
+       -- ER_NO_SUCH_TABLE (1146) on every call, so this endpoint returned HTTP 500
+       -- every time it was hit. The Notice Period tab in the Exit Command Center
+       -- catches that with a .catch(console.error) and renders "No employees
+       -- currently in notice period." — a broken query presenting as a real zero.
+       -- The SELECT list above already asked for d.dept_name / des.designation_name,
+       -- i.e. the _master column names, so only the table names were ever wrong.
+       LEFT JOIN department_master d   ON d.id  = e.department_id
+       LEFT JOIN designation_master des ON des.id = e.designation_id
        LEFT JOIN employees mgr   ON mgr.id  = e.reporting_manager_id
        WHERE er.status IN ('accepted', 'notice_serving')
        ORDER BY days_remaining ASC, er.created_at DESC`

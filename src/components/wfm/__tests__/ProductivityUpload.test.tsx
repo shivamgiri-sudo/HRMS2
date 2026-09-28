@@ -30,6 +30,12 @@ vi.mock("@/lib/hrmsApi", () => ({
 // useWfmScopeFilter reaches useWorkforceAccess -> useUserRole -> useAuth, i.e. a react context
 // this component does not own. Mocked to the "sees everything" answer so these tests are about
 // the upload flow rather than about scope resolution, which has its own tests.
+// ProductivityUpload reads useUserRole for the admin-only "Configure mapping" link (7009660e), which
+// reaches useAuth. Mocked as a non-admin so these tests keep asserting the plain upload flow.
+vi.mock("@/hooks/useUserRole", () => ({
+  useUserRole: () => ({ data: { roleKeys: ["team_leader"] }, isLoading: false }),
+}));
+
 vi.mock("@/hooks/useWfmScopeFilter", () => ({
   useWfmScopeFilter: () => ({
     branchIds: [],

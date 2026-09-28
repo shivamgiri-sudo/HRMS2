@@ -123,8 +123,11 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
   // so `user?.role` was always undefined and the Salary Start Date field below
   // was hidden from everyone, including super admins.
   const canSetSalaryStartDate = useHasRole("super_admin", "admin", "hr");
-  // Branch and cost centre changes affect payroll allocation — restricted to Payroll Head.
-  const canChangeBranchCC = useHasRole("super_admin", "payroll_head");
+  // Branch and cost centre changes affect payroll allocation — restricted to Payroll Head and,
+  // since 2026-09-08, the branch Payroll HR. payroll_hr is branch-scoped, so the API additionally
+  // refuses a destination branch or a cost centre outside that scope (employee.routes.ts PATCH
+  // /:id); this flag only decides whether the two fields are editable at all.
+  const canChangeBranchCC = useHasRole("super_admin", "payroll_head", "payroll_hr");
   const queryClient = useQueryClient();
   // Deactivating from this form now needs a stated reason, and the API refuses
   // the save without one. Kept out of EditFormData because it is not a field on
@@ -349,12 +352,13 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
     staleTime: 120_000,
   });
 
-  // Fetch cost centres — filter by selected branch when set
+  // Fetch cost centres — filter by selected branch when set, only active
   const { data: costCentres = [] } = useQuery({
     queryKey: ["cost-centres", formData.branch_id],
     queryFn: async () => {
-      const params = formData.branch_id ? `?branch_id=${formData.branch_id}` : "";
-      const res = await hrmsApi.get<{data: any[]}>(`/api/org/cost-centres${params}`);
+      const params = new URLSearchParams({ active_status: "1", limit: "500" });
+      if (formData.branch_id) params.set("branch_id", formData.branch_id);
+      const res = await hrmsApi.get<{data: any[]}>(`/api/org/cost-centres?${params.toString()}`);
       return res.data ?? [];
     },
     staleTime: 60_000,
@@ -740,10 +744,9 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                         <SelectValue placeholder="Select gender" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="male">Male</SelectItem>
-                        <SelectItem value="female">Female</SelectItem>
-                        <SelectItem value="other">Other</SelectItem>
-                        <SelectItem value="prefer_not_to_say">Prefer not to say</SelectItem>
+                        <SelectItem value="Male">Male</SelectItem>
+                        <SelectItem value="Female">Female</SelectItem>
+                        <SelectItem value="Other">Other</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -836,7 +839,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                     <Label htmlFor="branch">
                       Branch
                       {!canChangeBranchCC && (
-                        <span className="ml-2 text-xs font-normal text-slate-400">(Payroll Head only)</span>
+                        <span className="ml-2 text-xs font-normal text-slate-400">(Payroll Head / Payroll HR only)</span>
                       )}
                     </Label>
                     <Select
@@ -880,7 +883,7 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                   <Label htmlFor="cost_centre">
                     Cost Centre
                     {!canChangeBranchCC && (
-                      <span className="ml-2 text-xs font-normal text-slate-400">(Payroll Head only)</span>
+                      <span className="ml-2 text-xs font-normal text-slate-400">(Payroll Head / Payroll HR only)</span>
                     )}
                   </Label>
                   <Select
@@ -892,12 +895,23 @@ export function EmployeeEditDialog({ employee, open, onOpenChange }: EmployeeEdi
                       <SelectValue placeholder={formData.branch_id ? "Select cost centre" : "Select a branch first"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {costCentres.map((cc: any) => (
-                        <SelectItem key={cc.id} value={cc.id}>
-                          {cc.cost_centre_name}
-                          {cc.cost_centre_code ? ` (${cc.cost_centre_code})` : ""}
-                        </SelectItem>
-                      ))}
+                      {costCentres.map((cc: any) => {
+                        // Every cost centre sourced from db_bill carries
+                        // cost_centre_name = cost_centre_code, so the old label rendered
+                        // "BSS/OB/Noida/1045 (BSS/OB/Noida/1045)" — the code twice, and no
+                        // sign of the client the user is actually looking for. Show the
+                        // client instead whenever the name is only the code repeated.
+                        const isCodeOnlyName = !cc.cost_centre_name || cc.cost_centre_name === cc.cost_centre_code;
+                        const label = isCodeOnlyName
+                          ? (cc.client_name || cc.billing_client_name || cc.cost_centre_code)
+                          : cc.cost_centre_name;
+                        return (
+                          <SelectItem key={cc.id} value={cc.id}>
+                            {label}
+                            {cc.cost_centre_code && label !== cc.cost_centre_code ? ` (${cc.cost_centre_code})` : ""}
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                 </div>

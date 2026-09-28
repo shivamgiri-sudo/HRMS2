@@ -40,6 +40,17 @@ function readRange(req: AuthenticatedRequest): { from: string; to: string } {
 
 const OUT_OF_SCOPE = { success: false, code: "OUT_OF_SCOPE", message: "That process is outside your scope." };
 
+/**
+ * The closed set of real, already-defined metrics a manual entry may target —
+ * every active kpi_metric_master row. A single segment, so it cannot collide
+ * with the two-segment /:processId/values etc. routes below regardless of
+ * declaration order; kept here anyway for the same reason the drilldown route
+ * comment gives elsewhere in this codebase: readable next to what it feeds.
+ */
+router.get("/metric-catalog", requireAuth, requireRole(...VIEWER_ROLES), h(async (_req, res) => {
+  res.json({ success: true, data: await svc.listMetricCatalog() });
+}));
+
 router.get("/:processId/values", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const { processId } = req.params;
   if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {
@@ -81,14 +92,47 @@ router.post("/:processId/import", requireAuth, requireRole(...WRITER_ROLES), h(a
   if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {
     return res.status(403).json(OUT_OF_SCOPE);
   }
-  const rows = (req.body as { rows?: svc.ImportRow[] }).rows;
+  const body = req.body as { rows?: svc.ImportRow[]; dry_run?: boolean };
+  const rows = body.rows;
   if (!Array.isArray(rows) || rows.length === 0) {
     return res.status(400).json({ success: false, code: "NO_ROWS", message: "Send a non-empty rows array." });
   }
   if (rows.length > 2000) {
     return res.status(400).json({ success: false, code: "TOO_MANY_ROWS", message: "Import at most 2000 rows at a time." });
   }
-  res.json({ success: true, data: await svc.importMetricRows({ userId: req.authUser!.id, processId, rows }) });
+  // dry_run must be asked for explicitly. Defaulting to a preview would make an
+  // import that quietly did nothing look identical to one that worked.
+  const dryRun = body.dry_run === true;
+  res.json({
+    success: true,
+    data: await svc.importMetricRows({ userId: req.authUser!.id, processId, rows, dryRun }),
+  });
+}));
+
+/**
+ * The deepest-level manual path: per-analyst values for a metric with no
+ * automated per-employee feed. Scoped to one metric (unlike /import, which
+ * takes any metric per row) because the caller is always
+ * AnalystBreakdownPanel, already looking at exactly one metric.
+ */
+router.post("/:processId/metric/:metricKey/employee-import", requireAuth, requireRole(...WRITER_ROLES), h(async (req, res) => {
+  const { processId, metricKey } = req.params;
+  if (!(await svc.assertProcessWritable(req.authUser!.id, processId))) {
+    return res.status(403).json(OUT_OF_SCOPE);
+  }
+  const body = req.body as { rows?: svc.EmployeeImportRow[]; dry_run?: boolean };
+  const rows = body.rows;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ success: false, code: "NO_ROWS", message: "Send a non-empty rows array." });
+  }
+  if (rows.length > 500) {
+    return res.status(400).json({ success: false, code: "TOO_MANY_ROWS", message: "Import at most 500 rows at a time." });
+  }
+  const dryRun = body.dry_run === true;
+  res.json({
+    success: true,
+    data: await svc.importEmployeeMetricRows({ userId: req.authUser!.id, processId, metricKey, rows, dryRun }),
+  });
 }));
 
 router.post("/:processId/connector-refresh", requireAuth, requireRole(...WRITER_ROLES), h(async (req, res) => {

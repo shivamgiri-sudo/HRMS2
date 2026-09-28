@@ -1,6 +1,7 @@
 import type React from "react";
 
 import type { BpoPnlRow } from "@/hooks/useBpoProcessPnl";
+import { pnlLabel } from "./pnlLabels";
 
 export type ProcessPnlMatrixPreset =
   | "summary"
@@ -306,7 +307,7 @@ const commercialColumns: ProcessPnlColumnDefinition[] = [
   column("billingModels", "Billing models", { align: "left" }),
   column("revenueDataStatus", "Revenue data", { align: "left" }),
   additiveColumn("mandatedSeats", "Mandated seats"),
-  additiveColumn("activeHc", "Active HC"),
+  additiveColumn("activeHc", pnlLabel("ACTIVE_HEADCOUNT")),
   additiveColumn("agentHeadcount", "Agent HC"),
   additiveColumn("billableHc", "Billable HC"),
   weightedColumn("seatFillPct", "Seat fill %", "activeHc", "mandatedSeats"),
@@ -324,7 +325,7 @@ const revenueColumns: ProcessPnlColumnDefinition[] = [
   compositeColumn("incentiveRevenue", "Incentive/reward", (row) => row.incentiveRevenue + row.rewardRevenue),
   compositeColumn("penalty", "Penalty/SLA", (row) => row.penalty + row.slaDeduction),
   additiveColumn("creditNote", "Credit note"),
-  additiveColumn("recognizedRevenue", "Recognized revenue"),
+  additiveColumn("recognizedRevenue", pnlLabel("RECOGNISED_REVENUE")),
   additiveColumn("earnedRevenue", "Earned revenue"),
   additiveColumn("invoicedRevenue", "Invoiced revenue"),
   additiveColumn("collectedRevenue", "Collected revenue"),
@@ -347,18 +348,18 @@ const costColumns: ProcessPnlColumnDefinition[] = [
   additiveColumn("bmcNonPeople", "BMC non-people"),
   additiveColumn("bmc", "BMC"),
   weightedColumn("bmcPctRevenue", "BMC % revenue", "bmc", "recognizedRevenue"),
-  additiveColumn("grnVendorActual", "GRN/vendor actual"),
-  weightedColumn("peopleCostPctRevenue", "People cost % revenue", "totalPeopleCost", "recognizedRevenue"),
+  additiveColumn("grnVendorActual", pnlLabel("INDIRECT_COST")),
+  weightedColumn("peopleCostPctRevenue", `${pnlLabel("PEOPLE_COST")} % revenue`, "totalPeopleCost", "recognizedRevenue"),
 ];
 
 const profitabilityColumns: ProcessPnlColumnDefinition[] = [
-  additiveColumn("recognizedRevenue", "Recognized revenue"),
+  additiveColumn("recognizedRevenue", pnlLabel("RECOGNISED_REVENUE")),
   additiveColumn("contribution", "Contribution"),
   weightedColumn("contributionMarginPct", "Contribution margin %", "contribution", "recognizedRevenue"),
   additiveColumn("ebitda", "EBITDA"),
   weightedColumn("ebitdaMarginPct", "EBITDA margin %", "ebitda", "recognizedRevenue"),
-  additiveColumn("ebit", "EBIT"),
-  weightedColumn("operatingProfitPct", "Operating profit %", "operatingProfit", "recognizedRevenue"),
+  additiveColumn("ebit", pnlLabel("EBIT")),
+  weightedColumn("operatingProfitPct", pnlLabel("OPERATING_MARGIN"), "operatingProfit", "recognizedRevenue"),
   additiveColumn("pbt", "PBT"),
   additiveColumn("pat", "PAT"),
 ];

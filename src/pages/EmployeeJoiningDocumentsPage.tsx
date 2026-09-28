@@ -10,7 +10,9 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { ESIGN_STATE_COLORS, esignStatusColor } from "@/lib/esignState";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { SignedAppointmentLetterPanel, type SignedAppointmentLetter } from "@/components/letters/SignedAppointmentLetterPanel";
 import { formatISTDate } from "@/lib/utils";
+import { useToast, toast } from "@/hooks/use-toast";
 
 type ChecklistItem = {
   id: string;
@@ -46,6 +48,8 @@ type Pack = {
   checklist: ChecklistItem[];
   permissions: { can_download: boolean; is_self: boolean };
   audit: Array<{ action_type: string; remarks: string | null; created_at: string; document_code: string | null }>;
+  /** The appointment letter the employee signed with Aadhaar eSign (read from the appointment-letter tables). */
+  signed_appointment_letters?: SignedAppointmentLetter[];
 };
 
 type ReviewValue = {
@@ -119,6 +123,7 @@ function ErrorBanner({ message, onRetry }: { message: string | null; onRetry?: (
 
 export default function EmployeeJoiningDocumentsPage() {
   const { employeeId = "" } = useParams();
+  const { toast } = useToast();
   const [pack, setPack] = useState<Pack | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -164,8 +169,14 @@ export default function EmployeeJoiningDocumentsPage() {
 
   const progress = useMemo(() => Number(pack?.employee.joining_document_completion_pct ?? 0), [pack]);
 
+  // EPF_DECLARATION (Form 11) and EPF_NOMINATION_FORM2 (Form 2) arrive pre-filled and are
+  // reviewed by the employee on their own track, not through the joining-kit eSign flow —
+  // owner directive: they don't count toward this page's completion tracker (see the
+  // matching COMPLETION_EXCLUDED_DOCUMENT_CODES constant in employeeJoiningDocuments.service.ts).
+  const COMPLETION_EXCLUDED_CODES = new Set(["EPF_DECLARATION", "EPF_NOMINATION_FORM2"]);
+
   const stats = useMemo(() => {
-    const list = pack?.checklist ?? [];
+    const list = (pack?.checklist ?? []).filter(i => !COMPLETION_EXCLUDED_CODES.has(i.document_code));
     const completed = list.filter(i =>
       ["completed", "verified", "signed_verified", "esign_completed", "employee_confirmed"].includes(i.status)
     ).length;
@@ -279,7 +290,9 @@ export default function EmployeeJoiningDocumentsPage() {
       setPreviewUrl(URL.createObjectURL(blob));
       setPreviewTitle(title);
     } catch (err: any) {
-      setReviewError(err?.message || "Unable to preview this document.");
+      const msg = err?.message || "Unable to preview this document.";
+      setReviewError(msg);
+      toast({ title: "Preview failed", description: msg, variant: "destructive" });
     }
   };
 
@@ -368,6 +381,10 @@ export default function EmployeeJoiningDocumentsPage() {
           <ErrorBanner message={error} onRetry={() => void load()} />
 
           {employeeId && <JoiningKitPanel employeeId={employeeId} onSent={() => void load()} />}
+
+          {employeeId && !loading && (
+            <SignedAppointmentLetterPanel employeeId={employeeId} letters={pack?.signed_appointment_letters ?? []} />
+          )}
 
           {/* Stat tiles */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -746,6 +763,19 @@ type KitRecord = {
   id: string; status: string; blocked_reason: string | null;
   document_count: number; total_pages: number;
   sent_at: string | null; completed_at: string | null; items: number;
+  /** Only present on the open ("sent") kit — see joiningKit.routes.ts. */
+  sessionAlive?: boolean;
+};
+
+const KIT_BLOCKED_REASON_LABEL: Record<string, string> = {
+  draft_missing:             "One or more documents don't have a generated PDF yet. Open each document, regenerate the draft, then retry.",
+  placeholder_draft:         "One document is still an unconfigured placeholder. Configure its template before sending.",
+  hr_fill_pending:           "Some documents still have fields that HR must fill in before the kit can be sent.",
+  no_recipient_email:        "This employee has no email address on record. Add one and retry.",
+  feature_disabled:          "The consolidated joining kit feature is currently disabled.",
+  provider_disabled:         "The eSign provider is currently disabled.",
+  per_document_flow_active:  "This employee already has an active per-document signing link. Let it complete or expire first.",
+  payroll_head_not_approved: "The salary has not been approved by Payroll Head. Get salary approved before sending the kit.",
 };
 
 const KIT_BADGE: Record<string, string> = {
@@ -769,27 +799,42 @@ const KIT_BADGE: Record<string, string> = {
  */
 function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: () => void }) {
   const [preview, setPreview] = useState<{
-    documents: Array<{ code: string; name: string; status: string; fillStatus: string | null }>;
+    documents: Array<{ code: string; name: string; status: string; fillStatus: string | null; hasFile?: boolean }>;
     hrFillPending: string[];
     kits: Array<KitRecord>;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [ccEmail, setCcEmail] = useState("");
   const [msg, setMsg] = useState<{ kind: "ok" | "blocked" | "error"; text: string } | null>(null);
   const [pollPhase, setPollPhase] = useState<"idle" | "assembling" | "sent" | "failed" | "timeout">("idle");
   const [pollData, setPollData] = useState<{ docCount?: number; reason?: string } | null>(null);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [repairBusy, setRepairBusy] = useState(false);
 
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollStart = useRef<number>(0);
   // stable refs so poll closure never captures stale callbacks
   const loadRef = useRef<() => Promise<void>>(async () => {});
   const onSentRef = useRef(onSent);
+  // Auto-refresh interval while an open "sent" kit is awaiting signature
+  const autoRefreshTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Tracks the open "sent" kit ID from the last load, to detect signing completion
+  // during auto-refresh so the parent checklist is invalidated exactly once.
+  const prevOpenKitId = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const r = await hrmsApi.get<{ data: typeof preview }>(`/api/employees/${employeeId}/joining-kit/preview`);
       setPreview(r.data);
+      const nowOpenId = r.data?.kits.find((k: KitRecord) => k.status === "sent")?.id ?? null;
+      if (prevOpenKitId.current && !nowOpenId) {
+        // Kit just moved out of "sent" — signing completed or otherwise closed
+        onSentRef.current();
+      }
+      prevOpenKitId.current = nowOpenId;
     } catch {
       setPreview(null);
     } finally {
@@ -803,6 +848,27 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
 
   // Clean up any pending poll timer on unmount
   useEffect(() => () => { if (pollTimer.current) clearTimeout(pollTimer.current); }, []);
+
+  // Auto-refresh every 30 s while an open "sent" kit is awaiting signature.
+  // load() above detects signing completion and notifies the parent.
+  useEffect(() => {
+    const hasSentKit = preview?.kits.some((k) => k.status === "sent");
+    if (!hasSentKit || pollPhase !== "idle") {
+      if (autoRefreshTimer.current) {
+        clearInterval(autoRefreshTimer.current);
+        autoRefreshTimer.current = null;
+      }
+      return;
+    }
+    if (autoRefreshTimer.current) return; // already ticking
+    autoRefreshTimer.current = setInterval(() => { void loadRef.current(); }, 30_000);
+    return () => {
+      if (autoRefreshTimer.current) {
+        clearInterval(autoRefreshTimer.current);
+        autoRefreshTimer.current = null;
+      }
+    };
+  }, [preview, pollPhase]);
 
   const startPolling = useCallback(() => {
     if (pollTimer.current) clearTimeout(pollTimer.current);
@@ -836,9 +902,42 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
     pollTimer.current = setTimeout(tick, 5_000);
   }, [employeeId]);
 
+  /** Generate the PDFs of kit documents that have none (the draft_missing block). */
+  const regenerateMissingDrafts = async () => {
+    setRepairBusy(true);
+    try {
+      const response = await hrmsApi.post<{ data?: { attempted: number; generated: number; failed: Array<{ code: string; reason: string }> } }>(
+        `/api/employees/${employeeId}/joining-kit/regenerate-drafts`, {},
+      );
+      const out = response.data;
+      if (!out || out.attempted === 0) {
+        toast({ title: "Nothing to regenerate", description: "Every kit document already has a PDF." });
+      } else if (out.failed.length === 0) {
+        toast({ title: "Documents generated", description: `${out.generated} of ${out.attempted} missing document(s) generated. You can now send the kit.` });
+      } else {
+        toast({
+          title: "Some documents failed",
+          description: `${out.generated} generated, ${out.failed.length} failed: ${out.failed.map((f) => f.code).join(", ")}.`,
+          variant: "destructive",
+        });
+      }
+      void load();
+    } catch (err: any) {
+      toast({ title: "Regeneration failed", description: err?.message || "Unable to regenerate the documents.", variant: "destructive" });
+    } finally {
+      setRepairBusy(false);
+    }
+  };
+
   const send = async () => {
+    const ccTrimmed = ccEmail.trim();
+    if (ccTrimmed && !ccTrimmed.includes("@")) {
+      setMsg({ kind: "error", text: "The additional email address looks invalid." });
+      return;
+    }
+    const ccLine = ccTrimmed ? `\n\nAdditional email (CC): ${ccTrimmed}` : "";
     if (!window.confirm(
-      `Send all ${preview?.documents.length ?? 0} joining documents to this employee in one email?\n\n` +
+      `Send all ${preview?.documents.length ?? 0} joining documents to this employee in one email?${ccLine}\n\n` +
       "This makes one billed eSign call. The employee signs once and the signature is applied to every document.",
     )) return;
     setSending(true);
@@ -847,7 +946,8 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
     setPollData(null);
     try {
       await hrmsApi.post<{ message?: string; data?: { kitId: string; status: string } }>(
-        `/api/employees/${employeeId}/joining-kit/send`, {},
+        `/api/employees/${employeeId}/joining-kit/send`,
+        ccTrimmed ? { ccEmails: ccTrimmed } : {},
       );
       // Backend now returns { status: "queued" } — watch for completion via poll
       setPollPhase("assembling");
@@ -865,6 +965,8 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
 
   const open = preview?.kits.find((k) => k.status === "sent" || k.status === "queued");
   const blocked = (preview?.hrFillPending.length ?? 0) > 0;
+  const missingFileDocs = preview?.documents.filter((d) => d.hasFile === false) ?? [];
+  const hasMissingFiles = missingFileDocs.length > 0;
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -879,14 +981,28 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
           </p>
         </div>
         {pollPhase === "idle" && !open && (
-          <Button
-            type="button" onClick={() => void send()}
-            disabled={sending || loading || blocked || !preview?.documents.length}
-            className="min-h-[44px] gap-2"
-          >
-            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            Send all in one email
-          </Button>
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex items-center gap-2">
+              <input
+                type="email"
+                value={ccEmail}
+                onChange={(e) => setCcEmail(e.target.value)}
+                placeholder="CC email (optional)"
+                className="h-9 w-52 rounded-lg border border-slate-300 px-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none"
+              />
+              <Button
+                type="button" onClick={() => void send()}
+                disabled={sending || loading || blocked || !preview?.documents.length || hasMissingFiles}
+                className="min-h-[36px] gap-2"
+              >
+                {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                Send all in one email
+              </Button>
+            </div>
+            {ccEmail.trim() && !ccEmail.includes("@") && (
+              <p className="text-xs text-red-500">Enter a valid email address</p>
+            )}
+          </div>
         )}
       </div>
 
@@ -897,13 +1013,40 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
           {preview?.documents.length ? (
             <div className="mt-4 flex flex-wrap gap-1.5">
               {preview.documents.map((d) => (
-                <span key={d.code} className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-                  {d.name}
+                <span
+                  key={d.code}
+                  className={`rounded-lg px-2.5 py-1 text-xs font-medium ${d.hasFile === false ? "bg-red-100 text-red-700 ring-1 ring-red-300" : "bg-slate-100 text-slate-700"}`}
+                  title={d.hasFile === false ? "PDF not yet generated — open this document and regenerate" : undefined}
+                >
+                  {d.name}{d.hasFile === false ? " ⚠" : ""}
                 </span>
               ))}
             </div>
           ) : (
             <p className="mt-4 text-sm text-slate-500">No documents are eligible for a kit yet.</p>
+          )}
+
+          {hasMissingFiles && (
+            <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-red-700">Documents not yet generated</p>
+              <p className="mt-1 text-sm text-red-800">
+                The following documents don&apos;t have a PDF file yet. Open each one and use the &quot;Regenerate&quot; action before sending the kit:
+              </p>
+              <ul className="mt-1.5 space-y-0.5">
+                {missingFileDocs.map((d) => (
+                  <li key={d.code} className="text-sm text-red-900">• {d.name}</li>
+                ))}
+              </ul>
+              <Button
+                type="button" size="sm" variant="outline"
+                disabled={repairBusy}
+                onClick={() => void regenerateMissingDrafts()}
+                className="mt-3 min-h-[36px] gap-1.5 border-red-300 bg-white text-red-700 hover:bg-red-50"
+              >
+                {repairBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                {repairBusy ? "Generating…" : "Regenerate missing documents"}
+              </Button>
+            </div>
           )}
 
           {blocked && (
@@ -935,7 +1078,28 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
                       {k.completed_at && (
                         <span className="font-medium text-emerald-600">Signed {new Date(k.completed_at).toLocaleString("en-IN")}</span>
                       )}
-                      {k.blocked_reason && <span className="text-red-600">{k.blocked_reason}</span>}
+                      {k.blocked_reason && (
+                        <span className="text-red-600" title={k.blocked_reason}>
+                          {KIT_BLOCKED_REASON_LABEL[k.blocked_reason] ?? k.blocked_reason}
+                        </span>
+                      )}
+                      {(k.status === "signed" || k.status === "sent") && (
+                        <button
+                          type="button"
+                          title={k.status === "signed" ? "View the complete signed document" : "View the draft sent for signing"}
+                          onClick={async () => {
+                            try {
+                              const blob = await hrmsApi.getBlob(`/api/employees/${employeeId}/joining-kit/${k.id}/file`);
+                              window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
+                            } catch (err: any) {
+                              toast({ title: "Unable to open document", description: err?.message || "This kit has no file yet.", variant: "destructive" });
+                            }
+                          }}
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 font-semibold text-slate-600 hover:bg-slate-100"
+                        >
+                          <Eye className="h-3 w-3" /> {k.status === "signed" ? "View signed copy" : "View draft"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -943,12 +1107,104 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
             </div>
           )}
 
-          {/* "Already open" notice when poll is idle */}
+          {/* "Already open" notice with resend option when poll is idle */}
           {open && pollPhase === "idle" && (
-            <div className="mt-4 rounded-lg border border-cyan-200 bg-cyan-50 p-3 text-sm text-cyan-900">
-              A kit is already open for this employee — {open.document_count} documents, {open.total_pages} pages
-              {open.sent_at ? `, sent ${new Date(open.sent_at).toLocaleString("en-IN")}` : ""}.
-              Wait for it to be signed, or ask the employee to check their email.
+            <div className="mt-4 rounded-lg border border-cyan-200 bg-cyan-50 p-3">
+              <p className="text-sm text-cyan-900">
+                A kit is already open for this employee — {open.document_count} documents, {open.total_pages} pages
+                {open.sent_at ? `, sent ${new Date(open.sent_at).toLocaleString("en-IN")}` : ""}.
+              </p>
+              {open.sessionAlive === false ? (
+                <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
+                  <p className="text-sm font-semibold text-red-800">
+                    This kit&apos;s signing session has expired or been cancelled at the provider.
+                  </p>
+                  <p className="mt-1 text-xs text-red-700">
+                    Resending an email won&apos;t help — the link it points to is dead. Sending a new kit
+                    re-bills the eSign provider and the employee has to sign all documents again from scratch.
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="mt-2 min-h-[36px] gap-1.5 bg-red-600 text-white hover:bg-red-700"
+                    onClick={async () => {
+                      if (!window.confirm(
+                        "This kit's session is dead. Send a brand-new kit? This bills the eSign provider again and the employee will need to sign all documents from scratch."
+                      )) return;
+                      try {
+                        await hrmsApi.post(`/api/employees/${employeeId}/joining-kit/redispatch`, {});
+                        toast({ title: "New kit sent", description: "A fresh signing session has been dispatched to the employee." });
+                        void load();
+                      } catch (err: any) {
+                        toast({ title: "Redispatch failed", description: err?.message || "Unable to send a new kit.", variant: "destructive" });
+                      }
+                    }}
+                  >
+                    <Send className="h-3.5 w-3.5" /> Send a new kit
+                  </Button>
+                </div>
+              ) : (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={syncBusy}
+                    className="min-h-[36px] gap-1.5 border-emerald-400 bg-white text-emerald-700 hover:bg-emerald-50"
+                    onClick={async () => {
+                      setSyncBusy(true);
+                      try {
+                        const response = await hrmsApi.post<{ synced: boolean; message: string; providerStatus?: string }>(
+                          `/api/employees/${employeeId}/joining-kit/${open.id}/sync`, {},
+                        );
+                        toast({
+                          title: response.synced ? "Status checked" : "Already up to date",
+                          description: response.message || `Provider status: ${response.providerStatus ?? "unknown"}`,
+                        });
+                        void load();
+                        onSentRef.current();
+                      } catch (err: any) {
+                        toast({ title: "Sync failed", description: err?.message || "Unable to check status.", variant: "destructive" });
+                      } finally {
+                        setSyncBusy(false);
+                      }
+                    }}
+                  >
+                    {syncBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                    {syncBusy ? "Checking…" : "Check if signed"}
+                  </Button>
+                  <span className="text-xs text-slate-400">·</span>
+                  <p className="text-xs text-cyan-700">Employee hasn&apos;t received or lost the email?</p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="min-h-[36px] gap-1.5 border-cyan-400 bg-white text-cyan-700 hover:bg-cyan-50"
+                    onClick={async () => {
+                      if (!window.confirm("Resend the signing link to the employee's email address?")) return;
+                      try {
+                        // Backend answers 200 even when it declines to resend (e.g. the
+                        // provider session already failed/expired) — `resent` is the real
+                        // outcome, not the HTTP status. A try/catch alone showed "Email
+                        // resent" on every click regardless of whether anything happened.
+                        const response = await hrmsApi.post<{ resent: boolean; message: string }>(
+                          `/api/employees/${employeeId}/joining-kit/${open.id}/resend`, {},
+                        );
+                        if (response.resent) {
+                          toast({ title: "Email resent", description: response.message || "A fresh signing link has been sent to the employee." });
+                        } else {
+                          toast({ title: "Resend not sent", description: response.message || "Unable to resend.", variant: "destructive" });
+                        }
+                        void load();
+                      } catch (err: any) {
+                        toast({ title: "Resend failed", description: err?.message || "Unable to resend.", variant: "destructive" });
+                      }
+                    }}
+                  >
+                    <Send className="h-3.5 w-3.5" /> Resend email
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 

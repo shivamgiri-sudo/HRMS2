@@ -1,9 +1,8 @@
-import { useEffect, useState, useRef, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { lazy, Suspense, useEffect, useState, useRef, useCallback } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Link, useSearchParams } from "react-router-dom";
 import { ChevronLeft, ChevronRight, Download } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
@@ -12,18 +11,43 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { downloadBpoPnlExport, useBpoProcessPnl } from "@/hooks/useBpoProcessPnl";
 import { usePnlStatement, type PnlStatementViewBy } from "@/hooks/usePnlStatement";
+import { usePnlLiveReconciliation } from "@/hooks/usePnlLiveReconciliation";
 import { useCeoOverview } from "@/hooks/useCeoOverview";
 import { CeoOverviewPanel } from "@/components/finance/pnl/CeoOverviewPanel";
 import { PnlStatementView } from "@/components/finance/pnl/PnlStatementView";
 import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiStrip";
-import { PnlCostLeakagePanel } from "@/components/finance/pnl/PnlCostLeakagePanel";
-import { PnlDailyTrendChart } from "@/components/finance/pnl/PnlDailyTrendChart";
-import { PnlSeatForecastCard } from "@/components/finance/pnl/PnlSeatForecastCard";
-import { PnlReconciliationPanel } from "@/components/finance/pnl/PnlReconciliationPanel";
-import { BpoPnlMatrixTable } from "@/components/finance/pnl/BpoPnlMatrixTable";
-import { ProcessPnlAlertsWorkspace } from "@/components/finance/pnl/ProcessPnlAlertsWorkspace";
+import { DeferUntilVisible } from "@/components/finance/pnl/DeferUntilVisible";
 import { ProcessPnlMatrixToolbar } from "@/components/finance/pnl/ProcessPnlMatrixToolbar";
+import {
+  buildLiveBasis,
+  buildProcessBasis,
+  buildStatementBasis,
+  pctOf,
+  type HeaderCostLineKey,
+  type HeaderKpiBasis,
+} from "@/components/finance/pnl/headerKpiBasis";
+import { pnlLabel, pnlTooltip } from "@/components/finance/pnl/pnlLabels";
 import { getIssueCounts, type ProcessPnlDensity, type ProcessPnlIssueFilter, type ProcessPnlMatrixPreset, type ProcessPnlStatusFilter } from "@/components/finance/pnl/processPnlMatrixConfig";
+
+/*
+ * Code-split: every tab except the default CEO Overview, plus the below-the-fold trend charts, is
+ * loaded on first use. Radix Tabs already mounts only the active tab's content, so a tab's queries
+ * start when it is opened; splitting the modules as well keeps their JS (and recharts) off the
+ * first paint of the page.
+ */
+const PnlCostLeakagePanel = lazy(() => import("@/components/finance/pnl/PnlCostLeakagePanel").then((m) => ({ default: m.PnlCostLeakagePanel })));
+const PnlDailyTrendChart = lazy(() => import("@/components/finance/pnl/PnlDailyTrendChart").then((m) => ({ default: m.PnlDailyTrendChart })));
+const PnlSeatForecastCard = lazy(() => import("@/components/finance/pnl/PnlSeatForecastCard").then((m) => ({ default: m.PnlSeatForecastCard })));
+const PnlReconciliationPanel = lazy(() => import("@/components/finance/pnl/PnlReconciliationPanel").then((m) => ({ default: m.PnlReconciliationPanel })));
+const PnlTrendExplorer = lazy(() => import("@/components/finance/pnl/PnlTrendExplorer").then((m) => ({ default: m.PnlTrendExplorer })));
+const PnlInsightsPanel = lazy(() => import("@/components/finance/pnl/PnlInsightsPanel").then((m) => ({ default: m.PnlInsightsPanel })));
+const PnlTrendCharts = lazy(() => import("@/components/finance/pnl/PnlTrendCharts").then((m) => ({ default: m.PnlTrendCharts })));
+const PnlReceivablesAgeingPanel = lazy(() => import("@/components/finance/pnl/PnlReceivablesAgeingPanel").then((m) => ({ default: m.PnlReceivablesAgeingPanel })));
+const PnlSeatBillabilityPanel = lazy(() => import("@/components/finance/pnl/PnlSeatBillabilityPanel").then((m) => ({ default: m.PnlSeatBillabilityPanel })));
+const BpoPnlMatrixTable = lazy(() => import("@/components/finance/pnl/BpoPnlMatrixTable").then((m) => ({ default: m.BpoPnlMatrixTable })));
+const ProcessPnlAlertsWorkspace = lazy(() => import("@/components/finance/pnl/ProcessPnlAlertsWorkspace").then((m) => ({ default: m.ProcessPnlAlertsWorkspace })));
+
+const tabFallback = <Skeleton className="h-72 w-full rounded-md" />;
 
 const MATRIX_VIEW_STORAGE_KEY = "process-pnl-matrix:view";
 
@@ -38,6 +62,9 @@ const matrixIssueFilters: ProcessPnlIssueFilter[] = [
   "accounting-fallback",
 ];
 const matrixDensities: ProcessPnlDensity[] = ["comfortable", "compact"];
+
+const tabTriggerClass =
+  "rounded-none border-b-[3px] border-transparent px-4 py-3 text-[13px] font-extrabold text-muted-foreground data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none";
 
 /**
  * The month the page opens on.
@@ -78,7 +105,7 @@ export default function ProcessPnlPage() {
   const clientId = searchParams.get("clientId") ?? "";
   const search = searchParams.get("search") ?? "";
   const [draftSearch, setDraftSearch] = useState(search);
-  const [activeTab, setActiveTab] = useState<"overview" | "live" | "matrix" | "statement" | "alerts">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "live" | "trend" | "insights" | "matrix" | "statement" | "alerts">("overview");
   const [statementViewBy, setStatementViewBy] = useState<PnlStatementViewBy>("process");
   const [matrixPreset, setMatrixPreset] = useState<ProcessPnlMatrixPreset>("summary");
   const [statusFilter, setStatusFilter] = useState<ProcessPnlStatusFilter>("all");
@@ -125,12 +152,26 @@ export default function ProcessPnlPage() {
     search: search || undefined,
   };
   const bpoQuery = useBpoProcessPnl(filters);
-  const statementQuery = usePnlStatement(filters, statementViewBy);
+  // Only the Statement tab reads this view, so it is fetched when that tab is open — not on every
+  // page load alongside the header's own queries.
+  const statementQuery = usePnlStatement(filters, statementViewBy, { enabled: activeTab === "statement" });
+  // The Live P&L can scope by branch only, so it drives the headline only when no client or
+  // search filter is applied (see useLiveBasis below). Same query key as the Live P&L tab, so
+  // opening that tab reuses this result instead of fetching twice.
+  const liveBasisEligible = !clientId && !search;
+  const liveQuery = usePnlLiveReconciliation(liveBasisEligible ? period : "", { branchIds: branchId ? [branchId] : [] });
   const [showYtd, setShowYtd] = useState(false);
   const ytdQuery = useQuery({
-    queryKey: ["pnl-ytd-summary", period],
+    // Scoped by the page's branch filter like the panel beside it (audit item 18). The branch is
+    // in the key so switching branches never shows the previous scope's cached YTD.
+    queryKey: ["pnl-ytd-summary", period, branchId, clientId, search],
     queryFn: async () => {
-      const response = await hrmsApi.get<{ success: boolean; data: any }>(`/api/finance/pnl/ytd-summary?upTo=${period}`);
+      const params = new URLSearchParams({ upTo: period });
+      if (branchId) params.set("branchId", branchId);
+      // Client / Search too (audit item 19), so the strip covers the header's population.
+      if (clientId) params.set("clientId", clientId);
+      if (search) params.set("search", search);
+      const response = await hrmsApi.get<{ success: boolean; data: any }>(`/api/finance/pnl/ytd-summary?${params.toString()}`);
       // hrmsApi returns the envelope itself, so the payload is one level in. Typing data as
       // `any` meant the extra unwrap here type-checked while still being undefined at runtime,
       // which is why this one survived the sweep that fixed the rest.
@@ -138,6 +179,7 @@ export default function ProcessPnlPage() {
     },
     enabled: showYtd,
     staleTime: 5 * 60_000,
+    placeholderData: keepPreviousData,
   });
   const summary = bpoQuery.data;
   const rows = summary?.rows ?? [];
@@ -162,6 +204,8 @@ export default function ProcessPnlPage() {
   const byLabel = (a: [string, string], b: [string, string]) => a[1].localeCompare(b[1]);
   const branches = Array.from(seenBranches.current.entries()).sort(byLabel);
   const clients = Array.from(seenClients.current.entries()).sort(byLabel);
+  const branchLabel = branchId ? (seenBranches.current.get(branchId) ?? "Selected branch") : "All branches";
+  const clientLabel = clientId ? (seenClients.current.get(clientId) ?? "Selected client") : "";
 
   function updateFilters(next: { period?: string; branchId?: string; clientId?: string; search?: string }) {
     const params = new URLSearchParams(searchParams);
@@ -190,103 +234,200 @@ export default function ProcessPnlPage() {
    * this quietly hides that the process-level configuration was never done, and nobody ever
    * fills those four tables in.
    */
+  const bpoHasMoney = Boolean(summary) && [
+    summary?.kpis.recognizedRevenue, summary?.kpis.agentSalary,
+    summary?.kpis.dsc, summary?.kpis.bmc,
+  ].some((v) => Math.abs(Number(v ?? 0)) > 0.5);
+
+  /*
+   * The header's fallback reads its OWN statement query, pinned to the branch view (audit item 8).
+   * It used to sum whichever view the Statement tab's "View by" dropdown had selected, so toggling
+   * Process ↔ Branch on that tab changed the header figures — the process view counts only
+   * process-attributable revenue, the branch view the whole company. The branch view is the
+   * company-level total, so it is the fixed basis. Same query key as the Statement tab's branch
+   * view (shared cache), and only fetched when the fallback can actually be needed.
+   */
+  const headerStatementQuery = usePnlStatement(filters, "branch", { enabled: Boolean(summary) && !bpoHasMoney });
   const statementTotal = (componentKey: string): number | null => {
-    const rows = statementQuery.data?.rows;
-    const columns = statementQuery.data?.columns;
+    const rows = headerStatementQuery.data?.rows;
+    const columns = headerStatementQuery.data?.columns;
     if (!rows || !columns) return null;
     const row = rows.find((r) => r.componentKey === componentKey);
     if (!row) return null;
     return columns.reduce((total, column) => total + Number(row.values[column.id] ?? 0), 0);
   };
 
-  const bpoHasMoney = Boolean(summary) && [
-    summary?.kpis.recognizedRevenue, summary?.kpis.agentSalary,
-    summary?.kpis.dsc, summary?.kpis.bmc,
-  ].some((v) => Math.abs(Number(v ?? 0)) > 0.5);
-
   const fallbackRevenue = statementTotal("recognized_revenue");
   const useStatementFallback = Boolean(summary) && !bpoHasMoney
     && fallbackRevenue !== null && Math.abs(fallbackRevenue) > 0.5;
-  const kpiSource: "process" | "statement" = useStatementFallback ? "statement" : "process";
-
-  const pct = (part: number | null, whole: number | null) =>
-    part !== null && whole !== null && whole !== 0 ? (part / whole) * 100 : 0;
 
   /*
-   * Component keys, verified against finance_pnl_component_master rather than assumed. The cost
-   * lines are total_dsc / total_bmc — there is no plain "dsc" or "bmc" component, and reading
-   * those would have yielded 0, showing full revenue against no support cost and a hugely
-   * overstated Operating Profit. Operating Profit uses total_cost, which already includes IDC,
-   * instead of adding the three people lines and quietly dropping it.
+   * LIVE P&L BASIS (2026-09-15, owner decision). The process engine above prices revenue from
+   * process_revenue_rule, and while those rules cover only some processes it reports a partial
+   * company: August 2026 showed Onfido alone (Rs 94.3 L, OP -125.6%) because one approved rule
+   * was enough to switch the statement fallback off, and September was priced from 31 bulk-seeded
+   * Rs 18,000 placeholder rates. The Live P&L covers every MAS cost centre — invoices, then billing
+   * provisions, then seat rate x seats for cost centres not invoiced yet — so it drives the
+   * headline until every process has a revenue rule. Badged, never silent.
    */
-  const agentSalaryV = useStatementFallback ? (statementTotal("agent_salary") ?? 0) : summary?.kpis.agentSalary ?? 0;
-  const dscV = useStatementFallback ? (statementTotal("total_dsc") ?? 0) : summary?.kpis.dsc ?? 0;
-  const bmcV = useStatementFallback ? (statementTotal("total_bmc") ?? 0) : summary?.kpis.bmc ?? 0;
-  const revenueV = useStatementFallback ? (fallbackRevenue ?? 0) : summary?.kpis.recognizedRevenue ?? 0;
-  const opV = useStatementFallback
-    ? revenueV - (statementTotal("total_cost") ?? 0)
-    : summary?.kpis.operatingProfit ?? 0;
+  const live = liveQuery.data;
+  const processRulesComplete = (summary?.kpis.revenueModelCoveragePct ?? 0) >= 99.5;
+  const useLiveBasis = Boolean(summary) && liveBasisEligible && !processRulesComplete
+    && Boolean(live) && Math.abs(live?.totals.revenue ?? 0) > 0.5;
+  const kpiSource: "process" | "statement" | "live" = useLiveBasis ? "live" : useStatementFallback ? "statement" : "process";
 
-  const kpiItems = summary
-    ? [
-        { label: "Recognized revenue", value: revenueV, kind: "currency" as const, tone: "good" as const },
-        { label: "Agent salary", value: agentSalaryV, kind: "currency" as const },
-        { label: "Agent salary / revenue", value: useStatementFallback ? pct(agentSalaryV, revenueV) : summary.kpis.agentSalaryPctRevenue ?? 0, kind: "percent" as const },
-        { label: "Direct Service Cost", value: dscV, kind: "currency" as const, tone: "warning" as const },
-        { label: "DSC / revenue", value: useStatementFallback ? pct(dscV, revenueV) : summary.kpis.dscPctRevenue ?? 0, kind: "percent" as const },
-        { label: "Branch Management Cost", value: bmcV, kind: "currency" as const, tone: "warning" as const },
-        { label: "BMC / revenue", value: useStatementFallback ? pct(bmcV, revenueV) : summary.kpis.bmcPctRevenue ?? 0, kind: "percent" as const },
-        // EBITDA and its margin come from the engine the fallback exists BECAUSE it returns
-        // nothing, so under the fallback they are ~0 while Revenue and Operating Profit beside
-        // them are real. That is the same contradiction the PBT/PAT note below was written to
-        // avoid, one tile to the left: a strip reading "Revenue Rs 3.44 Cr, Operating profit
-        // positive, EBITDA Rs 0, EBITDA margin 0.0%". Omitted under the fallback for the same
-        // reason, rather than printed as a confident zero.
-        ...(useStatementFallback ? [] : [
-          {
-            label: "EBITDA",
-            value: summary.kpis.ebitda,
-            kind: "currency" as const,
-            tone: summary.kpis.ebitda >= 0 ? ("good" as const) : ("danger" as const),
-          },
-          {
-            label: "EBITDA margin",
-            value: summary.kpis.ebitdaMarginPct ?? 0,
-            kind: "percent" as const,
-            tone: (summary.kpis.ebitdaMarginPct ?? 0) >= 0 ? ("good" as const) : ("danger" as const),
-          },
-        ]),
+  /*
+   * ONE ENGINE PER HEADER (audit item 7). Exactly one basis is chosen and EVERY tile in the strip,
+   * the masthead revenue and the Cost-mix panel read from it — never Live revenue beside
+   * Statement/process cost. Statement component keys are verified against
+   * finance_pnl_component_master (see headerKpiBasis.ts). Each basis is additive:
+   * Recognised Revenue − People Cost − Indirect/GRN lines (− engine residual) = Operating Profit.
+   * Under the Live and Statement bases EBITDA / PBT / PAT are omitted: they exist only in the
+   * process engine and would be a second engine's figures (or confident zeros) beside this OP.
+   */
+  const basis: HeaderKpiBasis | null = !summary
+    ? null
+    : useLiveBasis && live
+      ? buildLiveBasis(live.totals)
+      : useStatementFallback
+        ? buildStatementBasis(statementTotal)
+        : buildProcessBasis(summary.kpis);
+  const revenueV = basis?.revenue ?? 0;
+  const pct = pctOf;
+
+  // Names and tooltips from the shared P&L glossary (audit items 23/24/28).
+  const costLineLabel: Record<HeaderCostLineKey, string> = {
+    people: pnlLabel("PEOPLE_COST"),
+    indirect: pnlLabel("INDIRECT_COST"),
+    grnConsumed: pnlLabel("GRN_CONSUMED"),
+    grnCommitted: pnlLabel("GRN_COMMITTED"),
+    other: "Other cost (engine residual)",
+  };
+  const costLineHint: Record<HeaderCostLineKey, string> = {
+    people: pnlTooltip("PEOPLE_COST"),
+    indirect: pnlTooltip("INDIRECT_COST"),
+    grnConsumed: pnlTooltip("GRN_CONSUMED"),
+    grnCommitted: pnlTooltip("GRN_COMMITTED"),
+    other: "The engine's Operating Profit differs from Recognised Revenue minus the cost lines it publishes by this amount; shown so the tiles still add up.",
+  };
+  // Under the Live basis the header shows the Live P&L's own figure, so it carries that figure's
+  // name — the same "Operating Profit (contribution)" as the Live P&L and CEO Overview tabs.
+  const opTerm = basis?.source === "live" ? "OPERATING_PROFIT_CONTRIBUTION" : "OPERATING_PROFIT";
+
+  const buildKpiItems = (b: HeaderKpiBasis) => {
+    const liveTotals = b.source === "live" ? live?.totals : undefined;
+    const peopleCost = b.costLines.find((line) => line.key === "people")?.value ?? 0;
+    const otherLines = b.costLines.filter((line) => line.key !== "people");
+    const split = b.peopleSplit;
+    // The process engine publishes its own ratios; the Statement basis derives them from its tiles.
+    const splitPct = (value: number, enginePct: number | null | undefined) =>
+      b.source === "process" && enginePct != null ? enginePct : pct(value, b.revenue);
+    return [
+      { label: pnlLabel("RECOGNISED_REVENUE"), value: b.revenue, kind: "currency" as const, tone: "good" as const, hint: pnlTooltip("RECOGNISED_REVENUE") },
+      ...(liveTotals && (liveTotals.revenueEstimated ?? 0) > 0 ? [{
+        label: `of which estimated (seat rate · ${liveTotals.estimatedCostCentres} CC)`,
+        value: liveTotals.revenueEstimated,
+        kind: "currency" as const,
+        tone: "warning" as const,
+      }] : []),
+      ...(liveTotals ? [{ label: "Revenue per day", value: liveTotals.perDayRevenue ?? 0, kind: "currency" as const }] : []),
+      {
+        label: b.peopleCostMissing ? `${pnlLabel("PEOPLE_COST")} (not run yet)` : pnlLabel("PEOPLE_COST"),
+        value: peopleCost,
+        kind: "currency" as const,
+        tone: "warning" as const,
+        hint: costLineHint.people,
+      },
+      ...(b.peopleCostMissing ? [] : [{ label: `${pnlLabel("PEOPLE_COST")} / revenue`, value: pct(peopleCost, b.revenue), kind: "percent" as const }]),
+      ...(split ? [
+        { label: "of which Agent salary", value: split.agentSalary, kind: "currency" as const },
+        { label: "Agent salary / revenue", value: splitPct(split.agentSalary, summary?.kpis.agentSalaryPctRevenue), kind: "percent" as const },
+        { label: "of which Direct Service Cost", value: split.dsc, kind: "currency" as const },
+        { label: "DSC / revenue", value: splitPct(split.dsc, summary?.kpis.dscPctRevenue), kind: "percent" as const },
+        { label: "of which Branch Management Cost", value: split.bmc, kind: "currency" as const },
+        { label: "BMC / revenue", value: splitPct(split.bmc, summary?.kpis.bmcPctRevenue), kind: "percent" as const },
+      ] : []),
+      ...otherLines.map((line) => ({
+        label: costLineLabel[line.key],
+        value: line.value,
+        kind: "currency" as const,
+        tone: "warning" as const,
+        hint: costLineHint[line.key],
+      })),
+      ...(b.source === "process" && summary ? [
         {
-          label: "Operating profit",
-          value: opV,
+          label: "EBITDA",
+          value: summary.kpis.ebitda,
           kind: "currency" as const,
-          tone: opV >= 0 ? ("good" as const) : ("danger" as const),
+          tone: summary.kpis.ebitda >= 0 ? ("good" as const) : ("danger" as const),
         },
-        // PBT and PAT need finance cost and tax, which the statement fallback has no source for.
-        // Showing them as Rs 0 beside a real Operating Profit would read as "we made a profit and
-        // then lost all of it", so they are omitted entirely when the fallback is in use.
-        ...(useStatementFallback ? [] : [
-          { label: "PBT", value: summary.kpis.pbt, kind: "currency" as const },
-          { label: "PAT", value: summary.kpis.pat, kind: "currency" as const },
-        ]),
-      ]
-    : [];
+        {
+          label: "EBITDA margin",
+          value: summary.kpis.ebitdaMarginPct ?? 0,
+          kind: "percent" as const,
+          tone: (summary.kpis.ebitdaMarginPct ?? 0) >= 0 ? ("good" as const) : ("danger" as const),
+        },
+      ] : []),
+      {
+        label: b.peopleCostMissing ? `${pnlLabel(opTerm)} (excl. People Cost)` : pnlLabel(opTerm),
+        value: b.operatingProfit,
+        kind: "currency" as const,
+        tone: b.peopleCostMissing ? ("warning" as const) : b.operatingProfit >= 0 ? ("good" as const) : ("danger" as const),
+        hint: `${pnlLabel("RECOGNISED_REVENUE")} minus ${b.costLines.map((line) => costLineLabel[line.key]).join(", ")}. ${pnlTooltip(opTerm)}`,
+      },
+      // Null when the engine says no margin is meaningful yet — omitted rather than shown as 0%.
+      ...(b.marginPct == null ? [] : [{
+        label: pnlLabel("OPERATING_MARGIN"),
+        value: b.marginPct,
+        kind: "percent" as const,
+        tone: b.marginPct >= 0 ? ("good" as const) : ("danger" as const),
+      }]),
+      ...(b.source === "process" && summary ? [
+        { label: "PBT", value: summary.kpis.pbt, kind: "currency" as const },
+        { label: "PAT", value: summary.kpis.pat, kind: "currency" as const },
+      ] : []),
+    ];
+  };
+
+  const kpiItems = basis ? buildKpiItems(basis) : [];
+
+  /** Cost-mix segments: the same additive cost lines as the strip, so the bar and tiles agree. */
+  const costMixFill: Record<HeaderCostLineKey, string> = {
+    people: "bg-primary",
+    indirect: "bg-amber-500",
+    grnConsumed: "bg-amber-500",
+    grnCommitted: "bg-amber-300",
+    other: "bg-slate-400",
+  };
+  const costMixSegments = (basis?.costLines ?? []).map((line) => ({
+    key: line.key,
+    label: costLineLabel[line.key],
+    value: line.value,
+    fill: costMixFill[line.key],
+  }));
 
   return (
     <DashboardLayout>
-      <div className="flex h-full flex-col">
-        {/* Slim header */}
+      <div className="flex h-full flex-col bg-background text-foreground">
+        {/* Page header — dense finance masthead, styled after the Process P&L reference:
+            MAS Blue primary accent and standard shadcn foreground/muted tokens, uppercase eyebrow over a large title. */}
         <div
-          className="flex items-center justify-between border-b px-4 h-12 shrink-0"
+          className="flex flex-col gap-2 border-b border-border bg-muted px-4 py-3 shrink-0 sm:flex-row sm:items-end sm:justify-between"
           aria-label="Complete commercial truth from mandate and delivery to EBITDA, PBT and PAT"
         >
-          <h1 className="text-sm font-semibold">Process P&amp;L</h1>
-          <div className="flex items-center gap-3">
+          <div>
+            <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-muted-foreground">
+              Finance · Profitability command centre
+            </p>
+            <h1 className="text-2xl font-extrabold leading-tight tracking-tight text-foreground">Process P&amp;L</h1>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
             {summary && (
               <>
-                <span className="text-xs text-slate-500">
-                  Revenue: <b className="text-slate-900">{formatCurrency(revenueV, true)}</b>
-                </span>
+                <div className="border-l-[3px] border-primary pl-2.5">
+                  <p className="text-[10px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground" title={pnlTooltip("RECOGNISED_REVENUE")}>{pnlLabel("RECOGNISED_REVENUE")}</p>
+                  <p className="text-lg font-extrabold tabular-nums text-foreground">{formatCurrency(revenueV, true)}</p>
+                </div>
                 {kpiSource === "statement" && (
                   // Never switch engines silently: without this the process-level configuration
                   // looks complete because the numbers look right.
@@ -297,33 +438,42 @@ export default function ProcessPnlPage() {
                     from P&amp;L Statement
                   </span>
                 )}
+                {kpiSource === "live" && (
+                  <span
+                    className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200"
+                    title={`Process revenue rules cover ${(summary.kpis.revenueModelCoveragePct ?? 0).toFixed(0)}% of processes, so these figures come from the Live P&L: invoices, then billing provisions, then seat rate × seats for cost centres not invoiced yet. Seat rates per LOB are set under P&L Configuration › Seat billing.`}
+                  >
+                    from Live P&amp;L
+                  </span>
+                )}
                 {(summary.kpis.lossMakingProcesses ?? 0) > 0 && (
-                  <Badge variant="destructive" className="text-xs">
-                    At risk: {summary.kpis.lossMakingProcesses}
-                  </Badge>
+                  <span className="bg-primary px-2 py-1 text-[11px] font-extrabold uppercase tracking-[0.06em] text-primary-foreground">
+                    {summary.kpis.lossMakingProcesses} at risk
+                  </span>
                 )}
               </>
             )}
             {bpoQuery.dataUpdatedAt > 0 && (
-              <span className="text-[11px] text-slate-400">
+              <span className="text-[11px] text-muted-foreground">
+                {bpoQuery.isFetching ? "Updating… · " : null}
                 Data as of {new Date(bpoQuery.dataUpdatedAt).toLocaleTimeString()}
                 {" · "}
-                <button type="button" className="underline hover:text-slate-600" onClick={() => void bpoQuery.refetch()}>Refresh</button>
+                <button type="button" className="underline hover:text-foreground" onClick={() => void bpoQuery.refetch()}>Refresh</button>
               </span>
             )}
-            <Button size="sm" variant="outline" onClick={() => void downloadBpoPnlExport(filters)}>
+            <Button size="sm" variant="outline" className="h-8 rounded-none border-foreground/30 text-foreground hover:bg-muted" onClick={() => void downloadBpoPnlExport(filters)}>
               <Download className="mr-1.5 h-3.5 w-3.5" /> Export
             </Button>
-            <Button size="sm" variant="outline" asChild>
+            <Button size="sm" asChild className="h-8 rounded-none bg-primary text-primary-foreground hover:bg-primary/90">
               <Link to={`/finance/branch-budget?period=${period}`}>Branch budget</Link>
             </Button>
           </div>
         </div>
 
         {/* Filter bar */}
-        <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 border-b-2 border-border bg-card px-4 py-2 shrink-0">
           <div className="flex items-center gap-1">
-            <Button size="icon" variant="ghost" className="h-8 w-8" aria-label="Previous month" onClick={() => updateFilters({ period: shiftMonth(period, -1) })}>
+            <Button size="icon" variant="ghost" className="h-8 w-8 rounded-none hover:bg-muted" aria-label="Previous month" onClick={() => updateFilters({ period: shiftMonth(period, -1) })}>
               <ChevronLeft className="h-4 w-4" />
             </Button>
             <MonthYearPicker
@@ -331,12 +481,12 @@ export default function ProcessPnlPage() {
               onChange={(v) => updateFilters({ period: v })}
               className="w-52"
             />
-            <Button size="icon" variant="ghost" className="h-8 w-8" aria-label="Next month" disabled={period >= defaultPeriod()} onClick={() => updateFilters({ period: shiftMonth(period, 1) })}>
+            <Button size="icon" variant="ghost" className="h-8 w-8 rounded-none hover:bg-muted" aria-label="Next month" disabled={period >= defaultPeriod()} onClick={() => updateFilters({ period: shiftMonth(period, 1) })}>
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
           <select
-            className="flex h-8 rounded-md border border-input bg-background px-2 py-0 text-xs"
+            className="flex h-8 rounded-none border border-input bg-card px-2 py-0 text-xs"
             value={branchId}
             onChange={(e) => updateFilters({ branchId: e.target.value || undefined })}
           >
@@ -346,7 +496,7 @@ export default function ProcessPnlPage() {
             ))}
           </select>
           <select
-            className="flex h-8 rounded-md border border-input bg-background px-2 py-0 text-xs"
+            className="flex h-8 rounded-none border border-input bg-card px-2 py-0 text-xs"
             value={clientId}
             onChange={(e) => updateFilters({ clientId: e.target.value || undefined })}
           >
@@ -356,13 +506,14 @@ export default function ProcessPnlPage() {
             ))}
           </select>
           <Input
-            className="h-8 w-48 text-xs"
+            className="h-8 w-48 rounded-none text-xs"
             placeholder="Search process..."
             value={draftSearch}
             onChange={(e) => setDraftSearch(e.target.value)}
           />
           <Button
             size="sm"
+            className="h-8 rounded-none bg-primary text-primary-foreground hover:bg-primary/90"
             onClick={() => updateFilters({ search: draftSearch || undefined })}
           >
             Apply
@@ -370,30 +521,34 @@ export default function ProcessPnlPage() {
         </div>
 
         {/* Always-visible KPI strip */}
-        <div className="border-b px-4 py-2 shrink-0 overflow-x-auto">
+        <div className="border-b-2 border-border bg-muted shrink-0 overflow-x-auto">
           {bpoQuery.isLoading ? (
-            <div className="flex gap-2">
+            <div className="flex gap-2 p-2">
               {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14 w-36 rounded-xl shrink-0" />)}
             </div>
           ) : bpoQuery.isError ? (
-            <p className="text-sm text-rose-600">
+            <p className="p-2 text-sm text-rose-600">
               Could not load P&amp;L data for {period}.{" "}
               <button type="button" className="underline" onClick={() => void bpoQuery.refetch()}>Retry</button>
             </p>
           ) : (
-            <PnlExecutiveKpiStrip items={kpiItems} compact />
+            <div className={bpoQuery.isPlaceholderData ? "opacity-60 transition-opacity" : undefined} aria-busy={bpoQuery.isPlaceholderData}>
+              <PnlExecutiveKpiStrip items={kpiItems} />
+            </div>
           )}
         </div>
 
         {/* Tab layout: CEO Overview (default) + Process Matrix + Alerts & Reconciliation */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="flex flex-1 flex-col overflow-hidden">
-          <TabsList className="mx-4 mt-3 w-fit shrink-0">
-            <TabsTrigger value="overview">CEO Overview</TabsTrigger>
-            <TabsTrigger value="live">Live P&amp;L</TabsTrigger>
-            <TabsTrigger value="matrix">Process Matrix</TabsTrigger>
-            <TabsTrigger value="statement">P&amp;L Statement</TabsTrigger>
+          <TabsList className="h-auto w-full shrink-0 justify-start gap-0 rounded-none border-b-2 border-border bg-card px-4 py-0">
+            <TabsTrigger value="overview" className={tabTriggerClass}>CEO Overview</TabsTrigger>
+            <TabsTrigger value="live" className={tabTriggerClass}>Live P&amp;L</TabsTrigger>
+            <TabsTrigger value="trend" className={tabTriggerClass}>P&amp;L Trend</TabsTrigger>
+            <TabsTrigger value="insights" className={tabTriggerClass}>Insights</TabsTrigger>
+            <TabsTrigger value="matrix" className={tabTriggerClass}>Process Matrix</TabsTrigger>
+            <TabsTrigger value="statement" className={tabTriggerClass}>P&amp;L Statement</TabsTrigger>
             <TabsTrigger value="alerts">Alerts &amp; Reconciliation</TabsTrigger>
-            <TabsTrigger value="leakage">Cost Leakage</TabsTrigger>
+            <TabsTrigger value="leakage" className={tabTriggerClass}>Cost Leakage</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="flex-1 overflow-auto px-4 py-3 m-0">
@@ -435,13 +590,63 @@ export default function ProcessPnlPage() {
                   period={period}
                   branchId={branchId || undefined}
                   onBranchChange={(id) => updateFilters({ branchId: id })}
+                  clientId={clientId || undefined}
+                  search={search || undefined}
                 />
 
+                {/* Cost mix — the header basis's own additive cost lines as a share of its own
+                    revenue (audit item 7): one engine, never one engine's profit over another's
+                    revenue. The segments plus Operating Profit sum to 100% of revenue. */}
+                {basis && basis.revenue > 0 && (
+                  <div className="border border-border bg-card px-4 py-3">
+                    <p className="text-[10px] font-extrabold uppercase tracking-[0.11em] text-muted-foreground">
+                      Cost mix (% of {pnlLabel("RECOGNISED_REVENUE")} ·{kpiSource === "live" ? "Live P&L" : kpiSource === "statement" ? "P&L Statement" : "process engine"})
+                    </p>
+                    <div className="mt-2 flex h-6 w-full overflow-hidden rounded-sm border border-border">
+                      {costMixSegments.map((seg) => (
+                        <div
+                          key={seg.key}
+                          className={seg.fill}
+                          style={{ width: `${Math.max(0, Math.min(100, pct(seg.value, basis.revenue)))}%` }}
+                          title={`${seg.label}: ${pct(seg.value, basis.revenue).toFixed(1)}% of revenue (${formatCurrency(seg.value, true)})`}
+                        />
+                      ))}
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                      {costMixSegments.map((seg) => (
+                        <span key={seg.key}><span className={`inline-block h-2 w-2 rounded-full ${seg.fill}`} /> {seg.label} {pct(seg.value, basis.revenue).toFixed(1)}%</span>
+                      ))}
+                      <span>{pnlLabel(opTerm)} {pct(basis.operatingProfit, basis.revenue).toFixed(1)}%</span>
+                    </div>
+                    {basis.peopleSplit && (
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {pnlLabel("PEOPLE_COST")} split: Agent salary {pct(basis.peopleSplit.agentSalary, basis.revenue).toFixed(1)}%
+                        {" · "}DSC {pct(basis.peopleSplit.dsc, basis.revenue).toFixed(1)}%
+                        {" · "}BMC {pct(basis.peopleSplit.bmc, basis.revenue).toFixed(1)}%
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Revenue/cost/margin trend + headcount-vs-revenue trend, over the real months
+                    of invoicing data only (see PnlTrendCharts's own doc comment). */}
+                <DeferUntilVisible placeholder={<Skeleton className="h-96 w-full rounded-none" />}>
+                  <Suspense fallback={<Skeleton className="h-96 w-full rounded-none" />}>
+                    <PnlTrendCharts filters={{ branchId: branchId || undefined, clientId: clientId || undefined, search: search || undefined }} />
+                  </Suspense>
+                </DeferUntilVisible>
+
                 {/* YTD summary strip */}
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <div className="rounded-2xl border border-slate-200 bg-card px-4 py-3">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-slate-700">
                       Year-to-Date Summary {ytdQuery.data ? `(FY ${ytdQuery.data.fy} · ${ytdQuery.data.months.length} month${ytdQuery.data.months.length !== 1 ? "s" : ""})` : ""}
+                      {/* Say which population the strip covers — it follows the page's filters. */}
+                      <span className="ml-2 text-xs font-normal text-slate-500">
+                        {branchId ? branchLabel : "All branches"}
+                        {clientId ? ` · ${clientLabel}` : ""}
+                        {search ? ` · matching "${search}"` : ""}
+                      </span>
                     </span>
                     <Button
                       size="sm"
@@ -464,10 +669,10 @@ export default function ProcessPnlPage() {
                         <div className="space-y-4">
                           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-5">
                             {[
-                              { label: "Revenue", value: ytdQuery.data.totalRevenue, tone: "text-slate-900" },
-                              { label: "People Cost", value: ytdQuery.data.totalPeopleCost, tone: "text-slate-700" },
-                              { label: "Indirect Cost", value: ytdQuery.data.totalIndirectCost, tone: "text-slate-700" },
-                              { label: "Operating Profit", value: ytdQuery.data.totalOperatingProfit, tone: ytdQuery.data.totalOperatingProfit >= 0 ? "text-emerald-700 font-semibold" : "text-rose-700 font-semibold" },
+                              { label: pnlLabel("RECOGNISED_REVENUE"), value: ytdQuery.data.totalRevenue, tone: "text-slate-900" },
+                              { label: pnlLabel("PEOPLE_COST"), value: ytdQuery.data.totalPeopleCost, tone: "text-slate-700" },
+                              { label: pnlLabel("INDIRECT_COST"), value: ytdQuery.data.totalIndirectCost, tone: "text-slate-700" },
+                              { label: pnlLabel("OPERATING_PROFIT"), value: ytdQuery.data.totalOperatingProfit, tone: ytdQuery.data.totalOperatingProfit >= 0 ? "text-emerald-700 font-semibold" : "text-rose-700 font-semibold" },
                               { label: "Budget (allocated)", value: ytdQuery.data.totalBudget, tone: "text-blue-700" },
                             ].map((item) => (
                               <div key={item.label} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
@@ -478,7 +683,7 @@ export default function ProcessPnlPage() {
                           </div>
                           {ytdQuery.data.marginPct != null && (
                             <p className="text-xs text-slate-500">
-                              YTD operating margin: <span className={`font-semibold ${ytdQuery.data.marginPct >= 8 ? "text-emerald-700" : "text-rose-700"}`}>{ytdQuery.data.marginPct.toFixed(1)}%</span>
+                              YTD {pnlLabel("OPERATING_MARGIN")}: <span className={`font-semibold ${ytdQuery.data.marginPct >= 8 ? "text-emerald-700" : "text-rose-700"}`}>{ytdQuery.data.marginPct.toFixed(1)}%</span>
                               {" · "}Budget consumed: <span className="font-semibold text-slate-700">{ytdQuery.data.totalBudget > 0 ? `${((ytdQuery.data.totalIndirectCost / ytdQuery.data.totalBudget) * 100).toFixed(1)}%` : "—"}</span>
                             </p>
                           )}
@@ -493,11 +698,36 @@ export default function ProcessPnlPage() {
           </TabsContent>
 
           <TabsContent value="live" className="flex-1 overflow-auto px-4 py-3 m-0">
-            <PnlReconciliationPanel period={period} branchId={branchId || undefined} />
+            <Suspense fallback={tabFallback}>
+              <PnlReconciliationPanel
+                period={period}
+                branchId={branchId || undefined}
+                clientId={clientId || undefined}
+                search={search || undefined}
+              />
+            </Suspense>
+          </TabsContent>
+
+          {/* Daily / weekly / monthly P&L trend for the company, a branch or a cost centre,
+              built on the Live P&L so its numbers agree with the tab beside it. */}
+          <TabsContent value="trend" className="flex-1 overflow-auto px-4 py-3 m-0">
+            <Suspense fallback={tabFallback}>
+              <PnlTrendExplorer period={period} branchId={branchId || undefined} />
+            </Suspense>
+          </TabsContent>
+
+          {/* Margin heatmap, profit contribution, unit economics and revenue confidence — also read
+              from the Live P&L rows, so every figure agrees with the Live P&L tab. */}
+          <TabsContent value="insights" className="flex-1 overflow-auto px-4 py-3 m-0">
+            <Suspense fallback={tabFallback}>
+              <PnlInsightsPanel period={period} branchId={branchId || undefined} />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="leakage" className="flex-1 overflow-auto px-4 py-3 m-0">
-            <PnlCostLeakagePanel period={period} />
+            <Suspense fallback={tabFallback}>
+              <PnlCostLeakagePanel period={period} />
+            </Suspense>
           </TabsContent>
 
           <TabsContent value="matrix" className="flex-1 overflow-auto px-4 py-3 m-0">
@@ -520,24 +750,33 @@ export default function ProcessPnlPage() {
                 <button type="button" className="underline" onClick={() => void bpoQuery.refetch()}>Retry</button>
               </p>
             ) : (
-              <BpoPnlMatrixTable
-                rows={rows}
-                period={period}
-                preset={matrixPreset}
-                status={statusFilter}
-                issue={issueFilter}
-                density={matrixDensity}
-                search={search}
-                alerts={summary?.alerts}
-              />
+              <Suspense fallback={tabFallback}>
+              <div className="flex flex-col gap-5">
+                <BpoPnlMatrixTable
+                  rows={rows}
+                  period={period}
+                  preset={matrixPreset}
+                  status={statusFilter}
+                  issue={issueFilter}
+                  density={matrixDensity}
+                  search={search}
+                  alerts={summary?.alerts}
+                />
+                <DeferUntilVisible placeholder={<Skeleton className="h-40 rounded-md" />}>
+                  <PnlSeatBillabilityPanel filters={{ branchId: branchId || undefined }} />
+                </DeferUntilVisible>
+              </div>
+              </Suspense>
             )}
           </TabsContent>
 
           <TabsContent value="statement" className="flex-1 overflow-auto px-4 py-3 m-0">
+            <Suspense fallback={tabFallback}>
             <div className="mb-4 space-y-4">
               <PnlSeatForecastCard period={period} branchId={branchId || undefined} />
               <PnlDailyTrendChart period={period} branchId={branchId || undefined} />
             </div>
+            </Suspense>
             <PnlStatementView
               statement={statementQuery.data}
               isLoading={statementQuery.isLoading}
@@ -563,7 +802,14 @@ export default function ProcessPnlPage() {
                 <button type="button" className="underline" onClick={() => void bpoQuery.refetch()}>Retry</button>
               </p>
             ) : summary ? (
-              <ProcessPnlAlertsWorkspace alerts={summary.alerts} period={period} rows={rows} />
+              <Suspense fallback={tabFallback}>
+              <div className="flex flex-col gap-5">
+                <ProcessPnlAlertsWorkspace alerts={summary.alerts} period={period} rows={rows} />
+                <DeferUntilVisible placeholder={<Skeleton className="h-40 rounded-md" />}>
+                  <PnlReceivablesAgeingPanel filters={{ branchId: branchId || undefined }} />
+                </DeferUntilVisible>
+              </div>
+              </Suspense>
             ) : null}
           </TabsContent>
         </Tabs>

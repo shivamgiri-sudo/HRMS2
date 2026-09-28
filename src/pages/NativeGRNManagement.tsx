@@ -41,17 +41,19 @@ export default function NativeGRNManagement() {
   // `admin` was in this list and is NOT in GRN_REVIEW_ROLES, so an admin was shown the Approval
   // Queue and Imprest tabs and every action in them 403'd — the exact outcome the note above
   // says this gate exists to prevent.
-  // `accounts_head` was here too until it was removed from GRN_REVIEW_ROLES by a98dd83d
-  // ("a review role that could never review" — GRN review only ever resolves to
-  // branch_head/finance_head; accounts_head's authority is the payment step, not GRN review).
-  // This gate was never updated to match, so accounts_head kept seeing the Approval Queue and
-  // Imprest tabs, opening a GRN, and finding no Approve/Reject button — the backend capability
-  // check (SmartGrnApprovalQueue's canReview, driven by canReviewBranchStage/canReviewFinanceStage)
-  // correctly excludes them, same failure mode as the admin case above.
+  // `accounts_head` was removed from this list by a98dd83d ("a review role that could never
+  // review" — at the time GRN review only ever resolved to branch_head/finance_head).
+  // Re-added (owner ruling, 2026-09-12): GRN is now a 3-stage chain — Branch Head -> Accounts
+  // Head -> Finance Head — and accounts_head owns the middle stage for real, in addition to
+  // (not instead of) their existing payment-step authority. Leaving them off this list after
+  // that change reproduced the exact bug a98dd83d fixed, just for a different reason: the
+  // Approval Queue tab stayed hidden, so accounts_head could not even reach the review action
+  // SmartGrnApprovalQueue's canReview now correctly grants them.
   const canReview = useHasRole(
     "finance_head",
     "super_admin",
-    "branch_head"
+    "branch_head",
+    "accounts_head"
   );
 
   // The LOB Attribution tab was rendered unconditionally while its header count was already

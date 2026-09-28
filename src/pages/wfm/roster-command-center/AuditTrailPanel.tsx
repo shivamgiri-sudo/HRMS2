@@ -1,0 +1,723 @@
+/**
+ * Roster Audit Trail Dashboard
+ * Track who changed what roster, when, and why
+ * Follows MAS HRMS frozen design patterns
+ */
+
+import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import {
+  FileText,
+  Clock,
+  User,
+  Calendar,
+  RefreshCw,
+  Filter,
+  History,
+  GitBranch,
+  ChevronRight,
+  AlertTriangle,
+  CheckCircle,
+  Loader2,
+} from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { useRosterConsoleFilters } from './RosterConsoleFilterContext';
+import { KpiTile } from '@/components/wfm/console/KpiTile';
+import { PanelHeader } from '@/components/wfm/console/PanelHeader';
+import { FilterNote } from '@/components/wfm/console/FilterNote';
+import { scopeParams } from './filterState';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { hrmsApi as api } from '@/lib/hrmsApi';
+
+interface AuditTrail {
+  id: string;
+  date: string;
+  changeType: string;
+  changeTypeCode: string;
+  reason: string;
+  timestamp: string;
+  employee: {
+    id: string;
+    code: string;
+    name: string;
+  };
+  processName: string;
+  branchName: string;
+  shiftName: string | null;
+  changedBy: string;
+  runType: string | null;
+}
+
+interface GenerationRun {
+  id: string;
+  cycleId: string;
+  processName: string;
+  branchName: string | null;
+  runType: string;
+  status: string;
+  stats: {
+    employeesProcessed: number;
+    assignmentsCreated: number;
+    weekoffsAllocated: number;
+    conflictsFound: number;
+  };
+  startedAt: string;
+  completedAt: string | null;
+  duration: number | null;
+  triggeredBy: string;
+}
+
+// Merge-plan Phase B bug #17: dedicated detail shapes for the two drill-down
+// drawers (Drill-Down Mandate) — fetched from GET /:id endpoints, never
+// reused from the list payloads above.
+interface AuditTrailDetail {
+  id: string;
+  date: string;
+  changeType: string;
+  changeTypeCode: string;
+  reason: string;
+  ruleApplied: string | null;
+  overrideReason: string | null;
+  timestamp: string;
+  employee: { id: string; code: string; name: string };
+  processName: string | null;
+  branchName: string | null;
+  shift: { name: string; startTime: string; endTime: string } | null;
+  changedBy: string;
+  changedByCode: string | null;
+  run: {
+    id: string; runType: string; status: string;
+    startedAt: string; completedAt: string | null; triggeredBy: string;
+  } | null;
+  relatedChanges: Array<{ id: string; date: string; changeType: string; reason: string; timestamp: string; changedBy: string }>;
+}
+
+interface GenerationRunDetail extends Omit<GenerationRun, 'triggeredBy'> {
+  triggeredBy: { id: string | null; name: string; code: string | null };
+  decisions: Array<{ id: string; date: string; changeType: string; reason: string; timestamp: string; employee: { code: string; name: string } }>;
+}
+
+interface AuditSummary {
+  totalChanges: number;
+  manualOverrides: number;
+  overrideRate: number;
+  byType: Record<string, number>;
+  generationRuns: {
+    auto: number;
+    manual: number;
+    totalAssignments: number;
+    totalConflicts: number;
+  };
+}
+
+const toneColors = {
+  blue: { iconBg: '#edf4ff', value: '#0b63e5', border: '#dce8fb' },
+  green: { iconBg: '#eaf8ef', value: '#15803d', border: '#d7f0df' },
+  amber: { iconBg: '#fff4e8', value: '#ea580c', border: '#fee3c5' },
+  violet: { iconBg: '#f3efff', value: '#6d28d9', border: '#e6ddff' },
+  slate: { iconBg: '#f1f4f8', value: '#0b1f44', border: '#e3e9f2' },
+};
+
+export default function AuditTrailPanel() {
+  const [activeTab, setActiveTab] = useState('trails');
+  const { filters } = useRosterConsoleFilters();
+  const { from: dateFrom, to: dateTo, branchId, processId, lobId } = filters;
+  const [changeTypeFilter, setChangeTypeFilter] = useState<string>('all');
+  const [amendDialogOpen, setAmendDialogOpen] = useState(false);
+  const [amendCycleId, setAmendCycleId] = useState('');
+  const [amendReason, setAmendReason] = useState('');
+  const [amendSubmitting, setAmendSubmitting] = useState(false);
+  // Merge-plan Phase B bug #17
+  const [selectedTrailId, setSelectedTrailId] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+
+  const { data: trailsData, isLoading: trailsLoading, refetch: refetchTrails } = useQuery({
+    queryKey: ['roster-audit-trails', dateFrom, dateTo, branchId, processId, lobId, changeTypeFilter],
+    queryFn: async () => {
+      const params = scopeParams({ branchId, processId, lobId });
+      if (dateFrom) params.append('dateFrom', dateFrom);
+      if (dateTo) params.append('dateTo', dateTo);
+      if (changeTypeFilter && changeTypeFilter !== 'all') {
+        params.append('changeType', changeTypeFilter);
+      }
+      params.append('limit', '200');
+      const res = await api.get(`/roster-audit/trails?${params}`);
+      return res.data as { trails: AuditTrail[]; count: number };
+    },
+  });
+
+  const { data: summaryData, isLoading: summaryLoading } = useQuery({
+    queryKey: ['roster-audit-summary', dateFrom, dateTo, branchId, processId, lobId],
+    queryFn: async () => {
+      const params = scopeParams({ branchId, processId, lobId });
+      if (dateFrom) params.append('dateFrom', dateFrom);
+      if (dateTo) params.append('dateTo', dateTo);
+      const res = await api.get(`/roster-audit/summary?${params}`);
+      return res.data as AuditSummary;
+    },
+  });
+
+  const { data: runsData, isLoading: runsLoading } = useQuery({
+    queryKey: ['roster-audit-runs'],
+    queryFn: async () => {
+      const res = await api.get('/roster-audit/generation-runs?limit=50');
+      return res.data as { runs: GenerationRun[] };
+    },
+    enabled: activeTab === 'runs',
+  });
+
+  // Merge-plan Phase B bug #17: dedicated per-row detail fetches for the drawers.
+  const { data: trailDetail, isLoading: trailDetailLoading } = useQuery({
+    queryKey: ['roster-audit-trail-detail', selectedTrailId],
+    queryFn: async () => {
+      const res = await api.get(`/roster-audit/trails/${selectedTrailId}`);
+      return res.data as AuditTrailDetail;
+    },
+    enabled: !!selectedTrailId,
+  });
+
+  const { data: runDetail, isLoading: runDetailLoading } = useQuery({
+    queryKey: ['roster-audit-run-detail', selectedRunId],
+    queryFn: async () => {
+      const res = await api.get(`/roster-audit/generation-runs/${selectedRunId}`);
+      return res.data as GenerationRunDetail;
+    },
+    enabled: !!selectedRunId,
+  });
+
+  const getChangeTypeBadge = (type: string, code: string) => {
+    const colorMap: Record<string, string> = {
+      shift_assigned: 'bg-blue-100 text-blue-700',
+      weekoff_assigned: 'bg-green-100 text-green-700',
+      weekoff_denied: 'bg-red-100 text-red-700',
+      weekoff_waitlisted: 'bg-amber-100 text-amber-700',
+      shift_frozen: 'bg-violet-100 text-violet-700',
+      holiday_applied: 'bg-cyan-100 text-cyan-700',
+      rejected_request: 'bg-red-100 text-red-700',
+      manager_override: 'bg-orange-100 text-orange-700',
+    };
+    return (
+      <Badge className={`${colorMap[code] || 'bg-gray-100 text-gray-700'} font-medium`}>
+        {type}
+      </Badge>
+    );
+  };
+
+  const getStatusBadge = (status: string) => {
+    const map: Record<string, { bg: string; text: string }> = {
+      completed: { bg: 'bg-green-100', text: 'text-green-700' },
+      running: { bg: 'bg-blue-100', text: 'text-blue-700' },
+      failed: { bg: 'bg-red-100', text: 'text-red-700' },
+      partial: { bg: 'bg-amber-100', text: 'text-amber-700' },
+    };
+    const colors = map[status] || map.completed;
+    return <Badge className={`${colors.bg} ${colors.text}`}>{status}</Badge>;
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-4">
+        <PanelHeader
+          icon={History}
+          title="Roster Audit Trail"
+          description="Track every roster change for compliance and accountability"
+          actions={
+            <>
+              <Button variant="outline" size="sm" className="cursor-pointer" onClick={() => refetchTrails()}>
+                <RefreshCw className="w-4 h-4 mr-1" />
+                Refresh
+              </Button>
+              <Button size="sm" className="cursor-pointer" onClick={() => setAmendDialogOpen(true)}>
+                Record Amendment
+              </Button>
+            </>
+          }
+        />
+
+        {!summaryLoading && summaryData && (
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+            <KpiTile icon={FileText} tone="blue" label="Total Changes" value={summaryData.totalChanges.toLocaleString()} />
+            <KpiTile icon={User} tone="amber" label="Manual Overrides" value={summaryData.manualOverrides} />
+            <KpiTile icon={GitBranch} tone="violet" label="Override Rate" value={`${summaryData.overrideRate}%`} />
+            <KpiTile icon={CheckCircle} tone="green" label="Auto Runs" value={summaryData.generationRuns.auto} />
+            <KpiTile
+              icon={AlertTriangle}
+              tone={summaryData.generationRuns.totalConflicts > 0 ? "red" : "neutral"}
+              label="Conflicts"
+              value={summaryData.generationRuns.totalConflicts}
+            />
+          </div>
+        )}
+
+        {/* Tabs */}
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="bg-white/80 border border-white/60 rounded-xl p-1">
+            <TabsTrigger value="trails" className="rounded-lg">
+              <History className="w-4 h-4 mr-2" />
+              Audit Trail
+            </TabsTrigger>
+            <TabsTrigger value="runs" className="rounded-lg">
+              <GitBranch className="w-4 h-4 mr-2" />
+              Generation Runs
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="trails" className="mt-4">
+            <Card className="rounded-lg">
+              <CardHeader className="border-b pb-4">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                    <FileText className="w-5 h-5 text-slate-600" />
+                    Change History
+                  </CardTitle>
+                  <div className="flex items-center gap-2">
+                    <Filter className="w-4 h-4 text-gray-400" />
+                    <Select value={changeTypeFilter} onValueChange={setChangeTypeFilter}>
+                      <SelectTrigger className="w-48 h-9">
+                        <SelectValue placeholder="All change types" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All change types</SelectItem>
+                        <SelectItem value="shift_assigned">Shift Assigned</SelectItem>
+                        <SelectItem value="weekoff_assigned">Week-off Assigned</SelectItem>
+                        <SelectItem value="weekoff_denied">Week-off Denied</SelectItem>
+                        <SelectItem value="weekoff_waitlisted">Week-off Waitlisted</SelectItem>
+                        <SelectItem value="shift_frozen">Shift Frozen</SelectItem>
+                        <SelectItem value="holiday_applied">Holiday Applied</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0">
+                {trailsLoading ? (
+                  <div className="flex items-center justify-center py-20">
+                    <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
+                  </div>
+                ) : !trailsData?.trails?.length ? (
+                  <div className="text-center py-20 text-gray-500">
+                    No audit records found for the selected period
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-slate-50/50">
+                          <TableHead className="font-semibold">Date</TableHead>
+                          <TableHead className="font-semibold">Employee</TableHead>
+                          <TableHead className="font-semibold">Change Type</TableHead>
+                          <TableHead className="font-semibold">Reason</TableHead>
+                          <TableHead className="font-semibold">Process</TableHead>
+                          <TableHead className="font-semibold">Changed By</TableHead>
+                          <TableHead className="font-semibold">Timestamp</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {trailsData.trails.map((trail) => (
+                          <TableRow
+                            key={trail.id}
+                            className="hover:bg-slate-50/50 cursor-pointer"
+                            onClick={() => setSelectedTrailId(trail.id)}
+                          >
+                            <TableCell className="font-medium">
+                              {new Date(trail.date).toLocaleDateString('en-IN', {
+                                day: '2-digit',
+                                month: 'short',
+                                year: 'numeric',
+                              })}
+                            </TableCell>
+                            <TableCell>
+                              <div>
+                                <p className="font-medium text-gray-900">{trail.employee.name}</p>
+                                <p className="text-xs text-gray-500">{trail.employee.code}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {getChangeTypeBadge(trail.changeType, trail.changeTypeCode)}
+                            </TableCell>
+                            <TableCell className="max-w-[200px]">
+                              <p className="text-sm text-gray-600 truncate" title={trail.reason}>
+                                {trail.reason}
+                              </p>
+                            </TableCell>
+                            <TableCell>
+                              <p className="text-sm">{trail.processName}</p>
+                              <p className="text-xs text-gray-500">{trail.branchName}</p>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-1">
+                                <User className="w-3 h-3 text-gray-400" />
+                                <span className="text-sm">{trail.changedBy}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-sm text-gray-500">
+                              {new Date(trail.timestamp).toLocaleString('en-IN', {
+                                day: '2-digit',
+                                month: 'short',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="runs" className="mt-4">
+            {(branchId || processId || lobId) && (
+              <FilterNote className="mb-2">Branch / Process / LOB filters not applied to generation runs</FilterNote>
+            )}
+            <Card className="rounded-lg">
+              <CardHeader className="border-b pb-4">
+                <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                  <GitBranch className="w-5 h-5 text-slate-600" />
+                  Roster Generation Runs
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                {runsLoading ? (
+                  <div className="flex items-center justify-center py-20">
+                    <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
+                  </div>
+                ) : !runsData?.runs?.length ? (
+                  <div className="text-center py-20 text-gray-500">
+                    No generation runs found
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    {runsData.runs.map((run) => (
+                      <div
+                        key={run.id}
+                        className="p-4 hover:bg-slate-50/50 flex items-center justify-between cursor-pointer"
+                        onClick={() => setSelectedRunId(run.id)}
+                      >
+                        <div className="flex items-center gap-4">
+                          <div
+                            className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                              run.runType === 'auto'
+                                ? 'bg-green-100'
+                                : 'bg-blue-100'
+                            }`}
+                          >
+                            <RefreshCw
+                              className={`w-5 h-5 ${
+                                run.runType === 'auto' ? 'text-green-600' : 'text-blue-600'
+                              }`}
+                            />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="font-semibold text-gray-900">
+                                {run.processName || 'All Processes'}
+                              </p>
+                              {getStatusBadge(run.status)}
+                              <Badge variant="outline" className="text-xs">
+                                {run.runType}
+                              </Badge>
+                            </div>
+                            <p className="text-sm text-gray-500">
+                              {run.branchName || 'All Branches'} • Triggered by {run.triggeredBy}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-6">
+                          <div className="text-right">
+                            <p className="text-sm font-medium text-gray-900">
+                              {run.stats.assignmentsCreated} assignments
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {run.stats.employeesProcessed} employees •{' '}
+                              {run.stats.weekoffsAllocated} week-offs
+                            </p>
+                          </div>
+                          {run.stats.conflictsFound > 0 && (
+                            <Badge className="bg-red-100 text-red-700">
+                              {run.stats.conflictsFound} conflicts
+                            </Badge>
+                          )}
+                          <div className="text-right text-sm text-gray-500">
+                            <p>
+                              {new Date(run.startedAt).toLocaleDateString('en-IN', {
+                                day: '2-digit',
+                                month: 'short',
+                              })}
+                            </p>
+                            <p className="text-xs">
+                              {run.duration ? `${run.duration}s` : 'Running...'}
+                            </p>
+                          </div>
+                          <ChevronRight className="w-5 h-5 text-gray-400" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
+
+      {amendDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 space-y-4">
+            <h2 className="font-semibold text-base">Record Post-Publication Amendment</h2>
+            <p className="text-sm text-slate-500">
+              Mandatory: describe what changed and why. Logged in the roster audit trail.
+            </p>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-slate-600">Cycle ID</label>
+              <input
+                className="w-full border rounded p-2 text-sm"
+                placeholder="e.g. 42"
+                value={amendCycleId}
+                onChange={(e) => setAmendCycleId(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-slate-600">Amendment Reason</label>
+              <textarea
+                className="w-full border rounded p-2 text-sm min-h-[100px]"
+                placeholder="Describe the amendment reason..."
+                value={amendReason}
+                onChange={(e) => setAmendReason(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { setAmendDialogOpen(false); setAmendCycleId(''); setAmendReason(''); }}
+              >Cancel</Button>
+              <Button
+                size="sm"
+                disabled={!amendReason.trim() || !amendCycleId.trim() || amendSubmitting}
+                className="bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50"
+                onClick={async () => {
+                  if (!amendReason.trim() || !amendCycleId.trim()) return;
+                  setAmendSubmitting(true);
+                  try {
+                    await api.post(`/roster-gov/cycles/${amendCycleId.trim()}/amendments`, {
+                      reason: amendReason.trim(),
+                    });
+                    setAmendDialogOpen(false);
+                    setAmendCycleId('');
+                    setAmendReason('');
+                    void refetchTrails();
+                  } finally {
+                    setAmendSubmitting(false);
+                  }
+                }}
+              >{amendSubmitting ? 'Saving…' : 'Save Amendment'}</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Merge-plan Phase B bug #17: Audit Trail row drill-down (Drill-Down Mandate) */}
+      <Sheet open={!!selectedTrailId} onOpenChange={(open) => !open && setSelectedTrailId(null)}>
+        <SheetContent className="w-[400px] sm:w-[540px] overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <FileText className="w-4 h-4" />
+              Audit Entry {trailDetail?.id ? `#${trailDetail.id}` : ''}
+            </SheetTitle>
+          </SheetHeader>
+          {trailDetailLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+            </div>
+          ) : trailDetail ? (
+            <div className="space-y-6 mt-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Change</p>
+                <div className="flex items-center gap-2 mb-2">
+                  {getChangeTypeBadge(trailDetail.changeType, trailDetail.changeTypeCode)}
+                  <span className="text-sm text-slate-500">
+                    {new Date(trailDetail.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  </span>
+                </div>
+                <p className="text-sm text-slate-600">{trailDetail.reason}</p>
+              </div>
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Employee</p>
+                <p className="text-sm font-medium text-gray-900">{trailDetail.employee.name}</p>
+                <p className="text-xs text-gray-500">{trailDetail.employee.code}</p>
+                <p className="text-xs text-gray-500 mt-1">{trailDetail.processName || '—'} · {trailDetail.branchName || '—'}</p>
+              </div>
+
+              {trailDetail.shift && (
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Shift</p>
+                  <p className="text-sm text-slate-700">
+                    {trailDetail.shift.name} ({trailDetail.shift.startTime}–{trailDetail.shift.endTime})
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Changed By</p>
+                <p className="text-sm text-slate-700">
+                  {trailDetail.changedBy}{trailDetail.changedByCode ? ` (${trailDetail.changedByCode})` : ''}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {new Date(trailDetail.timestamp).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </div>
+
+              {trailDetail.run && (
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Generation Run</p>
+                  <p className="text-sm text-slate-700">
+                    {trailDetail.run.runType} run · {getStatusBadge(trailDetail.run.status)}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">Triggered by {trailDetail.run.triggeredBy}</p>
+                </div>
+              )}
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">
+                  Related Changes (±7 days, same employee)
+                </p>
+                {trailDetail.relatedChanges.length > 0 ? (
+                  <div className="space-y-2">
+                    {trailDetail.relatedChanges.map((rc) => (
+                      <div key={rc.id} className="text-sm border-l-2 border-slate-200 pl-3 py-0.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-slate-700">{rc.changeType}</span>
+                          <span className="text-xs text-gray-400">
+                            {new Date(rc.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500">{rc.reason} · {rc.changedBy}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400">None</p>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </SheetContent>
+      </Sheet>
+
+      {/* Merge-plan Phase B bug #17: Generation Run row drill-down (Drill-Down Mandate) */}
+      <Sheet open={!!selectedRunId} onOpenChange={(open) => !open && setSelectedRunId(null)}>
+        <SheetContent className="w-[400px] sm:w-[560px] overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <GitBranch className="w-4 h-4" />
+              Generation Run {runDetail?.cycleId ? `· Cycle ${runDetail.cycleId}` : ''}
+            </SheetTitle>
+          </SheetHeader>
+          {runDetailLoading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+            </div>
+          ) : runDetail ? (
+            <div className="space-y-6 mt-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Run</p>
+                <div className="flex items-center gap-2 mb-1">
+                  {getStatusBadge(runDetail.status)}
+                  <Badge variant="outline" className="text-xs">{runDetail.runType}</Badge>
+                </div>
+                <p className="text-sm text-slate-700">
+                  {runDetail.processName || 'All Processes'} · {runDetail.branchName || 'All Branches'}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Triggered by {runDetail.triggeredBy.name}{runDetail.triggeredBy.code ? ` (${runDetail.triggeredBy.code})` : ''}
+                </p>
+              </div>
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Stats</p>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-lg bg-slate-50 p-2">
+                    <div className="font-bold text-slate-800">{runDetail.stats.assignmentsCreated}</div>
+                    <div className="text-xs text-slate-500">Assignments Created</div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-2">
+                    <div className="font-bold text-slate-800">{runDetail.stats.employeesProcessed}</div>
+                    <div className="text-xs text-slate-500">Employees Processed</div>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-2">
+                    <div className="font-bold text-slate-800">{runDetail.stats.weekoffsAllocated}</div>
+                    <div className="text-xs text-slate-500">Week-offs Allocated</div>
+                  </div>
+                  <div className={`rounded-lg p-2 ${runDetail.stats.conflictsFound > 0 ? 'bg-red-50' : 'bg-slate-50'}`}>
+                    <div className={`font-bold ${runDetail.stats.conflictsFound > 0 ? 'text-red-700' : 'text-slate-800'}`}>
+                      {runDetail.stats.conflictsFound}
+                    </div>
+                    <div className="text-xs text-slate-500">Conflicts Found</div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">Timing</p>
+                <p className="text-sm text-slate-700">
+                  Started {new Date(runDetail.startedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                </p>
+                <p className="text-sm text-slate-700">
+                  {runDetail.completedAt
+                    ? `Completed ${new Date(runDetail.completedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} (${runDetail.duration}s)`
+                    : 'Still running'}
+                </p>
+              </div>
+
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">
+                  Audit Trail (this run's decisions)
+                </p>
+                {runDetail.decisions.length > 0 ? (
+                  <div className="space-y-2 max-h-72 overflow-y-auto">
+                    {runDetail.decisions.map((d) => (
+                      <div key={d.id} className="text-sm border-l-2 border-slate-200 pl-3 py-0.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-slate-700">{d.changeType}</span>
+                          <span className="text-xs text-gray-400">
+                            {new Date(d.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500">{d.employee.name} ({d.employee.code}) · {d.reason}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400">None</p>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </SheetContent>
+      </Sheet>
+    </div>
+  );
+}

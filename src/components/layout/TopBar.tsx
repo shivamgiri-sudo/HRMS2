@@ -17,7 +17,8 @@ import {
   User,
   X,
 } from "lucide-react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -293,7 +294,7 @@ export function TopBar({
                 aria-label="Account menu"
               >
                 <Avatar className="h-11 w-11 ring-2 ring-[#1B6AB5]/25">
-                  <AvatarImage src={normalizeMediaUrl(myProfile?.avatar_url)} alt="My photo" />
+                  <AuthedAvatarImage src={normalizeMediaUrl(myProfile?.avatar_url)} alt="My photo" />
                   <AvatarFallback className="text-sm font-bold text-white" style={{ background: "#1B6AB5" }}>
                     {userInitials}
                   </AvatarFallback>

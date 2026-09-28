@@ -76,3 +76,24 @@ describe("getUnlinkedGrnReview — header status gate", () => {
     expect(result.rows[0].category).toBe("NO_MATCHING_LINE");
   });
 });
+
+describe("getUnlinkedGrnReview — HEADROOM_EXCEEDED shortfall is ex-GST on both sides", () => {
+  it("measures the GRN's ex-GST amount against the line's ex-GST ceiling, as the approval gate does", async () => {
+    // GRN 11,800 gross / 10,000 ex-GST; line base 9,000 (gross 10,620). Old basis: 11,800 − 10,620.
+    execute.mockResolvedValueOnce([[{ ...GRN_ROW, amount_with_tax: 11800, amount_ex_gst: 10000 }], []]);
+    execute.mockResolvedValueOnce([[{ id: "header-1", branch_id: "branch-noida-2", period_code: "2026-08" }], []]);
+    execute.mockResolvedValueOnce([[{
+      id: "line-1", budget_id: "header-1", cost_centre_id: "cc-ops", head: "Travel", sub_head: null,
+      gross_amount: 10620, ceiling_ex_gst: 9000, reserved_amount: 0, consumed_amount: 0,
+    }], []]);
+
+    const result = await getUnlinkedGrnReview({});
+
+    expect(result.rows[0].category).toBe("HEADROOM_EXCEEDED");
+    expect(result.rows[0].shortfall).toBe(1000);
+    const [grnSql] = execute.mock.calls[0];
+    const [lineSql] = execute.mock.calls[2];
+    expect(String(grnSql)).toContain("AS amount_ex_gst");
+    expect(String(lineSql)).toContain("COALESCE(NULLIF(l.base_amount, 0)");
+  });
+});

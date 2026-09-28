@@ -40,8 +40,48 @@ function readLock(): {
   return JSON.parse(fs.readFileSync(LOCK_PATH, "utf8"));
 }
 
-const sqlFiles = () =>
+/**
+ * .sql files directly in sql/, flat.
+ *
+ * This is the set the "no new migration file is left out of the manifest" check uses, and it stays
+ * FLAT deliberately. That check is grandfathered against a lock file (knownUnlisted) that was
+ * itself built from a flat listing, so widening it to subdirectories reports all 63 files under
+ * sql/migrations/ and sql/verify/ as brand-new orphans at once — none of which is a new migration
+ * anyone forgot. See sqlFilesIncludingSubdirs below for the set that does need subdirectories.
+ */
+const sqlFiles = (): string[] =>
   fs.readdirSync(path.join(ROOT, "sql")).filter((f) => /\.sql$/.test(f));
+
+/**
+ * Every .sql under sql/ including one level of subdirectory, named exactly as the manifest names
+ * it (forward slashes relative to sql/).
+ *
+ * Used ONLY by the "every manifest entry has a file" check. That check was previously flat and so
+ * was blind to subdirectory entries the runner genuinely supports: the manifest lists
+ * `migrations/0060_portal_admin_impersonation_log.sql`, that file exists, and it has applied
+ * successfully against the live database — yet the guard reported it as dangling and failed. A
+ * guard that cries wolf about a correct entry is worse than no guard, because a suite that is
+ * normally red stops being read.
+ *
+ * Forward slashes are forced rather than using path.join, which yields backslashes on Windows and
+ * would miss every Set lookup against the manifest's own spelling.
+ */
+const sqlFilesIncludingSubdirs = (): string[] => {
+  const root = path.join(ROOT, "sql");
+  const out: string[] = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (entry.isFile() && /\.sql$/.test(entry.name)) {
+      out.push(entry.name);
+      continue;
+    }
+    if (entry.isDirectory()) {
+      for (const nested of fs.readdirSync(path.join(root, entry.name), { withFileTypes: true })) {
+        if (nested.isFile() && /\.sql$/.test(nested.name)) out.push(`${entry.name}/${nested.name}`);
+      }
+    }
+  }
+  return out;
+};
 
 describe("migration manifest — removals", () => {
   it("no released entry has been removed without an approved deletion", () => {
@@ -97,7 +137,7 @@ describe("migration manifest — files and entries agree", () => {
   it("every manifest entry has a file", () => {
     // A dangling entry aborts the run at that point on a fresh database, so
     // everything after it never applies either.
-    const files = new Set(sqlFiles());
+    const files = new Set(sqlFilesIncludingSubdirs());
     const known = new Set(readLock().knownDangling);
     const dangling = readManifest().filter((m) => !files.has(m) && !known.has(m));
 
@@ -211,6 +251,58 @@ describe("migration manifest — duplicates", () => {
     // owner approval and are registered here so a rebuilt database gets them
     // too. Renaming them to free numbers is the one thing that would break:
     // schema_migrations now carries these exact filenames as applied.
-    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(69);
+    //
+    // 69 -> 82 (2026-09-09): merging worktree-payment-voucher-phase1 (Payment
+    // Voucher System, Phases 1-5) into main. Same shape as every jump above —
+    // the branch's own 1701-1707 (company_bank_account through
+    // bank_ledger_report_page_access) collided with main's independently
+    // numbered 1701-1707 (LP APR/offer-exception/Clovia/Housing), and its later
+    // 1708/1712/1713 (bank_reconciliation_period, bank_reconciliation_page_access,
+    // finance_masters_page_access) each collided with one of main's own
+    // concurrently-numbered files. All are real, already-applied-or-approved
+    // migrations tracked by distinct full filenames; renaming any of them is
+    // the one thing that would break schema_migrations' by-filename tracking.
+    //
+    // 82 -> 85 (2026-09-10): merging worktree-payment-voucher-phase1 again (Payment
+    // Voucher multi-GRN/role-model/general-payment work) into main. The branch's own
+    // 1726/1728 (payment_voucher_accounts_review, payment_voucher_general_source_type)
+    // collided with main's independently-numbered 1726/1728
+    // (reginald_abandoned_cart_daily_actual, bla_bli_blu_cdr_daily_actual). Same shape
+    // as every jump above; renaming either side is the one thing that would break
+    // schema_migrations' by-filename tracking.
+    //
+    // 85 -> 88 (2026-09-10): merging worktree-payment-voucher-phase1 a third time (bank
+    // ledger completeness / vendor picker / optional reference work) into main. The
+    // branch's own 1739-1741 (vendor_payment_transaction_bank_account,
+    // imprest_allocation_bank_account, bank_ledger_direct_source_types) collided with
+    // main's independently-numbered 1739-1741, part of a concurrent session's larger
+    // 1739-1746 batch (Bla Bli Blu / GNC / Bellavita / Neemans uploaders). Same shape as
+    // every jump above; renaming either side is the one thing that would break
+    // schema_migrations' by-filename tracking.
+    //
+    // 88 -> 89 (2026-09-10): merging worktree-payment-voucher-phase1 a fourth time (vendor
+    // advance payments / reconciliation hardening) into main. This merge's own conflict
+    // resolution on this exact manifest silently dropped the branch's 1739-1741 entries
+    // above (a real regression, caught by this test and re-added) while a fifth concurrent
+    // batch independently registered 1747_gnc_allocation_masmis_uploader.sql against the
+    // branch's own 1747_vendor_advance_payments.sql. Same shape as every jump above.
+    //
+    // 89 -> 90 (2026-09-14): merge conflict resolution re-registered two 1764 files
+    // (1764_exit_clearance_task_attachment.sql and 1764_noc_signatory_not_mandatory.sql)
+    // that were on HEAD's local branch but were silently dropped when the merge picked
+    // origin/main's manifest side. Both were committed on HEAD before the merge (bc8a5c77
+    // and a0d6707d) and the files exist on disk; the conflict resolution that chose
+    // origin/main's manifest section omitted them. Same numbering shape as every jump
+    // above — two unrelated concurrent sessions independently picked the same next-available
+    // number. Renaming either is the one thing that would break schema_migrations tracking.
+    //
+    // 90 -> 91 (2026-09-14): 1700_noc_case_opened_event.sql registered alongside the
+    // already-registered 1700_email_ticket_daily_actual.sql — same concurrent-session
+    // number collision pattern as every jump above.
+    //
+    // 91 -> 92 (2026-09-22): 1836_journal_voucher.sql registered alongside the
+    // already-registered 1836_user_assignment_scope_cost_centre.sql — same concurrent-session
+    // number collision pattern as every jump above.
+    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(92);
   });
 });

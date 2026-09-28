@@ -24,7 +24,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
@@ -33,6 +34,8 @@ import {
   EmployeeJourneyTimeline,
   type EmployeeJourneyEvent,
 } from "@/components/employees/EmployeeJourneyTimeline";
+import { EmployeeDocuments } from "@/components/documents/EmployeeDocuments";
+import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import { Employee } from "./EmployeeTable";
 import { employeeStatusStyles } from "@/lib/statusStyles";
 
@@ -74,6 +77,7 @@ function formatDate(value?: string | null) {
 
 export function EmployeeViewDialog({ employee, open, onOpenChange }: EmployeeViewDialogProps) {
   const [salaryVisible, setSalaryVisible] = useState(false);
+  const { isAdminOrHR } = useIsAdminOrHR();
   const { data, isLoading } = useQuery({
     queryKey: ["employee-stat-card", employee?.id],
     queryFn: async () => {
@@ -106,7 +110,7 @@ export function EmployeeViewDialog({ employee, open, onOpenChange }: EmployeeVie
         <header className="bg-[#073f78] px-6 py-7 text-white sm:px-8">
           <div className="flex flex-col gap-6 sm:flex-row sm:items-center">
             <Avatar className="size-32 border-4 border-white shadow-xl ring-2 ring-green-300">
-              <AvatarImage
+              <AuthedAvatarImage
                 src={normalizeMediaUrl(details?.avatar_url || details?.photo_url || employee.avatar)}
                 alt={`${displayName} profile photo`}
               />
@@ -165,6 +169,14 @@ export function EmployeeViewDialog({ employee, open, onOpenChange }: EmployeeVie
               {data?.journey?.length ? (
                 <span className="ml-2 rounded-full bg-[#1B6AB5] px-2 py-0.5 text-xs text-white">
                   {data.journey.length}
+                </span>
+              ) : null}
+            </TabsTrigger>
+            <TabsTrigger value="documents" className="rounded-xl px-5 py-2.5 text-sm font-bold">
+              Documents
+              {data?.pending_docs ? (
+                <span className="ml-2 rounded-full bg-orange-500 px-2 py-0.5 text-xs text-white">
+                  {data.pending_docs}
                 </span>
               ) : null}
             </TabsTrigger>
@@ -267,6 +279,16 @@ export function EmployeeViewDialog({ employee, open, onOpenChange }: EmployeeVie
               events={data?.journey ?? []}
               loading={isLoading}
             />
+          </TabsContent>
+
+          <TabsContent value="documents" className="mt-6">
+            {employee?.id && (
+              <EmployeeDocuments
+                employeeId={employee.id}
+                canUpload={isAdminOrHR}
+                canDelete={isAdminOrHR}
+              />
+            )}
           </TabsContent>
         </Tabs>
       </DialogContent>}

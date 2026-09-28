@@ -1,5 +1,5 @@
 import type { RowDataPacket } from "mysql2";
-import type { Response, NextFunction } from "express";
+import type { Request, Response, NextFunction } from "express";
 import { db } from "../db/mysql.js";
 import type { AuthenticatedRequest } from "../middleware/authMiddleware.js";
 import { memoizeForRequest } from "./requestContext.js";
@@ -205,10 +205,10 @@ export async function hasProcessScope(
  * 403 otherwise.
  */
 export function selfOrAdminHr(employeeIdParam = "id") {
-  return async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  return async (req: AuthenticatedRequest & Request, res: Response, next: NextFunction) => {
     try {
       const userId = req.authUser!.id;
-      const targetEmployeeId = req.params[employeeIdParam];
+      const targetEmployeeId = (req as Request).params[employeeIdParam];
 
       if (await hasRole(userId, "admin", "hr")) return next();
 

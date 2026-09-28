@@ -132,13 +132,20 @@ export async function calculateWeekoffEligibility(
   // Calculate available working days (calendar days minus weekoffs minus company holidays)
   const availableWorkingDays = workingDays - safeHolidays;
 
-  // If employee worked all available working days, they get all weekoffs
-  if (paidBase >= availableWorkingDays) {
+  // Holidays are paid days the company declared — they must count toward the employee's
+  // "effective" attendance for weekoff purposes, the same as a present day. Without this,
+  // a month with 1 holiday silently reduces an employee's slab score by 1 and can drop
+  // their weekoff entitlement by one tier (e.g. Aug 2026: 23 present + 1 holiday → slab
+  // gives 3 weekoffs; with holiday counted → 24 → slab gives 4 weekoffs).
+  const effectivePaidBase = paidBase + safeHolidays;
+
+  // If employee worked all available working days (including holidays), they get all weekoffs
+  if (effectivePaidBase >= availableWorkingDays) {
     return actualCount;
   }
 
-  // Otherwise apply the paid-base slab cap
-  const slabMax = await getSlabMaxWeekoffs(paidBase);
+  // Otherwise apply the paid-base slab cap using the holiday-inclusive effective base
+  const slabMax = await getSlabMaxWeekoffs(effectivePaidBase);
   if (slabMax === Infinity) return actualCount;
   return Math.min(slabMax, actualCount);
 }

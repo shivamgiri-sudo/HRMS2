@@ -16,6 +16,7 @@ import { encrypt, decrypt } from "../../utils/encryption.js";
 // receive BOTH the legacy AES-CBC shape written below and the canonical AES-GCM shape written by
 // the DPDP backfill; decrypt() rejects the latter as "Invalid encrypted format".
 import { decryptPii } from "../../shared/piiCiphertext.js";
+import { hashPiiForMatch } from "../../shared/piiHash.js";
 import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import { extractFromDocument, crossValidateDocument, checkDuplicates } from "./ocr.service.js";
@@ -1356,7 +1357,7 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
   const incomingPanIsMasked = /^[A-Z0-9]{3}XXXX[A-Z0-9]{2}$/.test(incomingPanRaw);
   const rawPan = incomingPanIsMasked ? "" : incomingPanRaw;
   const panMasked = rawPan ? maskPan(rawPan) : maskPan(input.pan_number_masked);
-  const panHash = rawPan ? hashValue(rawPan) : null;
+  const panHash = rawPan ? hashPiiForMatch(rawPan) : null;
   // Encrypted at rest so PAN verification can actually run. The masked form is not
   // a PAN and the hash is one-way, so neither can be sent to a provider - which is
   // why automatic PAN verification could never fire. Same treatment bank account
@@ -1371,7 +1372,7 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
   const incomingAadhaarIsMasked = /^XXXX-XXXX-\d{4}$/i.test(incomingAadhaarRaw);
   const rawAadhaar = incomingAadhaarIsMasked ? "" : incomingAadhaarRaw.replace(/\D/g, "");
   const aadhaarMasked = rawAadhaar ? maskAadhaar(rawAadhaar) : maskAadhaar(input.aadhaar_number_masked);
-  const aadhaarHash = rawAadhaar ? hashValue(rawAadhaar) : null;
+  const aadhaarHash = rawAadhaar ? hashPiiForMatch(rawAadhaar) : null;
   // candidate_onboarding_profile.aadhaar_number_encrypted DOES NOT EXIST on the live
   // database. Migration 1651_aadhaar_encrypted_storage_candidate_onboarding.sql was
   // written and shipped to the server, but was never added to MIGRATION_MANIFEST, so it
@@ -1659,7 +1660,7 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
           AND account_no_hash = ?
         ORDER BY (verification_status = 'verified') DESC, created_at DESC
         LIMIT 1`,
-      [candidateId, hashValue(submittedAccountNo)]
+      [candidateId, hashPiiForMatch(submittedAccountNo)]
     );
     if (!verifiedRows.length) {
       throw Object.assign(
@@ -1707,7 +1708,7 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
       input.branchName ?? null,
       input.accountHolderName ?? null,
       maskAccount(accountNo),
-      hashValue(accountNo),
+      hashPiiForMatch(accountNo),
       accountNoEncrypted,
       String(input.ifscCode ?? input.bank_ifsc ?? "").trim().toUpperCase() || null,
       input.accountType ?? null,
@@ -1751,14 +1752,14 @@ export async function saveBankDetails(token: string, input: Record<string, unkno
       /^[0-9]{9,18}$/.test(String(accountNo ?? "").replace(/\s+/g, ""))
         ? String(accountNo).replace(/\s+/g, "")
         : null,
-      hashValue(accountNo),
+      hashPiiForMatch(accountNo),
       accountNoEncrypted,
       candidateId,
     ]
   );
 
   // Fraud detection: check for duplicate bank account (non-blocking)
-  const bankHash = hashValue(accountNo);
+  const bankHash = hashPiiForMatch(accountNo);
   if (bankHash) {
     checkDuplicates(candidateId, "bank", bankHash).catch(e => console.error("[Fraud] Bank duplicate check error:", e.message));
   }
@@ -2389,7 +2390,23 @@ export async function getOnboardingCandidateScope(candidateId: string) {
 export async function listFullOnboardingRequests(scopeFilter?: OnboardingScopeFilter) {
   const whereSql = scopeFilter?.sql ? `WHERE (${normalizeCandidateScopeSql(scopeFilter.sql)})` : "";
   const params = scopeFilter?.params ?? [];
-  const [rows] = await db.execute<RowDataPacket[]>(
+  // br_scope/pm_scope only exist to give normalizeCandidateScopeSql() a
+  // COALESCE(br_scope.id, c.applied_for_branch) target — applied_for_branch is
+  // a legacy free-text-ish field that can hold a branch's id, name or code, so
+  // scope comparisons need whichever of those three actually matches. For
+  // super_admin and any admin-bypass caller, buildScopeWhereClause() returns a
+  // bare "1=1" that never mentions br_scope/pm_scope at all, so the joins were
+  // running unconditionally on every call for zero effect on that (by far the
+  // most common) case — each OR-across-three-columns join fans a candidate row
+  // out before GROUP BY collapses it back down, for nothing. Only pull them in
+  // when the normalized WHERE text actually references one.
+  const needsScopeJoins = whereSql.includes("br_scope") || whereSql.includes("pm_scope");
+  // db.query, not db.execute — this is the same class of multi-join query as
+  // listOnboardingRequests() (ats.onboarding.service.ts), which measured 561ms
+  // via db.query vs 8.7s via db.execute for identical SQL/data live on
+  // 2026-09-22 (MySQL's prepared-statement planner picking a far worse plan
+  // than the ad-hoc text-protocol planner for this join shape).
+  const [rows] = await db.query<RowDataPacket[]>(
     `SELECT req.id, req.status, req.candidate_id,
             req.created_at, req.updated_at,
             p.profile_status, p.reviewed_at,
@@ -2406,14 +2423,14 @@ export async function listFullOnboardingRequests(scopeFilter?: OnboardingScopeFi
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = req.candidate_id
        LEFT JOIN branch_master br ON br.id = c.applied_for_branch
        LEFT JOIN process_master pm ON pm.id = c.applied_for_process
-       LEFT JOIN branch_master br_scope
+       ${needsScopeJoins ? `LEFT JOIN branch_master br_scope
          ON br_scope.id = c.applied_for_branch
          OR br_scope.branch_name = c.applied_for_branch
          OR br_scope.branch_code = c.applied_for_branch
        LEFT JOIN process_master pm_scope
          ON pm_scope.id = c.applied_for_process
          OR pm_scope.process_name = c.applied_for_process
-         OR pm_scope.process_code = c.applied_for_process
+         OR pm_scope.process_code = c.applied_for_process` : ""}
        LEFT JOIN candidate_onboarding_bank_detail bank ON bank.candidate_id = req.candidate_id
        LEFT JOIN candidate_onboarding_document doc ON doc.candidate_id = req.candidate_id AND doc.deleted_at IS NULL
        LEFT JOIN ats_employment_offer offer
@@ -2485,6 +2502,31 @@ export async function reviewFullOnboarding(
   scopeFilter?: OnboardingScopeFilter
 ) {
   await ensureCandidateWithinScope(candidateId, scopeFilter);
+
+  // A profile the system has flagged as suspicious cannot be approved until the
+  // reviewer has recorded a decision on every critical/high alert. The screen already
+  // disables Approve, but a screen is not a control — this is the enforcement. Alerts
+  // still "under_review" count as unresolved: the reviewer said they need more
+  // information, not that they were satisfied.
+  if (input.status === "approved") {
+    const [openAlerts] = await db.execute<RowDataPacket[]>(
+      `SELECT alert_type FROM candidate_fraud_alert
+        WHERE candidate_id = ?
+          AND LOWER(COALESCE(status, 'open')) IN ('open', 'under_review')
+          AND LOWER(COALESCE(severity, '')) IN ('critical', 'high')`,
+      [candidateId],
+    );
+    if ((openAlerts as RowDataPacket[]).length > 0) {
+      const types = [...new Set((openAlerts as RowDataPacket[]).map((a) => String(a.alert_type).replace(/_/g, " ").toLowerCase()))];
+      throw Object.assign(
+        new Error(
+          `This profile was flagged by the fraud check (${types.join(", ")}). Review the documents and the Fraud & Identity Review section and record a decision on each alert before approving.`,
+        ),
+        { statusCode: 409, code: "FRAUD_REVIEW_REQUIRED" },
+      );
+    }
+  }
+
   const profileStatusMap: Record<string, string> = {
     approved: "hr_approved",
     rejected: "rejected",
@@ -2638,6 +2680,13 @@ export async function syncOnboardingStatus(
     payroll_hr_approved: "submitted",
     employee_created: "submitted",
     onboarded: "submitted",
+    // candidate_onboarding_profile.profile_status is a narrower ENUM than
+    // ats_onboarding_request.status (migration 345 extended the latter to add
+    // hr_pushback but never touched this column) — it has no 'hr_pushback'
+    // value, only 'hr_review'. Writing 'hr_pushback' here throws "Data
+    // truncated for column 'profile_status'" and masks as a 500 on every
+    // HR Push Back click (reference 925c8df7).
+    hr_pushback: "hr_review",
   };
   const mappedProfileStatus = profileStatusMap[profileStatus] ?? profileStatus;
   const safeProfileStatus = profileAllowed.has(mappedProfileStatus) ? mappedProfileStatus : "submitted";

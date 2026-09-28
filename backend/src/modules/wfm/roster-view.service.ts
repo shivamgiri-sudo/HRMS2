@@ -19,6 +19,7 @@
  */
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
+import { lobCondition, type LobFilter } from '../../shared/lobFilter.js';
 
 export interface RosterViewFilters {
   fromDate: string;
@@ -26,6 +27,8 @@ export interface RosterViewFilters {
   branchId?: string;
   processId?: string;
   costCentreId?: string;
+  /** Optional: only employees whose LOB (employees.lob_id) is this one. */
+  lob?: LobFilter;
   /** Free text over employee code and name. */
   search?: string;
   limit?: number;
@@ -53,6 +56,9 @@ export interface RosterViewRow {
   processName: string | null;
   branchName: string | null;
   costCentre: string | null;
+  /** The employee's LOB (employees.lob_id); null when not set. */
+  lobId?: string | null;
+  lobName?: string | null;
   /** date (YYYY-MM-DD) -> what is planned that day */
   days: Record<string, string>;
   /** date (YYYY-MM-DD) -> detailed cell with adherence — only if includeAdherence=true */
@@ -134,6 +140,8 @@ export async function getRosterView(
   if (filters.branchId) { where.push('e.branch_id = ?'); params.push(filters.branchId); }
   if (filters.processId) { where.push('e.process_id = ?'); params.push(filters.processId); }
   if (filters.costCentreId) { where.push('e.cost_centre_id = ?'); params.push(filters.costCentreId); }
+  const lobCond = filters.lob ? lobCondition(filters.lob, 'e') : null;
+  if (lobCond) { where.push(lobCond.sql); params.push(...lobCond.params); }
   if (filters.search) {
     where.push('(e.employee_code LIKE ? OR e.full_name LIKE ?)');
     params.push(`%${filters.search}%`, `%${filters.search}%`);
@@ -160,6 +168,7 @@ export async function getRosterView(
             b.branch_name       AS branch_name,
             b.id                AS branch_id,
             cc.cost_centre_name AS cost_centre,
+            e.lob_id            AS lob_id,
             DATE_FORMAT(ra.roster_date, '%Y-%m-%d') AS roster_date,
             ra.assignment_type,
             ra.shift_start_time  AS own_start_time,
@@ -209,15 +218,20 @@ export async function getRosterView(
     const empIdList = [...employeeIds];
     const placeholders = empIdList.map(() => '?').join(', ');
     const [attRows] = await db.execute<RowDataPacket[]>(
+      // clock_in_time/clock_out_time/raw_minutes/attendance_status are the real
+      // attendance_daily_record columns - first_in/last_out/total_hours/status never existed on
+      // this table at all (confirmed via SHOW COLUMNS live 2026-09-11), so this 500'd every
+      // roster-view call that asked for adherence data. Aliased to the original names so none of
+      // the downstream JS reading att.first_in/att.total_hours needs to change.
       `SELECT employee_id,
-              DATE_FORMAT(attendance_date, '%Y-%m-%d') AS att_date,
-              first_in,
-              last_out,
-              total_hours,
-              status
+              DATE_FORMAT(record_date, '%Y-%m-%d') AS att_date,
+              TIME_FORMAT(clock_in_time, '%H:%i') AS first_in,
+              TIME_FORMAT(clock_out_time, '%H:%i') AS last_out,
+              raw_minutes / 60 AS total_hours,
+              attendance_status AS status
          FROM attendance_daily_record
         WHERE employee_id IN (${placeholders})
-          AND attendance_date BETWEEN ? AND ?`,
+          AND record_date BETWEEN ? AND ?`,
       [...empIdList, filters.fromDate, filters.toDate]
     );
     for (const att of attRows) {
@@ -245,6 +259,7 @@ export async function getRosterView(
         processName: row.process_name ? String(row.process_name) : null,
         branchName: row.branch_name ? String(row.branch_name) : null,
         costCentre: row.cost_centre ? String(row.cost_centre) : null,
+        lobId: row.lob_id ? String(row.lob_id) : null,
         days: {},
         dayCells: includeAdherence ? {} : undefined,
         _adherenceStats: { green: 0, amber: 0, red: 0, brown: 0, total: 0 },
@@ -335,6 +350,18 @@ export async function getRosterView(
     resultRows.push({ ...rest, adherencePct: includeAdherence ? adherencePct : undefined });
   }
 
+  // LOB names by parameter (not a join): employees.lob_id and lob_master.id may not share a collation.
+  const lobIds = [...new Set(resultRows.map((r) => r.lobId).filter((v): v is string => !!v))];
+  if (lobIds.length) {
+    const [lobRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, lob_name FROM lob_master WHERE id IN (${lobIds.map(() => '?').join(', ')})`,
+      lobIds
+    );
+    const lobNames = new Map<string, string>();
+    for (const l of lobRows ?? []) lobNames.set(String(l.id), String(l.lob_name));
+    for (const r of resultRows) r.lobName = r.lobId ? (lobNames.get(r.lobId) ?? null) : null;
+  }
+
   // Build analytics summary
   let analytics: RosterAdherenceAnalytics | undefined;
   if (includeAdherence) {
@@ -396,6 +423,7 @@ export interface RosterStatusSummaryFilters {
   toDate: string;
   branchId?: string;
   processId?: string;
+  lob?: LobFilter;
 }
 
 export interface RosterStatusSummary {
@@ -463,13 +491,15 @@ export async function getEmployeeAdherenceTrend(
     );
 
     // Get attendance for this month
+    // Same real-schema fix as the adherence query above: first_in/total_hours never existed on
+    // attendance_daily_record - clock_in_time (datetime) and raw_minutes (minutes) do.
     const [attRows] = await db.execute<RowDataPacket[]>(
-      `SELECT DATE_FORMAT(attendance_date, '%Y-%m-%d') AS att_date,
-              first_in,
-              total_hours
+      `SELECT DATE_FORMAT(record_date, '%Y-%m-%d') AS att_date,
+              TIME_FORMAT(clock_in_time, '%H:%i') AS first_in,
+              raw_minutes / 60 AS total_hours
          FROM attendance_daily_record
         WHERE employee_id = ?
-          AND attendance_date BETWEEN ? AND ?`,
+          AND record_date BETWEEN ? AND ?`,
       [employeeId, firstDay, lastDay]
     );
 
@@ -529,6 +559,8 @@ export async function getRosterStatusSummary(
   const params: unknown[] = [filters.fromDate, filters.toDate];
   if (filters.branchId) { where.push('e.branch_id = ?'); params.push(filters.branchId); }
   if (filters.processId) { where.push('e.process_id = ?'); params.push(filters.processId); }
+  const lobCond = filters.lob ? lobCondition(filters.lob) : null;
+  if (lobCond) { where.push(lobCond.sql); params.push(...lobCond.params); }
   const whereSql = where.join(' AND ');
 
   const [publishRows] = await db.execute<RowDataPacket[]>(

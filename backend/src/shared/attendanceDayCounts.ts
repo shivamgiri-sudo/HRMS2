@@ -29,6 +29,10 @@
  *   half_day when hours < threshold on any day, so week_off_worked always represents a full day
  *   worked on week off).
  * unreconciled = anomalous punch data → Absent (same as legacy).
+ * lwp = Leave Without Pay → Absent on this register (unpaid, same letter as absent). It
+ *   previously had no entry here at all, so `lwp` fell through the lookup as the raw string
+ *   and was silently uncounted in every register/sign-off total — that part was the bug.
+ *   The letter shown stays "A", matching week_off's treatment below.
  */
 export const ATTENDANCE_STATUS_CODE: Record<string, string> = {
   present:         "P",
@@ -41,6 +45,7 @@ export const ATTENDANCE_STATUS_CODE: Record<string, string> = {
   missing_punch:   "A",
   week_off_worked: "P",
   unreconciled:    "A",
+  lwp:             "A",
 };
 
 export type DayCounts = {

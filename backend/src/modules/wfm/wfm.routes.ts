@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { readLobFilter, lobAnd } from "../../shared/lobFilter.js";
+import { withLobNames } from "../../shared/lobNames.js";
 import { z } from "zod";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -274,6 +276,61 @@ wfmRouter.patch("/roster-preferences/:id/approve", requireAuth, requireRole("adm
 wfmRouter.patch("/roster-preferences/:id/reject", requireAuth, requireRole("admin", "hr", "super_admin", "manager", "wfm"), h(async (req: any, res: any) => {
   const { reason } = req.body;
   await rosterPreferenceService.reject(req.params.id, req.authUser!.id, reason || "Rejected");
+  res.json({ success: true });
+}));
+
+// ── Notification Rules (Roster Notification Hub) ────────────────────────────
+// Was pure front-end mock — RosterNotificationHub.tsx held 8 hardcoded rules in React
+// state and "Save All Settings" only awaited a setTimeout, no backend call anywhere in
+// the file. wfm_notification_rule (migration 1755) gives this a real, persisted store;
+// these two endpoints are its entire backend.
+wfmRouter.get("/notification-rules", requireAuth, requireRole("admin", "hr", "super_admin", "wfm", "operations_manager"), h(async (_req: any, res: any) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, alert_type, alert_name, description, recipients_json, channels_json,
+            frequency, enabled, threshold_pct, schedule_time, updated_at
+       FROM wfm_notification_rule
+      ORDER BY alert_type`
+  );
+  const data = (rows as any[]).map((r) => ({
+    id: r.id,
+    alertType: r.alert_type,
+    alertName: r.alert_name,
+    description: r.description,
+    recipients: typeof r.recipients_json === "string" ? JSON.parse(r.recipients_json) : r.recipients_json,
+    channels: typeof r.channels_json === "string" ? JSON.parse(r.channels_json) : r.channels_json,
+    frequency: r.frequency,
+    enabled: !!r.enabled,
+    threshold: r.threshold_pct ?? undefined,
+    scheduleTime: r.schedule_time ?? undefined,
+  }));
+  res.json({ success: true, data });
+}));
+
+// PUT /api/wfm/notification-rules — bulk upsert (the page always saves the whole rule set
+// at once via "Save All Settings"; each rule already exists from the migration's seed, so
+// this always UPDATEs by alert_type rather than needing a separate create path).
+wfmRouter.put("/notification-rules", requireAuth, requireRole("admin", "hr", "super_admin", "wfm", "operations_manager"), h(async (req: any, res: any) => {
+  const rules = Array.isArray(req.body?.rules) ? req.body.rules : [];
+  if (rules.length === 0) return res.status(400).json({ error: "rules array required" });
+  for (const rule of rules) {
+    if (!rule.alertType) continue;
+    await db.execute(
+      `UPDATE wfm_notification_rule
+          SET recipients_json = ?, channels_json = ?, frequency = ?, enabled = ?,
+              threshold_pct = ?, schedule_time = ?, updated_by = ?
+        WHERE alert_type = ?`,
+      [
+        JSON.stringify(rule.recipients ?? []),
+        JSON.stringify(rule.channels ?? []),
+        rule.frequency ?? "immediate",
+        rule.enabled ? 1 : 0,
+        rule.threshold ?? null,
+        rule.scheduleTime ?? null,
+        req.authUser!.id,
+        rule.alertType,
+      ]
+    );
+  }
   res.json({ success: true });
 }));
 
@@ -703,10 +760,14 @@ wfmRouter.get("/manager/weekoff-review", requireAuth, requireRole("admin", "hr",
     params.push(emp.id, req.authUser!.id);
   }
 
+  const lob = readLobFilter(req, res);
+  if (!lob) return;
+  const lobSql = lobAnd(lob, "e");
+  params.push(...lobSql.params);
   const [rows] = await dbConn.execute(
     `SELECT wra.*,
             CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
-            e.employee_code, dm.designation_name AS designation,
+            e.employee_code, e.lob_id AS employee_lob_id, dm.designation_name AS designation,
             pm.process_name, bm.branch_name,
             wst.shift_name, wst.start_time, wst.end_time,
             wrc.week_start_date, wrc.week_end_date
@@ -719,11 +780,11 @@ wfmRouter.get("/manager/weekoff-review", requireAuth, requireRole("admin", "hr",
        LEFT JOIN weekly_roster_cycle wrc ON wrc.id = wra.cycle_id
       WHERE wra.final_roster_status = 'pending_manager_action'
         AND wra.employee_ack_status = 'rejected'
-        ${scopeWhere}
+        ${scopeWhere}${lobSql.sql}
       ORDER BY wra.roster_date ASC`,
     params
   );
-  return res.json({ success: true, data: rows });
+  return res.json({ success: true, data: await withLobNames(rows as any[], "employee_lob_id") });
 }));
 
 /**
@@ -2032,6 +2093,45 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
   // Unreachable default removed — see /my-attendance above. The COALESCEs are the guard.
   const data = (rows as any[])[0];
 
+  // weekOffDays from SQL only counts rows with attendance_status='week_off'. For employees
+  // whose non-working days are never inserted as records (NCOSEC import skips them), that
+  // count is 0. Compute calendar-based eligible week-offs and use the larger value.
+  if (Number(data.weekOffDays) === 0) {
+    const [empRows] = await db.execute(
+      `SELECT working_days FROM employees WHERE id = ? LIMIT 1`,
+      [employeeId]
+    );
+    const emp = (empRows as any[])[0];
+    if (emp) {
+      let workingDays: number[] = [1, 2, 3, 4, 5];
+      const wd = emp.working_days;
+      if (Array.isArray(wd)) {
+        workingDays = wd.map(Number).filter((d: number) => d >= 0 && d <= 6);
+      } else if (typeof wd === 'string' && wd.trim()) {
+        try {
+          const parsed = JSON.parse(wd);
+          if (Array.isArray(parsed)) workingDays = parsed.map(Number).filter((d: number) => d >= 0 && d <= 6);
+        } catch {
+          workingDays = wd.split(',').map((s: string) => Number(s.trim())).filter((d: number) => d >= 0 && d <= 6);
+        }
+      }
+
+      const [yr, mo] = month.split('-').map(Number);
+      const lastDay = new Date(yr, mo, 0).getDate();
+      const todayIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const isCurrentMonth = new Date(yr, mo - 1).getMonth() === todayIST.getMonth()
+        && new Date(yr, mo - 1).getFullYear() === todayIST.getFullYear();
+      const periodEndDay = isCurrentMonth ? todayIST.getDate() : lastDay;
+
+      let eligibleWeekoffs = 0;
+      for (let d = 1; d <= periodEndDay; d++) {
+        const dow = new Date(yr, mo - 1, d).getDay(); // 0=Sun … 6=Sat
+        if (!workingDays.includes(dow)) eligibleWeekoffs++;
+      }
+      data.weekOffDays = eligibleWeekoffs;
+    }
+  }
+
   return res.json({
     success: true,
     data
@@ -2040,7 +2140,10 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
 
 // ── Week-off fairness scores ──────────────────────────────────────────────────
 
-wfmRouter.get("/weekoff/fairness-scores", requireRole("wfm", "admin", "super_admin"), h(async (req, res) => {
+// branch_head added 2026-09-16: view-only, matching the read/write split already used by
+// planning-rules/slot-requirements/weekoff-day-rules — branch heads can see fairness scores
+// for their branch, but /compute (which recalculates and writes scores) stays wfm/admin-only.
+wfmRouter.get("/weekoff/fairness-scores", requireRole("wfm", "admin", "super_admin", "branch_head"), h(async (req, res) => {
   const { getFairnessScoresForWeek } = await import("./weekoff-fairness.service.js");
   const processId = String(req.query.processId ?? "");
   const weekStartDate = String(req.query.weekStartDate ?? "");

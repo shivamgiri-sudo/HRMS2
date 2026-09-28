@@ -685,8 +685,16 @@ export const wfmService = {
         const ownsExistingLock =
           (existing?.regularization_id && existing.regularization_id === id) ||
           (existing?.override_by && existing.override_by === reviewerId);
+        // APR bulk locks (source_system='apr_bulk', no human owner context) are explicitly
+        // designed to be outranked by approved corrections. The APR bulk ON DUPLICATE KEY
+        // only locks rows that have no override_by/regularization_id, encoding the same
+        // precedence. A correction should pass through; the payroll-freeze message must not fire.
+        const lockedByAprBulk =
+          String(existing?.source_system ?? '') === 'apr_bulk' &&
+          !existing?.regularization_id &&
+          !existing?.override_by;
 
-        if (lockedDay && !ownsExistingLock) {
+        if (lockedDay && !ownsExistingLock && !lockedByAprBulk) {
           const lockedByAnotherCorrection =
             !!existing?.regularization_id || !!existing?.override_by;
           throw new Error(
@@ -764,6 +772,18 @@ export const wfmService = {
         const appliedSource = String(existing?.attendance_source ?? '')
           || (isAprRegularizationReason(reg.reason_code) ? 'dialler' : 'biometric');
         const sourceSystem = isAprRegularizationReason(reg.reason_code) ? "apr_regularization" : "regularization";
+
+        // Clear the APR bulk engine lock so the ON DUPLICATE KEY condition (is_locked = 0 OR ...)
+        // fires correctly for the correction. APR bulk re-runs respect override_by/regularization_id
+        // and will not re-lock once the correction sets those fields.
+        if (lockedByAprBulk) {
+          await conn.execute(
+            `UPDATE attendance_daily_record SET is_locked = 0
+              WHERE employee_id = ? AND record_date = ?
+                AND source_system = 'apr_bulk' AND regularization_id IS NULL AND override_by IS NULL`,
+            [reg.employee_id, reg.session_date],
+          );
+        }
 
         const [adrResult] = await conn.execute(
           `INSERT INTO attendance_daily_record

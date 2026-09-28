@@ -18,7 +18,7 @@
  *   whole workforce suddenly became unpayable" rather than "we lost the verification source",
  *   and someone would go looking at bank records instead of at the database link.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -43,6 +43,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -53,9 +54,17 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { toast } from "sonner";
+import { FilterMultiSelect } from "@/components/finance/pnl/FilterMultiSelect";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { FnfTransferTab } from "./FnfTransferTab";
 
 // ── Bank Readiness types ───────────────────────────────────────────────────────
 
@@ -251,6 +260,16 @@ export default function PaymentDisbursalCenter() {
   const [draftNotes, setDraftNotes] = useState("");
   const [draftOwnerId, setDraftOwnerId] = useState<string>("");
 
+  // Selection state for the exceptions grid — code/name/branch identify the row, employee_id is
+  // the key. Cleared whenever the filter changes, because "select all matching filter" only ever
+  // means the filter that produced the current row list; carrying a selection across a filter
+  // change would silently select rows the user never saw.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkEditing, setBulkEditing] = useState(false);
+  const [bulkDraftStatus, setBulkDraftStatus] = useState("in_progress");
+  const [bulkDraftNotes, setBulkDraftNotes] = useState("");
+  const [bulkDraftOwnerId, setBulkDraftOwnerId] = useState<string>("");
+
   // ── Disbursal local state ──────────────────────────────────────────────────
   const [disbInnerTab, setDisbInnerTab] = useState("status");
   const [selectedRunId, setSelectedRunId] = useState<string>("");
@@ -258,6 +277,21 @@ export default function PaymentDisbursalCenter() {
     "generic"
   );
   const [csvText, setCsvText] = useState("");
+
+  // ── Salary Transfer state ──────────────────────────────────────────────────
+  const [transferGenerating, setTransferGenerating] = useState(false);
+  const [transferReexporting, setTransferReexporting] = useState(false);
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejectNote, setRejectNote] = useState("");
+  const [importPreview, setImportPreview] = useState<{
+    file_name: string;
+    file_sha256: string;
+    summary: { total: number; will_confirm: number; unmatched: number; already_confirmed: number; invalid: number };
+    data: Array<{ emp_code: string; emp_name: string; ecs_number: string; trf_date: string; outcome: string; detail: string; item_id: string | null }>;
+  } | null>(null);
+  const [importing, setImporting] = useState(false);
   const [manualRow, setManualRow] = useState({
     employee_code: "",
     cheque_no: "",
@@ -309,6 +343,84 @@ export default function PaymentDisbursalCenter() {
     enabled: bankInnerTab === "remediation",
   });
 
+  // ── Manual-review bank gap ─────────────────────────────────────────────────
+  interface ManualReviewRow {
+    employee_id: string;
+    employee_code: string;
+    employee_name: string;
+    branch_name: string | null;
+    verification_status: "verified" | "manual_review";
+    account_masked: string;
+    ifsc_code: string | null;
+    account_holder_name: string | null;
+    name_match_score: number | null;
+    verified_at: string | null;
+    bank_name: string | null;
+    branch_name_onboarding: string | null;
+    account_type: string | null;
+    name_on_cheque: string | null;
+    proof_document: { id: string; doc_type: string; file_name: string | null; uploaded_at: string | null } | null;
+  }
+  const manualReviewQ = useQuery<{ data: ManualReviewRow[]; count: number }>({
+    queryKey: ["bank-readiness-manual-review"],
+    queryFn: () => hrmsApi.get("/api/payroll/bank-readiness/manual-review-queue"),
+    enabled: bankInnerTab === "manual-review",
+  });
+  const approveManualReviewMutation = useMutation({
+    mutationFn: (employeeId: string) =>
+      hrmsApi.patch(`/api/payroll/bank-readiness/manual-review-queue/${employeeId}/approve`),
+    onSuccess: () => {
+      toast.success("Bank account approved and copied to the employee record");
+      void qc.invalidateQueries({ queryKey: ["bank-readiness-manual-review"] });
+      void qc.invalidateQueries({ queryKey: ["bank-readiness-summary"] });
+      void qc.invalidateQueries({ queryKey: ["bank-readiness-exceptions"] });
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Approval failed"),
+  });
+
+  // Row drill-down drawer: full onboarding-typed fields + the uploaded passbook/cheque proof
+  // image, fetched as an authenticated blob (same pattern as EsiRegDocsTab.tsx) — the onboarding
+  // preview route requires a bearer token or a candidate token, never an unauthenticated <img src>.
+  const [manualReviewDrawerRow, setManualReviewDrawerRow] = useState<ManualReviewRow | null>(null);
+  const [proofPreviewUrl, setProofPreviewUrl] = useState<string | null>(null);
+  const [proofPreviewLoading, setProofPreviewLoading] = useState(false);
+  const [proofPreviewError, setProofPreviewError] = useState<string | null>(null);
+  const [proofContentType, setProofContentType] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!manualReviewDrawerRow?.proof_document) {
+      setProofPreviewUrl(null);
+      setProofContentType(null);
+      return;
+    }
+    const docId = manualReviewDrawerRow.proof_document.id;
+    setProofPreviewLoading(true);
+    setProofPreviewError(null);
+    let revoked = false;
+    hrmsApi
+      .getBlob(`/api/ats/onboarding-full/documents/preview/${docId}`)
+      .then((blob: Blob) => {
+        if (revoked) return;
+        setProofContentType(blob.type || null);
+        setProofPreviewUrl(URL.createObjectURL(blob));
+      })
+      .catch((e: any) => {
+        if (!revoked) setProofPreviewError(e?.message ?? "Unable to load the uploaded document.");
+      })
+      .finally(() => {
+        if (!revoked) setProofPreviewLoading(false);
+      });
+    return () => {
+      revoked = true;
+    };
+  }, [manualReviewDrawerRow?.proof_document?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (proofPreviewUrl?.startsWith("blob:")) URL.revokeObjectURL(proofPreviewUrl);
+    };
+  }, [proofPreviewUrl]);
+
   const divergenceQ = useQuery<{ data: Record<string, number | string> }>({
     queryKey: ["bank-readiness-divergence", bankRunId],
     queryFn: () =>
@@ -326,7 +438,7 @@ export default function PaymentDisbursalCenter() {
       hrmsApi.get<{ data: AssignableOwner[] }>(
         "/api/payroll/bank-readiness/assignable-owners"
       ),
-    enabled: !!editing,
+    enabled: !!editing || bulkEditing,
   });
   const assignableOwners = ownersQ.data?.data ?? [];
 
@@ -352,6 +464,280 @@ export default function PaymentDisbursalCenter() {
       setEditing(null);
     },
     onError: (e: any) => toast.error(e?.message ?? "Update failed"),
+  });
+
+  // Clear selection whenever the filter changes — a selection is only ever meant to describe
+  // rows the user is currently looking at.
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [classFilter, search]);
+
+  /**
+   * Bulk assign / annotate. There is no bulk PATCH endpoint on the backend, so this issues one
+   * PATCH per selected employee (the same endpoint the single-row Assign dialog already uses)
+   * and reports how many succeeded vs failed rather than silently stopping on the first error —
+   * a partial failure here must not read as "nothing happened" when most of it did.
+   */
+  const bulkSaveMutation = useMutation({
+    mutationFn: async (vars: {
+      employeeIds: string[];
+      workflow_status: string;
+      notes: string;
+      owner_user_id: string;
+    }) => {
+      const results = await Promise.allSettled(
+        vars.employeeIds.map((employeeId) =>
+          hrmsApi.patch(`/api/payroll/bank-readiness/exceptions/${employeeId}`, {
+            workflow_status: vars.workflow_status,
+            notes: vars.notes || null,
+            owner_user_id: vars.owner_user_id || null,
+          }),
+        ),
+      );
+      const failed = results.filter((r) => r.status === "rejected").length;
+      return { succeeded: results.length - failed, failed, total: results.length };
+    },
+    onSuccess: (r) => {
+      if (r.failed === 0) {
+        toast.success(`Updated ${r.succeeded} employee(s)`);
+      } else {
+        toast.warning(`Updated ${r.succeeded} of ${r.total} — ${r.failed} failed`);
+      }
+      void qc.invalidateQueries({ queryKey: ["bank-readiness-exceptions"] });
+      void qc.invalidateQueries({ queryKey: ["bank-readiness-remediation"] });
+      setBulkEditing(false);
+      setSelectedIds(new Set());
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Bulk update failed"),
+  });
+
+  // ── Salary Transfer queries ────────────────────────────────────────────────
+  interface TransferItem {
+    id: string;
+    batch_id: string;
+    employee_id: string;
+    employee_code: string;
+    employee_name: string | null;
+    amount: number;
+    pay_mod: string;
+    account_masked: string;
+    status: "exported" | "rejected" | "corrected_ready" | "confirmed";
+    // Server-derived grouping (bank-payment-readiness.routes.ts) — exported/corrected_ready
+    // both count as "still waiting to go out", confirmed is "the bank has it", rejected is
+    // "payroll has flagged why it can't go out". Trust this over re-deriving from status here.
+    bucket: "ready_for_disbursal" | "disbursed" | "rejected";
+    rejection_reason: string | null;
+    rejection_reason_label: string | null;
+    rejection_note: string | null;
+    ecs_number: string | null;
+    transfer_date: string | null;
+    payslip_unlocked_at: string | null;
+    batch_number: string;
+    attempt_kind: string;
+  }
+
+  const transferItemsQ = useQuery<{
+    data: TransferItem[];
+    rejection_reasons: Array<{ value: string; label: string }>;
+  }>({
+    queryKey: ["salary-transfer-items", bankRunId],
+    queryFn: () =>
+      hrmsApi.get(`/api/payroll/bank-readiness/salary-transfer/items?run_id=${bankRunId}`),
+    enabled: !!bankRunId && bankInnerTab === "export",
+  });
+  const transferItems = transferItemsQ.data?.data ?? [];
+  const rejectionReasons = transferItemsQ.data?.rejection_reasons ?? [];
+  const correctedReadyItems = transferItems.filter((i) => i.status === "corrected_ready");
+
+  // The three buckets the user actually thinks in: generate the file -> everyone lands in
+  // "Ready for Disbursal"; upload the Transfer Number Update File -> matches move to
+  // "Disbursed" (their ECS/TRF number is recorded and the payslip unlocks); anyone whose code
+  // was NOT in that file stays in "Ready for Disbursal" exactly as before -- nothing moves them
+  // out except a real match. "Rejected" is its own section: items payroll has explicitly flagged
+  // with a failure reason (from Ready for Disbursal, via the existing reject action below).
+  const readyForDisbursalItems = transferItems.filter((i) => i.bucket === "ready_for_disbursal");
+  const disbursedItems = transferItems.filter((i) => i.bucket === "disbursed");
+  const rejectedItems = transferItems.filter((i) => i.bucket === "rejected");
+  const [openSection, setOpenSection] = useState<Record<"ready" | "disbursed" | "rejected", boolean>>({
+    ready: true, disbursed: true, rejected: true,
+  });
+
+  async function downloadSalaryTransferFile(reexport: boolean, employeeIds?: string[]) {
+    const setBusy = reexport ? setTransferReexporting : setTransferGenerating;
+    setBusy(true);
+    try {
+      const path = reexport
+        ? `/api/payroll/bank-readiness/salary-transfer/reexport`
+        : `/api/payroll/bank-readiness/salary-transfer/export`;
+      // POST, not a GET query string — a real selection can run into the hundreds of employee
+      // ids and a GET query string has a hard length limit a large one exceeds (real 414 caught
+      // live, 2026-09-11, 797 ids). POST body has no such ceiling.
+      const blob = await hrmsApi.postBlob(path, { run_id: bankRunId, employee_ids: employeeIds ?? [] });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `Salary_Transfer_${bankRunId}${reexport ? "_REEXPORT" : ""}.xls`;
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      toast.success(reexport ? "Re-export file generated" : "Salary transfer file generated");
+      setEligibleSelectedIds(new Set());
+      void qc.invalidateQueries({ queryKey: ["salary-transfer-items", bankRunId] });
+      void qc.invalidateQueries({ queryKey: ["salary-transfer-eligible", bankRunId] });
+    } catch (e: any) {
+      toast.error(e?.message ?? "Failed to generate file");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ── Salary Transfer: employee selection (Branch/Process/Cost Centre/Status filters) ─────────
+  const [eligibleBranchIds, setEligibleBranchIds] = useState<string[]>([]);
+  const [eligibleProcessIds, setEligibleProcessIds] = useState<string[]>([]);
+  const [eligibleCostCentreIds, setEligibleCostCentreIds] = useState<string[]>([]);
+  const [eligibleStatus, setEligibleStatus] = useState<"active" | "inactive" | "both">("active");
+  const [eligibleSelectedIds, setEligibleSelectedIds] = useState<Set<string>>(new Set());
+
+  const branchOptionsQ = useQuery<{ data: Array<{ id: string; branch_name: string }> }>({
+    queryKey: ["st-branch-options"],
+    queryFn: () => hrmsApi.get("/api/access/branches"),
+    enabled: bankInnerTab === "export",
+  });
+  const processOptionsQ = useQuery<{ data: Array<{ id: string; process_name: string }> }>({
+    queryKey: ["st-process-options"],
+    queryFn: () => hrmsApi.get("/api/access/processes"),
+    enabled: bankInnerTab === "export",
+  });
+  const costCentreOptionsQ = useQuery<{ data: Array<{ id: string; cost_centre_code: string; cost_centre_name?: string }> }>({
+    queryKey: ["st-cost-centre-options"],
+    queryFn: () => hrmsApi.get("/api/payroll-masters/cost-centres"),
+    enabled: bankInnerTab === "export",
+  });
+
+  interface EligibleRow {
+    employee_id: string;
+    employee_code: string;
+    employee_name: string;
+    amount: number;
+    account_masked: string;
+    ifsc: string;
+    bank_name: string | null;
+    branch_id: string | null;
+    branch_name: string | null;
+    process_id: string | null;
+    process_name: string | null;
+    cost_centre_id: string | null;
+    cost_centre_name: string | null;
+    employee_status: "active" | "inactive";
+  }
+
+  const eligibleQ = useQuery<{ data: EligibleRow[]; count: number; total_amount: number }>({
+    queryKey: ["salary-transfer-eligible", bankRunId, eligibleBranchIds, eligibleProcessIds, eligibleCostCentreIds, eligibleStatus],
+    queryFn: () => {
+      const p = new URLSearchParams({ run_id: bankRunId, status: eligibleStatus });
+      // Single-value filters server-side; a multi-select UI narrows client-side when >1 picked
+      // (keeps the server contract simple — one branch/process/cost-centre id per call — while
+      // still letting the user tick several and see the union).
+      return hrmsApi.get(`/api/payroll/bank-readiness/salary-transfer/eligible?${p.toString()}`);
+    },
+    enabled: !!bankRunId && bankInnerTab === "export",
+  });
+  const eligibleAllRows = eligibleQ.data?.data ?? [];
+  const eligibleRows = eligibleAllRows.filter((r) => {
+    if (eligibleBranchIds.length && !(r.branch_id && eligibleBranchIds.includes(r.branch_id))) return false;
+    if (eligibleProcessIds.length && !(r.process_id && eligibleProcessIds.includes(r.process_id))) return false;
+    if (eligibleCostCentreIds.length && !(r.cost_centre_id && eligibleCostCentreIds.includes(r.cost_centre_id))) return false;
+    return true;
+  });
+  const eligibleAllOnViewSelected =
+    eligibleRows.length > 0 && eligibleRows.every((r) => eligibleSelectedIds.has(r.employee_id));
+
+  function toggleEligibleRow(id: string) {
+    setEligibleSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function toggleEligibleSelectAll() {
+    setEligibleSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (eligibleAllOnViewSelected) {
+        for (const r of eligibleRows) next.delete(r.employee_id);
+      } else {
+        for (const r of eligibleRows) next.add(r.employee_id);
+      }
+      return next;
+    });
+  }
+
+  // A filter change narrows which rows are on screen — carrying a selection across that change
+  // would silently include employees the user can no longer see, same rule as the exceptions grid.
+  useEffect(() => {
+    setEligibleSelectedIds(new Set());
+  }, [bankRunId, eligibleBranchIds, eligibleProcessIds, eligibleCostCentreIds, eligibleStatus]);
+
+  const rejectItemsMutation = useMutation({
+    mutationFn: (vars: { item_ids: string[]; reason: string; note: string | null }) =>
+      hrmsApi.patch("/api/payroll/bank-readiness/salary-transfer/items/reject", vars),
+    onSuccess: () => {
+      toast.success("Item(s) marked rejected — correction task created");
+      void qc.invalidateQueries({ queryKey: ["salary-transfer-items", bankRunId] });
+      setRejectDialogOpen(false);
+      setSelectedItemIds(new Set());
+      setRejectReason("");
+      setRejectNote("");
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Reject failed"),
+  });
+
+  const markCorrectedReadyMutation = useMutation({
+    mutationFn: (itemId: string) =>
+      hrmsApi.patch(`/api/payroll/bank-readiness/salary-transfer/items/${itemId}/mark-corrected-ready`),
+    onSuccess: () => {
+      toast.success("Marked ready for re-export");
+      void qc.invalidateQueries({ queryKey: ["salary-transfer-items", bankRunId] });
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Update failed"),
+  });
+
+  async function handleImportFileSelected(file: File) {
+    setImporting(true);
+    setImportPreview(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      // Scopes the match to the run currently open on screen — without this the backend matched
+      // employee codes against whichever batch item was newest across every run, silently
+      // confirming a different run than the one being worked on (real incident, 2026-09-12).
+      fd.append("run_id", bankRunId);
+      const res = await hrmsApi.postForm<{
+        success: boolean;
+        file_name: string;
+        file_sha256: string;
+        summary: any;
+        data: any[];
+      }>("/api/payroll/bank-readiness/salary-transfer/import/preview", fd);
+      setImportPreview(res as any);
+    } catch (e: any) {
+      toast.error(e?.message ?? "Could not read file");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  const commitImportMutation = useMutation({
+    mutationFn: () =>
+      hrmsApi.post("/api/payroll/bank-readiness/salary-transfer/import/commit", {
+        file_name: importPreview?.file_name,
+        file_sha256: importPreview?.file_sha256,
+        preview: importPreview?.data,
+      }),
+    onSuccess: (res: any) => {
+      toast.success(res?.message ?? "Import committed");
+      setImportPreview(null);
+      void qc.invalidateQueries({ queryKey: ["salary-transfer-items", bankRunId] });
+    },
+    onError: (e: any) => toast.error(e?.message ?? "Commit failed"),
   });
 
   // ── Disbursal queries ──────────────────────────────────────────────────────
@@ -391,8 +777,6 @@ export default function PaymentDisbursalCenter() {
   const DISBURSE_ERROR_MESSAGES: Record<string, string> = {
     PAYROLL_CLOSE_NOT_AUTHORISED:
       "Disbursing a run is reserved for Finance or Payroll heads.",
-    PAYROLL_BLOCKED_PT_STATE_UNKNOWN:
-      "This run has employees with no resolvable Professional Tax state — assign their branch and recalculate first.",
     PAYROLL_SELF_APPROVAL:
       "You prepared this run, so it must be approved by someone else first.",
   };
@@ -431,6 +815,39 @@ export default function PaymentDisbursalCenter() {
   const sourceDown = summary && !summary.verification_source.available;
   const asOf = useMemo(() => fmtDateTime(summary?.as_of), [summary?.as_of]);
   const selectedRun = runs.find((r) => r.id === selectedRunId);
+
+  // ── Selection handlers ────────────────────────────────────────────────────
+  const allVisibleSelected =
+    exceptionRows.length > 0 && exceptionRows.every((r) => selectedIds.has(r.employee_id));
+
+  function toggleRow(employeeId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(employeeId)) next.delete(employeeId);
+      else next.add(employeeId);
+      return next;
+    });
+  }
+
+  function toggleSelectAllVisible() {
+    setSelectedIds((prev) => {
+      if (allVisibleSelected) {
+        const next = new Set(prev);
+        for (const r of exceptionRows) next.delete(r.employee_id);
+        return next;
+      }
+      const next = new Set(prev);
+      for (const r of exceptionRows) next.add(r.employee_id);
+      return next;
+    });
+  }
+
+  function openBulkEditor() {
+    setBulkDraftStatus("in_progress");
+    setBulkDraftNotes("");
+    setBulkDraftOwnerId("");
+    setBulkEditing(true);
+  }
 
   // ── Handlers ───────────────────────────────────────────────────────────────
   function openEditor(r: ExceptionRow) {
@@ -662,7 +1079,7 @@ export default function PaymentDisbursalCenter() {
                       This is a system fault, not a fault on these employees'
                       records.
                     </strong>{" "}
-                    Payment file generation is refused until it returns.
+                    Salary transfer file generation is refused until it returns.
                   </p>
                   {summary?.verification_source.error && (
                     <p className="text-rose-700 mt-1 font-mono text-xs">
@@ -755,7 +1172,9 @@ export default function PaymentDisbursalCenter() {
               <TabsList>
                 <TabsTrigger value="exceptions">Exceptions</TabsTrigger>
                 <TabsTrigger value="remediation">HR / Manager list</TabsTrigger>
-                <TabsTrigger value="export">Payment file</TabsTrigger>
+                <TabsTrigger value="manual-review">Manual Review</TabsTrigger>
+                <TabsTrigger value="export">Salary Transfer file</TabsTrigger>
+                <TabsTrigger value="fnf-export">F&amp;F Transfer</TabsTrigger>
               </TabsList>
 
               {/* ── Exceptions ────────────────────────────────────────────── */}
@@ -792,10 +1211,51 @@ export default function PaymentDisbursalCenter() {
                   </span>
                 </div>
 
+                {/* ── Selection bar ─────────────────────────────────────────── */}
+                {selectedIds.size > 0 && (
+                  <div className="flex items-center gap-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2">
+                    <span className="text-sm font-medium text-sky-900">
+                      {selectedIds.size} selected
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          for (const r of exceptionRows) next.add(r.employee_id);
+                          return next;
+                        })
+                      }
+                      disabled={allVisibleSelected}
+                      title="Select every row currently matching the filter above, not just this page"
+                    >
+                      Select all {exceptionsQ.data?.count ?? exceptionRows.length} matching filter
+                    </Button>
+                    <Button size="sm" onClick={openBulkEditor}>
+                      Bulk Assign
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setSelectedIds(new Set())}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                )}
+
                 <div className="rounded-md border overflow-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-muted">
                       <tr>
+                        <th className="px-3 py-2 w-8">
+                          <Checkbox
+                            checked={allVisibleSelected}
+                            onCheckedChange={toggleSelectAllVisible}
+                            aria-label="Select all rows on this view"
+                          />
+                        </th>
                         {[
                           "Code",
                           "Name",
@@ -824,7 +1284,7 @@ export default function PaymentDisbursalCenter() {
                       {exceptionsQ.isLoading ? (
                         <tr>
                           <td
-                            colSpan={13}
+                            colSpan={14}
                             className="px-3 py-10 text-center text-muted-foreground"
                           >
                             <Loader2 className="h-4 w-4 animate-spin inline mr-2" />
@@ -834,7 +1294,7 @@ export default function PaymentDisbursalCenter() {
                       ) : exceptionRows.length === 0 ? (
                         <tr>
                           <td
-                            colSpan={13}
+                            colSpan={14}
                             className="px-3 py-10 text-center text-muted-foreground"
                           >
                             No exceptions in this view.
@@ -844,8 +1304,15 @@ export default function PaymentDisbursalCenter() {
                         exceptionRows.map((r) => (
                           <tr
                             key={r.employee_id}
-                            className="border-t align-top"
+                            className={`border-t align-top ${selectedIds.has(r.employee_id) ? "bg-sky-50/60" : ""}`}
                           >
+                            <td className="px-3 py-2">
+                              <Checkbox
+                                checked={selectedIds.has(r.employee_id)}
+                                onCheckedChange={() => toggleRow(r.employee_id)}
+                                aria-label={`Select ${r.employee_code}`}
+                              />
+                            </td>
                             <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
                               {r.employee_code}
                             </td>
@@ -1031,6 +1498,189 @@ export default function PaymentDisbursalCenter() {
                 </div>
               </TabsContent>
 
+              {/* ── Manual review (onboarding penny-drop landed on manual_review) ── */}
+              <TabsContent value="manual-review" className="space-y-3">
+                <div className="rounded-md border border-sky-300 bg-sky-50 p-4 text-sm mt-3">
+                  <p className="font-semibold text-sky-900 flex items-center gap-2">
+                    <HelpCircle className="h-4 w-4" /> These employees submitted bank details
+                    at onboarding but never got a live bank record
+                  </p>
+                  <p className="text-sky-900 mt-1">
+                    <strong>Manual review</strong> — penny-drop couldn't confirm the account
+                    automatically. Click a row to see the uploaded passbook/cheque proof and the
+                    exact details the candidate typed, and judge it yourself before approving.{" "}
+                    <strong>Penny drop verified</strong> — the bank already confirmed this
+                    account on a later attempt; it was simply never copied over. Click a row to
+                    see the full confirmed details — there is nothing to judge, only to approve.
+                    Either way, approving copies the account exactly as captured; it does not
+                    change or re-verify it.
+                  </p>
+                </div>
+                <div className="rounded-md border overflow-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted">
+                      <tr>
+                        {["Code", "Name", "Branch", "Verification", "Account", "IFSC", "Account holder (onboarding)", "Name match", "Verified at", ""].map((hd) => (
+                          <th key={hd} className="px-3 py-2 text-left font-medium whitespace-nowrap">{hd}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {manualReviewQ.isLoading ? (
+                        <tr><td colSpan={10} className="px-3 py-10 text-center text-muted-foreground">Loading…</td></tr>
+                      ) : (manualReviewQ.data?.data ?? []).length === 0 ? (
+                        <tr><td colSpan={10} className="px-3 py-10 text-center text-muted-foreground">No employees waiting on manual review right now.</td></tr>
+                      ) : (
+                        (manualReviewQ.data?.data ?? []).map((r) => (
+                          <tr
+                            key={r.employee_id}
+                            className="border-t cursor-pointer hover:bg-muted/50"
+                            onClick={() => setManualReviewDrawerRow(r)}
+                          >
+                            <td className="px-3 py-2 font-mono text-xs">{r.employee_code}</td>
+                            <td className="px-3 py-2">{r.employee_name}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{r.branch_name ?? "—"}</td>
+                            <td className="px-3 py-2">
+                              {r.verification_status === "verified" ? (
+                                <Badge className="bg-green-600 hover:bg-green-600">Penny drop verified</Badge>
+                              ) : (
+                                <Badge variant="secondary">Manual review</Badge>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 font-mono text-xs">{r.account_masked}</td>
+                            <td className="px-3 py-2 font-mono text-xs">{r.ifsc_code ?? "—"}</td>
+                            <td className="px-3 py-2">{r.account_holder_name ?? "—"}</td>
+                            <td className="px-3 py-2">{r.name_match_score == null ? "—" : `${Math.round(r.name_match_score)}%`}</td>
+                            <td className="px-3 py-2 text-xs text-muted-foreground">{fmtDateTime(r.verified_at)}</td>
+                            <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                              <Button
+                                size="sm"
+                                disabled={approveManualReviewMutation.isPending}
+                                onClick={() => {
+                                  if (!window.confirm(`Approve ${r.employee_code}'s onboarding bank account (${r.account_masked}) for payment?`)) return;
+                                  approveManualReviewMutation.mutate(r.employee_id);
+                                }}
+                              >
+                                Approve
+                              </Button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </TabsContent>
+
+              {/* ── Manual review drawer: proof image (manual_review) or full confirmed
+                   details + verified tag (verified but stranded) — CLAUDE.md drill-down mandate ── */}
+              <Sheet
+                open={!!manualReviewDrawerRow}
+                onOpenChange={(open) => { if (!open) setManualReviewDrawerRow(null); }}
+              >
+                <SheetContent side="right" className="max-w-2xl w-full overflow-y-auto">
+                  {manualReviewDrawerRow && (
+                    <>
+                      <SheetHeader>
+                        <SheetTitle className="flex items-center gap-2 flex-wrap">
+                          {manualReviewDrawerRow.employee_name}
+                          <span className="font-mono text-xs text-muted-foreground">{manualReviewDrawerRow.employee_code}</span>
+                          {manualReviewDrawerRow.verification_status === "verified" ? (
+                            <Badge className="bg-green-600 hover:bg-green-600">Penny drop verified</Badge>
+                          ) : (
+                            <Badge variant="secondary">Manual review</Badge>
+                          )}
+                        </SheetTitle>
+                      </SheetHeader>
+
+                      <div className="mt-4 space-y-5 text-sm">
+                        <div>
+                          <div className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">
+                            {manualReviewDrawerRow.verification_status === "verified"
+                              ? "Bank confirmed these details"
+                              : "As typed at onboarding"}
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-md border p-3">
+                            <div><span className="text-muted-foreground">Branch</span><div>{manualReviewDrawerRow.branch_name ?? "—"}</div></div>
+                            <div><span className="text-muted-foreground">Account (masked)</span><div className="font-mono">{manualReviewDrawerRow.account_masked}</div></div>
+                            <div><span className="text-muted-foreground">IFSC</span><div className="font-mono">{manualReviewDrawerRow.ifsc_code ?? "—"}</div></div>
+                            <div><span className="text-muted-foreground">Bank name</span><div>{manualReviewDrawerRow.bank_name ?? "—"}</div></div>
+                            <div><span className="text-muted-foreground">Branch name (bank)</span><div>{manualReviewDrawerRow.branch_name_onboarding ?? "—"}</div></div>
+                            <div><span className="text-muted-foreground">Account type</span><div>{manualReviewDrawerRow.account_type ?? "—"}</div></div>
+                            <div><span className="text-muted-foreground">Account holder</span><div>{manualReviewDrawerRow.account_holder_name ?? "—"}</div></div>
+                            <div><span className="text-muted-foreground">Name on cheque</span><div>{manualReviewDrawerRow.name_on_cheque ?? "—"}</div></div>
+                            <div><span className="text-muted-foreground">Name match score</span><div>{manualReviewDrawerRow.name_match_score == null ? "—" : `${Math.round(manualReviewDrawerRow.name_match_score)}%`}</div></div>
+                            <div><span className="text-muted-foreground">Verified at</span><div>{fmtDateTime(manualReviewDrawerRow.verified_at)}</div></div>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-2">
+                            The full account number is never shown outside the payment file export —
+                            this stays masked here by the same rule as every other screen, verified or not.
+                          </p>
+                        </div>
+
+                        {manualReviewDrawerRow.verification_status === "verified" ? (
+                          <div className="rounded-md border border-green-300 bg-green-50 p-3 text-green-900">
+                            <p className="font-semibold flex items-center gap-2"><CheckCircle2 className="h-4 w-4" /> Penny drop already confirmed this account</p>
+                            <p className="mt-1 text-xs">
+                              No document review needed — the bank itself matched this account to
+                              this candidate. Approving here only copies it into the employee's live
+                              bank record; it does not re-verify anything.
+                            </p>
+                          </div>
+                        ) : (
+                          <div>
+                            <div className="text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">
+                              Uploaded passbook / cancelled cheque
+                            </div>
+                            {!manualReviewDrawerRow.proof_document ? (
+                              <div className="rounded-md border border-dashed p-4 text-center text-muted-foreground text-xs">
+                                No passbook or cheque image was uploaded at onboarding (the field is
+                                optional). Review the typed details above on judgement alone, or ask
+                                the employee to submit one before approving.
+                              </div>
+                            ) : proofPreviewLoading ? (
+                              <div className="rounded-md border p-6 text-center text-muted-foreground text-xs flex items-center justify-center gap-2">
+                                <Loader2 className="h-4 w-4 animate-spin" /> Loading document…
+                              </div>
+                            ) : proofPreviewError ? (
+                              <div className="rounded-md border border-red-300 bg-red-50 p-3 text-red-900 text-xs">{proofPreviewError}</div>
+                            ) : proofPreviewUrl ? (
+                              <div className="rounded-md border overflow-hidden">
+                                {proofContentType === "application/pdf" ? (
+                                  <iframe src={proofPreviewUrl} className="w-full h-96" title="Uploaded proof document" />
+                                ) : (
+                                  <img src={proofPreviewUrl} alt="Uploaded passbook or cheque" className="w-full max-h-96 object-contain bg-muted" />
+                                )}
+                                <div className="px-3 py-2 text-xs text-muted-foreground border-t bg-muted/50">
+                                  {manualReviewDrawerRow.proof_document.doc_type}
+                                  {manualReviewDrawerRow.proof_document.file_name ? ` — ${manualReviewDrawerRow.proof_document.file_name}` : ""}
+                                  {manualReviewDrawerRow.proof_document.uploaded_at ? ` · uploaded ${fmtDateTime(manualReviewDrawerRow.proof_document.uploaded_at)}` : ""}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        )}
+
+                        <Button
+                          className="w-full"
+                          disabled={approveManualReviewMutation.isPending}
+                          onClick={() => {
+                            const row = manualReviewDrawerRow;
+                            if (!row) return;
+                            if (!window.confirm(`Approve ${row.employee_code}'s onboarding bank account (${row.account_masked}) for payment?`)) return;
+                            approveManualReviewMutation.mutate(row.employee_id, {
+                              onSuccess: () => setManualReviewDrawerRow(null),
+                            });
+                          }}
+                        >
+                          Approve for payment
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </SheetContent>
+              </Sheet>
+
               {/* ── Payment file ───────────────────────────────────────────── */}
               <TabsContent value="export" className="space-y-4">
                 <div className="flex items-center gap-3 flex-wrap mt-3">
@@ -1060,6 +1710,131 @@ export default function PaymentDisbursalCenter() {
                     </a>
                   </Button>
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  Debit account, Pay Mod (I for ICICI beneficiaries, N otherwise) and every
+                  column are computed server-side from the reference Salary Transfer File format.
+                  Only READY employees not already exported for this run are included; a real
+                  export batch is recorded so a repeat click never double-pays anyone.
+                </p>
+
+                {/* ── Employee selection for Salary Transfer File ────────────── */}
+                {bankRunId && (
+                  <div className="rounded-md border p-4 space-y-3">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <FilterMultiSelect
+                        label="Branch"
+                        allLabel="All branches"
+                        options={(branchOptionsQ.data?.data ?? []).map((b) => ({ value: b.id, label: b.branch_name }))}
+                        selected={eligibleBranchIds}
+                        onChange={setEligibleBranchIds}
+                      />
+                      <FilterMultiSelect
+                        label="Process"
+                        allLabel="All processes"
+                        options={(processOptionsQ.data?.data ?? []).map((p) => ({ value: p.id, label: p.process_name }))}
+                        selected={eligibleProcessIds}
+                        onChange={setEligibleProcessIds}
+                      />
+                      <FilterMultiSelect
+                        label="Cost Centre"
+                        allLabel="All cost centres"
+                        options={(costCentreOptionsQ.data?.data ?? []).map((c) => ({
+                          value: c.id,
+                          label: c.cost_centre_name ? `${c.cost_centre_code} — ${c.cost_centre_name}` : c.cost_centre_code,
+                        }))}
+                        selected={eligibleCostCentreIds}
+                        onChange={setEligibleCostCentreIds}
+                      />
+                      <div className="flex items-center gap-1.5">
+                        <span className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                          Status
+                        </span>
+                        <Select value={eligibleStatus} onValueChange={(v) => setEligibleStatus(v as typeof eligibleStatus)}>
+                          <SelectTrigger className="w-32 h-8 text-[13px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="active">Active</SelectItem>
+                            <SelectItem value="inactive">Inactive</SelectItem>
+                            <SelectItem value="both">Both</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <span className="text-sm text-muted-foreground ml-auto">
+                        {eligibleQ.isLoading ? "loading…" : `${eligibleRows.length} eligible`}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <Button
+                        disabled={eligibleSelectedIds.size === 0 || transferGenerating}
+                        onClick={() => downloadSalaryTransferFile(false, [...eligibleSelectedIds])}
+                        title="Generates the bank-upload .xls in the exact Salary Transfer File format (21 columns, genuine BIFF8) for the selected employees only"
+                      >
+                        <Download className="h-4 w-4 mr-2" />
+                        {transferGenerating
+                          ? "Generating…"
+                          : `Generate Salary Transfer File (${eligibleSelectedIds.size} selected)`}
+                      </Button>
+                      {eligibleSelectedIds.size > 0 && (
+                        <Button variant="ghost" size="sm" onClick={() => setEligibleSelectedIds(new Set())}>
+                          Clear selection
+                        </Button>
+                      )}
+                    </div>
+
+                    <div className="rounded-md border overflow-auto max-h-96">
+                      <table className="w-full text-sm">
+                        <thead className="bg-muted sticky top-0">
+                          <tr>
+                            <th className="px-2 py-2 w-8">
+                              <Checkbox
+                                checked={eligibleAllOnViewSelected}
+                                onCheckedChange={toggleEligibleSelectAll}
+                                aria-label="Select all eligible employees on this view"
+                              />
+                            </th>
+                            {["Code", "Name", "Branch", "Process", "Cost Centre", "Status", "Amount", "Account", "IFSC"].map((h) => (
+                              <th key={h} className="px-3 py-2 text-left font-medium whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {eligibleQ.isLoading ? (
+                            <tr><td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">Loading…</td></tr>
+                          ) : eligibleRows.length === 0 ? (
+                            <tr><td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">No eligible employees for this run/filter combination.</td></tr>
+                          ) : (
+                            eligibleRows.map((r) => (
+                              <tr key={r.employee_id} className={`border-t ${eligibleSelectedIds.has(r.employee_id) ? "bg-sky-50/60" : ""}`}>
+                                <td className="px-2 py-2">
+                                  <Checkbox
+                                    checked={eligibleSelectedIds.has(r.employee_id)}
+                                    onCheckedChange={() => toggleEligibleRow(r.employee_id)}
+                                    aria-label={`Select ${r.employee_code}`}
+                                  />
+                                </td>
+                                <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{r.employee_code}</td>
+                                <td className="px-3 py-2 whitespace-nowrap">{r.employee_name}</td>
+                                <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{r.branch_name ?? "—"}</td>
+                                <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{r.process_name ?? "—"}</td>
+                                <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{r.cost_centre_name ?? "—"}</td>
+                                <td className="px-3 py-2">
+                                  <Badge variant="outline" className={r.employee_status === "active" ? "bg-emerald-100 text-emerald-800 border-emerald-200" : "bg-slate-200 text-slate-800 border-slate-300"}>
+                                    {r.employee_status}
+                                  </Badge>
+                                </td>
+                                <td className="px-3 py-2 tabular-nums whitespace-nowrap">₹{Number(r.amount).toLocaleString("en-IN")}</td>
+                                <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{r.account_masked}</td>
+                                <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{r.ifsc}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
 
                 {summary && !summary.gate_clear && (
                   <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm">
@@ -1120,6 +1895,269 @@ export default function PaymentDisbursalCenter() {
                     </p>
                   </div>
                 )}
+
+                {/* ── Salary Transfer items, split into the 3 sections payroll actually
+                     works in: generate the file -> Ready for Disbursal; upload the Transfer
+                     Number Update File -> matches move to Disbursed automatically; anyone
+                     whose code was not in that file simply stays in Ready for Disbursal,
+                     unchanged -- select them there and add a failure reason, same reject
+                     action as always, just scoped to exactly the people still waiting. ── */}
+                {bankRunId && transferItems.length > 0 && (() => {
+                  const renderItemTable = (items: TransferItem[], opts: { selectable?: boolean; showMarkCorrected?: boolean; emptyText: string }) => (
+                    <div className="rounded-md border overflow-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-muted">
+                          <tr>
+                            {opts.selectable && <th className="px-2 py-2 w-8"></th>}
+                            {["Code", "Name", "Amount", "Pay Mod", "Account", "Batch", "Rejection reason", "ECS / TRF date"].map((h) => (
+                              <th key={h} className="px-3 py-2 text-left font-medium whitespace-nowrap">{h}</th>
+                            ))}
+                            {opts.showMarkCorrected && <th className="px-3 py-2"></th>}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {items.length === 0 ? (
+                            <tr><td colSpan={9} className="px-3 py-6 text-center text-muted-foreground text-xs">{opts.emptyText}</td></tr>
+                          ) : (
+                            items.map((it) => (
+                              <tr key={it.id} className="border-t">
+                                {opts.selectable && (
+                                  <td className="px-2 py-2">
+                                    <Checkbox
+                                      checked={selectedItemIds.has(it.id)}
+                                      onCheckedChange={() =>
+                                        setSelectedItemIds((prev) => {
+                                          const next = new Set(prev);
+                                          if (next.has(it.id)) next.delete(it.id); else next.add(it.id);
+                                          return next;
+                                        })
+                                      }
+                                    />
+                                  </td>
+                                )}
+                                <td className="px-3 py-2 font-mono text-xs">{it.employee_code}</td>
+                                <td className="px-3 py-2 whitespace-nowrap">{it.employee_name ?? "—"}</td>
+                                <td className="px-3 py-2 tabular-nums">₹{Number(it.amount).toLocaleString("en-IN")}</td>
+                                <td className="px-3 py-2">{it.pay_mod}</td>
+                                <td className="px-3 py-2 font-mono text-xs">{it.account_masked}</td>
+                                <td className="px-3 py-2 text-xs">{it.batch_number}{it.attempt_kind === "reexport" ? " (re-export)" : ""}</td>
+                                <td className="px-3 py-2 text-xs max-w-xs">
+                                  {it.rejection_reason_label ?? "—"}
+                                  {it.rejection_note && <div className="text-muted-foreground">{it.rejection_note}</div>}
+                                </td>
+                                <td className="px-3 py-2 text-xs">
+                                  {it.ecs_number ? `${it.ecs_number} / ${it.transfer_date ?? "—"}` : "—"}
+                                  {it.payslip_unlocked_at && <div className="text-emerald-700">payslip unlocked</div>}
+                                </td>
+                                {opts.showMarkCorrected && (
+                                  <td className="px-3 py-2">
+                                    {it.status === "rejected" && (
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        disabled={markCorrectedReadyMutation.isPending}
+                                        onClick={() => markCorrectedReadyMutation.mutate(it.id)}
+                                        title="Only after the bank-change request has been approved and penny-drop verified"
+                                      >
+                                        Mark corrected
+                                      </Button>
+                                    )}
+                                  </td>
+                                )}
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+
+                  const readySelectedCount = readyForDisbursalItems.filter((i) => selectedItemIds.has(i.id)).length;
+                  const allReadySelected = readyForDisbursalItems.length > 0 && readySelectedCount === readyForDisbursalItems.length;
+
+                  return (
+                    <div className="space-y-3">
+                      {/* Ready for Disbursal */}
+                      <div className="rounded-md border p-4 space-y-3">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="flex items-center gap-2 text-sm font-semibold"
+                            onClick={() => setOpenSection((s) => ({ ...s, ready: !s.ready }))}
+                          >
+                            <Badge className="bg-amber-500 hover:bg-amber-500">Ready for Disbursal</Badge>
+                            ({readyForDisbursalItems.length})
+                          </button>
+                          <div className="flex items-center gap-2">
+                            {readyForDisbursalItems.length > 0 && (
+                              <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+                                <Checkbox
+                                  checked={allReadySelected}
+                                  onCheckedChange={() =>
+                                    setSelectedItemIds((prev) => {
+                                      const next = new Set(prev);
+                                      if (allReadySelected) readyForDisbursalItems.forEach((i) => next.delete(i.id));
+                                      else readyForDisbursalItems.forEach((i) => next.add(i.id));
+                                      return next;
+                                    })
+                                  }
+                                />
+                                Select all
+                              </label>
+                            )}
+                            {readySelectedCount > 0 && (
+                              <Button size="sm" variant="destructive" onClick={() => setRejectDialogOpen(true)}>
+                                Add failure reason for {readySelectedCount}
+                              </Button>
+                            )}
+                            {correctedReadyItems.length > 0 && (
+                              <Button
+                                size="sm"
+                                disabled={transferReexporting}
+                                onClick={() => downloadSalaryTransferFile(true)}
+                                title="Generates a new file containing only corrected, re-verified employees"
+                              >
+                                {transferReexporting ? "Generating…" : `Re-export ${correctedReadyItems.length} corrected`}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Generated but not yet confirmed by a Transfer Number Update File
+                          upload. Uploading a file that includes these employees' codes moves
+                          them to Disbursed automatically; anyone whose code is not in the file
+                          stays here — select them and add a failure reason once you know why.
+                        </p>
+                        {openSection.ready && renderItemTable(readyForDisbursalItems, {
+                          selectable: true,
+                          showMarkCorrected: true,
+                          emptyText: "Nothing waiting — every generated employee has either been confirmed or rejected.",
+                        })}
+                      </div>
+
+                      {/* Disbursed */}
+                      <div className="rounded-md border p-4 space-y-3">
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 text-sm font-semibold"
+                          onClick={() => setOpenSection((s) => ({ ...s, disbursed: !s.disbursed }))}
+                        >
+                          <Badge className="bg-emerald-600 hover:bg-emerald-600">Disbursed</Badge>
+                          ({disbursedItems.length})
+                        </button>
+                        <p className="text-xs text-muted-foreground">
+                          Matched by employee code against an uploaded Transfer Number Update
+                          File — ECS/TRF number recorded, payslip unlocked.
+                        </p>
+                        {openSection.disbursed && renderItemTable(disbursedItems, {
+                          emptyText: "Nothing confirmed yet for this run.",
+                        })}
+                      </div>
+
+                      {/* Rejected */}
+                      <div className="rounded-md border p-4 space-y-3">
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 text-sm font-semibold"
+                          onClick={() => setOpenSection((s) => ({ ...s, rejected: !s.rejected }))}
+                        >
+                          <Badge variant="outline" className="bg-rose-100 text-rose-800 border-rose-200">Rejected</Badge>
+                          ({rejectedItems.length})
+                        </button>
+                        <p className="text-xs text-muted-foreground">
+                          Explicitly flagged with a failure reason. Once the bank-change request
+                          behind a reason is approved and penny-drop verified, mark it corrected
+                          to include it in the next re-export.
+                        </p>
+                        {openSection.rejected && renderItemTable(rejectedItems, {
+                          showMarkCorrected: true,
+                          emptyText: "No rejected items for this run.",
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+                {bankRunId && transferItems.length === 0 && !transferItemsQ.isLoading && (
+                  <div className="rounded-md border p-6 text-center text-sm text-muted-foreground">
+                    No transfer batches generated for this run yet.
+                  </div>
+                )}
+
+                {/* ── Transfer Number Update File import ─────────────────── */}
+                {bankRunId && (
+                  <div className="rounded-md border p-4 space-y-3">
+                    <div>
+                      <h3 className="text-sm font-semibold">Import Transfer Number Update File</h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        CSV columns: EmpCode, EmpName, ECSNumber, TRF Date, Branch. Recording a
+                        transfer number here confirms the transfer and unlocks that employee's
+                        payslip for this month — nothing else does.
+                      </p>
+                    </div>
+                    <input
+                      type="file"
+                      accept=".csv,text/csv"
+                      disabled={importing}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void handleImportFileSelected(f);
+                        e.target.value = "";
+                      }}
+                      className="text-sm"
+                    />
+                    {importing && <p className="text-sm text-muted-foreground">Reading file…</p>}
+                    {importPreview && (
+                      <div className="space-y-3">
+                        <div className="flex flex-wrap gap-3 text-sm">
+                          <Badge variant="outline">{importPreview.summary.total} rows</Badge>
+                          <Badge className="bg-emerald-600">{importPreview.summary.will_confirm} will confirm</Badge>
+                          {importPreview.summary.unmatched > 0 && <Badge variant="destructive">{importPreview.summary.unmatched} unmatched</Badge>}
+                          {importPreview.summary.already_confirmed > 0 && <Badge variant="secondary">{importPreview.summary.already_confirmed} already confirmed</Badge>}
+                          {importPreview.summary.invalid > 0 && <Badge variant="destructive">{importPreview.summary.invalid} invalid</Badge>}
+                        </div>
+                        <div className="rounded-md border overflow-auto max-h-64">
+                          <table className="w-full text-xs">
+                            <thead className="bg-muted sticky top-0">
+                              <tr>
+                                {["Code", "Name", "ECS", "Date", "Outcome", "Detail"].map((h) => (
+                                  <th key={h} className="px-2 py-1.5 text-left font-medium whitespace-nowrap">{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {importPreview.data.map((r, i) => (
+                                <tr key={i} className="border-t">
+                                  <td className="px-2 py-1 font-mono">{r.emp_code}</td>
+                                  <td className="px-2 py-1">{r.emp_name}</td>
+                                  <td className="px-2 py-1">{r.ecs_number}</td>
+                                  <td className="px-2 py-1">{r.trf_date}</td>
+                                  <td className={`px-2 py-1 font-medium ${r.outcome === "will_confirm" ? "text-emerald-700" : "text-amber-700"}`}>
+                                    {r.outcome.replace("_", " ")}
+                                  </td>
+                                  <td className="px-2 py-1 text-muted-foreground">{r.detail}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button variant="ghost" onClick={() => setImportPreview(null)}>Cancel</Button>
+                          <Button
+                            disabled={commitImportMutation.isPending || importPreview.summary.will_confirm === 0}
+                            onClick={() => commitImportMutation.mutate()}
+                          >
+                            {commitImportMutation.isPending ? "Committing…" : `Confirm ${importPreview.summary.will_confirm} transfer(s)`}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </TabsContent>
+
+              {/* ── F&F Transfer — Full & Final settlement's own bank-transfer batch ──── */}
+              <TabsContent value="fnf-export" className="space-y-4 mt-3">
+                <FnfTransferTab />
               </TabsContent>
             </Tabs>
           </TabsContent>
@@ -1387,7 +2425,12 @@ export default function PaymentDisbursalCenter() {
                       IMPS / Cheque / Cash / UPI / RTGS
                     </p>
                   </div>
+                  <label htmlFor="disbursal-csv-text" className="sr-only">
+                    Disbursal records CSV
+                  </label>
                   <textarea
+                    id="disbursal-csv-text"
+                    name="disbursal_csv_text"
                     className="w-full h-40 rounded-md border p-3 text-xs font-mono bg-background resize-y"
                     placeholder={
                       "employee_code,cheque_no,payment_mode,payment_date,bank_ref,notes\nMAS001,CHQ12345,NEFT,2026-07-13,,\nMAS002,,Cash,2026-07-13,,"
@@ -1419,10 +2462,12 @@ export default function PaymentDisbursalCenter() {
                   )}
                   <div className="grid grid-cols-2 gap-4 max-w-xl">
                     <div className="space-y-1">
-                      <label className="text-sm font-medium">
+                      <label htmlFor="disbursal-employee-code" className="text-sm font-medium">
                         Employee Code *
                       </label>
                       <Input
+                        id="disbursal-employee-code"
+                        name="employee_code"
                         value={manualRow.employee_code}
                         onChange={(e) =>
                           setManualRow((p) => ({
@@ -1434,10 +2479,12 @@ export default function PaymentDisbursalCenter() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-sm font-medium">
+                      <label htmlFor="disbursal-cheque-no" className="text-sm font-medium">
                         Cheque / Reference No
                       </label>
                       <Input
+                        id="disbursal-cheque-no"
+                        name="cheque_no"
                         value={manualRow.cheque_no}
                         onChange={(e) =>
                           setManualRow((p) => ({
@@ -1449,7 +2496,7 @@ export default function PaymentDisbursalCenter() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-sm font-medium">
+                      <label id="disbursal-payment-mode-label" htmlFor="disbursal-payment-mode" className="text-sm font-medium">
                         Payment Mode
                       </label>
                       <Select
@@ -1457,8 +2504,9 @@ export default function PaymentDisbursalCenter() {
                         onValueChange={(v) =>
                           setManualRow((p) => ({ ...p, payment_mode: v }))
                         }
+                        name="payment_mode"
                       >
-                        <SelectTrigger>
+                        <SelectTrigger id="disbursal-payment-mode" aria-labelledby="disbursal-payment-mode-label">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -1471,10 +2519,12 @@ export default function PaymentDisbursalCenter() {
                       </Select>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-sm font-medium">
+                      <label htmlFor="disbursal-payment-date" className="text-sm font-medium">
                         Payment Date
                       </label>
                       <Input
+                        id="disbursal-payment-date"
+                        name="payment_date"
                         type="date"
                         value={manualRow.payment_date}
                         onChange={(e) =>
@@ -1486,8 +2536,10 @@ export default function PaymentDisbursalCenter() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-sm font-medium">Bank Ref</label>
+                      <label htmlFor="disbursal-bank-ref" className="text-sm font-medium">Bank Ref</label>
                       <Input
+                        id="disbursal-bank-ref"
+                        name="bank_ref"
                         value={manualRow.bank_ref}
                         onChange={(e) =>
                           setManualRow((p) => ({
@@ -1499,8 +2551,10 @@ export default function PaymentDisbursalCenter() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-sm font-medium">Notes</label>
+                      <label htmlFor="disbursal-notes" className="text-sm font-medium">Notes</label>
                       <Input
+                        id="disbursal-notes"
+                        name="notes"
                         value={manualRow.notes}
                         onChange={(e) =>
                           setManualRow((p) => ({
@@ -1601,6 +2655,147 @@ export default function PaymentDisbursalCenter() {
               }
             >
               {saveMutation.isPending ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Salary Transfer rejection dialog ─────────────────────────────────── */}
+      <Dialog open={rejectDialogOpen} onOpenChange={(o) => !o && setRejectDialogOpen(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Mark {selectedItemIds.size} item(s) rejected</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Creates a correction task and notifies the mapped Branch Payroll HR and the
+              employee. The employee's existing secure bank-update and penny-drop flow is used —
+              nothing here edits an account directly.
+            </p>
+            <div>
+              <label className="text-sm font-medium">Rejection reason</label>
+              <Select value={rejectReason} onValueChange={setRejectReason}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Select a reason…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {rejectionReasons.map((r) => (
+                    <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-sm font-medium">
+                Note {rejectReason === "other" && <span className="text-destructive">*</span>}
+              </label>
+              <Textarea
+                className="mt-1"
+                rows={3}
+                value={rejectNote}
+                onChange={(e) => setRejectNote(e.target.value)}
+                placeholder="Bank reference/reason detail. Never paste a full account number here."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRejectDialogOpen(false)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={
+                rejectItemsMutation.isPending ||
+                !rejectReason ||
+                (rejectReason === "other" && !rejectNote.trim())
+              }
+              onClick={() =>
+                rejectItemsMutation.mutate({
+                  item_ids: [...selectedItemIds],
+                  reason: rejectReason,
+                  note: rejectNote || null,
+                })
+              }
+            >
+              {rejectItemsMutation.isPending ? "Saving…" : "Mark rejected"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Bulk assign / annotate dialog ────────────────────────────────────── */}
+      <Dialog open={bulkEditing} onOpenChange={(o) => !o && setBulkEditing(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Bulk assign — {selectedIds.size} employee(s)</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Sets the same owner, workflow status and note on every selected exception. A note
+              left blank here does not clear an existing note.
+            </p>
+            <div>
+              <label className="text-sm font-medium">Owner</label>
+              <Select value={bulkDraftOwnerId} onValueChange={setBulkDraftOwnerId}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Unassigned" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ownersQ.isLoading && (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                      Loading…
+                    </div>
+                  )}
+                  {assignableOwners.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Workflow status</label>
+              <Select value={bulkDraftStatus} onValueChange={setBulkDraftStatus}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {WORKFLOW_STATUSES.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s.replace("_", " ")}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Note</label>
+              <Textarea
+                className="mt-1"
+                rows={4}
+                value={bulkDraftNotes}
+                onChange={(e) => setBulkDraftNotes(e.target.value)}
+                placeholder="What is being done about these, and by whom."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setBulkEditing(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={bulkSaveMutation.isPending || selectedIds.size === 0}
+              onClick={() =>
+                bulkSaveMutation.mutate({
+                  employeeIds: [...selectedIds],
+                  workflow_status: bulkDraftStatus,
+                  notes: bulkDraftNotes,
+                  owner_user_id: bulkDraftOwnerId,
+                })
+              }
+            >
+              {bulkSaveMutation.isPending
+                ? "Saving…"
+                : `Apply to ${selectedIds.size}`}
             </Button>
           </DialogFooter>
         </DialogContent>

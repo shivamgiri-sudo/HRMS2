@@ -5,6 +5,8 @@ import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { convertCandidateToEmployee } from "./ats.convert.service.js";
 import { classifyEsignState } from "./esignState.js";
 import { syncEsignStatus } from "../integrations/luckpay/luckpay-status.service.js";
+import { assertNotBeforeToday, canBackdateDates } from "../../utils/dateUtils.js";
+import { assertSalaryDateNotOwnedByPayrollHead, checkSalaryStartDateForCandidate, syncSalaryStartDateForCandidate } from "../payroll/salary-start-date.service.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -283,54 +285,66 @@ export async function listJoiningControlRoomQueue(search = "") {
 }
 
 export async function getJoiningControlRoomCandidate(candidateId: string) {
-  const summary = await candidateSnapshot(candidateId);
+  // Round 1: snapshot + all queries that only need candidateId run in parallel.
+  // Previously these ran sequentially (15 round trips); batching them saves
+  // ~200–400 ms of MySQL RTT on every candidate click.
+  const [
+    summary,
+    [profile],
+    [bank],
+    [qualifications],
+    [experience],
+    [payroll],
+    [salaryProposal],
+    [salarySteps],
+    [jclr],
+    [statutory],
+    [dpdp],
+    [withdrawals],
+    [bridge],
+    [offerRows],
+    [provTasks],
+  ] = await Promise.all([
+    candidateSnapshot(candidateId),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM ats_payroll_hr_validation WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM salary_exception_proposal WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM salary_proposal_approval_step WHERE candidate_id = ? ORDER BY FIELD(approval_level, 'bm','operations','payroll','finance')`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM jclr_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM statutory_declaration WHERE candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM dpdp_consent_register WHERE candidate_id = ? ORDER BY purpose_code`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT * FROM dpdp_consent_withdrawal WHERE requester_id = ? AND requester_type = 'candidate' ORDER BY created_at DESC`, [candidateId]),
+    db.execute<RowDataPacket[]>(`SELECT ob.*, e.employee_code, e.official_email FROM ats_onboarding_bridge ob LEFT JOIN employees e ON e.id = ob.employee_id WHERE ob.candidate_id = ? LIMIT 1`, [candidateId]),
+    db.execute<RowDataPacket[]>(
+      `SELECT o.*,
+              d.dept_name AS department_name, des.designation_name, cc.cost_centre_name,
+              CONCAT(m.first_name, ' ', m.last_name) AS manager_name
+         FROM ats_employment_offer o
+         LEFT JOIN department_master d ON d.id = o.department_id
+         LEFT JOIN designation_master des ON des.id = o.designation_id
+         LEFT JOIN cost_centre_master cc ON cc.id = o.cost_centre
+         LEFT JOIN employees m ON m.id = o.reporting_manager_id
+        WHERE o.candidate_id = ?
+        ORDER BY o.created_at DESC
+        LIMIT 1`,
+      [candidateId],
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT r.task_code, r.status, r.assigned_user_id AS assigned_to,
+              r.actioned_at AS completed_at, r.sla_due_at AS sla_due,
+              CONCAT(e.first_name, ' ', e.last_name) AS assigned_to_name
+         FROM it_provisioning_request r
+         LEFT JOIN employees e ON e.id = r.assigned_user_id
+        WHERE r.employee_id = (SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1)
+        ORDER BY FIELD(r.task_code, 'WFM_PROCESS_ALIGNMENT', 'IT_EMAIL_DOMAIN_ASSET', 'ADMIN_BIOMETRIC_ID_CARD', 'APPOINTMENT_LETTER_ESIGN')`,
+      [candidateId],
+    ),
+  ]);
+
   if (!summary) throw Object.assign(new Error("Candidate not found"), { statusCode: 404 });
-
-  const [profile] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [bank] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [qualifications] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_qualification WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]);
-  const [experience] = await db.execute<RowDataPacket[]>(`SELECT * FROM candidate_onboarding_experience WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]);
-  const [payroll] = await db.execute<RowDataPacket[]>(`SELECT * FROM ats_payroll_hr_validation WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [salaryProposal] = await db.execute<RowDataPacket[]>(`SELECT * FROM salary_exception_proposal WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [salarySteps] = await db.execute<RowDataPacket[]>(`SELECT * FROM salary_proposal_approval_step WHERE candidate_id = ? ORDER BY FIELD(approval_level, 'bm','operations','payroll','finance')`, [candidateId]);
-  const [jclr] = await db.execute<RowDataPacket[]>(`SELECT * FROM jclr_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [statutory] = await db.execute<RowDataPacket[]>(`SELECT * FROM statutory_declaration WHERE candidate_id = ? LIMIT 1`, [candidateId]);
-  const [dpdp] = await db.execute<RowDataPacket[]>(`SELECT * FROM dpdp_consent_register WHERE candidate_id = ? ORDER BY purpose_code`, [candidateId]);
-  const [withdrawals] = await db.execute<RowDataPacket[]>(`SELECT * FROM dpdp_consent_withdrawal WHERE requester_id = ? AND requester_type = 'candidate' ORDER BY created_at DESC`, [candidateId]);
-  const [bridge] = await db.execute<RowDataPacket[]>(`SELECT ob.*, e.employee_code, e.official_email FROM ats_onboarding_bridge ob LEFT JOIN employees e ON e.id = ob.employee_id WHERE ob.candidate_id = ? LIMIT 1`, [candidateId]);
-
-  // Fetch employment offer (salary source of truth set in onboarding-requests)
-  const [offerRows] = await db.execute<RowDataPacket[]>(
-    `SELECT o.*,
-            d.dept_name AS department_name, des.designation_name, cc.cost_centre_name,
-            CONCAT(m.first_name, ' ', m.last_name) AS manager_name
-       FROM ats_employment_offer o
-       LEFT JOIN department_master d ON d.id = o.department_id
-       LEFT JOIN designation_master des ON des.id = o.designation_id
-       LEFT JOIN cost_centre_master cc ON cc.id = o.cost_centre
-       LEFT JOIN employees m ON m.id = o.reporting_manager_id
-      WHERE o.candidate_id = ?
-      ORDER BY o.created_at DESC
-      LIMIT 1`,
-    [candidateId],
-  );
-
-  // Fetch provisioning task statuses
-  const [provTasks] = await db.execute<RowDataPacket[]>(
-    // Four columns here named things it_provisioning_request does not have, so the whole
-    // provisioning panel of the joining control room threw and showed no tasks:
-    // assigned_to -> assigned_user_id, completed_at -> actioned_at, sla_due -> sla_due_at,
-    // and candidate_id, which has no equivalent at all. The table links to a candidate only
-    // through ats_onboarding_bridge, so that subquery is the only real predicate.
-    `SELECT r.task_code, r.status, r.assigned_user_id AS assigned_to,
-            r.actioned_at AS completed_at, r.sla_due_at AS sla_due,
-            CONCAT(e.first_name, ' ', e.last_name) AS assigned_to_name
-       FROM it_provisioning_request r
-       LEFT JOIN employees e ON e.id = r.assigned_user_id
-      WHERE r.employee_id = (SELECT employee_id FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1)
-      ORDER BY FIELD(r.task_code, 'WFM_PROCESS_ALIGNMENT', 'IT_EMAIL_DOMAIN_ASSET', 'ADMIN_BIOMETRIC_ID_CARD', 'APPOINTMENT_LETTER_ESIGN')`,
-    [candidateId],
-  );
 
   // Joining-document e-sign checklist.
   //
@@ -449,7 +463,7 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
   };
 }
 
-export async function savePayrollControlRoomDetails(candidateId: string, input: JsonRecord, actorId: string) {
+export async function savePayrollControlRoomDetails(candidateId: string, input: JsonRecord, actorId: string, actorRoles?: readonly string[]) {
   // JCR only updates effective dates and remarks — salary is set in onboarding-requests offer form
   const salaryStartDate = String(input.salary_start_date || "");
   const attendanceEffective = String(input.attendance_effective_from || salaryStartDate);
@@ -466,10 +480,44 @@ export async function savePayrollControlRoomDetails(candidateId: string, input: 
   const offer = offerRows[0];
   const joiningDate = offer?.date_of_joining ? toDateOnly(offer.date_of_joining) : null;
   const originalSalaryDate = offer?.date_of_salary ? toDateOnly(offer.date_of_salary) : joiningDate;
+  // Payroll HR / Payroll Head keep the CURRENT salary start date on the validation row; the offer keeps
+  // the original. Re-saving either one is not a change, so it must neither need a reason nor trip the date lock.
+  const [currentRows] = await db.execute<RowDataPacket[]>(
+    `SELECT salary_start_date FROM ats_payroll_hr_validation WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
+    [candidateId],
+  );
+  const currentSalaryDate = currentRows[0]?.salary_start_date ? toDateOnly(currentRows[0].salary_start_date) : null;
+  const isExistingSalaryDate = (d: string) => d === originalSalaryDate || d === currentSalaryDate;
 
   // Validate salary start date if changed from original
-  if (salaryStartDate && originalSalaryDate && salaryStartDate !== originalSalaryDate && !reason.trim()) {
+  if (salaryStartDate && originalSalaryDate && !isExistingSalaryDate(salaryStartDate) && !reason.trim()) {
     throw Object.assign(new Error("salary_effective_date_reason is required when salary start date differs from offer"), { statusCode: 400 });
+  }
+
+  // W11/W12: salary_start_date must never precede joining_date
+  if (salaryStartDate && joiningDate && salaryStartDate < joiningDate) {
+    throw Object.assign(
+      new Error(`Salary start date (${salaryStartDate}) cannot be before date of joining (${joiningDate}).`),
+      { statusCode: 400, code: 'SALARY_START_BEFORE_JOINING' },
+    );
+  }
+
+  // Date lock: a salary start date cannot be moved to before today (re-saving the offer's own date is fine).
+  assertNotBeforeToday(salaryStartDate, "Salary start date", isExistingSalaryDate(salaryStartDate) ? salaryStartDate : undefined, canBackdateDates(actorRoles));
+
+  // Once Payroll Head has approved the salary the date is theirs: refuse BEFORE writing anything,
+  // otherwise this would change only the validation row and leave payroll reading another date.
+  await assertSalaryDateNotOwnedByPayrollHead(db, candidateId, salaryStartDate);
+  // If the employee record already exists, run every other rule (closed payroll months, date locks)
+  // now, before the validation row is written - a refusal after the write would leave that row on
+  // the new date while the employee, package and assignment stay on the old one.
+  if (salaryStartDate) {
+    await checkSalaryStartDateForCandidate({
+      candidateId,
+      newDate: salaryStartDate,
+      actorUserId: actorId,
+      source: "joining_control_room",
+    });
   }
 
   // Check if ats_payroll_hr_validation row exists; if not, seed minimal record from offer
@@ -561,6 +609,17 @@ export async function savePayrollControlRoomDetails(candidateId: string, input: 
         candidateId,
       ],
     );
+  }
+
+  // If the employee record already exists (salary review still pending) carry the date to every
+  // other copy in one transaction. Returns null - and does nothing - before employee creation.
+  if (salaryStartDate) {
+    await syncSalaryStartDateForCandidate({
+      candidateId,
+      newDate: salaryStartDate,
+      actorUserId: actorId,
+      source: "joining_control_room",
+    });
   }
 
   // Auto-lock the salary register the moment Payroll HR validates for payroll,

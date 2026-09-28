@@ -10,10 +10,12 @@
  * - wfm_roster_assignment (what was planned)
  * - attendance_daily_record (what actually happened)
  * - db_audit.call_quality_assessment (quality scores) - optional
- * - apr_requests (pending regularizations)
+ * - attendance_regularization (pending regularizations)
  */
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
+import { isShiftDueYet } from './shift-due.util.js';
+import { lobCondition, type LobFilter } from '../../shared/lobFilter.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,6 +38,10 @@ export interface ManagerDailyDigest {
   managerName: string;
   managerEmail: string | null;
   date: string;
+  /** Branch held by the most team members (see generateSingleManagerDigest) — null if the
+   *  team has no branch-assigned members at all. Added for merge-plan Phase B bug #2. */
+  branchId: string | null;
+  branchName: string | null;
   teamSize: number;
   planned: number;
   present: number;
@@ -121,8 +127,25 @@ const INCOMPLETE_THRESHOLD = 0.8;
  * Called by cron at 7 AM IST.
  */
 export async function generateManagerDailyDigests(
-  date: string = yesterdayDate()
+  date: string = yesterdayDate(),
+  scope?: RosterIntelligenceScope
 ): Promise<ManagerDailyDigest[]> {
+  if (scope?.branchIds?.length === 0 || scope?.processIds?.length === 0) return [];
+
+  // Scoped on e (the team member), not mgr — a branch-scoped or process-scoped caller sees
+  // digests for managers whose team sits in their branch/process, matching
+  // detectUnplannedAbsences's convention above.
+  const scopeConds: string[] = [];
+  const scopeParams: unknown[] = [];
+  if (scope?.branchIds) {
+    scopeConds.push(`e.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`);
+    scopeParams.push(...scope.branchIds);
+  }
+  if (scope?.processIds) {
+    scopeConds.push(`e.process_id IN (${scope.processIds.map(() => "?").join(",")})`);
+    scopeParams.push(...scope.processIds);
+  }
+
   // Get all managers with active team members who have roster for the date
   const [managers] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT
@@ -134,8 +157,9 @@ export async function generateManagerDailyDigests(
      JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = ?
      WHERE e.active_status = 1
        AND e.employment_status = 'Active'
-       AND mgr.active_status = 1`,
-    [date]
+       AND mgr.active_status = 1
+       ${scopeConds.map((c) => `AND ${c}`).join("\n       ")}`,
+    [date, ...scopeParams]
   );
 
   const digests: ManagerDailyDigest[] = [];
@@ -167,6 +191,8 @@ async function generateSingleManagerDigest(
        e.id AS employee_id,
        e.employee_code,
        e.full_name AS employee_name,
+       e.branch_id,
+       b.branch_name,
        ra.assignment_type,
        ra.shift_start_time,
        ra.shift_end_time,
@@ -180,11 +206,36 @@ async function generateSingleManagerDigest(
      JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = ?
      LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id
      LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ?
+     LEFT JOIN branch_master b ON b.id = e.branch_id
      WHERE e.reporting_manager_id = ?
        AND e.active_status = 1
        AND e.employment_status = 'Active'`,
     [date, date, managerId]
   );
+
+  // Merge-plan Phase B bug #2: Command Center's branch filter was a no-op ("Would need
+  // branch info in digest") because this digest never carried any. A manager's team is
+  // usually all one branch, but not guaranteed, so this takes the branch held by the most
+  // team members rather than assuming the first row — an honest single value for the
+  // (branchId, count) majority, not a fabricated one.
+  const branchCounts = new Map<string, { branchName: string; count: number }>();
+  for (const r of teamRows) {
+    if (!r.branch_id) continue;
+    const key = String(r.branch_id);
+    const existing = branchCounts.get(key);
+    if (existing) existing.count++;
+    else branchCounts.set(key, { branchName: r.branch_name ? String(r.branch_name) : 'Unknown', count: 1 });
+  }
+  let branchId: string | null = null;
+  let branchName: string | null = null;
+  let topCount = 0;
+  for (const [id, { branchName: name, count }] of branchCounts) {
+    if (count > topCount) {
+      topCount = count;
+      branchId = id;
+      branchName = name;
+    }
+  }
 
   const unplannedAbsences: TeamMemberAttendance[] = [];
   const lateArrivals: TeamMemberAttendance[] = [];
@@ -218,6 +269,23 @@ async function generateSingleManagerDigest(
     };
 
     if (isOff) {
+      member.adherence = 'GREY';
+      continue;
+    }
+
+    // A shift scheduled for TODAY that hasn't started yet (current time still before shift start
+    // + grace) has no measurable outcome — not present, but not genuinely absent either. Without
+    // this check, every employee on a later shift read as an "unplanned absence" the moment the
+    // day's row existed, so a team whose shift started at 19:00 showed 100% shrinkage all
+    // afternoon. Marked GREY (the same "no verdict yet" bucket as week-off/leave/holiday) and
+    // excluded from planned/present so it can't skew shrinkagePct. Only applies to today — a past
+    // date's shift has necessarily already started by the time it's queried. Found live
+    // 2026-09-11 on Roster Command Center. Guard extracted to shift-due.util.ts as part of
+    // Phase C (2026-09-12) — this also fixes a latent bug this call site had: the old
+    // `date === todayDate()` comparison used todayDate()'s UTC-based toISOString(), which
+    // misclassifies "today" for the first ~5.5 hours of the IST day on this host; the shared
+    // util uses local Date getters instead (see shift-due.util.ts for the full explanation).
+    if (!r.first_in && !isShiftDueYet(shiftStart ? String(shiftStart) : null, date)) {
       member.adherence = 'GREY';
       continue;
     }
@@ -265,12 +333,17 @@ async function generateSingleManagerDigest(
   const shrinkagePct = planned > 0 ? Math.round(((planned - present) / planned) * 100) : 0;
 
   // Get APR pending count for this manager's team
+  // apr_requests was never a real table — the actual attendance-regularization requests live in
+  // attendance_regularization (backend/sql/005_attendance_wfm.sql), whose only "still open" value
+  // is 'pending' (status is otherwise 'approved'/'rejected'/'cancelled'/'discarded' per
+  // wfm.regularization.secure.routes.ts — 'submitted' was never a real value here either). This
+  // 500'd every single manager-digests call live in production; confirmed 2026-09-11.
   const [aprRows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt
-     FROM apr_requests apr
+     FROM attendance_regularization apr
      JOIN employees e ON e.id = apr.employee_id
      WHERE e.reporting_manager_id = ?
-       AND apr.status IN ('pending', 'submitted')`,
+       AND apr.status = 'pending'`,
     [managerId]
   );
   const aprPending = Number(aprRows[0]?.cnt ?? 0);
@@ -283,6 +356,8 @@ async function generateSingleManagerDigest(
     managerName,
     managerEmail,
     date,
+    branchId,
+    branchName,
     teamSize,
     planned,
     present,
@@ -347,6 +422,15 @@ export async function generateBranchDashboard(
     const type = String(r.assignment_type ?? '').toUpperCase();
     const isOff = ['WEEK_OFF', 'LEAVE', 'HOLIDAY'].includes(type);
     if (isOff) continue;
+
+    // Same "shift hasn't started yet today" guard as generateSingleManagerDigest above — a row
+    // with no clock-in is only a real absence once its shift is actually due. Extracted to
+    // shift-due.util.ts as part of Phase C (2026-09-12); see that file and the comment on the
+    // generateSingleManagerDigest call site above for the UTC-vs-local fix that came with it.
+    const shiftStartForDue = r.template_start || r.shift_start_time;
+    if (!r.first_in && !isShiftDueYet(shiftStartForDue ? String(shiftStartForDue) : null, date)) {
+      continue;
+    }
 
     planned++;
     const processId = r.process_id ? String(r.process_id) : 'unknown';
@@ -435,6 +519,16 @@ export async function generateBranchDashboard(
 
 // ── Unplanned Absence Detection ──────────────────────────────────────────────
 
+// Caller's RBAC scope, resolved by roster-intelligence.routes.ts from
+// resolveDashboardScopeForRequest — not a raw UI filter. `undefined` on a field means the
+// caller's scope is unrestricted on that dimension (ORG_ALL, or the wfm/super_admin roles
+// this endpoint left untouched); an empty array means the caller's scope resolved to zero
+// branches/processes and must fail CLOSED (matches getCosecLatestPunches's convention).
+export type RosterIntelligenceScope = { branchIds?: string[]; processIds?: string[] };
+
+// Optional UI narrowing filters. They are ANDed onto (never replace) the caller's RBAC scope.
+export type RosterIntelligenceFilters = { branchId?: string; processId?: string; lob?: LobFilter };
+
 /**
  * Detect employees who are rostered for a shift but haven't punched in.
  * Called every 30 minutes to catch RED alerts.
@@ -443,10 +537,38 @@ export async function generateBranchDashboard(
  */
 export async function detectUnplannedAbsences(
   date: string = todayDate(),
-  gracePeriodMinutes: number = 30
+  gracePeriodMinutes: number = 30,
+  scope?: RosterIntelligenceScope,
+  filters?: RosterIntelligenceFilters
 ): Promise<UnplannedAbsenceAlert[]> {
+  if (scope?.branchIds?.length === 0 || scope?.processIds?.length === 0) return [];
+
   const now = new Date();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+  const scopeConds: string[] = [];
+  const scopeParams: unknown[] = [];
+  if (scope?.branchIds) {
+    scopeConds.push(`e.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`);
+    scopeParams.push(...scope.branchIds);
+  }
+  if (scope?.processIds) {
+    scopeConds.push(`e.process_id IN (${scope.processIds.map(() => "?").join(",")})`);
+    scopeParams.push(...scope.processIds);
+  }
+  if (filters?.branchId) {
+    scopeConds.push('e.branch_id = ?');
+    scopeParams.push(filters.branchId);
+  }
+  if (filters?.processId) {
+    scopeConds.push('e.process_id = ?');
+    scopeParams.push(filters.processId);
+  }
+  const lobCond = filters?.lob ? lobCondition(filters.lob) : null;
+  if (lobCond) {
+    scopeConds.push(lobCond.sql);
+    scopeParams.push(...lobCond.params);
+  }
 
   // Find employees rostered for shifts that have started but haven't punched in
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -471,8 +593,9 @@ export async function detectUnplannedAbsences(
      WHERE e.active_status = 1
        AND e.employment_status = 'Active'
        AND ra.assignment_type NOT IN ('WEEK_OFF', 'LEAVE', 'HOLIDAY', 'TRAINING')
-       AND att.clock_in_time IS NULL`,
-    [date, date]
+       AND att.clock_in_time IS NULL
+       ${scopeConds.map((c) => `AND ${c}`).join("\n       ")}`,
+    [date, date, ...scopeParams]
   );
 
   const alerts: UnplannedAbsenceAlert[] = [];

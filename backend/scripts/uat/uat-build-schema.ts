@@ -43,7 +43,20 @@ const SQL_DIR = path.resolve(HERE, "../../sql");
 const DB_HOST = process.env.UAT_DB_HOST ?? "127.0.0.1";
 const DB_PORT = Number(process.env.UAT_DB_PORT ?? 13306);
 const DB_USER = process.env.UAT_DB_USER ?? "root";
-const DB_PASSWORD = process.env.UAT_DB_PASSWORD ?? "uatroot";
+// No literal fallback, even for a throwaway UAT container. A default password in
+// a tracked file is indistinguishable from a real one to anything scanning the
+// repository, and the habit is how the burned credential got committed in the
+// first place. The other UAT settings keep their defaults because a hostname and
+// a port are not secrets.
+const DB_PASSWORD = process.env.UAT_DB_PASSWORD;
+if (!DB_PASSWORD) {
+  console.error(
+    "Set UAT_DB_PASSWORD before building the UAT schema — e.g. UAT_DB_PASSWORD=... npx tsx " +
+      "backend/scripts/uat/uat-build-schema.ts (it is the password of the throwaway UAT " +
+      "container, not a production credential).",
+  );
+  process.exit(1);
+}
 const DB_NAME = process.env.UAT_DB_NAME ?? "mas_hrms_test";
 
 // ── Guards. Identical in spirit to migrate-fresh-test.ts, and not overridable. ────────────────

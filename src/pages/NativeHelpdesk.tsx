@@ -100,7 +100,6 @@ const SUBCATEGORIES_BY_CATEGORY: Record<string, { value: string; label: string }
     { value: "payroll_pf_transfer_query",           label: "Statutory Deductions — PF Transfer Query" },
     { value: "payroll_uan_activation_issue",        label: "Statutory Deductions — UAN Activation Issue" },
     { value: "payroll_esic_deduction_query",        label: "Statutory Deductions — ESIC Deduction Query" },
-    { value: "payroll_professional_tax_query",      label: "Statutory Deductions — Professional Tax Query" },
     { value: "payroll_travel_reimb_pending",        label: "Reimbursements — Travel Reimbursement Pending" },
     { value: "payroll_medical_reimb_pending",       label: "Reimbursements — Medical Reimbursement Pending" },
     { value: "payroll_reimb_rejected",              label: "Reimbursements — Reimbursement Rejected" },
@@ -306,7 +305,23 @@ function PriorityBadge({ priority }: { priority: string }) {
   return <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize ${cls}`}>{priority}</span>;
 }
 
-function StatusBadge({ status }: { status: string }) {
+// ESIC requests (card issue, deduction query) read in the vocabulary HR and employees use for them.
+// Display only: the stored status is unchanged, so SLA, filters and every other screen keep working.
+const ESIC_STATUS_LABEL: Record<string, string> = {
+  open: "Submitted",
+  in_progress: "In Progress",
+  pending_info: "Pending Information",
+  on_hold: "On Hold",
+  resolved: "Completed",
+  closed: "Closed",
+};
+
+export function statusLabelFor(status: string, subcategory?: string): string {
+  if (subcategory && /esic/i.test(subcategory) && ESIC_STATUS_LABEL[status]) return ESIC_STATUS_LABEL[status];
+  return status.replace(/_/g, " ");
+}
+
+function StatusBadge({ status, subcategory }: { status: string; subcategory?: string }) {
   const statusMap: Record<string, string> = {
     open: "in_progress",
     in_progress: "in_progress",
@@ -319,7 +334,7 @@ function StatusBadge({ status }: { status: string }) {
   return (
     <SmartHRStatusBadge
       status={normalizeStatus(statusMap[status] || status)}
-      label={status.replace(/_/g, " ")}
+      label={statusLabelFor(status, subcategory)}
     />
   );
 }
@@ -824,7 +839,7 @@ export default function NativeHelpdesk() {
                             </span>
                           )}
                           <PriorityBadge priority={selectedTicket.priority} />
-                          <StatusBadge status={selectedTicket.status} />
+                          <StatusBadge status={selectedTicket.status} subcategory={selectedTicket.it_subcategory} />
                           <SlaBadge sla_due_at={selectedTicket.sla_due_at} sla_breached={!!selectedTicket.sla_breached} status={selectedTicket.status} />
                           {selectedTicket.escalation_level ? (
                             <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-orange-50 text-orange-700">
@@ -1241,7 +1256,7 @@ export default function NativeHelpdesk() {
                             )}
                           </td>
                           <td className="p-4"><PriorityBadge priority={t.priority} /></td>
-                          <td className="p-4"><StatusBadge status={t.status} /></td>
+                          <td className="p-4"><StatusBadge status={t.status} subcategory={t.it_subcategory} /></td>
                           <td className="p-4">
                             <SlaBadge sla_due_at={t.sla_due_at} sla_breached={!!t.sla_breached} status={t.status} />
                           </td>

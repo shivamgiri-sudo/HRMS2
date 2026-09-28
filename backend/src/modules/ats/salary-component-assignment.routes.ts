@@ -115,6 +115,12 @@ router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payro
     }
   }
 
+  // Supersede any previous active candidate assignment before inserting.
+  await db.execute(
+    `UPDATE salary_component_assignments SET status = 'superseded'
+      WHERE candidate_id = ? AND status = 'active'`,
+    [candidateId]
+  );
   await db.execute(
     `INSERT INTO salary_component_assignments (
        id, candidate_id, effective_date, salary_slab, package_id,

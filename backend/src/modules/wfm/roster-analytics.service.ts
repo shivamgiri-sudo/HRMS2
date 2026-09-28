@@ -8,6 +8,8 @@
  */
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
+import { isShiftDueYet } from './shift-due.util.js';
+import { lobAnd, lobCondition, type LobFilter } from '../../shared/lobFilter.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -155,6 +157,11 @@ function getDayName(dateStr: string): string {
   return days[new Date(dateStr).getDay()];
 }
 
+// Local (server wall-clock) date/time helpers moved to shift-due.util.ts (Phase C,
+// 2026-09-12) — deliberately NOT toISOString(), which reads a Date back in UTC and
+// would misclassify "today" for part of the day on a UTC-offset host. The production
+// box's own OS clock is IST, so those local getters give the right calendar day/minute.
+
 const GRACE_MINUTES = 5;
 const INCOMPLETE_THRESHOLD_PCT = 80;
 const DEFAULT_HOURLY_COST_INR = 150; // Average BPO agent cost per hour
@@ -164,8 +171,10 @@ const INDUSTRY_AVG_SHRINKAGE = 12; // BPO industry benchmark
 
 export async function getWeeklyShrinkageIntelligence(
   branchId: string,
-  weekStartDate: string
+  weekStartDate: string,
+  lob: LobFilter = { kind: 'none' }
 ): Promise<WeeklyShrinkageIntelligence> {
+  const lobSql = lobAnd(lob);
   const { start, end, dates } = getWeekDates(weekStartDate);
 
   // Get branch info
@@ -199,9 +208,9 @@ export async function getWeeklyShrinkageIntelligence(
      LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
      LEFT JOIN process_master pm ON pm.id = e.process_id
      WHERE e.branch_id = ?
-       AND e.active_status = 1
+       AND e.active_status = 1${lobSql.sql}
        AND ra.roster_date BETWEEN ? AND ?`,
-    [branchId, start, end]
+    [branchId, ...lobSql.params, start, end]
   );
 
   // Initialize counters
@@ -258,13 +267,28 @@ export async function getWeeklyShrinkageIntelligence(
       // Not counted
     } else {
       // Working day
+      const shiftStart = r.template_start || r.shift_start_time;
+      const shiftEnd = r.template_end || r.shift_end_time;
+
+      // A shift scheduled for TODAY that has not started yet (current time still before shift
+      // start + grace) has no measurable outcome — it is not present, but it is not genuinely
+      // absent either. A bare `clock_in IS NULL` check (the only thing available) can't tell
+      // "hasn't shown up" apart from "shift hasn't begun", and previously always read it as an
+      // absence — so a branch with, say, a 19:00 shift showed 100% shrinkage all afternoon,
+      // before a single person was even due in. Excluded entirely from today's tally until the
+      // shift is actually due; a past date is unaffected since its shift has necessarily already
+      // started by the time it's queried. Found live 2026-09-11 on Roster Analytics. Guard
+      // extracted to shift-due.util.ts as part of Phase C (2026-09-12) so this exact check
+      // isn't duplicated a 4th time by the new Process Team Roster feature.
+      if (!r.first_in && !isShiftDueYet(shiftStart ? String(shiftStart) : null, dateKey, GRACE_MINUTES)) {
+        continue;
+      }
+
       totalPlanned++;
       if (dayStat) dayStat.planned++;
       mgrStat.teamDays++;
       procStat.planned++;
 
-      const shiftStart = r.template_start || r.shift_start_time;
-      const shiftEnd = r.template_end || r.shift_end_time;
       let expectedHours = 8;
       if (shiftStart && shiftEnd) {
         const startMin = timeToMinutes(String(shiftStart));
@@ -339,10 +363,10 @@ export async function getWeeklyShrinkageIntelligence(
        JOIN wfm_roster_assignment ra ON ra.employee_id = e.id
        LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
        WHERE e.branch_id = ?
-         AND e.active_status = 1
+         AND e.active_status = 1${lobSql.sql}
          AND ra.roster_date BETWEEN ? AND ?
          AND ra.assignment_type NOT IN ('WEEK_OFF', 'HOLIDAY')`,
-      [branchId, formatDate(prevWeekStart), formatDate(new Date(prevWeekStart.getTime() + 6 * 86400000))]
+      [branchId, ...lobSql.params, formatDate(prevWeekStart), formatDate(new Date(prevWeekStart.getTime() + 6 * 86400000))]
     );
     if (prevRows[0]?.total > 0) {
       const prevPct = (Number(prevRows[0].shrinkage) / Number(prevRows[0].total)) * 100;
@@ -411,7 +435,8 @@ export async function getWeeklyShrinkageIntelligence(
 export async function getQualityAdherenceCorrelation(
   period: string, // YYYY-MM
   branchId?: string,
-  processId?: string
+  processId?: string,
+  lob: LobFilter = { kind: 'none' }
 ): Promise<QualityCorrelation> {
   const [year, month] = period.split('-').map(Number);
   const firstDay = `${period}-01`;
@@ -427,6 +452,11 @@ export async function getQualityAdherenceCorrelation(
   if (processId) {
     conditions.push('e.process_id = ?');
     params.push(processId);
+  }
+  const lobCond = lobCondition(lob);
+  if (lobCond) {
+    conditions.push(lobCond.sql);
+    params.push(...lobCond.params);
   }
   const whereClause = conditions.join(' AND ');
 
@@ -449,16 +479,25 @@ export async function getQualityAdherenceCorrelation(
     [...params, firstDay, lastDay]
   );
 
-  // Get quality data per employee (from KPI scores)
+  // Get quality data per employee (from KPI scores). There is no single "QUALITY"
+  // metric_code in this system — quality is role-specific (TL_GPI_QUALITY_SCORE,
+  // QA_GPI_OVERALL_QUALITY_SCORE, PROCESS_DELIVERY_QUALITY, etc., all tagged
+  // family='quality' in kpi_metric_master) — and kpi_score has no score_value/
+  // metric_code/score_date columns at all (real columns: metric_id, period
+  // char(7) 'YYYY-MM', actual_value). The previous query referenced none of the
+  // real schema, so this always 500'd rather than degrading to "no quality data
+  // yet" the way an empty kpi_score table (0 rows today) should read. Averaging
+  // across every quality-family metric an employee has for the month is the
+  // honest reading of "quality" this correlation was asking for, not a guess at
+  // one specific metric id.
   const [qualityRows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       employee_id,
-       AVG(score_value) AS avg_quality
-     FROM kpi_score
-     WHERE metric_code = 'QUALITY'
-       AND score_date BETWEEN ? AND ?
-     GROUP BY employee_id`,
-    [firstDay, lastDay]
+    `SELECT ks.employee_id, AVG(ks.actual_value) AS avg_quality
+     FROM kpi_score ks
+     JOIN kpi_metric_master km ON km.id = ks.metric_id
+     WHERE km.family = 'quality'
+       AND ks.period = ?
+     GROUP BY ks.employee_id`,
+    [period]
   );
 
   const qualityMap = new Map<string, number>();
@@ -604,7 +643,8 @@ export async function getQualityAdherenceCorrelation(
 export async function getCostOfNonAdherence(
   period: string, // YYYY-MM
   branchId?: string,
-  processId?: string
+  processId?: string,
+  lob: LobFilter = { kind: 'none' }
 ): Promise<CostOfNonAdherence> {
   const [year, month] = period.split('-').map(Number);
   const firstDay = `${period}-01`;
@@ -619,6 +659,11 @@ export async function getCostOfNonAdherence(
   if (processId) {
     conditions.push('e.process_id = ?');
     params.push(processId);
+  }
+  const lobCond = lobCondition(lob);
+  if (lobCond) {
+    conditions.push(lobCond.sql);
+    params.push(...lobCond.params);
   }
   const whereClause = conditions.join(' AND ');
 
@@ -726,7 +771,11 @@ export async function getCostOfNonAdherence(
 
 // ── Shrinkage Forecast ───────────────────────────────────────────────────────
 
-export async function getShrinkageForecast(branchId: string): Promise<ShrinkageForecast> {
+export async function getShrinkageForecast(
+  branchId: string,
+  lob: LobFilter = { kind: 'none' }
+): Promise<ShrinkageForecast> {
+  const lobSql = lobAnd(lob);
   const today = new Date();
   const nextMonday = new Date(today);
   nextMonday.setDate(today.getDate() + ((8 - today.getDay()) % 7 || 7));
@@ -747,10 +796,10 @@ export async function getShrinkageForecast(branchId: string): Promise<ShrinkageF
      JOIN wfm_roster_assignment ra ON ra.employee_id = e.id
      LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
      WHERE e.branch_id = ?
-       AND e.active_status = 1
+       AND e.active_status = 1${lobSql.sql}
        AND ra.roster_date BETWEEN ? AND ?
      GROUP BY DAYOFWEEK(ra.roster_date), DAY(ra.roster_date)`,
-    [branchId, formatDate(eightWeeksAgo), formatDate(today)]
+    [branchId, ...lobSql.params, formatDate(eightWeeksAgo), formatDate(today)]
   );
 
   // Calculate day-of-week patterns (Monday=2, Friday=6 in MySQL)

@@ -116,7 +116,36 @@ export interface KpiScorecardRow {
   actual: number | null;
   rag: "good" | "warn" | "crit" | null;
   trend: Array<{ period: string; value: number | null }>;
+  /**
+   * The counts the rate was built from, so the UI can print "356 of 363" beside
+   * the 98.1% instead of leaving the reader to guess whether it rests on three
+   * calls or three thousand. Null for a volume metric, and null whenever any day
+   * in the window lacked its parts — the same condition that makes the period
+   * figure a mean of daily rates rather than the period's own ratio.
+   */
+  support?: { numerator: number; denominator: number } | null;
   note?: string;
+}
+
+/**
+ * process_metric_actual stores a ratio's parts already scaled into the metric's
+ * unit, so numerator/denominator reproduces the stored value directly. For a
+ * percentage that means the numerator carries a factor of 100 — Clovia's answer
+ * level is held as 35,600 / 363. The denominator is always the real count; only
+ * the numerator needs undoing, and only for a percentage.
+ */
+export function supportFrom(
+  reading: { ratioNumerator?: number | null; ratioDenominator?: number | null } | undefined,
+  unit: KpiUnit,
+): { numerator: number; denominator: number } | null {
+  const numerator = reading?.ratioNumerator;
+  const denominator = reading?.ratioDenominator;
+  if (numerator == null || denominator == null || denominator === 0) return null;
+  const isPercent = String(unit).startsWith("percent");
+  return {
+    numerator: Math.round(isPercent ? numerator / 100 : numerator),
+    denominator: Math.round(denominator),
+  };
 }
 
 function ragFor(actual: number, target: number, direction: KpiDirection): "good" | "warn" | "crit" {
@@ -180,14 +209,20 @@ async function fetchProcessQualityScore(
   // Fall back to Shivamgiri's call-audit pilot -- real for only 2 of the 4
   // registered processes (see kpi-shivamgiri-source.ts's header comment for
   // why FINNABLE/GS1 are deliberately not mapped here).
+  //
+  // Held as `auditPilot` rather than `shivamgiri`: shivamgiri-schema-case.test.ts
+  // greps the tree for `shivamgiri.` to catch the lowercase schema name reaching
+  // SQL, which the upstream server rejects because Linux makes schema names
+  // case-sensitive. A local variable spelled that way is a false positive, and a
+  // guard that cries wolf is a guard people learn to skip.
   const clientId = SHIVAMGIRI_CLIENT_ID[processCode];
   if (!clientId) return { value: null, count: 0, asOf: null };
-  const shivamgiri = await fromSource(
+  const auditPilot = await fromSource(
     `shivamgiri:${processCode}`,
     { value: null, count: 0, asOfDate: null },
     () => fetchShivamgiriQualityScore(clientId),
   );
-  return { value: shivamgiri.value, count: shivamgiri.count, asOf: shivamgiri.asOfDate };
+  return { value: auditPilot.value, count: auditPilot.count, asOf: auditPilot.asOfDate };
 }
 
 /**
@@ -407,6 +442,7 @@ async function computeScorecards(
         actual: availability === "ok" ? reading!.value : null,
         rag: availability === "ok" && reading!.value != null ? ragFor(reading!.value, m.target, m.direction) : null,
         trend: reading?.trend ?? [],
+        support: availability === "ok" ? supportFrom(reading, m.unit) : null,
         note: availability === "no_data"
           ? "No figure supplied for this window yet — this metric is filled in from the process's own upload or database connection."
           : undefined,

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { ErrorState } from "@/components/enterprise/ErrorState";
 import { BadgeCard } from "@/components/engagement/BadgeCard";
 import type { ApiResponse, BadgeDefinition, EngagementSummary } from "@/components/engagement/types";
 import { Button } from "@/components/ui/button";
@@ -42,7 +43,7 @@ export default function NativeBadges() {
           <h1 className="text-3xl font-bold text-slate-900">Badge Gallery</h1>
           <p className="mt-1 text-slate-500">See the recognition you have unlocked and the milestones still ahead.</p>
         </div>
-        {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+        {error && <ErrorState title="Couldn't load badges" description={error} />}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap gap-2">
             {categories.map((item) => (

@@ -295,7 +295,7 @@ export function useOnboardingFull(token: string) {
 
       setEmployee((prev) => ({
         ...prev,
-        employeeName: sp.employee_name ?? s.token.full_name ?? "",
+        employeeName: sp.employee_name ?? ((() => { const n = s.token.full_name ?? ""; return (n && !n.includes("_") && !(n.length > 24 && !/\s/.test(n))) ? n : ""; })()) ?? "",
         mobileNumber: sp.mobile_number ?? s.token.mobile ?? "",
         personalEmailId: sp.personal_email_id ?? s.token.email ?? "",
         gender: sp.gender ?? s.token.gender ?? "",

@@ -69,12 +69,12 @@ export function getBatchJob(batchId: string): BatchJobState | null {
  * how BATCH-1788604867017 sat 'importing' for two and a half hours with 1,246 rows unprocessed.
  * The heartbeat is the durable half of that state — the one thing that survives the process.
  */
-const HEARTBEAT_MS = 15_000;
+export const HEARTBEAT_MS = 15_000;
 
 /** Identifies which process held the job, so a post-mortem can say where it died. */
-const JOB_OWNER = `${process.env.WORKERS_PROCESS ? "workers" : "api"}:${process.pid}`;
+export const JOB_OWNER = `${process.env.WORKERS_PROCESS ? "workers" : "api"}:${process.pid}`;
 
-async function beat(batchId: string): Promise<void> {
+export async function beat(batchId: string): Promise<void> {
   try {
     await db.execute(
       `UPDATE upload_batch SET job_heartbeat_at = NOW(), job_owner = ? WHERE id = ?`,
@@ -92,7 +92,7 @@ async function beat(batchId: string): Promise<void> {
  * Left set, a batch that completed normally would keep an ageing heartbeat and eventually be
  * reported as dead.
  */
-async function clearBeat(batchId: string): Promise<void> {
+export async function clearBeat(batchId: string): Promise<void> {
   try {
     await db.execute(`UPDATE upload_batch SET job_heartbeat_at = NULL WHERE id = ?`, [batchId]);
   } catch { /* as above */ }

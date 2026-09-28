@@ -72,8 +72,13 @@ function Avatar({ name }: { name: string }) {
 // ── Main ─────────────────────────────────────────────────────
 export default function TeamLeaveTab() {
   const [showHistory, setShowHistory] = useState(false);
+  // History can be narrowed to a span: everyone whose leave overlaps it, whatever its status.
+  const [spanFrom, setSpanFrom] = useState("");
+  const [spanTo, setSpanTo] = useState("");
+  const spanActive = showHistory && spanFrom !== "" && spanTo !== "" && spanFrom <= spanTo;
+  // Dialog is only for rejection — approval fires directly without any dialog
   const [reviewTarget, setReviewTarget] = useState<{
-    id: string; action: "approved" | "rejected"; name: string; escalated: boolean;
+    id: string; name: string; escalated: boolean;
   } | null>(null);
   const [remarks, setRemarks] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -84,37 +89,48 @@ export default function TeamLeaveTab() {
   // reached this fetch at all — the query was hardcoded to plain "pending" — so a
   // Branch Head using this page (the one page whose role-gate is built for them,
   // see MyTeamPage.tsx) never saw an escalated request to act on. (2026-08-21 audit)
-  const statusFilter = showHistory
-    ? "approved,rejected,branch_head_approved,branch_head_rejected"
-    : "pending,pending_branch_head";
+  const statusFilter = spanActive
+    ? "pending,pending_branch_head,approved,rejected,branch_head_approved,branch_head_rejected"
+    : showHistory
+      ? "approved,rejected,branch_head_approved,branch_head_rejected"
+      : "pending,pending_branch_head";
+  const spanQuery = spanActive ? `&overlapFrom=${spanFrom}&overlapTo=${spanTo}` : "";
 
   const { data, isLoading } = useQuery({
-    queryKey: ["team-leaves", statusFilter],
-    queryFn: () => hrmsApi.get<any>(`/api/leave/requests?status=${statusFilter}&limit=200`),
+    queryKey: ["team-leaves", statusFilter, spanQuery],
+    queryFn: () => hrmsApi.get<any>(`/api/leave/requests?status=${statusFilter}${spanQuery}&limit=200`),
     staleTime: 30_000,
   });
 
   const rows: LeaveRow[] = (data as any)?.data ?? [];
   const days = (r: LeaveRow) => r.total_days ?? r.days_count ?? "—";
 
+  // One-click approval — no dialog, no remarks required
+  async function handleQuickApprove(id: string, name: string, escalated: boolean) {
+    setSubmitting(true);
+    try {
+      const status = escalated ? "branch_head_approved" : "approved";
+      await hrmsApi.patch(`/api/leave/requests/${id}/review`, { status });
+      toast({ title: "Leave approved", description: `${name}'s request has been approved.` });
+      queryClient.invalidateQueries({ queryKey: ["team-leaves"] });
+    } catch (err: unknown) {
+      toast({ title: "Action failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // Rejection requires remarks — opens dialog
   async function handleReview() {
     if (!reviewTarget) return;
     setSubmitting(true);
     try {
-      // The backend's canReviewLeave requires the branch_head_* status value for
-      // an escalated request — sending plain "approved"/"rejected" against a
-      // pending_branch_head row is rejected (400 Invalid leave review status).
-      const status = reviewTarget.escalated
-        ? (reviewTarget.action === "approved" ? "branch_head_approved" : "branch_head_rejected")
-        : reviewTarget.action;
+      const status = reviewTarget.escalated ? "branch_head_rejected" : "rejected";
       await hrmsApi.patch(`/api/leave/requests/${reviewTarget.id}/review`, {
         status,
         remarks: remarks.trim() || undefined,
       });
-      toast({
-        title: reviewTarget.action === "approved" ? "Leave approved" : "Leave rejected",
-        description: `${reviewTarget.name}'s request has been ${reviewTarget.action}.`,
-      });
+      toast({ title: "Leave rejected", description: `${reviewTarget.name}'s request has been rejected.` });
       queryClient.invalidateQueries({ queryKey: ["team-leaves"] });
       setReviewTarget(null);
       setRemarks("");
@@ -134,7 +150,7 @@ export default function TeamLeaveTab() {
         <div className="flex items-center gap-2">
           <ClipboardList className="h-4 w-4 text-slate-500" />
           <h3 className="text-sm font-semibold text-slate-700">
-            {showHistory ? "Leave History" : "Pending Approvals"}
+            {spanActive ? "Leave applied in this period" : showHistory ? "Leave History" : "Pending Approvals"}
           </h3>
           {pendingCount > 0 && (
             <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-100 px-1.5 text-xs font-bold text-amber-700">
@@ -142,10 +158,18 @@ export default function TeamLeaveTab() {
             </span>
           )}
         </div>
+        {showHistory && (
+          <div className="ml-auto flex items-center gap-2 text-xs text-slate-600">
+            <label htmlFor="tl-span-from">Leave overlapping</label>
+            <input id="tl-span-from" type="date" value={spanFrom} onChange={(e) => setSpanFrom(e.target.value)} className="h-8 rounded-md border border-slate-200 px-2" />
+            <label htmlFor="tl-span-to">to</label>
+            <input id="tl-span-to" type="date" value={spanTo} min={spanFrom || undefined} onChange={(e) => setSpanTo(e.target.value)} className="h-8 rounded-md border border-slate-200 px-2" />
+          </div>
+        )}
         <Button
           variant="ghost"
           size="sm"
-          className="ml-auto gap-1.5 text-xs rounded-xl"
+          className={`${showHistory ? "" : "ml-auto "}gap-1.5 text-xs rounded-xl`}
           onClick={() => setShowHistory((p) => !p)}
         >
           <History className="h-3.5 w-3.5" />
@@ -213,14 +237,15 @@ export default function TeamLeaveTab() {
                       <div className="flex items-center justify-center gap-2">
                         <button
                           type="button"
-                          onClick={() => setReviewTarget({ id: r.id, action: "approved", name: r.employee_name, escalated: r.status === "pending_branch_head" })}
-                          className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer"
+                          onClick={() => handleQuickApprove(r.id, r.employee_name, r.status === "pending_branch_head")}
+                          disabled={submitting}
+                          className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer disabled:opacity-50"
                         >
                           <CheckCircle2 className="h-3.5 w-3.5" />Approve
                         </button>
                         <button
                           type="button"
-                          onClick={() => setReviewTarget({ id: r.id, action: "rejected", name: r.employee_name, escalated: r.status === "pending_branch_head" })}
+                          onClick={() => setReviewTarget({ id: r.id, name: r.employee_name, escalated: r.status === "pending_branch_head" })}
                           className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 transition-colors cursor-pointer"
                         >
                           <XCircle className="h-3.5 w-3.5" />Reject
@@ -235,15 +260,13 @@ export default function TeamLeaveTab() {
         </div>
       )}
 
-      {/* Review dialog */}
+      {/* Rejection dialog — approval fires directly without any dialog */}
       <Dialog open={!!reviewTarget} onOpenChange={(o) => { if (!o) { setReviewTarget(null); setRemarks(""); } }}>
         <DialogContent className="max-w-sm rounded-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              {reviewTarget?.action === "approved"
-                ? <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-                : <XCircle className="h-5 w-5 text-rose-600" />}
-              {reviewTarget?.action === "approved" ? "Approve" : "Reject"} Leave
+              <XCircle className="h-5 w-5 text-rose-600" />
+              Reject Leave
             </DialogTitle>
             <p className="text-sm text-slate-500">{reviewTarget?.name}</p>
             {reviewTarget?.escalated && (
@@ -254,10 +277,10 @@ export default function TeamLeaveTab() {
           </DialogHeader>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">
-              Remarks {reviewTarget?.action === "approved" ? "(optional)" : <span className="text-rose-500">*</span>}
+              Remarks <span className="text-rose-500">*</span>
             </label>
             <Textarea
-              placeholder={reviewTarget?.action === "approved" ? "Add a note for the employee (optional)" : "Remarks are required to reject"}
+              placeholder="Remarks are required to reject"
               value={remarks}
               onChange={(e) => setRemarks(e.target.value)}
               rows={3}
@@ -270,10 +293,10 @@ export default function TeamLeaveTab() {
             </Button>
             <Button
               onClick={handleReview}
-              disabled={submitting || (reviewTarget?.action !== "approved" && !remarks.trim())}
-              className={`rounded-xl ${reviewTarget?.action === "approved" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"}`}
+              disabled={submitting || !remarks.trim()}
+              className="rounded-xl bg-rose-600 hover:bg-rose-700"
             >
-              {submitting ? "Submitting…" : reviewTarget?.action === "approved" ? "Approve" : "Reject"}
+              {submitting ? "Submitting…" : "Reject"}
             </Button>
           </DialogFooter>
         </DialogContent>

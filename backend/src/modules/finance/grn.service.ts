@@ -10,7 +10,10 @@ import {
   type BudgetGstType,
   type BudgetTaxTreatment,
 } from "../process-pnl/branch-budget.service.js";
-import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
+import {
+  financeBranchFilter,
+  type FinanceBranchScope,
+} from "./finance-access-scope.js";
 import { budgetConsumptionService } from "../process-pnl/budget-consumption.service.js";
 import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
 import { resolveAccountingPeriod } from "./grn-number-monthly.service.js";
@@ -26,65 +29,29 @@ import {
 } from "../process-pnl/budget-headroom-gate.service.js";
 import { budgetClosureService } from "../process-pnl/budget-closure.service.js";
 import { refuse } from "../process-pnl/finance-error.js";
-import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
-
-/**
- * Bell notification for a GRN awaiting a stage. GRN approval was entirely notification-silent
- * before this — Work Inbox's derived GRN_APPROVAL_PENDING query (work-inbox.service.ts) surfaces
- * it on the Work Inbox page, but nothing ever wrote a `work_inbox_item` row, so the bell
- * (GET /api/inbox, which reads work_inbox_item only — see inbox.service.ts) never showed a GRN
- * at all. Mirrors leave.service.ts's submission notify: resolve every user holding the stage's
- * role in this GRN's branch, raise one item each. Non-fatal by design — a notification failure
- * must never roll back or block the GRN transition that triggered it.
- */
-async function notifyGrnStage(
-  grnId: string,
-  grnNumber: string | null,
-  branchId: string | null,
-  vendorName: string | null,
-  amount: number | null,
-  role: "branch_head" | "finance_head",
-) {
-  try {
-    const { inboxService } = await import("../inbox/inbox.service.js");
-    const userIds = await resolveRoleHolderUserIds(role, branchId);
-    const amountLabel = amount != null ? `₹${Number(amount).toLocaleString("en-IN")}` : "";
-    for (const userId of userIds) {
-      await inboxService.createItem({
-        user_id: userId,
-        type: "grn_approval_pending",
-        title: `[ACTION REQUIRED] GRN ${grnNumber ?? ""}${vendorName ? ` — ${vendorName}` : ""}`,
-        description: `Awaiting your ${role === "branch_head" ? "Branch Head" : "Finance Head"} review${amountLabel ? ` (${amountLabel})` : ""}.`,
-        entity_type: "grn_request",
-        entity_id: grnId,
-        action_url: "/finance/grn",
-        priority: "high",
-      });
-    }
-  } catch {
-    // Non-fatal — notification failure must not block the GRN transition.
-  }
-}
-
-/** The decision is made — close the bell alert(s) raised for this GRN, at any stage. */
-async function resolveGrnNotifications(grnId: string) {
-  try {
-    const { inboxService } = await import("../inbox/inbox.service.js");
-    await inboxService.resolveItems({
-      entity_type: "grn_request",
-      entity_id: grnId,
-      types: ["grn_approval_pending"],
-    });
-  } catch {
-    // Non-fatal.
-  }
-}
+import { notifyGrnStage, resolveGrnNotifications } from "./grn-notify.js";
+import {
+  notifyGrnSubmittedEmail,
+  notifyGrnAccountsHeadPendingEmail,
+} from "./grn.notifications.js";
+import { postGrnApprovalJournalEntry } from "./grn-journal-posting.service.js";
+import { runInBackground } from "./grn-background.js";
+import { journalService } from "./journal.service.js";
+import {
+  ownCompanyGrnSql,
+  refreshHiddenGrnScope,
+} from "../../shared/ownCompanyCostCentre.js";
+import {
+  qualifiesForHeadOfficeBypass,
+  shouldSkipFinanceHeadOnAccountsApproval,
+} from "./grn-head-office-bypass.js";
 
 export type GrnType = "vendor" | "imprest";
 export type GrnStatus =
   | "draft"
   | "submitted"
   | "branch_head_approved"
+  | "accounts_head_approved"
   | "finance_head_approved"
   | "pending_accounts_payment"
   | "payment_scheduled"
@@ -166,7 +133,7 @@ async function writeGrnAudit(
   grnId: string,
   actorId: string,
   actorRole: string,
-  changes: Record<string, unknown>
+  changes: Record<string, unknown>,
 ) {
   await logSensitiveAction({
     actor_user_id: actorId,
@@ -182,7 +149,7 @@ async function writeGrnAudit(
 async function resolveCanonicalVendor(
   grnType: GrnType,
   requestedVendorId: string | undefined,
-  preferredVendorId: string | null | undefined
+  preferredVendorId: string | null | undefined,
 ) {
   if (grnType === "imprest") {
     return { vendorId: null, vendorName: null };
@@ -190,7 +157,9 @@ async function resolveCanonicalVendor(
 
   const vendorId = requestedVendorId?.trim() || preferredVendorId || null;
   if (!vendorId) {
-    throw new Error("Vendor GRN requires an active vendor selected from Vendor Master");
+    throw new Error(
+      "Vendor GRN requires an active vendor selected from Vendor Master",
+    );
   }
 
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -198,10 +167,11 @@ async function resolveCanonicalVendor(
        FROM vendor_master
       WHERE id = ?
       LIMIT 1`,
-    [vendorId]
+    [vendorId],
   );
   const vendor = rows[0];
-  if (!vendor) throw new Error("Selected vendor was not found in Vendor Master");
+  if (!vendor)
+    throw new Error("Selected vendor was not found in Vendor Master");
   if (Number(vendor.is_active ?? 0) !== 1) {
     throw new Error("Selected vendor is inactive and cannot be used for a GRN");
   }
@@ -229,7 +199,7 @@ function addDays(dateString: string, days: number) {
 async function getGrnOrThrow(grnId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM grn_request WHERE id = ? LIMIT 1`,
-    [grnId]
+    [grnId],
   );
   if (!rows[0]) throw new Error("GRN not found");
   return rows[0] as any;
@@ -248,7 +218,7 @@ async function getGrnOrThrow(grnId: string) {
  */
 function legacyBranchCondition(
   scope: FinanceBranchScope,
-  alias: string = "g"
+  alias: string = "g",
 ): { sql: string; params: unknown[] } {
   if (scope.mode === "all") return { sql: "1=1", params: [] };
 
@@ -318,12 +288,14 @@ async function createUnbudgetedDraft(
   payload: CreateGrnPayload,
   paymentTermsDays: number,
   actorUserId: string,
-  actorRole: string
+  actorRole: string,
 ) {
   const head = String(payload.head ?? "").trim();
   const subHead = String(payload.subHead ?? "").trim();
-  if (!head) throw new Error("An expense head is required for an unbudgeted GRN");
-  if (!subHead) throw new Error("An expense sub-head is required for an unbudgeted GRN");
+  if (!head)
+    throw new Error("An expense head is required for an unbudgeted GRN");
+  if (!subHead)
+    throw new Error("An expense sub-head is required for an unbudgeted GRN");
   if (!payload.costCentreId) {
     throw new Error("A cost centre is required for an unbudgeted GRN");
   }
@@ -333,11 +305,11 @@ async function createUnbudgetedDraft(
   // belong to the branch the GRN is being raised for. Without this an unbudgeted GRN would be the
   // one create path able to attribute spend to another branch's cost centre.
   const [costCentreRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, cost_centre_name, branch_id
+    `SELECT id, cost_centre_name, branch_id, process_id
        FROM cost_centre_master
       WHERE id = ? AND active_status = 1
       LIMIT 1`,
-    [payload.costCentreId]
+    [payload.costCentreId],
   );
   const costCentre = costCentreRows[0] as any;
   if (!costCentre) throw new Error("Cost centre not found or inactive");
@@ -353,7 +325,7 @@ async function createUnbudgetedDraft(
   // is no line here, so it runs against the month the GRN actually books into.
   if (await isPeriodLocked(accountingPeriod)) {
     throw new Error(
-      `${accountingPeriod} is locked for P&L close. Raise this against the current open period.`
+      `${accountingPeriod} is locked for P&L close. Raise this against the current open period.`,
     );
   }
 
@@ -376,22 +348,33 @@ async function createUnbudgetedDraft(
     String(payload.branchId),
     accountingPeriod,
     head,
-    subHead
+    subHead,
   );
   assertCoverageExists(coverage, accountingPeriod, head, subHead);
-  await budgetClosureService.assertSubheadOpen(db, String(coverage.budgetId), head, subHead);
+  await budgetClosureService.assertSubheadOpen(
+    db,
+    String(coverage.budgetId),
+    head,
+    subHead,
+  );
 
   // Derived from the booking month rather than the budget line's period_code, which is the same
   // value in every budgeted case — getLineForGrn()'s period_code must already equal the bill month
   // (the "Bill date must fall within approved budget period" check enforces exactly that).
   const financialYear = financialYearFromPeriod(accountingPeriod);
   if (payload.financialYear && payload.financialYear !== financialYear) {
-    throw new Error(`Financial year must be ${financialYear} for this accounting period`);
+    throw new Error(
+      `Financial year must be ${financialYear} for this accounting period`,
+    );
   }
 
   // No budget line means no preferred_vendor_id to fall back on; the vendor the raiser picked is
   // the only candidate, and resolveCanonicalVendor still enforces that a vendor GRN has one.
-  const vendor = await resolveCanonicalVendor(payload.grnType, payload.vendorId, null);
+  const vendor = await resolveCanonicalVendor(
+    payload.grnType,
+    payload.vendorId,
+    null,
+  );
 
   const id = randomUUID();
   const dueDate = addDays(payload.billDate!, paymentTermsDays);
@@ -407,7 +390,7 @@ async function createUnbudgetedDraft(
       amount_without_tax, tax_amount, amount_with_tax, pnl_cost_amount, amount,
       bill_date, accounting_period, payment_terms_days, due_date, description, remarks, status,
       financial_year, budget_id, budget_line_id, is_unbudgeted, created_by, created_at)
-     VALUES (?,NULL,?,?,?,NULL,?,'direct',?,?,?,?,?,'amount',0,
+     VALUES (?,NULL,?,?,?,?,?,'direct',?,?,?,?,?,'amount',0,
              'exclusive',0,'cgst_sgst',100,
              0,0,0,0,0,
              ?,?,?,?,?,?,'draft',?,NULL,NULL,1,?,NOW())`,
@@ -416,6 +399,11 @@ async function createUnbudgetedDraft(
       payload.grnType,
       payload.branchId,
       payload.companyCode?.trim() || null,
+      // No budget line to carry a process on this path, so the cost centre's own mapping
+      // (owner ruling 2026-09-16) is the source: most cost centres are 1:1 with a process/
+      // client, unlike finance_budget_line.process_id, which is almost never populated (see
+      // the budgeted twin below).
+      costCentre.process_id ?? null,
       payload.costCentreId,
       vendor.vendorId,
       vendor.vendorName,
@@ -430,7 +418,7 @@ async function createUnbudgetedDraft(
       payload.remarks?.trim() || null,
       financialYear,
       actorUserId,
-    ]
+    ],
   );
 
   // An unbudgeted GRN has no budget line to name, which is precisely why its origin is worth
@@ -464,7 +452,11 @@ async function createUnbudgetedDraft(
 }
 
 export const grnService = {
-  async createDraft(payload: CreateGrnPayload, actorUserId: string, actorRole: string) {
+  async createDraft(
+    payload: CreateGrnPayload,
+    actorUserId: string,
+    actorRole: string,
+  ) {
     // P0-2: a type with no accounting lifecycle in application code cannot be raised. Covers
     // `salary` as well as `provision` — see grn-type-support.ts.
     assertGrnTypeSupported(payload.grnType, "Creation");
@@ -476,23 +468,51 @@ export const grnService = {
     if (!payload.billDate || !/^\d{4}-\d{2}-\d{2}$/.test(payload.billDate)) {
       throw new Error("A valid bill/receipt date is required");
     }
-    if (!Number.isFinite(Number(payload.quantity)) || Number(payload.quantity) <= 0) {
+    if (
+      !Number.isFinite(Number(payload.quantity)) ||
+      Number(payload.quantity) <= 0
+    ) {
       throw new Error("Quantity must be greater than zero");
     }
 
     const paymentTermsDays = Number(payload.paymentTermsDays ?? 0);
-    if (!Number.isInteger(paymentTermsDays) || paymentTermsDays < 0 || paymentTermsDays > 365) {
-      throw new Error("Payment terms must be a whole number between 0 and 365 days");
+    if (
+      !Number.isInteger(paymentTermsDays) ||
+      paymentTermsDays < 0 ||
+      paymentTermsDays > 365
+    ) {
+      throw new Error(
+        "Payment terms must be a whole number between 0 and 365 days",
+      );
     }
 
     if (isUnbudgeted) {
-      return await createUnbudgetedDraft(payload, paymentTermsDays, actorUserId, actorRole);
+      return await createUnbudgetedDraft(
+        payload,
+        paymentTermsDays,
+        actorUserId,
+        actorRole,
+      );
     }
 
-    const budgetLine = await branchBudgetService.getLineForGrn(
+    const budgetLine = (await branchBudgetService.getLineForGrn(
       payload.budgetLineId!,
-      payload.branchId
-    ) as any;
+      payload.branchId,
+    )) as any;
+
+    // finance_budget_line.process_id is almost never set (4 of 790 rows, live-verified
+    // 2026-09-16) — nobody fills a Process in when building a budget line. The cost centre the
+    // line is planned against usually already carries one (from the legacy process_name_bill
+    // backfill), so that is the fallback rather than leaving every budgeted GRN's Process blank.
+    // Same mapping the unbudgeted path above uses directly off the raiser's own cost centre pick.
+    let costCentreProcessId: string | null = null;
+    if (!budgetLine.process_id && budgetLine.cost_centre_id) {
+      const [ccRows] = await db.execute<RowDataPacket[]>(
+        `SELECT process_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
+        [budgetLine.cost_centre_id],
+      );
+      costCentreProcessId = (ccRows[0] as any)?.process_id ?? null;
+    }
 
     // An explicit accountingPeriod is only ever present when the caller asked to book into a
     // month other than the bill date's own month — grn.routes.ts's periodOverrideRoles gate has
@@ -505,15 +525,16 @@ export const grnService = {
     // picked a real, budgeted PAST period for a TODAY-dated bill (the deliberate cut-off-booking
     // case the override exists for) got "Bill date must fall within approved budget period"
     // for the one thing they were just cleared to do.
-    const effectivePeriod = payload.accountingPeriod?.trim() || payload.billDate.slice(0, 7);
+    const effectivePeriod =
+      payload.accountingPeriod?.trim() || payload.billDate.slice(0, 7);
     if (effectivePeriod !== String(budgetLine.period_code)) {
       throw new Error(
-        `Bill date must fall within approved budget period ${budgetLine.period_code}`
+        `Bill date must fall within approved budget period ${budgetLine.period_code}`,
       );
     }
     if (await isPeriodLocked(budgetLine.period_code)) {
       throw new Error(
-        `${budgetLine.period_code} is locked for P&L close. Raise this against the current open period.`
+        `${budgetLine.period_code} is locked for P&L close. Raise this against the current open period.`,
       );
     }
     if (payload.processId && payload.processId !== budgetLine.process_id) {
@@ -533,11 +554,14 @@ export const grnService = {
      * exist, be active, and belong to THIS GRN's branch. Otherwise a raiser could attribute spend
      * to another branch entirely, which is the one thing no later step re-checks.
      */
-    if (payload.costCentreId && payload.costCentreId !== budgetLine.cost_centre_id) {
+    if (
+      payload.costCentreId &&
+      payload.costCentreId !== budgetLine.cost_centre_id
+    ) {
       const [ccRows] = await db.execute<RowDataPacket[]>(
         `SELECT id, branch_id FROM cost_centre_master
           WHERE id = ? AND active_status = 1 LIMIT 1`,
-        [payload.costCentreId]
+        [payload.costCentreId],
       );
       const costCentre = ccRows[0] as any;
       if (!costCentre) throw new Error("GRN cost centre not found or inactive");
@@ -549,9 +573,10 @@ export const grnService = {
     const quantity = Number(payload.quantity);
     // Quantity does not refuse — see budget-consumption.service.ts's file-level banner. The money check below is the limit.
 
-    const unitRate = payload.unitRate == null
-      ? Number(budgetLine.unit_rate)
-      : Number(payload.unitRate);
+    const unitRate =
+      payload.unitRate == null
+        ? Number(budgetLine.unit_rate)
+        : Number(payload.unitRate);
     if (!Number.isFinite(unitRate) || unitRate < 0) {
       throw new Error("Unit rate cannot be negative");
     }
@@ -591,13 +616,13 @@ export const grnService = {
       String(payload.branchId),
       String(budgetLine.period_code),
       String(budgetLine.head),
-      budgetLine.sub_head ? String(budgetLine.sub_head) : null
+      budgetLine.sub_head ? String(budgetLine.sub_head) : null,
     );
     assertCoverageExists(
       coverage,
       String(budgetLine.period_code),
       String(budgetLine.head),
-      budgetLine.sub_head ? String(budgetLine.sub_head) : null
+      budgetLine.sub_head ? String(budgetLine.sub_head) : null,
     );
     // A head/sub-head Finance has closed for the month refuses new spend. Previously enforced
     // only inside reserve(), i.e. not until Branch Head pressed Approve.
@@ -605,31 +630,39 @@ export const grnService = {
       db,
       String(coverage.budgetId),
       String(budgetLine.head),
-      budgetLine.sub_head ? String(budgetLine.sub_head) : null
+      budgetLine.sub_head ? String(budgetLine.sub_head) : null,
     );
     // Compared against how much invoice GROSS the branch can absorb, not against the raw budget
     // sum. On a line planned as non_gst/exempt the GST on this invoice is never charged, so a
     // Rs 21,000 line carries more than Rs 21,000 of tax-inclusive invoice — reserve() has always
     // charged those lines the taxable value, and weighing the inclusive figure here refused GRNs
     // that Branch Head approval would then have accepted.
-    const absorbable = absorbableGrossFor(coverage, amounts.grossAmount, amounts.baseAmount);
+    const absorbable = absorbableGrossFor(
+      coverage,
+      amounts.grossAmount,
+      amounts.baseAmount,
+    );
     if (amounts.grossAmount > absorbable + 0.01) {
       throw refuse(
         409,
         "HEADROOM_EXCEEDED",
-        `Requested amount exceeds available budget for ${budgetLine.head}/${budgetLine.sub_head || ""} across the branch by `
-        + `₹${(amounts.grossAmount - absorbable).toFixed(2)}`
+        `Requested amount exceeds available budget for ${budgetLine.head}/${budgetLine.sub_head || ""} across the branch by ` +
+          `₹${(amounts.grossAmount - absorbable).toFixed(2)}`,
       );
     }
 
     const vendor = await resolveCanonicalVendor(
       payload.grnType,
       payload.vendorId,
-      budgetLine.preferred_vendor_id
+      budgetLine.preferred_vendor_id,
     );
-    const financialYear = financialYearFromPeriod(String(budgetLine.period_code));
+    const financialYear = financialYearFromPeriod(
+      String(budgetLine.period_code),
+    );
     if (payload.financialYear && payload.financialYear !== financialYear) {
-      throw new Error(`Financial year must be ${financialYear} for the selected budget`);
+      throw new Error(
+        `Financial year must be ${financialYear} for the selected budget`,
+      );
     }
 
     const id = randomUUID();
@@ -652,7 +685,9 @@ export const grnService = {
     // GRN number deferred to submission — see createUnbudgetedDraft for the rationale.
     const dueDate = addDays(payload.billDate, paymentTermsDays);
     const costClass: "direct" | "indirect" =
-      budgetLine.process_id || budgetLine.cost_centre_id ? "direct" : "indirect";
+      budgetLine.process_id || budgetLine.cost_centre_id
+        ? "direct"
+        : "indirect";
 
     await db.execute(
       `INSERT INTO grn_request
@@ -668,7 +703,7 @@ export const grnService = {
         payload.grnType,
         payload.branchId,
         payload.companyCode?.trim() || null,
-        budgetLine.process_id ?? null,
+        budgetLine.process_id ?? costCentreProcessId,
         budgetLine.cost_centre_id ?? null,
         costClass,
         vendor.vendorId,
@@ -681,7 +716,9 @@ export const grnService = {
         isImprest ? IMPREST_TAX_PROFILE.taxTreatment : budgetLine.tax_treatment,
         isImprest ? IMPREST_TAX_PROFILE.gstRate : budgetLine.gst_rate,
         isImprest ? IMPREST_TAX_PROFILE.gstType : budgetLine.gst_type,
-        isImprest ? IMPREST_TAX_PROFILE.recoverableTaxPct : budgetLine.recoverable_tax_pct,
+        isImprest
+          ? IMPREST_TAX_PROFILE.recoverableTaxPct
+          : budgetLine.recoverable_tax_pct,
         amountsForGrn.baseAmount,
         amountsForGrn.taxAmount,
         amountsForGrn.grossAmount,
@@ -697,7 +734,7 @@ export const grnService = {
         budgetLine.budget_id,
         budgetLine.id,
         actorUserId,
-      ]
+      ],
     );
 
     // A GRN's history should start where the GRN does. Without this the readable trail began
@@ -720,7 +757,7 @@ export const grnService = {
       grn_number: null,
       budget_id: budgetLine.budget_id,
       budget_line_id: budgetLine.id,
-      process_id: budgetLine.process_id ?? null,
+      process_id: budgetLine.process_id ?? costCentreProcessId,
       cost_centre_id: budgetLine.cost_centre_id ?? null,
       cost_class: costClass,
       quantity,
@@ -737,7 +774,8 @@ export const grnService = {
     grnId: string,
     payload: SubmitGrnPayload,
     actorUserId: string,
-    actorRole: string
+    actorRole: string,
+    userRoles?: string[],
   ) {
     const grn = await getGrnOrThrow(grnId);
     // P0-2: a type with no accounting lifecycle cannot be submitted — fail closed.
@@ -749,7 +787,9 @@ export const grnService = {
       throw new Error("GRN is not linked to an approved budget line");
     }
     if (!grn.attachment_path && !grn.attachment_file_path) {
-      throw new Error("Invoice / supporting attachment is required before submission");
+      throw new Error(
+        "Invoice / supporting attachment is required before submission",
+      );
     }
 
     // Owner ruling: a GRN number is assigned at FINAL (Finance Head) approval, not at
@@ -759,6 +799,119 @@ export const grnService = {
     // migrated row) is left exactly as it was.
     const grnNumber = grn.grn_number ?? null;
 
+    /*
+     * HEAD OFFICE BYPASS (owner ruling, 2026-09-23):
+     *
+     * When Finance Head raises a GRN at Head Office branch, the 3-stage approval chain
+     * is shortened: Branch Head approval is skipped (Finance Head is senior) and Finance
+     * Head approval is skipped (no self-approval). Only Accounts Head reviews.
+     *
+     * On submit: reserve budget and go directly to branch_head_approved (pending Accounts
+     * Head review) instead of submitted (pending Branch Head review).
+     */
+    const headOfficeBypass = await qualifiesForHeadOfficeBypass(
+      grn.branch_id ? String(grn.branch_id) : null,
+      actorRole,
+      userRoles,
+    );
+
+    if (headOfficeBypass) {
+      // Reserve budget immediately (normally done by Branch Head approval)
+      // Must use a connection for the transaction
+      const connection = await db.getConnection();
+      try {
+        await connection.beginTransaction();
+
+        await budgetConsumptionService.reserve(
+          connection,
+          grn.budget_line_id,
+          Number(grn.amount_with_tax || grn.amount),
+          Number(grn.quantity),
+          Number(grn.amount_without_tax) || undefined,
+        );
+
+        const [result] = await connection.execute<ResultSetHeader>(
+          `UPDATE grn_request
+              SET status = 'branch_head_approved',
+                  submitted_by = ?,
+                  submitted_at = NOW(),
+                  branch_head_reviewed_by = NULL,
+                  branch_head_reviewed_at = NOW(),
+                  branch_head_review_note = 'Auto-approved: Finance Head submission at Head Office',
+                  remarks = COALESCE(?, remarks)
+            WHERE id = ? AND status = 'draft'`,
+          [actorUserId, payload.remarks?.trim() || null, grnId],
+        );
+        if (result.affectedRows !== 1) {
+          throw new Error(
+            "GRN status changed before submission; refresh and try again",
+          );
+        }
+
+        await recordFinanceApprovalEvent(
+          {
+            entityType: "grn",
+            entityId: grnId,
+            action: "submit",
+            fromStatus: "draft",
+            toStatus: "branch_head_approved",
+            actorUserId,
+            actorRole,
+            remarks: payload.remarks?.trim() || null,
+            details: {
+              grnNumber: String(grnNumber ?? ""),
+              branchId: String(grn.branch_id ?? ""),
+              headOfficeBypass: true,
+              bypassReason:
+                "Finance Head submission at Head Office — Branch Head stage auto-approved",
+            },
+          },
+          connection,
+        );
+
+        await connection.commit();
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
+      }
+
+      await writeGrnAudit(
+        "SUBMIT_HEAD_OFFICE_BYPASS",
+        grnId,
+        actorUserId,
+        actorRole,
+        {
+          remarks: payload.remarks,
+          grn_number: grnNumber,
+          bypass_reason: "Finance Head submission at Head Office",
+        },
+      );
+
+      // Notify Accounts Head instead of Branch Head
+      runInBackground("grn-submit-accounts-head-alert", () =>
+        notifyGrnStage(
+          grnId,
+          String(grnNumber ?? ""),
+          grn.branch_id ? String(grn.branch_id) : null,
+          grn.vendor_name ? String(grn.vendor_name) : null,
+          Number(grn.amount_with_tax ?? grn.amount ?? 0) || null,
+          "accounts_head",
+        ),
+      );
+      runInBackground("grn-submit-email", () =>
+        notifyGrnAccountsHeadPendingEmail(grnId),
+      );
+      return {
+        success: true,
+        newStatus: "branch_head_approved" as const,
+        grnNumber,
+        headOfficeBypass: true,
+      };
+    }
+
+    // Normal flow: go to submitted status, pending Branch Head review
     const [result] = await db.execute<ResultSetHeader>(
       `UPDATE grn_request
           SET status = 'submitted',
@@ -766,16 +919,14 @@ export const grnService = {
               submitted_at = NOW(),
               remarks = COALESCE(?, remarks)
         WHERE id = ? AND status = 'draft'`,
-      [actorUserId, payload.remarks?.trim() || null, grnId]
+      [actorUserId, payload.remarks?.trim() || null, grnId],
     );
     if (result.affectedRows !== 1) {
-      throw new Error("GRN status changed before submission; refresh and try again");
+      throw new Error(
+        "GRN status changed before submission; refresh and try again",
+      );
     }
 
-    await writeGrnAudit("SUBMIT", grnId, actorUserId, actorRole, {
-      remarks: payload.remarks,
-      grn_number: grnNumber,
-    });
     /*
      * Also recorded on the WORKFLOW trail, not only the security one.
      *
@@ -786,25 +937,37 @@ export const grnService = {
      * only history a reviewer can read back (GET /grns/:id/approval-history), and it is the
      * transition that starts the chain. Both writes stay; they answer different questions.
      */
-    await recordFinanceApprovalEvent({
-      entityType: "grn",
-      entityId: grnId,
-      action: "submit",
-      fromStatus: "draft",
-      toStatus: "submitted",
-      actorUserId,
-      actorRole,
-      remarks: payload.remarks?.trim() || null,
-      details: { grnNumber: String(grnNumber ?? ""), branchId: String(grn.branch_id ?? "") },
-    });
-    await notifyGrnStage(
-      grnId,
-      String(grnNumber ?? ""),
-      grn.branch_id ? String(grn.branch_id) : null,
-      grn.vendor_name ? String(grn.vendor_name) : null,
-      Number(grn.amount_with_tax ?? grn.amount ?? 0) || null,
-      "branch_head",
+    await Promise.all([
+      writeGrnAudit("SUBMIT", grnId, actorUserId, actorRole, {
+        remarks: payload.remarks,
+        grn_number: grnNumber,
+      }),
+      recordFinanceApprovalEvent({
+        entityType: "grn",
+        entityId: grnId,
+        action: "submit",
+        fromStatus: "draft",
+        toStatus: "submitted",
+        actorUserId,
+        actorRole,
+        remarks: payload.remarks?.trim() || null,
+        details: {
+          grnNumber: String(grnNumber ?? ""),
+          branchId: String(grn.branch_id ?? ""),
+        },
+      }),
+    ]);
+    runInBackground("grn-submit-branch-alert", () =>
+      notifyGrnStage(
+        grnId,
+        String(grnNumber ?? ""),
+        grn.branch_id ? String(grn.branch_id) : null,
+        grn.vendor_name ? String(grn.vendor_name) : null,
+        Number(grn.amount_with_tax ?? grn.amount ?? 0) || null,
+        "branch_head",
+      ),
     );
+    runInBackground("grn-submit-email", () => notifyGrnSubmittedEmail(grnId));
     return { success: true, newStatus: "submitted" as const, grnNumber };
   },
 
@@ -812,7 +975,7 @@ export const grnService = {
     grnId: string,
     payload: ReviewGrnPayload,
     actorUserId: string,
-    actorRole: string
+    actorRole: string,
   ) {
     if (!payload || !["approved", "rejected"].includes(payload.decision)) {
       throw new Error("Review decision must be approved or rejected");
@@ -828,33 +991,64 @@ export const grnService = {
     let grnNumber: string | null = null;
     // Captured inside the transaction below, for the bell notification raised after it commits —
     // `grn` and `effectiveStage` are declared inside the try block and go out of scope at `finally`.
-    let notifyStage: "branch_head" | "finance_head" | null = null;
+    let notifyStage: "branch_head" | "accounts_head" | "finance_head" | null =
+      null;
     let notifyGrnNumber: string | null = null;
     let notifyBranchId: string | null = null;
     let notifyVendorName: string | null = null;
     let notifyAmount: number | null = null;
+    // Head Office bypass: when Accounts Head does the final approval, don't notify Finance Head
+    let headOfficeBypassFinalApproval = false;
 
     try {
       await connection.beginTransaction();
       const [rows] = await connection.execute<RowDataPacket[]>(
         `SELECT * FROM grn_request WHERE id = ? FOR UPDATE`,
-        [grnId]
+        [grnId],
       );
       const grn = rows[0] as any;
       if (!grn) throw new Error("GRN not found");
-      if (!grn.budget_line_id) throw new Error("GRN has no approved budget mapping");
+      /*
+       * A GRN with no budget_line_id used to be an unconditional block here — "GRN has no
+       * approved budget mapping" — regardless of why the line was missing. That contradicted
+       * the Owner ruling already live on the Smart GRN path (grn-smart.service.ts review():
+       * an unbudgeted GRN approves WITHOUT a budget line, deliberately; linking is an option
+       * Finance Head has, never a gate). This legacy reviewGrn() is what a GRN with zero
+       * grn_cost_allocation rows falls through to (see onlyWhenSmart in grn-smart.routes.ts) —
+       * which includes every GRN imported from db_bill (created_by = the dbbill import user),
+       * none of which were ever given a budget line or an allocation row. Those legitimately
+       * reached branch_head_approved and then hard-failed here the moment Finance Head tried
+       * to approve them, even though the system had allowed raising (and Branch-Head-approving)
+       * them in the first place.
+       *
+       * Fix: no longer block on a missing budget line. Instead `noBudgetLine` skips the
+       * reserve/consume/release calls below (there is no line to move money against) and the
+       * GRN is flagged is_unbudgeted so the gap stays visible rather than silently indistinguishable
+       * from a normal budgeted GRN. The cost still lands in the P&L overlay regardless — it reads
+       * grn_request.pnl_cost_amount directly (bpo-pnl.service.ts), which has never depended on
+       * budget_line_id being set.
+       */
+      const noBudgetLine = !grn.budget_line_id;
       notifyGrnNumber = grn.grn_number ? String(grn.grn_number) : null;
       notifyBranchId = grn.branch_id ? String(grn.branch_id) : null;
       notifyVendorName = grn.vendor_name ? String(grn.vendor_name) : null;
       notifyAmount = Number(grn.amount_with_tax ?? grn.amount ?? 0) || null;
 
-      const effectiveStage = role === "super_admin"
-        ? grn.status === "submitted"
-          ? "branch_head"
-          : grn.status === "branch_head_approved"
-            ? "finance_head"
-            : null
-        : role;
+      // 3-stage chain (owner ruling, 2026-09-12): Branch Head -> Accounts Head -> Finance Head.
+      // See finance-workflow-role.ts's resolveFinanceStageRole, which every OTHER caller of this
+      // stage resolution goes through — duplicated here only for the super_admin "acting as
+      // whichever stage the row is actually at" case, exactly as it always was for the 2-stage
+      // chain.
+      const effectiveStage =
+        role === "super_admin"
+          ? grn.status === "submitted"
+            ? "branch_head"
+            : grn.status === "branch_head_approved"
+              ? "accounts_head"
+              : grn.status === "accounts_head_approved"
+                ? "finance_head"
+                : null
+          : role;
 
       // P0-2: a type with no payment/ledger/reversal lifecycle cannot be approved.
       assertGrnTypeSupported(grn.grn_type, "Approval");
@@ -862,11 +1056,13 @@ export const grnService = {
       // P0-3: Re-check period lock inside the transaction immediately before the financial
       // mutation. Guards against a concurrent lock applied after the API-level check in
       // createDraft() but before this approval actually changes reserved/consumed figures.
-      const grnPeriod = String(grn.accounting_period ?? grn.bill_date ?? "").substring(0, 7);
-      if (grnPeriod && await isPeriodLocked(grnPeriod, connection)) {
+      const grnPeriod = String(
+        grn.accounting_period ?? grn.bill_date ?? "",
+      ).substring(0, 7);
+      if (grnPeriod && (await isPeriodLocked(grnPeriod, connection))) {
         throw new Error(
-          `${grnPeriod} was locked for P&L close before this approval completed. `
-          + "Resubmit the GRN against the current open period."
+          `${grnPeriod} was locked for P&L close before this approval completed. ` +
+            "Resubmit the GRN against the current open period.",
         );
       }
 
@@ -874,23 +1070,49 @@ export const grnService = {
       // Applies to approvals only — rejections do not create financial commitments.
       if (payload.decision === "approved") {
         if (
-          effectiveStage === "branch_head"
-          && grn.submitted_by
-          && String(grn.submitted_by) === actorUserId
+          effectiveStage === "branch_head" &&
+          grn.submitted_by &&
+          String(grn.submitted_by) === actorUserId
         ) {
           throw new Error(
-            "Maker-checker violation: the same person cannot submit and Branch Head-approve the same GRN"
+            "Maker-checker violation: the same person cannot submit and Branch Head-approve the same GRN",
           );
+        }
+        if (effectiveStage === "accounts_head") {
+          if (grn.submitted_by && String(grn.submitted_by) === actorUserId) {
+            throw new Error(
+              "Maker-checker violation: Accounts Head cannot be the person who submitted this GRN",
+            );
+          }
+          if (
+            grn.branch_head_reviewed_by &&
+            String(grn.branch_head_reviewed_by) === actorUserId
+          ) {
+            throw new Error(
+              "Maker-checker violation: Accounts Head cannot be the person who performed the Branch Head review",
+            );
+          }
         }
         if (effectiveStage === "finance_head") {
           if (grn.submitted_by && String(grn.submitted_by) === actorUserId) {
             throw new Error(
-              "Maker-checker violation: Finance Head cannot be the person who submitted this GRN"
+              "Maker-checker violation: Finance Head cannot be the person who submitted this GRN",
             );
           }
-          if (grn.branch_head_reviewed_by && String(grn.branch_head_reviewed_by) === actorUserId) {
+          if (
+            grn.branch_head_reviewed_by &&
+            String(grn.branch_head_reviewed_by) === actorUserId
+          ) {
             throw new Error(
-              "Maker-checker violation: Finance Head cannot be the person who performed the Branch Head review"
+              "Maker-checker violation: Finance Head cannot be the person who performed the Branch Head review",
+            );
+          }
+          if (
+            grn.accounts_head_reviewed_by &&
+            String(grn.accounts_head_reviewed_by) === actorUserId
+          ) {
+            throw new Error(
+              "Maker-checker violation: Finance Head cannot be the person who performed the Accounts Head review",
             );
           }
         }
@@ -899,18 +1121,21 @@ export const grnService = {
       if (effectiveStage === "branch_head") {
         if (grn.status !== "submitted") {
           throw new Error(
-            `Branch Head can only review submitted GRNs. Current status: ${grn.status}`
+            `Branch Head can only review submitted GRNs. Current status: ${grn.status}`,
           );
         }
 
         if (payload.decision === "approved") {
-          await budgetConsumptionService.reserve(
-            connection,
-            grn.budget_line_id,
-            Number(grn.amount_with_tax || grn.amount),
-            Number(grn.quantity),
-            Number(grn.amount_without_tax) || undefined,
-          );
+          // noBudgetLine: nothing to reserve against — see the comment on noBudgetLine above.
+          if (!noBudgetLine) {
+            await budgetConsumptionService.reserve(
+              connection,
+              grn.budget_line_id,
+              Number(grn.amount_with_tax || grn.amount),
+              Number(grn.quantity),
+              Number(grn.amount_without_tax) || undefined,
+            );
+          }
           newStatus = "branch_head_approved";
         } else {
           newStatus = "rejected";
@@ -924,6 +1149,12 @@ export const grnService = {
         // transaction; this WHERE clause is the same atomic guard used by submit() above and
         // by cancelGrn/returnGrn/resubmitReturnedGrn elsewhere in this file, so a stray
         // refactor that drops the FOR UPDATE read doesn't silently reopen double-approval.
+        // When super_admin overrides the branch-head stage via role-mapping, don't record
+        // their user_id as the branch_head_reviewed_by — it's an admin override, not a
+        // named branch head decision. The audit event already captures who acted and when.
+        // This prevents the same person from being blocked at the accounts_head stage when
+        // they later have accounts_head as their active role.
+        const bhReviewedBy = actorRole === "super_admin" ? null : actorUserId;
         const [bhUpdateResult] = await connection.execute<ResultSetHeader>(
           `UPDATE grn_request
               SET status = ?,
@@ -933,48 +1164,256 @@ export const grnService = {
                   reviewed_by = ?,
                   reviewed_at = NOW(),
                   review_note = ?,
-                  rejection_reason = ?
+                  rejection_reason = ?,
+                  is_unbudgeted = CASE WHEN ? THEN 1 ELSE is_unbudgeted END
             WHERE id = ? AND status = 'submitted'`,
           [
             newStatus,
-            actorUserId,
+            bhReviewedBy,
             payload.reviewNote?.trim() || null,
             actorUserId,
             payload.reviewNote?.trim() || null,
             payload.decision === "rejected" ? payload.reviewNote?.trim() : null,
+            noBudgetLine,
             grnId,
-          ]
+          ],
         );
         if (bhUpdateResult.affectedRows !== 1) {
           throw Object.assign(
             new Error("GRN state changed concurrently; refresh and try again"),
-            { code: "STATE_CHANGED", statusCode: 409 }
+            { code: "STATE_CHANGED", statusCode: 409 },
           );
         }
-      } else if (effectiveStage === "finance_head") {
+      } else if (effectiveStage === "accounts_head") {
+        // Owner ruling (2026-09-12): Accounts Head sits between Branch Head and Finance Head,
+        // not only at the downstream payment step. This stage mirrors Branch Head's shape —
+        // approving does not move budget (the reservation from Branch Head's approve() stands
+        // untouched; only Finance Head's final approve() converts reserved into consumed) — it
+        // is a second pair of eyes on the invoice before Finance commits money against it.
         if (grn.status !== "branch_head_approved") {
           throw new Error(
-            `Finance Head can only review Branch Head-approved GRNs. Current status: ${grn.status}`
+            `Accounts Head can only review Branch Head-approved GRNs. Current status: ${grn.status}`,
+          );
+        }
+
+        /*
+         * HEAD OFFICE BYPASS (owner ruling, 2026-09-23):
+         *
+         * When this GRN was submitted by Finance Head at Head Office, the Finance Head
+         * approval stage is skipped. Accounts Head approval becomes the FINAL approval:
+         * consume budget, assign GRN number, post journal entry, go to final status.
+         */
+        const skipFinanceHead =
+          await shouldSkipFinanceHeadOnAccountsApproval(grn);
+
+        if (payload.decision === "approved") {
+          if (skipFinanceHead) {
+            // This is the final approval — do everything Finance Head would normally do
+            if (!noBudgetLine) {
+              await budgetConsumptionService.consume(
+                connection,
+                grn.budget_line_id,
+                Number(grn.amount_with_tax || grn.amount),
+                Number(grn.quantity),
+                Number(grn.amount_without_tax) || undefined,
+              );
+            }
+            newStatus =
+              grn.grn_type === "vendor"
+                ? "pending_accounts_payment"
+                : "approved";
+
+            // Assign GRN number at final approval
+            grnNumber = await resolveGrnNumberOnSubmit(grn);
+
+            // Post journal entry
+            if (grn.grn_type === "vendor" || grn.grn_type === "imprest") {
+              await postGrnApprovalJournalEntry(
+                connection,
+                { ...(grn as any), grn_number: grnNumber ?? grn.grn_number },
+                actorUserId,
+              );
+            }
+
+            const [ahFinalResult] = await connection.execute<ResultSetHeader>(
+              `UPDATE grn_request
+                  SET status = ?,
+                      accounts_payment_status = ?,
+                      accounts_head_reviewed_by = ?,
+                      accounts_head_reviewed_at = NOW(),
+                      accounts_head_review_note = ?,
+                      finance_head_reviewed_by = ?,
+                      finance_head_reviewed_at = NOW(),
+                      finance_head_review_note = 'Auto-approved: Head Office bypass (Finance Head was raiser)',
+                      reviewed_by = ?,
+                      reviewed_at = NOW(),
+                      review_note = ?,
+                      approved_by = ?,
+                      approved_at = NOW(),
+                      rejection_reason = NULL,
+                      grn_number = COALESCE(grn_number, ?)
+                WHERE id = ? AND status = 'branch_head_approved'`,
+              [
+                newStatus,
+                grn.grn_type === "vendor" ? "pending" : "not_required",
+                actorUserId,
+                payload.reviewNote?.trim() || null,
+                actorUserId, // Finance Head auto-approval
+                actorUserId,
+                payload.reviewNote?.trim() || null,
+                actorUserId,
+                grnNumber,
+                grnId,
+              ],
+            );
+            if (ahFinalResult.affectedRows !== 1) {
+              throw Object.assign(
+                new Error(
+                  "GRN state changed concurrently; refresh and try again",
+                ),
+                { code: "STATE_CHANGED", statusCode: 409 },
+              );
+            }
+
+            // Create vendor payment if vendor GRN
+            if (grn.grn_type === "vendor") {
+              paymentId = await vendorPaymentService.createFromGrn(
+                grnId,
+                actorUserId,
+                connection,
+              );
+            }
+
+            // Mark that this was the final approval — don't notify Finance Head
+            headOfficeBypassFinalApproval = true;
+          } else {
+            // Normal flow: go to accounts_head_approved, pending Finance Head
+            newStatus = "accounts_head_approved";
+
+            const [ahUpdateResult] = await connection.execute<ResultSetHeader>(
+              `UPDATE grn_request
+                  SET status = ?,
+                      accounts_head_reviewed_by = ?,
+                      accounts_head_reviewed_at = NOW(),
+                      accounts_head_review_note = ?,
+                      reviewed_by = ?,
+                      reviewed_at = NOW(),
+                      review_note = ?
+                WHERE id = ? AND status = 'branch_head_approved'`,
+              [
+                newStatus,
+                actorUserId,
+                payload.reviewNote?.trim() || null,
+                actorUserId,
+                payload.reviewNote?.trim() || null,
+                grnId,
+              ],
+            );
+            if (ahUpdateResult.affectedRows !== 1) {
+              throw Object.assign(
+                new Error(
+                  "GRN state changed concurrently; refresh and try again",
+                ),
+                { code: "STATE_CHANGED", statusCode: 409 },
+              );
+            }
+          }
+        } else {
+          // Rejecting here undoes exactly what Branch Head's approval reserved — nothing has
+          // been consumed yet, so this is the same release() a rejection at the old
+          // branch_head_approved -> finance_head boundary always did.
+          if (!noBudgetLine) {
+            await budgetConsumptionService.release(
+              connection,
+              grn.budget_line_id,
+              Number(grn.amount_with_tax || grn.amount),
+              Number(grn.quantity),
+              Number(grn.amount_without_tax) || undefined,
+            );
+          }
+          newStatus = "rejected";
+
+          const [ahRejectResult] = await connection.execute<ResultSetHeader>(
+            `UPDATE grn_request
+                SET status = 'rejected',
+                    accounts_head_reviewed_by = ?,
+                    accounts_head_reviewed_at = NOW(),
+                    accounts_head_review_note = ?,
+                    reviewed_by = ?,
+                    reviewed_at = NOW(),
+                    review_note = ?,
+                    rejection_reason = ?
+              WHERE id = ? AND status = 'branch_head_approved'`,
+            [
+              actorUserId,
+              payload.reviewNote?.trim() || null,
+              actorUserId,
+              payload.reviewNote?.trim() || null,
+              payload.reviewNote?.trim() || null,
+              grnId,
+            ],
+          );
+          if (ahRejectResult.affectedRows !== 1) {
+            throw Object.assign(
+              new Error(
+                "GRN state changed concurrently; refresh and try again",
+              ),
+              { code: "STATE_CHANGED", statusCode: 409 },
+            );
+          }
+        }
+      } else if (effectiveStage === "finance_head") {
+        if (grn.status !== "accounts_head_approved") {
+          throw new Error(
+            `Finance Head can only review Accounts-Head-approved GRNs. Current status: ${grn.status}`,
           );
         }
 
         if (payload.decision === "approved") {
-          await budgetConsumptionService.consume(
-            connection,
-            grn.budget_line_id,
-            Number(grn.amount_with_tax || grn.amount),
-            Number(grn.quantity),
-            Number(grn.amount_without_tax) || undefined,
-          );
-          newStatus = grn.grn_type === "vendor"
-            ? "pending_accounts_payment"
-            : "approved";
+          // noBudgetLine: nothing was reserved, so nothing to move into consumed — see the
+          // comment on noBudgetLine above. The GRN still approves; it just funds nothing.
+          if (!noBudgetLine) {
+            await budgetConsumptionService.consume(
+              connection,
+              grn.budget_line_id,
+              Number(grn.amount_with_tax || grn.amount),
+              Number(grn.quantity),
+              Number(grn.amount_without_tax) || undefined,
+            );
+          }
+          newStatus =
+            grn.grn_type === "vendor" ? "pending_accounts_payment" : "approved";
 
           // Owner ruling: a GRN number is assigned at FINAL (Finance Head) approval, not at
           // submission — see the same change in grn-smart.service.ts's review() and
           // grn-validation-control.service.ts's submit(). A rejected GRN never reaches this
           // branch, so it never gets one.
           grnNumber = await resolveGrnNumberOnSubmit(grn);
+
+          // Journal Task 2 — posts Dr Expense:<head>:<sub_head> / Cr Vendor (or Cr Imprest
+          // Float for an imprest GRN), inside this same transaction, gross amount matching
+          // budgetConsumptionService.consume() above exactly, and after grnNumber so the
+          // journal narration carries the real GRN number rather than falling back to the raw
+          // id. Unconditional on noBudgetLine — an unbudgeted GRN still creates a real expense
+          // and a real creditor; it's only the BUDGET tracking that has nothing to consume, not
+          // the accounting event. A resolution failure here (see grn-journal-posting.service.ts)
+          // throws and rolls back the whole approval, including the consume() call above,
+          // rather than leaving budget consumed with no journal entry behind it.
+          //
+          // Owner-confirmed 2026-09-17: grn_type='salary' (a db_bill migration artifact, 39,099
+          // historical rows from 2018-2021, no active ledger head, unreachable from any current
+          // GRN form) is closed historical record and is deliberately never journal-posted —
+          // postGrnApprovalJournalEntry()'s credit-side logic only knows vendor vs imprest, so
+          // letting a salary-type GRN fall through here would wrongly credit Imprest Float. The
+          // real payroll→ledger posting belongs to a separate, purpose-built path (see
+          // salary-voucher.service.ts's Gross-Salary/Payable model), not this generic one.
+          if (grn.grn_type === "vendor" || grn.grn_type === "imprest") {
+            await postGrnApprovalJournalEntry(
+              connection,
+              { ...(grn as any), grn_number: grnNumber ?? grn.grn_number },
+              actorUserId,
+            );
+          }
 
           const [fhUpdateResult] = await connection.execute<ResultSetHeader>(
             `UPDATE grn_request
@@ -989,8 +1428,9 @@ export const grnService = {
                     approved_by = ?,
                     approved_at = NOW(),
                     rejection_reason = NULL,
-                    grn_number = COALESCE(grn_number, ?)
-              WHERE id = ? AND status = 'branch_head_approved'`,
+                    grn_number = COALESCE(grn_number, ?),
+                    is_unbudgeted = CASE WHEN ? THEN 1 ELSE is_unbudgeted END
+              WHERE id = ? AND status = 'accounts_head_approved'`,
             [
               newStatus,
               grn.grn_type === "vendor" ? "pending" : "not_required",
@@ -1000,13 +1440,16 @@ export const grnService = {
               payload.reviewNote?.trim() || null,
               actorUserId,
               grnNumber,
+              noBudgetLine,
               grnId,
-            ]
+            ],
           );
           if (fhUpdateResult.affectedRows !== 1) {
             throw Object.assign(
-              new Error("GRN state changed concurrently; refresh and try again"),
-              { code: "STATE_CHANGED", statusCode: 409 }
+              new Error(
+                "GRN state changed concurrently; refresh and try again",
+              ),
+              { code: "STATE_CHANGED", statusCode: 409 },
             );
           }
 
@@ -1014,17 +1457,20 @@ export const grnService = {
             paymentId = await vendorPaymentService.createFromGrn(
               grnId,
               actorUserId,
-              connection
+              connection,
             );
           }
         } else {
-          await budgetConsumptionService.release(
-            connection,
-            grn.budget_line_id,
-            Number(grn.amount_with_tax || grn.amount),
-            Number(grn.quantity),
-            Number(grn.amount_without_tax) || undefined,
-          );
+          // noBudgetLine: nothing was reserved at Branch Head stage, so nothing to release.
+          if (!noBudgetLine) {
+            await budgetConsumptionService.release(
+              connection,
+              grn.budget_line_id,
+              Number(grn.amount_with_tax || grn.amount),
+              Number(grn.quantity),
+              Number(grn.amount_without_tax) || undefined,
+            );
+          }
           newStatus = "rejected";
           const [fhRejectResult] = await connection.execute<ResultSetHeader>(
             `UPDATE grn_request
@@ -1036,7 +1482,7 @@ export const grnService = {
                     reviewed_at = NOW(),
                     review_note = ?,
                     rejection_reason = ?
-              WHERE id = ? AND status = 'branch_head_approved'`,
+              WHERE id = ? AND status = 'accounts_head_approved'`,
             [
               actorUserId,
               payload.reviewNote?.trim(),
@@ -1044,12 +1490,14 @@ export const grnService = {
               payload.reviewNote?.trim(),
               payload.reviewNote?.trim(),
               grnId,
-            ]
+            ],
           );
           if (fhRejectResult.affectedRows !== 1) {
             throw Object.assign(
-              new Error("GRN state changed concurrently; refresh and try again"),
-              { code: "STATE_CHANGED", statusCode: 409 }
+              new Error(
+                "GRN state changed concurrently; refresh and try again",
+              ),
+              { code: "STATE_CHANGED", statusCode: 409 },
             );
           }
         }
@@ -1092,11 +1540,18 @@ export const grnService = {
           remarks: payload.reviewNote?.trim() || null,
           details: paymentId ? { vendorPaymentId: paymentId } : undefined,
         },
-        connection
+        connection,
       );
 
-      if (effectiveStage === "branch_head" && payload.decision === "approved") {
-        notifyStage = "finance_head";
+      if (payload.decision === "approved") {
+        if (effectiveStage === "branch_head") notifyStage = "accounts_head";
+        // Don't notify Finance Head if this was a Head Office bypass final approval
+        else if (
+          effectiveStage === "accounts_head" &&
+          !headOfficeBypassFinalApproval
+        ) {
+          notifyStage = "finance_head";
+        }
       }
 
       await connection.commit();
@@ -1107,27 +1562,44 @@ export const grnService = {
       connection.release();
     }
 
-    await writeGrnAudit(
-      payload.decision.toUpperCase(),
-      grnId,
-      actorUserId,
-      actorRole,
-      {
-        review_note: payload.reviewNote,
-        new_status: newStatus!,
-        payment_id: paymentId,
-      }
+    runInBackground("grn-review-audit", () =>
+      writeGrnAudit(
+        payload.decision.toUpperCase(),
+        grnId,
+        actorUserId,
+        actorRole,
+        {
+          review_note: payload.reviewNote,
+          new_status: newStatus!,
+          payment_id: paymentId,
+        },
+      ),
     );
     if (paymentId) {
-      await vendorPaymentService.notifyPaymentPending(paymentId).catch(() => undefined);
+      const pendingPaymentId = paymentId;
+      runInBackground("payment-pending", () =>
+        vendorPaymentService.notifyPaymentPending(pendingPaymentId),
+      );
     }
-    // The stage this decision cleared is done with; close its bell alert regardless of outcome,
-    // then raise the next stage's alert only when the chain continues (branch_head approved into
-    // finance_head_approved's next stage). A rejection or the finance_head's own final decision
-    // ends the chain, so nothing new is raised.
+    // resolveGrnNotifications is one cheap UPDATE and must complete before the next stage's alert
+    // is raised — kept inline. All downstream fan-out (next alert, email) runs in the background.
     await resolveGrnNotifications(grnId);
     if (notifyStage) {
-      await notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, notifyStage);
+      runInBackground("next-stage-alert", () =>
+        notifyGrnStage(
+          grnId,
+          notifyGrnNumber,
+          notifyBranchId,
+          notifyVendorName,
+          notifyAmount,
+          notifyStage!,
+        ),
+      );
+      if (notifyStage === "accounts_head") {
+        runInBackground("accounts-head-email", () =>
+          notifyGrnAccountsHeadPendingEmail(grnId),
+        );
+      }
     }
     // grnNumber is assigned at final approval (number-at-final-approval); the caller surfaces it.
     return { success: true, newStatus: newStatus!, paymentId, grnNumber };
@@ -1139,7 +1611,7 @@ export const grnService = {
       await connection.beginTransaction();
       const [rows] = await connection.execute<RowDataPacket[]>(
         `SELECT * FROM grn_request WHERE id = ? FOR UPDATE`,
-        [grnId]
+        [grnId],
       );
       const grn = rows[0] as any;
       if (!grn) throw new Error("GRN not found");
@@ -1157,7 +1629,14 @@ export const grnService = {
         throw new Error(`Cannot cancel a GRN with status '${grn.status}'`);
       }
 
-      if (grn.status === "branch_head_approved" && grn.budget_line_id) {
+      // Reserved-but-not-consumed spans two statuses now that Accounts Head sits between
+      // Branch Head and Finance Head — consumption only ever happens at Finance Head's final
+      // approve(), so both pre-Finance-Head statuses are still holding a reservation to release.
+      if (
+        (grn.status === "branch_head_approved" ||
+          grn.status === "accounts_head_approved") &&
+        grn.budget_line_id
+      ) {
         await budgetConsumptionService.release(
           connection,
           grn.budget_line_id,
@@ -1171,10 +1650,12 @@ export const grnService = {
         `UPDATE grn_request
             SET status = 'cancelled', reviewed_by = ?, reviewed_at = NOW()
           WHERE id = ? AND status = ?`,
-        [actorUserId, grnId, grn.status]
+        [actorUserId, grnId, grn.status],
       );
       if (result.affectedRows !== 1) {
-        throw new Error("GRN status changed before cancellation; refresh and try again");
+        throw new Error(
+          "GRN status changed before cancellation; refresh and try again",
+        );
       }
       // Cancellation is terminal and can release consumed budget, so it belongs on the readable
       // workflow trail as much as an approval does. On the SAME connection as the UPDATE and the
@@ -1189,9 +1670,12 @@ export const grnService = {
           toStatus: "cancelled",
           actorUserId,
           actorRole,
-          details: { grnNumber: String(grn.grn_number ?? ""), branchId: String(grn.branch_id ?? "") },
+          details: {
+            grnNumber: String(grn.grn_number ?? ""),
+            branchId: String(grn.branch_id ?? ""),
+          },
         },
-        connection
+        connection,
       );
       await connection.commit();
     } catch (error) {
@@ -1229,22 +1713,29 @@ export const grnService = {
       await connection.beginTransaction();
       const [rows] = await connection.execute<RowDataPacket[]>(
         `SELECT id, status, created_by, grn_number, branch_id FROM grn_request WHERE id = ? FOR UPDATE`,
-        [grnId]
+        [grnId],
       );
       const grn = rows[0] as any;
       if (!grn) throw new Error("GRN not found");
       if (grn.status !== "draft") {
-        throw new Error(`Only a draft GRN can be deleted (current status '${grn.status}')`);
+        throw new Error(
+          `Only a draft GRN can be deleted (current status '${grn.status}')`,
+        );
       }
       const isOwner = String(grn.created_by ?? "") === String(actorUserId);
       if (!isOwner && actorRole !== "super_admin") {
         throw Object.assign(
-          new Error("Only the GRN's creator or a Super Admin may delete a draft"),
-          { statusCode: 403 }
+          new Error(
+            "Only the GRN's creator or a Super Admin may delete a draft",
+          ),
+          { statusCode: 403 },
         );
       }
 
-      await connection.execute(`DELETE FROM grn_invoice_component WHERE grn_request_id = ?`, [grnId]);
+      await connection.execute(
+        `DELETE FROM grn_invoice_component WHERE grn_request_id = ?`,
+        [grnId],
+      );
 
       await recordFinanceApprovalEvent(
         {
@@ -1255,17 +1746,22 @@ export const grnService = {
           toStatus: "deleted",
           actorUserId,
           actorRole,
-          details: { grnNumber: String(grn.grn_number ?? ""), branchId: String(grn.branch_id ?? "") },
+          details: {
+            grnNumber: String(grn.grn_number ?? ""),
+            branchId: String(grn.branch_id ?? ""),
+          },
         },
-        connection
+        connection,
       );
 
       const [result] = await connection.execute<ResultSetHeader>(
         `DELETE FROM grn_request WHERE id = ? AND status = 'draft'`,
-        [grnId]
+        [grnId],
       );
       if (result.affectedRows !== 1) {
-        throw new Error("GRN status changed before deletion; refresh and try again");
+        throw new Error(
+          "GRN status changed before deletion; refresh and try again",
+        );
       }
       await connection.commit();
     } catch (error) {
@@ -1288,11 +1784,13 @@ export const grnService = {
     grnId: string,
     reason: string,
     actorUserId: string,
-    actorRole: string
+    actorRole: string,
   ) {
     const trimmedReason = reason?.trim();
     if (!trimmedReason) {
-      throw new Error("A reason is required to reverse a GRN's budget consumption");
+      throw new Error(
+        "A reason is required to reverse a GRN's budget consumption",
+      );
     }
 
     const connection = await db.getConnection();
@@ -1300,13 +1798,13 @@ export const grnService = {
       await connection.beginTransaction();
       const [rows] = await connection.execute<RowDataPacket[]>(
         `SELECT * FROM grn_request WHERE id = ? FOR UPDATE`,
-        [grnId]
+        [grnId],
       );
       const grn = rows[0] as any;
       if (!grn) throw new Error("GRN not found");
       if (!CONSUMED_GRN_STATUSES.includes(grn.status)) {
         throw new Error(
-          `Cannot reverse consumption for a GRN with status '${grn.status}' — it has not consumed budget, or has already been reversed`
+          `Cannot reverse consumption for a GRN with status '${grn.status}' — it has not consumed budget, or has already been reversed`,
         );
       }
 
@@ -1322,6 +1820,27 @@ export const grnService = {
         );
       }
 
+      // Journal Task 5 — reverse this GRN's journal entry (Task 2), if one exists. It may not:
+      // a GRN approved before Task 2 went live, or before Phase 6's historical backfill runs,
+      // has no journal_entry to find — that's expected, not an error, so this looks it up
+      // rather than assuming one is there. reversed_by_entry_id IS NULL guards against
+      // reversing an already-reversed entry a second time (journalService.reverse() would
+      // refuse it anyway, but checking here avoids the query round-trip and the noise of a
+      // caught-and-ignored refusal).
+      const [[liveEntry]] = await connection.execute<RowDataPacket[]>(
+        `SELECT id FROM journal_entry
+          WHERE source_type = 'grn' AND source_id = ? AND reversed_by_entry_id IS NULL`,
+        [grnId],
+      );
+      if (liveEntry) {
+        await journalService.reverse(
+          connection,
+          String((liveEntry as any).id),
+          actorUserId,
+          trimmedReason,
+        );
+      }
+
       const [result] = await connection.execute<ResultSetHeader>(
         `UPDATE grn_request
             SET status = 'consumption_reversed',
@@ -1330,24 +1849,29 @@ export const grnService = {
                 review_note = ?,
                 rejection_reason = ?
           WHERE id = ? AND status = ?`,
-        [actorUserId, trimmedReason, trimmedReason, grnId, grn.status]
+        [actorUserId, trimmedReason, trimmedReason, grnId, grn.status],
       );
       if (result.affectedRows !== 1) {
-        throw new Error("GRN status changed before reversal; refresh and try again");
+        throw new Error(
+          "GRN status changed before reversal; refresh and try again",
+        );
       }
       // Write into the reviewer-facing financial timeline inside the transaction so the
       // approval sequence never shows a complete chain with the reversal silently elsewhere.
-      await recordFinanceApprovalEvent({
-        entityType: "grn",
-        entityId: grnId,
-        action: "reverse",
-        fromStatus: String(grn.status),
-        toStatus: "consumption_reversed",
-        decision: "reversed",
-        actorUserId,
-        actorRole,
-        remarks: trimmedReason,
-      }, connection);
+      await recordFinanceApprovalEvent(
+        {
+          entityType: "grn",
+          entityId: grnId,
+          action: "reverse",
+          fromStatus: String(grn.status),
+          toStatus: "consumption_reversed",
+          decision: "reversed",
+          actorUserId,
+          actorRole,
+          remarks: trimmedReason,
+        },
+        connection,
+      );
       await connection.commit();
     } catch (error) {
       await connection.rollback();
@@ -1459,8 +1983,26 @@ export const grnService = {
               NULL AS context_consumed_pnl_cost_amount,
               NULL AS context_pending_pnl_cost_amount`;
 
-    const conditions: string[] = [];
+    // DialDesk / I-Spark / IDC GRNs are not MAS Callnet's (owner rule 2026-09-24).
+    await refreshHiddenGrnScope();
+    const conditions: string[] = [ownCompanyGrnSql("g")];
     const params: unknown[] = [];
+    // IDC/... GRNs are the db_bill legacy petty-cash import (CompId 2), bulk-inserted under a
+    // migration-sentinel created_by — never raised live through this app, no vendor/invoice/
+    // process attached. Kept in the database for audit; excluded from the working list/search
+    // view. A caller that explicitly quotes an IDC number in grnNumber/search still finds it —
+    // this only hides them from the unfiltered browse. Owner ruling 2026-09-16.
+    if (
+      !(filters.grnNumber && filters.grnNumber.toUpperCase().includes("IDC")) &&
+      !(filters.search && filters.search.toUpperCase().includes("IDC"))
+    ) {
+      // g.grn_number IS NULL for drafts (number assigned at submission only) — without the
+      // IS NULL guard, MySQL evaluates NULL NOT LIKE 'IDC/%' as NULL (not TRUE), silently
+      // excluding every draft from history.
+      conditions.push(
+        "(g.grn_number IS NULL OR g.grn_number NOT LIKE 'IDC/%')",
+      );
+    }
     if (filters.branchScope) {
       const filter = financeBranchFilter(filters.branchScope, "g.branch_id");
       if (filter.sql !== "1=1") {
@@ -1500,6 +2042,16 @@ export const grnService = {
     if (filters.status) {
       conditions.push("g.status = ?");
       params.push(filters.status);
+      // Migrated GRNs (bill_source_id IS NOT NULL) were fully approved in DB_Bill before
+      // being imported into HRMS. They must never appear in HRMS approval queue views.
+      const APPROVAL_QUEUE_STATUSES = new Set([
+        "submitted",
+        "branch_head_approved",
+        "accounts_head_approved",
+      ]);
+      if (APPROVAL_QUEUE_STATUSES.has(filters.status)) {
+        conditions.push("g.bill_source_id IS NULL");
+      }
     }
     if (filters.excludeDraft) {
       conditions.push("g.status <> 'draft'");
@@ -1514,7 +2066,7 @@ export const grnService = {
     }
     if (filters.search) {
       conditions.push(
-        "(g.grn_number LIKE ? OR g.vendor_name LIKE ? OR g.head LIKE ? OR g.description LIKE ?)"
+        "(g.grn_number LIKE ? OR g.vendor_name LIKE ? OR g.head LIKE ? OR g.description LIKE ?)",
       );
       const like = `%${filters.search}%`;
       params.push(like, like, like, like);
@@ -1586,7 +2138,7 @@ export const grnService = {
       // Falls back to bill_date for rows raised before accounting_period existed, so a period
       // filter does not simply hide every historical GRN.
       conditions.push(
-        "COALESCE(g.accounting_period, DATE_FORMAT(g.bill_date, '%Y-%m')) = ?"
+        "COALESCE(g.accounting_period, DATE_FORMAT(g.bill_date, '%Y-%m')) = ?",
       );
       params.push(filters.accountingPeriod);
     }
@@ -1600,7 +2152,10 @@ export const grnService = {
     }
     // Compared against the gross, which is what the list column shows — filtering on a
     // different figure from the one on screen is how "the filter is broken" reports start.
-    if (filters.amountFrom !== undefined && Number.isFinite(filters.amountFrom)) {
+    if (
+      filters.amountFrom !== undefined &&
+      Number.isFinite(filters.amountFrom)
+    ) {
       conditions.push("COALESCE(g.amount_with_tax, g.amount) >= ?");
       params.push(filters.amountFrom);
     }
@@ -1657,6 +2212,10 @@ export const grnService = {
                 CONCAT(bhb.first_name, ' ', bhb.last_name),
                 CASE WHEN g.grn_type = 'imprest' THEN g.legacy_approved_by_name END
               ) AS branch_head_reviewed_by_name,
+              -- No legacy fallback here: the Accounts Head approval stage postdates every
+              -- db_bill-migrated row (owner ruling, 2026-09-12) — a legacy row simply never has
+              -- one, which is honestly NULL rather than borrowed from legacy_approved_by_name.
+              CONCAT(ahb.first_name, ' ', ahb.last_name) AS accounts_head_reviewed_by_name,
               COALESCE(
                 CONCAT(fhb.first_name, ' ', fhb.last_name),
                 CASE WHEN g.grn_type <> 'imprest' THEN g.legacy_approved_by_name END
@@ -1676,19 +2235,20 @@ export const grnService = {
          LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
          LEFT JOIN finance_budget_header h ON h.id = g.budget_id
          LEFT JOIN finance_budget_line l ON l.id = g.budget_line_id
-         LEFT JOIN employees cb ON cb.user_id = g.created_by
-         LEFT JOIN employees rb ON rb.user_id = g.reviewed_by
-         LEFT JOIN employees bhb ON bhb.user_id = g.branch_head_reviewed_by
-         LEFT JOIN employees fhb ON fhb.user_id = g.finance_head_reviewed_by
+         LEFT JOIN (SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees WHERE user_id IS NOT NULL GROUP BY user_id) cb ON cb.user_id = g.created_by
+         LEFT JOIN (SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees WHERE user_id IS NOT NULL GROUP BY user_id) rb ON rb.user_id = g.reviewed_by
+         LEFT JOIN (SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees WHERE user_id IS NOT NULL GROUP BY user_id) bhb ON bhb.user_id = g.branch_head_reviewed_by
+         LEFT JOIN (SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees WHERE user_id IS NOT NULL GROUP BY user_id) ahb ON ahb.user_id = g.accounts_head_reviewed_by
+         LEFT JOIN (SELECT user_id, MIN(first_name) AS first_name, MIN(last_name) AS last_name FROM employees WHERE user_id IS NOT NULL GROUP BY user_id) fhb ON fhb.user_id = g.finance_head_reviewed_by
          ${contextAllocationJoin}
          ${where}
         ORDER BY g.created_at DESC
         LIMIT ? OFFSET ?`,
-      [...contextAllocationParams, ...params, limit, offset]
+      [...contextAllocationParams, ...params, limit, offset],
     );
     const [countRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS total FROM grn_request g ${where}`,
-      params
+      params,
     );
 
     return {
@@ -1728,7 +2288,9 @@ export const grnService = {
 
     if (filters.branchScope) {
       if (filters.branchScope.mode !== "all") {
-        const { sql, params: bParams } = legacyBranchCondition(filters.branchScope);
+        const { sql, params: bParams } = legacyBranchCondition(
+          filters.branchScope,
+        );
         conditions.push(sql);
         params.push(...bParams);
       }
@@ -1771,16 +2333,19 @@ export const grnService = {
         conditions.push("g.is_rejected = 1");
       } else if (filters.status === "approved" || filters.status === "paid") {
         conditions.push(
-          "g.is_rejected = 0 AND (g.entry_status = 'Close' OR (g.entry_status <> 'Booked' AND g.approved_at IS NOT NULL))"
+          "g.is_rejected = 0 AND (g.entry_status = 'Close' OR (g.entry_status <> 'Booked' AND g.approved_at IS NOT NULL))",
         );
       } else if (
         filters.status === "pending_accounts_payment" ||
         filters.status === "payment_scheduled"
       ) {
         conditions.push("g.is_rejected = 0 AND g.entry_status = 'Booked'");
-      } else if (filters.status === "submitted" || filters.status === "branch_head_approved") {
+      } else if (
+        filters.status === "submitted" ||
+        filters.status === "branch_head_approved"
+      ) {
         conditions.push(
-          "g.is_rejected = 0 AND g.entry_status NOT IN ('Close', 'Booked') AND g.approved_at IS NULL"
+          "g.is_rejected = 0 AND g.entry_status NOT IN ('Close', 'Booked') AND g.approved_at IS NULL",
         );
       } else {
         conditions.push("1 = 0");
@@ -1802,7 +2367,10 @@ export const grnService = {
       params.push(filters.billDateTo.slice(0, 7));
     }
 
-    if (filters.amountFrom !== undefined && Number.isFinite(filters.amountFrom)) {
+    if (
+      filters.amountFrom !== undefined &&
+      Number.isFinite(filters.amountFrom)
+    ) {
       conditions.push("(g.amount + g.cgst + g.sgst + g.igst) >= ?");
       params.push(filters.amountFrom);
     }
@@ -1827,14 +2395,14 @@ export const grnService = {
 
     if (filters.search) {
       conditions.push(
-        "(g.grn_no LIKE ? OR g.vendor LIKE ? OR hd.head_name LIKE ? OR g.description LIKE ?)"
+        "(g.grn_no LIKE ? OR g.vendor LIKE ? OR hd.head_name LIKE ? OR g.description LIKE ?)",
       );
       const like = `%${filters.search}%`;
       params.push(like, like, like, like);
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const page  = Math.max(1, filters.page  ?? 1);
+    const page = Math.max(1, filters.page ?? 1);
     const limit = Math.min(100, Math.max(1, filters.limit ?? 30));
     const offset = (page - 1) * limit;
 
@@ -1890,7 +2458,7 @@ export const grnService = {
         ${where}
         ORDER BY g.source_created_at DESC, g.bill_source_id DESC
         LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      [...params, limit, offset],
     );
 
     const [countRows] = await db.execute<RowDataPacket[]>(
@@ -1901,7 +2469,7 @@ export const grnService = {
          LEFT JOIN finance_expense_head_snapshot shd
                 ON shd.bill_source_id = g.sub_head_id AND shd.head_type = 'subhead'
          ${where}`,
-      params
+      params,
     );
 
     return {
@@ -2046,16 +2614,31 @@ export const grnService = {
       const from = String(grn.status);
 
       // Only a GRN that is actually with a reviewer can be sent back. Returning a paid or
-      // cancelled one would reopen something already accounted for.
-      const RETURNABLE = new Set(["submitted", "branch_head_approved", "returned_to_branch_head"]);
+      // cancelled one would reopen something already accounted for. accounts_head_approved
+      // added alongside branch_head_approved — Accounts Head's own approval, like Branch Head's,
+      // is not yet a final commitment, so Finance Head can still send it back from there.
+      const RETURNABLE = new Set([
+        "submitted",
+        "branch_head_approved",
+        "accounts_head_approved",
+        "returned_to_branch_head",
+      ]);
       if (!RETURNABLE.has(from)) {
         throw new Error(`A GRN with status ${from} cannot be returned`);
       }
-      const to = target === "branch_head" ? "returned_to_branch_head" : "returned_to_raiser";
+      const to =
+        target === "branch_head"
+          ? "returned_to_branch_head"
+          : "returned_to_raiser";
       if (from === to) throw new Error(`This GRN is already ${to}`);
 
-      // Release only from branch_head_approved — that is the only state holding a reservation.
-      if (from === "branch_head_approved" && grn.budget_line_id) {
+      // Release from either pre-Finance-Head status — both are still holding a reservation;
+      // only Finance Head's own approve() converts it into consumed.
+      if (
+        (from === "branch_head_approved" ||
+          from === "accounts_head_approved") &&
+        grn.budget_line_id
+      ) {
         await budgetConsumptionService.release(
           connection,
           String(grn.budget_line_id),
@@ -2083,7 +2666,10 @@ export const grnService = {
           action: "return",
           fromStatus: from,
           toStatus: to,
-          decision: target === "branch_head" ? "returned_to_branch_head" : "returned_to_raiser",
+          decision:
+            target === "branch_head"
+              ? "returned_to_branch_head"
+              : "returned_to_raiser",
           actorUserId,
           actorRole,
           remarks: reason,
@@ -2108,7 +2694,12 @@ export const grnService = {
    * branch_head_approved — the Branch Head must approve it again, which re-reserves the
    * budget through the normal path rather than through a second reservation route here.
    */
-  async resubmitReturnedGrn(grnId: string, actorUserId: string, actorRole: string, note?: string) {
+  async resubmitReturnedGrn(
+    grnId: string,
+    actorUserId: string,
+    actorRole: string,
+    note?: string,
+  ) {
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
@@ -2120,7 +2711,9 @@ export const grnService = {
       if (!grn) throw new Error("GRN not found");
       const from = String(grn.status);
       if (from !== "returned_to_branch_head" && from !== "returned_to_raiser") {
-        throw new Error(`Only a returned GRN can be resubmitted; this one is ${from}`);
+        throw new Error(
+          `Only a returned GRN can be resubmitted; this one is ${from}`,
+        );
       }
 
       const [result] = await connection.execute<ResultSetHeader>(
@@ -2128,7 +2721,9 @@ export const grnService = {
         [grnId, from],
       );
       if (result.affectedRows !== 1) {
-        throw new Error("GRN status changed during resubmission; refresh and retry");
+        throw new Error(
+          "GRN status changed during resubmission; refresh and retry",
+        );
       }
 
       await recordFinanceApprovalEvent(
@@ -2160,7 +2755,14 @@ export const grnService = {
     branchScope?: FinanceBranchScope;
     financialYear?: string;
   }) {
-    const conditions: string[] = [];
+    // Same IDC exclusion as listGrns() — the legacy db_bill petty-cash import must not inflate
+    // the approval-backlog counters that Vendor Payment Dispatch surfaces.
+    // IS NULL guard: grn_number is NULL until Finance Head approval; NULL NOT LIKE is NULL (false).
+    await refreshHiddenGrnScope();
+    const conditions: string[] = [
+      "(g.grn_number IS NULL OR g.grn_number NOT LIKE 'IDC/%')",
+      ownCompanyGrnSql("g"),
+    ];
     const params: unknown[] = [];
     if (filters.branchScope) {
       const filter = financeBranchFilter(filters.branchScope, "g.branch_id");
@@ -2185,7 +2787,7 @@ export const grnService = {
          FROM grn_request g
          ${where}
         GROUP BY g.status`,
-      params
+      params,
     );
 
     const byStatus: Record<string, { count: number; value: number }> = {};
@@ -2196,9 +2798,14 @@ export const grnService = {
       };
     }
 
-    // "In queue" spans both review stages: a GRN waiting on the Branch Head and one already
-    // through it and waiting on Finance are both awaiting a decision from someone.
-    const inQueue = ["submitted", "branch_head_approved"].reduce(
+    // "In queue" spans all three review stages now (Branch Head -> Accounts Head -> Finance
+    // Head, owner ruling 2026-09-12) — a GRN waiting on any of the three is awaiting a decision
+    // from someone.
+    const inQueue = [
+      "submitted",
+      "branch_head_approved",
+      "accounts_head_approved",
+    ].reduce(
       (acc, status) => {
         const bucket = byStatus[status];
         if (bucket) {
@@ -2207,7 +2814,7 @@ export const grnService = {
         }
         return acc;
       },
-      { count: 0, value: 0 }
+      { count: 0, value: 0 },
     );
 
     return { byStatus, inQueue };
@@ -2222,7 +2829,7 @@ export const grnService = {
     filePath: string,
     originalName: string,
     actorUserId: string,
-    mimeType?: string
+    mimeType?: string,
   ) {
     const [result] = await db.execute<ResultSetHeader>(
       `UPDATE grn_request
@@ -2241,10 +2848,12 @@ export const grnService = {
         originalName,
         mimeType ?? null,
         grnId,
-      ]
+      ],
     );
     if (result.affectedRows !== 1) {
-      throw new Error("Attachment can only be changed on an existing draft GRN");
+      throw new Error(
+        "Attachment can only be changed on an existing draft GRN",
+      );
     }
 
     await logSensitiveAction({
@@ -2272,7 +2881,10 @@ export const grnService = {
    * so this reports against the same period a consumed allocation would land in — it is not a
    * new definition of "period", just the existing one queried on the other lifecycle states.
    */
-  async getAllocationReadiness(options: { periodCode: string; branchId?: string }) {
+  async getAllocationReadiness(options: {
+    periodCode: string;
+    branchId?: string;
+  }) {
     const params: unknown[] = [options.periodCode];
     let branchClause = "";
     if (options.branchId) {
@@ -2292,7 +2904,7 @@ export const grnService = {
                 a.recognition_period,
                 DATE_FORMAT(COALESCE(g.service_period_end, g.bill_date, g.reviewed_at, g.created_at), '%Y-%m')
               ) = ?${branchClause}`,
-      params
+      params,
     );
     const row = rows[0] ?? {};
     const allocationCount = Number(row.allocation_count ?? 0);
@@ -2305,7 +2917,6 @@ export const grnService = {
     };
   },
 };
-
 
 /**
  * Adds the pendency fields the approval queue renders (Requirement 10).
@@ -2323,7 +2934,7 @@ export const grnService = {
  */
 function decorateGrnPendency(row: RowDataPacket): RowDataPacket {
   const status = String(row.status ?? "");
-  const pending = resolvePendingWith(status, "grn");
+  const pending = resolvePendingWith(status, "grn", row.grn_type ?? null);
 
   // Check if this is legacy data from db_bill
   const isLegacyData = Boolean(row.bill_source_id);
@@ -2334,7 +2945,12 @@ function decorateGrnPendency(row: RowDataPacket): RowDataPacket {
 
   let ageDays: number | null = null;
   if (pending.isPending && stageStartedAt) {
-    const rawAgeDays = Math.max(0, Math.floor((Date.now() - new Date(String(stageStartedAt)).getTime()) / 86_400_000));
+    const rawAgeDays = Math.max(
+      0,
+      Math.floor(
+        (Date.now() - new Date(String(stageStartedAt)).getTime()) / 86_400_000,
+      ),
+    );
     // For legacy data with timestamps older than 90 days, cap at a reasonable display value
     // This handles migrated data where the original timestamps are years old
     ageDays = isLegacyData && rawAgeDays > 90 ? -1 : rawAgeDays;
@@ -2347,7 +2963,16 @@ function decorateGrnPendency(row: RowDataPacket): RowDataPacket {
     is_pending: pending.isPending,
     pending_since: pending.isPending ? stageStartedAt : null,
     ageing_days: ageDays,
-    age_bucket: ageDays === null ? null : ageDays === -1 ? "legacy" : ageDays <= 2 ? "0-2" : ageDays <= 7 ? "3-7" : "7+",
+    age_bucket:
+      ageDays === null
+        ? null
+        : ageDays === -1
+          ? "legacy"
+          : ageDays <= 2
+            ? "0-2"
+            : ageDays <= 7
+              ? "3-7"
+              : "7+",
     is_legacy: isLegacyData,
   } as RowDataPacket;
 }

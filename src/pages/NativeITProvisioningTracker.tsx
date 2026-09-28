@@ -30,11 +30,17 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import {
   Server, Lock, CheckCircle, Clock, AlertTriangle, Search, XCircle,
-  ShieldCheck, RefreshCw, Upload, Download, User, ChevronRight, Loader2,
+  ShieldCheck, RefreshCw, Upload, Download, User, ChevronRight, ChevronDown, Loader2,
   AlertCircle, TrendingDown, Paperclip, ExternalLink, FileSignature,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { WfmLobField } from "@/components/wfm/WfmLobField";
+import { SearchableSelect } from "@/components/ui/searchable-select";
+import { useProcesses } from "@/hooks/useOrgMasters";
+import { ExitClearanceQueue } from "@/components/exit/ExitClearanceQueue";
+import { NoticePeriodDrawer } from "@/components/exit/NoticePeriodDrawer";
+import type { ClearanceOwnerRole } from "@/lib/exitClearance";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -44,6 +50,7 @@ interface ProvisioningRequest {
   employee_name: string;
   employee_code: string;
   branch_name: string | null;
+  branch_id?: string | null;
   request_type: "join" | "exit";
   task_code: string;
   assigned_role: string;
@@ -112,6 +119,7 @@ interface AdminForm {
 
 interface WfmForm {
   processId: string;
+  lobId: string;
   shiftId: string;
   rosterEffectiveDate: string;
   weekOffDay: string;
@@ -132,6 +140,7 @@ const TASK_LABELS: Record<string, string> = {
   IT_EMAIL_DOMAIN_ASSET: "Email, Domain & Asset Setup",
   ADMIN_BIOMETRIC_ID_CARD: "Biometric & ID Card",
   APPOINTMENT_LETTER_ESIGN: "Appointment Letter E-Sign",
+  HR_BGV_INITIATION: "BGV Initiation",
 };
 
 const ROLE_LABELS: Record<string, string> = {
@@ -144,6 +153,7 @@ const QUEUE_PRESETS: Record<string, { role: string; taskCode: string; title: str
   "/provisioning/it":            { role: "it",  taskCode: "IT_EMAIL_DOMAIN_ASSET",  title: "IT Provisioning Queue" },
   "/provisioning/admin":         { role: "admin", taskCode: "ADMIN_BIOMETRIC_ID_CARD", title: "Admin Provisioning Queue" },
   "/provisioning/appointment-letter": { role: "hr", taskCode: "APPOINTMENT_LETTER_ESIGN", title: "Appointment Letter Queue" },
+  "/provisioning/hr-bgv":             { role: "hr", taskCode: "HR_BGV_INITIATION",       title: "BGV Initiation Queue" },
 };
 
 function StatusBadge({ status, locked }: { status: string; locked: number }) {
@@ -360,8 +370,8 @@ function BulkUploadDialog({ open, onClose }: { open: boolean; onClose: () => voi
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
-            Upload a CSV with columns: <strong>employee_code</strong>, <strong>official_email</strong>, <strong>domain_account</strong>, asset_tag (optional).
-            Official email and domain account are mandatory for each row.
+            Upload a CSV with columns: <strong>employee_code</strong>, <strong>official_email</strong> (optional), <strong>domain_account</strong>, asset_tag (optional).
+            Domain account is mandatory for each row.
           </div>
           <Button variant="outline" size="sm" className="gap-2" onClick={() => {
             const blob = new Blob([CSV_TEMPLATE], { type: "text/csv" });
@@ -423,7 +433,7 @@ function ITTaskForm({ form, setForm, disabled }: {
   return (
     <div className="space-y-3">
       <div>
-        <Label htmlFor="it-official-email">Official Email ID Created <span className="text-rose-500">*</span></Label>
+        <Label htmlFor="it-official-email">Official Email ID Created <span className="text-xs font-normal text-muted-foreground">(optional)</span></Label>
         <Input
           id="it-official-email"
           value={form.officialEmail}
@@ -432,6 +442,9 @@ function ITTaskForm({ form, setForm, disabled }: {
           disabled={disabled}
           className="mt-1 min-h-[44px]"
         />
+        <p className="mt-1 text-xs text-muted-foreground">
+          Leave blank if no official email is being issued yet — the employee can still log in with their employee code. Login-account creation is deferred until an email is added here.
+        </p>
       </div>
       <div>
         <Label htmlFor="it-domain-account">Domain Account / AD Username <span className="text-rose-500">*</span></Label>
@@ -561,36 +574,87 @@ function AdminTaskForm({ form, setForm, disabled, photoMissing }: {
   );
 }
 
-function WfmTaskForm({ form, setForm, disabled }: {
+interface WfmShiftOption {
+  id: string;
+  shift_code: string;
+  shift_name: string;
+  start_time: string | null;
+  end_time: string | null;
+}
+
+function WfmTaskForm({ form, setForm, disabled, branchId }: {
   form: WfmForm;
   setForm: React.Dispatch<React.SetStateAction<WfmForm>>;
   disabled: boolean;
+  branchId?: string | null;
 }) {
+  const processesQuery = useProcesses(branchId ?? undefined);
+  const processOptions = (processesQuery.data ?? [])
+    .filter((p) => !branchId || !p.branch_id || p.branch_id === branchId)
+    .map((p) => ({
+      value: p.id,
+      label: p.process_name ?? p.name ?? p.id,
+      hint: p.process_code,
+    }));
+  const shiftsQuery = useQuery({
+    queryKey: ["it-provisioning", "wfm-shift-options", branchId ?? null],
+    queryFn: async () => {
+      const qs = branchId ? `?branch_id=${encodeURIComponent(branchId)}` : "";
+      const res = await hrmsApi.get<{ data: WfmShiftOption[] }>(
+        `/api/it-provisioning/wfm-shift-options${qs}`,
+      );
+      return res.data ?? [];
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const shiftOptions = (shiftsQuery.data ?? []).map((s) => ({
+    value: s.id,
+    label: s.shift_name,
+    hint: s.start_time && s.end_time
+      ? `${s.shift_code} · ${s.start_time.slice(0, 5)}-${s.end_time.slice(0, 5)}`
+      : s.shift_code,
+  }));
   return (
     <div className="space-y-3">
       <p className="text-sm text-slate-600">Enter WFM alignment details:</p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
-          <Label htmlFor="wfm-process-id">Process ID <span className="text-red-500">*</span></Label>
-          <Input
-            id="wfm-process-id"
-            value={form.processId}
-            onChange={e => setForm(f => ({ ...f, processId: e.target.value }))}
-            placeholder="Process UUID or code"
-            disabled={disabled}
-            className="mt-1"
-          />
+          <Label htmlFor="wfm-process-id">Process <span className="text-red-500">*</span></Label>
+          <div className="mt-1">
+            <SearchableSelect
+              id="wfm-process-id"
+              options={processOptions}
+              value={form.processId}
+              onChange={(processId) => setForm(f => ({ ...f, processId, lobId: "" }))}
+              placeholder="Select process"
+              searchPlaceholder="Search process name or code"
+              emptyText="No process found for this branch"
+              disabled={disabled}
+              loading={processesQuery.isFetching}
+            />
+          </div>
         </div>
+        <WfmLobField
+          processId={form.processId}
+          value={form.lobId}
+          onChange={lobId => setForm(f => ({ ...f, lobId }))}
+          disabled={disabled}
+        />
         <div>
-          <Label htmlFor="wfm-shift-id">Shift ID <span className="text-slate-400 font-normal">(optional)</span></Label>
-          <Input
-            id="wfm-shift-id"
-            value={form.shiftId}
-            onChange={e => setForm(f => ({ ...f, shiftId: e.target.value }))}
-            placeholder="Shift UUID"
-            disabled={disabled}
-            className="mt-1"
-          />
+          <Label htmlFor="wfm-shift-id">Shift <span className="text-slate-400 font-normal">(optional)</span></Label>
+          <div className="mt-1">
+            <SearchableSelect
+              id="wfm-shift-id"
+              options={shiftOptions}
+              value={form.shiftId}
+              onChange={(shiftId) => setForm(f => ({ ...f, shiftId }))}
+              placeholder="Select shift"
+              searchPlaceholder="Search shift"
+              emptyText="No shift found"
+              disabled={disabled}
+              loading={shiftsQuery.isFetching}
+            />
+          </div>
         </div>
         <div>
           <Label htmlFor="wfm-roster-date">Roster Effective Date <span className="text-red-500">*</span></Label>
@@ -741,9 +805,10 @@ export default function NativeITProvisioningTracker() {
   // Same precedence as NativeEmployeeStatCard: uploaded avatar wins over the legacy photo.
   const statCardPhotoUrl = statCardData?.avatar_url ?? statCardData?.photo_url ?? null;
   const [evidenceNote, setEvidenceNote] = useState("");
+  const [bgvResult, setBgvResult] = useState<"red" | "green" | null>(null);
   const [itForm, setItForm]       = useState<ITForm>({ officialEmail: "", domainAccount: "", assetTag: "", evidenceNote: "", evidenceFile: null });
   const [adminForm, setAdminForm] = useState<AdminForm>({ biometricEnrolled: false, cosecUserId: "", idCardPrinted: false, idCardNumber: "", evidenceNote: "" });
-  const [wfmForm, setWfmForm]     = useState<WfmForm>({ processId: "", shiftId: "", rosterEffectiveDate: "", weekOffDay: "", attendanceEffectiveDate: "", evidenceNote: "" });
+  const [wfmForm, setWfmForm]     = useState<WfmForm>({ processId: "", lobId: "", shiftId: "", rosterEffectiveDate: "", weekOffDay: "", attendanceEffectiveDate: "", evidenceNote: "" });
   const [reportTaskId, setReportTaskId] = useState<string | null>(null);
   const [reportOpen, setReportOpen]     = useState(false);
   const [bulkOpen, setBulkOpen]         = useState(false);
@@ -887,9 +952,10 @@ export default function NativeITProvisioningTracker() {
 
   function resetForms() {
     setEvidenceNote("");
+    setBgvResult(null);
     setItForm({ officialEmail: "", domainAccount: "", assetTag: "", evidenceNote: "", evidenceFile: null });
     setAdminForm({ biometricEnrolled: false, cosecUserId: "", idCardPrinted: false, idCardNumber: "", evidenceNote: "" });
-    setWfmForm({ processId: "", shiftId: "", rosterEffectiveDate: "", weekOffDay: "", attendanceEffectiveDate: "", evidenceNote: "" });
+    setWfmForm({ processId: "", lobId: "", shiftId: "", rosterEffectiveDate: "", weekOffDay: "", attendanceEffectiveDate: "", evidenceNote: "" });
   }
 
   function openDialog(request: ProvisioningRequest, mode: "action" | "waive" | "confirm" | "reopen") {
@@ -897,9 +963,27 @@ export default function NativeITProvisioningTracker() {
     resetForms();
     // Pre-populate if already has values
     if (request.official_email) setItForm(f => ({ ...f, officialEmail: request.official_email ?? "" }));
-    if (request.domain_account) setItForm(f => ({ ...f, domainAccount: request.domain_account ?? "" }));
+    if (request.domain_account) {
+      setItForm(f => ({ ...f, domainAccount: request.domain_account ?? "" }));
+    } else if (request.task_code === "IT_EMAIL_DOMAIN_ASSET" && request.employee_code) {
+      // Default Domain Account to this employee's own code — the same value already
+      // shown in the header above the form. A blank required field meant retyping the
+      // code by hand on every task in a queue, and on 2026-09-09 the value from the
+      // previous task in the queue was found to have carried over into this one instead
+      // of being updated (confirmed for both this field and Cosec User ID below, on two
+      // different employees, by two different staff). Defaulting to the real code means
+      // submitting without touching the field is now correct; still fully editable.
+      setItForm(f => ({ ...f, domainAccount: request.employee_code }));
+    }
     if (request.asset_tag)      setItForm(f => ({ ...f, assetTag: request.asset_tag ?? "" }));
     if (request.biometric_enrolled) setAdminForm(f => ({ ...f, biometricEnrolled: !!request.biometric_enrolled }));
+    if (request.task_code === "ADMIN_BIOMETRIC_ID_CARD" && request.employee_code) {
+      // Same default as Domain Account above, for Cosec User ID. This field already fell
+      // back to the employee code server-side when left blank — the bug was staff typing
+      // a (wrong, carried-over) value into a box that would have been correct left empty.
+      // Filling it in up front removes the reason to type over it.
+      setAdminForm(f => ({ ...f, cosecUserId: request.employee_code }));
+    }
     if (request.id_card_printed)    setAdminForm(f => ({ ...f, idCardPrinted: !!request.id_card_printed }));
   }
 
@@ -923,24 +1007,59 @@ export default function NativeITProvisioningTracker() {
       body = { reason: evidenceNote.trim() };
     } else if (mode === "action") {
       if (request.task_code === "IT_EMAIL_DOMAIN_ASSET") {
-        if (!itForm.officialEmail.trim() || !itForm.domainAccount.trim()) {
-          toast.error("Official Email and Domain Account are required");
+        // Official email is optional (owner decision) — Domain Account is the only hard
+        // requirement. When email is left blank, login-account creation for this employee is
+        // deferred (they can still log in via employee code once an account exists from
+        // elsewhere) rather than created with a blank/duplicate email.
+        if (!itForm.domainAccount.trim()) {
+          toast.error("Domain Account is required");
           return;
         }
-        if (!/^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/.test(itForm.officialEmail.trim())) {
+        if (itForm.officialEmail.trim() && !/^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/.test(itForm.officialEmail.trim())) {
           toast.error("Email must end with @teammas.in or @teammas.co.in");
           return;
         }
+        // Catches exactly the 2026-09-09 mix-up: a value left over from the previous
+        // task in the queue, submitted for this one instead of this employee's own
+        // code. Only compares this task's own field against this task's own employee —
+        // never against other employees' records — so it can't misfire on the many
+        // legacy employees whose real device/biometric IDs are legitimately unrelated
+        // to their employee code elsewhere in the system.
+        if (
+          request.employee_code &&
+          itForm.domainAccount.trim().toUpperCase() !== request.employee_code.toUpperCase() &&
+          !window.confirm(
+            `Domain Account "${itForm.domainAccount.trim()}" does not match ${request.employee_name}'s employee code (${request.employee_code}). Continue anyway?`
+          )
+        ) {
+          return;
+        }
         body = {
-          official_email: itForm.officialEmail.trim(),
+          official_email: itForm.officialEmail.trim() || null,
           domain_account: itForm.domainAccount.trim(),
           asset_tag: itForm.assetTag.trim() || null,
-          evidence_note: itForm.evidenceNote.trim() || `Email: ${itForm.officialEmail}, Domain: ${itForm.domainAccount}`,
+          evidence_note: itForm.evidenceNote.trim() || (itForm.officialEmail.trim()
+            ? `Email: ${itForm.officialEmail}, Domain: ${itForm.domainAccount}`
+            : `Domain: ${itForm.domainAccount} (no official email issued yet)`),
         };
       } else if (request.task_code === "ADMIN_BIOMETRIC_ID_CARD") {
+        const cosecUserId = adminForm.cosecUserId.trim();
+        // Same self-consistency check as Domain Account above, and same reasoning: this
+        // field already falls back to the employee's own code server-side when left
+        // blank, so any typed value that disagrees with it is worth one confirm click.
+        if (
+          cosecUserId &&
+          request.employee_code &&
+          cosecUserId.toUpperCase() !== request.employee_code.toUpperCase() &&
+          !window.confirm(
+            `Cosec User ID "${cosecUserId}" does not match ${request.employee_name}'s employee code (${request.employee_code}). Continue anyway?`
+          )
+        ) {
+          return;
+        }
         body = {
           biometric_enrolled: adminForm.biometricEnrolled,
-          cosec_user_id: adminForm.cosecUserId.trim() || null,
+          cosec_user_id: cosecUserId || null,
           id_card_printed: adminForm.idCardPrinted,
           id_card_number: adminForm.idCardNumber.trim() || null,
           evidence_note: adminForm.evidenceNote.trim() || `Biometric: ${adminForm.biometricEnrolled ? "done" : "pending"}, ID Card: ${adminForm.idCardPrinted ? "issued" : "pending"}`,
@@ -952,11 +1071,21 @@ export default function NativeITProvisioningTracker() {
         }
         body = {
           process_id: wfmForm.processId.trim(),
+          lob_id: wfmForm.lobId || null,
           shift_id: wfmForm.shiftId.trim() || null,
           roster_effective_date: wfmForm.rosterEffectiveDate,
           week_off_day: wfmForm.weekOffDay || null,
           attendance_effective_date: wfmForm.attendanceEffectiveDate,
           evidence_note: wfmForm.evidenceNote.trim() || `Process aligned: ${wfmForm.processId}`,
+        };
+      } else if (request.task_code === "HR_BGV_INITIATION") {
+        if (!bgvResult) {
+          toast.error("Select a BGV result (Red or Green) before completing this task");
+          return;
+        }
+        body = {
+          bgv_result: bgvResult,
+          evidence_note: evidenceNote.trim() || `BGV result: ${bgvResult}`,
         };
       } else {
         body = { evidence_note: evidenceNote.trim() || "Completed from provisioning queue" };
@@ -976,11 +1105,23 @@ export default function NativeITProvisioningTracker() {
   const isITQueue   = preset?.taskCode === "IT_EMAIL_DOMAIN_ASSET";
   const isAdminQueue = preset?.taskCode === "ADMIN_BIOMETRIC_ID_CARD";
 
+  // Exit clearance section (separate system from the it_provisioning_request table this
+  // whole page otherwise reads/writes — see exitClearance.ts). Only rendered on the 3
+  // role-scoped provisioning queues, never on /it-provisioning or the appointment-letter
+  // queue, which have no single owning role to scope the section to.
+  const exitClearanceRole: ClearanceOwnerRole | undefined =
+    preset?.role === "admin" || preset?.role === "wfm" || preset?.role === "it"
+      ? (preset.role as ClearanceOwnerRole)
+      : undefined;
+  const [exitClearanceOpen, setExitClearanceOpen] = useState(false);
+  const [exitDrawerId, setExitDrawerId] = useState<string | null>(null);
+
   const currentTaskCode = actionDialog.request?.task_code ?? "";
   const isITTask    = currentTaskCode === "IT_EMAIL_DOMAIN_ASSET";
   const isAdminTask = currentTaskCode === "ADMIN_BIOMETRIC_ID_CARD";
   const isWfmTask   = currentTaskCode === "WFM_PROCESS_ALIGNMENT";
   const isAppointmentLetterTask = currentTaskCode === "APPOINTMENT_LETTER_ESIGN";
+  const isBgvTask = currentTaskCode === "HR_BGV_INITIATION";
   const navigate = useNavigate();
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -1421,6 +1562,36 @@ export default function NativeITProvisioningTracker() {
         </CardContent>
       </Card>
 
+      {/* Exit Clearance Tasks — a separate system (exit_clearance_task) from the
+          it_provisioning_request table above. Kept as its own collapsed-by-default card
+          rather than merged into the table above, since the two have different status
+          vocabularies and lifecycles. */}
+      {exitClearanceRole && (
+        <Card className="rounded-2xl border border-white/60 bg-white/95 shadow-sm backdrop-blur-sm">
+          <button
+            type="button"
+            onClick={() => setExitClearanceOpen((v) => !v)}
+            className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-2xl px-6 py-4 text-left transition-colors hover:bg-slate-50"
+          >
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-slate-500" aria-hidden="true" />
+              <span className="text-base font-semibold text-slate-900">Exit Clearance Tasks</span>
+              <span className="text-sm font-normal text-muted-foreground">— resignation checklist items owned by this role</span>
+            </div>
+            <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${exitClearanceOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+          </button>
+          {exitClearanceOpen && (
+            <CardContent className="pt-0">
+              <ExitClearanceQueue ownerRole={exitClearanceRole} embedded onRowClick={setExitDrawerId} />
+            </CardContent>
+          )}
+        </Card>
+      )}
+
+      {exitDrawerId && (
+        <NoticePeriodDrawer exitId={exitDrawerId} onClose={() => setExitDrawerId(null)} />
+      )}
+
       {/* Action / Waive / Confirm Dialog */}
       <Dialog open={actionDialog.open} onOpenChange={(open) => {
         if (!open) { setActionDialog({ open: false, request: null, mode: "action" }); resetForms(); }
@@ -1515,7 +1686,7 @@ export default function NativeITProvisioningTracker() {
                   <AdminTaskForm form={adminForm} setForm={setAdminForm} disabled={actionMutation.isPending} photoMissing={!statCardPhotoUrl} />
                 </>
               ) : isWfmTask ? (
-                <WfmTaskForm form={wfmForm} setForm={setWfmForm} disabled={actionMutation.isPending} />
+                <WfmTaskForm form={wfmForm} setForm={setWfmForm} disabled={actionMutation.isPending} branchId={actionDialog.request?.branch_id} />
               ) : isAppointmentLetterTask ? (
                 <div className="space-y-4">
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
@@ -1549,6 +1720,46 @@ export default function NativeITProvisioningTracker() {
                     />
                   </div>
                 </div>
+              ) : isBgvTask ? (
+                <div className="space-y-4">
+                  <div>
+                    <Label className="mb-2 block">BGV Result</Label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setBgvResult("green")}
+                        className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+                          bgvResult === "green"
+                            ? "bg-[#eaf8ef] text-[#15803d] border-[#d7f0df] ring-2 ring-[#15803d]/30"
+                            : "bg-white text-slate-500 border-slate-200 hover:border-[#d7f0df]"
+                        }`}
+                      >
+                        Green — Clear
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBgvResult("red")}
+                        className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+                          bgvResult === "red"
+                            ? "bg-[#fff0f1] text-[#dc2626] border-[#ffdadd] ring-2 ring-[#dc2626]/30"
+                            : "bg-white text-slate-500 border-slate-200 hover:border-[#ffdadd]"
+                        }`}
+                      >
+                        Red — Flagged
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="evidence_note">Vendor correspondence reference</Label>
+                    <Textarea
+                      id="evidence_note"
+                      placeholder="e.g., Vendor confirmed clean report, ref VEN-2026-441"
+                      value={evidenceNote}
+                      onChange={(e) => setEvidenceNote(e.target.value)}
+                      rows={3}
+                    />
+                  </div>
+                </div>
               ) : (
                 <div className="space-y-2">
                   <Label htmlFor="evidence_note">Evidence note (optional)</Label>
@@ -1573,13 +1784,17 @@ export default function NativeITProvisioningTracker() {
             </Button>
             <Button
               onClick={handleSubmitAction}
-              disabled={actionMutation.isPending || (actionDialog.mode === "reopen" && evidenceNote.trim().length < 10)}
+              disabled={
+                actionMutation.isPending ||
+                (actionDialog.mode === "reopen" && evidenceNote.trim().length < 10) ||
+                (actionDialog.mode === "action" && isBgvTask && !bgvResult)
+              }
               variant={actionDialog.mode === "waive" ? "destructive" : "default"}
               className="min-h-[44px]"
             >
               {actionMutation.isPending && <Loader2 className="animate-spin h-4 w-4 mr-1" aria-hidden="true" />}
               {actionMutation.isPending ? "Saving..." : (
-                actionDialog.mode === "action"  ? (isITTask ? "Submit & Mark Done" : isAdminTask ? "Save Status" : isWfmTask ? "Submit WFM Alignment" : "Confirm Action") :
+                actionDialog.mode === "action"  ? (isITTask ? "Submit & Mark Done" : isAdminTask ? "Save Status" : isWfmTask ? "Submit WFM Alignment" : isBgvTask ? "Submit BGV Result" : "Confirm Action") :
                 actionDialog.mode === "waive"   ? "Waive Request" :
                 actionDialog.mode === "reopen"  ? "Reopen Request" : "Lock Evidence"
               )}

@@ -1,6 +1,8 @@
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'crypto';
+import { assertNotBeforeToday, canBackdateDates } from '../../utils/dateUtils.js';
+import { assertSalaryDateNotOwnedByPayrollHead } from '../payroll/salary-start-date.service.js';
 import { sendBranchHeadApprovalEmail } from './ats.email.service.js';
 import { triggerOfferApprovalPending } from '../work-inbox/work-inbox.triggers.js';
 
@@ -49,6 +51,7 @@ export interface SalaryValidationInput {
   joining_date: string; // YYYY-MM-DD format
   salary_start_date?: string; // YYYY-MM-DD format (optional, defaults to joining_date)
   shift_id?: string;
+  actor_roles?: string[]; // set by the route from the session, never from the request body
   remarks?: string;
   payroll_hr_id: string;
   /** Payroll HR's decision at offer creation — not the candidate's. See payroll-hr.routes.ts. */
@@ -233,6 +236,18 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
     if (new Date(salaryStartDate) < new Date(input.joining_date)) {
       throw new Error('salary_start_date cannot be before joining_date');
     }
+
+    // Date lock: joining / salary dates cannot be set (or moved) to before today.
+    const [prevRaw] = await connection.execute(
+      `SELECT joining_date, salary_start_date FROM ats_payroll_hr_validation WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
+      [input.candidate_id]
+    );
+    const prevVal = (prevRaw as RowDataPacket[])[0];
+    const allowPast = canBackdateDates(input.actor_roles);
+    assertNotBeforeToday(input.joining_date, 'joining_date', prevVal?.joining_date, allowPast);
+    assertNotBeforeToday(salaryStartDate, 'salary_start_date', prevVal?.salary_start_date, allowPast);
+    // After Payroll Head approves the salary the date is theirs - refuse before anything is written.
+    await assertSalaryDateNotOwnedByPayrollHead(connection, input.candidate_id, salaryStartDate);
 
     const [slabRowsRaw] = await connection.execute(
       `SELECT id, range_from, range_to, active_status FROM salary_slab_master WHERE id = ? LIMIT 1`,

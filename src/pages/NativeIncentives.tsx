@@ -1251,7 +1251,6 @@ interface DeductionSummaryRow {
   short_collection: number;
   asset_recovery: number;
   insurance: number;
-  professional_tax: number;
   leave_deduction: number;
   others_deduction: number;
   total_deduction: number;
@@ -1263,7 +1262,6 @@ interface DeductionTotals {
   short_collection: number;
   asset_recovery: number;
   insurance: number;
-  professional_tax: number;
   leave_deduction: number;
   others_deduction: number;
   total_deduction: number;
@@ -1332,7 +1330,6 @@ function DbBillSnapshotTab() {
     { key: "short_collection",  label: "Short Coll." },
     { key: "asset_recovery",    label: "Asset Rec." },
     { key: "insurance",         label: "Insurance" },
-    { key: "professional_tax",  label: "Prof. Tax" },
     { key: "leave_deduction",   label: "Leave Ded." },
     { key: "others_deduction",  label: "Others" },
     { key: "total_deduction",   label: "Total" },

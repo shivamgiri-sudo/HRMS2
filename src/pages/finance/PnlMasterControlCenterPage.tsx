@@ -60,6 +60,10 @@ import {
   type SaveRatePayload,
 } from "@/hooks/usePnlConfiguration";
 import { PnlBulkUploadDialog } from "@/components/finance/PnlBulkUploadDialog";
+import { SeatBillingPanel } from "@/components/finance/pnl/SeatBillingPanel";
+import { CostCentreOverridePanel } from "@/components/finance/pnl/CostCentreOverridePanel";
+import { BelowTheLinePanel } from "@/components/finance/pnl/BelowTheLinePanel";
+import { costCentreText } from "@/components/finance/pnl/costCentreLabel";
 
 type AnyRow = Record<string, any>;
 
@@ -504,7 +508,12 @@ export default function PnlMasterControlCenterPage() {
   const costCentreList = useCostCentreList({ status: "active", branch_id: branchFilter || undefined });
   const costCentres = costCentreList.data?.data ?? [];
   const costCentreName = useMemo(
-    () => new Map(costCentres.map((cc: any) => [cc.id, cc.cost_centre_name as string])),
+    // Code + the process it serves (owner request 2026-09-15), same rule as the backend's
+    // cost-centre-label.ts: mapped process, else billing process name, else billing client.
+    () => new Map(costCentres.map((cc: any) => [
+      cc.id,
+      costCentreText(String(cc.cost_centre_code || cc.cost_centre_name || cc.id), cc.process_name || cc.process_name_bill || cc.billing_client_name || null),
+    ])),
     [costCentres]
   );
   // useHasRole is variadic (...roles: string[]). Passing an array made roles === [[...]],
@@ -795,6 +804,9 @@ export default function PnlMasterControlCenterPage() {
               <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
                 <TabsTrigger className="rounded-xl" value="overview">Control overview</TabsTrigger>
                 <TabsTrigger className="rounded-xl" value="commercial">Revenue &amp; contracts</TabsTrigger>
+                <TabsTrigger className="rounded-xl" value="seatbilling">Seat billing</TabsTrigger>
+                <TabsTrigger className="rounded-xl" value="costcentremapping">Cost centre mapping</TabsTrigger>
+                <TabsTrigger className="rounded-xl" value="belowtheline">Below-the-line costs</TabsTrigger>
                 <TabsTrigger className="rounded-xl" value="delivery">Delivery &amp; adjustments</TabsTrigger>
                 <TabsTrigger className="rounded-xl" value="costs">Cost master</TabsTrigger>
                 <TabsTrigger className="rounded-xl" value="allocation">Allocation master</TabsTrigger>
@@ -802,6 +814,21 @@ export default function PnlMasterControlCenterPage() {
                 <TabsTrigger className="rounded-xl" value="plans">Plans &amp; periods</TabsTrigger>
                 <TabsTrigger className="rounded-xl" value="governance">Governance &amp; history</TabsTrigger>
               </TabsList>
+
+              {/* ── SEAT BILLING — revenue per day from seat rate x seats, per LOB line ── */}
+              <TabsContent value="seatbilling" className="space-y-4">
+                <SeatBillingPanel period={period} />
+              </TabsContent>
+
+              {/* ── COST CENTRE MAPPING — redirect an employee's pay to another cost centre for P&L only ── */}
+              <TabsContent value="costcentremapping" className="space-y-4">
+                <CostCentreOverridePanel />
+              </TabsContent>
+
+              {/* ── BELOW-THE-LINE COSTS — depreciation, finance cost, tax for Live P&L's True Bottom Line ── */}
+              <TabsContent value="belowtheline" className="space-y-4">
+                <BelowTheLinePanel />
+              </TabsContent>
 
               {/* ── OVERVIEW ── */}
               <TabsContent value="overview" className="space-y-4">
@@ -1228,7 +1255,7 @@ export default function PnlMasterControlCenterPage() {
                           <Label className="text-xs text-slate-600 mb-1 block">Cost centre</Label>
                           <select className={selectClass} value={rpForm.cost_centre_id} onChange={(e) => setRpForm((f) => ({ ...f, cost_centre_id: e.target.value }))}>
                             <option value="">Select cost centre…</option>
-                            {costCentres.map((cc: any) => <option key={cc.id} value={cc.id}>{cc.cost_centre_name}</option>)}
+                            {costCentres.map((cc: any) => <option key={cc.id} value={cc.id}>{costCentreName.get(cc.id) ?? cc.cost_centre_name}</option>)}
                           </select>
                         </div>
                         <div>
@@ -1294,7 +1321,7 @@ export default function PnlMasterControlCenterPage() {
                         <tbody>
                           {rewardPenaltyEntries.map((row: any) => (
                             <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50">
-                              <td className="px-4 py-2 text-slate-700">{row.cost_centre_name ?? costCentreName.get(row.cost_centre_id) ?? row.cost_centre_id}</td>
+                              <td className="px-4 py-2 text-slate-700">{costCentreName.get(row.cost_centre_id) ?? row.cost_centre_name ?? row.cost_centre_id}</td>
                               <td className="px-4 py-2">
                                 <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${row.entry_type === "reward" ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
                                   {row.entry_type === "reward" ? "Reward" : "Penalty"}

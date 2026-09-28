@@ -38,6 +38,7 @@ export function useFullWaterfall(period: string, branchId?: string | null, enabl
     queryKey: ["pnl-full-waterfall", period, branchId ?? ""],
     enabled: enabled && Boolean(period),
     placeholderData: (previous) => previous,
+    staleTime: 60_000,
     queryFn: async () => {
       const params = new URLSearchParams({ period });
       if (branchId) params.set("branchId", branchId);

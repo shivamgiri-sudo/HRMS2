@@ -26,6 +26,7 @@ const HolidayMaster             = lazy(() => import("@/pages/payroll/HolidayMast
 // Legacy redirect-only pages removed — routes below use Navigate instead
 const PayrollValidationScreen   = lazy(() => import("@/pages/payroll/PayrollValidationScreen"));
 const NocManagement             = lazy(() => import("@/pages/payroll/NocManagement"));
+const NocClearanceWorkspace     = lazy(() => import("@/pages/payroll/NocClearanceWorkspace"));
 const SalaryDisputeHub         = lazy(() => import("@/pages/payroll/SalaryDisputeHub"));
 const ProcessSalaryVerify       = lazy(() => import("@/pages/payroll/ProcessSalaryVerify"));
 const PayrollCalendar           = lazy(() => import("@/pages/payroll/PayrollCalendar"));
@@ -44,6 +45,8 @@ const PayrollHeadSalaryReviewQueue  = lazy(() => import("@/pages/payroll/Payroll
 const PayrollHeadSalaryReviewDetail = lazy(() => import("@/pages/payroll/PayrollHeadSalaryReviewDetail"));
 const PayrollApprovalStatusView     = lazy(() => import("@/pages/payroll/PayrollApprovalStatusView"));
 const SalaryChangeCenter            = lazy(() => import("@/pages/payroll/SalaryChangeCenter"));
+const SalaryTrendExport             = lazy(() => import("@/pages/payroll/SalaryTrendExport"));
+const AttendanceRegisterExport      = lazy(() => import("@/pages/payroll/AttendanceRegisterExport"));
 const SalaryRevisionPage            = lazy(() => import("@/pages/payroll/SalaryRevisionPage"));
 const HolidayWork               = lazy(() => import("@/pages/payroll/HolidayWork"));
 const PfManagement              = lazy(() => import("@/pages/payroll/PfManagement"));
@@ -200,6 +203,13 @@ export const payrollRouteElements = (
       <Route path="/payroll/holiday-work-approvals" element={<Navigate to="/payroll/holiday-work?tab=approvals" replace />} />
       <Route path="/payroll/validation"          element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_hr']}><Gate pageCode="PAYROLL_VALIDATION"><PayrollValidationScreen /></Gate></ProtectedRoute>} />
       <Route path="/payroll/noc"                 element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch','payroll','admin','branch_payroll','payroll_hr']}><Gate pageCode="PAYROLL_NOC"><NocManagement /></Gate></ProtectedRoute>} />
+      {/* NOC Certificate clearance workspace (8-signatory chain + asset return), distinct from
+          /payroll/noc above (older doc-upload flow, singular /api/payroll/noc/* API). Roles here
+          mirror noc-case.routes.ts's READ_ROLES exactly, since the backend is the real gate and
+          this list must not drift from it. No PAYROLL_NOC_CASES page-access rows exist yet for
+          any role, so only super_admin can actually see it via Gate's own bypass until that RBAC
+          grant is added for the rest of READ_ROLES — flagged here rather than hidden. */}
+      <Route path="/payroll/noc-cases"           element={<ProtectedRoute roles={['hr','branch_hr','payroll','payroll_head','payroll_hr','payroll_branch','finance','finance_head','accounts','admin','super_admin','branch_head','branch_admin','branch_it','it','it_head','process_manager','manager','tl','team_leader']}><Gate pageCode="PAYROLL_NOC_CASES"><NocClearanceWorkspace /></Gate></ProtectedRoute>} />
       {/* Payroll Readiness Dashboard — merged page with scope toggle for branch/process */}
       <Route path="/payroll/readiness" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','payroll_hr','admin','hr','finance','payroll','process_manager','wfm','branch_payroll','branch_wfm']}><Gate pageCode="PAYROLL_BRANCH_READINESS"><PayrollReadinessDashboard /></Gate></ProtectedRoute>} />
       {/* Cost-centre attendance sign-off — the drill-down behind the readiness page's
@@ -235,6 +245,8 @@ export const payrollRouteElements = (
       <Route path="/payroll/salary-review/:employeeId" element={<ProtectedRoute roles={['super_admin','payroll_head','admin','payroll_hr','branch_head','hr']}><Gate pageCode="PAYROLL_HEAD_SALARY_REVIEW_DETAIL"><PayrollHeadSalaryReviewDetail /></Gate></ProtectedRoute>} />
       <Route path="/payroll/approval-status"           element={<ProtectedRoute roles={['branch_head','payroll_hr','payroll_head','admin','super_admin']}><Gate pageCode="PAYROLL_APPROVAL_STATUS_VIEW"><PayrollApprovalStatusView /></Gate></ProtectedRoute>} />
       <Route path="/payroll/salary-change"             element={<ProtectedRoute roles={['payroll_head','admin','super_admin','payroll_hr']}><Gate pageCode="SALARY_CHANGE_CENTER"><SalaryChangeCenter /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/salary-trend"              element={<ProtectedRoute roles={['payroll_head','admin','super_admin','payroll_hr','hr','hr_admin']}><Gate pageCode="SALARY_TREND_EXPORT"><SalaryTrendExport /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/attendance-register"       element={<ProtectedRoute roles={['payroll_head','admin','super_admin','payroll_hr','hr','hr_admin','wfm','branch_head','process_manager']}><Gate pageCode="ATTENDANCE_REGISTER_EXPORT"><AttendanceRegisterExport /></Gate></ProtectedRoute>} />
       <Route path="/salary-revision"                   element={<ProtectedRoute roles={['payroll_hr','payroll_head','branch_head','hr','admin','super_admin']}><Gate pageCode="SALARY_REVISION"><DashboardLayout><SalaryRevisionPage /></DashboardLayout></Gate></ProtectedRoute>} />
       <Route path="/payroll/cheque-validation"   element={<Navigate to="/payroll/ho-queues" replace />} />
       <Route path="/payroll/epf-compliance"      element={<ProtectedRoute roles={['admin','super_admin','payroll_hr','payroll','hr','manager','finance_head','payroll_head']}><Gate pageCode="PAYROLL_EPF_COMPLIANCE"><PayrollEpfCompliancePage /></Gate></ProtectedRoute>} />

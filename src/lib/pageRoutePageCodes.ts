@@ -7,6 +7,10 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   // path and a Gate pageCode.
   "/ats/dashboard-v2": "ATS_DASHBOARD",
   "/ats/sourcing-analysis": "ATS_DASHBOARD",
+  "/ats/meta-campaigns": "ATS_META_CAMPAIGNS",
+  "/ats/meta-leads": "ATS_META_CAMPAIGNS",
+  "/ats/meta-shortlist": "ATS_META_CAMPAIGNS",
+  "/ats/whatsapp-inbox": "ATS_META_CAMPAIGNS",
   "/attendance-rules-master": "ATTENDANCE_RULES_MASTER",
   "/client-master": "CLIENT_MASTER",
   "/communication/dispatch": "COMM_DISPATCH",
@@ -44,6 +48,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/performance/process-data-sources": "PROCESS_DATA_SOURCE",
   "/kpi-studio": "KPI_STUDIO",
   "/dashboard-builder": "DASHBOARD_BUILDER",
+  "/process-operations": "PROCESS_OPERATIONS",
   "/process-config": "PROCESS_CONFIG",
   "/quality/file-audit": "QUALITY_DASHBOARD",
   "/roster-capacity-config": "ROSTER_MASTER",
@@ -52,19 +57,24 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/social-feed": "SOCIAL_FEED",
   "/super-admin/policy-engine": "SUPER_ADMIN_POLICY_ENGINE",
   "/wfm/break-desk-devices": "WFM_BREAK_DESK_DEVICES",
-  "/wfm/capacity-dashboard": "WFM_ROSTER",
+  "/wfm/capacity-dashboard": "WFM_CAPACITY_DASHBOARD",
   "/wfm/mobile-attendance": "WFM_ROSTER",
   "/wfm/mobile-roster": "WFM_ROSTER",
   "/wfm/notification-hub": "WFM_ROSTER",
-  "/wfm/roster-analytics": "WFM_ROSTER",
-  "/wfm/roster-analytics-panel": "WFM_ROSTER",
-  "/wfm/roster-audit": "WFM_ROSTER",
-  "/wfm/roster-command-center": "WFM_ROSTER",
-  "/wfm/roster-compliance": "WFM_ROSTER",
   "/wfm/roster-import": "WFM_ROSTER",
-  "/wfm/roster-interventions": "WFM_ROSTER",
+  // "/wfm/roster-command-center" is deliberately NOT mapped here, same reasoning as
+  // "/wfm/attendance-integrity" above: the merged console (RosterCommandCenter.tsx) covers
+  // 7 different page codes (one per tab), which don't collapse into one value. Mapping
+  // this route to any single code would let ProtectedRoute's hard routePageCode gate
+  // (`routePageCode && !hasRoutePageAccess`) 403 a viewer whose grant covers only some of
+  // the 7 tabs, before the console's own per-tab canViewPage() gating ever runs. The
+  // route carries no Gate wrapper for the same reason (see workforce.routes.tsx).
+  // navConfig.tsx's merged nav entry supplies its own explicit pageCode instead of
+  // relying on this map's fallback. The 6 routes this console replaced
+  // (roster-analytics, roster-analytics-panel, roster-interventions, roster-compliance,
+  // shift-effectiveness, roster-audit) no longer render pages of their own and are
+  // removed from this map rather than left stale.
   "/wfm/roster-workspace": "WFM_ROSTER",
-  "/wfm/shift-effectiveness": "WFM_ROSTER",
   "/wfm/team-comparison": "WFM_ROSTER",
   "/wfm/tni-analysis": "WFM_ROSTER",
   "/wfm/weekoff-fairness": "WFM_WEEKOFF_FAIRNESS",
@@ -158,6 +168,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/kpi-config": "KPI_CONFIG",
   "/kpi-master": "KPI_MASTER",
   "/kpi/my-team": "TEAM_KPI_SCORECARD",
+  "/team/coaching": "COACHING",
   "/leave-types": "LEAVE_TYPES",
   "/letters": "LETTERS",
   "/lms/admin": "LMS_ADMIN",
@@ -233,6 +244,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/profile": "MY_PROFILE",
   "/provisioning/admin": "PROVISIONING_ADMIN",
   "/provisioning/appointment-letter": "PROVISIONING_APPOINTMENT_LETTER",
+  "/provisioning/hr-bgv": "PROVISIONING_HR_BGV",
   "/provisioning/it": "PROVISIONING_IT",
   "/provisioning/wfm-alignment": "PROVISIONING_WFM_ALIGNMENT",
   "/quality-dashboard": "QUALITY_DASHBOARD",
@@ -289,6 +301,9 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   // navConfig.tsx exactly or nav visibility and page access disagree.
   "/wfm/team-attendance": "TEAM_ATTENDANCE",
   "/wfm/planning-rules": "WFM_PLANNING_RULES",
+  "/wfm/process-lob-mapping": "WFM_PROCESS_LOB_MAP",
+  "/wfm/roster-offday-policy": "WFM_ROSTER_OFFDAY_POLICY",
+  "/wfm/team-roster": "WFM_TEAM_ROSTER",
   "/wfm/roster": "WFM_ROSTER",
   "/wfm/roster-builder": "WFM_ROSTER_BUILDER",
   "/wfm/roster-rules": "WFM_ROSTER",

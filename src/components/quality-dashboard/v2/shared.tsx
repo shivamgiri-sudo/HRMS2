@@ -1,15 +1,14 @@
 import type { ReactNode } from "react";
+import { qualityScoreBadgeClass } from "@/lib/qualityScoreFormatting";
 
 export { ScorePill, Spinner, ErrBanner, PanelShell };
 
+// Conditional formatting bands live in src/lib/qualityScoreFormatting.ts —
+// shared across every quality dashboard page so a given score always renders
+// the same colour everywhere.
 function ScorePill({ score }: { score: number }) {
-  const cls =
-    score >= 80 ? "bg-emerald-100 text-emerald-700 border-emerald-200" :
-    score >= 70 ? "bg-yellow-100 text-yellow-700 border-yellow-200" :
-    score >= 60 ? "bg-orange-100 text-orange-700 border-orange-200" :
-                  "bg-red-100 text-red-700 border-red-200";
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold tabular-nums ${cls}`}>
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-bold tabular-nums ${qualityScoreBadgeClass(score)}`}>
       {score}%
     </span>
   );

@@ -147,7 +147,7 @@ export async function decideDerivedItem(
     // grn.service.ts's reviewGrn(). Branch scope and stage-role resolution are the same real
     // guards that route enforces (assertFinanceRecordBranch, resolveFinanceStageRole), not a
     // looser reimplementation of them.
-    let grn: { branch_id?: string | null; status?: string } | undefined;
+    let grn: { branch_id?: string | null; status?: string; grn_type?: string | null } | undefined;
     try {
       grn = await grnService.getGrn(entityId);
     } catch (err) {
@@ -162,6 +162,7 @@ export async function decideDerivedItem(
     }
     const effectiveRole = resolveFinanceStageRole({
       primaryRole, userRoles, currentStatus: String(grn.status ?? ""), workflow: "grn",
+      grnType: grn.grn_type ?? null,
     });
     try {
       return await grnService.reviewGrn(

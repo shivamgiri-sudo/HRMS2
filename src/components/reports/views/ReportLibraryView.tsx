@@ -256,9 +256,14 @@ function buildFiltersForReport(code: string): FilterDef[] {
 
   const filterMap: Record<string, FilterDef[]> = {
     "headcount": [...branchProcess, DEPT_FILTER, EMPLOYEE_STATUS_FILTER],
-    // From/To are honoured now (tenure window in employeeMaster) — they previously did
-    // nothing. STATUS_FILTER replaced by EMPLOYEE_STATUS_FILTER: see the note on that const.
-    "employee-master": [...branchProcess, DEPT_FILTER, EMPLOYEE_STATUS_FILTER, ...dateFilters],
+    // Date filters here are DOJ-scoped (filter by date_of_joining), NOT a tenure window.
+    // The old tenure window was removed 2026-09-14 because it silently dropped ~98% of rows
+    // with no warning. DOJ filters are unambiguous: "show employees who joined between these
+    // dates" — leave both blank to get the full directory.
+    "employee-master": [...branchProcess, DEPT_FILTER, EMPLOYEE_STATUS_FILTER,
+      { key: "dojFrom", label: "Joining Date From", type: "date" } as FilterDef,
+      { key: "dojTo",   label: "Joining Date To",   type: "date" } as FilterDef,
+    ],
     "manager-mapping": [...branchProcess, EMPLOYEE_STATUS_FILTER],
     "org-structure-snapshot": [...branchOnly, EMPLOYEE_STATUS_FILTER],
     "cost-centre-headcount": [...branchOnly, EMPLOYEE_STATUS_FILTER],
@@ -278,12 +283,16 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "shift-adherence-detail": [...dateFilters, ...branchProcess],
     "attendance-summary": [...monthFilter, ...branchProcess],
     "attendance-register-monthly": [...monthFilter, ...branchProcess],
+    "attendance-source-sheet": [...monthFilter, ...branchProcess],
     "attendance-register-grid": [...monthFilter, ...branchProcess],
     "late-arrival-summary": [...monthFilter, ...branchProcess],
     "overtime-summary": [...monthFilter, ...branchProcess],
     "biometric-reconciliation": [...dateFilters, ...branchProcess],
     "regularization-summary": [...monthFilter, ...branchProcess, STATUS_FILTER],
     "attendance-dispute-summary": [...monthFilter, ...branchProcess, STATUS_FILTER],
+    // Date-ranged, not month-locked (unlike the two above) — an audit lookup usually spans
+    // more than one month. Defaults to all time when both fields are left blank.
+    "regularization-audit": [...dateFilters, ...branchProcess, STATUS_FILTER],
     "habitual-absentee-list": [...monthFilter, ...branchProcess],
     "daily-shrinkage-report": [...dateFilters, ...branchProcess],
     "monthly-shrinkage-trend": [...dateFilters, ...branchProcess],
@@ -328,8 +337,6 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "pf-ecr-format": [...monthFilter, branchOnly[0]],
     "esic-contribution-register": [...monthFilter, ...branchProcess],
     "esic-monthly-summary": [...monthFilter, branchOnly[0]],
-    "pt-register": [...monthFilter, ...branchProcess],
-    "pt-monthly-register": [...monthFilter, branchOnly[0]],
     "tds-computation-register": branchOnly,
     "form-16-status": branchOnly,
     "investment-declaration-status": branchOnly,
@@ -396,7 +403,10 @@ function buildFiltersForReport(code: string): FilterDef[] {
     //
     // Reports that DO honour a date range — keep the pickers:
     "left-employee-export":                    [...dateFilters, ...branchProcess],
-    "new-join-export":                         [...dateFilters, ...branchProcess],
+    // Month/year quick-filters on top of the from/to range: pick either one to jump
+    // straight to that period instead of typing exact dates (backend narrows
+    // date_of_joining to the chosen month/year when either is set, from/to when neither is).
+    "new-join-export":                         [...dateFilters, ...monthFilter, YEAR_FILTER, ...branchProcess],
     "payroll-population-reconciliation":       [...dateFilters, ...branchProcess],
     "attendance-enrollment-gap":               [...dateFilters, ...branchProcess],
     "leave-trend-monthly":                     [...dateFilters, ...branchProcess],
@@ -784,7 +794,6 @@ const _LEGACY_CATALOG_UNUSED: LegacyReportDef[] = [
       { key: "gross_salary", label: "Gross Salary", format: "currency", width: 120, align: "right" },
       { key: "pf_employee", label: "PF (Employee)", format: "currency", width: 100, align: "right" },
       { key: "esic_employee", label: "ESIC (Employee)", format: "currency", width: 100, align: "right" },
-      { key: "professional_tax", label: "PT", format: "currency", width: 80, align: "right" },
       { key: "tds", label: "TDS", format: "currency", width: 100, align: "right" },
       { key: "lwp_deduction", label: "LWP Deduction", format: "currency", width: 120, align: "right" },
       { key: "total_deductions", label: "Total Deductions", format: "currency", width: 120, align: "right" },
@@ -1546,8 +1555,12 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50">
-                        {rows.map((row, i) => (
-                          <tr key={i} className={`hover:bg-blue-50/50 ${i % 2 === 0 ? "" : "bg-gray-50/50"}`}>
+                        {rows.map((row, i) => {
+                          const rowKey = selectedReport.primaryKey?.length
+                            ? selectedReport.primaryKey.map(k => String(row[k] ?? "")).join("|") + `|${i}`
+                            : String(i);
+                          return (
+                          <tr key={rowKey} className={`hover:bg-blue-50/50 ${i % 2 === 0 ? "" : "bg-gray-50/50"}`}>
                             {selectedReport.columns.map(col => (
                               <td
                                 key={col.key}
@@ -1565,7 +1578,8 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                               </td>
                             ))}
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

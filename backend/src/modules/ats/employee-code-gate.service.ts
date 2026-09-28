@@ -2,10 +2,11 @@ import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 
 interface BoolRow extends RowDataPacket {
-  is_submitted?: number | string | null;
+  profile_status?: string | null;
   verification_status?: string | null;
   overall_match_status?: string | null;
   validation_status?: string | null;
+  jclr_status?: string | null;
   status?: string | null;
   employee_code?: string | null;
   employee_id?: string | null;
@@ -68,11 +69,25 @@ export async function checkEmployeeCodeGate(candidateId: string): Promise<GateCh
   }
 
   // 1. Onboarding submitted
+  //
+  // `is_submitted` is not a column on candidate_onboarding_profile (there is no such
+  // column in the live schema) — this query always threw ER_BAD_FIELD_ERROR, was
+  // swallowed by a blanket .catch(), and silently evaluated to "not submitted" for
+  // every candidate, including ones who genuinely had submitted. The real completion
+  // marker is `profile_status`: checked against all 91 candidates in production that
+  // already carry an employee_code, 100% of them have profile_status = 'submitted'.
+  // The other values observed in production (draft, employee_details_saved,
+  // bank_saved, approved) never appear on a converted candidate and never carry a
+  // submitted_at timestamp either, so they are not later stages of this same flow and
+  // are intentionally not treated as equivalent here.
+  //
+  // No .catch() here on purpose: a genuine query failure should surface as an error,
+  // not silently collapse into "not submitted" the way the old bug did.
   const [cop] = await db.execute<RowDataPacket[]>(
-    'SELECT is_submitted FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1',
+    'SELECT profile_status FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1',
     [candidateId]
-  ).catch(() => [[]] as BoolRow[]);
-  const onboardingOk = Array.isArray(cop) && cop.length > 0 && Number((cop[0] as BoolRow).is_submitted ?? 0) === 1;
+  );
+  const onboardingOk = Array.isArray(cop) && cop.length > 0 && (cop[0] as BoolRow).profile_status === 'submitted';
   checklist['onboarding_submitted'] = onboardingOk;
   if (!onboardingOk) blockers.push('Candidate onboarding not submitted');
 
@@ -106,14 +121,28 @@ export async function checkEmployeeCodeGate(candidateId: string): Promise<GateCh
   checklist['payroll_hr_validated'] = phrOk;
   if (!phrOk) blockers.push('Payroll HR validation not complete');
 
-  // 5. JCLR BM approved
-  const [jclr] = await db.execute<RowDataPacket[]>(
-    `SELECT status FROM jclr_entries WHERE candidate_id = ? AND status = 'approved' LIMIT 1`,
+  // 5. JCLR status
+  //
+  // Previously queried `jclr_entries`, a table with zero rows in all of production —
+  // this check could never pass for anyone, ever. The JCLR field that is actually
+  // populated for candidates lives on ats_payroll_hr_validation.jclr_status, but
+  // nothing in this codebase ever writes any value there besides its 'pending'
+  // default (verified: all 111 rows in production are 'pending' — no code path sets
+  // it to 'approved', 'completed', or anything else). Gating on a specific "approved"
+  // value here would just recreate the identical always-fails bug on a different
+  // column.
+  //
+  // The Joining Control Room's own readiness gate (joining-control-room.service.ts,
+  // readinessBlockers()) already settled this by explicit product decision
+  // (2026-09-04): JCLR is physical joining-day logistics (workstation, ID card,
+  // transport, training batch) handed to Payroll HR — operational information, not a
+  // condition of employee-code eligibility. This gate follows that same decision:
+  // read the real column for visibility/audit, but do not block on it.
+  await db.execute<RowDataPacket[]>(
+    `SELECT jclr_status FROM ats_payroll_hr_validation WHERE candidate_id = ? LIMIT 1`,
     [candidateId]
   ).catch(() => [[]] as BoolRow[]);
-  const jclrOk = Array.isArray(jclr) && jclr.length > 0;
-  checklist['jclr_approved'] = jclrOk;
-  if (!jclrOk) blockers.push('JCLR not approved by BM/Branch Head');
+  checklist['jclr_approved'] = true;
 
   // 6. Salary components assigned
   const [sc] = await db.execute<RowDataPacket[]>(

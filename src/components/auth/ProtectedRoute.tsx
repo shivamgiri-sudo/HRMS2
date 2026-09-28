@@ -6,7 +6,7 @@ import { useIsAdminOrHR, useWorkforceAccess } from "@/hooks/useUserRole";
 import { Loader2, ShieldX, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { getHrmsApiErrorStatus } from "@/lib/hrmsApi";
+import { getHrmsApiErrorStatus, getHrmsApiErrorCode } from "@/lib/hrmsApi";
 import {
   canAccessDashboard,
   type DashboardCode,
@@ -25,9 +25,14 @@ interface ProtectedRouteProps {
   roles?: readonly string[];
   /** Canonical role-dashboard entitlement. Takes precedence over a local role list. */
   dashboardCode?: DashboardCode;
+  /**
+   * The caller has ALREADY verified an entitlement that replaces the role list and page grant for this route (TPZ Process
+   * per-user grants, enforced again by the API). Sign-in, password, 2FA and onboarding checks still apply.
+   */
+  entitlementVerified?: boolean;
 }
 
-export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRouteProps) {
+export function ProtectedRoute({ children, roles, dashboardCode, entitlementVerified = false }: ProtectedRouteProps) {
   const { user, isLoading, mustChangePassword, twoFactorRequired, twoFactorVerified } = useAuth();
   const location = useLocation();
   const { data: employeeStatus, isLoading: isEmployeeLoading } = useEmployeeStatus();
@@ -43,6 +48,17 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
   const authFailure =
     getHrmsApiErrorStatus(roleError) === 401 ||
     getHrmsApiErrorStatus(accessError) === 401;
+  // A 403 with this code means the account's token is restricted to the password-change
+  // flow (SEC-06, authMiddleware.ts) — every endpoint except /api/auth/change-password
+  // rejects it, including the role/access-scope queries above. Before this check existed,
+  // that 403 fell straight into the generic "Unable to load page" card below instead of
+  // redirecting to /change-password, because AuthContext's own `mustChangePassword` (set
+  // at login) can be stale for an account flagged for a forced change after its last
+  // login — the account never sees a way out short of a support ticket. Checked the same
+  // way authFailure is: from the query errors directly, not from cached login-time state.
+  const mustChangePasswordFromApi =
+    getHrmsApiErrorCode(roleError) === "MUST_CHANGE_PASSWORD" ||
+    getHrmsApiErrorCode(accessError) === "MUST_CHANGE_PASSWORD";
   const hasTriggeredSignOutRef = useRef(false);
 
   useEffect(() => {
@@ -62,6 +78,22 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
 
   if (authFailure) {
     return <Navigate to="/auth" replace state={{ from: location }} />;
+  }
+
+  const onChangePasswordRoute = location.pathname === "/change-password";
+
+  if (mustChangePasswordFromApi) {
+    if (!onChangePasswordRoute) {
+      return <Navigate to="/change-password" replace />;
+    }
+    // Pre-existing gap, not introduced by the redirect above: role/access queries 403
+    // MUST_CHANGE_PASSWORD for this account on *every* endpoint, including once already on
+    // this page, so the generic error branch below would still swallow it and nobody with
+    // this scope could ever reach the actual change-password form. This account's whole
+    // purpose on this route is to submit /api/auth/change-password, which the same
+    // middleware explicitly allows for this scope — the page never needed role/access data
+    // to function, so skip that branch and render it directly.
+    return <>{children}</>;
   }
 
   if (roleError || isAccessError) {
@@ -162,7 +194,7 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
   // Grants and lists were reconciled in the same change, so no live user loses a page they
   // hold today; the lists now pin that surface in place, and a grant added later cannot
   // silently widen a route past what its own file declares.
-  if (roles && roles.length > 0) {
+  if (!entitlementVerified && roles && roles.length > 0) {
     const hasRequiredRole = dashboardCode
       ? canAccessDashboard(dashboardCode, roleKeys)
       : roleKeys.includes("super_admin") || roles.some((r) => roleKeys.includes(r));
@@ -190,7 +222,7 @@ export function ProtectedRoute({ children, roles, dashboardCode }: ProtectedRout
     }
   }
 
-  if (routePageCode && !hasRoutePageAccess) {
+  if (!entitlementVerified && routePageCode && !hasRoutePageAccess) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <Card className="max-w-md w-full">

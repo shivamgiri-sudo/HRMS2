@@ -9,6 +9,9 @@ import { checkRequiredTables, REQUIRED_TABLES } from "./db/schema-presence-check
 // instead of running migrations. Use `npm run migrate` to apply migrations separately.
 const MIGRATIONS_VERIFY_ONLY = process.env.MIGRATIONS_VERIFY_ONLY === "true";
 import { initBusinessActionSyncJobs } from "./cron/business-action-sync.cron.js";
+import { startEmployeeMasterSnapshotScheduler } from "./cron/employee-master-snapshot.cron.js";
+import { startExitAutoAdvanceScheduler, stopExitAutoAdvanceScheduler } from "./cron/exitAutoAdvance.cron.js";
+import { startMetaLeadSyncScheduler, stopMetaLeadSyncScheduler } from "./cron/metaLeadSync.cron.js";
 import { startCommunicationCleanup } from "./modules/communication/cleanup.cron.js";
 import { startTenureBadgeScheduler } from "./modules/engagement/tenure.cron.js";
 import { startCelebrationScheduler } from "./modules/engagement/celebration.cron.js";
@@ -17,6 +20,7 @@ import { startMcnmeetCron, stopMcnmeetCron } from "./modules/mcnmeet/mcnmeet.cro
 import { startSocialFeedCron } from "./modules/social-feed/social-feed.cron.js";
 import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-db.service.js";
 import { startITProvisioningLockScheduler } from "./modules/it-provisioning/it-provisioning.cron.js";
+import { startPortalSessionCleanupScheduler } from "./modules/portal/portal-session-cleanup.cron.js";
 import { startPayrollWindowClosureScheduler } from "./modules/payroll/payroll-window.cron.js";
 import { startDashboardSnapshotScheduler } from "./modules/dashboards/dashboard-snapshot.cron.js";
 import { startPerformanceScorecardSnapshotScheduler } from "./modules/performance-scorecard/performance-scorecard-snapshot.cron.js";
@@ -29,7 +33,13 @@ import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-re
 // registration silently never runs in the WORKERS_PROCESS=external topology).
 // Off by default: MANAGER_DAILY_BRIEF_ENABLED must be explicitly "true".
 import { startManagerDailyBriefScheduler } from "./modules/management/daily-brief/daily-brief.cron.js";
+import { startRosterUploadEscalationScheduler } from "./modules/wfm/roster-upload-escalation.cron.js";
+// Off by default: INTERVENTION_RECOMMENDATIONS_ENABLED must be explicitly "true" —
+// see intervention-recommendation.cron.ts's header for why this engine existed
+// but never ran before this scheduler was added.
+import { startInterventionRecommendationScheduler } from "./modules/analytics/intervention-recommendation.cron.js";
 import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.bootstrap.js";
+import { isModelAvailable as warmUpFaceDetectionModels } from "./modules/ats/face-match.service.js";
 import { startCosecSyncWorker } from "./modules/wfm/cosec-sync.worker.js";
 import { startAccessExpiryScheduler } from "./workers/access-expiry.worker.js";
 import { startMobilityTransferWorker } from "./workers/mobility-transfer.worker.js";
@@ -39,6 +49,7 @@ import { legacySyncWorker } from "./workers/legacy-sync-worker.js";
 import { startOfficialEmailComplianceScheduler } from "./workers/official-email-compliance.worker.js";
 import { startIntegrationScheduler, stopIntegrationScheduler } from "./workers/integration-scheduler.worker.js";
 import { startAprVicidialSyncWorker } from "./workers/apr-vicidial-sync.worker.js";
+import { startMolecularEmailSyncWorker } from "./workers/molecular-email-sync.worker.js";
 import { startKpiDailySyncWorker } from "./workers/kpi-daily-sync.worker.js";
 import { startKpiStudioComputeWorker } from "./workers/kpi-studio-compute.worker.js";
 import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from "./workers/payroll-nightly-recalc.worker.js";
@@ -53,9 +64,14 @@ import { startHelpdeskSlaCron } from "./modules/helpdesk/helpdesk-sla.cron.js";
 import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
 import { startAtsDailyReportScheduler } from "./modules/ats/ats-daily-report.cron.js";
+import { startBranchActivityReportScheduler } from "./modules/ats/branch-activity-report/scheduler.js";
+import { startBranchHealthReportScheduler } from "./modules/branch-health-report/scheduler.js";
 import { startEmployeeLifecycleWorker } from "./workers/employee-lifecycle.worker.js";
 import { startTatEscalationWorker } from "./workers/tat-escalation.worker.js";
+import { startQualityGapDetectorWorker } from "./workers/quality-gap-detector.worker.js";
 import { startReportSubscriptionWorker } from "./workers/report-subscription.worker.js";
+import { startLeaveApprovalReminderWorker } from "./workers/leave-approval-reminder.worker.js";
+import { startGrnApprovalReminderWorker } from "./workers/grn-approval-reminder.worker.js";
 import { registerNotificationDeliverer } from "./modules/communication/notification.deliverer.js";
 import { clearAllTimers } from "./workers/worker-utils.js";
 
@@ -103,6 +119,8 @@ async function gracefulShutdown(signal: string): Promise<void> {
     stopPayrollRecalcDrainerWorker();
     stopPerformanceIngestionScheduler();
     stopDailyGamesScheduler();
+    stopExitAutoAdvanceScheduler();
+    stopMetaLeadSyncScheduler();
 
     // Clear all registered timers
     clearAllTimers();
@@ -147,6 +165,22 @@ function startServer() {
     // widening the real user-facing gap during any restart. No-op outside PM2 (process.send
     // is undefined when not launched by a process manager), so this is safe in every
     // environment including plain `node dist/src/server.js` and local dev.
+
+    // Disable socket inactivity timeout so long-running requests (payroll, bulk exports)
+    // are never killed mid-flight. Nginx proxy_read_timeout (120s/300s) is the outer
+    // guard; Express itself has no built-in request timeout.
+    httpServer!.setTimeout(0);
+    // The P&L Trend reads years of payroll; fill its cache once the boot-time migrations and jobs have settled.
+    setTimeout(() => { void import("./modules/process-pnl/pnl-trend.service.js").then((m) => m.warmPnlTrendCache()); }, 180_000).unref();
+    // Process Operations /feeds counts ~36 source tables; keep those counts warm so the page never waits on them.
+    setTimeout(() => { void import("./modules/process-operations/feed-health.service.js").then((m) => m.startFeedHealthCacheWarmer()); }, 200_000).unref();
+    // The Onfido Overview and Analyst reports take 20-26s cold; keep them in the response cache so the dashboard's first load is instant.
+    setTimeout(() => { void import("./modules/onfido-process/onfido-cache-warmer.js").then((m) => m.startOnfidoCacheWarmer()); }, 240_000).unref();
+    // Keep connections alive slightly longer than nginx's keepalive_timeout (60s) to
+    // avoid the race where nginx sends a request on a reused connection at the exact
+    // moment Node is closing it (produces a spurious 502).
+    httpServer!.keepAliveTimeout = 65000;
+    httpServer!.headersTimeout   = 66000;
     if (process.send) {
       process.send("ready");
     }
@@ -209,6 +243,10 @@ function startServer() {
         // No-ops unless MANAGER_DAILY_BRIEF_ENABLED=true — see daily-brief.cron.ts's
         // header for the dependency-timing evidence behind its default run time.
         startManagerDailyBriefScheduler();
+        // No-op unless ROSTER_UPLOAD_ESCALATION_ENABLED=true (dry-run unless ..._DRY_RUN=false).
+        startRosterUploadEscalationScheduler();
+        // No-op unless INTERVENTION_RECOMMENDATIONS_ENABLED=true.
+        startInterventionRecommendationScheduler();
         // Pulls biometric punches from the NCOSEC SQL Server — the only feed that
         // populates integration_biometric_daily, and so the source every non-Operations
         // employee's payroll attendance is built from.
@@ -224,10 +262,13 @@ function startServer() {
         // Self-guarding: no-ops unless NCOSEC_DB_HOST/USER/PASSWORD are set, and skips
         // when NCOSEC_SYNC_ENABLED=false, so this is inert where COSEC isn't configured.
         startCosecSyncWorker();
-        legacySyncWorker.start();
         startAccessExpiryScheduler();
         startMobilityTransferWorker();
         startITProvisioningLockScheduler();
+        // Deletes stale/revoked/expired client-portal session rows so portal_user_sessions
+        // (an insert-only table until now — nothing anywhere ever DELETEd from it) does not
+        // grow unbounded forever. See portal-session-cleanup.cron.ts for the full reasoning.
+        startPortalSessionCleanupScheduler();
         startLeaveMonthlyWorker();
         startAnnualLeaveWorker();
         startPayrollWindowClosureScheduler();
@@ -236,6 +277,16 @@ function startServer() {
         startPerformanceScorecardSnapshotScheduler();
         startPerformanceIngestionScheduler();
         initBusinessActionSyncJobs();
+        // Keeps employee_master_snapshot (the 73-column legacy-format employee export,
+        // including db_bill fallback enrichment) fresh every 30 minutes so the report can
+        // read a plain table instead of recomputing two cross-database fallbacks on request.
+        startEmployeeMasterSnapshotScheduler();
+        // Auto-advances exits from notice_active/terminated → exited when LWD has passed
+        // and all clearance tasks are cleared. Runs daily at 00:30 IST.
+        startExitAutoAdvanceScheduler();
+        // Hourly pull of new Meta Lead Ads leads + campaign metrics.
+        // Idempotent safety net — skips already-imported leads, no-ops if META_MARKETING_ACCESS_TOKEN unset.
+        startMetaLeadSyncScheduler();
         startBreachSlaCron();
         startRetentionCron();
         // D-SLA-01: replaces the inline refreshSlaBreachFlags() call removed from
@@ -267,6 +318,10 @@ function startServer() {
         if (process.env.ATS_DAILY_REPORT_ENABLED === "true") {
           startAtsDailyReportScheduler();
         }
+        // No-op unless ATS_BRANCH_ACTIVITY_REPORT_ENABLED=true (dry-run unless ..._DRY_RUN=false).
+        startBranchActivityReportScheduler();
+        // No-op unless BRANCH_HEALTH_REPORT_ENABLED=true (dry-run unless ..._DRY_RUN=false).
+        startBranchHealthReportScheduler();
         // Activates employees whose joining date has arrived, and retries failed
         // provisioning. Previously only registered in workers/all-workers.ts,
         // which has no npm script and no importer — so anyone approved before
@@ -278,11 +333,24 @@ function startServer() {
         // other topology, which is exactly what happened to ats-reminders.
         // Gated by worker_config.enabled (0 by default) regardless of which starts it.
         startTatEscalationWorker();
+        // Same dual registration. Produces training_assignment/task_tat_instance rows for
+        // QA skill gaps; tat-escalation above drives TAT/escalation for the task_type it
+        // creates, so this worker sends no notification of its own.
+        startQualityGapDetectorWorker();
         // Same dual registration. This one was in NEITHER file: the worker was written
         // and the report_subscription table shipped, but nothing ever imported it, so a
         // scheduled report could never have run however it was configured. Gated by
         // worker_config.enabled (0) and every subscription is_active=0.
         startReportSubscriptionWorker();
+        // Same dual registration, learned from the ats-reminders/noc-sla-reminder failure
+        // mode above: noc-sla-reminder.worker.ts was written with a real worker_config row
+        // seeded enabled=1, but its start function was never imported into either this file
+        // or workers/all-workers.ts, so it has never run despite looking fully wired — see
+        // 1698_noc_worker_and_release_gate_flag.sql. Registering this one in BOTH files from
+        // the start, not as a follow-up fix.
+        startLeaveApprovalReminderWorker();
+        // Same dual registration, same reasoning.
+        startGrnApprovalReminderWorker();
         console.log(
           "[schedulers] tenure, communication, attendance, attendance-reconciliation, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, performance-ingestion, business-action-sync, breach-sla, privacy-retention, helpdesk-sla, ats-reminders, employee-lifecycle started",
         );
@@ -290,6 +358,9 @@ function startServer() {
         // Start heavy workers (with distributed lock protection)
         startAprVicidialSyncWorker().catch((error) =>
           console.error("[apr-sync] startup error:", error instanceof Error ? error.message : String(error)),
+        );
+        startMolecularEmailSyncWorker().catch((error) =>
+          console.error("[molecular-email-sync] startup error:", error instanceof Error ? error.message : String(error)),
         );
         startPayrollNightlyRecalcWorker().catch((error) =>
           console.error("[payroll-nightly-recalc] startup error:", error instanceof Error ? error.message : String(error)),
@@ -351,6 +422,9 @@ function startServer() {
         console.log(
           "[workers] WORKERS_PROCESS=external - ALL schedulers/workers handled by external process",
         );
+        // Meta lead sync is a lightweight external API call — safe to run in the API process
+        // even when WORKERS_PROCESS=external. No DB-intensive workers here.
+        startMetaLeadSyncScheduler();
       }
     } else {
       console.log("[schedulers] disabled (set ENABLE_SCHEDULERS=true to enable)");
@@ -363,7 +437,7 @@ function startServer() {
   // restart overlapping the previous listener's hold on the port — a watch-mode
   // reload in development, or a pm2 restart in production — where the old socket
   // has not been released yet. Both are worth retrying rather than dying for.
-  httpServer.on("error", (error: NodeJS.ErrnoException) => {
+  httpServer!.on("error", (error: NodeJS.ErrnoException) => {
     if (error.code !== "EADDRINUSE") {
       console.error("[startup] HTTP server error:", error.message);
       throw error;
@@ -422,6 +496,20 @@ async function initializeRuntime() {
   console.log(
     `[cosec-sync] automatic schedule ${cosecActive ? "active" : "inactive"}`,
   );
+
+  // Fire-and-forget: load the face-detection models (TensorFlow.js/WASM +
+  // three neural nets from disk) now, during boot, rather than paying that
+  // 10-30s cold-start cost on whichever offer approval happens to be first to
+  // trigger it after this process starts — see the comment in
+  // employee-creation-orchestrator.service.ts's Live Selfie promotion step for
+  // the incident this is the other half of the fix for. Not awaited: must
+  // never add to the boot window health checks are already timed against.
+  warmUpFaceDetectionModels().then((available) => {
+    console.log(`[face-match] model warm-up ${available ? "complete" : "unavailable (models not found on disk)"}`);
+  }).catch((err) => {
+    console.warn("[face-match] model warm-up failed (non-blocking):", err instanceof Error ? err.message : err);
+  });
+
   startServer();
 }
 
@@ -458,10 +546,24 @@ async function handleMigrations(): Promise<void> {
 handleMigrations()
   .then(initializeRuntime)
   .catch(async (error) => {
-    console.error(
-      "[startup] migration/schema verification failed:",
-      error instanceof Error ? error.message : error,
-    );
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error("[startup] migration/schema verification failed:", msg);
+
+    // Lock contention (another instance already holds the advisory lock) is safe to
+    // ignore at startup — the schema is already complete; we just couldn't re-verify it.
+    // Crashing the server here causes a PM2 restart loop that takes the whole service
+    // down under heavy traffic. Warn and continue instead.
+    const isLockContention =
+      /lock wait timeout|advisory lock|could not acquire migration lock/i.test(msg) ||
+      (error as NodeJS.ErrnoException)?.code === "ER_LOCK_WAIT_TIMEOUT";
+
+    if (isLockContention) {
+      console.warn(
+        "[startup] migration lock was held by another process — schema assumed current, starting anyway.",
+      );
+      await initializeRuntime();
+      return;
+    }
 
     if (env.NODE_ENV === "production") {
       console.error(

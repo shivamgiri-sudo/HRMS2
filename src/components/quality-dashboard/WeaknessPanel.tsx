@@ -1,5 +1,6 @@
 import React from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+// CartesianGrid intentionally not imported — clean plain background, no gridlines.
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { formatISTDate } from "@/lib/utils";
 
 interface SubMetric {
@@ -181,7 +182,6 @@ export const WeaknessPanel: React.FC<WeaknessPanelProps> = ({
               {topWeaknesses.length > 0 ? (
                 <ResponsiveContainer width="100%" height={300}>
                   <BarChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis dataKey="category" angle={-45} textAnchor="end" height={80} />
                     <YAxis domain={[0, 100]} />
                     <Tooltip formatter={(value) => `${value}%`} />

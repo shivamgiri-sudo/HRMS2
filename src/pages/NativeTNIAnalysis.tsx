@@ -30,13 +30,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 
+import { localISODate, localFirstOfMonth } from "@/lib/localDate";
+
 // ── Date helpers ───────────────────────────────────────────────────────────────
 
-function today() { return new Date().toISOString().slice(0, 10); }
-function firstOfMonth() {
-  const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
-}
+const today = localISODate;
+const firstOfMonth = localFirstOfMonth;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -64,19 +63,35 @@ const PARAMS = [
 
 type ParamKey = (typeof PARAMS)[number]["key"];
 
-const TNI_THRESHOLD = 60;  // pass% below this = needs training
-const AMBER_THRESHOLD = 80; // pass% 60–79 = amber
+/**
+ * The red/needs-training line is per-parameter now, computed server-side from
+ * that parameter's own org-wide baseline for the window queried (see
+ * tni.service.ts effectiveThreshold) — a flat 60% for all 19 parameters flagged
+ * 57 of 63 agents (90%) in a live check, because several parameters run a
+ * lower natural pass rate than that. `thresholds[param]` from the API is the
+ * real bar; AMBER_SPAN is just how far above that bar "monitor" extends before
+ * a cell reads as a clean pass, so the three-band feel is kept without a second
+ * hardcoded flat number.
+ */
+const AMBER_SPAN = 20;
+const FALLBACK_THRESHOLD = 60; // used only if the API response is missing thresholds (older cache, etc.)
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface TniAgentRow {
   agent_code: string;
   agent_name: string;
+  process_name: string;
+  reporting_manager: string;
+  branch_name: string;
+  cost_centre_name: string;
   audit_count: number;
   avg_cq_score: number;
   params: Record<ParamKey, number>;
   tni_flag_count: number;
 }
+
+interface FilterOption { id: string; name: string; }
 
 interface TniSummary {
   total_agents: number;
@@ -104,15 +119,15 @@ interface SidePanelState {
 
 // ── Cell color helper ─────────────────────────────────────────────────────────
 
-function cellClass(pct: number): string {
-  if (pct >= AMBER_THRESHOLD) return "bg-emerald-50 text-emerald-700 font-medium";
-  if (pct >= TNI_THRESHOLD)   return "bg-amber-50 text-amber-700 font-semibold";
+function cellClass(pct: number, threshold: number): string {
+  if (pct >= threshold + AMBER_SPAN) return "bg-emerald-50 text-emerald-700 font-medium";
+  if (pct >= threshold)              return "bg-amber-50 text-amber-700 font-semibold";
   return "bg-red-100 text-red-700 font-bold cursor-pointer hover:bg-red-200 transition-colors";
 }
 
-function cellBg(pct: number): string {
-  if (pct >= AMBER_THRESHOLD) return "bg-emerald-100 text-emerald-800";
-  if (pct >= TNI_THRESHOLD)   return "bg-amber-100 text-amber-700";
+function cellBg(pct: number, threshold: number): string {
+  if (pct >= threshold + AMBER_SPAN) return "bg-emerald-100 text-emerald-800";
+  if (pct >= threshold)              return "bg-amber-100 text-amber-700";
   return "bg-red-100 text-red-700";
 }
 
@@ -178,6 +193,20 @@ function SidePanel({
         .then((r) => r.calls ?? []),
   });
 
+  // A persisted, trackable finding for this exact agent+parameter, if the
+  // scheduled TNI scan has already raised one. Read-only here — this drawer
+  // shows it, it does not create or edit it; that lifecycle lives in tni_finding.
+  const findingQ = useQuery({
+    queryKey: ["tni-finding", panel.agentCode, panel.param],
+    queryFn: () =>
+      hrmsApi.get<{ finding: {
+        id: string; severity: string; status: string;
+        sampleCount: number; failCount: number; evidenceNote: string; raisedAt: string;
+      } | null }>(
+        `/api/quality-dashboard/tni-finding?agent_code=${encodeURIComponent(panel.agentCode)}&param=${encodeURIComponent(panel.param)}`
+      ).then((r) => r.finding),
+  });
+
   const calls = data ?? [];
   const failCalls = calls.filter((c) => c.param_pass === 0);
 
@@ -204,6 +233,27 @@ function SidePanel({
           <span>{calls.length} total calls audited</span>
           <span>·</span>
           <span>{failCalls.length} fails ({calls.length > 0 ? Math.round(failCalls.length / calls.length * 100) : 0}% fail rate)</span>
+        </div>
+      )}
+
+      {/* Persisted TNI finding for this exact agent + parameter, if the scheduled
+          scan has already raised one — the tracked, assignable version of what
+          this heatmap cell shows live. Silent when there is none: most cells
+          will not have one yet, and that is not itself worth a message. */}
+      {findingQ.data && (
+        <div className={`mx-4 mt-3 rounded-xl border px-4 py-3 text-xs ${
+          findingQ.data.severity === "EXTREME_REVIEW"
+            ? "border-purple-200 bg-purple-50 text-purple-800"
+            : "border-orange-200 bg-orange-50 text-orange-800"
+        }`}>
+          <div className="flex items-center justify-between font-bold">
+            <span>
+              {findingQ.data.severity === "EXTREME_REVIEW" ? "⚠ Flagged for calibration review" : "Tracked training finding"}
+            </span>
+            <Badge className="bg-white/70 border-current text-current text-[10px]">{findingQ.data.status}</Badge>
+          </div>
+          <p className="mt-1">{findingQ.data.evidenceNote}</p>
+          <p className="mt-1 text-[10px] opacity-70">Raised {new Date(findingQ.data.raisedAt).toLocaleDateString()}</p>
         </div>
       )}
 
@@ -253,27 +303,49 @@ function SidePanel({
 
 export default function NativeTNIAnalysis() {
   const { toast } = useToast();
-  const [from, setFrom]       = useState(firstOfMonth());
-  const [to, setTo]           = useState(today());
+  const [from, setFrom]         = useState(firstOfMonth());
+  const [to, setTo]             = useState(today());
   const [clientId, setClientId] = useState("all");
+  const [branchId, setBranchId] = useState("all");
+  const [processId, setProcessId] = useState("all");
+  const [costCentreId, setCostCentreId] = useState("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [sidePanel, setSidePanel] = useState<SidePanelState | null>(null);
 
+  const filterOptsQ = useQuery({
+    queryKey: ["tni-filter-options"],
+    queryFn: () => hrmsApi.get<{ branches: FilterOption[]; processes: FilterOption[]; costCentres: FilterOption[] }>(
+      "/api/quality-dashboard/tni-filter-options"
+    ),
+    staleTime: 5 * 60 * 1000,
+  });
+  const branches    = filterOptsQ.data?.branches    ?? [];
+  const processes   = filterOptsQ.data?.processes   ?? [];
+  const costCentres = filterOptsQ.data?.costCentres ?? [];
+
   const qs = new URLSearchParams({
     from, to,
-    ...(clientId !== "all" ? { client_id: clientId } : {}),
+    ...(clientId     !== "all" ? { client_id:      clientId }     : {}),
+    ...(branchId     !== "all" ? { branch_id:      branchId }     : {}),
+    ...(processId    !== "all" ? { process_id:     processId }    : {}),
+    ...(costCentreId !== "all" ? { cost_centre_id: costCentreId } : {}),
   }).toString();
 
   const tniQ = useQuery({
-    queryKey: ["tni-analysis", from, to, clientId],
+    queryKey: ["tni-analysis", from, to, clientId, branchId, processId, costCentreId],
     queryFn: () =>
-      hrmsApi.get<{ agents: TniAgentRow[]; summary: TniSummary }>(
+      hrmsApi.get<{ agents: TniAgentRow[]; summary: TniSummary; thresholds?: Record<ParamKey, number> }>(
         `/api/quality-dashboard/tni-analysis?${qs}`
       ),
   });
 
   const agents: TniAgentRow[] = tniQ.data?.agents ?? [];
   const summary: TniSummary | null = tniQ.data?.summary ?? null;
+  const thresholds: Record<ParamKey, number> = tniQ.data?.thresholds ?? ({} as Record<ParamKey, number>);
+  const thresholdFor = useCallback(
+    (param: ParamKey) => thresholds[param] ?? FALLBACK_THRESHOLD,
+    [thresholds],
+  );
 
   // Param label lookup
   const paramLabelMap = useMemo(() => {
@@ -289,12 +361,14 @@ export default function NativeTNIAnalysis() {
   const exportCsv = useCallback(() => {
     if (!agents.length) return;
     const headers = [
-      "Agent Code", "Agent Name", "Audit Count", "Avg CQ Score",
+      "Agent Code", "Agent Name", "Process Name", "Reporting Manager",
+      "Branch", "Cost Centre", "Audit Count", "Avg CQ Score",
       "TNI Flag Count",
       ...PARAMS.map((p) => p.label),
     ];
     const rows = agents.map((a) => [
-      a.agent_code, a.agent_name, a.audit_count, a.avg_cq_score, a.tni_flag_count,
+      a.agent_code, a.agent_name, a.process_name, a.reporting_manager,
+      a.branch_name, a.cost_centre_name, a.audit_count, a.avg_cq_score, a.tni_flag_count,
       ...PARAMS.map((p) => a.params[p.key]),
     ]);
     const csv = [headers, ...rows].map((r) => r.join(",")).join("\n");
@@ -405,38 +479,52 @@ export default function NativeTNIAnalysis() {
           <CardContent className="pt-4 pb-4">
             <div className="flex flex-wrap items-end gap-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
-                  From
-                </label>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">From</label>
                 <input
-                  type="date"
-                  value={from}
-                  onChange={(e) => setFrom(e.target.value)}
+                  type="date" value={from} onChange={(e) => setFrom(e.target.value)}
                   className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
-                  To
-                </label>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">To</label>
                 <input
-                  type="date"
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
+                  type="date" value={to} onChange={(e) => setTo(e.target.value)}
                   className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">
-                  Client / Process
-                </label>
-                <Select value={clientId} onValueChange={setClientId}>
-                  <SelectTrigger className="w-48 h-9 text-sm border-slate-200">
-                    <SelectValue placeholder="All Clients" />
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Branch</label>
+                <Select value={branchId} onValueChange={setBranchId}>
+                  <SelectTrigger className="w-44 h-9 text-sm border-slate-200">
+                    <SelectValue placeholder="All Branches" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Clients</SelectItem>
-                    {/* Client list can be loaded via /api/quality-dashboard/clients if needed */}
+                    <SelectItem value="all">All Branches</SelectItem>
+                    {branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Process</label>
+                <Select value={processId} onValueChange={setProcessId}>
+                  <SelectTrigger className="w-48 h-9 text-sm border-slate-200">
+                    <SelectValue placeholder="All Processes" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Processes</SelectItem>
+                    {processes.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Cost Centre</label>
+                <Select value={costCentreId} onValueChange={setCostCentreId}>
+                  <SelectTrigger className="w-48 h-9 text-sm border-slate-200">
+                    <SelectValue placeholder="All Cost Centres" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Cost Centres</SelectItem>
+                    {costCentres.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -491,18 +579,18 @@ export default function NativeTNIAnalysis() {
 
             {/* ── Legend ──────────────────────────────────────────────────── */}
             <div className="flex items-center gap-4 text-xs font-medium">
-              <span className="text-slate-500">Legend:</span>
+              <span className="text-slate-500">Legend (bar is per-parameter — hover a cell to see it):</span>
               <span className="flex items-center gap-1.5">
                 <span className="inline-block w-4 h-4 rounded bg-emerald-100 border border-emerald-200" />
-                ≥80% — Pass (no action)
+                Pass (no action)
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="inline-block w-4 h-4 rounded bg-amber-100 border border-amber-200" />
-                60–79% — Monitor
+                Monitor
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="inline-block w-4 h-4 rounded bg-red-100 border border-red-200" />
-                &lt;60% — Needs Training (click to drill in)
+                Needs Training (click to drill in)
               </span>
             </div>
 
@@ -537,6 +625,12 @@ export default function NativeTNIAnalysis() {
                         <TableHead className="sticky left-8 z-10 bg-slate-50 min-w-[180px] text-xs font-semibold text-slate-600">
                           Agent
                         </TableHead>
+                        <TableHead className="text-xs font-semibold text-slate-600 min-w-[140px]">
+                          Process Name
+                        </TableHead>
+                        <TableHead className="text-xs font-semibold text-slate-600 min-w-[140px]">
+                          Reporting Manager
+                        </TableHead>
                         <TableHead className="text-xs font-semibold text-slate-600 text-center w-16">
                           Audits
                         </TableHead>
@@ -549,10 +643,10 @@ export default function NativeTNIAnalysis() {
                         {PARAMS.map((p) => (
                           <TableHead
                             key={p.key}
-                            className="text-xs font-semibold text-slate-500 text-center min-w-[72px] whitespace-nowrap"
+                            className="text-xs font-semibold text-slate-500 text-center min-w-[72px] whitespace-normal"
                             title={friendlyParamName(p.key)}
                           >
-                            <span className="block max-w-[72px] overflow-hidden text-ellipsis">{p.label}</span>
+                            <span className="block text-center leading-tight">{p.label}</span>
                           </TableHead>
                         ))}
                       </TableRow>
@@ -581,13 +675,23 @@ export default function NativeTNIAnalysis() {
                             </div>
                             <div className="text-xs text-slate-400">{a.agent_code}</div>
                           </TableCell>
+                          {/* Process Name */}
+                          <TableCell className="text-xs text-slate-600">
+                            {a.process_name || <span className="text-slate-300">—</span>}
+                          </TableCell>
+                          {/* Reporting Manager */}
+                          <TableCell className="text-xs text-slate-600">
+                            {a.reporting_manager || <span className="text-slate-300">—</span>}
+                          </TableCell>
                           {/* Audit count */}
                           <TableCell className="text-center text-xs text-slate-600">
                             {a.audit_count}
                           </TableCell>
-                          {/* CQ Score */}
+                          {/* CQ Score — an aggregate composite, not one of the 19 TNI
+                              parameters, so it has no per-parameter baseline of its
+                              own; kept on the flat convention deliberately. */}
                           <TableCell className="text-center">
-                            <span className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold ${cellBg(a.avg_cq_score)}`}>
+                            <span className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold ${cellBg(a.avg_cq_score, FALLBACK_THRESHOLD)}`}>
                               {a.avg_cq_score}%
                             </span>
                           </TableCell>
@@ -604,12 +708,13 @@ export default function NativeTNIAnalysis() {
                           {/* Param cells */}
                           {PARAMS.map((p) => {
                             const pct = a.params[p.key] ?? 0;
-                            const isRed = pct < TNI_THRESHOLD;
+                            const threshold = thresholdFor(p.key);
+                            const isRed = pct < threshold;
                             return (
                               <TableCell
                                 key={p.key}
-                                className={`text-center text-xs px-2 py-2 ${cellClass(pct)}`}
-                                title={`${a.agent_name} — ${friendlyParamName(p.key)}: ${pct}% pass`}
+                                className={`text-center text-xs px-2 py-2 ${cellClass(pct, threshold)}`}
+                                title={`${a.agent_name} — ${friendlyParamName(p.key)}: ${pct}% pass (needs-training line for this parameter: ${threshold}%)`}
                                 onClick={() => isRed && openPanel(a, p.key)}
                               >
                                 {pct}%

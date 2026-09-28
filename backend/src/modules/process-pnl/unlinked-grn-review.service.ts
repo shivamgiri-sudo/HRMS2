@@ -1,5 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { budgetLineCeilingSql } from "./budget-tax-basis.js";
+import { grnRequestExGstSql } from "./pnl-ex-gst.js";
 
 /**
  * Unlinked GRN Review (/finance/unlinked-grn-review) — built 2026-08-22 as the permanent,
@@ -18,8 +20,10 @@ import { db } from "../../db/mysql.js";
  *   - NO_BRANCH_BUDGET: the branch has no finance_budget_header for that exact month at all
  *   - NO_MATCHING_LINE: a budget exists for that branch/month, but no line covers this
  *     cost-centre + head + sub-head combination (head coverage gap)
- *   - HEADROOM_EXCEEDED: a line matches exactly, but its remaining (gross - reserved -
- *     consumed) is less than this GRN's amount — real overspend against what was approved
+ *   - HEADROOM_EXCEEDED: a line matches exactly, but its remaining (ex-GST ceiling - reserved -
+ *     consumed) is less than this GRN's ex-GST amount — real overspend against what was approved.
+ *     Both sides ex-GST since 2026-09-24, the basis the approval gate enforces (budget-tax-basis.ts);
+ *     it was the line's gross against the GRN's amount_with_tax.
  */
 
 export type UnlinkedGrnCategory =
@@ -90,7 +94,8 @@ export async function getUnlinkedGrnReview(filters: {
   const [grns] = await db.execute<RowDataPacket[]>(
     `SELECT g.id, g.grn_number, g.grn_type, g.status, g.branch_id, bm.branch_name,
             g.cost_centre_id, ccm.cost_centre_name, g.head, g.sub_head,
-            g.accounting_period, g.financial_year, g.amount_with_tax
+            g.accounting_period, g.financial_year, g.amount_with_tax,
+            ${grnRequestExGstSql("g")} AS amount_ex_gst
        FROM grn_request g
        JOIN branch_master bm ON bm.id = g.branch_id
        LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
@@ -112,7 +117,8 @@ export async function getUnlinkedGrnReview(filters: {
 
   const [lines] = await db.execute<RowDataPacket[]>(
     `SELECT l.id, l.budget_id, l.cost_centre_id, l.head, l.sub_head,
-            l.gross_amount, l.reserved_amount, l.consumed_amount
+            l.gross_amount, l.reserved_amount, l.consumed_amount,
+            ${budgetLineCeilingSql("l")} AS ceiling_ex_gst
        FROM finance_budget_line l`
   );
   const lineByKey = new Map<string, RowDataPacket>();
@@ -151,8 +157,11 @@ export async function getUnlinkedGrnReview(filters: {
     if (!line) {
       return { ...base, category: "NO_MATCHING_LINE" as const, shortfall: null };
     }
-    const available = n(line.gross_amount) - n(line.reserved_amount) - n(line.consumed_amount);
-    const shortfall = Math.max(0, n(g.amount_with_tax) - available);
+    // Ex-GST on both sides, the basis the approval gate enforces. A row missing the computed
+    // column (never from the query above) falls back to the old gross figures, not to zero.
+    const ceiling = line.ceiling_ex_gst ?? line.gross_amount;
+    const available = n(ceiling) - n(line.reserved_amount) - n(line.consumed_amount);
+    const shortfall = Math.max(0, n(g.amount_ex_gst ?? g.amount_with_tax) - available);
     return { ...base, category: "HEADROOM_EXCEEDED" as const, shortfall };
   });
 

@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { readLobFilter, lobAnd } from "../../shared/lobFilter.js";
+import { withLobNames } from "../../shared/lobNames.js";
 import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -493,11 +495,15 @@ router.get("/manager-review-queue", h(async (req: AuthenticatedRequest, res: Res
     params.push(...pids);
   }
 
+  const lob = readLobFilter(req, res);
+  if (!lob) return;
+  const lobSql = lobAnd(lob, "e");
+  params.push(...lobSql.params);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT rda.id, rda.cycle_id, rda.employee_id, rda.roster_date,
             rda.shift_template_id, rda.is_week_off, rda.acknowledgement_status,
             rda.dispute_reason, rda.dispute_resolved_at, rda.dispute_resolution,
-            e.employee_code, e.first_name, e.last_name,
+            e.employee_code, e.first_name, e.last_name, e.lob_id,
             wrc.process_id, wrc.week_start_date, wrc.week_end_date,
             wst.shift_name, wst.start_time, wst.end_time
        FROM roster_daily_assignment rda
@@ -506,11 +512,11 @@ router.get("/manager-review-queue", h(async (req: AuthenticatedRequest, res: Res
        LEFT JOIN wfm_shift_template wst ON wst.id = rda.shift_template_id
       WHERE rda.acknowledgement_status = 'disputed'
         AND rda.dispute_resolved_at IS NULL
-        ${processFilter}
+        ${processFilter}${lobSql.sql}
       ORDER BY rda.roster_date ASC`,
     params
   );
-  return res.json({ data: rows });
+  return res.json({ data: await withLobNames(rows, "lob_id") });
 }));
 
 // POST /assignments/:id/resolve-dispute — manager resolves dispute

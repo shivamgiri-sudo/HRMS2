@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { apiBaseUrl } from "@/lib/apiBase";
 
 interface AuthedImageProps {
   src: string;
   alt: string;
   className?: string;
+  style?: CSSProperties;
   loading?: "eager" | "lazy";
 }
 
@@ -26,7 +27,7 @@ function resolveUrl(src: string): string {
   return `${HRMS_BASE}${src}`;
 }
 
-function AuthedImagePrivate({ src, alt, className, loading = "lazy" }: AuthedImageProps) {
+function AuthedImagePrivate({ src, alt, className, style, loading = "lazy" }: AuthedImageProps) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [errored, setErrored] = useState(false);
   const prevUrl = useRef<string | null>(null);
@@ -71,14 +72,14 @@ function AuthedImagePrivate({ src, alt, className, loading = "lazy" }: AuthedIma
 
   if (errored) {
     return (
-      <div className={`flex items-center justify-center bg-slate-100 text-slate-400 text-xs ${className ?? ""}`}>
+      <div className={`flex items-center justify-center bg-slate-100 text-slate-400 text-xs ${className ?? ""}`} style={style}>
         Image unavailable
       </div>
     );
   }
 
   if (!objectUrl) {
-    return <div className={`animate-pulse bg-slate-100 ${className ?? ""}`} aria-hidden="true" />;
+    return <div className={`animate-pulse bg-slate-100 ${className ?? ""}`} style={style} aria-hidden="true" />;
   }
 
   return (
@@ -87,11 +88,12 @@ function AuthedImagePrivate({ src, alt, className, loading = "lazy" }: AuthedIma
       alt={alt}
       loading={loading}
       className={className}
+      style={style}
     />
   );
 }
 
-export function AuthedImage({ src, alt, className, loading = "lazy" }: AuthedImageProps) {
+export function AuthedImage({ src, alt, className, style, loading = "lazy" }: AuthedImageProps) {
   if (isPublicUrl(src)) {
     return (
       <img
@@ -99,8 +101,9 @@ export function AuthedImage({ src, alt, className, loading = "lazy" }: AuthedIma
         alt={alt}
         loading={loading}
         className={className}
+        style={style}
       />
     );
   }
-  return <AuthedImagePrivate src={src} alt={alt} className={className} loading={loading} />;
+  return <AuthedImagePrivate src={src} alt={alt} className={className} style={style} loading={loading} />;
 }

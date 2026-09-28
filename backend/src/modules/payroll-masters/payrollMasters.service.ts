@@ -133,7 +133,15 @@ export async function listPackages(filters: {
     SELECT spm.*,
            sbm.slab_from, sbm.slab_to, sbm.band_name
     FROM salary_package_master spm
-    LEFT JOIN salary_band_master sbm ON sbm.band_code = spm.band_code AND sbm.active_status = 1
+    LEFT JOIN (
+      SELECT band_code,
+             MIN(slab_from) AS slab_from,
+             MAX(slab_to)   AS slab_to,
+             MIN(band_name) AS band_name
+      FROM salary_band_master
+      WHERE active_status = 1
+      GROUP BY band_code
+    ) sbm ON sbm.band_code = spm.band_code
     WHERE 1=1`;
   const params: unknown[] = [];
   // Retired packages must not be offerable. This endpoint is what fills every
@@ -152,7 +160,11 @@ export async function listPackages(filters: {
   // location_id this function used to accept and silently ignore.
   if (filters.band) { sql += ' AND spm.band_code = ?'; params.push(filters.band); }
   if (filters.branch) { sql += ' AND spm.branch_name = ?'; params.push(filters.branch); }
-  if (filters.costCentre) { sql += ' AND spm.cost_centre_code = ?'; params.push(filters.costCentre); }
+  if (filters.costCentre) {
+    // Include branch-wide packages (cost_centre_code IS NULL) alongside CC-specific ones
+    sql += ' AND (spm.cost_centre_code = ? OR spm.cost_centre_code IS NULL)';
+    params.push(filters.costCentre);
+  }
   sql += ' ORDER BY spm.created_at DESC';
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
   return rows;
@@ -190,6 +202,18 @@ export async function getPackageById(id: string) {
 function amt(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Same as amt(), except for the professional_tax column: PT removed 2026-09-11
+ * per user decision — full company-wide removal. A new or edited salary package
+ * can no longer store a nonzero professional_tax, regardless of what the caller
+ * submits. Existing stored rows are left untouched (additive-only rule) and
+ * still readable via getPackageById/listPackages.
+ */
+function amtColumn(column: string, v: unknown): number {
+  if (column === "professional_tax") return 0;
+  return amt(v);
 }
 
 /**
@@ -257,7 +281,7 @@ async function checkPackageMinimumWage(branchName: unknown, packageAmount: numbe
 export async function createPackage(data: any, createdBy: string) {
   requirePackageKeys(data);
   const id = randomUUID();
-  const money = PACKAGE_MONEY_COLUMNS.map((c) => amt(data[c]));
+  const money = PACKAGE_MONEY_COLUMNS.map((c) => amtColumn(c, data[c]));
   const packageAmount = amt(data.package_amount);
   const minWage = await checkPackageMinimumWage(data.branch_name, packageAmount);
 
@@ -288,6 +312,40 @@ export async function createPackage(data: any, createdBy: string) {
 }
 
 /**
+ * Create the same package definition across multiple branch+cost-centre combinations.
+ * Skips any combination that already has a row with the same (branch_name, cost_centre_code, band_code)
+ * so repeated submissions are safe. Returns a summary of created vs skipped counts.
+ */
+export async function bulkCreatePackages(
+  data: { branch_names: string[]; cost_centre_codes?: string[]; band_code: string; [key: string]: unknown },
+  createdBy: string,
+): Promise<{ created: number; skipped: number; packages: unknown[] }> {
+  const { branch_names, cost_centre_codes = [], ...packageFields } = data;
+  const results: unknown[] = [];
+  let created = 0;
+  let skipped = 0;
+
+  for (const branch_name of branch_names) {
+    const ccList = cost_centre_codes.length > 0 ? cost_centre_codes : [null];
+    for (const cost_centre_code of ccList) {
+      try {
+        const pkg = await createPackage({ ...packageFields, branch_name, cost_centre_code }, createdBy);
+        results.push(pkg);
+        created++;
+      } catch (err: unknown) {
+        const code = (err as any)?.code ?? (err as any)?.sqlState;
+        if (code === 'ER_DUP_ENTRY' || code === '23000') {
+          skipped++;
+        } else {
+          throw err;
+        }
+      }
+    }
+  }
+  return { created, skipped, packages: results };
+}
+
+/**
  * Update a salary package. Same column correction as createPackage above.
  *
  * Merged over the existing row so a partial payload cannot blank a money column
@@ -315,7 +373,7 @@ export async function updatePackage(id: string, data: any) {
       merged.cost_centre_code ?? null,
       merged.band_code,
       packageAmount,
-      ...PACKAGE_MONEY_COLUMNS.map((c) => amt(merged[c])),
+      ...PACKAGE_MONEY_COLUMNS.map((c) => amtColumn(c, merged[c])),
       merged.active_status ?? 1,
       minWage.min_wage_provisional,
       minWage.min_wage_check_note,

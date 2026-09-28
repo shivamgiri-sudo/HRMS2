@@ -454,6 +454,11 @@ Answer the user's question based solely on the provided context. Be concise and 
     const special = Number(ctx.special_allowance_component ?? 0);
     const pf = Number(ctx.pf_deduction ?? 0);
     const tds = Number(ctx.tds_deduction ?? 0);
+    // PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+    // company-wide, all states). Left wired, not deleted: ctx.professional_tax_deduction
+    // is 0 for any current run (the `pt > 0` guard below then naturally hides the line),
+    // but a historical month that already carried a real PT amount still shows it —
+    // which is correct, since it actually happened and must not be erased from the record.
     const pt = Number(ctx.professional_tax_deduction ?? 0);
     const lwp = Number(ctx.lwp_deduction ?? 0);
     const presentDays = Number(ctx.present_days_count ?? 0);

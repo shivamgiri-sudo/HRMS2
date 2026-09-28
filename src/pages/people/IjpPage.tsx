@@ -2,9 +2,10 @@ import { useState } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { HrmsModernShell, HrmsBentoTile } from "@/components/ui/hrms-modern";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Briefcase, FileText, TrendingUp } from "lucide-react";
+import { Briefcase, FileText, TrendingUp, UserPlus } from "lucide-react";
 import { IjpOpportunities } from "@/components/ijp/IjpOpportunities";
 import { IjpMyApplications } from "@/components/ijp/IjpMyApplications";
+import { EmployeeReferralTab } from "@/components/ijp/EmployeeReferralTab";
 import { useMyIjpApplications, useEligibleIjpPostings } from "@/components/ijp/useIjp";
 
 function IjpEmployeeStats() {
@@ -69,7 +70,7 @@ export default function IjpPage() {
         <IjpEmployeeStats />
 
         <Tabs value={tab} onValueChange={setTab} className="w-full">
-          <TabsList className="h-10 w-full max-w-xs grid grid-cols-2">
+          <TabsList className="h-10 w-full max-w-md grid grid-cols-3">
             <TabsTrigger value="opportunities" className="gap-1.5 text-xs sm:text-sm">
               <Briefcase className="h-3.5 w-3.5" />
               Opportunities
@@ -77,6 +78,10 @@ export default function IjpPage() {
             <TabsTrigger value="applications" className="gap-1.5 text-xs sm:text-sm">
               <FileText className="h-3.5 w-3.5" />
               My Applications
+            </TabsTrigger>
+            <TabsTrigger value="refer" className="gap-1.5 text-xs sm:text-sm">
+              <UserPlus className="h-3.5 w-3.5" />
+              Refer a candidate
             </TabsTrigger>
           </TabsList>
 
@@ -86,6 +91,10 @@ export default function IjpPage() {
 
           <TabsContent value="applications" className="mt-4">
             <IjpMyApplications />
+          </TabsContent>
+
+          <TabsContent value="refer" className="mt-4">
+            <EmployeeReferralTab />
           </TabsContent>
         </Tabs>
       </HrmsModernShell>

@@ -105,6 +105,8 @@ export interface BranchBudgetAllocationRecord {
   cost_centre_id: string;
   cost_centre_name: string | null;
   cost_centre_code: string | null;
+  /** Mapped process, else billing process name (backend cost-centre-label.ts). */
+  cost_centre_process?: string | null;
   driver_value: number;
   allocation_percentage: number;
   planned_unit: number;

@@ -230,13 +230,14 @@ export function AttendanceTab({ employeeId, employeeLabel }: Props) {
           {Array.from({ length: 7 }).map((_, i) => <Skeleton key={i} className="h-16 flex-1 rounded-xl" />)}
         </div>
       ) : summary ? (
-        <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
+        <div className="grid grid-cols-4 gap-2 sm:grid-cols-8">
           {[
             { label: "Present", value: summary.presentDays, cls: "bg-emerald-50 text-emerald-800 border-emerald-100" },
             { label: "Half Day", value: summary.halfDays, cls: "bg-amber-50 text-amber-800 border-amber-100" },
             { label: "Absent", value: summary.absentDays, cls: "bg-rose-50 text-rose-800 border-rose-100" },
             { label: "LWP", value: Number(summary.totalLwp).toFixed(1), cls: "bg-orange-50 text-orange-800 border-orange-100" },
             { label: "Leave", value: summary.leaveDays, cls: "bg-purple-50 text-purple-800 border-purple-100" },
+            { label: "Week Off", value: summary.weekOffDays ?? 0, cls: "bg-slate-50 text-slate-700 border-slate-200" },
             { label: "Holiday", value: summary.holidayDays, cls: "bg-blue-50 text-blue-800 border-blue-100" },
             { label: "Late Marks", value: summary.lateMarks, cls: "bg-yellow-50 text-yellow-800 border-yellow-100" },
           ].map(item => (

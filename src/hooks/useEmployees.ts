@@ -28,6 +28,8 @@ export interface Employee {
   joinDate: string;
   /** `employees.salary_start_date`; falls back to date_of_joining server-side when unset. */
   salaryStartDate: string;
+  /** `employees.date_of_exit`, formatted; empty string for active employees. */
+  exitDate: string;
   status: "active" | "inactive" | "onboarding" | "offboarded";
   /**
    * Set by the mapper below from the API's `profile_incomplete`, but never declared here — so
@@ -76,6 +78,8 @@ export interface RawEmployee {
   designation?: string | null;
   date_of_joining?: string | null;
   salary_start_date?: string | null;
+  /** `employees.date_of_exit` — set when the employee has left; null/absent for active employees. */
+  date_of_exit?: string | null;
   employment_status?: string | null;
   reporting_manager_id?: string | null;
   reporting_manager_name?: string | null;
@@ -96,6 +100,10 @@ export interface EmployeeDirectoryFilters {
   departmentId?: string;
   processId?: string;
   branchId?: string;
+  // Joining-date range, "yyyy-MM-dd". Currently only consumed by the export flow
+  // (fetchAllFilteredEmployeeRows) — the on-screen directory page has no date filter.
+  startDate?: string;
+  endDate?: string;
   sortBy?: EmployeeSortKey;
   sortOrder?: "asc" | "desc";
 }
@@ -205,6 +213,8 @@ export async function fetchAllFilteredEmployeeRows(
     if (filters.departmentId) params.set("departmentId", filters.departmentId);
     if (filters.processId) params.set("processId", filters.processId);
     if (filters.branchId) params.set("branchId", filters.branchId);
+    if (filters.startDate) params.set("startDate", filters.startDate);
+    if (filters.endDate) params.set("endDate", filters.endDate);
     if (filters.sortBy) params.set("sortBy", filters.sortBy);
     if (filters.sortOrder) params.set("sortOrder", filters.sortOrder);
     return `/api/employees?${params.toString()}`;
@@ -266,6 +276,7 @@ function mapEmployee(emp: RawEmployee): Employee {
     designation: emp.designation_name || emp.designation || "",
     joinDate: formatEmployeeDate(emp.date_of_joining),
     salaryStartDate: formatEmployeeDate(emp.salary_start_date),
+    exitDate: formatEmployeeDate(emp.date_of_exit),
     status: normalizeEmployeeStatus(emp.employment_status),
     profileIncomplete: Boolean(emp.profile_incomplete),
   };

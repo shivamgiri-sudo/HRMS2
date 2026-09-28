@@ -14,9 +14,15 @@ import {
   type RevenueComponentInput,
   type RevenueRuleInput,
 } from "./bpo-pnl.calculation.js";
-import { PROCESS_BY_COST_CENTRE, getInvoicedRevenueActuals } from "./pnl-actuals.service.js";
+import { PROCESS_BY_COST_CENTRE, getInvoicedRevenueActuals, getApprovedCostCentreSplits } from "./pnl-actuals.service.js";
+import { isOpenPeriod, getLiveRevenueEstimate } from "./pnl-statement.service.js";
+import { isEstimateWindow } from "./pnl-seat-billing.service.js";
+import { getCurrentDateIST } from "../../shared/istDate.js";
+import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
+import { grnRequestExGstSql, vendorPayableExGstSql } from "./pnl-ex-gst.js";
+import { peopleCostSqlForColumns } from "./pnl-people-cost.js";
 import type { PeopleCostByKey, PnlPeopleBucket } from "./pnl-running-salary.service.js";
-import { processPnlService } from "./process-pnl.service.js";
+import { processPnlService, getClosedBranchIds } from "./process-pnl.service.js";
 import type { PnlQueryFilters, ProcessPnlRecord } from "./process-pnl.types.js";
 
 type NumericMap = Map<string, number>;
@@ -122,8 +128,13 @@ interface AllocationPolicyRow extends RowDataPacket {
 interface PayrollPersonRow extends RowDataPacket {
   employee_id: string;
   employee_code: string | null;
+  /** EFFECTIVE process/branch — where the pay is counted (see getPayrollPeople). */
   process_id: string | null;
   branch_id: string | null;
+  /** HR home process/branch — classification-rule matching only. Absent in older callers/tests,
+   *  in which case matching falls back to the effective values. */
+  home_process_id?: string | null;
+  home_branch_id?: string | null;
   designation_id: string | null;
   designation_name: string | null;
   department_id: string | null;
@@ -238,6 +249,13 @@ export interface BpoPnlRow {
   bmc: number;
   bmcPctRevenue: number | null;
   grnVendorActual: number;
+  /**
+   * GRN Committed (reserved) — the part of grnVendorActual that is approved GRN allocation not yet
+   * consumed, ex-GST. Owner rule 2026-09-24 ("Reserved + Consumed should be there in P&L"). Set by
+   * bpo-pnl-allocation-overlay.service.ts (which adds it into the non-people buckets, so EBITDA /
+   * EBIT / Operating Profit already subtract it); absent / 0 on a row the overlay never touched.
+   */
+  grnCommitted?: number;
   totalPeopleCost: number;
   peopleCostPctRevenue: number | null;
   contribution: number;
@@ -608,9 +626,13 @@ function matchClassification(person: PayrollPersonRow, rules: ClassificationRule
     designation: [lower(person.designation_id), lower(person.designation_name)],
     department: [lower(person.department_id), lower(person.department_name)],
   };
+  // Rules match the person's HOME process/branch (who they are), not where a cost-centre mapping
+  // sends their pay — see getPayrollPeople.
+  const processId = person.home_process_id !== undefined ? person.home_process_id : person.process_id;
+  const branchId = person.home_branch_id !== undefined ? person.home_branch_id : person.branch_id;
   return rules.find((rule) => {
-    if (rule.process_id && String(rule.process_id) !== String(person.process_id ?? "")) return false;
-    if (rule.branch_id && String(rule.branch_id) !== String(person.branch_id ?? "")) return false;
+    if (rule.process_id && String(rule.process_id) !== String(processId ?? "")) return false;
+    if (rule.branch_id && String(rule.branch_id) !== String(branchId ?? "")) return false;
     return (values[rule.scope_type] ?? []).includes(lower(rule.scope_key));
   }) ?? null;
 }
@@ -654,14 +676,9 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
   const departmentExists = await tableExists("department_master");
   const departmentColumns = departmentExists ? await listColumns("department_master") : new Set<string>();
 
-  const grossExpr = salaryColumns.has("gross_salary") ? "COALESCE(spl.gross_salary, 0)" : "0";
-  const pfExpr = salaryColumns.has("pf_employer") ? "COALESCE(spl.pf_employer, 0)" : "0";
-  const esicExpr = salaryColumns.has("esic_employer") ? "COALESCE(spl.esic_employer, 0)" : "0";
-  const gratuityExpr = salaryColumns.has("gratuity")
-    ? "COALESCE(spl.gratuity, 0)"
-    : salaryColumns.has("basic")
-    ? "COALESCE(spl.basic, 0) * 0.0481"
-    : "0";
+  // People Cost per line (owner rule 2026-09-24, pnl-people-cost.ts): CTC paid less other/loan/
+  // advance/LWP deductions; a missing column contributes 0 as before.
+  const peopleCostExpr = peopleCostSqlForColumns("spl", salaryColumns);
   /*
    * Process resolved via two sources in order:
    *   1. employees.process_id — set directly on the employee (most agents and DSC staff)
@@ -677,10 +694,35 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
   const ccJoin = hasCostCentreId
     ? "LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id"
     : "";
-  const processExpr = employeeColumns.has("process_id")
+  const homeProcessExpr = employeeColumns.has("process_id")
     ? (hasCostCentreId ? "COALESCE(e.process_id, ccm.process_id)" : "e.process_id")
     : "NULL";
-  const branchExpr = employeeColumns.has("branch_id") ? "e.branch_id" : "NULL";
+  const homeBranchExpr = employeeColumns.has("branch_id") ? "e.branch_id" : "NULL";
+  /*
+   * WHERE a person's pay is counted (owner rule 2026-09-23, aligned with Live P&L, CEO Overview,
+   * trend and the drilldown via payrollAttributionSql): the EFFECTIVE cost centre — the payroll cost
+   * centre an employee is mapped to in pnl_employee_cost_centre_override, else their HR cost
+   * centre — decides the branch (its branch; home e.branch_id only for staff with no cost centre)
+   * and, for a mapped employee, the process (the mapped cost centre's process when it has one).
+   * A mapped employee is therefore in exactly one branch and one process, never also in their home
+   * ones: the query still returns one row per employee (GROUP BY e.id; both joins are 1:1).
+   *
+   * branch_id / process_id below are these EFFECTIVE values, so the Statement branch view's
+   * byBranch/byProcess, its coverage counts and the BMC branch pools all follow the mapping.
+   * home_branch_id / home_process_id are kept ONLY for classification-rule matching
+   * (matchClassification): a rule classifies who a person is (Agent / DSC / BMC), and reclassifying
+   * people because Finance mapped their cost elsewhere was not asked for.
+   */
+  const attribution = employeeColumns.has("cost_centre_id")
+    ? await payrollAttributionSql({
+        employeeIdExpr: "e.id",
+        homeCostCentreExpr: "e.cost_centre_id",
+        homeBranchExpr,
+        homeProcessExpr,
+      })
+    : { join: "", effectiveBranchExpr: homeBranchExpr, effectiveProcessExpr: homeProcessExpr };
+  const processExpr = attribution.effectiveProcessExpr;
+  const branchExpr = attribution.effectiveBranchExpr;
   const designationIdExpr = employeeColumns.has("designation_id") ? "e.designation_id" : "NULL";
   const departmentIdExpr = employeeColumns.has("department_id") ? "e.department_id" : "NULL";
   const designationJoin = designationExists && employeeColumns.has("designation_id")
@@ -698,24 +740,34 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
       : "NULL"
     : "NULL";
 
+  // ONE ROW PER EMPLOYEE, grouped on e.id alone. Every join here is 1:1 with the employee (cost
+  // centre and designation/department on their primary keys; the override on its unique
+  // employee_id), so each non-summed column has exactly one value per employee and MAX() only
+  // satisfies ONLY_FULL_GROUP_BY. This used to also GROUP BY the bare aliases process_id / branch_id,
+  // which MySQL resolves against the FROM columns first (e.branch_id, ccm.branch_id, ...) — with the
+  // effective cost centre joined in as well that would have been ambiguous, and grouping by a home
+  // column could never split one person across two places anyway.
   return safeRows<PayrollPersonRow>(
     `SELECT
         e.id AS employee_id,
-        e.employee_code,
-        ${processExpr} AS process_id,
-        ${branchExpr} AS branch_id,
-        ${designationIdExpr} AS designation_id,
-        ${designationNameExpr} AS designation_name,
-        ${departmentIdExpr} AS department_id,
-        ${departmentNameExpr} AS department_name,
-        SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS loaded_cost
+        MAX(e.employee_code) AS employee_code,
+        MAX(${processExpr}) AS process_id,
+        MAX(${branchExpr}) AS branch_id,
+        MAX(${homeProcessExpr}) AS home_process_id,
+        MAX(${homeBranchExpr}) AS home_branch_id,
+        MAX(${designationIdExpr}) AS designation_id,
+        MAX(${designationNameExpr}) AS designation_name,
+        MAX(${departmentIdExpr}) AS department_id,
+        MAX(${departmentNameExpr}) AS department_name,
+        SUM(${peopleCostExpr}) AS loaded_cost
        FROM salary_prep_line spl
        JOIN employees e ON e.id = spl.employee_id
        ${ccJoin}
+       ${attribution.join}
        ${designationJoin}
        ${departmentJoin}
       WHERE spl.run_id IN (${runIds.map(() => "?").join(", ")})
-      GROUP BY e.id, e.employee_code, process_id, branch_id, designation_id, designation_name, department_id, department_name`,
+      GROUP BY e.id`,
     runIds
   );
 }
@@ -816,45 +868,6 @@ export function allocateBranchPools<T extends { amount: number }>(
     for (const [processId, amount] of outcome.amounts) result.set(processId, amount);
   }
   return result;
-}
-
-/**
- * Approved per-employee cost-centre splits for the period, resolved to PROCESSES.
- *
- * Support staff who serve several cost centres are pooled at branch level today and spread by
- * the allocation driver, which is a reasonable guess and nothing more. Where finance has
- * recorded what someone actually splits across, the guess should not be used at all.
- *
- * The cost centre is mapped to a process by the same modal-employee rule the actuals use
- * (cost_centre_master.process_id is NULL on all 927 rows, so there is no FK to follow). A share
- * pointing at a cost centre with no derivable process is dropped HERE and left in the branch
- * pool by the caller, because posting it nowhere would quietly delete salary.
- */
-async function getApprovedCostCentreSplits(
-  period: string
-): Promise<Map<string, { processId: string; pct: number }[]>> {
-  const splits = new Map<string, { processId: string; pct: number }[]>();
-  if (!(await tableExists("employee_cost_centre_allocation"))) return splits;
-  const [year, month] = period.split("-").map(Number);
-  if (!year || !month) return splits;
-  const periodEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
-
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT a.employee_id, a.allocation_pct, pc.process_id
-       FROM employee_cost_centre_allocation a
-       LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = a.cost_centre_id
-      WHERE a.status = 'approved'
-        AND a.effective_from <= ? AND (a.effective_to IS NULL OR a.effective_to >= ?)`,
-    [periodEnd, periodEnd]
-  );
-  for (const row of rows) {
-    if (!row.process_id) continue;
-    const key = String(row.employee_id);
-    const list = splits.get(key) ?? [];
-    list.push({ processId: String(row.process_id), pct: toNumber(row.allocation_pct) });
-    splits.set(key, list);
-  }
-  return splits;
 }
 
 /**
@@ -1250,9 +1263,13 @@ async function getGrnVendorActuals(
 
   if (await tableExists("vendor_payment_tracking")) {
     const columns = await listColumns("vendor_payment_tracking");
-    const amountExpr = columns.has("pnl_cost_amount")
-      ? "COALESCE(vpt.pnl_cost_amount, vpt.due_amount, 0)"
-      : "COALESCE(vpt.due_amount, 0)";
+    // EX-GST (owner rule 2026-09-24: P&L GRN must be non-GST). Was
+    // COALESCE(vpt.pnl_cost_amount, vpt.due_amount) — due_amount is the GST-inclusive payable.
+    const amountExpr = columns.has("amount_without_tax")
+      ? vendorPayableExGstSql("vpt")
+      : columns.has("pnl_cost_amount")
+        ? "COALESCE(vpt.pnl_cost_amount, vpt.due_amount, 0)"
+        : "COALESCE(vpt.due_amount, 0)";
     const recognitionExpr = columns.has("recognition_period")
       ? "COALESCE(vpt.recognition_period, DATE_FORMAT(COALESCE(vpt.due_date, vpt.payment_date, vpt.created_at), '%Y-%m'))"
       : "DATE_FORMAT(COALESCE(vpt.due_date, vpt.payment_date, vpt.created_at), '%Y-%m')";
@@ -1304,9 +1321,12 @@ async function getGrnVendorActuals(
 
   if (await tableExists("grn_request")) {
     const columns = await listColumns("grn_request");
-    const amountExpr = columns.has("pnl_cost_amount")
-      ? "COALESCE(g.pnl_cost_amount, g.amount, 0)"
-      : "COALESCE(g.amount, 0)";
+    // EX-GST (owner rule 2026-09-24). Was COALESCE(g.pnl_cost_amount, g.amount).
+    const amountExpr = columns.has("amount_without_tax")
+      ? grnRequestExGstSql("g")
+      : columns.has("pnl_cost_amount")
+        ? "COALESCE(g.pnl_cost_amount, g.amount, 0)"
+        : "COALESCE(g.amount, 0)";
     const recognitionExpr = columns.has("recognition_period")
       ? "COALESCE(g.recognition_period, DATE_FORMAT(COALESCE(g.bill_date, g.reviewed_at, g.created_at), '%Y-%m'))"
       : "DATE_FORMAT(COALESCE(g.bill_date, g.reviewed_at, g.created_at), '%Y-%m')";
@@ -1450,6 +1470,26 @@ function statusFrom(row: {
   return "profitable" as const;
 }
 
+/**
+ * For a CLOSED period, getBaseProcesses (process-pnl.service.ts) keeps processes of branches that
+ * have since been closed, so their real money for that month is still summed. This drops only the
+ * ones with nothing at all for the month — no revenue, no cost, no GRN — so a branch closed long
+ * ago does not reappear in dropdowns built from these rows. Runs AFTER allocation, so no pool is
+ * ever re-spread because of it. The open period is already filtered in SQL.
+ */
+async function dropDormantClosedBranchRows(rows: BpoPnlRow[], period: string): Promise<BpoPnlRow[]> {
+  if (isOpenPeriod(period)) return rows;
+  const closed = await getClosedBranchIds().catch(() => new Set<string>());
+  if (closed.size === 0) return rows;
+  return rows.filter((row) => {
+    if (!row.branchId || !closed.has(String(row.branchId))) return true;
+    return row.recognizedRevenue !== 0
+      || row.totalOperatingCost !== 0
+      || row.grnVendorActual !== 0
+      || row.pat !== 0;
+  });
+}
+
 async function computeBranchRows(scope: PnlQueryFilters) {
   const baseRows = await processPnlService.listProcesses(scope);
   const processIds = baseRows.map((row) => row.processId);
@@ -1496,6 +1536,12 @@ async function computeBranchRows(scope: PnlQueryFilters) {
      */
     getActualPeopleCost(scope.period ?? ""),
   ]);
+  // Live P&L's seat-rate estimate for not-yet-billed cost centres — only for the month just
+  // closed (closed per isOpenPeriod, still inside isEstimateWindow). Same figure the Statement,
+  // Live P&L and CEO Overview add; see pnl-statement.service.ts enrichColumn. Degrades to none.
+  const lastMonthEstimate = !isOpenPeriod(scope.period ?? "") && isEstimateWindow(scope.period ?? "", getCurrentDateIST())
+    ? await getLiveRevenueEstimate(scope.period ?? "").catch(() => null)
+    : null;
 
   const rows: BpoPnlRow[] = baseRows.map((base) => {
     const configuredRules = rulesMap.get(base.processId) ?? [];
@@ -1594,19 +1640,23 @@ async function computeBranchRows(scope: PnlQueryFilters) {
     }));
     const revenue = calculateRevenue(rules, deliveries, revenueComponents);
     /*
-     * Revenue, most-specific source first:
-     *   1. base.revenueMtd        accounting/invoice figure already on the row
-     *   2. revenue.earnedRevenue  computed from approved rules x validated delivery
-     *   3. invoiced               what the client was actually billed this month
-     *
-     * Three is a real number, not an estimate, and it is the only one populated today. It stays a
-     * fallback rather than the default because a configured rule knows things an invoice does not
-     * — minimum commitments, SLA deductions, incentive components — and must win wherever finance
-     * has set one up.
+     * Revenue source, matching pnl-statement.service.ts's periodOpen rule so this tile and the
+     * P&L Statement tab never disagree for the same branch/month:
+     *   - Period still open (current/future month): rule/plan estimate — base.revenueMtd, else
+     *     revenue.earnedRevenue from approved rules x validated delivery. Nothing has been billed
+     *     yet, so a plan figure is the only number available.
+     *   - Period closed (a past month): invoiced actuals from getInvoicedRevenueActuals win
+     *     whenever they exist, even if the rule estimate is also non-zero — a closed month has a
+     *     real billed number and the estimate must not outrank it. Falls back to the rule estimate
+     *     only if nothing was invoiced for the process (e.g. billing not yet recorded).
      */
-    const invoicedForProcess = invoiced.byProcess.get(base.processId) ?? 0;
+    // + last month's seat estimate for this process's unbilled cost centres (zero otherwise), so
+    // header KPIs / Full Waterfall agree with the Statement and Live P&L for the default month.
+    const invoicedForProcess = (invoiced.byProcess.get(base.processId) ?? 0)
+      + (lastMonthEstimate?.byProcess.get(base.processId) ?? 0);
     const ruleRevenue = toNumber(base.revenueMtd) > 0 ? toNumber(base.revenueMtd) : revenue.earnedRevenue;
-    const usedInvoicedFallback = ruleRevenue <= 0 && invoicedForProcess > 0;
+    const periodOpen = isOpenPeriod(scope.period ?? "");
+    const usedInvoicedFallback = !periodOpen && invoicedForProcess > 0;
     const recognizedRevenue = usedInvoicedFallback ? invoicedForProcess : ruleRevenue;
     const cost = calculateBpoCostWaterfall({
       revenue: recognizedRevenue,
@@ -1757,7 +1807,7 @@ async function computeBranchRows(scope: PnlQueryFilters) {
 
   return {
     filters: scope,
-    rows,
+    rows: await dropDormantClosedBranchRows(rows, scope.period ?? ""),
     rulesMap,
     deliveryMap,
     componentsMap,
@@ -2069,6 +2119,7 @@ export const bpoPnlService = {
         bmc: sum(rows, "bmc"),
         bmcPctRevenue: ratio(rows, "bmc", "recognizedRevenue"),
         grnVendorActual: sum(rows, "grnVendorActual"),
+        grnCommitted: sum(rows, "grnCommitted"),
         totalPeopleCost: sum(rows, "totalPeopleCost"),
         peopleCostPctRevenue: ratio(rows, "totalPeopleCost", "recognizedRevenue"),
         contribution: sum(rows, "contribution"),
@@ -2219,13 +2270,34 @@ export const bpoPnlService = {
     const id = String(payload.id ?? randomUUID());
     const status = String(payload.status ?? "draft");
     const before = await readExistingConfigRow("process_revenue_rule", id);
+
+    // This form is process-wide (no LOB picker), which historically left process_lob_id
+    // NULL -- invisible to every LOB-scoped reader (P&L LOB table, dataStatus), even though
+    // the rule itself was saved and approved. Every process today resolves to exactly one
+    // LOB (the system-created "Core / Unallocated" default), so auto-resolving to it here
+    // closes that gap at the source instead of requiring another manual DB relink later.
+    // If a process ever legitimately has more than one LOB, this intentionally leaves
+    // process_lob_id NULL rather than guessing which one -- same discipline as the manual
+    // fix this replaces.
+    let processLobId: string | null =
+      typeof payload.processLobId === "string" && payload.processLobId ? payload.processLobId : null;
+    if (!processLobId && payload.processId) {
+      const [lobRows] = await db.execute<RowDataPacket[]>(
+        "SELECT id FROM process_lob_master WHERE process_id = ? LIMIT 2",
+        [payload.processId]
+      );
+      if (lobRows.length === 1) {
+        processLobId = String(lobRows[0].id);
+      }
+    }
+
     await db.execute(
       `INSERT INTO process_revenue_rule
-        (id, process_id, contract_id, rule_name, billing_model, metric_key, rate_amount, currency_code,
+        (id, process_id, process_lob_id, contract_id, rule_name, billing_model, metric_key, rate_amount, currency_code,
          fx_to_inr, monthly_minimum_commitment, included_units, overage_rate, mandated_seats,
          quality_gate_pct, sla_gate_pct, effective_from, effective_to, status, approved_by, approved_at,
          approval_reference, created_by, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          contract_id=VALUES(contract_id), rule_name=VALUES(rule_name), billing_model=VALUES(billing_model),
          metric_key=VALUES(metric_key), rate_amount=VALUES(rate_amount), currency_code=VALUES(currency_code),
@@ -2234,10 +2306,12 @@ export const bpoPnlService = {
          quality_gate_pct=VALUES(quality_gate_pct), sla_gate_pct=VALUES(sla_gate_pct),
          effective_from=VALUES(effective_from), effective_to=VALUES(effective_to), status=VALUES(status),
          approved_by=VALUES(approved_by), approved_at=VALUES(approved_at),
-         approval_reference=VALUES(approval_reference), updated_by=VALUES(updated_by)`,
+         approval_reference=VALUES(approval_reference), updated_by=VALUES(updated_by),
+         process_lob_id=COALESCE(process_lob_id, VALUES(process_lob_id))`,
       [
         id,
         payload.processId,
+        processLobId,
         payload.contractId ?? null,
         payload.ruleName,
         payload.billingModel,

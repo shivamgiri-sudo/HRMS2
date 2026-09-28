@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
 import { refuse } from "./finance-error.js";
+import { assertFinanceRecordBranch } from "../finance/finance-access-scope.js";
 
 /**
  * Manual P&L Adjustments — Projected Revenue, Penalty, Reward.
@@ -89,9 +90,15 @@ function assertPeriod(periodCode: string) {
   }
 }
 
+export interface AdjustmentActorContext {
+  primaryRole?: string;
+  userRoles?: string[];
+}
+
 export async function createManualAdjustment(
   input: CreateAdjustmentInput,
-  actorId: string
+  actorId: string,
+  actorContext: AdjustmentActorContext = {}
 ): Promise<ManualAdjustment> {
   if (!(await tableExists("pnl_manual_adjustment"))) {
     throw refuse(503, "ADJUSTMENT_TABLE_MISSING", "pnl_manual_adjustment table not yet migrated (run sql/1645).");
@@ -115,6 +122,22 @@ export async function createManualAdjustment(
   );
   const process = processRows[0];
   if (!process) throw refuse(404, "ADJUSTMENT_PROCESS_NOT_FOUND", "Process not found");
+
+  // F-01: branch_head is in ADJUSTMENT_WRITE_ROLES and can name any process_id in the request
+  // body. Without this, a branch head could raise a manual revenue/penalty/reward adjustment
+  // against another branch's process. Global finance roles are unaffected — assertFinanceRecordBranch
+  // is a no-op for them. Validated against the process's branch inside this same write path,
+  // not as a separate pre-check, so it cannot be bypassed by a race with a process re-mapping.
+  try {
+    await assertFinanceRecordBranch({
+      userId: actorId,
+      primaryRole: actorContext.primaryRole,
+      userRoles: actorContext.userRoles,
+      recordBranchId: process.branch_id ?? null,
+    });
+  } catch {
+    throw refuse(403, "ADJUSTMENT_PROCESS_OUT_OF_SCOPE", "You cannot raise an adjustment for a process outside your branch");
+  }
 
   const id = randomUUID();
   await db.execute(

@@ -47,6 +47,7 @@ import {
   seedFieldMapsFromSchema,
   synchronizeChecklistFieldValues,
 } from "./universalDigitalFormFill.service.js";
+import { getSignedAppointmentLetterForAccess } from "./employeeSignedAppointmentLetter.service.js";
 import { validateEpfCompliance } from "./epfComplianceValidation.service.js";
 import type { WebhookAuthOutcome } from "./employeeCompliancePrivacy.js";
 import {
@@ -711,6 +712,26 @@ employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/:checklistId
     userAgent: req.get("user-agent") ?? null,
   });
   return res.json({ success: true, data });
+}));
+
+/**
+ * The appointment letter the employee signed with Aadhaar eSign. Same page, same
+ * access resolution as the joining documents above (see
+ * employeeSignedAppointmentLetter.service.ts); ?inline=1 previews it in the browser.
+ */
+employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/appointment-letters/:issueId/signed-copy", h(async (req: AuthenticatedRequest, res) => {
+  const inline = req.query.inline === "1" || req.query.inline === "true";
+  const file = await getSignedAppointmentLetterForAccess({
+    employeeId: req.params.employeeId,
+    issueId: req.params.issueId,
+    actorUserId: req.authUser!.id,
+    inline,
+  });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("Content-Length", String(file.bytes.length));
+  res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${file.fileName.replace(/"/g, "")}"`);
+  res.end(file.bytes);
 }));
 
 employeeJoiningDocumentsRouter.get("/:employeeId/joining-documents/files/:fileId/preview", h(async (req: AuthenticatedRequest, res) => {

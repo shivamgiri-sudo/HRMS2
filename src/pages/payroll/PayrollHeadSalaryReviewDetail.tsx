@@ -1,3 +1,5 @@
+import { useDateLockMin, backdateNeedsReason } from '@/hooks/useDateLockMin';
+import { BackdateReasonField, MIN_BACKDATE_REASON_LENGTH } from '@/components/payroll/BackdateReasonField';
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
@@ -30,7 +32,8 @@ const inr = (v: number | null | undefined) =>
 const fmtDate = (d: string | null | undefined) =>
   d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
-const REVIEWER_ROLES = ['payroll_head', 'admin', 'super_admin'];
+// Admin can view and fix but only Payroll Head / Super Admin approve.
+const REVIEWER_ROLES = ['payroll_head', 'super_admin'];
 const FIXER_ROLES   = ['payroll_hr', 'branch_head', 'hr', 'admin', 'super_admin'];
 
 interface Reason { code: string; category: string; label: string; }
@@ -138,6 +141,7 @@ export default function PayrollHeadSalaryReviewDetail() {
   const { hasAnyRole } = useWorkforceAccess();
   const isReviewer = hasAnyRole(...REVIEWER_ROLES);
   const isFixer    = hasAnyRole(...FIXER_ROLES);
+  const dateMin = useDateLockMin();
 
   const [journey, setJourney] = useState<any>(null);
   const [loading, setLoading]   = useState(true);
@@ -157,6 +161,7 @@ export default function PayrollHeadSalaryReviewDetail() {
   const [packages, setPackages]                 = useState<any[]>([]);
   const [selectedPkgId, setSelectedPkgId]       = useState('');
   const [effectiveDate, setEffectiveDate]       = useState('');
+  const [backdateReason, setBackdateReason]     = useState('');
   const [loadedSalaryStartDate, setLoadedSalaryStartDate] = useState<string>('');
   const [pkgBuilderOpen, setPkgBuilderOpen]     = useState(false);
 
@@ -166,6 +171,13 @@ export default function PayrollHeadSalaryReviewDetail() {
   } | null>(null);
   const [confirmDateReason, setConfirmDateReason] = useState('');
   const [confirmDateBusy, setConfirmDateBusy] = useState(false);
+
+  // Date is auto-filled only when empty; reset per employee so a previous employee's date isn't saved onto this one.
+  useEffect(() => {
+    setEffectiveDate('');
+    setBackdateReason('');
+    setLoadedSalaryStartDate('');
+  }, [employeeId]);
 
   useEffect(() => {
     if (effectiveDate) return;
@@ -229,9 +241,14 @@ export default function PayrollHeadSalaryReviewDetail() {
     } finally { setBusy(false); }
   }
 
+  // A date before today / before joining needs a written reason (server: REASON_REQUIRED).
+  const needsBackdateReason = backdateNeedsReason(effectiveDate, journey?.employee?.date_of_joining, loadedSalaryStartDate);
+  const reasonBlocks = needsBackdateReason && backdateReason.trim().length < MIN_BACKDATE_REASON_LENGTH;
+  const reasonPart = needsBackdateReason ? { reason: backdateReason.trim() } : {};
+
   const assignExisting = () => run(() =>
     hrmsApi.post(`/api/payroll-head-review/${employeeId}/package/assign`, {
-      package_id: selectedPkgId, effective_date: effectiveDate,
+      package_id: selectedPkgId, effective_date: effectiveDate, ...reasonPart,
     }), 'Package assigned successfully.'
   );
 
@@ -239,7 +256,7 @@ export default function PayrollHeadSalaryReviewDetail() {
     if (!effectiveDate) { setError('Please set an effective date before building a package.'); return; }
     await run(() =>
       hrmsApi.post(`/api/payroll-head-review/${employeeId}/package/assign`, {
-        package_id: pkgId, effective_date: effectiveDate,
+        package_id: pkgId, effective_date: effectiveDate, ...reasonPart,
       }), 'New package created and assigned.'
     );
   };
@@ -562,10 +579,16 @@ export default function PayrollHeadSalaryReviewDetail() {
                     <Input
                       type="date"
                       value={effectiveDate}
+                  min={dateMin}
                       onChange={(e) => setEffectiveDate(e.target.value)}
                       onBlur={async (e) => {
                         const newDate = e.target.value;
                         if (!newDate || newDate === loadedSalaryStartDate) return;
+                        // A backdated date needs its reason first; it is saved with the package below.
+                        if (!journey?.salary_assignment?.effective_from && backdateNeedsReason(newDate, journey?.employee?.date_of_joining, loadedSalaryStartDate) && backdateReason.trim().length < MIN_BACKDATE_REASON_LENGTH) {
+                          setNotice('Enter the reason for backdating - the date is saved together with the package.');
+                          return;
+                        }
 
                         const hasLiveAssignment = !!journey?.salary_assignment?.effective_from;
 
@@ -579,12 +602,13 @@ export default function PayrollHeadSalaryReviewDetail() {
                           try {
                             await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/salary-start-date`, {
                               salary_start_date: newDate,
+                              ...(backdateNeedsReason(newDate, journey?.employee?.date_of_joining, loadedSalaryStartDate) ? { reason: backdateReason.trim() } : {}),
                             });
                             setLoadedSalaryStartDate(newDate);
                             setNotice('Salary start date updated.');
                             setTimeout(() => setNotice(null), 3000);
-                          } catch {
-                            setError('Failed to update salary start date.');
+                          } catch (e: any) {
+                            setError(e?.message ?? 'Failed to update salary start date.');
                           }
                         }
                       }}
@@ -601,6 +625,13 @@ export default function PayrollHeadSalaryReviewDetail() {
                 </div>
                 <p className="text-xs text-slate-400 mb-2">Required for both catalog and new package.</p>
               </div>
+              <BackdateReasonField
+                date={effectiveDate}
+                joiningDate={journey?.employee?.date_of_joining}
+                unchangedFrom={loadedSalaryStartDate}
+                value={backdateReason}
+                onChange={setBackdateReason}
+              />
 
               {/* Select from catalog */}
               <div>
@@ -624,7 +655,7 @@ export default function PayrollHeadSalaryReviewDetail() {
                     </SelectContent>
                   </Select>
                   <Button
-                    disabled={busy || !selectedPkgId || !effectiveDate}
+                    disabled={busy || !selectedPkgId || !effectiveDate || reasonBlocks}
                     onClick={() => void assignExisting()}
                     className="cursor-pointer shrink-0 bg-purple-600 hover:bg-purple-700 rounded-xl"
                   >
@@ -672,7 +703,7 @@ export default function PayrollHeadSalaryReviewDetail() {
                 <p className="text-xs text-slate-500 flex-1">
                   No suitable package in catalog? Build one with the salary calculator — PF/ESIC toggles, From CTC or In-Hand.
                 </p>
-                <Button variant="outline" disabled={busy || !effectiveDate} onClick={() => setPkgBuilderOpen(true)}
+                <Button variant="outline" disabled={busy || !effectiveDate || reasonBlocks} onClick={() => setPkgBuilderOpen(true)}
                   className="cursor-pointer shrink-0 gap-2 rounded-xl border-purple-200 text-purple-700 hover:bg-purple-50">
                   <Calculator className="h-4 w-4" />Build New Package
                 </Button>
@@ -1111,6 +1142,9 @@ export default function PayrollHeadSalaryReviewDetail() {
                 className="rounded-xl resize-none text-sm"
               />
             </div>
+            {error && (
+              <p role="alert" className="text-xs text-red-600">{error}</p>
+            )}
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" className="rounded-xl"
@@ -1123,6 +1157,7 @@ export default function PayrollHeadSalaryReviewDetail() {
               onClick={async () => {
                 if (!confirmDateDialog) return;
                 setConfirmDateBusy(true);
+                setError(null);
                 try {
                   await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/assignment-effective-date`, {
                     effective_date: confirmDateDialog.newDate,

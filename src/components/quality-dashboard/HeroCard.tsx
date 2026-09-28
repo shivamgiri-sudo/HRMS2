@@ -1,5 +1,6 @@
 import React from 'react';
 import { formatIST, formatISTDate, formatISTTime } from '@/lib/utils';
+import { qualityScoreHex } from '@/lib/qualityScoreFormatting';
 
 interface CQScoreData {
   cq_score_current: number;
@@ -45,11 +46,8 @@ export const HeroCard: React.FC<HeroCardProps> = ({ data, isLoading = false }) =
     }
   };
 
-  const getGaugeColor = (score: number) => {
-    if (score >= 80) return '#10b981';
-    if (score >= 70) return '#f59e0b';
-    return '#ef4444';
-  };
+  // Conditional formatting matches the shared bands in qualityScoreFormatting.ts.
+  const getGaugeColor = (score: number) => qualityScoreHex(score);
 
   // Simple circular gauge component
   const GaugeChart = ({ value, max = 100, size = 280 }: { value: number; max?: number; size?: number }) => {

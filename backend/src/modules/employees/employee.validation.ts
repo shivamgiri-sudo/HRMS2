@@ -89,6 +89,10 @@ export const employeeFiltersSchema = z.object({
   departmentId: z.string().uuid().optional(),
   designationId: z.string().uuid().optional(),
   search: z.string().trim().optional(),
+  // Joining-date range filter (Export Employee Directory's Start/End Date). Applied
+  // to e.date_of_joining as an inclusive BETWEEN in employee.service.ts.
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   includeAnalytics: z.coerce.boolean().default(false),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(200).default(50),

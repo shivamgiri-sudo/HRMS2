@@ -4,6 +4,39 @@
  */
 
 export type EmploymentType = 'full_time' | 'part_time' | 'contract' | 'intern' | 'trainee';
+
+/**
+ * Structured screening config stored as JSON on job_requisition.meta_screening_config.
+ * Drives auto-screening of incoming META Lead Gen leads beyond age/education/experience.
+ */
+export interface MetaScreeningConfig {
+  /** Send WhatsApp immediately when a lead qualifies. Default true. */
+  auto_notify?: boolean;
+  gender?: 'any' | 'male' | 'female';
+  /** Required certifications — e.g. ["DRA","IRDA"]. Lead must confirm holding each one. */
+  certifications?: string[];
+  /** Language requirements. Lead must confirm the listed skills per language. */
+  language_requirements?: Array<{
+    language: string;
+    skills: Array<'speak' | 'read' | 'write'>;
+  }>;
+  /** Minimum typing speed in WPM — for chat/email/back-office processes. */
+  min_typing_speed_wpm?: number | null;
+  /** Minimum written English level — for chat/email processes. */
+  written_english_level?: 'basic' | 'intermediate' | 'advanced' | null;
+  /**
+   * Arbitrary form-field conditions. Each rule checks a specific META form answer.
+   * op: eq | neq | contains | not_contains | gte (for numeric fields like wpm) | is_yes (a yes/no
+   * answer: "Yes"/"Yas"/"ok" pass, "No" fails, an ambiguous answer is skipped, never rejected;
+   * `value` is ignored).
+   */
+  custom_field_rules?: Array<{
+    field: string;
+    op: 'eq' | 'neq' | 'contains' | 'not_contains' | 'gte' | 'is_yes';
+    value: string;
+    label?: string;
+  }>;
+}
 export type RequisitionPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type RequisitionType = 'new_position' | 'replacement' | 'expansion' | 'seasonal' | 'project_based';
 export type ApprovalStatus = 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'cancelled' | 'on_hold' | 'closed';
@@ -48,6 +81,20 @@ export interface JobRequisition {
   requested_by_name: string | null;
   owner_recruiter_id: string | null;
   preferred_sources: string[] | null;
+  /**
+   * META campaign targeting (migration 1810).
+   *
+   * The age band is dual-purpose and that is worth knowing before changing it: it drives META
+   * audience targeting AND it is the criterion lead-screener.service.ts screens incoming Lead Gen
+   * leads against. A null band means age is NOT screened, not that all ages fail.
+   */
+  bmi_assessment_url: string | null;
+  meta_target_age_min: number | null;
+  meta_target_age_max: number | null;
+  meta_target_locations: string[] | null;
+  meta_target_radius_km: number | null;
+  /** Structured screening config — see MetaScreeningConfig (migration 1829). */
+  meta_screening_config: MetaScreeningConfig | null;
   internal_posting: boolean;
   active_status: boolean;
   closed_at: string | null;
@@ -94,6 +141,13 @@ export interface CreateRequisitionInput {
   business_justification?: string;
   preferred_sources?: string[];
   internal_posting?: boolean;
+  // META campaign targeting (migration 1810) — see JobRequisition above for why the age band matters.
+  bmi_assessment_url?: string | null;
+  meta_target_age_min?: number | null;
+  meta_target_age_max?: number | null;
+  meta_target_locations?: string[] | null;
+  meta_target_radius_km?: number | null;
+  meta_screening_config?: MetaScreeningConfig | null;
 }
 
 export interface UpdateRequisitionInput extends Partial<CreateRequisitionInput> {

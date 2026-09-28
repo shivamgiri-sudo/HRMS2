@@ -110,7 +110,7 @@ export interface PaginatedDispatchLogs { logs: DispatchLog[]; total: number; pag
 // ========== Provider config types ==========
 
 export type EmailProviderType = 'nodemailer' | 'sendgrid' | 'mailgun' | 'local-email-tool';
-export type SMSProviderType   = 'twilio' | 'msg91' | 'local-sms-tool';
+export type SMSProviderType   = 'twilio' | 'msg91' | 'smartping' | 'local-sms-tool';
 export type WAProviderType    = 'twilio' | 'meta' | 'local-whatsapp-tool';
 export type AnyProviderType   = EmailProviderType | SMSProviderType | WAProviderType;
 
@@ -132,6 +132,8 @@ export interface SMSConfig {
   twilio_messaging_service_sid?: string;
   msg91_sender_id?: string;
   msg91_template_id?: string;
+  smartping_sender_id?: string;
+  smartping_entity_id?: string;
   local_api_url?: string;
   local_sender_id?: string;
 }
@@ -156,6 +158,8 @@ export interface SMSSecrets {
   twilio_account_sid?: string;
   twilio_auth_token?: string;
   msg91_auth_key?: string;
+  smartping_username?: string;
+  smartping_password?: string;
   local_api_key?: string;
 }
 
@@ -172,6 +176,9 @@ export interface ProviderConfig {
   provider_type: AnyProviderType;
   config_json: EmailConfig | SMSConfig | WAConfig;
   is_enabled: boolean;
+  /** The genuine kill switch — see send-block.ts. Distinct from is_enabled, which is not one. */
+  send_blocked: boolean;
+  block_reason: string | null;
   test_ok: boolean | null;
   test_error: string | null;
   test_at: string | null;

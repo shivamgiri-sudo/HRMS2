@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
 import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 import { imprestLedgerService } from "./imprest-ledger.service.js";
+import { assertNotInClosedPeriod } from "./bank-reconciliation-period.service.js";
 
 /**
  * Imprest Manager master (Requirement 8) and Imprest Allocation (Requirement 6).
@@ -12,6 +13,11 @@ import { imprestLedgerService } from "./imprest-ledger.service.js";
  * allocation that funds it, and the voucher that spends it. The voucher is the existing
  * grn_type='imprest' GRN, not a fourth entity here.
  */
+
+/** Owner ruling (PRD §10, 2026-09-09): flag a manager for replenishment when their float drops
+ *  below this percentage of their own sanctioned_float_amount, unless they carry their own
+ *  replenishment_floor_pct override. */
+const DEFAULT_REPLENISHMENT_FLOOR_PCT = 25;
 
 const ALLOCATION_STATUSES = ["draft", "submitted", "branch_head_approved", "disbursed", "rejected"] as const;
 export type ImprestAllocationStatus = (typeof ALLOCATION_STATUSES)[number];
@@ -69,6 +75,15 @@ const ALLOCATION_PAYMENT_MODES = [
   "Cheque", "NEFT", "RTGS", "IMPS", "UPI", "Cash", "Bank Transfer", "Adjustment", "Other",
 ];
 
+// Mirrors vendor-payment-ledger.service.ts's BANK_MODES — the modes that genuinely move money
+// through a specific bank account, as opposed to Cash (no account) or Adjustment/Other (not a
+// real bank-rail transfer). Used to require company_bank_account_id only where it applies.
+const ALLOCATION_BANK_MODES = new Set(["Cheque", "NEFT", "RTGS", "IMPS", "UPI", "Bank Transfer"]);
+
+function round2(value: number) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
 export const imprestService = {
   // ── Manager master ────────────────────────────────────────────────────────
 
@@ -81,7 +96,12 @@ export const imprestService = {
         conditions.push(filter.sql);
         params.push(...filter.params);
       }
-    } else if (filters.branchId) {
+    }
+    // Was `else if` — a no-op for any caller whose scope resolves to "all" (super_admin,
+    // finance_head, …), which is exactly who a UI branch filter is for: a branch_admin's own
+    // scope already narrows them to one branch, so the filter mattered least there. Now applies
+    // independently of the scope check above, so it narrows further rather than being ignored.
+    if (filters.branchId) {
       conditions.push("m.branch_id = ?");
       params.push(filters.branchId);
     }
@@ -115,6 +135,12 @@ export const imprestService = {
       effectiveFrom?: string;
       effectiveTo?: string | null;
       activeStatus?: number;
+      /** Payment Voucher System Phase 2 (1705_imprest_manager_sanctioned_float.sql). The float
+       *  ceiling the "% of sanctioned float" replenishment auto-flag computes against — NULL
+       *  means no cap is set yet, so that manager gets no auto-flag until Finance sets one. */
+      sanctionedFloatAmount?: number | null;
+      /** NULL = use the global default (25%). Per-manager override of the flag threshold. */
+      replenishmentFloorPct?: number | null;
     },
     actorUserId: string,
   ) {
@@ -217,12 +243,16 @@ export const imprestService = {
               SET tally_name = COALESCE(?, tally_name),
                   effective_to = COALESCE(?, effective_to),
                   active_status = ?,
+                  sanctioned_float_amount = COALESCE(?, sanctioned_float_amount),
+                  replenishment_floor_pct = COALESCE(?, replenishment_floor_pct),
                   updated_by = ?
             WHERE id = ?`,
           [
             input.tallyName !== undefined ? input.tallyName : null,
             input.effectiveTo ?? null,
             nextActiveStatus,
+            input.sanctionedFloatAmount ?? null,
+            input.replenishmentFloorPct ?? null,
             actorUserId,
             input.id,
           ],
@@ -256,11 +286,12 @@ export const imprestService = {
       await connection.execute(
         `INSERT INTO imprest_manager
            (id, branch_id, user_id, employee_id, tally_name, effective_from, effective_to,
-            active_status, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+            active_status, sanctioned_float_amount, replenishment_floor_pct, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
           id, input.branchId, input.userId, input.employeeId ?? null, input.tallyName ?? null,
-          input.effectiveFrom, input.effectiveTo ?? null, input.activeStatus ?? 1, actorUserId,
+          input.effectiveFrom, input.effectiveTo ?? null, input.activeStatus ?? 1,
+          input.sanctionedFloatAmount ?? null, input.replenishmentFloorPct ?? null, actorUserId,
         ],
       );
       await connection.commit();
@@ -284,6 +315,74 @@ export const imprestService = {
     return rows[0];
   },
 
+  // ── Replenishment auto-flag (Payment Voucher System Phase 2) ────────────────
+  //
+  // Owner ruling (PRD §10): "% of sanctioned float", not a flat rupee floor — a manager with a
+  // ₹50,000 float and one with a ₹5,000 float should not be flagged at the same number. Default
+  // 25%, overridable per manager via imprest_manager.replenishment_floor_pct (1705).
+  //
+  // A manager with no sanctioned_float_amount set gets no flag at all — there is nothing to take
+  // a percentage OF — which degrades to the equivalent of Option C (no automatic flag) for that
+  // manager until Finance sets one, exactly as 1705's migration comment says.
+
+  async getReplenishmentStatus(imprestManagerId: string) {
+    const manager = await this.getManager(imprestManagerId);
+    const sanctioned = manager.sanctioned_float_amount != null ? Number(manager.sanctioned_float_amount) : null;
+    const currentBalance = await imprestLedgerService.getBalance(imprestManagerId);
+    if (sanctioned == null || sanctioned <= 0) {
+      return {
+        imprestManagerId, sanctionedFloatAmount: null, floorPct: null, floorAmount: null,
+        currentBalance, needsReplenishment: false,
+        reason: "No sanctioned float amount set for this manager — cannot compute a percentage floor.",
+      };
+    }
+    const floorPct = manager.replenishment_floor_pct != null ? Number(manager.replenishment_floor_pct) : DEFAULT_REPLENISHMENT_FLOOR_PCT;
+    const floorAmount = Math.round((sanctioned * floorPct / 100 + Number.EPSILON) * 100) / 100;
+    return {
+      imprestManagerId, sanctionedFloatAmount: sanctioned, floorPct, floorAmount, currentBalance,
+      needsReplenishment: currentBalance < floorAmount,
+      reason: null,
+    };
+  },
+
+  /** Every active manager whose float is currently below its own flag line — the list a Finance
+   *  Head dashboard/queue reads to know who to raise a Lane B voucher for. */
+  async listReplenishmentFlags(filters: { branchScope?: FinanceBranchScope; branchId?: string }) {
+    const managers = await this.listManagers({ ...filters, activeOnly: true });
+    const flagged: any[] = [];
+    for (const m of managers as any[]) {
+      const status = await this.getReplenishmentStatus(String(m.id));
+      if (status.needsReplenishment) flagged.push({ ...m, ...status });
+    }
+    return flagged;
+  },
+
+  /**
+   * The imprest GRNs (voucher debits) posted since this manager's last allocation credit — the
+   * "here's what the float was actually spent on" list PRD §6.6 asks the CEO's approval to be
+   * backed by, rather than just a number the manager asked for. Not a report of ALL history —
+   * only what has happened since the float was last topped up.
+   */
+  async getConsumptionSinceLastReplenishment(imprestManagerId: string) {
+    const [lastAllocRows] = await db.execute<RowDataPacket[]>(
+      `SELECT transaction_date FROM imprest_transaction_ledger
+        WHERE imprest_manager_id = ? AND entry_type = 'allocation'
+        ORDER BY transaction_date DESC, created_at DESC LIMIT 1`,
+      [imprestManagerId],
+    );
+    const since = lastAllocRows[0]?.transaction_date ?? "1900-01-01";
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT l.id, l.transaction_date, l.amount, l.narration,
+              g.grn_number, g.head AS expense_head, g.sub_head AS expense_sub_head
+         FROM imprest_transaction_ledger l
+         LEFT JOIN grn_request g ON l.reference_type = 'grn_request' AND g.id = l.reference_id
+        WHERE l.imprest_manager_id = ? AND l.entry_type = 'voucher' AND l.transaction_date > ?
+        ORDER BY l.transaction_date ASC`,
+      [imprestManagerId, since],
+    );
+    return { sinceDate: since, rows };
+  },
+
   // ── Allocation ────────────────────────────────────────────────────────────
 
   async listAllocations(filters: {
@@ -302,7 +401,10 @@ export const imprestService = {
         conditions.push(filter.sql);
         params.push(...filter.params);
       }
-    } else if (filters.branchId) {
+    }
+    // Was `else if` — see listManagers' identical fix just above in this file: a no-op for any
+    // caller whose scope resolves to "all", which is exactly who a UI branch filter is for.
+    if (filters.branchId) {
       conditions.push("a.branch_id = ?");
       params.push(filters.branchId);
     }
@@ -353,6 +455,15 @@ export const imprestService = {
       paymentMode?: string;
       bankId?: string | null;
       bankName?: string | null;
+      /**
+       * Which of the company's own bank accounts (company_bank_account.id) this allocation was
+       * actually funded from — distinct from bankId above, which is only bank_master's generic
+       * bank-name directory. Required for a real bank-rail mode once the org has at least one
+       * account configured; this is what lets a direct allocation write its own
+       * bank_account_ledger_entry row, closing the gap where "real bank-funded" top-ups never
+       * reached the Bank Ledger / reconciliation.
+       */
+      companyBankAccountId?: string | null;
       referenceNo?: string | null;
       transactionDate?: string | null;
       remarks?: string | null;
@@ -391,10 +502,23 @@ export const imprestService = {
     if (mode !== "Cash" && !input.referenceNo) {
       throw new Error(`A transaction reference is required for ${mode}`);
     }
+    const companyBankAccountId = input.companyBankAccountId?.trim() || null;
 
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
+
+      // Required once the org has a bank account configured — same reasoning as the mirror
+      // check in vendor-payment-ledger.service.ts's dispatch(): otherwise this is silently
+      // skippable and the bank ledger stays incomplete for the exact payments this was meant to
+      // close. Only checked for real bank-rail modes; a fresh/test tenant with zero accounts
+      // configured is unaffected.
+      if (ALLOCATION_BANK_MODES.has(mode) && !companyBankAccountId) {
+        const [[anyAccount]] = await connection.execute<RowDataPacket[]>(
+          `SELECT id FROM company_bank_account WHERE active_status = 1 LIMIT 1`
+        );
+        if (anyAccount) throw new Error("Bank account is required for this payment mode");
+      }
 
       const [managerRows] = await connection.execute<RowDataPacket[]>(
         `SELECT id, branch_id FROM imprest_manager WHERE id = ? AND active_status = 1 LIMIT 1`,
@@ -415,13 +539,14 @@ export const imprestService = {
       await connection.execute(
         `INSERT INTO imprest_allocation
            (id, allocation_no, imprest_manager_id, branch_id, allocation_date, amount,
-            payment_mode, bank_id, bank_name, reference_no, transaction_date, remarks,
-            accounting_period,
+            payment_mode, bank_id, company_bank_account_id, bank_name, reference_no,
+            transaction_date, remarks, accounting_period,
             status, submitted_by, submitted_at, disbursed_at, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, NOW())`,
         [
           id, allocationNo, input.imprestManagerId, input.branchId, input.allocationDate, amount,
-          mode, input.bankId ?? null, input.bankName ?? null, input.referenceNo ?? null,
+          mode, input.bankId ?? null, companyBankAccountId, input.bankName ?? null,
+          input.referenceNo ?? null,
           input.transactionDate ?? null, input.remarks ?? null,
           input.accountingPeriod?.trim() || null,
           status, actorUserId, input.disburseImmediately ? new Date() : null, actorUserId,
@@ -447,6 +572,54 @@ export const imprestService = {
           },
           connection,
         );
+
+        // Bank ledger write — closes the gap this fix targets. No callingVoucherId-style gate
+        // needed here: payment-voucher.service.ts's release() funds the "imprest_allocation"
+        // voucher lane by calling imprestLedgerService.post() directly, never createAllocation(),
+        // so there is no double-write path to guard against, unlike the vendor-dispatch fix.
+        if (companyBankAccountId) {
+          const [[bankAccount]] = await connection.execute<RowDataPacket[]>(
+            `SELECT id, opening_balance, active_status
+               FROM company_bank_account WHERE id = ? FOR UPDATE`,
+            [companyBankAccountId]
+          );
+          if (!bankAccount) throw new Error("Bank account not found");
+          if (!(bankAccount as any).active_status) throw new Error("This bank account is closed");
+          await assertNotInClosedPeriod(connection, companyBankAccountId, input.allocationDate);
+
+          const [[lastEntry]] = await connection.execute<RowDataPacket[]>(
+            `SELECT running_balance FROM bank_account_ledger_entry
+               WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+            [companyBankAccountId]
+          );
+          const runningBalance = round2(
+            (lastEntry ? Number((lastEntry as any).running_balance) : Number((bankAccount as any).opening_balance))
+            - amount
+          );
+
+          const [[imprestPayableAccount]] = await connection.execute<RowDataPacket[]>(
+            `SELECT id FROM payable_account_master WHERE account_name = 'Imprest Float' LIMIT 1`
+          );
+          if (!imprestPayableAccount) throw new Error("Imprest Float ledger account is not configured");
+
+          await connection.execute(
+            `INSERT INTO bank_account_ledger_entry
+               (id, bank_account_id, entry_date, voucher_id, debit_amount, credit_amount,
+                payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
+             VALUES (?, ?, ?, NULL, ?, 0, ?, ?, ?, ?, 'direct_imprest_allocation', ?)`,
+            [
+              randomUUID(),
+              companyBankAccountId,
+              input.allocationDate,
+              amount,
+              (imprestPayableAccount as any).id,
+              `Imprest allocation ${allocationNo} disbursed to manager ${input.imprestManagerId}`,
+              input.referenceNo ?? null,
+              runningBalance,
+              actorUserId,
+            ]
+          );
+        }
       }
 
       await recordFinanceApprovalEvent(
@@ -534,6 +707,57 @@ export const imprestService = {
           },
           connection,
         );
+
+        // Bank ledger write, mirroring createAllocation()'s immediate-disbursement block. The
+        // bank account was chosen once, when this allocation was raised as "submitted" — read it
+        // back off the locked row rather than asking again at approval time; the money-out
+        // decision is made once, approval only decides yes/no.
+        const companyBankAccountId = allocation.company_bank_account_id
+          ? String(allocation.company_bank_account_id)
+          : null;
+        if (companyBankAccountId) {
+          const [[bankAccount]] = await connection.execute<RowDataPacket[]>(
+            `SELECT id, opening_balance, active_status
+               FROM company_bank_account WHERE id = ? FOR UPDATE`,
+            [companyBankAccountId]
+          );
+          if (!bankAccount) throw new Error("Bank account not found");
+          if (!(bankAccount as any).active_status) throw new Error("This bank account is closed");
+          await assertNotInClosedPeriod(connection, companyBankAccountId, String(allocation.allocation_date).slice(0, 10));
+
+          const [[lastEntry]] = await connection.execute<RowDataPacket[]>(
+            `SELECT running_balance FROM bank_account_ledger_entry
+               WHERE bank_account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+            [companyBankAccountId]
+          );
+          const runningBalance = round2(
+            (lastEntry ? Number((lastEntry as any).running_balance) : Number((bankAccount as any).opening_balance))
+            - Number(allocation.amount)
+          );
+
+          const [[imprestPayableAccount]] = await connection.execute<RowDataPacket[]>(
+            `SELECT id FROM payable_account_master WHERE account_name = 'Imprest Float' LIMIT 1`
+          );
+          if (!imprestPayableAccount) throw new Error("Imprest Float ledger account is not configured");
+
+          await connection.execute(
+            `INSERT INTO bank_account_ledger_entry
+               (id, bank_account_id, entry_date, voucher_id, debit_amount, credit_amount,
+                payable_account_id, narration, instrument_ref, running_balance, source_type, created_by)
+             VALUES (?, ?, ?, NULL, ?, 0, ?, ?, ?, ?, 'direct_imprest_allocation', ?)`,
+            [
+              randomUUID(),
+              companyBankAccountId,
+              String(allocation.allocation_date).slice(0, 10),
+              Number(allocation.amount),
+              (imprestPayableAccount as any).id,
+              `Imprest allocation ${allocation.allocation_no} disbursed to manager ${allocation.imprest_manager_id}`,
+              allocation.reference_no ?? null,
+              runningBalance,
+              actorUserId,
+            ]
+          );
+        }
       }
 
       await recordFinanceApprovalEvent(

@@ -5,7 +5,8 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordMoneyEventAudit } from "../../shared/moneyEventAudit.js";
 import { calculateGratuity } from "../payroll/payrollCalculate.service.js";
-import { notifyFullFinalReady } from "./exit.notifications.js";
+import { nocReleaseStatusForEmployee } from "../payroll/noc-release-gate.service.js";
+import { notifyFullFinalReady, notifyFFApproved } from "./exit.notifications.js";
 // Type-only import — does not create a runtime circular dependency with
 // ff-compute.service.ts, which imports ffService from this file.
 import type { ComputedStatus } from "./ff-compute.service.js";
@@ -390,14 +391,6 @@ export const ffService = {
     if (!rec) throw ffError(404, "F&F calculation not found");
     if (rec.status === "paid") throw ffError(409, "F&F already paid — cannot re-approve");
 
-    if (Number(rec.is_ff_provisional) === 1) {
-      throw ffError(
-        409,
-        "Cannot approve F&F: calculation contains provisional statutory values. " +
-        "Verify and recalculate with approved configuration before approving."
-      );
-    }
-
     // WHERE carries the status this decision was made on. It was `WHERE id = ?` alone, with
     // no predicate at all, which made the guard above advisory: between that SELECT and this
     // UPDATE another actor could mark the settlement paid, and this statement would then
@@ -427,6 +420,10 @@ export const ffService = {
     });
 
     void notifyFullFinalReady(rec.exit_request_id);
+
+    // Notify employee of F&F approval
+    const netPayable = Number(rec.net_payable ?? 0);
+    void notifyFFApproved(rec.exit_request_id, netPayable);
 
     return this.getFF(rec.exit_request_id);
   },
@@ -489,6 +486,22 @@ export const ffService = {
       throw ffError(
         403,
         "Payment must be recorded by someone other than the person who approved this settlement"
+      );
+    }
+
+    // NOC — the SAME rule fnf-transfer.service.ts enforces before a settlement can even enter
+    // a bank-transfer batch (owner ruling 2026-09-12, Q7: "a leaver without a signed NOC must
+    // not appear in the bank file"). Enforced HERE too, not only at that eligibility stage,
+    // because this function has a SECOND caller that never goes through eligibility filtering
+    // at all: NativeFullFinal.tsx's "Mark Paid" button posts straight to this endpoint with a
+    // hand-typed reference — no bank file, no batch, no NOC check anywhere on that path. Without
+    // this, the NOC gate was real for one door into markFfPaid and decorative for the other.
+    const noc = await nocReleaseStatusForEmployee(rec.employee_id);
+    if (noc.blocked) {
+      throw ffError(
+        409,
+        `Cannot mark this F&F paid: ${noc.reason ?? "NOC clearance is not complete"}. ` +
+        "Complete the NOC in Payroll › NOC Management, or have a Payroll Head override it there."
       );
     }
 
@@ -569,7 +582,7 @@ export const ffService = {
     // existing callers can't silently keep omitting it.
     const trimmedReason = String(reason ?? "").trim();
     if (!trimmedReason) {
-      throw new Error("A reason is required to clear a provisional F&F calculation");
+      throw ffError(400, "A reason is required to clear a provisional F&F calculation");
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -577,13 +590,27 @@ export const ffService = {
       [id]
     );
     const rec = (rows as any[])[0];
-    if (!rec) throw new Error("F&F calculation not found");
+    if (!rec) throw ffError(404, "F&F calculation not found");
+
+    // Resolve the verifier's display name from employees so the audit row is
+    // human-readable without a join, the same pattern used in exit clearance.
+    const [nameRows] = await db.execute<RowDataPacket[]>(
+      `SELECT CONCAT_WS(' ', first_name, last_name) AS full_name
+         FROM employees WHERE user_id = ? LIMIT 1`,
+      [verifiedBy]
+    );
+    const verifierName = (nameRows[0] as any)?.full_name ?? verifiedBy;
 
     await db.execute(
       `UPDATE full_final_calculation
-          SET is_ff_provisional = 0, updated_at = NOW()
+          SET is_ff_provisional = 0,
+              verified_by = ?,
+              verified_by_name = ?,
+              verified_at = NOW(),
+              verification_reason = ?,
+              updated_at = NOW()
         WHERE id = ?`,
-      [id]
+      [verifiedBy, verifierName, trimmedReason, id]
     );
 
     void logSensitiveAction({
@@ -592,7 +619,7 @@ export const ffService = {
       module_key: "exit",
       entity_type: "full_final_calculation",
       entity_id: id,
-      change_summary: { exit_request_id: rec.exit_request_id, verified_by: verifiedBy, reason: trimmedReason },
+      change_summary: { exit_request_id: rec.exit_request_id, verified_by: verifiedBy, verified_by_name: verifierName, reason: trimmedReason },
       req,
     });
 

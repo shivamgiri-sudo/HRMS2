@@ -10,20 +10,9 @@ import "dotenv/config";
 import { randomUUID } from "crypto";
 import { db } from "../src/db/mysql.js";
 import { getOnfidoPool } from "../src/db/onfidoDb.js";
-import { ONFIDO_REPORT_CONFIGS, type OnfidoFieldExtract } from "../src/modules/bulk-upload/onfido-report-configs.js";
+import { ONFIDO_REPORT_CONFIGS } from "../src/modules/bulk-upload/onfido-report-configs.js";
+import { onfidoSqlTypeFor as sqlTypeFor } from "../src/modules/bulk-upload/onfido-schema-sync.js";
 import { readFileSync } from "fs";
-
-function sqlTypeFor(extract: OnfidoFieldExtract): string {
-  switch (extract.type) {
-    case "date": return "DATE NULL";
-    case "int": return "INT NULL";
-    case "float": return "DECIMAL(8,2) NULL";
-    case "bool_yes_no": return "TINYINT(1) NULL";
-    default:
-      // URL/UUID-shaped dedup columns run long; everything else is a short label.
-      return /url|uuid/i.test(extract.column) ? "VARCHAR(512) NULL" : "VARCHAR(255) NULL";
-  }
-}
 
 async function createTable(cfg: (typeof ONFIDO_REPORT_CONFIGS)[number]) {
   const pool = await getOnfidoPool();

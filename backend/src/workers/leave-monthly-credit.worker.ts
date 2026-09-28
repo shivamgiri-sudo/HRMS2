@@ -15,7 +15,7 @@ try {
 // implementation; the formula is unchanged (verified byte-identical before the
 // switch). (2026-08-13 audit)
 import { leavePolicyService } from "../modules/leave/leave-policy.service.js";
-const { prorateMonthlyCredit } = leavePolicyService;
+const { prorateMonthlyCredit, isAccruingInMonth } = leavePolicyService;
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
@@ -35,6 +35,11 @@ let intervalRef: ReturnType<typeof setInterval> | undefined;
  * table holds the pattern — CL in months 1,3,5,7,8,10,12 and ML in 2,4,6,9,11 — which is where
  * the 7 CL + 5 ML annual entitlement comes from, and why one month (8) doubles up on CL. The
  * pattern is DATA: change the schedule table, not this worker.
+ *
+ * "One whole day" now really means one whole day, including in a joiner's first month. Until
+ * 2026-09-08 the scheduled days were still multiplied by prorateMonthlyCredit(), so the
+ * alternating-whole-day rule was true for everyone EXCEPT the people it mattered most for —
+ * new joiners, who received 0.3 or 0.8 of a Casual Leave day. EL keeps its proration.
  *
  * This docblock previously said "CL (0.583/mo) and ML (0.417/mo)", describing the fractional
  * accrual that ran before the schedule existed. That was wrong for long enough to mislead a
@@ -87,9 +92,13 @@ export async function creditMonthlyLeaves(
     try {
       // Credit from schedule (CL/ML whole numbers)
       for (const schedule of scheduleRows) {
-        const proration = prorateMonthlyCredit(emp.accrual_start_date, creditMonth, creditYear);
-        const daysToCredit = Math.round(proration * schedule.credit_days * 10) / 10;
-        if (daysToCredit <= 0) continue;
+        // Whole day or nothing. This used to multiply the scheduled days by
+        // prorateMonthlyCredit(), which turned a joiner's first CL credit into a fraction —
+        // 24-Aug joiners ended up holding 0.3 Casual Leave, a balance that cannot be applied
+        // for, because leave is taken in whole or half days. See isAccruingInMonth().
+        if (!isAccruingInMonth(emp.accrual_start_date, creditMonth, creditYear)) continue;
+        const daysToCredit = Number(schedule.credit_days);
+        if (!(daysToCredit > 0)) continue;
 
         // Idempotency check
         const [exists]: any = await db.execute(

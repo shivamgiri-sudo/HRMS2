@@ -308,6 +308,10 @@ imprestRouter.get(
   h(async (req, res) => {
     const data = await imprestService.listAllocations({
       branchScope: await scopeOf(req),
+      // listAllocations already accepted this (used as a fallback when branchScope is absent) —
+      // the route just never read it off the query string, so an org-wide viewer had no way to
+      // narrow the list to one branch; the same param /managers already exposes.
+      branchId: req.query.branchId ? String(req.query.branchId) : undefined,
       imprestManagerId: req.query.imprestManagerId ? String(req.query.imprestManagerId) : undefined,
       status: req.query.status ? String(req.query.status) : undefined,
       from: req.query.from ? String(req.query.from) : undefined,
@@ -522,6 +526,45 @@ imprestRouter.get(
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", 'attachment; filename="Imprest_Details.csv"');
     res.send(csv);
+  }),
+);
+
+// ── Replenishment auto-flag (Payment Voucher System Phase 2) ─────────────────
+// Mounted here rather than a new router — same resource (imprest managers), same read roles.
+
+imprestRouter.get(
+  "/replenishment-flags",
+  requireRole(...IMPREST_READ_ROLES),
+  h(async (req, res) => {
+    const data = await imprestService.listReplenishmentFlags({
+      branchScope: await scopeOf(req),
+      branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    res.json({ success: true, data });
+  }),
+);
+
+imprestRouter.get(
+  "/managers/:id/replenishment-status",
+  requireRole(...IMPREST_READ_ROLES),
+  h(async (req, res) => {
+    const check = await assertManagerBranch(req, req.params.id);
+    if (!check.found) return res.status(404).json({ success: false, error: "Imprest manager not found" });
+    if (!check.allowed) return res.status(403).json({ success: false, error: "You do not have access to this branch" });
+    const data = await imprestService.getReplenishmentStatus(req.params.id);
+    res.json({ success: true, data });
+  }),
+);
+
+imprestRouter.get(
+  "/managers/:id/consumption-since-replenishment",
+  requireRole(...IMPREST_READ_ROLES),
+  h(async (req, res) => {
+    const check = await assertManagerBranch(req, req.params.id);
+    if (!check.found) return res.status(404).json({ success: false, error: "Imprest manager not found" });
+    if (!check.allowed) return res.status(403).json({ success: false, error: "You do not have access to this branch" });
+    const data = await imprestService.getConsumptionSinceLastReplenishment(req.params.id);
+    res.json({ success: true, data });
   }),
 );
 

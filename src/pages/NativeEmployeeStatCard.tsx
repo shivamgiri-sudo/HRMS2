@@ -1,3 +1,4 @@
+import { EmployeeWarningsPanel } from "@/components/employees/EmployeeWarningsPanel";
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useNavigate, Link } from "react-router-dom";
@@ -25,6 +26,7 @@ import {
   Clock,
   CheckCircle,
   AlertCircle,
+  AlertTriangle,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -127,7 +129,7 @@ interface StatCardData {
   journey: JourneyEvent[];
 }
 
-type StatTab = "overview" | "documents" | "attendance" | "leave" | "payslips" | "salary" | "assets" | "journey";
+type StatTab = "overview" | "documents" | "attendance" | "leave" | "payslips" | "salary" | "assets" | "journey" | "warnings";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -904,6 +906,7 @@ const TABS: { key: StatTab; label: string; icon: React.ReactNode }[] = [
   { key: "payslips",   label: "Payslips",   icon: <CreditCard className="h-4 w-4" /> },
   { key: "assets",     label: "Assets",     icon: <Package className="h-4 w-4" /> },
   { key: "journey",    label: "Journey",    icon: <TrendingUp className="h-4 w-4" /> },
+  { key: "warnings",   label: "Warnings",   icon: <AlertTriangle className="h-4 w-4" /> },
 ];
 
 export default function NativeEmployeeStatCard() {
@@ -1378,6 +1381,9 @@ export default function NativeEmployeeStatCard() {
                 {activeTab === "assets" && resolvedId && (
                   <div className="p-6"><AssetsTab employeeId={resolvedId} /></div>
                 )}
+
+                {/* Warnings: the record on the employee. The server decides who may see or issue. */}
+                {activeTab === "warnings" && resolvedId && <EmployeeWarningsPanel employeeId={resolvedId} />}
 
                 {/* Journey */}
                 {activeTab === "journey" && (

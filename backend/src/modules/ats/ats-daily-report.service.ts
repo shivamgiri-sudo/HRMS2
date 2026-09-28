@@ -7,6 +7,7 @@
 
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { branchNameVariants } from "./ats-vocabulary.js";
 
 export interface PeriodMetrics {
   walkin: number;
@@ -102,6 +103,11 @@ async function queryPeriodMetrics(
   fromDate: string,
   toDate: string,
 ): Promise<PeriodMetrics> {
+  // applied_for_branch is free text with confirmed alias spellings for the same physical
+  // branch (e.g. "Okaya Centre" for NOIDA-2) — match every known spelling, not just the
+  // canonical one, or this silently undercounts. See branchNameVariants().
+  const branchVariants = branchNameVariants(branchName);
+  const branchPlaceholders = branchVariants.map(() => "?").join(",");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(DISTINCT c.id)                                                         AS total_walkin,
@@ -142,9 +148,9 @@ async function queryPeriodMetrics(
      FROM ats_candidate c
      LEFT JOIN ats_interview_submission s ON s.candidate_id = c.id
      WHERE c.record_type = 'candidate'
-       AND c.applied_for_branch = ?
+       AND c.applied_for_branch IN (${branchPlaceholders})
        AND DATE(COALESCE(c.walk_in_date, c.created_at)) BETWEEN ? AND ?`,
-    [SLA_MINUTES, branchName, fromDate, toDate],
+    [SLA_MINUTES, ...branchVariants, fromDate, toDate],
   );
 
   const r = rows[0] ?? {};
@@ -168,9 +174,14 @@ async function queryPeriodMetrics(
 
 async function queryProcessFtd(branchName: string, forDate: string): Promise<ProcessRow[]> {
   const today = forDate;
+  // Same alias widening as queryPeriodMetrics — and since several spellings now match,
+  // GROUP BY can no longer include applied_for_branch itself (that would split one
+  // branch's process breakdown into a separate row per spelling); it groups by process
+  // only, and the output below reports the canonical branchName directly.
+  const branchVariants = branchNameVariants(branchName);
+  const branchPlaceholders = branchVariants.map(() => "?").join(",");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
-       c.applied_for_branch                               AS branch,
        COALESCE(c.applied_for_process,'Unknown')         AS process,
        COUNT(DISTINCT c.id)                               AS total_walkin,
        SUM(CASE WHEN c.current_stage IN
@@ -203,18 +214,18 @@ async function queryProcessFtd(branchName: string, forDate: string): Promise<Pro
      FROM ats_candidate c
      LEFT JOIN ats_interview_submission s ON s.candidate_id = c.id
      WHERE c.record_type = 'candidate'
-       AND c.applied_for_branch = ?
+       AND c.applied_for_branch IN (${branchPlaceholders})
        AND DATE(COALESCE(c.walk_in_date, c.created_at)) = ?
-     GROUP BY c.applied_for_branch, c.applied_for_process
+     GROUP BY c.applied_for_process
      ORDER BY total_walkin DESC`,
-    [branchName, today],
+    [...branchVariants, today],
   );
 
   return rows.map((r) => {
     const walkin   = Number(r.total_walkin ?? 0);
     const selected = Number(r.selected ?? 0);
     return {
-      branch:             String(r.branch ?? branchName),
+      branch:             branchName,
       process:            String(r.process ?? "Unknown"),
       walkin,
       selected,
@@ -233,10 +244,12 @@ async function queryProcessFtd(branchName: string, forDate: string): Promise<Pro
 
 async function queryRecruiterFtd(branchName: string, forDate: string): Promise<RecruiterRow[]> {
   const today = forDate;
+  // Same alias widening + GROUP BY fix as queryProcessFtd above.
+  const branchVariants = branchNameVariants(branchName);
+  const branchPlaceholders = branchVariants.map(() => "?").join(",");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COALESCE(c.recruiter_assigned_name, c.recruiter_name, 'Unassigned') AS recruiter,
-       c.applied_for_branch                                                  AS branch,
        COUNT(DISTINCT c.id)                                                  AS sourced,
        SUM(CASE WHEN c.current_stage NOT IN ('Applied','New')
                  THEN 1 ELSE 0 END)                                          AS attended,
@@ -262,11 +275,11 @@ async function queryRecruiterFtd(branchName: string, forDate: string): Promise<R
      FROM ats_candidate c
      LEFT JOIN ats_interview_submission s ON s.candidate_id = c.id
      WHERE c.record_type = 'candidate'
-       AND c.applied_for_branch = ?
+       AND c.applied_for_branch IN (${branchPlaceholders})
        AND DATE(COALESCE(c.walk_in_date, c.created_at)) = ?
-     GROUP BY recruiter, c.applied_for_branch
+     GROUP BY recruiter
      ORDER BY attended DESC`,
-    [SLA_MINUTES, branchName, today],
+    [SLA_MINUTES, ...branchVariants, today],
   );
 
   return rows.map((r) => {
@@ -282,7 +295,7 @@ async function queryRecruiterFtd(branchName: string, forDate: string): Promise<R
 
     return {
       recruiter:     String(r.recruiter ?? "Unassigned"),
-      branch:        String(r.branch ?? branchName),
+      branch:        branchName,
       sourced:       Number(r.sourced ?? 0),
       attended,
       slaPct:        fmtPct(slaMet, attended),

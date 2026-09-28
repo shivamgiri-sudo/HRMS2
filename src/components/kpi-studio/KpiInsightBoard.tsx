@@ -281,7 +281,7 @@ function KpiTrendChart({ kpi }: { kpi: KpiLike }) {
     () =>
       [...(kpi.trend_data ?? [])]
         .sort((left, right) => left.date.localeCompare(right.date))
-        .map((point) => ({ date: point.date.slice(5), value: Number(point.value), source: point.source })),
+        .map((point) => ({ date: (point.date ?? "").slice(5), value: Number(point.value), source: point.source })),
     [kpi.trend_data],
   );
 

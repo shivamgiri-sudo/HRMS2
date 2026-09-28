@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getUserRoleKeys, getUserAssignmentScopes } from "../../shared/scopeAccess.js";
+import { branchNameVariants } from "./ats-vocabulary.js";
 
 /**
  * ONE canonical candidate row-scope rule, for every candidate operation.
@@ -46,9 +47,16 @@ export async function resolveCandidateScope(userId: string): Promise<CandidateSc
       branchIds,
     );
     const branchNames = (bmRows as { branch_name: string }[]).map((r) => r.branch_name);
-    if (branchNames.length > 0) {
-      sqlParts.push(`applied_for_branch IN (${branchNames.map(() => "?").join(",")})`);
-      params.push(...branchNames);
+    // applied_for_branch is free text, and the same physical branch is recorded under
+    // several spellings (e.g. 1,862 candidates as "Okaya Centre" rather than "NOIDA-2") —
+    // see ats-vocabulary.ts. Matching only the canonical branch_master name silently
+    // dropped every one of those candidates for a recruiter scoped to that branch.
+    // branchNameVariants() only adds confirmed aliases, so this can only widen who a
+    // scoped recruiter sees, never narrow it.
+    const expandedNames = [...new Set(branchNames.flatMap((n) => branchNameVariants(n)))];
+    if (expandedNames.length > 0) {
+      sqlParts.push(`applied_for_branch IN (${expandedNames.map(() => "?").join(",")})`);
+      params.push(...expandedNames);
     }
   }
 

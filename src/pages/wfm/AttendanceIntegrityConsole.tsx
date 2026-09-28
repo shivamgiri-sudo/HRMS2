@@ -60,7 +60,9 @@ const MismatchesPanel = lazy(() => import("@/pages/wfm/attendance-integrity/Mism
 const BiometricSyncPanel = lazy(() => import("@/pages/wfm/attendance-integrity/BiometricSyncPanel"));
 const BillingRulesPanel = lazy(() => import("@/pages/wfm/attendance-integrity/BillingRulesPanel"));
 
-type TabKey = "exceptions" | "mismatches" | "biometric" | "billing";
+const BranchLedgerPanel = lazy(() => import("@/pages/wfm/attendance-integrity/BranchLedgerPanel"));
+
+type TabKey = "exceptions" | "mismatches" | "biometric" | "billing" | "ledger";
 
 type TabDef = {
   key: TabKey;
@@ -75,6 +77,9 @@ const TAB_DEFS: TabDef[] = [
   { key: "mismatches", label: "Mismatches", pageCode: "WFM_LIVE_TRACKER", Component: MismatchesPanel },
   { key: "biometric", label: "Biometric Sync", pageCode: "WFM_LIVE_TRACKER", Component: BiometricSyncPanel },
   { key: "billing", label: "Billing Rules", pageCode: "ATTENDANCE_BILLING_CONFIG", Component: BillingRulesPanel },
+  // Read-only per-branch record of who gave which attendance correction to whom. Same audience
+  // as the Exceptions tab: the API's roles + row scope mirror the mismatch/exception routes.
+  { key: "ledger", label: "Branch Ledger", pageCode: "WFM_ATTENDANCE_EXCEPTIONS", Component: BranchLedgerPanel },
 ];
 
 /** The code offered to the Request Access flow when no tab is visible at all. */

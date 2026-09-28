@@ -4,10 +4,13 @@ async function test() {
   console.log('Testing real-time attendance on port 5056...\n');
 
   // Login
-  const loginData = JSON.stringify({
-    email: 'admin@mascallnet.com',
-    password: 'Admin@123'
-  });
+  const email = process.env.TEST_ADMIN_EMAIL;
+  const password = process.env.TEST_ADMIN_PASSWORD;
+  if (!email || !password) {
+    console.error('Set TEST_ADMIN_EMAIL and TEST_ADMIN_PASSWORD env vars before running this script.');
+    process.exit(1);
+  }
+  const loginData = JSON.stringify({ email, password });
 
   const token = await new Promise((resolve, reject) => {
     const req = http.request({

@@ -36,6 +36,24 @@ const AGGREGATES = ["SUM", "AVG", "COUNT", "MAX", "MIN"] as const;
 const isoLocal = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const firstOfMonth = () => isoLocal(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+interface ImportOutcome {
+  row: number;
+  metricKey: string;
+  scoreDate: string;
+  value: number | null;
+  ok: boolean;
+  message?: string;
+  /** Present only on a dry run, and only where a figure already exists for that day. */
+  replaces?: number | null;
+}
+
+interface ImportResult {
+  imported: number;
+  errors: Array<{ row: number; message: string }>;
+  outcomes: ImportOutcome[];
+  dryRun: boolean;
+}
+
 const todayIso = () => isoLocal(new Date());
 
 const inputCls =
@@ -107,20 +125,63 @@ export default function ProcessDataSourcePage() {
   });
 
   const [pasted, setPasted] = useState("");
-  const importRows = useMutation({
-    mutationFn: () => {
-      // metricKey,date,value[,note] per line — the same four columns the single
-      // entry form collects, so one mental model covers both.
-      const rows = pasted.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
-        const [metricKey, scoreDate, value, ...note] = line.split(",").map((c) => c.trim());
-        return { metricKey, scoreDate, value, note: note.join(",") || undefined };
-      });
-      return hrmsApi.post<HrmsEnvelope<{ imported: number; errors: Array<{ row: number; message: string }> }>>(
-        `/api/process-data-source/${processId}/import`, { rows },
-      );
-    },
-    onSuccess: invalidateAll,
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [preview, setPreview] = useState<ImportOutcome[] | null>(null);
+
+  /**
+   * metricKey,date,value[,note] per line — the same four columns the single
+   * entry form collects, so one mental model covers both.
+   *
+   * A leading header row is dropped rather than reported as a broken row:
+   * every spreadsheet export has one, and rejecting it teaches people the
+   * upload is unreliable.
+   */
+  const parseRows = (text: string) => {
+    const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const body = lines.length && /^metric[_ ]?key\s*,/i.test(lines[0]) ? lines.slice(1) : lines;
+    return body.map((line) => {
+      const [metricKey, scoreDate, value, ...note] = line.split(",").map((c) => c.trim());
+      return { metricKey, scoreDate, value, note: note.join(",") || undefined };
+    });
+  };
+
+  const runImport = (dryRun: boolean) =>
+    hrmsApi.post<HrmsEnvelope<ImportResult>>(`/api/process-data-source/${processId}/import`, {
+      rows: parseRows(pasted),
+      dry_run: dryRun,
+    });
+
+  // Checked before it writes, against the same registry and date rules the write
+  // uses. Pasting a month and discovering afterwards that half the rows were
+  // rejected leaves the dashboard a blend of new and stale figures that still
+  // looks complete.
+  const checkRows = useMutation({
+    mutationFn: () => runImport(true),
+    onSuccess: (res) => setPreview(res.data.outcomes),
   });
+
+  const importRows = useMutation({
+    mutationFn: () => runImport(false),
+    onSuccess: (res) => {
+      setPreview(res.data.outcomes);
+      invalidateAll();
+    },
+  });
+
+  /** Reads a .csv/.txt in the browser; nothing is uploaded until Check is run. */
+  const onFile = (file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setPasted(String(reader.result ?? ""));
+      setFileName(file.name);
+      setPreview(null);
+    };
+    reader.readAsText(file);
+  };
+
+  const readyCount = preview?.filter((o) => o.ok).length ?? 0;
+  const blockedCount = preview?.filter((o) => !o.ok).length ?? 0;
 
   const [conn, setConn] = useState({
     integration_name: "", host: "", port: "3306", database: "",
@@ -270,31 +331,107 @@ export default function ProcessDataSourcePage() {
 
         <section className={cardCls}>
           <h2 className="mb-1 flex items-center gap-2 text-lg font-semibold text-slate-900">
-            <Upload className="h-4 w-4" /> Paste a month at once
+            <Upload className="h-4 w-4" /> Upload a month at once
           </h2>
           <p className="mb-3 text-xs text-slate-500">
-            One row per line: <code>metricKey,YYYY-MM-DD,value,note</code>. A bad row is reported by its
-            line number and the rest still import.
+            Choose a CSV or paste rows: <code>metricKey,YYYY-MM-DD,value,note</code>, one per line. A
+            header row is ignored. Nothing is saved until you have seen what it will do.
           </p>
+
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <label className="cursor-pointer rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-50">
+              Choose file
+              <input
+                type="file"
+                accept=".csv,.txt,text/csv,text/plain"
+                className="hidden"
+                onChange={(e) => onFile(e.target.files?.[0])}
+              />
+            </label>
+            {fileName && <span className="text-xs text-slate-500">{fileName}</span>}
+          </div>
+
           <textarea
             className={`${inputCls} h-28 font-mono text-xs`}
             value={pasted}
-            onChange={(e) => setPasted(e.target.value)}
+            onChange={(e) => { setPasted(e.target.value); setPreview(null); }}
             placeholder={"gs1_email_tat_sec,2026-08-01,3200\ngs1_email_tat_sec,2026-08-02,2980"}
           />
-          <button
-            className="mt-2 rounded-md border border-slate-300 px-4 py-2 text-sm font-medium disabled:opacity-50"
-            disabled={!pasted.trim() || !processId || importRows.isPending}
-            onClick={() => importRows.mutate()}
-          >
-            {importRows.isPending ? "Importing…" : "Import rows"}
-          </button>
-          {importRows.data && (
-            <div className="mt-2 text-sm">
-              <p className="text-emerald-700">Imported {importRows.data.data.imported} row(s).</p>
-              {importRows.data.data.errors.map((e) => (
-                <p key={e.row} className="text-rose-600">Line {e.row}: {e.message}</p>
-              ))}
+
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium disabled:opacity-50"
+              disabled={!pasted.trim() || !processId || checkRows.isPending}
+              onClick={() => checkRows.mutate()}
+            >
+              {checkRows.isPending ? "Checking…" : "Check rows"}
+            </button>
+            <button
+              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              disabled={!preview || readyCount === 0 || importRows.isPending}
+              onClick={() => importRows.mutate()}
+            >
+              {importRows.isPending
+                ? "Importing…"
+                : preview
+                  ? `Import ${readyCount} row${readyCount === 1 ? "" : "s"}`
+                  : "Import rows"}
+            </button>
+            {preview && blockedCount > 0 && (
+              <span className="text-xs text-rose-600">
+                {blockedCount} row{blockedCount === 1 ? "" : "s"} will be skipped
+              </span>
+            )}
+          </div>
+
+          {(checkRows.isError || importRows.isError) && (
+            <p className="mt-2 text-sm text-rose-600">
+              {((checkRows.error ?? importRows.error) as Error).message}
+            </p>
+          )}
+
+          {importRows.data && !importRows.data.data.dryRun && (
+            <p className="mt-2 text-sm text-emerald-700">
+              Imported {importRows.data.data.imported} row(s).
+            </p>
+          )}
+
+          {preview && preview.length > 0 && (
+            <div className="mt-3 max-h-64 overflow-auto rounded-md border border-slate-200">
+              <table className="w-full text-left text-xs">
+                <thead className="sticky top-0 bg-slate-50 text-slate-500">
+                  <tr>
+                    <th className="px-2 py-1.5 font-medium">Line</th>
+                    <th className="px-2 py-1.5 font-medium">Metric</th>
+                    <th className="px-2 py-1.5 font-medium">Date</th>
+                    <th className="px-2 py-1.5 font-medium">Value</th>
+                    <th className="px-2 py-1.5 font-medium">What will happen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.map((o) => (
+                    <tr key={`${o.row}-${o.metricKey}-${o.scoreDate}`} className="border-t border-slate-100">
+                      <td className="px-2 py-1.5 text-slate-400">{o.row}</td>
+                      <td className="px-2 py-1.5 font-mono">{o.metricKey || "—"}</td>
+                      <td className="px-2 py-1.5 font-mono">{o.scoreDate || "—"}</td>
+                      <td className="px-2 py-1.5 font-mono">
+                        {o.value === null ? <span className="text-slate-400">no reading</span> : o.value}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        {!o.ok ? (
+                          <span className="text-rose-600">{o.message}</span>
+                        ) : o.replaces !== undefined ? (
+                          <span className="text-amber-700">
+                            replaces {o.replaces === null ? "no reading" : o.replaces}
+                          </span>
+                        ) : (
+                          <span className="text-emerald-700">new</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </section>

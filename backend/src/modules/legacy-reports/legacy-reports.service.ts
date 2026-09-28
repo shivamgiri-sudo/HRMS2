@@ -167,6 +167,8 @@ const REPORTS: Record<string, ReportDef> = {
       { key: "short_collection", label: "Short Collection",    format: "currency", align: "right" },
       { key: "asset_rec",        label: "Asset Recovery",      format: "currency", align: "right" },
       { key: "insurance",        label: "Insurance",           format: "currency", align: "right" },
+      // PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+      // company-wide, all states); this column reads 0 on runs after removal.
       { key: "pt",               label: "Prof Tax",            format: "currency", align: "right" },
       { key: "lwp_deduction",    label: "Leave Ded",           format: "currency", align: "right" },
       { key: "other_deductions", label: "Other Ded",           format: "currency", align: "right" },
@@ -176,9 +178,13 @@ const REPORTS: Record<string, ReportDef> = {
       { key: "uan",              label: "UAN",                 format: "text" },
       { key: "epf_no",           label: "EPF No",              format: "text" },
       { key: "esic_no",          label: "ESIC No",             format: "text" },
+      // cheque_no/cheque_date/print_date are legacy column names inherited from db_bill's
+      // physical-cheque era; this company pays by bank transfer now, so they carry the
+      // Salary Transfer File's ECS number, its transfer date, and the date that number was
+      // recorded (see the query below) rather than any actual cheque.
       { key: "cheque_no",        label: "Cheque No",           format: "text" },
-      { key: "cheque_date",      label: "Cheque Date",         format: "text" },
-      { key: "print_date",       label: "Print Date",          format: "text" },
+      { key: "cheque_date",      label: "Cheque Date",         format: "date" },
+      { key: "print_date",       label: "Print Date",          format: "date" },
       { key: "left_status",      label: "Left Status",         format: "text" },
       { key: "tax_total_gross",  label: "Tax Total Gross",     format: "currency", align: "right" },
       { key: "tax_section10",    label: "Tax Section 10",      format: "currency", align: "right" },
@@ -276,6 +282,8 @@ const REPORTS: Record<string, ReportDef> = {
           0                                                                          AS short_collection,
           COALESCE(MAX(CASE WHEN c.component_code='ASSET_REC'     THEN c.amount END),0) AS asset_rec,
           COALESCE(MAX(CASE WHEN c.component_code='INS'           THEN c.amount END),0) AS insurance,
+          -- PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+          -- company-wide, all states); both sources here read 0 on runs after removal.
           COALESCE(spl.professional_tax, MAX(CASE WHEN c.component_code='PT'  THEN c.amount END), 0) AS pt,
           COALESCE(spl.lwp_deduction,    MAX(CASE WHEN c.component_code='LWP' THEN c.amount END), 0) AS lwp_deduction,
           COALESCE(spl.other_deductions, MAX(CASE WHEN c.component_code='OTHER_DED' THEN c.amount END), 0) AS other_deductions,
@@ -296,7 +304,14 @@ const REPORTS: Record<string, ReportDef> = {
           COALESCE(e.uan_number, '')                                                 AS uan,
           COALESCE(e.epf_number, '')                                                 AS epf_no,
           COALESCE(e.esic_number, '')                                                AS esic_no,
-          NULL AS cheque_no, NULL AS cheque_date, NULL AS print_date,
+          -- Sourced from the Salary Transfer File workflow (bank-payment-readiness), not a real
+          -- cheque: ecs_number is the bank's transfer/ECS reference, transfer_date is the payment
+          -- date from that file, confirmed_at is when the transfer number was recorded (i.e. the
+          -- file's upload/commit moment). MAX() picks the confirmed row when duplicates exist for
+          -- this employee+run; exported/rejected rows carry no ecs_number so they never win.
+          MAX(sti.ecs_number)                                  AS cheque_no,
+          DATE_FORMAT(MAX(sti.transfer_date), '%Y-%m-%d')      AS cheque_date,
+          DATE_FORMAT(MAX(sti.confirmed_at), '%Y-%m-%d')       AS print_date,
           IF(e.active_status = 1, '', 'LEFT')                                        AS left_status,
           NULL AS tax_total_gross, NULL AS tax_section10, NULL AS tax_balance,
           NULL AS tax_under_hd, NULL AS deduction_under24, NULL AS tax_gross_total,
@@ -316,6 +331,8 @@ const REPORTS: Record<string, ReportDef> = {
         LEFT JOIN designation_master dm ON dm.id = e.designation_id
         LEFT JOIN department_master dpm ON dpm.id = e.department_id
         LEFT JOIN salary_prep_line_component c ON c.line_id = spl.id
+        LEFT JOIN salary_transfer_batch_item sti
+               ON sti.run_id = spr.id AND sti.employee_code = spl.employee_code
         ${processJoin("pm", "e")}
         WHERE 1=1 ${bw} ${mw} ${ew} ${nw} ${pw}
         GROUP BY spl.id, spl.employee_code, e.full_name, bm.branch_name,
@@ -1410,6 +1427,10 @@ const REPORTS: Record<string, ReportDef> = {
   },
 
   // ── Professional Tax Register ─────────────────────────────────────────────
+  // PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+  // company-wide, all states). Kept, not deleted, for historical audit of runs
+  // that already carried a professional_tax amount; HAVING pt_amount > 0 below
+  // means this report returns zero rows for every run processed after removal.
   "professional-tax": {
     label: "Professional Tax Register",
     sumCols: ["pt_amount"],
@@ -1796,6 +1817,61 @@ const REPORTS: Record<string, ReportDef> = {
         ORDER BY gratuity_liability DESC, bm.branch_name
         LIMIT ${f._limit ?? 50000}
       `, [...bv, ...ev]);
+    },
+  },
+
+  // ── 39. Client Bill Collection History (migration 1718/1719/1720) ──────────
+  //
+  // db_bill.bill_pay_particulars had no mirror in mas_hrms until 1718 — invoices and
+  // GRNs were already synced, but "who paid us, how much, when, with what TDS
+  // deducted" was not. This surfaces that mirror.
+  //
+  // Originally shipped as "Vendor Payment History" / vendor_bill_payment_snapshot —
+  // WRONG, corrected by migration 1720 the same day. company_name on this table is
+  // always 'Mas Callnet India Pvt Ltd' or 'IDC' (MAS's own entities, never a vendor),
+  // and reconstructing bill_no + '/' + short finance_year matches
+  // billing_invoice_snapshot.bill_no (MAS's own CLIENT invoices) on 79% of rows, with
+  // the matched invoice's bill_client being a real client (Vodafone, Idea Cellular,
+  // Aircel, ...) and grand_total equal to this row's bill_amount on every sampled
+  // pair. This is money MAS RECEIVED from its clients, not money MAS paid a vendor.
+  //
+  // Uses Range mode (from_date/to_date against pay_type_date, a real DATETIME) rather
+  // than tally-invoice's from_date-as-finance-year convention, which the date-picker
+  // UI can't actually drive.
+  "client-bill-collection-history": {
+    label: "Client Bill Collection History",
+    sumCols: ["bill_amount", "tds_deducted", "net_amount"],
+    columns: [
+      { key: "bill_no",              label: "Bill No",       format: "text" },
+      { key: "branch_name",          label: "Branch",        format: "text" },
+      { key: "financial_year",       label: "Financial Year", format: "text" },
+      { key: "bill_amount",          label: "Bill Amount",   format: "currency", align: "right" },
+      { key: "tds_deducted",         label: "TDS Deducted by Client", format: "currency", align: "right" },
+      { key: "deduction",            label: "Other Deduction", format: "currency", align: "right" },
+      { key: "net_amount",           label: "Net Collected", format: "currency", align: "right" },
+      { key: "payment_completeness", label: "Completeness",  format: "status" },
+      { key: "bill_passed",          label: "Bill Passed",   format: "text" },
+      { key: "status",               label: "Status",        format: "status" },
+      { key: "bank_name",            label: "Bank",          format: "text" },
+      { key: "pay_type_date",        label: "Collected On",  format: "date" },
+      { key: "raised_by",            label: "Raised By",     format: "text" },
+    ],
+    async query(f: LegacyFilter) {
+      const [bw, bv] = branchWhere("branch_name", f.branch);
+      const [dw, dv] = dateRangeWhere("pay_type_date", f.from_date, f.to_date);
+      return q(`
+        SELECT bill_no, branch_name, financial_year,
+               COALESCE(bill_amount,0)  AS bill_amount,
+               COALESCE(tds_deducted,0) AS tds_deducted,
+               COALESCE(deduction,0)    AS deduction,
+               COALESCE(net_amount,0)   AS net_amount,
+               COALESCE(payment_completeness, 'unknown') AS payment_completeness,
+               bill_passed, status, bank_name, pay_type_date, raised_by
+        FROM client_bill_collection_snapshot
+        WHERE is_deleted = 0 ${bw} ${dw}
+        ORDER BY pay_type_date DESC, bill_source_id DESC
+        LIMIT ${f._limit ?? 50000}
+      `, [...bv, ...dv]);
     },
   },
 

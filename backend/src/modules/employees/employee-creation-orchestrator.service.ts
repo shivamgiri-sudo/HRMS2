@@ -45,8 +45,10 @@ import { logSensitiveAction } from '../../shared/auditLog.js';
 import { sendPayrollHrJoiningDocNotification } from '../ats/ats.email.service.js';
 import { issueCandidatePortalAccess } from '../ats/interview.service.js';
 import { resolveOnboardingDocumentFile } from '../ats/onboardingDocumentPath.js';
+import { promoteCandidateDocumentsToEmployee } from './candidateDocumentPromotion.service.js';
 import { cropFaceForProfilePhoto } from './face-crop.util.js';
 import { normalizeBloodGroup } from './bloodGroup.util.js';
+import { normalizeMaritalStatus } from './maritalStatus.util.js';
 import { writeEmployeePhotoBuffer } from './employee.photo.compat.routes.js';
 import { env } from '../../config/env.js';
 import { resolveVerifiedDob } from "../ats/ageVerification.service.js";
@@ -56,6 +58,7 @@ import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { encryptField } from "../../shared/fieldEncryption.js";
 import { computeAccountBlindIndex } from "../../shared/bankAccountDuplicate.js";
+import { applySingleMappedLob } from "../wfm/process-lob-map.service.js";
 
 export interface EmployeeCreationInput {
   candidateId: string;
@@ -298,6 +301,16 @@ export async function createEmployeeFromCandidate(
          COALESCE(p.permanent_address, c.permanent_address) AS permanent_address,
          -- The statutory forms need these; they were collected and then dropped.
          COALESCE(p.father_name, p.father_husband_name, c.father_name) AS father_name,
+         -- Father/Husband relation sits right next to father_name on the onboarding form
+         -- (candidate_onboarding_profile.relation) but was never read here — same class of
+         -- bug blood_group had below before that was fixed. No employees column holds this;
+         -- written into employee_legacy_meta.relationship_type after the main insert below,
+         -- matching where the Employee Master report already reads it from.
+         p.relation,
+         -- Onboarding-form submission timestamp — "Entry Date" on the legacy-format export.
+         -- Requires employees.candidate_id to actually be set at insert time (added below);
+         -- without that FK the report's join to this table can never match, for any employee.
+         p.submitted_at AS onboarding_submitted_at,
          p.marital_status,
          -- Collected on the Onboarding form and then dropped here, exactly like the
          -- emergency contact below: the INSERT never named the column, so every employee
@@ -315,9 +328,31 @@ export async function createEmployeeFromCandidate(
          -- fallback until someone manually re-typed what the candidate already gave.
          p.emergency_contact_name,
          p.emergency_contact_relation,
-         p.emergency_contact_mobile
+         p.emergency_contact_mobile,
+         -- Present/permanent address, structured (line1/line2/city/state/pincode) —
+         -- captured on the onboarding form and, until now, never read here at all (the
+         -- single-blob current_address/permanent_address above went into employees'
+         -- flat address1/permanent_address1 columns, which the Employee Master report
+         -- never reads; this structured version is what the report's employee_address
+         -- join actually needs — see the INSERT below).
+         p.present_address_line1, p.present_address_line2, p.present_city,
+         p.present_state, p.present_pincode,
+         p.permanent_address_line1, p.permanent_address_line2, p.permanent_city,
+         p.permanent_state, p.permanent_pincode,
+         -- FamilyForm — captured into candidate_onboarding_family and never read here
+         -- either, so employees.annual_income/count_of_dependents (added specifically
+         -- to mirror this form, see 1073_employee_profile_parity.sql) stayed NULL for
+         -- every employee created through this path.
+         fam.annual_income, fam.count_of_dependents,
+         -- Nominee — same story again: candidate_onboarding_profile.nominee_name/
+         -- nominee_relation/nominee_dob is captured on the form, and this function's own
+         -- comments ("Create related records (statutory, salary, nominee, leave...)")
+         -- claimed employee_nominee was already handled here — it never was. No code in
+         -- this file has ever inserted a row into employee_nominee.
+         p.nominee_name, p.nominee_relation, p.nominee_dob
        FROM ats_candidate c
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
+       LEFT JOIN candidate_onboarding_family fam ON fam.candidate_id = c.id
        WHERE c.id = ? LIMIT 1`,
       [candidateId]
     );
@@ -388,7 +423,7 @@ export async function createEmployeeFromCandidate(
       // 'Active', and the nightly activation job only selects 'preboarding',
       // so a future-dated joiner left on the default is never activated.
       `INSERT INTO employees
-         (id, employee_code, first_name, last_name, email, official_email, mobile,
+         (id, employee_code, biometric_code, first_name, last_name, email, official_email, mobile,
           personal_email, personal_phone, alternate_mobile,
           gender, date_of_birth, father_name, marital_status, blood_group,
           address1, permanent_address1,
@@ -398,12 +433,27 @@ export async function createEmployeeFromCandidate(
           -- them from legacy import. ESI registration reads employees.pan_number and had
           -- nothing to read for anyone onboarded through the current flow.
           pan_number, aadhaar_number,
+          -- Never written before, so no employee created through this path could ever be
+          -- joined back to their own onboarding-form submission (candidate_onboarding_profile
+          -- via this FK) — every candidate-profile-linked field (e.g. the Employee Master
+          -- report's "Entry Date") silently had nothing to read for every future hire, not
+          -- just the pre-ATS backfilled population.
+          candidate_id,
           branch_id, process_id, department_id, designation_id, cost_centre_id, cost_center_code,
-          date_of_joining, salary_start_date, employment_type, reporting_manager_id,
+          date_of_joining, salary_start_date, employment_type, emp_type, reporting_manager_id,
+          -- FamilyForm — see the fam join above. Mirrors the candidate journey exactly as
+          -- 1073_employee_profile_parity.sql intended when it added these two columns.
+          annual_income, count_of_dependents,
           user_id, active_status, employment_status)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
+       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
       [
-        employeeId, employeeCode, toStoredNameRequired(firstName), toStoredNameRequired(lastName),
+        // biometric_code -- owner decision 2026-09-16: no separate biometric enrollment ID is
+        // in use, so this is always the employee code itself. (Actual biometric-device
+        // matching, where it exists, goes through employee_biometric_enrollment.cosec_user_id
+        // first -- see cosec-sync.service.ts -- with this column as a secondary fallback
+        // before employee_code; setting it here just fills a field that already fell through
+        // to employee_code at match time.)
+        employeeId, employeeCode, employeeCode, toStoredNameRequired(firstName), toStoredNameRequired(lastName),
         candRow?.personal_email ?? null,
         candRow?.mobile ?? null,
         candRow?.personal_email ?? null,
@@ -412,7 +462,7 @@ export async function createEmployeeFromCandidate(
         candRow?.gender ?? null,
         candRow?.date_of_birth ?? null,
         toStoredName(candRow?.father_name),
-        candRow?.marital_status || null,
+        normalizeMaritalStatus(candRow?.marital_status),
         // Normalised, never stored raw: the onboarding field is free text and holds the
         // same 'NA' / 'B+ve' shapes as the legacy employee rows. An unrecognisable value
         // becomes NULL so the card prints an honest blank instead of a fake reading.
@@ -428,6 +478,7 @@ export async function createEmployeeFromCandidate(
         /^[0-9]{12}$/.test(String(candRow?.aadhar_number ?? "").replace(/\D/g, ""))
           ? String(candRow?.aadhar_number).replace(/\D/g, "")
           : null,
+        candidateId,
         resolvedBranchId,
         resolvedProcessId,
         offer.department_id ?? null,
@@ -437,9 +488,186 @@ export async function createEmployeeFromCandidate(
         offer.date_of_joining,
         salaryStartDate,
         offer.emp_type,
+        offer.emp_type,
         offer.reporting_manager_id ?? null,
+        candRow?.annual_income ?? null,
+        // SMALLINT max is 32767; a candidate who entered an income-like number
+        // into this field would crash the INSERT without this guard.
+        (typeof candRow?.count_of_dependents === 'number' && candRow.count_of_dependents <= 32767 && candRow.count_of_dependents >= 0)
+          ? candRow.count_of_dependents
+          : null,
       ]
     );
+
+    // LOB default: a process with exactly ONE active mapped LOB (process_lob_map) gives the new
+    // employee that LOB; 0 or >1 mappings leave employees.lob_id NULL for WFM to pick at
+    // alignment. Additive follow-up UPDATE guarded by lob_id IS NULL; never blocks creation
+    // (e.g. before migration 1845 has been applied).
+    try {
+      await applySingleMappedLob(conn, employeeId, resolvedProcessId);
+    } catch (lobErr: unknown) {
+      console.warn('[EmployeeOrchestrator] Single-LOB default skipped:', lobErr instanceof Error ? lobErr.message : lobErr);
+    }
+
+    // Father/Husband relation: no employees column holds this (only father_name does), and
+    // employee_legacy_meta — where the Employee Master report already reads relationship_type
+    // from — had no live writer anywhere until now. Only written when the onboarding form
+    // actually captured it, so this never creates an empty row for no reason.
+    if (candRow?.relation && String(candRow.relation).trim() !== "") {
+      await conn.execute(
+        `INSERT INTO employee_legacy_meta (id, employee_id, relationship_type)
+         VALUES (UUID(), ?, ?)
+         ON DUPLICATE KEY UPDATE
+           relationship_type = COALESCE(NULLIF(relationship_type,''), VALUES(relationship_type))`,
+        [employeeId, String(candRow.relation).trim()]
+      );
+    }
+
+    // Structured present/permanent address -> employee_address. This is the table the
+    // Employee Master report actually joins on (address_type='current'/'permanent'); the
+    // flat address1/permanent_address1 written into `employees` above is a different,
+    // already-existing column the report never reads, kept as-is for the other callers
+    // that do (profile display, ESI docs, DPDP export, etc.) — this is additive, not a
+    // replacement. Only written when the onboarding form actually captured at least one
+    // structured field, so this never creates an empty row for no reason.
+    // All four columns are NOT NULL in employee_address, so the INSERT still needs a
+    // non-null value for each -- but requiring address_line1 to be one of them (the
+    // original gate) was the bug: verified live 2026-09-16 that of 32,983
+    // candidate_onboarding_profile rows ever submitted, precisely ZERO have
+    // present_address_line1 filled alongside city/state/pincode -- the onboarding form
+    // does not collect a street-line address at all, only city/state/pincode via a
+    // picker. Gating on address_line1 meant this INSERT had never fired for a single
+    // employee since it shipped (2026-09-12), discarding real city/state/pincode data
+    // for every new hire. City/state/pincode are the fields that actually identify a
+    // location and the report's *_city/*_state/*_pincode columns read; address_line1
+    // falls back to '' (a real empty value, not NULL) rather than blocking the whole
+    // row when the form never asked for it.
+    const hasPresentAddress = !!(
+      candRow?.present_city  && String(candRow.present_city).trim() &&
+      candRow?.present_state && String(candRow.present_state).trim() &&
+      candRow?.present_pincode && String(candRow.present_pincode).trim()
+    );
+    if (hasPresentAddress) {
+      await conn.execute(
+        `INSERT INTO employee_address
+           (id, employee_id, address_type, address_line1, address_line2, city, state, pincode, country)
+         VALUES (UUID(), ?, 'current', ?, ?, ?, ?, ?, 'India')
+         ON DUPLICATE KEY UPDATE
+           address_line1 = COALESCE(NULLIF(address_line1,''), VALUES(address_line1)),
+           address_line2 = COALESCE(NULLIF(address_line2,''), VALUES(address_line2)),
+           city          = COALESCE(NULLIF(city,''), VALUES(city)),
+           state         = COALESCE(NULLIF(state,''), VALUES(state)),
+           pincode       = COALESCE(NULLIF(pincode,''), VALUES(pincode))`,
+        [employeeId, String(candRow?.present_address_line1 ?? "").trim(), candRow?.present_address_line2 ?? null,
+         candRow?.present_city ?? null, candRow?.present_state ?? null, candRow?.present_pincode ?? null]
+      );
+    }
+    const hasPermanentAddress = !!(
+      candRow?.permanent_city  && String(candRow.permanent_city).trim() &&
+      candRow?.permanent_state && String(candRow.permanent_state).trim() &&
+      candRow?.permanent_pincode && String(candRow.permanent_pincode).trim()
+    );
+    if (hasPermanentAddress) {
+      await conn.execute(
+        `INSERT INTO employee_address
+           (id, employee_id, address_type, address_line1, address_line2, city, state, pincode, country)
+         VALUES (UUID(), ?, 'permanent', ?, ?, ?, ?, ?, 'India')
+         ON DUPLICATE KEY UPDATE
+           address_line1 = COALESCE(NULLIF(address_line1,''), VALUES(address_line1)),
+           address_line2 = COALESCE(NULLIF(address_line2,''), VALUES(address_line2)),
+           city          = COALESCE(NULLIF(city,''), VALUES(city)),
+           state         = COALESCE(NULLIF(state,''), VALUES(state)),
+           pincode       = COALESCE(NULLIF(pincode,''), VALUES(pincode))`,
+        [employeeId, String(candRow?.permanent_address_line1 ?? "").trim(), candRow?.permanent_address_line2 ?? null,
+         candRow?.permanent_city ?? null, candRow?.permanent_state ?? null, candRow?.permanent_pincode ?? null]
+      );
+    }
+
+    // Qualification -> employee_education, and Experience -> employee_experience. Same class
+    // of gap as the address block above: candidate_onboarding_qualification (33,177 rows live)
+    // and candidate_onboarding_experience (286 rows) are real, form-captured data that this
+    // function never read at all -- neither table had ANY writer here before this. The
+    // Employee Master report and the Employee Profile page both read employee_education /
+    // employee_experience, not the candidate_onboarding_* tables directly, so this data was
+    // invisible everywhere despite being sitting right there. Verified 2026-09-16 on three
+    // fresh joiners (MAS63547/63548/63553): real qualification and work-history rows existed,
+    // employee_education/employee_experience had zero rows for any of them.
+    //
+    // A candidate can submit more than one qualification row (10th, 12th, graduate, etc.) --
+    // "Qualification" on this report has always meant the highest one attained (matches the
+    // legacy masjclrentry.Qualification convention), so the row with the highest
+    // passed_out_year wins, not simply the most recently edited one.
+    const [qualRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT qualification, specialization_course_name, institution_name, passed_out_state,
+              passed_out_city, passed_out_year, passed_out_percentage
+         FROM candidate_onboarding_qualification
+        WHERE candidate_id = ?
+        ORDER BY passed_out_year DESC, created_at DESC
+        LIMIT 1`,
+      [candidateId]
+    );
+    const qualRow = (qualRows as RowDataPacket[])[0];
+    if (qualRow?.qualification && String(qualRow.qualification).trim()) {
+      await conn.execute(
+        `INSERT INTO employee_education
+           (id, employee_id, qualification, specialization_course_name, institution_name,
+            passed_out_state, passed_out_city, passed_out_year, passed_out_percentage)
+         VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [employeeId, qualRow.qualification, qualRow.specialization_course_name ?? null,
+         qualRow.institution_name ?? null, qualRow.passed_out_state ?? null,
+         qualRow.passed_out_city ?? null, qualRow.passed_out_year ?? null,
+         qualRow.passed_out_percentage ?? null]
+      );
+    }
+
+    // Experience: a row in candidate_onboarding_experience is only ever created when the
+    // candidate actually filled in a past employer, so its presence alone (not a separate
+    // "is this person experienced" flag, which the onboarding form never asks) is what marks
+    // is_fresher = 0. Absence of a row is NOT treated as "confirmed fresher" -- that would
+    // assert something the candidate was never asked, matching the address block's own rule
+    // of never inventing a value the form didn't actually collect. Most recent employer wins,
+    // same reasoning as qualification above (a snapshot, not a full history table).
+    const [expRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT experience_year
+         FROM candidate_onboarding_experience
+        WHERE candidate_id = ?
+        ORDER BY to_date DESC, created_at DESC
+        LIMIT 1`,
+      [candidateId]
+    );
+    const expRow = (expRows as RowDataPacket[])[0];
+    if (expRow?.experience_year !== undefined && expRow?.experience_year !== null) {
+      await conn.execute(
+        `INSERT INTO employee_experience (id, employee_id, is_fresher, experience_years)
+         VALUES (UUID(), ?, 0, ?)`,
+        [employeeId, Number(expRow.experience_year) || 0]
+      );
+    }
+
+    // Nominee — captured on the onboarding form (candidate_onboarding_profile.nominee_*)
+    // and, until now, never written to employee_nominee at all despite this function's own
+    // long-standing comment claiming it handled it (see createRelatedEmployeeRecords below,
+    // whose header comment says "statutory, salary, nominee, leave" but never actually
+    // touches this table). Only written when the form actually captured both a name and a
+    // relation, since both are NOT NULL on employee_nominee. share_percentage defaults to
+    // 100 (single-nominee case, which this form only ever collects one of); nominee_for
+    // defaults to 'general' rather than asserting a specific statutory purpose (gratuity/pf/
+    // esic) the form never asked the candidate to choose between. is_minor is computed from
+    // nominee_dob when given, rather than guessed, since the actual date is right here.
+    const nomineeName = String(candRow?.nominee_name ?? "").trim();
+    const nomineeRelation = String(candRow?.nominee_relation ?? "").trim();
+    if (nomineeName && nomineeRelation) {
+      const nomineeDob = candRow?.nominee_dob ? new Date(candRow.nominee_dob) : null;
+      const isMinor = nomineeDob && !Number.isNaN(nomineeDob.getTime())
+        ? (Date.now() - nomineeDob.getTime()) / (365.25 * 24 * 60 * 60 * 1000) < 18
+        : false;
+      await conn.execute(
+        `INSERT INTO employee_nominee
+           (id, employee_id, nominee_name, relationship, date_of_birth, share_percentage, nominee_for, is_minor)
+         VALUES (?, ?, ?, ?, ?, 100, 'general', ?)`,
+        [randomUUID(), employeeId, toStoredNameRequired(nomineeName), nomineeRelation, candRow?.nominee_dob ?? null, isMinor ? 1 : 0]
+      ).catch((e: unknown) => console.warn('[createEmployee] employee_nominee insert skipped:', (e as Error).message));
+    }
 
     // Create related records (statutory, salary, nominee, leave, pf-opt-out)
     await createRelatedEmployeeRecords(conn, employeeId, candidateId, offer, candRow, approverId);
@@ -564,38 +792,75 @@ export async function createEmployeeFromCandidate(
       });
 
     // Promote the candidate's mandatory onboarding Live Selfie to employee
-    // avatar_url/photo_url (non-blocking). Previously this read
-    // ats_candidate.selfie_url — the legacy short-form's flat field, not the
-    // real onboarding document — and self-admittedly no-op'd whenever that
-    // value was an auth-gated /api/files/candidate/ URL, which is the normal
-    // case. The correct source is the candidate_onboarding_document row
-    // (doc_type "Live Selfie") the mandatory-gate onboarding flow writes.
-    try {
-      const [selfieDocRows] = await db.execute<RowDataPacket[]>(
-        `SELECT file_path FROM candidate_onboarding_document
-          WHERE candidate_id = ? AND doc_type = 'Live Selfie' AND deleted_at IS NULL
-          ORDER BY uploaded_at DESC LIMIT 1`,
-        [candidateId]
-      );
-      const storedPath: string | null = (selfieDocRows as any[])[0]?.file_path ?? null;
-      const resolvedPath = storedPath ? resolveOnboardingDocumentFile(storedPath) : null;
+    // avatar_url/photo_url. Previously this read ats_candidate.selfie_url — the
+    // legacy short-form's flat field, not the real onboarding document — and
+    // self-admittedly no-op'd whenever that value was an auth-gated
+    // /api/files/candidate/ URL, which is the normal case. The correct source is
+    // the candidate_onboarding_document row (doc_type "Live Selfie") the
+    // mandatory-gate onboarding flow writes.
+    //
+    // Genuinely fire-and-forget now, not just labelled that way. This block was
+    // commented "(non-blocking)" while still sitting behind an `await` — the two
+    // AWAITED calls inside it, cropFaceForProfilePhoto -> detectFaceBbox, run a
+    // TensorFlow.js/WASM face-detection model (@vladmandic/face-api) that lazily
+    // loads three neural nets from disk and initializes the WASM backend on the
+    // FIRST call after every process restart. That cold load routinely takes
+    // 10-30+ seconds — and while it runs, it also occupies Node's single event
+    // loop, so unrelated concurrent requests (a reject on a different offer, a
+    // second approve) queue up behind it too, not just this one. That is
+    // Branch Head's "offer approve/reject take a long time, sometimes 30s
+    // timeout" on /ats/offer-approvals. dispatchJoinProvisioningTasks just below
+    // was already moved off this same blocking pattern for exactly this
+    // failure mode ("was causing 30+ second timeouts for Branch Head") — this
+    // step is the one survivor of that fix.
+    (async () => {
+      try {
+        const [selfieDocRows] = await db.execute<RowDataPacket[]>(
+          `SELECT file_path FROM candidate_onboarding_document
+            WHERE candidate_id = ? AND doc_type = 'Live Selfie' AND deleted_at IS NULL
+            ORDER BY uploaded_at DESC LIMIT 1`,
+          [candidateId]
+        );
+        const storedPath: string | null = (selfieDocRows as any[])[0]?.file_path ?? null;
+        const resolvedPath = storedPath ? resolveOnboardingDocumentFile(storedPath) : null;
 
-      if (resolvedPath) {
-        const croppedBuffer = await cropFaceForProfilePhoto(resolvedPath);
-        await writeEmployeePhotoBuffer(employeeId, croppedBuffer, '.jpg');
-        result.warnings.push('Onboarding Live Selfie auto-cropped and promoted to employee avatar');
-      } else if (storedPath) {
-        // Row exists but the file isn't reachable on this machine (see
-        // onboardingDocumentPath.ts — a known, separate, unrecoverable-by-
-        // path-resolution class of already-missing files).
-        console.warn(`[EmployeeOrchestrator] Live Selfie document row exists but file not found on disk for candidate ${candidateId}.`);
-        result.warnings.push('Onboarding Live Selfie not promoted — source file missing on disk');
-      } else {
-        result.warnings.push('Onboarding Live Selfie not promoted — no Live Selfie document on file');
+        if (resolvedPath) {
+          const croppedBuffer = await cropFaceForProfilePhoto(resolvedPath);
+          await writeEmployeePhotoBuffer(employeeId, croppedBuffer, '.jpg');
+          console.log(`[EmployeeOrchestrator] Onboarding Live Selfie auto-cropped and promoted to employee avatar for ${employeeCode}`);
+        } else if (storedPath) {
+          // Row exists but the file isn't reachable on this machine (see
+          // onboardingDocumentPath.ts — a known, separate, unrecoverable-by-
+          // path-resolution class of already-missing files).
+          console.warn(`[EmployeeOrchestrator] Live Selfie document row exists but file not found on disk for candidate ${candidateId}.`);
+        }
+      } catch (selfieErr) {
+        console.warn('[EmployeeOrchestrator] Selfie promotion failed (non-blocking):', selfieErr);
       }
-    } catch (selfieErr) {
-      console.warn('[EmployeeOrchestrator] Selfie promotion failed (non-blocking):', selfieErr);
-    }
+    })();
+
+    // Copy the candidate's other uploaded onboarding documents (Aadhaar,
+    // Address Proof, marksheets, etc.) into employee_documents, the table
+    // the employee Documents tab reads. Without this the tab showed "Not
+    // uploaded" for documents the candidate had genuinely submitted — see
+    // candidateDocumentPromotion.service.ts. Fire-and-forget for the same
+    // reason as the selfie promotion above: must never delay or fail
+    // employee creation itself.
+    promoteCandidateDocumentsToEmployee(employeeId, candidateId, approverId)
+      .then(({ promoted, skippedFileMissing }) => {
+        if (promoted > 0 || skippedFileMissing > 0) {
+          console.log(
+            `[EmployeeOrchestrator] Promoted ${promoted} onboarding document(s) to employee_documents for ${employeeCode}`
+              + (skippedFileMissing > 0 ? ` (${skippedFileMissing} skipped — file missing on disk)` : ''),
+          );
+        }
+      })
+      .catch((docPromoErr: unknown) => {
+        console.error(
+          `[EmployeeOrchestrator] Document promotion failed for ${employeeCode} (non-blocking):`,
+          docPromoErr instanceof Error ? docPromoErr.message : docPromoErr,
+        );
+      });
 
     // RULE 9: Provisioning failure doesn't block creation — fire-and-forget so
     // sequential SMTP sends inside dispatchJoinProvisioningTasks do not hold
@@ -716,20 +981,55 @@ export async function createEmployeeFromCandidate(
     // "manual review required" that no system tracked and nobody was assigned.
     void raiseManualReviewWorkItem(employeeId, candidateId, employeeCode, result.warnings);
 
-    // Real-time activation: if joining date is today or past, activate immediately
+    // Real-time activation: if joining date is today or past, activate immediately.
+    //
+    // A transient failure here (pool exhaustion, brief DB hiccup) silently strands
+    // the employee in 'preboarding' until the 12:01 AM cron — invisible to HR and
+    // to the employee whose account never opens. The old catch swallowed the error
+    // entirely. Now we:
+    //   1. Retry once after a short back-off before giving up.
+    //   2. Log the error with employee code so on-call can find it instantly.
+    //   3. Record the failure in the work_item queue so HR sees an action item
+    //      rather than a missing employee.
     if (result.employeeId && offer.date_of_joining) {
+      const tryActivate = () =>
+        activateIfJoiningDateReached(result.employeeId!, offer.date_of_joining, approverId);
+
       try {
-        const activated = await activateIfJoiningDateReached(
-          result.employeeId,
-          offer.date_of_joining,
-          approverId
-        );
+        const activated = await tryActivate();
         if (activated) {
           result.warnings.push('Employee activated immediately - joining date is today');
         }
-      } catch (activationErr) {
-        // Non-blocking - cron will handle it
-        console.warn('[EmployeeOrchestrator] Real-time activation failed, cron will handle:', activationErr);
+      } catch (firstErr) {
+        // Retry once after 2 s — covers transient pool exhaustion during approval bursts.
+        try {
+          await new Promise((r) => setTimeout(r, 2000));
+          const activated = await tryActivate();
+          if (activated) {
+            result.warnings.push('Employee activated immediately (retry) - joining date is today');
+          }
+        } catch (retryErr) {
+          console.error(
+            `[EmployeeOrchestrator] Real-time activation failed for ${result.employeeCode} (${result.employeeId}) after retry — cron will recover at 00:01.`,
+            retryErr instanceof Error ? retryErr.message : retryErr,
+          );
+          // Surface as an HR action item so the stuck employee does not go unnoticed.
+          db.execute(
+            `INSERT INTO work_item
+               (id, item_type, title, description, module_code, entity_type, entity_id,
+                assigned_to_role, priority, status, created_at)
+             VALUES (UUID(), 'EMPLOYEE_ACTIVATION_FAILED',
+               ?, ?, 'employees', 'employee', ?, 'hr', 'high', 'pending', NOW())`,
+            [
+              `Activation failed: ${result.employeeCode}`,
+              `Employee ${result.employeeCode} (${result.employeeId}) could not be activated at joining time. The nightly job will retry at 00:01. If it is still preboarding tomorrow, raise with IT.`,
+              result.employeeId,
+            ],
+          ).catch((e: unknown) =>
+            console.error('[EmployeeOrchestrator] Could not raise activation-failed work item:', e),
+          );
+          result.warnings.push('Real-time activation failed — nightly job will retry at 00:01');
+        }
       }
     }
 
@@ -1319,7 +1619,7 @@ async function createRelatedEmployeeRecords(
   //
   // INSERT IGNORE: safe to retry — the unique key uq_emp_override_active on
   // (employee_id, override_type, status) prevents a second approved row.
-  if (Boolean(candRow?.pf_opt_out_elected)) {
+  if (candRow?.pf_opt_out_elected) {
     const joiningDate: Date = offer.date_of_joining instanceof Date
       ? offer.date_of_joining
       : new Date(String(offer.date_of_joining));
@@ -1356,7 +1656,7 @@ async function createRelatedEmployeeRecords(
     { flag: offer.esic_opt_out, overrideType: 'esic_opt_out', label: 'ESIC' },
   ];
   for (const { flag, overrideType, label } of offerOptOuts) {
-    if (!Boolean(Number(flag))) continue;
+    if (!Number(flag)) continue;
     const joiningDate: Date = offer.date_of_joining instanceof Date
       ? offer.date_of_joining
       : new Date(String(offer.date_of_joining));
@@ -1470,12 +1770,28 @@ async function createRelatedEmployeeRecords(
   // whereas candidate_bank_verification stores only last4 and a hash. Still gated on a
   // genuinely verified penny drop, per the owner's rule that an account is only carried
   // once verification is positive.
+  // bank_name/branch_name: same class of gap as address/education/experience above -- the
+  // INSERT below never carried them at all, despite the real values sitting in
+  // candidate_onboarding_bank_detail the whole time. Verified live 2026-09-16 on
+  // MAS63547/63548/63553: employee_bank_detail had a real account_number + ifsc_code but
+  // bank_name/bank_branch both NULL, while candidate_onboarding_bank_detail held "Indian
+  // Overseas Bank Limited"/"Laxmi Nagar" etc. for the same candidate.
+  //
+  // Joined by candidate_id, not candidate_bank_verification.bank_detail_id -- that FK is
+  // NULL on every 'verified' row in production (only populated on a separate
+  // 'manual_review' path), so it can never resolve the row that actually matters here.
   const [pennyDropRows] = await conn.execute<RowDataPacket[]>(
     `SELECT c.bank_account_no AS account_no,
             COALESCE(NULLIF(v.ifsc_code, ''), c.bank_ifsc) AS ifsc_code,
-            COALESCE(NULLIF(v.input_account_holder_name, ''), c.full_name) AS account_holder_name
+            COALESCE(NULLIF(v.input_account_holder_name, ''), c.full_name) AS account_holder_name,
+            cbd.bank_name, cbd.branch_name
        FROM candidate_bank_verification v
        JOIN ats_candidate c ON c.id = v.candidate_id
+       LEFT JOIN (
+         SELECT candidate_id, bank_name, branch_name,
+                ROW_NUMBER() OVER (PARTITION BY candidate_id ORDER BY created_at DESC) AS rn
+           FROM candidate_onboarding_bank_detail
+       ) cbd ON cbd.candidate_id = v.candidate_id AND cbd.rn = 1
       WHERE v.candidate_id = ?
         AND v.verification_status = 'verified'
         AND c.bank_account_no IS NOT NULL AND c.bank_account_no <> ''
@@ -1494,8 +1810,9 @@ async function createRelatedEmployeeRecords(
       await conn.execute(
         `INSERT INTO employee_bank_detail
            (id, employee_id, is_primary, account_seq, account_holder_name,
-            account_number, account_number_enc, account_number_blind_index, ifsc_code, account_type, verified, active_status)
-         VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?, 'savings', 1, 1)`,
+            account_number, account_number_enc, account_number_blind_index, ifsc_code,
+            bank_name, bank_branch, account_type, verified, active_status)
+         VALUES (?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, 'savings', 1, 1)`,
         [
           randomUUID(), employeeId,
           verifiedAccount.account_holder_name ?? null,
@@ -1503,6 +1820,8 @@ async function createRelatedEmployeeRecords(
           encryptField(accountNoStr),
           computeAccountBlindIndex(accountNoStr),
           verifiedAccount.ifsc_code ?? null,
+          verifiedAccount.bank_name ?? null,
+          verifiedAccount.branch_name ?? null,
         ]
       );
     }

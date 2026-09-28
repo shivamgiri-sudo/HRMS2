@@ -1,5 +1,46 @@
 import sharp from "sharp";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { detectFaceBbox } from "../ats/face-match.service.js";
+
+/**
+ * Longest side the face detector is given. The detector is a WASM model running on Node's main
+ * thread, so cost scales with pixels: a 3000px phone selfie held the event loop for 10s+, which
+ * delayed the approve response and every other request behind it. A face is easily found at 640px.
+ */
+const DETECTION_MAX_SIDE = 640;
+
+/** Detects on a downscaled copy and maps the box back to the original's coordinates. */
+async function detectFaceBboxDownscaled(imagePath: string) {
+  const meta = await sharp(imagePath).metadata();
+  const width = meta.width ?? 0;
+  const height = meta.height ?? 0;
+  const longest = Math.max(width, height);
+  if (!longest || longest <= DETECTION_MAX_SIDE) return detectFaceBbox(imagePath);
+
+  const scale = longest / DETECTION_MAX_SIDE;
+  const dir = await mkdtemp(path.join(tmpdir(), "facedet-"));
+  try {
+    const small = path.join(dir, "small.jpg");
+    await writeFile(
+      small,
+      await sharp(imagePath).resize({ width: DETECTION_MAX_SIDE, height: DETECTION_MAX_SIDE, fit: "inside" }).jpeg({ quality: 85 }).toBuffer(),
+    );
+    const box = await detectFaceBbox(small);
+    if (!box) return null;
+    return {
+      x: box.x * scale,
+      y: box.y * scale,
+      width: box.width * scale,
+      height: box.height * scale,
+      imageWidth: width,
+      imageHeight: height,
+    };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
 
 /**
  * Output size for auto-cropped profile/ID-card photos. Square so the same
@@ -33,7 +74,7 @@ const VERTICAL_BIAS_RATIO = 0.12;
  * activation pipeline that calls this can stay non-blocking.
  */
 export async function cropFaceForProfilePhoto(imagePath: string): Promise<Buffer> {
-  const bbox = await detectFaceBbox(imagePath);
+  const bbox = await detectFaceBboxDownscaled(imagePath);
   const source = sharp(imagePath);
   const metadata = await source.metadata();
   const imageWidth = bbox?.imageWidth ?? metadata.width ?? 0;

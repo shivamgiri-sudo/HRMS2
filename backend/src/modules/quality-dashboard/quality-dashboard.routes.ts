@@ -35,6 +35,18 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 const ALLOWED_ROLES = ["admin", "hr", ...dashboardConsumerRoles("QUALITY_DASHBOARD")] as const;
 
 /**
+ * TNI (Training Needs Identification) specifically -- a trainer is exactly who
+ * this exists for, and 11 real trainer/qa accounts currently cannot reach it
+ * (verified live 2026-09-09): the frontend route's role list omits "trainer"
+ * entirely, and separately the page it's gated behind (WFM_ROSTER) carries no
+ * grant for trainer or qa at all. Deliberately NOT added to ALLOWED_ROLES
+ * itself, which also gates 20+ other endpoints on this router (fraud-signals,
+ * sales-intelligence, agent-risk, roi, scores...) that a trainer has no
+ * business seeing just to reach training-needs data.
+ */
+const TNI_ROLES = [...ALLOWED_ROLES, "trainer"] as const;
+
+/**
  * Resolve caller's data scope:
  * - admin/hr/ceo/qa/quality_analyst → full access (no filter)
  * - process_manager/manager → scoped to their assigned process campaign_ids
@@ -122,20 +134,34 @@ function dateDefaults(query: Record<string, unknown>): { from: string; to: strin
  * routing gap, not an empty feature.
  */
 
-// GET /api/quality-dashboard/tni-analysis?from=&to=&client_id=
-router.get("/tni-analysis", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+// GET /api/quality-dashboard/tni-analysis?from=&to=&client_id=&branch_id=&process_id=&cost_centre_id=
+router.get("/tni-analysis", requireRole(...TNI_ROLES), h(async (req, res) => {
   const { from, to } = dateDefaults(req.query);
-  const clientId = typeof req.query.client_id === "string" && req.query.client_id.trim()
-    ? req.query.client_id.trim()
+  const qs = (key: string) => typeof req.query[key] === "string" && (req.query[key] as string).trim()
+    ? (req.query[key] as string).trim()
     : null;
-  const data = await getTniAnalysis(from, to, clientId);
-  // Spread rather than nested under `data`: the page reads `agents` and `summary` off the
-  // response root, matching how it documents the endpoint.
+  const data = await getTniAnalysis(from, to, qs("client_id"), qs("branch_id"), qs("process_id"), qs("cost_centre_id"));
   return res.json({ success: true, ...data });
 }));
 
+// GET /api/quality-dashboard/tni-filter-options — branches, processes, cost centres for filter dropdowns
+router.get("/tni-filter-options", requireRole(...TNI_ROLES), h(async (_req, res) => {
+  const [branches, processes, costCentres] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT id, branch_name AS name FROM mas_hrms.branch_master WHERE active_status = 1 ORDER BY branch_name`
+    ).then(([r]) => r),
+    db.execute<RowDataPacket[]>(
+      `SELECT id, process_name AS name FROM mas_hrms.process_master WHERE active_status = 1 ORDER BY process_name`
+    ).then(([r]) => r),
+    db.execute<RowDataPacket[]>(
+      `SELECT id, cost_centre_name AS name FROM mas_hrms.cost_centre_master WHERE active_status = 1 ORDER BY cost_centre_name`
+    ).then(([r]) => r),
+  ]);
+  return res.json({ success: true, branches, processes, costCentres });
+}));
+
 // GET /api/quality-dashboard/tni-agent-params?from=&to=&agent_code=&param=&client_id=
-router.get("/tni-agent-params", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+router.get("/tni-agent-params", requireRole(...TNI_ROLES), h(async (req, res) => {
   const { from, to } = dateDefaults(req.query);
   const agentCode = typeof req.query.agent_code === "string" ? req.query.agent_code.trim() : "";
   const param = typeof req.query.param === "string" ? req.query.param.trim() : "";
@@ -158,6 +184,28 @@ router.get("/tni-agent-params", requireRole(...ALLOWED_ROLES), h(async (req, res
     }
     throw err;
   }
+}));
+
+// GET /api/quality-dashboard/tni-finding?agent_code=&param=
+//
+// Read-only lookup into tni_finding (see tni-derivation.service.ts), so the
+// existing TNI heatmap's per-agent drill-in can show "this cell already has a
+// tracked, assignable finding" without a separate page. `param` here is one of
+// the 19 raw column names the page already drills into; only six of them map
+// onto a tni_finding parameter_key, and the rest correctly return no match.
+router.get("/tni-finding", requireRole(...TNI_ROLES), h(async (req, res) => {
+  const agentCode = typeof req.query.agent_code === "string" ? req.query.agent_code.trim() : "";
+  const param = typeof req.query.param === "string" ? req.query.param.trim() : "";
+  if (!agentCode || !param) {
+    return res.status(400).json({ success: false, message: "agent_code and param are required" });
+  }
+  const { RAW_COLUMN_TO_PARAMETER_KEY, getFindingForEmployeeParameter } = await import(
+    "./tni-derivation.service.js"
+  );
+  const parameterKey = RAW_COLUMN_TO_PARAMETER_KEY[param];
+  if (!parameterKey) return res.json({ success: true, finding: null });
+  const finding = await getFindingForEmployeeParameter(agentCode, parameterKey);
+  return res.json({ success: true, finding });
 }));
 
 // GET /api/quality-dashboard/inbound-ops/summary

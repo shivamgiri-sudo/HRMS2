@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -7,6 +7,7 @@ import { workforceMandateService } from "./workforce.mandate.service.js";
 import { getHcFormula } from "./hc-formula.service.js";
 import { lmsDb } from "../../db/lms-mysql.js";
 import type { RowDataPacket } from "mysql2";
+import { lookupLobNames } from "../../shared/lobNames.js";
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -117,7 +118,7 @@ router.get(
 router.get(
   "/capacity/:processId",
   requireRole("admin", "hr", "wfm", "process_manager", "ceo"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
+  h(async (req: AuthenticatedRequest & Request, res: Response) => {
     const { processId } = req.params;
     const { branchId } = req.query as { branchId?: string };
     const data = await workforceMandateService.getCapacitySnapshot(processId, branchId);
@@ -142,12 +143,30 @@ router.get(
 /**
  * GET /api/workforce-mandate/capacity-summary
  * Aggregated capacity dashboard summary across all active mandates.
- * Roles: hr | admin | super_admin | wfm | ceo
+ *
+ * Read-only: this endpoint aggregates and returns, it writes nothing.
+ *
+ * The role list matches the grants on the WFM_CAPACITY_DASHBOARD page code exactly
+ * (migration 1688). The two MUST stay in step: a role granted the page but refused here gets a
+ * dashboard that loads and then errors, which reads as a broken product rather than as a denied
+ * permission. Widened from hr|admin|super_admin|wfm|ceo so branch and process leadership,
+ * Training & Quality and the WFM roles who are the page's actual audience can read their own
+ * capacity numbers, rather than only HR and the executive.
+ *
+ * Note this reaches people by ROLE only. Operations staff who hold just the 'employee' role -
+ * Team Leaders, Data Analysts, RTMs - cannot be admitted here without also admitting every
+ * Operations EXECUTIVE, since they share that role. Their access is a per-person grant.
  */
 router.get(
   "/capacity-summary",
-  requireRole("hr", "admin", "super_admin", "wfm", "ceo"),
-  h(async (req: AuthenticatedRequest, res: Response) => {
+  requireRole(
+    "hr", "admin", "super_admin", "wfm", "ceo",
+    "branch_wfm", "branch_head", "process_manager", "manager", "assistant_manager",
+    "team_leader", "tl", "tq_head", "trainer", "qa",
+    // Designation-based audience that no existing role can express - see migration 1689.
+    "capacity_viewer",
+  ),
+  h(async (req: AuthenticatedRequest & Request, res: Response) => {
     const { branchId } = req.query as { branchId?: string };
 
     const [mandates] = await (await import("../../db/mysql.js")).db.execute<any[]>(
@@ -205,6 +224,31 @@ router.get(
          ${branchId ? 'AND e.branch_id = ?' : ''}`,
       branchId ? [processIds, branchId] : [processIds]
     );
+    // Read-only breakdown of the same active production seats by LOB (employees.lob_id). Mandates are
+    // per process/branch and are NOT LOB-keyed, so this is informational and changes no total above.
+    // LOB names come from a separate parameterised lookup (never a JOIN: mixed collations).
+    let headcountByLob: Array<{ lobId: string | null; lobName: string | null; activeHc: number }> = [];
+    if (processIds.length > 0) {
+      try {
+        const [lobRows] = await db.query<any[]>(
+          `SELECT e.lob_id AS lob_id, COUNT(*) AS cnt FROM employees e
+           JOIN designation_master d   ON d.id    = e.designation_id
+           LEFT JOIN department_master dept ON dept.id = e.department_id
+           WHERE e.active_status = 1 AND ${PROD_SEAT_SQL} AND e.process_id IN (?)
+           ${branchId ? 'AND e.branch_id = ?' : ''}
+           GROUP BY e.lob_id`,
+          branchId ? [processIds, branchId] : [processIds]
+        );
+        const lobNames = await lookupLobNames((lobRows ?? []).map((r: any) => (r.lob_id ? String(r.lob_id) : null)));
+        headcountByLob = (lobRows ?? []).map((r: any) => ({
+          lobId: r.lob_id ? String(r.lob_id) : null,
+          lobName: r.lob_id ? (lobNames.get(String(r.lob_id)) ?? null) : null,
+          activeHc: Number(r.cnt ?? 0),
+        })).sort((a, b) => b.activeHc - a.activeHc);
+      } catch (err: unknown) {
+        console.error("[capacity-summary] headcount-by-LOB lookup failed, omitting:", err);
+      }
+    }
     // In Training = live headcount sitting in an active NHT (New Hire Training) batch in the
     // LMS, for the processes actually in view — not the whole ats_candidate table (every
     // process, every branch, the platform's entire application history: 34,905 rows, which
@@ -330,6 +374,7 @@ router.get(
         trainingBufferPct: Math.round(avgTrainingBuffer * 10) / 10,
       },
       hiringByProcess,
+      headcountByLob,
     });
   })
 );

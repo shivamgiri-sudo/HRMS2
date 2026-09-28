@@ -3,7 +3,7 @@ import type { PoolConnection } from "mysql2/promise";
 
 import { refuse } from "./finance-error.js";
 import { budgetClosureService } from "./budget-closure.service.js";
-import { budgetCostRatio } from "./budget-tax-basis.js";
+import { budgetCostRatio, budgetLineCeiling } from "./budget-tax-basis.js";
 
 /*
  * QUANTITY IS NOT A SPENDING CONTROL — MONEY IS. (2026-08-27, owner decision)
@@ -57,12 +57,13 @@ export async function lockActiveBudgetLine(connection: PoolConnection, lineId: s
 
 function availability(line: RowDataPacket) {
   return {
-    // P&L budget ceiling: pnl_cost_amount = base for ITC lines, gross for non-ITC/imprest.
-    // reserved_amount / consumed_amount accumulate the P&L cost (consumptionBasis returns net
-    // for ITC invoices). Comparing like-for-like here; gross_amount was a mixed-unit ceiling
-    // that silently allowed ~(1/costRatio - 1) over-spend on ITC budget lines.
+    // EX-GST ceiling (owner decision 2026-09-24): the line's base_amount, guarded for legacy
+    // zero-default rows — see budgetLineCeiling(). reserved_amount / consumed_amount accumulate the
+    // invoice's taxable value (consumptionBasis below), so this compares ex-GST with ex-GST.
+    // Was pnl_cost_amount (base + non-recoverable GST), which let a line with non-recoverable GST
+    // carry that GST's worth of extra ex-GST spend before refusing.
     amount: roundMoney(
-      Number(line.pnl_cost_amount ?? 0)
+      budgetLineCeiling(line)
       - Number(line.reserved_amount ?? 0)
       - Number(line.consumed_amount ?? 0)
     ),
@@ -77,12 +78,11 @@ function availability(line: RowDataPacket) {
 /**
  * Which invoice figure to charge against this budget line.
  *
- * For ITC-eligible lines (ratio < 1): charge the invoice's taxable base (netAmount). The budget
- * ceiling is pnl_cost_amount — what Finance approved as P&L spend — and only the base hits P&L.
- * GST is recovered as ITC and never charged to the budget.
+ * Whenever the taxable value is supplied and below the gross (ratio < 1): charge the taxable base
+ * (netAmount), whatever the line's tax treatment. The ceiling it is checked against is the line's
+ * ex-GST base_amount (availability() above), so both sides are ex-GST.
  *
- * For non-ITC / exempt / imprest lines (ratio = 1, gross = net): charge the full gross.
- * pnl_cost_amount = gross_amount for these lines, so it makes no difference.
+ * When gross = net (no GST on the invoice): charging the gross is the same number.
  *
  * Falls back to gross when no net is supplied (conservative: charges the inclusive figure
  * rather than silently consuming zero if the caller did not supply a net).

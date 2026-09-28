@@ -42,7 +42,7 @@ describe("changeSalary()", () => {
     });
 
     await changeSalary({
-      employeeId: "e1", packageId: "pkg-1", effectiveDate: "2026-09-01",
+      employeeId: "e1", packageId: "pkg-1", effectiveDate: "2026-09-01", actorRoles: ["payroll_head"], // historical date: run as an exempt role
       reason: "Annual increment", requestedByUserId: "req-1", requestedByName: "Manager X",
       actorUserId: "actor-1",
     });
@@ -73,7 +73,7 @@ describe("changeSalary()", () => {
     getPackageById.mockResolvedValueOnce({ id: "pkg-1" });
 
     await expect(changeSalary({
-      employeeId: "e1", packageId: "pkg-1", effectiveDate: "2026-09-01",
+      employeeId: "e1", packageId: "pkg-1", effectiveDate: "2026-09-01", actorRoles: ["payroll_head"], // historical date: run as an exempt role
       reason: "   ", requestedByUserId: null, requestedByName: null, actorUserId: "actor-1",
     })).rejects.toThrow(/reason/i);
   });

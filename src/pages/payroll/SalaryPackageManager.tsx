@@ -64,7 +64,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
-import { calcFromCtc, calcFromInHand, PT_BY_STATE, type PkgCalcOptions } from "@/lib/salaryCalculator";
+import { calcFromCtc, calcFromInHand, type PkgCalcOptions } from "@/lib/salaryCalculator";
 import { earningRows, otherDeductionRows, employerCostRows } from "@/lib/salaryComponentRows";
 
 /** One label/amount line inside an expanded package row. */
@@ -164,7 +164,6 @@ interface AdminPackage {
   ctc: number;
   bonus: number;
   pli: number;
-  professional_tax: number;
   special_allowance: number;
   other_allowance: number;
   portfolio: number;
@@ -687,15 +686,6 @@ function AdminTab() {
   const colCount = 3 + earningCols.length + 4 + employerCols.length + 2;
 
   const branches = [...new Set(costCentres.map((c) => c.branch_name))].sort();
-  const [branchStates, setBranchStates] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    hrmsApi.get<any>("/api/payroll-masters/branch-states").then((r: any) => {
-      const map: Record<string, string> = {};
-      for (const row of r?.data ?? []) if (row.branch_name && row.state) map[row.branch_name] = row.state;
-      setBranchStates(map);
-    }).catch(() => {});
-  }, []);
 
   const loadBands = useCallback(async () => {
     const r = await hrmsApi.get<any>("/api/payroll-masters/bands");
@@ -723,8 +713,7 @@ function AdminTab() {
 
   useEffect(() => {
     if (!editPkg) return;
-    const selectedBranch = editPkg?.branch_name ?? pkgBranch;
-    const opts: PkgCalcOptions = { includePf, includeEsic, includeBonus, basicPct, hraPct, state: selectedBranch ? branchStates[selectedBranch] : undefined };
+    const opts: PkgCalcOptions = { includePf, includeEsic, includeBonus, basicPct, hraPct };
     if (calcMode === "ctc") {
       const v = parseFloat(ctcInput);
       if (!v || v <= 0) return;
@@ -736,7 +725,7 @@ function AdminTab() {
       const c = calcFromInHand(v, opts);
       setEditPkg((p) => ({ ...p!, ...c, package_amount: c.ctc }));
     }
-  }, [ctcInput, inHandInput, includePf, includeEsic, includeBonus, basicPct, hraPct, calcMode, editPkg?.branch_name, pkgBranch, branchStates]);
+  }, [ctcInput, inHandInput, includePf, includeEsic, includeBonus, basicPct, hraPct, calcMode]);
 
   const saveBand = async () => {
     if (!editBand?.band_code || editBand.slab_from == null || editBand.slab_to == null) return;
@@ -954,7 +943,7 @@ function AdminTab() {
                     </div>
                     <div className="space-y-2">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 border-b pb-1">Deductions</p>
-                      {[["epf_employee", "PF (Emp)"], ["esic_employee", "ESIC (Emp)"], ["professional_tax", "Prof. Tax"]].map(([f, l]) => (
+                      {[["epf_employee", "PF (Emp)"], ["esic_employee", "ESIC (Emp)"]].map(([f, l]) => (
                         <div key={f} className="flex items-center gap-2">
                           <Label className="text-xs w-28">{l}</Label>
                           <Input className="h-8 text-xs flex-1 bg-slate-50 text-red-600" type="number" value={(editPkg as any)[f] ?? 0}

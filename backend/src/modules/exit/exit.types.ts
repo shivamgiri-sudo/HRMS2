@@ -1,3 +1,22 @@
+export type ExitStatus =
+  // New FSM states
+  | 'submitted'
+  | 'returned'
+  | 'notice_active'
+  | 'exited'
+  | 'closed'
+  | 'revoked'
+  | 'terminated'
+  // Legacy states kept for backward compat with existing DB rows
+  | 'draft'
+  | 'manager_review'
+  | 'hr_review'
+  | 'admin_review'
+  | 'accepted'
+  | 'rejected'
+  | 'notice_serving'
+  | 'withdrawn';
+
 export interface ExitRequest {
   id: string;
   employee_id: string;
@@ -9,10 +28,13 @@ export interface ExitRequest {
   resignation_reason: string | null;
   last_working_day_proposed: string | null;
   last_working_day_confirmed: string | null;
+  lwd_override?: string | null;
+  lwd_override_reason?: string | null;
+  return_reason?: string | null;
   notice_period_days: number;
   notice_start_date: string | null;
   notice_end_date: string | null;
-  status: string;
+  status: ExitStatus;
   revoked_at: string | null;
   revoke_reason: string | null;
   revoked_by: string | null;
@@ -74,6 +96,10 @@ export interface ExitStats {
   revoked: number;
   notice_serving: number;
   exited: number;
+  notice_active?: number;
+  returned?: number;
+  terminated?: number;
+  closed?: number;
   total: number;
 }
 

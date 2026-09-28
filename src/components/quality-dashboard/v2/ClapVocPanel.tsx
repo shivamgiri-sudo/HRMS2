@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
+// CartesianGrid intentionally not imported — clean plain background, no gridlines.
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { safeNum } from "./types";
@@ -111,7 +112,6 @@ export function ClapVocPanel({ from, to, clientId, queryKey }: Props) {
         ) : (
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }} barSize={14}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
               <XAxis dataKey="branch" tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false} />
               <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false} />
               <Tooltip contentStyle={{ borderRadius: "10px", border: "1px solid #e2e8f0", fontSize: 12 }} />

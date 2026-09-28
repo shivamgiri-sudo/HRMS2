@@ -1,9 +1,12 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { lobCondition, type LobFilter } from "../../shared/lobFilter.js";
 
 export interface GridRow {
   employeeId: string;
   employeeName: string;
+  lobId: string | null;
+  lobName: string | null;
   rosterDate: string;
   assignmentId: string | null;
   shiftTemplateId: string | null;
@@ -16,6 +19,7 @@ export interface GridFilters {
   cycleId: string;
   branchId?: string;
   employeeSearch?: string;
+  lob?: LobFilter;
 }
 
 export async function getRosterGrid(filters: GridFilters): Promise<GridRow[]> {
@@ -31,11 +35,17 @@ export async function getRosterGrid(filters: GridFilters): Promise<GridRow[]> {
     const like = `%${filters.employeeSearch}%`;
     params.push(like, like);
   }
+  const lobCond = filters.lob ? lobCondition(filters.lob, "e") : null;
+  if (lobCond) {
+    conds.push(lobCond.sql);
+    params.push(...lobCond.params);
+  }
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        wra.employee_id        AS employee_id,
        e.full_name            AS employee_name,
+       e.lob_id               AS lob_id,
        wra.roster_date        AS roster_date,
        wra.id                 AS assignment_id,
        wra.shift_template_id  AS shift_template_id,
@@ -50,9 +60,22 @@ export async function getRosterGrid(filters: GridFilters): Promise<GridRow[]> {
     params
   );
 
+  // LOB names by parameterised id lookup (never JOIN lob_master: mixed collations).
+  const lobIds = [...new Set((rows as RowDataPacket[]).map((r) => r.lob_id).filter(Boolean).map(String))];
+  const lobNames = new Map<string, string>();
+  if (lobIds.length) {
+    const [lobRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, lob_name FROM lob_master WHERE id IN (${lobIds.map(() => "?").join(", ")})`,
+      lobIds
+    );
+    for (const l of lobRows ?? []) lobNames.set(String(l.id), String(l.lob_name));
+  }
+
   return (rows as RowDataPacket[]).map((r) => ({
     employeeId: String(r.employee_id),
     employeeName: String(r.employee_name),
+    lobId: r.lob_id ? String(r.lob_id) : null,
+    lobName: r.lob_id ? (lobNames.get(String(r.lob_id)) ?? null) : null,
     rosterDate: String(r.roster_date),
     assignmentId: r.assignment_id ? String(r.assignment_id) : null,
     shiftTemplateId: r.shift_template_id ? String(r.shift_template_id) : null,

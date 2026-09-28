@@ -2,8 +2,9 @@ import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getIstDateString } from '../../utils/dateUtils.js';
-import { resolveAppointmentLetterSalary, toLetterRows } from "./appointmentLetterData.service.js";
+import { letterSalaryRowsOrBlank } from "./appointmentLetterData.service.js";
 import { istDate, assertUsableName } from "./letterFormat.js";
+import { nocReleaseStatusForEmployee } from "../payroll/noc-release-gate.service.js";
 
 export const lettersService = {
   async getById(letterId: string): Promise<{ id: string; employee_id: string; letter_type: string } | null> {
@@ -53,13 +54,41 @@ export const lettersService = {
     const emp = (empRows as RowDataPacket[])[0] as any;
     if (!emp) throw Object.assign(new Error("Employee not found"), { statusCode: 404 });
 
+    // Experience/relieving letter: gated on the employee having actually exited, and on the
+    // same NOC clearance (noc_case) that gates F&F release — owner ruling 2026-09-16. Before
+    // this check, this generic endpoint had NO eligibility gate of any kind for any letter
+    // type, so anyone with admin/hr/super_admin could issue a relieving letter for a still-
+    // active employee, or one whose NOC was never cleared. Reuses
+    // nocReleaseStatusForEmployee() — the same per-employee NOC decision the F&F release gate
+    // uses — rather than the older payroll_noc upload/validate flow, which nothing else in the
+    // app still reads (its one caller was removed from the exit-status gate in this same
+    // change: NOC no longer blocks marking someone exited, only money and this letter).
+    if (template.letter_type === "experience") {
+      const isExited = String(emp.employment_status ?? "").trim().toLowerCase() !== "active"
+        && Boolean(emp.date_of_exit);
+      if (!isExited) {
+        throw Object.assign(
+          new Error("This employee has not exited yet. An experience/relieving letter can only be issued after their exit date is recorded."),
+          { statusCode: 409, code: "EXPERIENCE_LETTER_NOT_EXITED" },
+        );
+      }
+      const nocStatus = await nocReleaseStatusForEmployee(data.employee_id);
+      if (nocStatus.blocked) {
+        throw Object.assign(
+          new Error(`Experience letter cannot be issued: ${nocStatus.reason ?? "NOC clearance is not complete."}`),
+          { statusCode: 409, code: "EXPERIENCE_LETTER_NOC_BLOCKED" },
+        );
+      }
+    }
 
-    // Build data payload matching renderer variable names
-    // Salary comes from the resolver, which knows the three real sources
-    // (approved package -> assignment -> legacy snapshot). The fields below
-    // previously read columns that do not exist on employee_salary_assignment,
-    // so every line of the salary table rendered "0.00".
-    const salary = await resolveAppointmentLetterSalary(data.employee_id);
+    // Build data payload matching renderer variable names.
+    //
+    // Salary is the Payroll-Head-approved package and nothing else. This
+    // generator serves the offer/confirmation/experience templates, two of
+    // which print no salary at all, so a missing approval leaves the salary
+    // variables BLANK rather than failing the whole letter — see
+    // letterSalaryRowsOrBlank() for why blank and not zero.
+    const { rows: salaryRows } = await letterSalaryRowsOrBlank(data.employee_id);
 
     const vars: Record<string, string> = {
       full_name:         assertUsableName(emp.full_name ?? `${emp.first_name} ${emp.last_name ?? ""}`),
@@ -75,7 +104,7 @@ export const lettersService = {
       issued_date:       istDate(data.issued_date ?? new Date()),
       epf_no:            emp.epf_number ?? "",
       esi_no:            emp.esic_number ?? "",
-      ...toLetterRows(salary),
+      ...salaryRows,
       ...data.override_vars,
     };
 

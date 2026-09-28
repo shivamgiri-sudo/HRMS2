@@ -9,6 +9,22 @@
   "modules/finance/mandate-seat-tracking.service.ts": [
     "mandate_seat_history"
   ],
+  "modules/finance/journal.service.ts": [
+    "journal_entry",
+    "journal_entry_line"
+  ],
+  "modules/finance/grn.service.ts": [
+    "journal_entry"
+  ],
+  "modules/finance/ledger-reports.service.ts": [
+    "journal_entry_line"
+  ],
+  "modules/finance/tally-export.service.ts": [
+    "journal_entry_line"
+  ],
+  "modules/wfm/mismatch-escalation.service.ts": [
+    "attendance_mismatch_escalation"
+  ],
   "modules/salary-dispute/salary-dispute.service.ts": [
     "email_queue",
     "salary_dispute_attachment",
@@ -77,5 +93,17 @@
   ],
   "modules/sales-upload/sales-upload.service.ts": [
     "db_masmis"
+  ],
+  "modules/bulk-upload/batch-auto-recovery.service.ts": [
+    "bulk_import_queue"
+  ],
+  "modules/bulk-upload/bulk-upload.routes.ts": [
+    "bulk_import_queue"
+  ],
+  "workers/bulk-import.worker.ts": [
+    "bulk_import_queue"
+  ],
+  "modules/quality-dashboard/onfido-utilization.routes.ts": [
+    "onfido_utilization_upload"
   ]
 }

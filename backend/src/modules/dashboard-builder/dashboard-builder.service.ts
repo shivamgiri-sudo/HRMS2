@@ -29,7 +29,14 @@ const VIEWER_ROLES = [
 
 const WIDGET_TYPES = ["kpi_tile", "line", "bar", "pie", "table"] as const;
 const METRIC_SOURCES = ["kpi_daily_actual", "process_metric_actual"] as const;
-const DATE_RANGES = ["last_7_days", "last_30_days", "this_month", "last_month"] as const;
+// A dashboard could look back 30 days or to last month, and no further. That put
+// every metric whose data is older than that out of sight completely — not
+// showing a stale number, showing nothing at all, which reads as "no data" rather
+// than "outside the window". Biometric shift hours end in June and the order
+// export in December, so both were invisible.
+const DATE_RANGES = [
+  "last_7_days", "last_30_days", "last_90_days", "last_365_days", "this_month", "last_month",
+] as const;
 
 export type WidgetType = (typeof WIDGET_TYPES)[number];
 export type MetricSource = (typeof METRIC_SOURCES)[number];
@@ -79,6 +86,16 @@ export function resolveDateRange(range: DateRange, today = new Date()): { from: 
     case "last_30_days": {
       const start = new Date(end);
       start.setDate(start.getDate() - 29);
+      return { from: iso(start), to: iso(end) };
+    }
+    case "last_90_days": {
+      const start = new Date(end);
+      start.setDate(start.getDate() - 89);
+      return { from: iso(start), to: iso(end) };
+    }
+    case "last_365_days": {
+      const start = new Date(end);
+      start.setDate(start.getDate() - 364);
       return { from: iso(start), to: iso(end) };
     }
     case "last_month": {
@@ -396,6 +413,31 @@ async function readableProcessIds(userId: string): Promise<Set<string>> {
   return new Set(rows.map((r) => String(r.id)));
 }
 
+/**
+ * A metric's unit, cached for the life of the process.
+ *
+ * Only used to decide how a period rolls up. Unknown units fall through to the
+ * averaging default, which is what this did for everything before.
+ */
+const unitCache = new Map<string, string | null>();
+async function metricUnit(metricKey: string): Promise<string | null> {
+  if (unitCache.has(metricKey)) return unitCache.get(metricKey) ?? null;
+  let unit: string | null = null;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT unit FROM kpi_metric_master WHERE metric_code = ? AND active_status = 1 LIMIT 1`,
+      [metricKey],
+    );
+    unit = (rows as any[])[0]?.unit ?? null;
+  } catch {
+    // A missing catalogue row is not an error here: plenty of process metrics are
+    // keyed by the registry's own metricKey and never appear in kpi_metric_master.
+    unit = null;
+  }
+  unitCache.set(metricKey, unit);
+  return unit;
+}
+
 export async function renderDashboard(
   userId: string, role: string, id: string,
 ): Promise<{ dashboard: DashboardRow; widgets: RenderedWidget[] } | null> {
@@ -428,14 +470,45 @@ export async function renderDashboard(
     }
 
     if (widget.metricSource === "process_metric_actual") {
-      const readings = await fetchProcessMetricValues(processId, [widget.metricKey], from, to);
+      // How a period's figure is derived depends on what the metric MEASURES,
+      // and getting it from the unit is the only signal available here.
+      //
+      // A volume must be summed: a month of "PAN submissions" is the total for
+      // the month, and averaging it reports a typical day as though it were the
+      // month. Everything else is averaged, which is right for a duration and
+      // is the closest available answer for a rate — see the caveat below.
+      const unit = (await metricUnit(widget.metricKey)) ?? "";
+      const isVolume = ["count", "currency", "number", "volume"].includes(unit.toLowerCase());
+      const readings = await fetchProcessMetricValues(
+        processId,
+        [widget.metricKey],
+        from,
+        to,
+        isVolume ? [widget.metricKey] : [],
+      );
       const reading = readings.get(widget.metricKey);
+      const isRate = ["percent", "percentage", "ratio"].includes(unit.toLowerCase());
       rendered.push({
         ...widget,
         availability: reading && reading.count > 0 ? "ok" : "no_data",
         value: reading?.value ?? null,
         series: reading?.trend ?? [],
-        note: reading && reading.count > 0 ? undefined : "Nothing supplied for this window yet.",
+        note:
+          !reading || reading.count === 0
+            ? "Nothing supplied for this window yet."
+            : isRate
+              // Which of the two numbers this is, stated rather than left to be
+              // assumed. Where every counted day recorded the parts its ratio was
+              // built from, the figure is the period's real rate; where any day
+              // did not, it falls back to the mean of the daily rates, and those
+              // differ whenever daily volumes differ.
+              ? reading.exactRatio
+                ? undefined
+                : "Period figure is the mean of daily values, not the period's own ratio — " +
+                  "some days did not record the numbers behind their rate."
+              : isVolume
+                ? "Period figure is the sum of daily values."
+                : undefined,
       });
       continue;
     }
@@ -443,9 +516,42 @@ export async function renderDashboard(
     // kpi_daily_actual, joined through the employee's CURRENT process — the
     // same join quality-target.service.ts uses, because process_id_at_event is
     // only sparsely populated.
+    //
+    // How a period is aggregated follows the same rule as the process-grain path
+    // above, and matters more here because this table is bigger and busier. This
+    // branch used to average everything, which on real data reports:
+    //   AHT              62.22s shown against 49.40s actual  (+26%)
+    //   CONVERSION_RATE   9.35% shown against  8.26% actual  (+13%)
+    //   FATAL_RATE        3.74% shown against  4.68% actual  (understated by a fifth)
+    // A lower-is-better metric reading a fifth better than reality is the worst
+    // of those, because nothing about it looks wrong.
+    //
+    // No migration was needed: kpi_daily_actual has carried numerator_value and
+    // denominator_value all along, populated for every row of AHT,
+    // CONVERSION_RATE, FATAL_RATE and QUALITY_SCORE. Unlike process_metric_actual
+    // they are stored RAW, so a percent has to be scaled back up by 100 while a
+    // duration is already in its own unit.
+    const empUnit = ((await metricUnit(widget.metricKey)) ?? "").toLowerCase();
+    const empIsVolume = ["count", "currency", "number", "volume"].includes(empUnit);
+    const empScale = ["percent", "percentage"].includes(empUnit) ? 100 : 1;
+
+    // Guarded on EVERY counted row having a denominator: mixing rows that carry
+    // parts with rows that do not divides a partial numerator by a partial
+    // denominator and yields a number belonging to neither method. ATTENDANCE_PCT
+    // is exactly that case — 24,240 of its 54,766 rows have parts — so it
+    // correctly keeps averaging.
+    const exactExpr =
+      `CASE WHEN COUNT(k.denominator_value) = COUNT(k.actual_value) AND SUM(k.denominator_value) <> 0
+             THEN SUM(k.numerator_value) / SUM(k.denominator_value) * ${empScale}
+             ELSE AVG(k.actual_value) END`;
+    const valueExpr = empIsVolume ? "SUM(k.actual_value)" : exactExpr;
+    const exactFlag =
+      `CASE WHEN COUNT(k.denominator_value) = COUNT(k.actual_value) AND SUM(k.denominator_value) <> 0
+             THEN 1 ELSE 0 END`;
+
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT DATE_FORMAT(k.score_date, '%Y-%m') AS period,
-              AVG(k.actual_value) AS value, COUNT(k.actual_value) AS n
+              ${valueExpr} AS value, COUNT(k.actual_value) AS n
          FROM employees e
          JOIN kpi_daily_actual k ON k.employee_id = e.id
          JOIN kpi_metric_master m ON m.id = k.metric_id AND m.metric_code = ?
@@ -456,15 +562,35 @@ export async function renderDashboard(
     const series = rows
       .filter((r) => Number(r.n) > 0)
       .map((r) => ({ period: String(r.period), value: r.value == null ? null : Number(r.value) }));
-    const readings = series.map((s) => s.value).filter((v): v is number => v != null);
+
+    // The headline is computed over the WHOLE window in one aggregate, not as the
+    // mean of the periods above. Averaging monthly ratios would reintroduce the
+    // very error this branch just fixed, one level up.
+    const [totalRows] = await db.execute<RowDataPacket[]>(
+      `SELECT ${valueExpr} AS value, COUNT(k.actual_value) AS n, ${exactFlag} AS exact_ratio
+         FROM employees e
+         JOIN kpi_daily_actual k ON k.employee_id = e.id
+         JOIN kpi_metric_master m ON m.id = k.metric_id AND m.metric_code = ?
+        WHERE e.process_id = ? AND k.score_date BETWEEN ? AND ?`,
+      [widget.metricKey, processId, from, to],
+    );
+    const total = (totalRows as any[])[0];
+    const hasReadings = Number(total?.n ?? 0) > 0;
+    const empExact = Number(total?.exact_ratio ?? 0) === 1;
+
     rendered.push({
       ...widget,
-      availability: readings.length ? "ok" : "no_data",
-      // The headline is the mean of the periods shown, so it agrees with the
-      // chart beside it rather than being computed a second, different way.
-      value: readings.length ? readings.reduce((a, b) => a + b, 0) / readings.length : null,
+      availability: hasReadings ? "ok" : "no_data",
+      value: hasReadings && total?.value != null ? Number(total.value) : null,
       series,
-      note: readings.length ? undefined : "No readings for this metric in this window.",
+      note: !hasReadings
+        ? "No readings for this metric in this window."
+        : empIsVolume
+          ? "Period figure is the sum of daily values."
+          : empExact
+            ? undefined
+            : "Period figure is the mean of daily values, not the period's own ratio — " +
+              "some rows did not record the numbers behind their rate.",
     });
   }
 

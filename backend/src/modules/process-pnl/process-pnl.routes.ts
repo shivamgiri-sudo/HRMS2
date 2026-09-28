@@ -7,6 +7,7 @@ import {
 import { requireRole } from "../../middleware/requireRole.js";
 import {
   assertFinanceRecordBranch,
+  getProcessBranchId,
   resolveFinanceBranchScope,
   resolveFinanceBranchScopeSet,
   resolveFinanceProcessScope,
@@ -35,7 +36,21 @@ import { getCostLeakageReview, getStafflessCostCentreSpend } from "./pnl-cost-le
 import { getDailyTrend } from "./pnl-daily-trend.service.js";
 import { getPnlDrilldown } from "./pnl-drilldown.service.js";
 import { getSeatRevenueForecast } from "./pnl-seat-revenue-forecast.service.js";
+import {
+  createSeatBillingLine,
+  deactivateSeatBillingLine,
+  getLineCostCentre,
+  getOwnCostCentreBranch,
+  getSeatBillingCostCentreDetail,
+  getSeatBillingEstimate,
+  importSeatBillingFromInvoice,
+  updateSeatBillingLine,
+} from "./pnl-seat-billing.service.js";
+import { getPnlTrendSeries } from "./pnl-trend-series.service.js";
+import { getPnlInsights } from "./pnl-insights.service.js";
 import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
+import { clearPnlReadCache } from "./pnl-read-cache.js";
+import { narrowProcessScope, resolveClientSearchProcessIds } from "./pnl-client-search-scope.js";
 import { refreshRunningSalarySnapshot } from "./pnl-running-salary.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
@@ -48,6 +63,16 @@ import {
   getRewardPenaltySummary,
 } from "./reward-penalty.service.js";
 import { pnlManualAdjustmentService } from "./pnl-manual-adjustment.service.js";
+import { getPnlTrend } from "./pnl-trend.service.js";
+import { getReceivablesAgeing } from "./pnl-receivables-ageing.service.js";
+import { getSeatBillability } from "./pnl-seat-billability.service.js";
+import {
+  bulkSetCostCentreOverride,
+  deactivateCostCentreOverride,
+  listCostCentreOverrides,
+  listOverrideCostCentreOptions,
+  searchEmployeesForOverride,
+} from "./pnl-cost-centre-override.service.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -143,6 +168,25 @@ async function assertBranchOf(req: AuthenticatedRequest, recordBranchId: string 
   });
 }
 
+/**
+ * Asserts a caller-supplied process id is one the caller may touch (F-01 fix).
+ *
+ * Covers both process-scoped roles (process_manager, via resolveFinanceProcessScope, which
+ * throws on a foreign process) and branch-scoped roles (branch_head, who is not process-scoped
+ * by that function at all — resolved separately here via the process's own branch_id, the same
+ * way assertBranchOf resolves a cost centre's branch). Global finance roles are a no-op in both.
+ */
+async function assertProcessInScope(req: AuthenticatedRequest, processId: string) {
+  const user = actor(req);
+  await resolveFinanceProcessScope({
+    userId: user.id,
+    primaryRole: user.role,
+    userRoles: user.roles,
+    requestedProcessId: processId,
+  });
+  await assertBranchOf(req, await getProcessBranchId(processId));
+}
+
 async function scopedBudget(req: AuthenticatedRequest, budgetId: string) {
   const user = actor(req);
   const budget = await branchBudgetService.get(budgetId) as any;
@@ -157,6 +201,20 @@ async function scopedBudget(req: AuthenticatedRequest, budgetId: string) {
 }
 
 router.use(requireAuth);
+
+/*
+ * A successful P&L write under /pnl (cost-centre override, manual adjustment, below-the-line cost,
+ * recalculate, …) clears the 60s read cache (pnl-read-cache.ts), so whoever made the change sees it
+ * on the next read rather than up to a minute later. Never blocks or denies: it always calls next().
+ */
+router.use("/pnl", (req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") {
+    res.on("finish", () => {
+      if (res.statusCode < 400) clearPnlReadCache();
+    });
+  }
+  next();
+});
 
 router.get(
   "/pnl/budgets",
@@ -372,7 +430,8 @@ router.post(
       user.id,
       effectiveRole,
       req.body?.remarks ? String(req.body.remarks) : undefined,
-      lineCorrections
+      lineCorrections,
+      [user.role, ...(user.roles ?? [])]
     );
     res.json({ success: true, data });
   })
@@ -1327,31 +1386,46 @@ router.get(
      */
     const requestedBranchIds = csv(req.query.branchIds);
     const requestedProcessIds = csv(req.query.processIds);
+    // user.roles (actor()) is req.userRoles ?? [] — the roles requireRole just resolved — and the
+    // resolvers treat undefined and [] alike, so this is the same set as before. Read through
+    // actor() like /pnl/ytd-summary and /pnl/reconciliation so one page load can never be scoped
+    // from two differently-named sources (audit item 26).
     const branchId = await resolveFinanceBranchScope({
       userId: user.id,
       primaryRole: user.role,
-      userRoles: req.userRoles,
+      userRoles: user.roles,
       requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
     });
     const confinedBranch = await resolveFinanceBranchScope({
-      userId: user.id, primaryRole: user.role, userRoles: req.userRoles,
+      userId: user.id, primaryRole: user.role, userRoles: user.roles,
     });
     const period = req.query.period ? String(req.query.period) : "";
     const processId = await resolveFinanceProcessScope({
       userId: user.id,
       primaryRole: user.role,
-      userRoles: req.userRoles,
+      userRoles: user.roles,
       requestedProcessId: req.query.processId ? String(req.query.processId) : undefined,
     });
     const confinedProcess = await resolveFinanceProcessScope({
-      userId: user.id, primaryRole: user.role, userRoles: req.userRoles,
+      userId: user.id, primaryRole: user.role, userRoles: user.roles,
     });
+    // The page's Client / Search filters, as the process ids they match (audit item 19) —
+    // intersected with the process scope above, so they can only narrow it.
+    const clientSearch = await resolveClientSearchProcessIds({
+      clientId: req.query.clientId ? String(req.query.clientId) : null,
+      search: req.query.search ? String(req.query.search) : null,
+    });
+    const baseProcessIds = confinedProcess ? [confinedProcess] : requestedProcessIds;
     const data = await getCeoOverview(period, {
       branchId: branchId ?? undefined,
-      processId: processId ?? undefined,
+      // Folded into processIds when a client/search filter applies: scopeOf() UNIONS the singular
+      // with the list, which would otherwise re-widen past the intersection.
+      processId: clientSearch ? undefined : processId ?? undefined,
       costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
       branchIds: confinedBranch ? [confinedBranch] : requestedBranchIds,
-      processIds: confinedProcess ? [confinedProcess] : requestedProcessIds,
+      processIds: clientSearch
+        ? narrowProcessScope([...baseProcessIds, ...(processId && !confinedProcess ? [processId] : [])], clientSearch)
+        : baseProcessIds,
       costCentreIds: csv(req.query.costCentreIds),
     });
     res.json({ success: true, data });
@@ -1395,15 +1469,31 @@ router.get(
     const upTo = req.query.upTo ? String(req.query.upTo) : "";
     if (!/^\d{4}-\d{2}$/.test(upTo)) throw Object.assign(new Error("upTo must be YYYY-MM"), { statusCode: 400 });
     const user = actor(req);
-    const confinedBranch = await resolveFinanceBranchScope({
+    // The page's own branch selection is honoured (audit item 18: the strip used to be company-wide
+    // beside a branch-scoped panel). A requested branch goes through resolveFinanceBranchScope,
+    // which returns it only when the caller may read it and THROWS for anyone else's — so a
+    // request can narrow a scoped user's view, never widen it. With no request, the user's own
+    // confinement applies exactly as before.
+    const requestedBranchId = req.query.branchId ? String(req.query.branchId).trim() : "";
+    const branchFilter = await resolveFinanceBranchScope({
       userId: user.id, primaryRole: user.role, userRoles: user.roles,
+      requestedBranchId: requestedBranchId || undefined,
     });
     const confinedProcess = await resolveFinanceProcessScope({
       userId: user.id, primaryRole: user.role, userRoles: user.roles,
     });
     const filters: CeoFilters = {};
-    if (confinedBranch !== undefined) filters.branchId = confinedBranch;
-    if (confinedProcess !== undefined) filters.processId = confinedProcess;
+    if (branchFilter !== undefined) filters.branchId = branchFilter;
+    // Client / Search, as process ids, intersected with any process confinement (audit item 19).
+    const clientSearch = await resolveClientSearchProcessIds({
+      clientId: req.query.clientId ? String(req.query.clientId) : null,
+      search: req.query.search ? String(req.query.search) : null,
+    });
+    if (clientSearch) {
+      filters.processIds = narrowProcessScope(confinedProcess ? [confinedProcess] : [], clientSearch);
+    } else if (confinedProcess !== undefined) {
+      filters.processId = confinedProcess;
+    }
     const data = await getYtdSummary(upTo, filters);
     res.json({ success: true, data });
   })
@@ -1433,9 +1523,17 @@ router.get(
       : confinedRequestedBranch
         ? [confinedRequestedBranch]
         : requestedBranchIds;
+    // Client / Search, as the process ids they match (audit item 19). Live P&L's grain is the cost
+    // centre, so it narrows to the cost centres those processes' staff are posted to — the same
+    // rule CEO Overview uses for a process filter.
+    const clientSearch = await resolveClientSearchProcessIds({
+      clientId: req.query.clientId ? String(req.query.clientId) : null,
+      search: req.query.search ? String(req.query.search) : null,
+    });
     const data = await getPnlReconciliation(period, {
       branchIds,
       includeInactive: String(req.query.includeInactive ?? "false") === "true",
+      ...(clientSearch ? { processIds: clientSearch } : {}),
     });
     res.json({ success: true, data });
   })
@@ -1512,10 +1610,17 @@ router.get(
       );
     }
 
+    // Statement breakdown lines under Total Indirect Cost: GRN Consumed / GRN Committed (reserved).
+    const grnKindParam = req.query.grnKind ? String(req.query.grnKind) : undefined;
+    if (grnKindParam && !["consumed", "reserved"].includes(grnKindParam)) {
+      throw Object.assign(new Error("grnKind must be one of: consumed, reserved"), { statusCode: 400 });
+    }
+
     const data = await getPnlDrilldown({
       metric: metric as "revenue" | "people" | "indirect" | "budget",
       period,
       peopleBucket: bucketParam as "agent_salary" | "dsc_people" | "bmc_people" | undefined,
+      grnKind: grnKindParam as "consumed" | "reserved" | undefined,
       branchId: requestedBranchId ? (branchId ?? requestedBranchId) : undefined,
       processId: requestedProcessId ? (processId ?? requestedProcessId) : undefined,
       costCentreId,
@@ -1574,6 +1679,239 @@ router.get(
       requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
     });
     const data = await getSeatRevenueForecast(period, branchId ? { branchId } : {});
+    res.json({ success: true, data });
+  })
+);
+
+/**
+ * Seat billing — revenue per day from seat rate x seats, per cost centre and LOB line.
+ *
+ * Read: the per-cost-centre lines (configured, or from the cost centre's last invoice) and the
+ * resulting monthly / per-day / month-to-date figures. Write: finance maintains the lines from
+ * P&L Configuration > Seat billing. Every write is branch-checked against the cost centre it
+ * touches and audited in audit_action_log. See pnl-seat-billing.service.ts.
+ */
+
+/**
+ * finance-access-scope.ts refuses with a plain Error (no statusCode), which errorHandler turns into
+ * a 500 — so a branch head asking for another branch's cost centre saw a server error rather than
+ * "not allowed". Found by the sandbox end-to-end run (2026-09-15). Mapped to 403 for the seat
+ * billing routes only; the helper itself is shared by every finance route and is left unchanged.
+ */
+async function asForbidden<T>(work: Promise<T>): Promise<T> {
+  try {
+    return await work;
+  } catch (error) {
+    const err = error as Error & { statusCode?: number };
+    if (!err.statusCode && /^(Your user account is not mapped|You cannot access|You can only access)/.test(String(err.message))) {
+      err.statusCode = 403;
+    }
+    throw err;
+  }
+}
+
+router.get(
+  "/pnl/seat-billing",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const period = String(req.query.period ?? "");
+    const user = actor(req);
+    const branchId = await asForbidden(resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    }));
+    const data = await getSeatBillingEstimate(period, branchId ? { branchIds: [branchId] } : {});
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/seat-billing/cost-centres/:id",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const { branchId } = await getOwnCostCentreBranch(String(req.params.id));
+    await asForbidden(assertBranchOf(req, branchId));
+    const data = await getSeatBillingCostCentreDetail(String(req.params.id), String(req.query.period ?? ""));
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/seat-billing/lines",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const body = req.body ?? {};
+    const { branchId } = await getOwnCostCentreBranch(String(body.costCentreId ?? ""));
+    await asForbidden(assertBranchOf(req, branchId));
+    const data = await createSeatBillingLine(body, actor(req).id);
+    res.status(201).json({ success: true, data });
+  })
+);
+
+router.patch(
+  "/pnl/seat-billing/lines/:id",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const { costCentreId } = await getLineCostCentre(String(req.params.id));
+    const { branchId } = await getOwnCostCentreBranch(costCentreId);
+    await asForbidden(assertBranchOf(req, branchId));
+    // The cost centre of a line is fixed at creation; moving revenue between cost centres is a
+    // new line on the other one, so it cannot be smuggled in through an edit.
+    const { costCentreId: _ignored, ...patch } = req.body ?? {};
+    const data = await updateSeatBillingLine(String(req.params.id), patch, actor(req).id);
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/seat-billing/lines/:id/deactivate",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const { costCentreId } = await getLineCostCentre(String(req.params.id));
+    const { branchId } = await getOwnCostCentreBranch(costCentreId);
+    await asForbidden(assertBranchOf(req, branchId));
+    const reason = req.body?.reason ? String(req.body.reason).slice(0, 500) : null;
+    const data = await deactivateSeatBillingLine(String(req.params.id), actor(req).id, reason);
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/seat-billing/import",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const costCentreId = String(req.body?.costCentreId ?? "");
+    const { branchId } = await getOwnCostCentreBranch(costCentreId);
+    await asForbidden(assertBranchOf(req, branchId));
+    const data = await importSeatBillingFromInvoice(costCentreId, String(req.body?.period ?? ""), actor(req).id);
+    res.status(201).json({ success: true, data });
+  })
+);
+
+/**
+ * Cost centre override — redirect an employee's pay to a different cost centre for P&L
+ * attribution only, e.g. BSS/BO/NOIDA-2/577's back-office staff who work entirely on the
+ * BSS/BO/NOIDA-2/576 (Onfido) account. employees.cost_centre_id is never written by these routes;
+ * see pnl-cost-centre-override.service.ts for how getPnlReconciliation() / getCeoOverview() read
+ * it. Company-wide (no branch scope check) — restricted to PNL_WRITE_ROLES because it can move
+ * cost across branches, which a branch head should not be able to do for anyone but themself.
+ */
+
+router.get(
+  "/pnl/cost-centre-overrides",
+  requireRole(...PNL_READ_ROLES),
+  h(async (_req, res) => {
+    const data = await listCostCentreOverrides();
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/cost-centre-overrides/cost-centres",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const branchId = req.query.branchId ? String(req.query.branchId) : null;
+    const data = await listOverrideCostCentreOptions(branchId);
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/cost-centre-overrides/employees",
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const branchId = req.query.branchId ? String(req.query.branchId) : null;
+    const data = await searchEmployeesForOverride(String(req.query.q ?? ""), branchId, Number(req.query.limit ?? 20));
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/cost-centre-overrides/bulk",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    const employeeCodes = Array.isArray(req.body?.employeeCodes) ? req.body.employeeCodes.map(String) : [];
+    const targetCostCentreId = String(req.body?.targetCostCentreId ?? "");
+    const reason = req.body?.reason ? String(req.body.reason).slice(0, 500) : null;
+    const data = await bulkSetCostCentreOverride({ employeeCodes, targetCostCentreId, reason }, actor(req).id);
+    res.status(201).json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/cost-centre-overrides/:employeeId/deactivate",
+  requireWriteAccess,
+  requireRole(...PNL_WRITE_ROLES),
+  h(async (req, res) => {
+    await deactivateCostCentreOverride(String(req.params.employeeId), actor(req).id);
+    res.json({ success: true });
+  })
+);
+
+/**
+ * P&L trend — revenue, salary, IDC and OP% by day / week / month for the company, a branch or a
+ * cost centre, built on the Live P&L so it always agrees with it. See pnl-trend-series.service.ts.
+ * A branch-scoped user is held to their own branch whatever scope they ask for.
+ */
+router.get(
+  "/pnl/trend-series",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const scopeType = String(req.query.scope ?? "company");
+    const scopeId = req.query.scopeId ? String(req.query.scopeId) : null;
+    const branchScope = await asForbidden(resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: scopeType === "branch" && scopeId ? scopeId : undefined,
+    }));
+    let costCentreBranchId: string | null = null;
+    if (scopeType === "cost_centre" && scopeId) {
+      costCentreBranchId = (await getOwnCostCentreBranch(scopeId)).branchId;
+      await asForbidden(assertBranchOf(req, costCentreBranchId));
+    }
+    const data = await getPnlTrendSeries({
+      grain: String(req.query.grain ?? "month"),
+      scopeType,
+      scopeId,
+      anchor: String(req.query.anchor ?? ""),
+      count: req.query.count ? Number(req.query.count) : undefined,
+      branchScope: branchScope ?? null,
+      costCentreBranchId,
+    });
+    res.json({ success: true, data });
+  })
+);
+
+/**
+ * P&L Insights — margin heatmap, profit contribution, unit economics and revenue mix, all read
+ * from the Live P&L rows. See pnl-insights.service.ts. Same scoping as the trend: a branch-scoped
+ * user only ever gets their own branch.
+ */
+router.get(
+  "/pnl/insights",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchScope = await asForbidden(resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    }));
+    const data = await getPnlInsights({
+      period: String(req.query.period ?? ""),
+      months: req.query.months ? Number(req.query.months) : undefined,
+      branchScope: branchScope ?? null,
+    });
     res.json({ success: true, data });
   })
 );
@@ -1652,6 +1990,12 @@ router.post(
 
 // Transposed statement (P&L components as rows, entities as dynamic columns) — read-only
 // composition over the same canonical engine as /pnl/summary. See pnl-statement.service.ts.
+// ACCESS (audit item 26, 2026-09-23): no requireRole on this line, but NOT ungated — the
+// router.use("/pnl", requireRole(...PNL_READ_ROLES)) registered above runs first for every /pnl/*
+// path, and scopedFilters() applies the branch row scope. The gate is implicit, though: moving or
+// narrowing that router.use() would silently open this route. Adding an explicit
+// requireRole(...PNL_READ_ROLES) here would change nothing for any caller today; left for an owner
+// decision rather than added silently.
 router.get("/pnl/statement", h(async (req, res) => {
   const viewBy = (req.query.viewBy ? String(req.query.viewBy) : "process") as StatementViewBy;
   const data = await pnlStatementService.getStatement(await scopedFilters(req), viewBy);
@@ -1729,34 +2073,48 @@ router.get("/pnl/processes/:processId/canonical-detail", h(async (req, res) => {
   res.json({ success: true, data });
 }));
 
-router.get("/pnl/config/reference-data", h(async (_req, res) => {
+// F-01/F-10: company-wide P&L configuration (contracts, rates, monthly plan, reference data,
+// periods, adjustments) and period-close/governance state have no per-row branch/process owner
+// to scope against, unlike the operational reads elsewhere in this file. PNL_READ_ROLES above
+// includes branch_head/process_manager for THAT reason — row-scoping makes sense there — but
+// none of the endpoints below take a branch/process filter, so that same inclusion would hand
+// them every other branch's contract and rate terms. This matches the frontend guard exactly:
+// `pnlRoles` in finance.routes.tsx already excludes both roles from
+// /finance/process-pnl/configuration and /period-close; neither role has a nav link to them
+// either (navConfig.tsx). Fixes F-01's "BPO configuration reads... return unrestricted data
+// under the broad inherited read role" and closes the frontend/backend mismatch in F-10.
+const PNL_GLOBAL_ONLY_ROLES = [
+  "super_admin", "admin", "ceo", "coo", "finance", "finance_head", "accounts_head", "payroll_head",
+] as const;
+
+router.get("/pnl/config/reference-data", requireRole(...PNL_GLOBAL_ONLY_ROLES), h(async (_req, res) => {
   const data = await processPnlGovernanceService.getReferenceData();
   res.json({ success: true, data });
 }));
 
-router.get("/pnl/config/contracts", h(async (_req, res) => {
+router.get("/pnl/config/contracts", requireRole(...PNL_GLOBAL_ONLY_ROLES), h(async (_req, res) => {
   const data = await processPnlGovernanceService.listContracts();
   res.json({ success: true, data });
 }));
 
-router.get("/pnl/config/rates", h(async (_req, res) => {
+router.get("/pnl/config/rates", requireRole(...PNL_GLOBAL_ONLY_ROLES), h(async (_req, res) => {
   const data = await processPnlGovernanceService.listRates();
   res.json({ success: true, data });
 }));
 
-router.get("/pnl/config/monthly-plan", h(async (req, res) => {
+router.get("/pnl/config/monthly-plan", requireRole(...PNL_GLOBAL_ONLY_ROLES), h(async (req, res) => {
   const data = await processPnlGovernanceService.listMonthlyPlans(
     req.query.period ? String(req.query.period) : undefined
   );
   res.json({ success: true, data });
 }));
 
-router.get("/pnl/config/periods", h(async (_req, res) => {
+router.get("/pnl/config/periods", requireRole(...PNL_GLOBAL_ONLY_ROLES), h(async (_req, res) => {
   const data = await processPnlGovernanceService.listPeriods();
   res.json({ success: true, data });
 }));
 
-router.get("/pnl/config/adjustments", h(async (req, res) => {
+router.get("/pnl/config/adjustments", requireRole(...PNL_GLOBAL_ONLY_ROLES), h(async (req, res) => {
   const data = await processPnlGovernanceService.listAdjustments(
     req.query.period ? String(req.query.period) : undefined,
     req.query.processId ? String(req.query.processId) : undefined
@@ -1764,7 +2122,7 @@ router.get("/pnl/config/adjustments", h(async (req, res) => {
   res.json({ success: true, data });
 }));
 
-router.get("/pnl/period-close", h(async (req, res) => {
+router.get("/pnl/period-close", requireRole(...PNL_GLOBAL_ONLY_ROLES), h(async (req, res) => {
   const data = await canonicalPnlService.getPeriodClose(
     req.query.period ? String(req.query.period) : undefined,
     req.userRoles,
@@ -1858,13 +2216,34 @@ const RP_APPROVE_ROLES = ["super_admin", "finance_head", "accounts_head"] as con
 router.get("/pnl/reward-penalty", requireAuth, requireRole(...RP_READ_ROLES), h(async (req, res) => {
   const period = String(req.query.period ?? "");
   const costCentreId = req.query.costCentreId ? String(req.query.costCentreId) : undefined;
-  const data = await listRewardPenalty(period, costCentreId);
+  // F-01: branch_head/process_manager are in RP_READ_ROLES but this list is company-wide
+  // whenever costCentreId is absent. An explicit costCentreId is checked against the caller's
+  // branch via its own cost centre; with no filter at all, the query is confined to the
+  // caller's branch scope instead of returning every branch's rewards/penalties.
+  const user = actor(req);
+  if (costCentreId) {
+    await assertBranchOf(req, await costCentreMappingService.getCostCentreBranchId(costCentreId));
+  }
+  const branchScope = await resolveFinanceBranchScopeSet({
+    userId: user.id,
+    primaryRole: user.role,
+    userRoles: user.roles,
+    requestedBranchId: undefined,
+  });
+  const data = await listRewardPenalty(period, costCentreId, branchScope);
   res.json({ success: true, data });
 }));
 
 router.get("/pnl/reward-penalty/summary", requireAuth, requireRole(...RP_READ_ROLES), h(async (req, res) => {
   const period = String(req.query.period ?? "");
-  const data = await getRewardPenaltySummary(period);
+  const user = actor(req);
+  const branchScope = await resolveFinanceBranchScopeSet({
+    userId: user.id,
+    primaryRole: user.role,
+    userRoles: user.roles,
+    requestedBranchId: undefined,
+  });
+  const data = await getRewardPenaltySummary(period, branchScope);
   res.json({ success: true, data });
 }));
 
@@ -1896,9 +2275,22 @@ const ADJUSTMENT_WRITE_ROLES = ["super_admin", "admin", "branch_admin", "branch_
 const ADJUSTMENT_APPROVE_ROLES = ["super_admin", "finance_head", "accounts_head"] as const;
 
 router.get("/pnl/manual-adjustments", requireAuth, requireRole(...ADJUSTMENT_READ_ROLES), h(async (req, res) => {
+  const user = actor(req);
+  // F-01: branch_head/process_manager are in ADJUSTMENT_READ_ROLES. resolveFinanceBranchScope
+  // both validates an explicit ?branchId against the caller's scope and, when absent, resolves
+  // to the caller's own branch rather than leaving the filter off entirely.
+  const branchId = await resolveFinanceBranchScope({
+    userId: user.id, primaryRole: user.role, userRoles: user.roles,
+    requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+  });
+  const processId = await resolveFinanceProcessScope({
+    userId: user.id, primaryRole: user.role, userRoles: user.roles,
+    requestedProcessId: req.query.processId ? String(req.query.processId) : undefined,
+  });
+  if (processId) await assertProcessInScope(req, processId);
   const data = await pnlManualAdjustmentService.listManualAdjustments({
-    processId: req.query.processId ? String(req.query.processId) : undefined,
-    branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    processId,
+    branchId,
     periodCode: req.query.period ? String(req.query.period) : undefined,
     status: req.query.status ? (String(req.query.status) as never) : undefined,
   });
@@ -1907,6 +2299,7 @@ router.get("/pnl/manual-adjustments", requireAuth, requireRole(...ADJUSTMENT_REA
 
 router.get("/pnl/manual-adjustments/adjusted-total", requireAuth, requireRole(...ADJUSTMENT_READ_ROLES), h(async (req, res) => {
   const processId = String(req.query.processId ?? "");
+  if (processId) await assertProcessInScope(req, processId);
   const period = String(req.query.period ?? "");
   const systemRevenue = Number(req.query.systemRevenue ?? 0);
   const data = await pnlManualAdjustmentService.getAdjustedTotal(processId, period, systemRevenue);
@@ -1914,6 +2307,7 @@ router.get("/pnl/manual-adjustments/adjusted-total", requireAuth, requireRole(..
 }));
 
 router.post("/pnl/manual-adjustments", requireAuth, requireWriteAccess, requireRole(...ADJUSTMENT_WRITE_ROLES), h(async (req, res) => {
+  const user = actor(req);
   const data = await pnlManualAdjustmentService.createManualAdjustment(
     {
       processId: String(req.body?.processId ?? ""),
@@ -1922,7 +2316,8 @@ router.post("/pnl/manual-adjustments", requireAuth, requireWriteAccess, requireR
       amount: Number(req.body?.amount),
       reason: String(req.body?.reason ?? ""),
     },
-    req.authUser.id
+    req.authUser.id,
+    { primaryRole: user.role, userRoles: user.roles }
   );
   res.status(201).json({ success: true, data });
 }));
@@ -1935,6 +2330,49 @@ router.put("/pnl/manual-adjustments/:id/approve", requireAuth, requireWriteAcces
 router.put("/pnl/manual-adjustments/:id/reject", requireAuth, requireWriteAccess, requireRole(...ADJUSTMENT_APPROVE_ROLES), h(async (req, res) => {
   const reason = String(req.body?.reason ?? "");
   const data = await pnlManualAdjustmentService.reviewManualAdjustment(req.params.id, "reject", req.authUser.id, reason);
+  res.json({ success: true, data });
+}));
+
+// ── Trend / receivables ageing / seat billability (2026-09-10 build) ───────
+// All three sit under /pnl, so they inherit the requireRole(...PNL_READ_ROLES) gate above.
+// F-01: that gate alone let branch_head/process_manager pass ANY branchId/processId straight
+// through to the query, or omit both and see every branch. Resolved through the same
+// resolveFinanceBranchScope/resolveFinanceProcessScope pair the rest of this file already uses.
+
+async function scopedTrendFilters(req: AuthenticatedRequest) {
+  const user = actor(req);
+  const branchId = await resolveFinanceBranchScope({
+    userId: user.id, primaryRole: user.role, userRoles: user.roles,
+    requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+  });
+  const processId = await resolveFinanceProcessScope({
+    userId: user.id, primaryRole: user.role, userRoles: user.roles,
+    requestedProcessId: req.query.processId ? String(req.query.processId) : undefined,
+  });
+  if (processId) await assertProcessInScope(req, processId);
+  return { branchId, processId };
+}
+
+router.get("/pnl/trend", requireAuth, h(async (req, res) => {
+  const scoped = await scopedTrendFilters(req);
+  // Client / Search as process ids (audit item 19), intersected with any process scope above.
+  const clientSearch = await resolveClientSearchProcessIds({
+    clientId: req.query.clientId ? String(req.query.clientId) : null,
+    search: req.query.search ? String(req.query.search) : null,
+  });
+  const data = await getPnlTrend(clientSearch
+    ? { branchId: scoped.branchId, processIds: narrowProcessScope(scoped.processId ? [scoped.processId] : [], clientSearch) }
+    : scoped);
+  res.json({ success: true, data });
+}));
+
+router.get("/pnl/receivables-ageing", requireAuth, h(async (req, res) => {
+  const data = await getReceivablesAgeing(await scopedTrendFilters(req));
+  res.json({ success: true, data });
+}));
+
+router.get("/pnl/seat-billability", requireAuth, h(async (req, res) => {
+  const data = await getSeatBillability(await scopedTrendFilters(req));
   res.json({ success: true, data });
 }));
 

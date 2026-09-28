@@ -16,8 +16,10 @@ import { db } from "../../db/mysql.js";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { getPublicKitSession, getPublicKitFile, startKitEsign } from "./joiningKitPublic.service.js";
-import { queueJoiningKit, dispatchJoiningKit } from "./joiningKitDispatch.service.js";
+import { queueJoiningKit, dispatchJoiningKit, resendKitEsignLink, redispatchDeadKit, kitEsignSessionIsAlive } from "./joiningKitDispatch.service.js";
+import { syncKitEsignStatus } from "./joiningKitSync.service.js";
 import { kitEligibleDocuments } from "./joiningKitAssembly.service.js";
+import { regenerateMissingKitDrafts } from "./joiningKitDraftRepair.service.js";
 
 type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
 const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
@@ -77,6 +79,16 @@ joiningKitRouter.get("/:employeeId/joining-kit/preview", h(async (req, res) => {
       WHERE employee_id = ? ORDER BY created_at DESC LIMIT 5`,
     [employeeId],
   );
+  // The page reads its open kit from this payload, not from GET /joining-kit, so
+  // liveness has to be here too — otherwise a dead session never shows the
+  // "Send a new kit" action and HR is left with a Resend that always declines.
+  const kits = await Promise.all(
+    existing.map(async (row) =>
+      String(row.status) === "sent"
+        ? { ...row, sessionAlive: await kitEsignSessionIsAlive(String(row.id)) }
+        : row,
+    ),
+  );
   return res.json({
     success: true,
     data: {
@@ -85,9 +97,10 @@ joiningKitRouter.get("/:employeeId/joining-kit/preview", h(async (req, res) => {
         name: String(d.document_name ?? d.document_code),
         status: String(d.status ?? ""),
         fillStatus: d.fill_status ? String(d.fill_status) : null,
+        hasFile: !!d.storage_path,
       })),
       hrFillPending: pending.map((p) => String(p.document_name)),
-      kits: existing,
+      kits,
     },
   });
 }));
@@ -102,6 +115,11 @@ joiningKitRouter.get("/:employeeId/joining-kit/preview", h(async (req, res) => {
 joiningKitRouter.post("/:employeeId/joining-kit/send", h(async (req: AuthenticatedRequest, res) => {
   const employeeId = String(req.params.employeeId);
   const actorUserId = req.authUser?.id ?? null;
+  // Optional CC / extra recipients: comma-separated string or array
+  const rawCc: unknown = req.body?.ccEmails ?? req.body?.cc_emails ?? "";
+  const ccEmails: string[] = (Array.isArray(rawCc) ? rawCc : String(rawCc ?? "").split(","))
+    .map((e: string) => e.trim())
+    .filter((e: string) => e.includes("@"));
 
   const queued = await queueJoiningKit({
     employeeId,
@@ -134,12 +152,67 @@ joiningKitRouter.post("/:employeeId/joining-kit/send", h(async (req: Authenticat
 
   // Fire-and-forget. Errors are logged; kit status moves to "failed" inside
   // dispatchJoiningKit on any unhandled throw.
-  dispatchJoiningKit(queued.kitId, actorUserId).catch((err: unknown) => {
+  dispatchJoiningKit(queued.kitId, actorUserId, ccEmails).catch((err: unknown) => {
     console.error(
       "[joining-kit] background dispatch error:",
       err instanceof Error ? err.message : err,
     );
   });
+}));
+
+/**
+ * Regenerate kit documents that have a checklist row but no generated file (the
+ * `draft_missing` block). Only file-less, unsigned, non-terminal kit documents are
+ * touched; the service writes its own audit entry. Synchronous so HR sees the
+ * outcome, then re-send the kit as usual.
+ */
+joiningKitRouter.post("/:employeeId/joining-kit/regenerate-drafts", h(async (req: AuthenticatedRequest, res) => {
+  const result = await regenerateMissingKitDrafts(
+    String(req.params.employeeId),
+    req.authUser?.id ?? null,
+  );
+  return res.json({ success: true, data: result });
+}));
+
+/** Re-send the signing email for an already-sent kit without touching the provider. */
+joiningKitRouter.post("/:employeeId/joining-kit/:kitId/resend", h(async (req: AuthenticatedRequest, res) => {
+  const result = await resendKitEsignLink(
+    String(req.params.kitId),
+    req.authUser?.id ?? null,
+  );
+  return res.json({ success: true, ...result });
+}));
+
+/**
+ * Recovery for a kit whose provider session is genuinely dead (expired/cancelled —
+ * kitEsignSessionIsAlive says so). Abandons the stuck kit and dispatches a brand-new
+ * one from scratch. This was previously only reachable pre-conversion, from the ATS
+ * candidate control room (joining-control-room.service.ts's redispatchDeadEsignKit) —
+ * an employee whose kit died after conversion had no UI path to this at all.
+ * redispatchDeadKit itself refuses (409) if the current kit's session is still alive,
+ * so this cannot be used to bail on a kit someone could still complete.
+ */
+/**
+ * Force-pull the current eSign status from the provider for a sent kit.
+ * The reconciliation worker does this automatically (every 5 min, with backoff),
+ * but HR often needs the answer immediately — especially if the employee just
+ * finished signing and the page still shows "pending".
+ */
+joiningKitRouter.post("/:employeeId/joining-kit/:kitId/sync", h(async (req: AuthenticatedRequest, res) => {
+  const result = await syncKitEsignStatus(
+    String(req.params.kitId),
+    String(req.params.employeeId),
+    req.authUser?.id ?? null,
+  );
+  return res.json({ success: true, ...result });
+}));
+
+joiningKitRouter.post("/:employeeId/joining-kit/redispatch", h(async (req: AuthenticatedRequest, res) => {
+  const result = await redispatchDeadKit(
+    String(req.params.employeeId),
+    req.authUser?.id ?? null,
+  );
+  return res.json({ success: true, data: result });
 }));
 
 /** Current kit state for a listing screen. */
@@ -152,5 +225,38 @@ joiningKitRouter.get("/:employeeId/joining-kit", h(async (req, res) => {
       WHERE k.employee_id = ? ORDER BY k.created_at DESC`,
     [String(req.params.employeeId)],
   );
-  return res.json({ success: true, data: rows });
+  // Only the open ("sent") kit's liveness is worth telling HR about — a "redispatch"
+  // action only makes sense against that one, and checking every historical kit here
+  // would mean one extra query per row for no reason.
+  const withLiveness = await Promise.all(rows.map(async (row) => {
+    if (String(row.status) !== "sent") return row;
+    return { ...row, sessionAlive: await kitEsignSessionIsAlive(String(row.id)) };
+  }));
+  return res.json({ success: true, data: withLiveness });
+}));
+
+/**
+ * The kit's own file — signed copy once complete, otherwise the unsigned draft that
+ * was sent for signing. Before this route existed, HR had no way to see the complete
+ * merged document at all from this page: each checklist item's own preview happens to
+ * resolve to the same underlying kit file (see latestChecklistFile's FIELD() order),
+ * but nothing said so, and a kit with no member items yet (still 'queued') had no
+ * preview path whatsoever.
+ */
+joiningKitRouter.get("/:employeeId/joining-kit/:kitId/file", h(async (req, res) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT f.storage_path, f.original_filename, f.mime_type
+       FROM employee_joining_esign_kit k
+       JOIN employee_joining_document_file f ON f.id = COALESCE(k.signed_file_id, k.kit_file_id)
+      WHERE k.id = ? AND k.employee_id = ? AND f.deleted_at IS NULL
+      LIMIT 1`,
+    [String(req.params.kitId), String(req.params.employeeId)],
+  );
+  const file = rows[0];
+  if (!file || !file.storage_path || !fs.existsSync(String(file.storage_path))) {
+    return res.status(404).json({ success: false, message: "This kit has no document file yet." });
+  }
+  res.setHeader("Content-Type", String(file.mime_type ?? "application/pdf"));
+  res.setHeader("Content-Disposition", `inline; filename="${String(file.original_filename ?? "joining-kit.pdf").replace(/"/g, "")}"`);
+  fs.createReadStream(String(file.storage_path)).pipe(res);
 }));

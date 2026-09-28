@@ -74,7 +74,7 @@ joiningControlRoomRouter.get("/candidates/:candidateId", h(async (req, res) => {
 }));
 
 joiningControlRoomRouter.put("/candidates/:candidateId/payroll", h(async (req, res) => {
-  const data = await savePayrollControlRoomDetails(req.params.candidateId, req.body || {}, req.authUser!.id);
+  const data = await savePayrollControlRoomDetails(req.params.candidateId, req.body || {}, req.authUser!.id, req.authUser!.roles);
   return res.json({ success: true, data });
 }));
 

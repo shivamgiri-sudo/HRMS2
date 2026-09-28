@@ -9,8 +9,11 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
   void fn(req, res).catch(next);
 };
 
-const REVIEWER_ROLES = ["payroll_head", "admin", "super_admin"] as const;
-const FIXER_ROLES    = ["payroll_hr", "branch_head", "hr", "admin", "super_admin"] as const;
+// Only Payroll Head and Super Admin approve a salary date revision; admin may raise one (FIXER_ROLES) but not approve it.
+const REVIEWER_ROLES = ["payroll_head", "super_admin"] as const;
+// "payroll" is what a payroll_hr-only account is resolved to before requireRole runs (payroll_hr is aliased to
+// payroll), so without it Payroll HR -- the primary requester -- was refused on every write.
+const FIXER_ROLES    = ["payroll_hr", "payroll", "branch_head", "hr", "admin", "super_admin"] as const;
 
 router.post("/", requireAuth, requireWriteAccess, requireRole(...FIXER_ROLES), h(async (req, res) => {
   const { employee_id, requested_effective_from, reason } = req.body as Record<string, unknown>;
@@ -22,7 +25,14 @@ router.post("/", requireAuth, requireWriteAccess, requireRole(...FIXER_ROLES), h
     requested_effective_from: String(requested_effective_from),
     reason: String(reason),
     requested_by: String(req.authUser!.id),
+    actor_roles: req.authUser!.roles,
   });
+  res.json({ success: true, data });
+}));
+
+// Requesters (HR / Payroll HR / Branch Head) see the requests THEY raised, in every status.
+router.get("/mine", requireAuth, requireRole(...FIXER_ROLES), h(async (req, res) => {
+  const data = await svc.listMyRevisionRequests(String(req.authUser!.id));
   res.json({ success: true, data });
 }));
 
@@ -48,6 +58,7 @@ router.post("/bulk-validate", requireAuth, requireRole(...FIXER_ROLES), h(async 
   const results = await svc.bulkValidate({
     employee_codes: (employee_codes as unknown[]).map(String),
     requested_effective_from: String(requested_effective_from),
+    actor_roles: req.authUser!.roles,
   });
   res.json({ success: true, results });
 }));
@@ -68,6 +79,7 @@ router.post("/bulk", requireAuth, requireWriteAccess, requireRole(...FIXER_ROLES
     requested_effective_from: String(requested_effective_from),
     reason: String(reason),
     requested_by: String(req.authUser!.id),
+    actor_roles: req.authUser!.roles,
   });
   res.json({ success: true, ...result });
 }));
@@ -81,7 +93,8 @@ router.post("/:id/review", requireAuth, requireWriteAccess, requireRole(...REVIE
     Number(req.params.id),
     action as "approve" | "reject",
     String(req.authUser!.id),
-    typeof remarks === "string" ? remarks : undefined
+    typeof remarks === "string" ? remarks : undefined,
+    req.authUser!.roles
   );
   res.json({ success: true });
 }));

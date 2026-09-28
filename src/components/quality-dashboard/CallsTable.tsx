@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatISTDate } from "@/lib/utils";
+import { qualityScoreCellClass } from "@/lib/qualityScoreFormatting";
 
 interface Call {
   call_id: string;
@@ -68,11 +69,10 @@ export const CallsTable: React.FC<CallsTableProps> = ({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const getCQColor = (cq: number): string => {
-    if (cq >= 80) return 'text-green-600 bg-green-50';
-    if (cq >= 70) return 'text-yellow-600 bg-yellow-50';
-    return 'text-red-600 bg-red-50';
-  };
+  // Conditional formatting matches the shared bands in qualityScoreFormatting.ts
+  // (good >=80 / warn 70-79 / caution 60-69 / bad <60), so a call's CQ score
+  // reads the same colour here as everywhere else it appears.
+  const getCQColor = (cq: number): string => qualityScoreCellClass(cq);
 
   if (isLoading) {
     return (

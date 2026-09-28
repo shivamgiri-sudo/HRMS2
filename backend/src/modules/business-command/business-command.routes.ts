@@ -7,6 +7,7 @@ import { tableExists } from "../../shared/dbHelpers.js";
 import { businessCommandService } from "./business-command.service.js";
 import { revenueRiskService } from "../revenue-risk/revenue-risk.service.js";
 import { hasRole } from "../../shared/accessGuard.js";
+import { hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
 import { PAYROLL_ROLES } from "../../platform/policy/roles.js";
 
 export const businessCommandRouter = Router();
@@ -117,6 +118,27 @@ businessCommandRouter.post("/workforce-mandates", h(async (req, res) => {
   if (!process_id) return res.status(400).json({ success: false, error: "process_id is required" });
   if (!mandated_hc || Number(mandated_hc) < 1) return res.status(400).json({ success: false, error: "mandated_hc must be >= 1" });
   if (!effective_from) return res.status(400).json({ success: false, error: "effective_from is required" });
+
+  // A WFM-only caller may set Required HC only for a process in a branch assigned to them.
+  // Everyone else who already reached this endpoint keeps their existing (unrestricted) access.
+  const userId = req.authUser!.id;
+  const isWfm = await hasAnyRole(userId, "wfm", "branch_wfm");
+  const isBroader = await hasAnyRole(
+    userId, "super_admin", "admin", "hr", "ceo", "coo", "manager", "operations_manager", "process_manager", "branch_head"
+  );
+  if (isWfm && !isBroader) {
+    const [procRows] = await db.execute<RowDataPacket[]>(
+      "SELECT branch_id FROM process_master WHERE id = ? LIMIT 1",
+      [process_id]
+    );
+    const branchId = (procRows as RowDataPacket[])[0]?.branch_id ?? null;
+    const allowed = branchId
+      ? await hasScopedAccess(userId, ["wfm", "branch_wfm"], { branchId: String(branchId), processId: String(process_id) })
+      : false;
+    if (!allowed) {
+      return res.status(403).json({ success: false, error: "You can only change the seat count for a process in a branch assigned to you." });
+    }
+  }
 
   const { randomUUID } = await import("crypto");
   const id = randomUUID();

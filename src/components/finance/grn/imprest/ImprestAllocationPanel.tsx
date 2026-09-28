@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Plus, RefreshCw, X } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -75,6 +75,10 @@ const EMPTY_DRAFT = {
   amount: "",
   paymentMode: "Bank Transfer",
   bankName: "",
+  // Which of the company's own accounts this allocation is actually funded from — required for
+  // a real bank-funded top-up to write its own Bank Ledger entry (bank_account_ledger_entry),
+  // closing the gap where these top-ups never reached reconciliation.
+  companyBankAccountId: "",
   referenceNo: "",
   transactionDate: "",
   remarks: "",
@@ -99,16 +103,49 @@ export function ImprestAllocationPanel() {
   const [showForm, setShowForm] = useState(false);
   const [rejecting, setRejecting] = useState<{ id: string; reason: string } | null>(null);
   const canOverridePeriod = useHasRole("finance_head", "super_admin");
+  // ?branchId was already accepted by both /managers and /allocations but silently ignored for
+  // any org-wide role (super_admin, finance_head, …): their branchScope resolves to "all", and
+  // the service only checked filters.branchId inside an `else` branch that scope had already
+  // taken. Fixed server-side (imprest.service.ts); this is the filter control that now works.
+  const [branchId, setBranchId] = useState("");
+
+  const branchesQuery = useQuery({
+    queryKey: ["imprest-branches"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<any>("/api/org/branches?limit=500");
+      return (res?.data ?? res?.rows ?? []) as Array<{ id: string; branch_name?: string; name?: string }>;
+    },
+    staleTime: 5 * 60_000,
+  });
+  const branches = branchesQuery.data ?? [];
 
   const managersQuery = useQuery({
-    queryKey: ["imprest-managers"],
-    queryFn: async () => unwrap<Manager>(await hrmsApi.get<any>("/api/finance/imprest/managers")),
+    queryKey: ["imprest-managers", branchId],
+    queryFn: async () =>
+      unwrap<Manager>(
+        await hrmsApi.get<any>(
+          `/api/finance/imprest/managers${branchId ? `?branchId=${branchId}` : ""}`,
+        ),
+      ),
   });
 
+  // Same shared query key the Payment Voucher forms use — one cache for the company's account
+  // list.
+  const bankAccountsQuery = useQuery({
+    queryKey: ["payment-voucher-bank-accounts"],
+    queryFn: async () => (await hrmsApi.get<{ success: boolean; data: any[] }>("/api/finance/bank-accounts")).data ?? [],
+    enabled: showForm,
+  });
+  const bankAccounts = bankAccountsQuery.data ?? [];
+
   const allocationsQuery = useQuery({
-    queryKey: ["imprest-allocations"],
+    queryKey: ["imprest-allocations", branchId],
     queryFn: async () =>
-      unwrap<Allocation>(await hrmsApi.get<any>("/api/finance/imprest/allocations")),
+      unwrap<Allocation>(
+        await hrmsApi.get<any>(
+          `/api/finance/imprest/allocations${branchId ? `?branchId=${branchId}` : ""}`,
+        ),
+      ),
   });
 
   const managers = managersQuery.data ?? [];
@@ -117,6 +154,16 @@ export function ImprestAllocationPanel() {
     () => managers.find((m) => m.id === draft.imprestManagerId) ?? null,
     [managers, draft.imprestManagerId],
   );
+
+  // Narrowing the Branch filter can drop the manager already picked in the still-open form out
+  // of the list — clear it rather than silently submitting a selection the picker no longer shows.
+  useEffect(() => {
+    setDraft((d) =>
+      d.imprestManagerId && !managers.some((m) => m.id === d.imprestManagerId)
+        ? { ...d, imprestManagerId: "" }
+        : d,
+    );
+  }, [managers]);
 
   // The float the allocation is about to credit. Server-derived, from the ledger.
   const balanceQuery = useQuery({
@@ -151,6 +198,7 @@ export function ImprestAllocationPanel() {
         amount: Number(draft.amount),
         paymentMode: draft.paymentMode,
         bankName: draft.bankName || undefined,
+        companyBankAccountId: draft.companyBankAccountId || undefined,
         referenceNo: draft.referenceNo || undefined,
         transactionDate: draft.transactionDate || undefined,
         remarks: draft.remarks || undefined,
@@ -194,6 +242,24 @@ export function ImprestAllocationPanel() {
 
   return (
     <div className="space-y-4">
+      <GrnCard>
+        <GrnFieldRow
+          label="Branch"
+          hint="Narrows the manager picker below and the Allocations list to one branch."
+        >
+          <GrnSelect
+            className="w-[240px]"
+            value={branchId}
+            onChange={(e) => setBranchId(e.target.value)}
+          >
+            <option value="">All branches I can see</option>
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>{b.branch_name ?? b.name ?? b.id}</option>
+            ))}
+          </GrnSelect>
+        </GrnFieldRow>
+      </GrnCard>
+
       <GrnCard>
         <GrnCardHeader
           title="Raise an allocation"
@@ -296,6 +362,26 @@ export function ImprestAllocationPanel() {
             </GrnFieldRow>
 
             <GrnFieldRow
+              label="Bank account"
+              required
+              hint="Which of the company's own accounts this is actually paid from — needed so this allocation shows up in Bank Ledger and reconciliation, the same way a Payment Voucher release does."
+            >
+              <GrnSelect
+                value={draft.companyBankAccountId}
+                onChange={(e) => setDraft((d) => ({ ...d, companyBankAccountId: e.target.value }))}
+              >
+                <option value="">
+                  {bankAccountsQuery.isLoading ? "Loading…" : "— choose —"}
+                </option>
+                {bankAccounts.map((a: any) => (
+                  <option key={a.id} value={a.id}>
+                    {a.account_name} — {a.account_number_masked}
+                  </option>
+                ))}
+              </GrnSelect>
+            </GrnFieldRow>
+
+            <GrnFieldRow
               label="Reference / UTR"
               hint="Mode, bank and reference together must be unique — the same guard the vendor payment ledger uses to stop a transfer being recorded twice."
             >
@@ -337,6 +423,10 @@ export function ImprestAllocationPanel() {
               <GrnButton
                 disabled={
                   create.isPending || !draft.imprestManagerId || !(Number(draft.amount) > 0)
+                  // Bank account only required once the org actually has one configured —
+                  // mirrors createAllocation()'s own server-side gate, so a fresh/test tenant
+                  // with none set up isn't blocked from raising an allocation.
+                  || (draft.paymentMode !== "Cash" && bankAccounts.length > 0 && !draft.companyBankAccountId)
                 }
                 onClick={() => create.mutate()}
               >

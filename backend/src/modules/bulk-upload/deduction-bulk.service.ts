@@ -53,6 +53,23 @@ export async function importDeductionBatch(
   const { branchId, error: branchError } = resolveSingleBranch(matched);
   if (branchError) throw new BulkUploadError(branchError, 400);
 
+  // Pre-fetch all duplicate entries for the batch in one query instead of one SELECT per row.
+  // Keyed as "employeeId|TYPE_CODE|YYYY-MM" for O(1) lookup in the loop below.
+  const employeeIds = [...new Set(matched.map((e) => e.id))];
+  const existingDupKeys = new Set<string>();
+  if (employeeIds.length > 0) {
+    const ph = employeeIds.map(() => "?").join(",");
+    const [dupRows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_id, deduction_type_code, run_month
+         FROM employee_deduction_entries
+        WHERE employee_id IN (${ph}) AND status NOT IN ('inactive','rejected')`,
+      employeeIds,
+    );
+    for (const r of dupRows as RowDataPacket[]) {
+      existingDupKeys.add(`${r.employee_id}|${String(r.deduction_type_code).toUpperCase()}|${r.run_month}`);
+    }
+  }
+
   for (const row of rows) {
     const d = row.data;
     const emp = employees.get((d.employee_code ?? "").toUpperCase());
@@ -79,16 +96,9 @@ export async function importDeductionBatch(
 
     if (!validationError) d.run_month = normalizeMonth(d.run_month) as string;
 
-    // Duplicate guard: same employee + deduction code + run month already active/pending
+    // O(1) Map lookup instead of a per-row SELECT
     if (!validationError && emp) {
-      const [dupRows] = await db.execute<RowDataPacket[]>(
-        `SELECT id FROM employee_deduction_entries
-          WHERE employee_id = ? AND deduction_type_code = ? AND run_month = ?
-            AND status NOT IN ('inactive','rejected')
-          LIMIT 1`,
-        [emp.id, typeCode, d.run_month],
-      );
-      if ((dupRows as RowDataPacket[]).length > 0) {
+      if (existingDupKeys.has(`${emp.id}|${typeCode}|${d.run_month}`)) {
         validationError = `Duplicate: deduction ${d.deduction_type_code} for ${d.employee_code} in ${d.run_month} already exists`;
       }
     }
@@ -255,6 +265,97 @@ export async function applyDeductionBatch(
       lockedBy: approverUserId,
     })),
   );
+
+  return { applied, failed, errors };
+}
+
+/**
+ * Re-process the error rows of a partially_applied DEDUCTION_BULK batch.
+ * Only retries rows still in row_status='error' whose deduction entry is still 'pending_approval'.
+ */
+export async function reapplyDeductionBatch(
+  batch: BatchRecord,
+  approverUserId: string,
+  remarks: string | null,
+): Promise<ApplyOutcome> {
+  const [rawRows] = await db.execute<RowDataPacket[]>(
+    `SELECT ubr.id, ubr.row_no, ubr.created_entity_id
+       FROM upload_batch_row ubr
+       JOIN employee_deduction_entries ede ON ede.id = ubr.created_entity_id
+      WHERE ubr.upload_batch_id = ? AND ubr.created_entity_type = ?
+        AND ubr.row_status = 'error'
+        AND ede.status = 'pending_approval'
+      ORDER BY ubr.row_no ASC`,
+    [batch.id, ENTITY_TYPE],
+  );
+  const rows = rawRows as Array<{ id: string; row_no: number; created_entity_id: string }>;
+
+  const outcomes = await mapWithConcurrency(rows, BULK_ROW_CONCURRENCY, async (row) => {
+    try {
+      const [res] = await withBulkLockRetry(() =>
+        db.execute<ResultSetHeader>(
+          `UPDATE employee_deduction_entries
+              SET status = 'active', updated_at = NOW()
+            WHERE id = ? AND status = 'pending_approval'`,
+          [row.created_entity_id],
+        ),
+      );
+      if (res.affectedRows === 0) {
+        throw new Error("deduction entry is no longer pending approval");
+      }
+      await db.execute(
+        `UPDATE upload_batch_row SET row_status = 'imported', error_messages = NULL WHERE id = ?`,
+        [row.id],
+      );
+      void logSensitiveAction({
+        actor_user_id: approverUserId,
+        actor_role: "branch_head",
+        action_type: "DEDUCTION_APPROVED",
+        module_key: "payroll",
+        entity_type: ENTITY_TYPE,
+        entity_id: row.created_entity_id,
+        reason: remarks ?? undefined,
+        old_value_json: { status: "pending_approval" },
+        new_value_json: {
+          status: "active",
+          via_bulk_upload: true,
+          upload_batch_no: batch.upload_batch_no,
+        },
+      });
+      return { ok: true as const, entityId: row.created_entity_id };
+    } catch (err) {
+      const msg = `Row ${row.row_no}: ${(err as Error)?.message ?? String(err)}`;
+      await markRowFailed(row.id, msg);
+      return { ok: false as const, msg };
+    }
+  });
+
+  const toLock: string[] = [];
+  const errors: string[] = [];
+  let applied = 0;
+  let failed = 0;
+  for (const outcome of outcomes) {
+    if (outcome.ok) {
+      applied++;
+      toLock.push(outcome.entityId);
+    } else {
+      failed++;
+      errors.push(outcome.msg);
+    }
+  }
+
+  if (toLock.length > 0) {
+    await lockEntities(
+      toLock.map((entityId) => ({
+        entityType: ENTITY_TYPE,
+        entityId,
+        batchId: batch.id,
+        batchNo: batch.upload_batch_no,
+        employeeId: null,
+        lockedBy: approverUserId,
+      })),
+    );
+  }
 
   return { applied, failed, errors };
 }

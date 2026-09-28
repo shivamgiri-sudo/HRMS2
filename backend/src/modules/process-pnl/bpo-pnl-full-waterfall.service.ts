@@ -1,6 +1,7 @@
 import type { BpoPnlRow } from "./bpo-pnl.service.js";
 import { getCachedAllocationSummary } from "./canonical-pnl.service.js";
 import { costComponentDataFlags, type CostComponentDataFlags } from "./pnl-cost-component-flags.js";
+import { cachedPnlRead } from "./pnl-read-cache.js";
 
 /**
  * "Full P&L Waterfall" — a supplementary, ADDITIONAL branch/company-wide total, built by summing
@@ -10,14 +11,27 @@ import { costComponentDataFlags, type CostComponentDataFlags } from "./pnl-cost-
  * adjustedRow in bpo-pnl-allocation-overlay.service.ts for how each process's row is corrected for
  * its true share of branch-pool costs).
  *
- * This is NOT the "Operating Profit" figure CEO Overview and the P&L Statement show. That figure
- * is a separate, simpler calculation (revenue − lump peopleCost − indirectCost) in
- * ceo-overview.service.ts / pnl-statement.service.ts, deliberately reconciled against the
- * business's real reported P&L Excel file (see migration 435_pnl_components_real_shape.sql) — and
- * this module never reads or writes anything either of those two touch. A reader who wants to
+ * This is NOT the "Operating Profit" figure CEO Overview and the P&L Statement show, and its `ebit`
+ * is not derived from their lines:
+ *   - P&L Statement (pnl-statement.service.ts enrichColumn), EVERY view — process, branch and LOB
+ *     alike since 2026-09-23: Operating Profit = Recognised Revenue − Total Cost, where Total Cost =
+ *     DC Total (Agent + DSC + BMC salary, from actual payroll / the running-salary snapshot) + IDC
+ *     (the shared GRN reader, readGrnSpend). Before that date the process view alone printed the
+ *     canonical `ebit` summed here, which did not equal its own Revenue − Total Cost rows; the
+ *     canonical figure is still published on a process column as `canonicalEbit`.
+ *   - CEO Overview (ceo-overview.service.ts): revenue − peopleCost − indirectCost per branch.
+ * Both are reconciled against the business's real reported P&L Excel file (see migration
+ * 435_pnl_components_real_shape.sql), and this module never reads or writes anything either of
+ * them touches. This module sums the canonical rows' own waterfall fields. A reader who wants to
  * verify this total by hand can add up the branch's own processes on their individual detail pages
  * (same source, same fields, same math) and land on exactly this number — that reconciliation is
  * this feature's whole point, and is exercised in bpo-pnl-full-waterfall.test.ts.
+ *
+ * GRN Committed (reserved) — owner rule 2026-09-24, "Reserved + Consumed should be there in P&L":
+ * the overlay now folds approved-but-unconsumed GRN allocations (ex-GST, same period/bucket rule as
+ * the consumed view) into each row's non-people buckets, so every EBITDA / EBIT / PBT / PAT summed
+ * here already subtracts it, for every month. Nothing extra is added in this module — adding it
+ * again here would count it twice. Each row also carries it apart as `grnCommitted`.
  *
  * Both the per-process row and this aggregate READ THROUGH bpoPnlAllocationOverlayService's own
  * correctly-split branch-pool allocation (fixed 2026-09-01, commit 8172b98a) via the same 60s
@@ -89,12 +103,22 @@ function sumRows(rows: BpoPnlRow[]) {
  * already scopes the SQL to that branch (bpoPnlService.getSummary's branchFilters), so `rows` here
  * contains only that branch's active processes — no extra filtering is applied on top.
  */
-export async function getFullWaterfall(period: string, branchId?: string | null): Promise<FullWaterfallTotals> {
+export function getFullWaterfall(period: string, branchId?: string | null): Promise<FullWaterfallTotals> {
+  // 60s result cache + single-flight (pnl-read-cache.ts), keyed by period and the caller's
+  // RESOLVED branch scope (the route passes resolveFinanceBranchScope's answer), so a branch-bound
+  // user can never be served another branch's or the company's totals.
+  return cachedPnlRead("pnl-full-waterfall", { period, branchId: branchId ?? null }, () => buildFullWaterfall(period, branchId));
+}
+
+async function buildFullWaterfall(period: string, branchId?: string | null): Promise<FullWaterfallTotals> {
   const filters = branchId ? { period, branchId } : { period };
-  const summary = await getCachedAllocationSummary(filters);
+  // Independent reads, run together.
+  const [summary, flags] = await Promise.all([
+    getCachedAllocationSummary(filters),
+    costComponentDataFlags(period, branchId ? { branchId } : {}),
+  ]);
   const rows = summary.rows as BpoPnlRow[];
   const totals = sumRows(rows);
-  const flags = await costComponentDataFlags(period, branchId ? { branchId } : {});
 
   return {
     period,

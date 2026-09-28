@@ -145,7 +145,7 @@ export const journeyAuditReportService = {
     if (has(columns, "ats_candidate", ["id", "candidate_code", "full_name", "current_stage", "created_at"])) {
       parts.push(`SELECT
         COALESCE(e.employee_code, 'PENDING EMPLOYEE CODE') AS EMPLOYEE_CODE,
-        DATE_FORMAT(c.created_at, '%d-%b-%Y') AS REPORT_DATE,
+        DATE_FORMAT(c.created_at, '%d-%m-%Y') AS REPORT_DATE,
         c.id AS CANDIDATE_ID, c.candidate_code AS CANDIDATE_CODE, c.full_name AS PERSON_NAME,
         'RECRUITMENT' AS JOURNEY_PHASE, 'APPLICATION CREATED' AS ACTIVITY_TYPE,
         c.current_stage AS ACTIVITY_STATUS, c.created_at AS ACTIVITY_DATETIME,
@@ -167,7 +167,7 @@ export const journeyAuditReportService = {
     if (has(columns, "ats_candidate_stage_log", ["id", "candidate_id", "from_stage", "to_stage", "stage_date", "updated_by"])) {
       parts.push(`SELECT
         COALESCE(e.employee_code, 'PENDING EMPLOYEE CODE') AS EMPLOYEE_CODE,
-        DATE_FORMAT(l.stage_date, '%d-%b-%Y') AS REPORT_DATE,
+        DATE_FORMAT(l.stage_date, '%d-%m-%Y') AS REPORT_DATE,
         c.id AS CANDIDATE_ID, c.candidate_code AS CANDIDATE_CODE, c.full_name AS PERSON_NAME,
         'INTERVIEW / SELECTION' AS JOURNEY_PHASE, 'ATS STAGE MOVEMENT' AS ACTIVITY_TYPE,
         l.to_stage AS ACTIVITY_STATUS, l.stage_date AS ACTIVITY_DATETIME,
@@ -192,7 +192,7 @@ export const journeyAuditReportService = {
     }
 
     if (has(columns, "employee_journey_log", ["id", "employee_id", "event_type", "event_date", "description", "created_at"])) {
-      parts.push(`SELECT e.employee_code AS EMPLOYEE_CODE, DATE_FORMAT(j.created_at, '%d-%b-%Y') AS REPORT_DATE,
+      parts.push(`SELECT e.employee_code AS EMPLOYEE_CODE, DATE_FORMAT(j.created_at, '%d-%m-%Y') AS REPORT_DATE,
         NULL AS CANDIDATE_ID, NULL AS CANDIDATE_CODE, e.full_name AS PERSON_NAME,
         COALESCE(j.module, 'EMPLOYEE LIFECYCLE') AS JOURNEY_PHASE, j.event_type AS ACTIVITY_TYPE,
         j.event_type AS ACTIVITY_STATUS, j.created_at AS ACTIVITY_DATETIME, j.event_date AS EFFECTIVE_DATE,
@@ -210,7 +210,7 @@ export const journeyAuditReportService = {
     }
 
     if (has(columns, "employee_lifecycle_event", ["id", "employee_id", "event_type", "effective_date", "old_value_json", "new_value_json", "created_at"])) {
-      parts.push(`SELECT e.employee_code, DATE_FORMAT(le.created_at,'%d-%b-%Y'), NULL,NULL,e.full_name,
+      parts.push(`SELECT e.employee_code, DATE_FORMAT(le.created_at,'%d-%m-%Y'), NULL,NULL,e.full_name,
         'EMPLOYMENT LIFECYCLE', le.event_type, COALESCE(CAST(le.approved_by AS CHAR),'RECORDED'), le.created_at, le.effective_date,
         COALESCE(actor_employee.employee_code,actor_user_employee.employee_code,CAST(le.initiated_by AS CHAR),'SYSTEM'),
         COALESCE(actor_employee.full_name,actor_user_employee.full_name,'SYSTEM'),'HR/LIFECYCLE USER',
@@ -225,7 +225,7 @@ export const journeyAuditReportService = {
     }
 
     if (has(columns, "employee_job_history", ["id", "employee_id", "effective_date", "change_type", "created_at"])) {
-      parts.push(`SELECT e.employee_code,DATE_FORMAT(jh.created_at,'%d-%b-%Y'),NULL,NULL,e.full_name,
+      parts.push(`SELECT e.employee_code,DATE_FORMAT(jh.created_at,'%d-%m-%Y'),NULL,NULL,e.full_name,
         'JOB HISTORY',jh.change_type,jh.change_type,jh.created_at,jh.effective_date,
         COALESCE(actor_employee.employee_code,actor_user_employee.employee_code,CAST(jh.created_by AS CHAR),'SYSTEM'),
         COALESCE(actor_employee.full_name,actor_user_employee.full_name,'SYSTEM'),'HR USER',
@@ -241,7 +241,7 @@ export const journeyAuditReportService = {
     }
 
     if (has(columns, "exit_approval_log", ["id", "exit_request_id", "stage", "action", "action_by", "action_by_role", "created_at"])) {
-      parts.push(`SELECT e.employee_code,DATE_FORMAT(xl.created_at,'%d-%b-%Y'),NULL,NULL,e.full_name,
+      parts.push(`SELECT e.employee_code,DATE_FORMAT(xl.created_at,'%d-%m-%Y'),NULL,NULL,e.full_name,
         'EXIT',xl.stage,xl.action,xl.created_at,DATE(xl.created_at),
         COALESCE(actor_employee.employee_code,actor_user_employee.employee_code,CAST(xl.action_by AS CHAR)),
         COALESCE(actor_employee.full_name,actor_user_employee.full_name,'UNKNOWN USER'),xl.action_by_role,
@@ -259,7 +259,7 @@ export const journeyAuditReportService = {
     // the exit module writes (24 live rows). department -> clearance_area, assigned_to ->
     // owner_user_id (a real user id, unlike owner_role which holds a role string).
     if (has(columns, "exit_clearance_task", ["id", "exit_request_id", "clearance_area", "status", "created_at"])) {
-      parts.push(`SELECT e.employee_code,DATE_FORMAT(COALESCE(ec.cleared_at,ec.created_at),'%d-%b-%Y'),NULL,NULL,e.full_name,
+      parts.push(`SELECT e.employee_code,DATE_FORMAT(COALESCE(ec.cleared_at,ec.created_at),'%d-%m-%Y'),NULL,NULL,e.full_name,
         'EXIT CLEARANCE',ec.clearance_area,ec.status,COALESCE(ec.cleared_at,ec.created_at),DATE(COALESCE(ec.cleared_at,ec.created_at)),
         COALESCE(actor_employee.employee_code,actor_user_employee.employee_code,CAST(ec.owner_user_id AS CHAR),'SYSTEM'),
         COALESCE(actor_employee.full_name,actor_user_employee.full_name,'SYSTEM'),ec.clearance_area,

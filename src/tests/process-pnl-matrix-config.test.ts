@@ -64,6 +64,9 @@ const baseRow: BpoPnlRow = {
   deferredRevenue: 0,
   revenueLeakage: 0,
   revenueAtRisk: 1000,
+  // null = the revenue-at-risk feed genuinely ran (see resolveRevenueAtRisk in
+  // canonical-pnl.service.ts); row2/accountingFallbackRow inherit this via ...baseRow.
+  revenueAtRiskUnavailable: null,
   revenueBudget: 100000,
   revenueVariance: -5000,
   agentSalary: 40000,

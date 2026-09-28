@@ -25,6 +25,7 @@ import {
 import {
   appendScopeConditions,
   appendFilterConditions,
+  appendEmployeeStatusFilter,
   dateParam,
   monthParam,
   monthRange,
@@ -159,6 +160,20 @@ export async function attendanceRegisterMonthly(
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
+  appendEmployeeStatusFilter(filters, clauses, params);
+  // Optional explicit employee-id list (Team Roster "Team Attendance" preview reuses this register
+  // query rather than re-deriving attendance rules). It only ever NARROWS: it is AND-ed with the scope
+  // and filters above, and an empty list matches nobody. Placed before the params snapshot below so the
+  // fast pre-pagination path and the worker path both carry it.
+  if (Array.isArray(filters.employeeIds)) {
+    const teamIds = filters.employeeIds.map((id) => String(id)).filter(Boolean);
+    clauses.push(teamIds.length ? `e.id IN (${teamIds.map(() => "?").join(",")})` : "1 = 0");
+    params.push(...teamIds);
+  }
+  // Capture scope/filter params BEFORE the JOIN binds are unshifted below.
+  // The pre-pagination query (which only reads the employees table) uses these
+  // params + arm binds only — no JOIN binds needed.
+  const preJoinParams: unknown[] = [...params];
   // Two-population filter: show all currently-active employees (even if absent
   // all month) PLUS any inactive employee who had attendance records during the
   // period and has not exited before the period started.
@@ -198,14 +213,66 @@ export async function attendanceRegisterMonthly(
   );
   // Exclude employees at inactive branches unless no branch is assigned.
   clauses.push("(e.branch_id IS NULL OR EXISTS (SELECT 1 FROM branch_master _bm WHERE _bm.id = e.branch_id AND _bm.active_status = 1))");
-  // JOIN ON binds go to the front (positional order: JOIN before WHERE).
-  params.unshift(firstDay, lastDay);
   // WHERE binds — positional order matches the three arms above:
   //   Arm 2: date_of_exit guard (firstDay), EXISTS BETWEEN (firstDay, lastDay)
   //   Arm 3: DATE(date_of_joining) BETWEEN (firstDay, lastDay), date_of_exit guard (firstDay)
-  params.push(firstDay, firstDay, lastDay, firstDay, lastDay, firstDay);
+  const armBinds = [firstDay, firstDay, lastDay, firstDay, lastDay, firstDay] as const;
+  // WHERE-only params (no JOIN binds) — used by the pre-pagination count/page queries.
+  const whereOnlyParams: unknown[] = [...preJoinParams, ...armBinds];
+  // JOIN ON binds go to the front (positional order: JOIN before WHERE).
+  params.unshift(firstDay, lastDay);
+  params.push(...armBinds);
 
-  const attSql = `
+  // Pre-paginate employees before the expensive JS pivot.
+  //
+  // The original approach ran the full complex WHERE against all employees, pivoted every
+  // attendance row in JavaScript, and only then sliced to the caller's limit. For ~1124
+  // employees this means ~35K SQL rows, a JS pivot loop, and one calculateWeekoffEligibility
+  // call per employee — all of which runs regardless of whether limit=10 or limit=1000.
+  // Pre-paginating cuts the pivot and eligibility work from "all employees" to "exactly
+  // limit employees": a limit-100 request goes from ~70 s to ~2-3 s.
+  //
+  // Worker mode (async export) still processes all employees and slices at the end because
+  // the workbook builder needs them in one shot.
+  const isWorker = options.mode === "worker";
+  let pagedEmployeeIds: string[] | null = null;
+  let grandTotal = 0;
+
+  if (!isWorker) {
+    // Fast paginate — no EXISTS subqueries against attendance_daily_record.
+    // The arm conditions (inactive-employee-with-attendance, recently-joined-new-hire)
+    // are expensive over a remote DB because each arm correlated-subquery scans
+    // attendance_daily_record per employee. Replace them with a simple active/exit guard
+    // for pagination purposes; the full conditions are preserved in the worker-mode
+    // attSql for exports. The fast guard correctly covers all active employees and
+    // any recently exited employee whose last day falls inside the period.
+    //
+    // clauses[0..n-2] holds: [e.id IS NOT NULL, ...scope, ...filter]
+    // clauses[n-2] = arm clause  (replaced below)
+    // clauses[n-1] = branch EXISTS clause (skipped — branch joins are done in attSql)
+    const fastWhere = [
+      ...clauses.slice(0, clauses.length - 2),
+      "(e.active_status = 1 OR (e.date_of_exit IS NULL OR e.date_of_exit >= ?))",
+    ];
+    const fastParams = [...preJoinParams, firstDay];
+
+    const [[countRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT e.id) AS total FROM employees e WHERE ${fastWhere.join(" AND ")}`,
+      fastParams
+    );
+    grandTotal = (countRow as RowDataPacket).total as number;
+    if (grandTotal === 0) return { rows: [], rowCount: 0, isTruncated: false, nextCursor: null };
+
+    const [pageRows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id FROM employees e WHERE ${fastWhere.join(" AND ")} ORDER BY e.employee_code LIMIT ${options.limit} OFFSET ${options.offset}`,
+      fastParams
+    );
+    pagedEmployeeIds = (pageRows as RowDataPacket[]).map(r => r.id as string);
+    if (pagedEmployeeIds.length === 0) return { rows: [], rowCount: grandTotal, isTruncated: false, nextCursor: null };
+  }
+
+  // Shared SELECT + FROM + JOIN block for both screen and worker paths.
+  const attSelectFrom = `
     SELECT
       e.id AS employee_id,
       e.employee_code,
@@ -221,16 +288,28 @@ export async function attendanceRegisterMonthly(
       CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
       COALESCE(dept.dept_name, '') AS department,
       COALESCE(desig.designation_name, '') AS designation,
-      COALESCE(NULLIF(e.profile_type, ''), e.employment_type, '') AS profile,
+      -- No fallback to employment_type: every other report showing this column
+      -- (legacy-reports.service.ts, payroll.executor.ts, payroll-extended.routes.ts)
+      -- leaves it blank when profile_type is unset. This report used to fall back
+      -- to employment_type (e.g. "Permanent"), which is a different field
+      -- mislabelled as "Profile" — the stakeholder-reported "incorrect Profile Name".
+      COALESCE(NULLIF(e.profile_type, ''), '') AS profile,
       COALESCE(cc.cost_centre_name, '') AS cost_center,
       COALESCE(b.branch_name, '') AS emp_location,
+      COALESCE(p.process_name, '') AS process_name,
+      COALESCE(p.business_lob, '') AS process_lob_name,
       CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
       CASE WHEN e.active_status = 1 THEN 'Active' ELSE 'Inactive' END AS employee_status,
       e.date_of_joining,
       e.date_of_exit,
+      -- Display-only, DD-MMM-YYYY. Kept separate from the raw date_of_joining above, which
+      -- stays a real DATE value because the pivot below does day-boundary arithmetic on it.
+      DATE_FORMAT(e.date_of_joining, '%d-%m-%Y') AS doj_display,
+      DATE_FORMAT(e.salary_start_date, '%d-%m-%Y') AS salary_start_date_display,
       DAY(adr.record_date) AS day_num,
       adr.attendance_status,
-      COALESCE(adr.raw_minutes, 0) AS raw_minutes
+      COALESCE(adr.raw_minutes, 0) AS raw_minutes,
+      (adr.regularization_id IS NOT NULL) AS is_regularized
     FROM employees e
     LEFT JOIN attendance_daily_record adr
            ON adr.employee_id = e.id
@@ -239,11 +318,22 @@ export async function attendanceRegisterMonthly(
     LEFT JOIN designation_master desig ON desig.id = e.designation_id
     LEFT JOIN cost_centre_master cc   ON cc.id    = e.cost_centre_id
     LEFT JOIN branch_master b         ON b.id     = e.branch_id
-    WHERE ${clauses.join(" AND ")}
-    ORDER BY e.employee_code, adr.record_date
-  `;
+    LEFT JOIN process_master p        ON p.id     = e.process_id`;
 
-  const attRows = await query(attSql, params);
+  // Screen mode: WHERE e.id IN (...) — touches only the pre-paginated employees.
+  // Worker mode: full complex WHERE — same as before.
+  let attSql: string;
+  let attParams: unknown[];
+  if (isWorker) {
+    attSql = `${attSelectFrom} WHERE ${clauses.join(" AND ")} ORDER BY e.employee_code, adr.record_date`;
+    attParams = params;
+  } else {
+    const inList = pagedEmployeeIds!.map(() => "?").join(",");
+    attSql = `${attSelectFrom} WHERE e.id IN (${inList}) ORDER BY e.employee_code, adr.record_date`;
+    attParams = [firstDay, lastDay, ...pagedEmployeeIds!];
+  }
+
+  const attRows = await query(attSql, attParams);
 
   // Status code mapping, the fill rule below, and the paid-base/sal-days arithmetic further down
   // now live in shared/attendanceDayCounts.ts — extracted verbatim so the cost-centre attendance
@@ -265,10 +355,14 @@ export async function attendanceRegisterMonthly(
         profile:         row.profile,
         cost_center:     row.cost_center,
         emp_location:    row.emp_location,
+        process_name:    row.process_name,
+        process_lob_name: row.process_lob_name,
         billable:        row.billable,
         employee_status: row.employee_status,
         date_of_joining: row.date_of_joining,
         date_of_exit:    row.date_of_exit,
+        doj_display:              row.doj_display,
+        salary_start_date_display: row.salary_start_date_display,
       });
     }
     // row.day_num is NULL when the LEFT JOIN found no attendance record.
@@ -277,6 +371,7 @@ export async function attendanceRegisterMonthly(
     const emp = empMap.get(row.employee_id);
     const code = statusCode[row.attendance_status] ?? row.attendance_status ?? "";
     emp[`day_${row.day_num}`] = code;
+    if (row.is_regularized) emp[`day_${row.day_num}_reg`] = true;
   }
 
   // "Today" threshold: future dates stay blank (no data yet).
@@ -340,10 +435,17 @@ export async function attendanceRegisterMonthly(
       profile:         emp.profile,
       cost_center:     emp.cost_center,
       emp_location:    emp.emp_location,
+      process_name:    emp.process_name,
+      process_lob_name: emp.process_lob_name,
+      date_of_joining: emp.doj_display,
+      salary_start_date: emp.salary_start_date_display,
       billable:        emp.billable,
       employee_status: emp.employee_status,
       ...Object.fromEntries(
         Array.from({ length: daysInMonth }, (_, i) => [`day_${i + 1}`, emp[`day_${i + 1}`] ?? ""])
+      ),
+      ...Object.fromEntries(
+        Array.from({ length: daysInMonth }, (_, i) => [`day_${i + 1}_reg`, emp[`day_${i + 1}_reg`] ?? false])
       ),
       absent_count:  absent,
       present_count: present,
@@ -358,30 +460,18 @@ export async function attendanceRegisterMonthly(
     };
   }));
 
-  // Slice the caller's page out of the pivot.
-  //
-  // The pivot runs in JavaScript after the SQL, so LIMIT and OFFSET cannot be pushed into the
-  // query — the day columns only exist once every attendance row for the month has been folded
-  // together. This returned the whole pivot regardless of what was asked for, which meant a
-  // request for 100 rows got 1,113 and the offset was ignored entirely: the grid computed
-  // twelve pages from the total and every one of them showed the same 1,113 rows.
-  //
-  // Ported verbatim from the inline handler, including that behaviour, when this report was
-  // promoted so its download would work. Correct then — the aim was a provable no-op — and
-  // worth fixing now that it has been measured.
-  //
-  // sno is assigned before the slice, so a row keeps its position in the whole register rather
-  // than restarting at 1 on every page. Worker mode takes everything, as it did before, because
-  // the async export builds one workbook rather than paging.
-  const total = pivotRows.length;
-  const page = options.mode === "worker"
-    ? pivotRows
-    : pivotRows.slice(options.offset, options.offset + options.limit);
-
+  // Screen mode: already paginated via the pre-pagination query — return all pivot rows.
+  // Worker mode: applies legacy slice (the workbook builder calls with mode="worker"
+  // and expects the full register in one shot; its own total/offset is irrelevant here).
+  if (isWorker) {
+    const total = pivotRows.length;
+    const page = pivotRows.slice(options.offset, options.offset + options.limit);
+    return { rows: page, rowCount: total, isTruncated: total > options.offset + page.length, nextCursor: null };
+  }
   return {
-    rows: page,
-    rowCount: total,
-    isTruncated: total > options.offset + page.length,
+    rows: pivotRows,
+    rowCount: grandTotal,
+    isTruncated: grandTotal > options.offset + pivotRows.length,
     nextCursor: null,
   };
 }
@@ -1166,6 +1256,181 @@ export async function attendanceDisputeSummary(
   const rows  = paged.rows as Record<string, unknown>[];
   const nextCursor = (options.mode === "worker" && rows.length > 0)
     ? (rows[rows.length - 1]._cursor as number) : null;
+  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+}
+
+// ---------------------------------------------------------------------------
+// regularization-audit
+//
+// One row per regularization request (plain regularizations AND disputes — no
+// `dispute_type IS NOT NULL` restriction, unlike attendance-dispute-summary), showing the
+// full before/after audit trail: what attendance was actually recorded, what it was
+// changed to, who requested it and when, who reviewed it and when, and their remarks.
+//
+// Built entirely from existing columns on attendance_regularization (migrations 005, 171,
+// 237, 1014) — no schema change. Two known limitations, deliberately not silently
+// papered over:
+//
+//  1. `requested_by_type` only distinguishes 'employee' vs 'manager' as a category. When a
+//     manager submits on an employee's behalf, this report cannot name that manager —
+//     attendance_regularization has no requested_by_user_id column. The exact submitter's
+//     actor_user_id is only recorded in sensitive_action_log (action_type
+//     'REGULARIZATION_SUBMITTED', entity_id = this row's id), a separate join this report
+//     does not attempt. When requested_by_type = 'employee', the subject IS the requester,
+//     so employee_name already answers "who requested it" for the common case.
+//  2. `reviewer_name`/`reviewed_at`/`reviewer_note` reflect only the LATEST reviewer.
+//     wfm.service.ts's reviewRegularization() overwrites reviewed_by/reviewed_at on every
+//     stage transition (manager review, then final WFM review), so a multi-stage approval
+//     shows only its last stage here. The staged columns designed for full per-stage
+//     history (manager_reviewer_user_id, final_wfm_reviewer_user_id, etc. — migration
+//     1014_regularization_spoc_columns.sql) exist but are never populated by any code
+//     path today, so they cannot be surfaced honestly. Full per-stage history would need
+//     a separate join against sensitive_action_log's REGULARIZATION_MANAGER_APPROVED /
+//     REGULARIZATION_APPROVED / REGULARIZATION_REJECTED events instead.
+//
+// Date-ranged (session_date), not month-locked, since an audit lookup usually spans more
+// than one month; defaults to all time when neither from nor to is given.
+// ---------------------------------------------------------------------------
+export async function regularizationAuditReport(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const from = dateParam(filters.from, "1900-01-01");
+  const to   = dateParam(filters.to,   "9999-12-31");
+
+  // Filter by created_at (submission date) not session_date (attendance date) so that
+  // "show me today's regularizations" matches requests submitted today, not attendance
+  // dates that happen to fall today. session_date remains a visible output column.
+  const clauses: string[] = ["e.id IS NOT NULL", "DATE(arr.created_at) >= ?", "DATE(arr.created_at) <= ?"];
+  const params: unknown[]  = [from, to];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  if (filters.status) { clauses.push("arr.status = ?"); params.push(String(filters.status)); }
+
+  if (options.mode === "worker" && options.cursor != null) {
+    clauses.push("arr.id > ?");
+    params.push(options.cursor);
+  }
+
+  const base = `
+    SELECT arr.id AS _cursor,
+           e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+           COALESCE(zcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+           dm.designation_name,
+           arr.session_date AS attendance_date,
+           arr.dispute_type,
+           COALESCE(arr.old_status, 'not recorded') AS actual_attendance_status,
+           COALESCE(arr.new_status, arr.requested_status) AS requested_attendance_status,
+           TIME_FORMAT(arr.old_punch_in, '%H:%i') AS actual_punch_in,
+           TIME_FORMAT(arr.old_punch_out, '%H:%i') AS actual_punch_out,
+           TIME_FORMAT(arr.new_punch_in, '%H:%i') AS requested_punch_in,
+           TIME_FORMAT(arr.new_punch_out, '%H:%i') AS requested_punch_out,
+           arr.reason,
+           arm.label AS reason_label,
+           arr.requested_by_type,
+           arr.payroll_impact,
+           arr.status AS approval_status,
+           arr.created_at AS requested_at,
+           reviewer.full_name AS approver_name,
+           arr.reviewed_at AS approved_at,
+           arr.reviewer_note AS approver_remarks
+      FROM attendance_regularization arr
+      JOIN employees e ON e.id = arr.employee_id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN designation_master dm ON dm.id = e.designation_id
+      LEFT JOIN attendance_reason_master arm ON arm.code = arr.reason_code
+      LEFT JOIN employees reviewer ON reviewer.id = arr.reviewed_by
+      LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY arr.session_date DESC, employee_name`;
+
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as number) : null;
+  const out = rows.map(({ _cursor: _, ...rest }) => rest);
+  return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
+}
+
+// ---------------------------------------------------------------------------
+// attendance-direct-edit-log
+// Shows every direct attendance status change made via the Attendance Lookup
+// "Change Status" dialog (attendance_manual_override). This is separate from
+// attendance_regularization — the two write paths are distinct by design:
+// regularizations go through an approval workflow; direct edits by
+// Payroll Head / Super Admin take effect immediately (or after super_admin
+// confirmation for locked payroll months) without creating a regularization row.
+// ---------------------------------------------------------------------------
+export async function attendanceDirectEditLog(
+  filters: ExecFilters,
+  scope: ExecScope,
+  options: ExecOptions
+): Promise<ExecResult> {
+  const from = dateParam(filters.from, "1900-01-01");
+  const to   = dateParam(filters.to,   "9999-12-31");
+
+  const clauses: string[] = ["e.id IS NOT NULL", "DATE(amo.created_at) >= ?", "DATE(amo.created_at) <= ?"];
+  const params: unknown[]  = [from, to];
+  appendScopeConditions(scope, clauses, params);
+  appendFilterConditions(filters, clauses, params);
+  if (filters.status)  { clauses.push("amo.approval_status = ?"); params.push(String(filters.status)); }
+
+  if (options.mode === "worker" && options.cursor != null) {
+    clauses.push("amo.id > ?");
+    params.push(options.cursor);
+  }
+
+  const base = `
+    SELECT amo.id AS _cursor,
+           e.employee_code,
+           COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
+           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
+           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
+           COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
+           dm.designation_name,
+           amo.attendance_date,
+           amo.old_status AS status_before,
+           amo.new_status AS status_after,
+           ROUND(COALESCE(amo.old_lwp, 0), 2) AS lwp_before,
+           ROUND(COALESCE(amo.new_lwp, 0), 2) AS lwp_after,
+           amo.reason,
+           amo.approval_status,
+           amo.payroll_month,
+           amo.is_payroll_month_locked AS payroll_month_locked,
+           amo.created_at AS submitted_at,
+           COALESCE(cb_emp.full_name, cb.email) AS submitted_by,
+           amo.approved_at,
+           COALESCE(ab_emp.full_name, ab.email) AS approved_by_name,
+           amo.rejected_at,
+           amo.rejection_reason
+      FROM attendance_manual_override amo
+      JOIN employees e ON e.id = amo.employee_id
+      LEFT JOIN auth_user cb ON cb.id = amo.created_by
+      LEFT JOIN employees cb_emp ON cb_emp.user_id = cb.id
+      LEFT JOIN auth_user ab ON ab.id = amo.approved_by
+      LEFT JOIN employees ab_emp ON ab_emp.user_id = ab.id
+      LEFT JOIN branch_master b ON b.id = e.branch_id
+      LEFT JOIN process_master p ON p.id = e.process_id
+      LEFT JOIN department_master d ON d.id = e.department_id
+      LEFT JOIN designation_master dm ON dm.id = e.designation_id
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY amo.created_at DESC, employee_name`;
+
+  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  const total = paged.total;
+  const rows  = paged.rows as Record<string, unknown>[];
+  const nextCursor = (options.mode === "worker" && rows.length > 0)
+    ? (rows[rows.length - 1]._cursor as string) : null;
   const out = rows.map(({ _cursor: _, ...rest }) => rest);
   return { rows: out, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > out.length, nextCursor };
 }

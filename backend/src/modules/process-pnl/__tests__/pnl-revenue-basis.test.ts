@@ -39,6 +39,8 @@ function period(offsetMonths: number): string {
 }
 const CLOSED = period(-2);
 const OPEN = period(0);
+/** The month just closed: still inside the seat-estimate window (current + previous month). */
+const LAST = period(-1);
 
 const actuals = (amount: number) => ({
   byBranch: new Map([[BRANCH_ID, amount]]),
@@ -56,7 +58,7 @@ const seatActuals = (earned: number, rateMissing: number) => ({
 });
 
 async function statementFor(periodCode: string, opts: {
-  planned: number; invoiced: number; seatEarned?: number; rateMissing?: number;
+  planned: number; invoiced: number; seatEarned?: number; rateMissing?: number; estimate?: number;
 }) {
   const componentRow = (key: string, field: string, order: number) => ({
     component_key: key, display_name: key, section_key: "revenue",
@@ -83,6 +85,7 @@ async function statementFor(periodCode: string, opts: {
     getInvoicedRevenue: async () => actuals(opts.invoiced),
     getSeatRevenue: async () => seatActuals(opts.seatEarned ?? 0, opts.rateMissing ?? 0),
     getPeopleCost: async () => ({ byBranch: new Map(), byProcess: new Map() }) as never,
+    getRevenueEstimate: async () => actuals(opts.estimate ?? 0),
     getProcessSummary,
   } as never);
 }
@@ -112,6 +115,21 @@ describe("statement revenue basis", () => {
       revenueOf(statement),
       "no invoice data must not zero the revenue line",
     ).toBe(11_900_000);
+  });
+
+  it("adds Live P&L's seat estimate for the month just closed, matching Live P&L and CEO Overview", async () => {
+    // Last month is closed (invoices win over the plan) but still inside the estimate window, so
+    // cost centres not billed yet carry the same seat-rate estimate Live P&L and CEO add.
+    const statement = await statementFor(LAST, { planned: 11_900_000, invoiced: 30_000_000, estimate: 2_000_000 });
+    expect(revenueOf(statement)).toBe(32_000_000);
+    expect(statement.revenueEstimated).toBe(2_000_000);
+  });
+
+  it("never adds a seat estimate to an older closed month or to the running month", async () => {
+    const older = await statementFor(CLOSED, { planned: 11_900_000, invoiced: 30_000_000, estimate: 2_000_000 });
+    expect(revenueOf(older)).toBe(30_000_000);
+    const running = await statementFor(OPEN, { planned: 11_900_000, invoiced: 7_705_000, estimate: 2_000_000 });
+    expect(revenueOf(running)).toBe(11_900_000);
   });
 
   it("publishes a seat shortfall only when every billable person has a rate", async () => {

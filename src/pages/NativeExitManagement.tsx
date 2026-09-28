@@ -8,10 +8,12 @@ import {
   FileText,
   Loader,
   MoreVertical,
+  Paperclip,
   Plus,
   RefreshCcw,
   Search,
   ShieldCheck,
+  Upload,
   UserMinus,
   Users,
   X,
@@ -60,6 +62,7 @@ type ClearanceTask = {
   due_date?: string | null;
   status: string;
   remarks?: string | null;
+  attachment_url?: string | null;
   cleared_by?: string | null;
   cleared_at?: string | null;
 };
@@ -84,6 +87,8 @@ const STATUS_COLORS: Record<string, string> = {
   admin_review: "bg-orange-50 text-orange-700",
   accepted: "bg-emerald-50 text-emerald-700",
   notice_serving: "bg-cyan-50 text-cyan-700",
+  notice_active: "bg-cyan-100 text-cyan-800",
+  returned: "bg-orange-50 text-orange-700",
   exited: "bg-green-100 text-green-800",
   exit_confirmed: "bg-green-100 text-green-800",
   revoked: "bg-rose-50 text-rose-700",
@@ -212,6 +217,12 @@ export default function NativeExitManagement() {
   const [empResults, setEmpResults] = useState<EmpResult[]>([]);
   const [empSearching, setEmpSearching] = useState(false);
   const [empInactiveCount, setEmpInactiveCount] = useState(0);
+  // Set when the directory returns nothing because the signed-in account has no branch/process
+  // assigned, rather than because nobody matched. Company policy scopes HR to their own branch,
+  // so an HR user with no scope row correctly matches zero employees — and this screen used to
+  // render that as 'No active employee matches "…"', which reads as "that person does not
+  // exist". Same query, same result, completely different action required.
+  const [empScopeWarning, setEmpScopeWarning] = useState<string | null>(null);
 
   // — New exit form —
   const [form, setForm] = useState({
@@ -237,7 +248,17 @@ export default function NativeExitManagement() {
     confirmedLwd: string;
     noticeDays: string;
     remarks: string;
-  }>({ open: false, exitId: "", targetStatus: "", confirmedLwd: "", noticeDays: "30", remarks: "" });
+    // Populated from the exit record itself when the modal opens (see openReviewModal), NOT
+    // from a hardcoded constant here.
+    //
+    // Company policy is a 30-day notice period that the reporting manager may change, and the
+    // server now stamps that default onto exit_request.notice_period_days at creation — read
+    // through getPolicyValue, so it is effective-dated and changeable from config. Prefilling a
+    // literal "30" in the UI would put a second, silently diverging copy of that policy in the
+    // frontend: change the company default in config and this box would still say 30. Reading
+    // the record means the manager is shown the number actually on the exit, and typing over it
+    // is an explicit override rather than an accepted guess.
+  }>({ open: false, exitId: "", targetStatus: "", confirmedLwd: "", noticeDays: "", remarks: "" });
 
   // — Clearance drawer —
   const [clearanceDrawer, setClearanceDrawer] = useState<{
@@ -247,6 +268,7 @@ export default function NativeExitManagement() {
     loading: boolean;
   }>({ open: false, exitId: "", tasks: [], loading: false });
   const [clearanceUpdateLoading, setClearanceUpdateLoading] = useState<string | null>(null);
+  const [attachmentUploading, setAttachmentUploading] = useState<string | null>(null);
 
   // — Actions kebab —
   const [openKebab, setOpenKebab] = useState<string | null>(null);
@@ -272,6 +294,11 @@ export default function NativeExitManagement() {
     open: boolean; exitId: string;
     data: Record<string, unknown> | null; loading: boolean;
   }>({ open: false, exitId: "", data: null, loading: false });
+
+  // — Return resignation modal —
+  const [returnModal, setReturnModal] = useState<{
+    open: boolean; exitId: string; reason: string;
+  }>({ open: false, exitId: "", reason: "" });
 
   const load = async () => {
     setLoading(true);
@@ -304,7 +331,10 @@ export default function NativeExitManagement() {
       setEmpSearching(true);
       try {
         const [res, inactive] = await Promise.all([
-          hrmsApi.get<{ data: Array<Record<string, unknown>> }>(
+          hrmsApi.get<{
+            data: Array<Record<string, unknown>>;
+            scopeWarning?: { code: string; message: string };
+          }>(
             `/api/employees?recordStatus=active&limit=10&search=${encodeURIComponent(q)}`,
           ),
           hrmsApi.get<{ total?: number }>(
@@ -312,6 +342,7 @@ export default function NativeExitManagement() {
           ).catch(() => ({ total: 0 })),
         ]);
         if (cancelled) return;
+        setEmpScopeWarning(res?.scopeWarning?.message ?? null);
         setEmpResults(
           (res?.data ?? []).map((e) => ({
             id: String(e.id ?? ""),
@@ -325,7 +356,7 @@ export default function NativeExitManagement() {
         );
         setEmpInactiveCount(Number(inactive?.total ?? 0));
       } catch {
-        if (!cancelled) { setEmpResults([]); setEmpInactiveCount(0); }
+        if (!cancelled) { setEmpResults([]); setEmpInactiveCount(0); setEmpScopeWarning(null); }
       } finally {
         if (!cancelled) setEmpSearching(false);
       }
@@ -333,17 +364,27 @@ export default function NativeExitManagement() {
     return () => { cancelled = true; clearTimeout(t); };
   }, [empQuery]);
 
-  // Auto-fill proposed LWD when absconding since changes
+  // Absconding: the last worked date IS the last working day — not that date + 7.
+  //
+  // This used to set lastWorkingDayProposed = abscondingSince + 7 days, mirroring the
+  // "grace period ends" hint below it. Owner ruling 2026-09-12: the 7 days is how long the
+  // company waits before deciding somebody has absconded, not time they are paid for. The
+  // proposed LWD feeds payroll's employment-end-date resolver, which prorates the final month,
+  // so the +7 paid every absconding leaver for a week they did not work. The backend now
+  // enforces the same rule regardless of client (see createExitRequest), and this keeps the
+  // form showing the value that will actually be stored.
   useEffect(() => {
-    if (form.exitSubType === "absconding" && form.abscondingSince) {
-      setForm((f) => ({ ...f, lastWorkingDayProposed: addDays(f.abscondingSince, 7) }));
+    if (["absconding", "abandonment"].includes(form.exitSubType) && form.abscondingSince) {
+      setForm((f) => ({ ...f, lastWorkingDayProposed: f.abscondingSince }));
     }
   }, [form.abscondingSince, form.exitSubType]);
 
   const submitRequest = async () => {
     if (!form.employeeId.trim()) return setMessage("Select an employee first.");
     if (!form.lastWorkingDayProposed) return setMessage("Proposed last working day is required.");
-    if (form.exitSubType === "absconding" && !form.abscondingSince) return setMessage("Absconding Since date is required.");
+    if (["absconding", "abandonment"].includes(form.exitSubType) && !form.abscondingSince) {
+      return setMessage("Absconding Since date is required.");
+    }
     try {
       await hrmsApi.post("/api/exit", {
         employeeId: form.employeeId.trim(),
@@ -352,6 +393,12 @@ export default function NativeExitManagement() {
         exitReasonCategory: form.exitReasonCategory,
         resignationReason: form.resignationReason || null,
         lastWorkingDayProposed: form.lastWorkingDayProposed,
+        // Was collected as a mandatory field and never sent — the server had no field to accept
+        // it and no column to store it, so the date HR was forced to enter was discarded on
+        // submit. Persisted as of migration 1760.
+        abscondingSince: ["absconding", "abandonment"].includes(form.exitSubType)
+          ? form.abscondingSince
+          : null,
       });
       setShowModal(false);
       setEmpQuery(""); setEmpResults([]);
@@ -376,21 +423,77 @@ export default function NativeExitManagement() {
     finally { setUpdating(null); }
   };
 
-  const openReviewModal = (exitId: string, targetStatus: string, proposed?: string) => {
+  const openReviewModal = (
+    exitId: string,
+    targetStatus: string,
+    proposed?: string,
+    currentNoticeDays?: number | null,
+  ) => {
     setReviewModal({
       open: true, exitId, targetStatus,
       confirmedLwd: proposed ?? "",
-      noticeDays: "30", remarks: "",
+      // The notice period already on the record — the 30-day company default the server stamped
+      // at creation, or whatever a manager set previously. Shown so the manager confirms or
+      // overrides a real number instead of re-entering policy from memory. Blank only when the
+      // record genuinely carries none (e.g. an involuntary exit, which serves no notice).
+      noticeDays:
+        currentNoticeDays !== null && currentNoticeDays !== undefined && Number(currentNoticeDays) > 0
+          ? String(currentNoticeDays)
+          : "",
+      remarks: "",
     });
   };
 
+  const approveExit = async (id: string, lwdOverride?: string, overrideReason?: string) => {
+    setUpdating(id);
+    try {
+      await hrmsApi.patch(`/api/exit/${id}/approve`, {
+        ...(lwdOverride ? { lwd_override: lwdOverride } : {}),
+        ...(overrideReason ? { lwd_override_reason: overrideReason } : {}),
+      });
+      setMessage("Resignation approved — notice period is now active.");
+      await load();
+    } catch (err: unknown) { setMessage((err as Error)?.message || "Approval failed."); }
+    finally { setUpdating(null); }
+  };
+
+  const revokeExit = async (id: string) => {
+    setUpdating(id);
+    try {
+      await hrmsApi.patch(`/api/exit/${id}/revoke`, {});
+      setMessage("Exit request revoked.");
+      await load();
+    } catch (err: unknown) { setMessage((err as Error)?.message || "Revoke failed."); }
+    finally { setUpdating(null); }
+  };
+
   const confirmReview = async () => {
-    await updateStatus(reviewModal.exitId, reviewModal.targetStatus, {
-      remarks: reviewModal.remarks || `Status changed to ${reviewModal.targetStatus}`,
-      confirmedLwd: reviewModal.confirmedLwd || undefined,
-      noticeDays: reviewModal.noticeDays || undefined,
-    });
+    if (reviewModal.targetStatus === "approve") {
+      await approveExit(
+        reviewModal.exitId,
+        reviewModal.confirmedLwd || undefined,
+        reviewModal.remarks || undefined,
+      );
+    } else {
+      await updateStatus(reviewModal.exitId, reviewModal.targetStatus, {
+        remarks: reviewModal.remarks || `Status changed to ${reviewModal.targetStatus}`,
+        confirmedLwd: reviewModal.confirmedLwd || undefined,
+        noticeDays: reviewModal.noticeDays || undefined,
+      });
+    }
     setReviewModal((m) => ({ ...m, open: false }));
+  };
+
+  const returnExit = async () => {
+    if (!returnModal.reason.trim()) return setMessage("Please provide a reason for returning.");
+    setUpdating(returnModal.exitId);
+    try {
+      await hrmsApi.patch(`/api/exit/${returnModal.exitId}/return`, { reason: returnModal.reason });
+      setReturnModal({ open: false, exitId: "", reason: "" });
+      setMessage("Resignation returned for revision.");
+      await load();
+    } catch (err: unknown) { setMessage((err as Error)?.message || "Return failed."); }
+    finally { setUpdating(null); }
   };
 
   // — Clearance —
@@ -411,14 +514,33 @@ export default function NativeExitManagement() {
     } catch (err: unknown) { setMessage((err as Error)?.message || "Failed to generate checklist."); }
   };
 
-  const updateClearanceTask = async (taskId: string, status: string, remarks: string) => {
+  const updateClearanceTask = async (taskId: string, status: string, remarks: string, attachment_url?: string) => {
     setClearanceUpdateLoading(taskId);
     try {
-      await hrmsApi.patch(`/api/exit/${clearanceDrawer.exitId}/clearance/${taskId}`, { status, remarks });
+      await hrmsApi.patch(`/api/exit/${clearanceDrawer.exitId}/clearance/${taskId}`, { status, remarks, ...(attachment_url ? { attachment_url } : {}) });
       await openClearanceDrawer(clearanceDrawer.exitId);
       await load();
     } catch (err: unknown) { setMessage((err as Error)?.message || "Failed to update task."); }
     finally { setClearanceUpdateLoading(null); }
+  };
+
+  const uploadClearanceAttachment = async (taskId: string, file: File) => {
+    setAttachmentUploading(taskId);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const token = localStorage.getItem("hrms_access_token") ?? "";
+      const res = await fetch("/api/files/upload?category=exit_clearance", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      const json = await res.json() as { success: boolean; url?: string; message?: string };
+      if (!json.success || !json.url) throw new Error(json.message || "Upload failed");
+      await hrmsApi.patch(`/api/exit/${clearanceDrawer.exitId}/clearance/${taskId}`, { attachment_url: json.url });
+      await openClearanceDrawer(clearanceDrawer.exitId);
+    } catch (err: unknown) { setMessage((err as Error)?.message || "Attachment upload failed."); }
+    finally { setAttachmentUploading(null); }
   };
 
   // — Exit interview —
@@ -481,7 +603,7 @@ export default function NativeExitManagement() {
     }
   };
 
-  const STATUSES = ["all", "submitted", "manager_review", "accepted", "notice_serving", "exited", "revoked", "rejected", "withdrawn"];
+  const STATUSES = ["all", "submitted", "returned", "manager_review", "accepted", "notice_serving", "notice_active", "exited", "revoked", "rejected", "withdrawn"];
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -492,7 +614,7 @@ export default function NativeExitManagement() {
   }, [requests, search]);
 
   const agedCount = filtered.filter((r) => !["exited", "rejected", "revoked"].includes(normalizeStatus(r.status)) && ageDays(r.created_at) > 7).length;
-  const clearanceBlocked = filtered.filter((r) => normalizeStatus(r.status) === "notice_serving" && Number(r.clearance_total ?? 0) > Number(r.clearance_cleared ?? 0)).length;
+  const clearanceBlocked = filtered.filter((r) => ["notice_serving", "notice_active"].includes(normalizeStatus(r.status)) && Number(r.clearance_total ?? 0) > Number(r.clearance_cleared ?? 0)).length;
 
 
   return (
@@ -649,21 +771,36 @@ export default function NativeExitManagement() {
                         <td className="p-4"><Badge status={status} /></td>
                         <td className="p-4">
                           <div className="flex flex-wrap gap-1 items-center">
-                            {/* Governance-aware action buttons */}
+                            {/* New FSM: submitted → Approve or Return */}
                             {status === "submitted" && (
-                              <button onClick={() => openReviewModal(r.id, "manager_review", r.last_working_day_proposed ?? "")} disabled={updating === r.id} className="rounded-lg bg-amber-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-50">Review</button>
+                              <button onClick={() => openReviewModal(r.id, "approve", r.last_working_day_proposed ?? "", r.notice_period_days)} disabled={updating === r.id} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50">Approve</button>
                             )}
+                            {status === "submitted" && (
+                              <button onClick={() => setReturnModal({ open: true, exitId: r.id, reason: "" })} disabled={updating === r.id} className="rounded-lg bg-orange-500 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-orange-600 disabled:opacity-50">Return</button>
+                            )}
+                            {/* Legacy flow: manager_review → notice_active */}
                             {status === "manager_review" && (
-                              <button onClick={() => openReviewModal(r.id, "accepted", r.last_working_day_proposed ?? "")} disabled={updating === r.id} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50">Accept</button>
+                              <button onClick={() => openReviewModal(r.id, "approve", r.last_working_day_proposed ?? "", r.notice_period_days)} disabled={updating === r.id} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50">Approve</button>
                             )}
+                            {/* Legacy flow: accepted → notice_serving */}
                             {status === "accepted" && (
                               <button onClick={() => updateStatus(r.id, "notice_serving")} disabled={updating === r.id} className="rounded-lg bg-cyan-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-cyan-700 disabled:opacity-50">Notice</button>
                             )}
+                            {/* Legacy: notice_serving → exited (manual confirm) */}
                             {status === "notice_serving" && (
                               <button onClick={() => updateStatus(r.id, "exited")} disabled={updating === r.id || Number(r.clearance_total ?? 0) > Number(r.clearance_cleared ?? 0)} className="rounded-lg bg-slate-950 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-slate-700 disabled:opacity-40">Confirm Exit</button>
                             )}
-                            {!["exited", "revoked", "rejected"].includes(status) && (
-                              <button onClick={() => updateStatus(r.id, "revoked")} disabled={updating === r.id} className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50 disabled:opacity-50">Revoke</button>
+                            {/* New FSM: notice_active — auto-confirmed by nightly cron */}
+                            {status === "notice_active" && (
+                              <span className="rounded-lg bg-cyan-50 border border-cyan-200 px-2.5 py-1.5 text-xs font-semibold text-cyan-700">On Notice · Auto-exits on LWD</span>
+                            )}
+                            {/* returned — pending employee re-submission */}
+                            {status === "returned" && (
+                              <span className="rounded-lg bg-orange-50 border border-orange-200 px-2.5 py-1.5 text-xs font-semibold text-orange-700">Returned · Awaiting employee</span>
+                            )}
+                            {/* Revoke — new endpoint */}
+                            {!["exited", "revoked", "rejected", "returned", "closed"].includes(status) && (
+                              <button onClick={() => revokeExit(r.id)} disabled={updating === r.id} className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50 disabled:opacity-50">Revoke</button>
                             )}
 
                             {/* Kebab menu */}
@@ -733,8 +870,22 @@ export default function NativeExitManagement() {
                     {empQuery.trim().length >= 2 && (
                       <div className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-2xl border bg-white shadow-lg">
                         {empSearching && <div className="px-4 py-3 text-sm text-slate-500">Searching…</div>}
-                        {!empSearching && empResults.length === 0 && (
-                          <div className="px-4 py-3 text-sm text-slate-500">No active employee matches "{empQuery.trim()}".</div>
+                        {/* A scope gap is not a search result. Saying "no employee matches" when
+                            the account simply has no branch assigned sends HR looking for the
+                            employee instead of asking an admin for access. */}
+                        {!empSearching && empScopeWarning && (
+                          <div className="flex gap-2 px-4 py-3 text-sm text-amber-900 bg-amber-50">
+                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                            <span>{empScopeWarning}</span>
+                          </div>
+                        )}
+                        {!empSearching && !empScopeWarning && empResults.length === 0 && (
+                          <div className="px-4 py-3 text-sm text-slate-500">
+                            No active employee matches "{empQuery.trim()}".
+                            <span className="mt-1 block text-xs text-slate-400">
+                              Search by name, or by the full employee code (e.g. MAS63193). Partial codes such as "63193" will not match.
+                            </span>
+                          </div>
                         )}
                         {!empSearching && empInactiveCount > 0 && (
                           <div className="border-t bg-amber-50/70 px-4 py-2.5 text-xs text-amber-900">
@@ -802,13 +953,17 @@ export default function NativeExitManagement() {
               </div>
 
 
-              {/* Absconding since date */}
-              {form.exitSubType === "absconding" && (
+              {/* Absconding since date — this IS the last working day, see the effect above */}
+              {["absconding", "abandonment"].includes(form.exitSubType) && (
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Absconding Since <span className="text-red-500">*</span></label>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Last date actually worked <span className="text-red-500">*</span></label>
                   <input type="date" value={form.abscondingSince} onChange={(e) => setForm({ ...form, abscondingSince: e.target.value })} className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400" />
                   {form.abscondingSince && (
-                    <p className="mt-1 text-xs text-slate-500">Grace period ends: <strong>{addDays(form.abscondingSince, 7)}</strong> (7 calendar days)</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      This becomes the employee's last working day and the date payroll pays them
+                      up to. The 7-day no-show window is the time allowed to confirm an absconding,
+                      not paid employment.
+                    </p>
                   )}
                 </div>
               )}
@@ -847,14 +1002,21 @@ export default function NativeExitManagement() {
               <button onClick={() => setReviewModal((m) => ({ ...m, open: false }))} className="text-slate-400 hover:text-slate-700"><X className="h-5 w-5" /></button>
             </div>
             <div className="space-y-4 p-6">
-              <p className="text-sm text-slate-600">Status will move to <span className="font-bold capitalize">{label(reviewModal.targetStatus)}</span>.</p>
+              <p className="text-sm text-slate-600">
+                {reviewModal.targetStatus === "approve"
+                  ? "Resignation will be approved and the notice period will begin (status → Notice Active)."
+                  : <>Status will move to <span className="font-bold capitalize">{label(reviewModal.targetStatus)}</span>.</>}
+              </p>
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1.5">Confirm Last Working Day</label>
                 <input type="date" value={reviewModal.confirmedLwd} onChange={(e) => setReviewModal((m) => ({ ...m, confirmedLwd: e.target.value }))} className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400" />
               </div>
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1.5">Notice Period (days)</label>
-                <input type="number" min={0} max={180} value={reviewModal.noticeDays} onChange={(e) => setReviewModal((m) => ({ ...m, noticeDays: e.target.value }))} className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400" />
+                <input type="number" min={0} max={365} placeholder="Company default is 30 days" value={reviewModal.noticeDays} onChange={(e) => setReviewModal((m) => ({ ...m, noticeDays: e.target.value }))} className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400" />
+                <p className="mt-1 text-xs text-slate-500">
+                  Pre-filled from this exit record. Changing it is a manager override, and it sets the notice window used to calculate any notice-shortfall recovery in the final settlement.
+                </p>
               </div>
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1.5">Remarks</label>
@@ -895,7 +1057,7 @@ export default function NativeExitManagement() {
                   return (
                     <div key={task.id} className={`rounded-2xl border p-4 ${isDone ? "border-emerald-200 bg-emerald-50/50" : "border-slate-200 bg-white"}`}>
                       <div className="flex items-start justify-between gap-3">
-                        <div>
+                        <div className="min-w-0 flex-1">
                           <div className="font-semibold text-slate-900 text-sm">{task.task_title}</div>
                           <div className="mt-0.5 flex gap-2 text-xs text-slate-500">
                             <span className="rounded bg-slate-100 px-1.5 py-0.5">{task.clearance_area}</span>
@@ -903,6 +1065,41 @@ export default function NativeExitManagement() {
                             {task.due_date && <span>Due: {task.due_date}</span>}
                           </div>
                           {task.remarks && <div className="mt-1 text-xs text-slate-500 italic">{task.remarks}</div>}
+                          {/* attachment row */}
+                          <div className="mt-2 flex items-center gap-2 flex-wrap">
+                            {task.attachment_url ? (
+                              <a
+                                href={task.attachment_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 border border-blue-200"
+                              >
+                                <Paperclip className="h-3 w-3" />
+                                View attachment
+                              </a>
+                            ) : null}
+                            <label className={`inline-flex cursor-pointer items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${
+                              attachmentUploading === task.id
+                                ? "border-slate-200 bg-slate-50 text-slate-400 cursor-not-allowed"
+                                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                            }`}>
+                              {attachmentUploading === task.id
+                                ? <><Loader className="h-3 w-3 animate-spin" /> Uploading…</>
+                                : <><Upload className="h-3 w-3" /> {task.attachment_url ? "Replace" : "Attach email"}</>
+                              }
+                              <input
+                                type="file"
+                                className="sr-only"
+                                accept=".pdf,.jpg,.jpeg,.png,.eml,.msg,.doc,.docx"
+                                disabled={attachmentUploading === task.id}
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) uploadClearanceAttachment(task.id, file);
+                                  e.target.value = "";
+                                }}
+                              />
+                            </label>
+                          </div>
                         </div>
                         {!isDone ? (
                           <button
@@ -1033,6 +1230,31 @@ export default function NativeExitManagement() {
               <button onClick={() => setRetentionModal((m) => ({ ...m, open: false }))} className="flex-1 rounded-2xl border py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">Cancel</button>
               <button onClick={submitRetention} disabled={retentionModal.saving || !retentionModal.action_summary.trim()} className="flex-1 rounded-2xl bg-slate-950 py-3 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-50">
                 {retentionModal.saving ? "Saving…" : "Record Action"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Return Resignation Modal ── */}
+      {returnModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b p-6">
+              <h2 className="text-lg font-black text-slate-950">Return Resignation</h2>
+              <button onClick={() => setReturnModal({ open: false, exitId: "", reason: "" })} className="text-slate-400 hover:text-slate-700"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="space-y-4 p-6">
+              <p className="text-sm text-slate-600">The resignation will be returned to the employee with your feedback. They can revise and re-submit.</p>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Reason for returning <span className="text-red-500">*</span></label>
+                <textarea value={returnModal.reason} onChange={(e) => setReturnModal((m) => ({ ...m, reason: e.target.value }))} placeholder="Explain why this is being returned…" rows={3} className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 resize-none" />
+              </div>
+            </div>
+            <div className="flex gap-3 border-t p-6">
+              <button onClick={() => setReturnModal({ open: false, exitId: "", reason: "" })} className="flex-1 rounded-2xl border py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">Cancel</button>
+              <button onClick={returnExit} disabled={!returnModal.reason.trim() || updating !== null} className="flex-1 rounded-2xl bg-orange-500 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50">
+                {updating ? "Returning…" : "Return to Employee"}
               </button>
             </div>
           </div>

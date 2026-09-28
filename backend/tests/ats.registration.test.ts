@@ -243,10 +243,23 @@ describe("public registration cannot overwrite an existing candidate's identity"
     expect(updateBlock).toMatch(/date_of_birth\s*=\s*COALESCE\(date_of_birth/);
   });
 
-  it("is rate limited where it is mounted", () => {
-    const appSource = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
-    const mount = appSource.split("\n").find((line) => line.includes('"/api/ats/registration"')) ?? "";
-    expect(mount, "the public registration router is mounted without a rate limiter")
-      .toMatch(/publicRegistrationLimiter/);
+  it("applies rate limiter to POST submission routes, not GET lookups", () => {
+    // The limiter is on POST routes inside the router (not the app.ts mount) so
+    // that GET branch/recruiter lookups don't consume the submission budget.
+    const routerSource = readFileSync(
+      new URL("../src/modules/ats/registration.enhanced.routes.ts", import.meta.url),
+      "utf8"
+    );
+    // Both POST endpoints must carry the limiter
+    expect(routerSource, "submit-enhanced POST is not rate limited").toMatch(
+      /post\(["']\/submit-enhanced["'],\s*publicRegistrationLimiter/
+    );
+    expect(routerSource, "parse-resume POST is not rate limited").toMatch(
+      /post\(\s*["']\/parse-resume["'],\s*publicRegistrationLimiter/
+    );
+    // GET lookups must NOT carry the limiter
+    const branchLine = routerSource.split("\n").find((l) => l.includes('get("/branch-aliases"')) ?? "";
+    expect(branchLine, "branch-aliases GET should not carry the submission rate limiter")
+      .not.toMatch(/publicRegistrationLimiter/);
   });
 });

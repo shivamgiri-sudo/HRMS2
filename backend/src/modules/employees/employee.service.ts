@@ -13,6 +13,7 @@ import { dispatchJoinProvisioningTasks } from "../it-provisioning/it-provisionin
 import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
 import { recordSupervisoryChange } from "../management/manager-attribution.service.js";
 import { appendJourneyEvent } from "./journeyLog.service.js";
+import { checkSalaryStartDate, dayOf, setSalaryStartDate, type ApplySalaryStartDateArgs, type SalaryDateAuthority } from "../payroll/salary-start-date.service.js";
 
 // Directory list sort — SortableTableHead on the frontend already exposes these 8 columns,
 // but the query ignored sortBy entirely and always returned employee_code ASC, so "sort by
@@ -196,6 +197,12 @@ export const employeeService = {
     const id = randomUUID();
     // salary_start_date defaults to date_of_joining when not explicitly set
     const salaryStartDate = input.salaryStartDate ?? input.dateOfJoining;
+    if (salaryStartDate && input.dateOfJoining && salaryStartDate < input.dateOfJoining) {
+      throw Object.assign(
+        new Error(`Salary start date (${salaryStartDate}) cannot be before date of joining (${input.dateOfJoining}).`),
+        { statusCode: 400, code: "SALARY_START_BEFORE_JOINING" }
+      );
+    }
 
     // Resolve branch_id and process_id from cost_centre if not explicitly provided
     let resolvedBranchId = input.branchId ?? null;
@@ -219,10 +226,10 @@ export const employeeService = {
       // request shape, two different answers depending on which screen created the row.
       `INSERT INTO employees
          (id, employee_code, first_name, last_name, email, mobile, gender,
-          date_of_birth, date_of_joining, salary_start_date, employment_type,
+          date_of_birth, date_of_joining, salary_start_date, employment_type, emp_type,
           branch_id, department_id, process_id, designation_id, cost_centre_id, cost_center_code,
           reporting_manager_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
          (SELECT cost_centre_code FROM cost_centre_master WHERE id = ? LIMIT 1),
          ?)`,
       [
@@ -237,6 +244,7 @@ export const employeeService = {
         input.dateOfJoining,
         salaryStartDate,
         input.employmentType ?? "Full Time",
+        input.employmentType ?? "Full Time",
         resolvedBranchId,
         input.departmentId ?? null,
         resolvedProcessId,
@@ -247,15 +255,17 @@ export const employeeService = {
       ]
     );
 
-    // CRITICAL FIX: Auto-create auth_user if employee has valid email
-    // This ensures employees can login via "Forgot Password" flow immediately
-    if (input.email && input.email.includes('@') && input.email.toLowerCase() !== 'n/a') {
-      try {
-        await createAuthUserForEmployee(id, input.email);
-      } catch (error) {
-        // Log but don't block employee creation if auth fails
-        console.error(`[WARN] Failed to auto-create auth for employee ${input.employeeCode}:`, error);
-      }
+    // Always auto-create an auth_user. Use real email when available; fall back to a
+    // deterministic internal placeholder so the account exists even before HR fills in
+    // the email. The placeholder can be replaced later when the employee's email is set.
+    const rawEmail = (input.email ?? '').trim().toLowerCase();
+    const loginEmail = (rawEmail.includes('@') && rawEmail !== 'n/a')
+      ? rawEmail
+      : `${input.employeeCode.toLowerCase()}@mas.internal`;
+    try {
+      await createAuthUserForEmployee(id, loginEmail);
+    } catch (error) {
+      console.error(`[WARN] Failed to auto-create auth for employee ${input.employeeCode}:`, error);
     }
 
     const employee = await this.getEmployee(id);
@@ -299,7 +309,7 @@ export const employeeService = {
   },
 
   async listEmployees(filters: EmployeeFilters & { scopeFilter?: { sql: string; params: unknown[] } }): Promise<PaginatedResult<Employee>> {
-    const { page, limit, status, recordStatus, processId, branchId, departmentId, designationId, search, scopeFilter, includeAnalytics, sortBy, sortOrder } = filters;
+    const { page, limit, status, recordStatus, processId, branchId, departmentId, designationId, search, startDate, endDate, scopeFilter, includeAnalytics, sortBy, sortOrder } = filters;
     const offset = (page - 1) * limit;
 
     // `active_status = 1` used to be hardcoded here, while `recordStatus` was declared in
@@ -326,6 +336,12 @@ export const employeeService = {
     if (branchId)     { filterConds.push("e.branch_id = ?");         filterParams.push(branchId); }
     if (departmentId) { filterConds.push("e.department_id = ?");     filterParams.push(departmentId); }
     if (designationId){ filterConds.push("e.designation_id = ?");    filterParams.push(designationId); }
+    // Joining-date range (Export Employee Directory's Start/End Date). Was never
+    // wired to the backend at all — the frontend filtered client-side AFTER
+    // downloading every row matching the other filters, which also meant the
+    // export-too-large guard was checked against the pre-date-filter count.
+    if (startDate) { filterConds.push("e.date_of_joining >= ?"); filterParams.push(startDate); }
+    if (endDate)   { filterConds.push("e.date_of_joining <= ?"); filterParams.push(endDate); }
     if (search) {
       // PERF (2026-08-18): this used to be a 7-column leading-wildcard LIKE OR-chain —
       // unindexable by any B-tree index, confirmed live against production at 12-22
@@ -495,12 +511,12 @@ export const employeeService = {
     return result;
   },
 
-  async updateEmployee(id: string, input: UpdateEmployeeInput, actorUserId: string): Promise<Employee> {
+  async updateEmployee(id: string, input: UpdateEmployeeInput, actorUserId: string, opts: { authority?: SalaryDateAuthority; allowBackdate?: boolean } = {}): Promise<Employee> {
     // Snapshot current sensitive field values before update for audit trail
     const [snapRows] = await db.execute<RowDataPacket[]>(
       `SELECT branch_id, department_id, process_id, designation_id,
               reporting_manager_id, employment_status, employment_type, active_status,
-              date_of_joining, first_name, last_name, official_email, mobile,
+              date_of_joining, salary_start_date, first_name, last_name, official_email, mobile,
               personal_email, date_of_birth, gender, blood_group, address1, city
        FROM employees WHERE id = ? LIMIT 1`,
       [id]
@@ -555,6 +571,19 @@ export const employeeService = {
       );
     }
 
+    // Guard: salary_start_date must never be before date_of_joining.
+    // Evaluate against the effective final values — caller may be changing one or both.
+    const effectiveDoj = input.dateOfJoining ?? (snap.date_of_joining ? String(snap.date_of_joining).slice(0, 10) : null);
+    const effectiveSsd = input.salaryStartDate !== undefined
+      ? (input.salaryStartDate ?? null)
+      : (snap.salary_start_date ? String(snap.salary_start_date).slice(0, 10) : null);
+    if (effectiveSsd && effectiveDoj && effectiveSsd < effectiveDoj) {
+      throw Object.assign(
+        new Error(`Salary start date (${effectiveSsd}) cannot be before date of joining (${effectiveDoj}).`),
+        { statusCode: 400, code: "SALARY_START_BEFORE_JOINING" }
+      );
+    }
+
     const sets: string[] = [];
     const params: unknown[] = [];
 
@@ -572,9 +601,10 @@ export const employeeService = {
     if (input.bloodGroup        !== undefined) { sets.push("blood_group = ?");          params.push(normalizeBloodGroup(input.bloodGroup)); }
     if (input.dateOfBirth       !== undefined) { sets.push("date_of_birth = ?");        params.push(input.dateOfBirth ?? null); }
     if (input.dateOfJoining     !== undefined) { sets.push("date_of_joining = ?");      params.push(input.dateOfJoining); }
-    if (input.salaryStartDate   !== undefined) { sets.push("salary_start_date = ?");    params.push(input.salaryStartDate ?? null); }
+    // salary_start_date is NOT written here. It is one of five stored copies of the same date, so
+    // it goes through the central service below, which writes all of them in one transaction.
     if (input.dateOfExit        !== undefined) { sets.push("date_of_exit = ?");         params.push(input.dateOfExit ?? null); }
-    if (input.employmentType    !== undefined) { sets.push("employment_type = ?");      params.push(input.employmentType); }
+    if (input.employmentType    !== undefined) { sets.push("employment_type = ?, emp_type = ?"); params.push(input.employmentType, input.employmentType); }
     if (input.employmentStatus  !== undefined) { sets.push("employment_status = ?");    params.push(input.employmentStatus); }
     if (input.branchId          !== undefined) { sets.push("branch_id = ?");            params.push(input.branchId ?? null); }
     if (input.departmentId      !== undefined) { sets.push("department_id = ?");        params.push(input.departmentId ?? null); }
@@ -600,6 +630,28 @@ export const employeeService = {
     // Carry the deactivation across to the column the access gates actually read,
     // in the same statement, so the two can never disagree again.
     if (isDeactivating && wasActive) { sets.push("active_status = 0"); }
+
+    // A salary start date change is validated NOW (ownership, date locks, closed payroll months;
+    // nothing is written) and applied after the profile UPDATE below, so a refused date cannot
+    // leave the rest of the edit half-saved and a failed profile UPDATE cannot leave the date moved.
+    let salaryDateChange: ApplySalaryStartDateArgs | null = null;
+    if (input.salaryStartDate !== undefined && dayOf(input.salaryStartDate) !== dayOf(snap.salary_start_date)) {
+      if (!input.salaryStartDate) {
+        throw Object.assign(new Error("Salary start date cannot be cleared."), {
+          statusCode: 400,
+          code: "SALARY_START_REQUIRED",
+        });
+      }
+      salaryDateChange = {
+        employeeId: id,
+        newDate: String(input.salaryStartDate),
+        actorUserId,
+        source: "employee_edit",
+        authority: opts.authority ?? "standard",
+        allowBackdate: opts.allowBackdate === true,
+      };
+      await checkSalaryStartDate(salaryDateChange);
+    }
 
     if (sets.length > 0) {
       params.push(id);
@@ -733,19 +785,38 @@ export const employeeService = {
       }
     }
 
-    // Sync auth_user.email = official_email when official_email updated
-    if (input.officialEmail) {
-      const newEmail = input.officialEmail.toLowerCase().trim();
+    if (salaryDateChange) await setSalaryStartDate(salaryDateChange);
+
+    // Sync auth_user.email when official_email is updated; also create the account
+    // on the spot if the employee still has no user_id (e.g. added without email,
+    // email filled in later via profile edit).
+    if (input.officialEmail !== undefined || input.email !== undefined) {
       const [empRows] = await db.execute<RowDataPacket[]>(
-        'SELECT user_id FROM employees WHERE id = ? LIMIT 1', [id]
+        'SELECT user_id, email, official_email FROM employees WHERE id = ? LIMIT 1', [id]
       );
-      const userId = (empRows as any[])[0]?.user_id;
-      if (userId) {
+      const empRow = (empRows as any[])[0];
+      const userId: string | null = empRow?.user_id ?? null;
+
+      if (userId && input.officialEmail) {
+        // Employee has an account — sync the official email onto it
+        const newEmail = input.officialEmail.toLowerCase().trim();
         const [conflict] = await db.execute<RowDataPacket[]>(
           'SELECT id FROM auth_user WHERE LOWER(email) = ? AND id != ? LIMIT 1', [newEmail, userId]
         );
         if (!(conflict as any[]).length) {
           await db.execute('UPDATE auth_user SET email = ? WHERE id = ?', [newEmail, userId]);
+        }
+      } else if (!userId) {
+        // No auth account yet — create one now using the best available email
+        const bestEmail = [input.officialEmail, input.email, empRow?.official_email, empRow?.email]
+          .map((e: string | null | undefined) => (e ?? '').trim().toLowerCase())
+          .find((e: string) => e.includes('@') && e !== 'n/a');
+        if (bestEmail) {
+          try {
+            await createAuthUserForEmployee(id, bestEmail);
+          } catch {
+            // Non-fatal — account creation failure should not block the profile save
+          }
         }
       }
     }

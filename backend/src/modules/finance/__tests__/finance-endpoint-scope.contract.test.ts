@@ -87,7 +87,13 @@ describe("an export never returns what its list would not", () => {
 
 describe("writes check the branch before moving money", () => {
   it("refuses an allocation into a branch the caller does not hold", () => {
-    const block = routeBlock(IMPREST, "/allocations", 1400);
+    // routeBlock finds the FIRST "/allocations" (the GET list route) and reads forward from
+    // there, so this span has to reach past that whole handler into the POST handler right
+    // after it, where the actual 403 check lives. Widened from 1400 when GET's own handler grew
+    // a few comment lines (its ?branchId fix, imprest.routes.ts) and pushed POST's check past
+    // the old span — bumped with headroom rather than to the exact new offset, so the next small
+    // GET-side comment does not silently re-break this assertion.
+    const block = routeBlock(IMPREST, "/allocations", 1800);
     expect(block).toContain("403");
     expect(block).toContain('scope.mode === "branches"');
   });

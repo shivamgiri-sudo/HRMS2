@@ -341,9 +341,92 @@ async function lookupProcess(name: string | undefined): Promise<string | null> {
   return id;
 }
 
+// ── Bulk Pre-fetch ──────────────────────────────────────────────────────────────
+
+interface PrefetchedData {
+  existingByMobile: Map<string, { id: string; candidate_code: string }>;
+  existingByEmail: Map<string, { id: string; candidate_code: string }>;
+  employeeByMobile: Map<string, { id: string; employee_code: string }>;
+  employeeByPersonalEmail: Map<string, { id: string; employee_code: string }>;
+}
+
+/**
+ * Resolves all existence + employee lookups for an entire import batch in 2 parallel queries
+ * instead of 2 per-row queries. For 1000 rows this replaces ~2000 individual SELECTs.
+ */
+async function bulkPrefetch(rows: ImportRow[]): Promise<PrefetchedData> {
+  const result: PrefetchedData = {
+    existingByMobile: new Map(),
+    existingByEmail: new Map(),
+    employeeByMobile: new Map(),
+    employeeByPersonalEmail: new Map(),
+  };
+
+  const ph = (n: number) => Array.from({ length: n }, () => "?").join(",");
+
+  const mobiles = [...new Set(
+    rows.map(r => String(r.Mobile ?? "").replace(/\D/g, "")).filter(m => /^[6-9]\d{9}$/.test(m)),
+  )];
+  const emails = [...new Set(
+    rows.map(r => r.Email?.trim().toLowerCase()).filter((e): e is string => Boolean(e)),
+  )];
+
+  if (mobiles.length === 0 && emails.length === 0) return result;
+
+  await Promise.all([
+    (async () => {
+      const conds: string[] = [];
+      const vals: string[] = [];
+      if (mobiles.length) { conds.push(`mobile IN (${ph(mobiles.length)})`); vals.push(...mobiles); }
+      if (emails.length) { conds.push(`email IN (${ph(emails.length)})`); vals.push(...emails); }
+      const [fetched] = await db.execute<RowDataPacket[]>(
+        `SELECT id, candidate_code, mobile, email FROM ats_candidate WHERE ${conds.join(" OR ")}`,
+        vals,
+      );
+      for (const r of fetched as any[]) {
+        if (r.mobile) result.existingByMobile.set(String(r.mobile), { id: r.id, candidate_code: r.candidate_code });
+        if (r.email) result.existingByEmail.set(String(r.email).toLowerCase(), { id: r.id, candidate_code: r.candidate_code });
+      }
+    })(),
+    (async () => {
+      const conds: string[] = [];
+      const vals: string[] = [];
+      if (mobiles.length) {
+        conds.push(`mobile IN (${ph(mobiles.length)})`);
+        conds.push(`alternate_mobile IN (${ph(mobiles.length)})`);
+        vals.push(...mobiles, ...mobiles);
+      }
+      if (emails.length) { conds.push(`personal_email IN (${ph(emails.length)})`); vals.push(...emails); }
+      if (!conds.length) return;
+      const [emps] = await db.execute<RowDataPacket[]>(
+        `SELECT id, employee_code, mobile, alternate_mobile, personal_email FROM employees WHERE ${conds.join(" OR ")}`,
+        vals,
+      );
+      for (const e of emps as any[]) {
+        if (e.mobile) result.employeeByMobile.set(String(e.mobile), { id: e.id, employee_code: e.employee_code });
+        if (e.alternate_mobile) result.employeeByMobile.set(String(e.alternate_mobile), { id: e.id, employee_code: e.employee_code });
+        if (e.personal_email) result.employeeByPersonalEmail.set(String(e.personal_email).toLowerCase(), { id: e.id, employee_code: e.employee_code });
+      }
+    })(),
+  ]);
+
+  return result;
+}
+
 // ── Core Import ───────────────────────────────────────────────────────────────
 
-async function findExistingCandidate(mobile: string, email: string | undefined): Promise<{ id: string; candidate_code: string } | null> {
+async function findExistingCandidate(mobile: string, email: string | undefined, prefetched?: PrefetchedData): Promise<{ id: string; candidate_code: string } | null> {
+  if (prefetched) {
+    if (/^[6-9]\d{9}$/.test(mobile)) {
+      const hit = prefetched.existingByMobile.get(mobile);
+      if (hit) return hit;
+    }
+    if (email) {
+      const hit = prefetched.existingByEmail.get(email.toLowerCase().trim());
+      if (hit) return hit;
+    }
+    return null;
+  }
   // Only match on mobile when it's a plausible real number. A single-digit placeholder
   // value is shared by 539 ats_candidate rows and 1,284 employees rows (confirmed
   // live) — matching on it during import would treat a new candidate as an update to
@@ -379,14 +462,15 @@ async function importOneCandidate(
   rowIdx: number,
   actorUserId: string,
   dryRun: boolean,
-  importBatchId: string | null = null
+  importBatchId: string | null = null,
+  prefetched?: PrefetchedData,
 ): Promise<{ action: "created" | "updated" | "skipped"; warnings: ImportWarning[] }> {
   const warnings: ImportWarning[] = [];
   const cid = row.CandidateID ?? `row-${rowIdx}`;
   const mobile = String(row.Mobile ?? "").replace(/\D/g, "");
   const email = row.Email?.trim().toLowerCase() || undefined;
 
-  const existing = await findExistingCandidate(mobile, email);
+  const existing = await findExistingCandidate(mobile, email, prefetched);
   /**
    * created_at is an audit timestamp: a record cannot have been created after now. walk_in_date
    * is a business date and MAY legitimately be in the future — a walk-in is scheduled — so the
@@ -453,7 +537,7 @@ async function importOneCandidate(
     await insertHiringActivity(
       row, candidateDbId, recruiterUserId,
       row.RecruiterAssignedName?.trim() || null,
-      actorUserId, createdAt, currentStage, importBatchId
+      actorUserId, createdAt, currentStage, importBatchId, prefetched,
     );
 
     return { action: "updated", warnings };
@@ -556,7 +640,7 @@ async function importOneCandidate(
   await insertHiringActivity(
     row, candidateDbId, recruiterUserId,
     row.RecruiterAssignedName?.trim() || null,
-    actorUserId, createdAt, currentStage, importBatchId
+    actorUserId, createdAt, currentStage, importBatchId, prefetched,
   );
 
   return { action: "created", warnings };
@@ -572,7 +656,12 @@ function buildSkillRemarks(row: ImportRow): string {
 
 // ── Employee Auto-Match ──────────────────────────────────────────────────────
 
-async function findEmployeeByMobileOrEmail(mobile: string, email?: string): Promise<{ id: string; employee_code: string } | null> {
+async function findEmployeeByMobileOrEmail(mobile: string, email?: string, prefetched?: PrefetchedData): Promise<{ id: string; employee_code: string } | null> {
+  if (prefetched) {
+    if (mobile) { const h = prefetched.employeeByMobile.get(mobile); if (h) return h; }
+    if (email) { const h = prefetched.employeeByPersonalEmail.get(email.toLowerCase().trim()); if (h) return h; }
+    return null;
+  }
   if (mobile) {
     // Match by mobile (primary) or alternate_mobile
     const [byMobile] = await db.execute<RowDataPacket[]>(
@@ -633,14 +722,15 @@ async function insertHiringActivity(
   actorUserId: string,
   createdAt: string,
   currentStage: string,
-  importBatchId: string | null
+  importBatchId: string | null,
+  prefetched?: PrefetchedData,
 ): Promise<void> {
   const mobile = String(row.Mobile ?? "").replace(/\D/g, "");
   const email = row.Email?.trim().toLowerCase() || undefined;
   const flags = deriveHiringFlags(row, currentStage);
 
   // Auto-match with employee table via mobile or personal_email
-  const employee = await findEmployeeByMobileOrEmail(mobile, email);
+  const employee = await findEmployeeByMobileOrEmail(mobile, email, prefetched);
 
   const activityDate = parseHistoricalDate(row.CreatedDate) ?? createdAt.split(" ")[0];
 
@@ -727,7 +817,12 @@ export async function runBulkImport(params: {
 
   const importBatchId = params.dryRun ? null : randomUUID();
 
-  const BATCH_SIZE = 10;
+  // Pre-fetch all existence + employee lookups in 2 parallel queries instead of 2 per row.
+  // For 1000 rows this replaces ~2000 individual SELECTs with 2 bulk SELECTs.
+  const prefetched = params.dryRun ? undefined : await bulkPrefetch(params.rows);
+
+  // Larger batches are safe because the expensive per-row SELECTs are now eliminated.
+  const BATCH_SIZE = params.dryRun ? 10 : 100;
   for (let batchStart = 0; batchStart < params.rows.length; batchStart += BATCH_SIZE) {
     const batch = params.rows.slice(batchStart, batchStart + BATCH_SIZE);
     await Promise.all(batch.map(async (row, idx) => {
@@ -744,7 +839,7 @@ export async function runBulkImport(params: {
       }
 
       try {
-        const { action, warnings: actionWarnings } = await importOneCandidate(row, rowIdx, params.actorUserId, params.dryRun, importBatchId);
+        const { action, warnings: actionWarnings } = await importOneCandidate(row, rowIdx, params.actorUserId, params.dryRun, importBatchId, prefetched);
         result.warnings.push(...actionWarnings);
         if (action === "created") result.summary.created++;
         else if (action === "updated") result.summary.updated++;

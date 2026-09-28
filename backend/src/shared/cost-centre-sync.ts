@@ -1,4 +1,4 @@
-import type { RowDataPacket } from "mysql2";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../db/mysql.js";
 
 /**
@@ -113,4 +113,175 @@ export async function syncCostCentreRelatedTables(opts: {
       [derivedCode, cost_centre_name, branch_id, client_id ?? null, clientName]
     );
   }
+}
+
+function ccTypeToWorkload(ccType: string | null | undefined): string {
+  switch ((ccType ?? "").toLowerCase().trim()) {
+    case "inbound":     return "inbound_voice";
+    case "blended":     return "blended";
+    case "backoffice":
+    case "back office": return "backoffice";
+    case "chat":        return "chat";
+    case "email":       return "email";
+    default:            return "outbound_voice";
+  }
+}
+
+function ccTypeToProcessType(ccType: string | null | undefined): string {
+  switch ((ccType ?? "").toLowerCase().trim()) {
+    case "inbound":     return "INBOUND";
+    case "blended":     return "OUTBOUND";
+    case "backoffice":
+    case "back office": return "BACK_OFFICE";
+    case "chat":        return "CHAT";
+    case "email":       return "EMAIL";
+    default:            return "OUTBOUND";
+  }
+}
+
+/**
+ * Creates process_master entries for any active cost centres that have a client_name
+ * but no matching active process yet.
+ *
+ * Called nightly by cost-centre-process-resolver.worker after the db_bill sync lands
+ * new cost centres — that path bypasses the API (which calls syncCostCentreRelatedTables
+ * inline), so this is the backstop that closes the gap.
+ *
+ * Returns the count of newly created rows.
+ */
+export async function backfillProcessMasterForOrphanedCostCentres(): Promise<number> {
+  const [rows] = await db.execute<RowDataPacket[]>(`
+    SELECT cc.cost_centre_code, cc.client_name, cc.billing_client_name,
+           cc.branch_id, cc.cc_type
+    FROM cost_centre_master cc
+    WHERE cc.client_name IS NOT NULL
+      AND TRIM(cc.client_name) <> ''
+      AND cc.active_status = 1
+      AND LOWER(COALESCE(cc.status, '')) <> 'closed'
+      AND NOT EXISTS (
+        SELECT 1 FROM process_master pm
+        WHERE TRIM(LOWER(pm.process_name)) = TRIM(LOWER(cc.client_name))
+          AND pm.active_status = 1
+      )
+  `);
+
+  let created = 0;
+  for (const row of rows as Array<{
+    cost_centre_code: string;
+    client_name: string;
+    billing_client_name: string | null;
+    branch_id: string | null;
+    cc_type: string | null;
+  }>) {
+    const derivedCode = row.cost_centre_code
+      .replace(/[^A-Za-z0-9]/g, "_")
+      .toUpperCase()
+      .replace(/_+/g, "_")
+      .slice(0, 50);
+
+    const [result] = await db.execute<ResultSetHeader>(
+      `INSERT IGNORE INTO process_master
+         (process_code, process_name, branch_id, workload_type, process_type, client_name, active_status)
+       VALUES (?, ?, ?, ?, ?, ?, 1)`,
+      [
+        derivedCode,
+        row.client_name.trim(),
+        row.branch_id ?? null,
+        ccTypeToWorkload(row.cc_type),
+        ccTypeToProcessType(row.cc_type),
+        row.billing_client_name ?? null,
+      ]
+    );
+    if (result.affectedRows > 0) created++;
+  }
+  return created;
+}
+
+/**
+ * Cost centres linked to each process, with whether each is closed. A process is linked to a
+ * cost centre by cost_centre_master.process_id, or by the process_code the backfill above
+ * derives from cost_centre_code (non-alphanumerics -> "_", upper-cased, first 50 chars).
+ */
+const PROCESS_COST_CENTRE_LINKS_SQL = `
+  WITH cc AS (
+    SELECT process_id,
+           LEFT(UPPER(REGEXP_REPLACE(cost_centre_code, '[^A-Za-z0-9]+', '_')), 50) AS derived_code,
+           (active_status = 0 OR LOWER(COALESCE(status, '')) = 'closed') AS is_closed
+      FROM cost_centre_master
+  ),
+  links AS (
+    SELECT process_id AS pid, is_closed FROM cc WHERE process_id IS NOT NULL
+    UNION ALL
+    SELECT pm.id AS pid, cc.is_closed FROM process_master pm JOIN cc ON cc.derived_code = pm.process_code
+  )`;
+
+/**
+ * Keeps process_master.active_status in step with the cost centres behind each process.
+ * Owner ruling 2026-09-24: "if their cost centre is inactive then mark process also inactive
+ * and it should be auto".
+ *
+ * Deactivates an active process when every cost centre linked to it is closed, unless it
+ * still has active employees or an open approved requisition — those are left for a human
+ * (moving the staff or reopening the cost centre), since flipping them would strand live
+ * people on an inactive process. A process linked to no cost centre is never touched.
+ *
+ * Every automatic deactivation is recorded in process_master_auto_deactivation, and only
+ * those recorded rows are reactivated automatically once one of their cost centres is open
+ * again. Processes someone deactivated by hand are never reactivated here.
+ *
+ * Called nightly by cost-centre-process-resolver.worker.
+ */
+export async function syncProcessActiveStatusWithCostCentres(): Promise<{ deactivated: number; reactivated: number }> {
+  const [toDeactivate] = await db.execute<RowDataPacket[]>(`
+    ${PROCESS_COST_CENTRE_LINKS_SQL},
+    all_closed AS (SELECT pid FROM links GROUP BY pid HAVING MIN(is_closed) = 1)
+    SELECT pm.id, pm.process_code, pm.process_name
+      FROM process_master pm
+      JOIN all_closed ac ON ac.pid = pm.id
+     WHERE pm.active_status = 1
+       AND NOT EXISTS (
+         SELECT 1 FROM employees e WHERE e.process_id = pm.id AND e.employment_status = 'active'
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM job_requisition jr
+          WHERE jr.process_id = pm.id AND jr.active_status = 1
+            AND jr.approval_status = 'approved' AND jr.fulfilled_headcount < jr.requested_headcount
+       )
+  `);
+
+  for (const row of toDeactivate as Array<{ id: string; process_code: string; process_name: string }>) {
+    await db.execute(
+      `INSERT INTO process_master_auto_deactivation (process_id, process_code, process_name, deactivated_at, reactivated_at)
+       VALUES (?, ?, ?, NOW(), NULL)
+       ON DUPLICATE KEY UPDATE deactivated_at = NOW(), reactivated_at = NULL`,
+      [row.id, row.process_code, row.process_name],
+    );
+    await db.execute(
+      `UPDATE process_master SET active_status = 0, updated_at = NOW() WHERE id = ? AND active_status = 1`,
+      [row.id],
+    );
+  }
+
+  const [toReactivate] = await db.execute<RowDataPacket[]>(`
+    ${PROCESS_COST_CENTRE_LINKS_SQL},
+    any_open AS (SELECT DISTINCT pid FROM links WHERE is_closed = 0)
+    SELECT pm.id
+      FROM process_master pm
+      JOIN process_master_auto_deactivation d ON d.process_id = pm.id AND d.reactivated_at IS NULL
+      JOIN any_open ao ON ao.pid = pm.id
+     WHERE pm.active_status = 0
+  `);
+
+  for (const row of toReactivate as Array<{ id: string }>) {
+    await db.execute(
+      `UPDATE process_master SET active_status = 1, updated_at = NOW() WHERE id = ? AND active_status = 0`,
+      [row.id],
+    );
+    await db.execute(
+      `UPDATE process_master_auto_deactivation SET reactivated_at = NOW() WHERE process_id = ?`,
+      [row.id],
+    );
+  }
+
+  return { deactivated: toDeactivate.length, reactivated: toReactivate.length };
 }

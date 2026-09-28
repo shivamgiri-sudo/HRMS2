@@ -399,7 +399,13 @@ function buildVoucher(
     // Distinct from the debit-side "Gross Salary" — different ledger, deliberately. Carries
     // miscellaneous recoveries (833 at Ahmedabad in the reference).
     { ledger_name: "GROSS SALARY", columns: acc.otherDeductions },
-    { ledger_name: `Professional Tax ${financialYearLabel(period)}`, columns: acc.professionalTax },
+    // "Professional Tax {FY}" line item removed 2026-09-11: PT discontinued
+    // from active payroll company-wide by explicit stakeholder decision.
+    // acc.professionalTax is still accumulated below (always 0 for any run
+    // after the removal, since salary_prep_line.professional_tax is now
+    // hardcoded to 0 in payrollCalculate.service.ts) but is no longer emitted
+    // as a voucher line item. The gross plug below is unaffected either way,
+    // since the removed line always summed to 0 going forward.
     { ledger_name: `TDS SALARY ${financialYearLabel(period)}`, columns: acc.tds },
   ];
 

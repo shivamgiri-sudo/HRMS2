@@ -86,6 +86,18 @@ describe("branch budget review — stage authority", () => {
     expect(reviewBody()).toContain("!MAKER_CHECKER_EXEMPT_ROLES.has(role)");
   });
 
+  it("exempts a user who HOLDS finance_head even when acting at the Branch Head stage", () => {
+    // The route passes the stage-owner role ("branch_head" for a submitted budget), so the
+    // exemption must also consult every role the caller actually holds.
+    const body = reviewBody();
+    expect(body).toContain("callerRoles");
+    expect(body).toContain("holdsMakerCheckerExemptRole");
+    expect(body).toContain("!holdsMakerCheckerExemptRole");
+    const routes = readFileSync(resolve(__dirname, "../process-pnl.routes.ts"), "utf8");
+    const route = routes.slice(routes.indexOf('"/pnl/budgets/:id/review"'));
+    expect(route.slice(0, route.indexOf("res.json"))).toContain("[user.role, ...(user.roles ?? [])]");
+  });
+
   it("still blocks a non-exempt reviewer from approving their own prior work", () => {
     const body = reviewBody();
     expect(body).toContain("BUDGET_MAKER_CHECKER");

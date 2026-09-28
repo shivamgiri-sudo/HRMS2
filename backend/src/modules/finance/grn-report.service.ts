@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
+import { ownCompanyGrnSql, refreshHiddenGrnScope } from "../../shared/ownCompanyCostCentre.js";
 import { resolvePendingWith } from "./finance-workflow-role.js";
 
 /**
@@ -43,15 +44,36 @@ export type GrnReportFilters = {
   grnNumber?: string;
   vendorId?: string;
   status?: string;
+  /** Approval-chain position, one of APPROVAL_STAGE_STATUSES' keys. Expands to several statuses. */
+  approvalStage?: string;
   /** Rows awaiting a named stage. Derived from status, never stored. */
   pendingWith?: string;
+  /** "hrms" = raised natively in this system; "legacy" = migrated from db_bill (bill_source_id IS NOT NULL). */
+  source?: string;
   limit?: number;
 };
 
 const MAX_ROWS = 5000;
 
+/**
+ * Approval-chain positions for the register filter (Branch Head -> Accounts Head -> Finance Head).
+ * "fully_approved" is every status at or past Finance Head approval — the point at which the GRN
+ * number is issued — so it includes the payment tail (payable, scheduled, part paid, paid).
+ */
+export const APPROVAL_STAGE_STATUSES: Record<string, readonly string[]> = {
+  draft: ["draft"],
+  awaiting_branch_head: ["submitted"],
+  awaiting_accounts_head: ["branch_head_approved"],
+  awaiting_finance_head: ["accounts_head_approved"],
+  pending_any_level: ["submitted", "branch_head_approved", "accounts_head_approved", "returned_to_branch_head", "returned_to_raiser"],
+  fully_approved: ["approved", "finance_head_approved", "pending_accounts_payment", "payment_scheduled", "partially_paid", "paid"],
+  returned: ["returned_to_branch_head", "returned_to_raiser"],
+  rejected: ["rejected"],
+  cancelled: ["cancelled"],
+};
+
 function scopeConditions(filters: GrnReportFilters) {
-  const conditions: string[] = [];
+  const conditions: string[] = [ownCompanyGrnSql("g")];
   const params: unknown[] = [];
 
   const scope = financeBranchFilter(filters.branchScope, "g.branch_id");
@@ -110,6 +132,11 @@ function scopeConditions(filters: GrnReportFilters) {
   } else if (filters.expenseMode === "non_imprest") {
     conditions.push("g.grn_type <> 'imprest'");
   }
+  if (filters.source === "legacy") {
+    conditions.push("g.bill_source_id IS NOT NULL");
+  } else if (filters.source === "hrms") {
+    conditions.push("g.bill_source_id IS NULL");
+  }
   if (filters.grnNumber) {
     conditions.push("g.grn_number LIKE ?");
     params.push(`%${filters.grnNumber}%`);
@@ -121,6 +148,13 @@ function scopeConditions(filters: GrnReportFilters) {
   if (filters.status) {
     conditions.push("g.status = ?");
     params.push(filters.status);
+  }
+  if (filters.approvalStage) {
+    const statuses = APPROVAL_STAGE_STATUSES[filters.approvalStage];
+    // An unknown key matches nothing rather than being ignored, so a stale link cannot
+    // silently return the whole register as if it had been filtered.
+    conditions.push(statuses ? `g.status IN (${statuses.map(() => "?").join(", ")})` : "1 = 0");
+    if (statuses) params.push(...statuses);
   }
   return { conditions, params };
 }
@@ -141,6 +175,7 @@ export const grnReportService = {
    * could not carry because it was exported from a system with no approval chain.
    */
   async register(filters: GrnReportFilters) {
+    await refreshHiddenGrnScope();
     const { conditions, params } = scopeConditions(filters);
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     // LIMIT is interpolated, not bound: mysql2 3.22.3 rejects LIMIT placeholders in execute(),
@@ -209,7 +244,10 @@ export const grnReportService = {
           g.recognition_end_period
         FROM grn_request g
         LEFT JOIN branch_master bm ON bm.id = g.branch_id
-        LEFT JOIN employees u ON u.user_id = g.created_by
+        LEFT JOIN (
+          SELECT user_id, MIN(full_name) AS full_name
+            FROM employees WHERE user_id IS NOT NULL GROUP BY user_id
+        ) u ON u.user_id = g.created_by
         LEFT JOIN cost_centre_master cc ON cc.id = g.cost_centre_id
         LEFT JOIN (
           -- NOT IN ('released') also admitted 'reversed' and 'draft'. Reversed tax has been credited
@@ -240,7 +278,7 @@ export const grnReportService = {
     );
 
     const decorated = (rows as RowDataPacket[]).map((row) => {
-      const pending = resolvePendingWith(String(row.status ?? ""), "grn");
+      const pending = resolvePendingWith(String(row.status ?? ""), "grn", row.grn_type ?? null);
       const stageStartedAt = row.branch_head_reviewed_at ?? row.submitted_at ?? row.grn_date ?? null;
       const isLegacyData = Boolean(row.bill_source_id);
       let ageDays: number | null = null;
@@ -509,6 +547,7 @@ export const grnReportService = {
    * option can never reach the dropdown.
    */
   async filterOptions(filters: GrnReportFilters) {
+    await refreshHiddenGrnScope();
     const { conditions, params } = scopeConditions({ ...filters, head: undefined, subHead: undefined });
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 

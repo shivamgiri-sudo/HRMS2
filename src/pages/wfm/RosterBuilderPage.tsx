@@ -11,6 +11,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { LobSelect } from "@/components/wfm/LobSelect";
 import RosterPivotGrid from "@/components/wfm/RosterPivotGrid";
 
 // Same minimal shape NativeWFMRoster.tsx uses for the process picker (src/pages/NativeWFMRoster.tsx:7).
@@ -52,6 +53,7 @@ export default function RosterBuilderPage() {
   const [processId, setProcessId] = useState("");
   const [weekStart, setWeekStart] = useState("");
   const [weekEnd, setWeekEnd] = useState("");
+  const [lobId, setLobId] = useState("");
   const [cycleId, setCycleId] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const { data: processes } = useProcessOptions();
@@ -108,7 +110,7 @@ export default function RosterBuilderPage() {
               <select
                 aria-label="Process"
                 value={processId}
-                onChange={(e) => setProcessId(e.target.value)}
+                onChange={(e) => { setProcessId(e.target.value); setLobId(""); }}
                 className="mt-1 rounded-xl border border-slate-200 p-2"
               >
                 <option value="">Select a process</option>
@@ -192,7 +194,11 @@ export default function RosterBuilderPage() {
               {/* processId is required by the grid: its shift-template picker calls
                   /api/roster-gov/shifts/templates, which 403s a non-admin/hr caller
                   without a process scope (roster.governance.routes.ts:64). */}
-              <RosterPivotGrid cycleId={cycleId} processId={processId} />
+              <div className="mb-3 max-w-[220px]">
+                <label className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-600">LOB</label>
+                <LobSelect processId={processId} value={lobId} onChange={setLobId} includeUnassigned />
+              </div>
+              <RosterPivotGrid cycleId={cycleId} processId={processId} lobId={lobId} />
             </div>
           )}
         </main>

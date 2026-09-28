@@ -1,8 +1,8 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Upload, Download, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
+import { Upload, Download, CheckCircle2, XCircle, AlertCircle, RefreshCw } from "lucide-react";
 
 interface UploadResult {
   uploaded: number;
@@ -12,6 +12,28 @@ interface UploadResult {
   skipped_locked: number;
   errors: Array<{ row: number; employee_code: string; reason: string }>;
 }
+
+interface UploadBatchHistoryRow {
+  id: string;
+  file_name: string;
+  date_from: string;
+  date_to: string;
+  submitted_at: string;
+  submitted_row_count: number;
+  accepted_row_count: number;
+  rejected_row_count: number;
+  status: "pending" | "accepted" | "rejected" | "superseded";
+  branch_name: string | null;
+  process_name: string | null;
+  uploaded_by_name: string | null;
+}
+
+const HISTORY_STATUS_STYLE: Record<string, string> = {
+  pending: "bg-amber-100 text-amber-700",
+  accepted: "bg-green-100 text-green-700",
+  rejected: "bg-red-100 text-red-700",
+  superseded: "bg-slate-200 text-slate-600",
+};
 
 const REQUIRED_COLUMNS = ["employee_code", "attendance_date", "net_login_minutes"];
 
@@ -133,6 +155,31 @@ export function AprBulkUpload() {
   const [result, setResult] = useState<UploadResult | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
 
+  const [history, setHistory] = useState<UploadBatchHistoryRow[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+
+  async function loadHistory() {
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const res = await fetch("/api/wfm/attendance/apr-bulk-upload/batches", {
+        headers: { Authorization: `Bearer ${localStorage.getItem("hrms_access_token") ?? ""}` },
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.message ?? "Could not load upload history");
+      setHistory(json.data ?? []);
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : "Could not load upload history");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadHistory();
+  }, []);
+
   function downloadSample() {
     const blob = new Blob([SAMPLE_CSV], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -201,6 +248,9 @@ export function AprBulkUpload() {
       const json = await res.json();
       if (!json.success) throw new Error(json.message ?? "Upload failed");
       setResult(json);
+      // The batch(es) this upload just created (evidence_batch_ids) belong at the top of the
+      // list the uploader is about to look at, not left stale until a manual refresh.
+      void loadHistory();
     } catch (err) {
       setApiError(err instanceof Error ? err.message : "Upload failed");
     } finally {
@@ -314,6 +364,67 @@ export function AprBulkUpload() {
           )}
         </div>
       )}
+
+      <div className="pt-2 border-t border-slate-100">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-sm font-semibold text-slate-700">Upload History</h4>
+          <Button variant="ghost" size="sm" onClick={() => void loadHistory()} disabled={historyLoading} className="text-xs gap-1">
+            <RefreshCw className={`w-3 h-3 ${historyLoading ? "animate-spin" : ""}`} /> Refresh
+          </Button>
+        </div>
+
+        {historyError && (
+          <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded p-3">
+            <XCircle className="w-4 h-4 shrink-0" />
+            {historyError}
+          </div>
+        )}
+
+        {!historyError && historyLoading && history.length === 0 && (
+          <p className="text-xs text-slate-400 py-4 text-center">Loading upload history...</p>
+        )}
+
+        {!historyError && !historyLoading && history.length === 0 && (
+          <p className="text-xs text-slate-400 py-4 text-center">No APR/Dialler uploads yet.</p>
+        )}
+
+        {history.length > 0 && (
+          <div className="overflow-x-auto rounded border border-slate-200">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-50 text-slate-500">
+                <tr>
+                  <th className="text-left px-3 py-2">Uploaded</th>
+                  <th className="text-left px-3 py-2">File</th>
+                  <th className="text-left px-3 py-2">Date Range</th>
+                  <th className="text-left px-3 py-2">Branch / Process</th>
+                  <th className="text-left px-3 py-2">Uploaded By</th>
+                  <th className="text-left px-3 py-2">Rows</th>
+                  <th className="text-left px-3 py-2">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {history.map((h) => (
+                  <tr key={h.id} className="hover:bg-slate-50">
+                    <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{h.submitted_at}</td>
+                    <td className="px-3 py-2 font-medium text-slate-700 max-w-[160px] truncate" title={h.file_name}>{h.file_name}</td>
+                    <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{h.date_from} to {h.date_to}</td>
+                    <td className="px-3 py-2 text-slate-500">{[h.branch_name, h.process_name].filter(Boolean).join(" / ") || "-"}</td>
+                    <td className="px-3 py-2 text-slate-500">{h.uploaded_by_name?.trim() || "-"}</td>
+                    <td className="px-3 py-2 text-slate-500 whitespace-nowrap">
+                      {h.submitted_row_count} total
+                      <span className="text-green-600"> / {h.accepted_row_count} ok</span>
+                      {h.rejected_row_count > 0 && <span className="text-red-600"> / {h.rejected_row_count} failed</span>}
+                    </td>
+                    <td className="px-3 py-2">
+                      <Badge className={`text-[10px] ${HISTORY_STATUS_STYLE[h.status] ?? ""}`}>{h.status}</Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

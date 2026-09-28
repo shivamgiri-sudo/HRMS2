@@ -34,7 +34,7 @@ describe("recruiter pending-candidate queues exclude legacy employee records", (
   const src = read(SERVICE);
 
   it("imports the shared exclusion helper", () => {
-    expect(src).toMatch(/import\s*\{\s*excludeEmployeeShapedCandidatesSql\s*\}/);
+    expect(src).toMatch(/import\s*\{[^}]*excludeEmployeeShapedCandidatesSql[^}]*\}/);
   });
 
   it("getMyPendingCandidates applies the exclusion", () => {
@@ -60,5 +60,39 @@ describe("recruiter pending-candidate queues exclude legacy employee records", (
     const otherBody = functionBody(src, "getOtherRecruitersPendingCandidates");
     expect(myBody).toMatch(/excludeEmployeeShapedCandidatesSql\(\s*["']ats_candidate["']\s*\)/);
     expect(otherBody).toMatch(/excludeEmployeeShapedCandidatesSql\(\s*["']ats_candidate["']\s*\)/);
+  });
+});
+
+/**
+ * Owner ruling 2026-09-22: "if the form has been submitted by recruiter [...] there should be no
+ * pendency". `status`/`current_stage` is what these two queries actually filter on, and two write
+ * paths can close a candidate out without ever touching either column (see
+ * excludeResolvedInterviewCandidatesSql's own header for the live evidence: 10 of a 145-candidate
+ * pending queue already had a completed/no_show queue token with status still 'Waiting'). This is
+ * the read-side fix: exclude by the presence of a submission or a closed queue token, so a
+ * candidate the recruiter already actioned cannot outlive that action in the pending count.
+ */
+describe("recruiter pending-candidate queues exclude candidates already resolved", () => {
+  const src = read(SERVICE);
+
+  it("imports the shared exclusion helper", () => {
+    expect(src).toMatch(/import\s*\{[^}]*excludeResolvedInterviewCandidatesSql[^}]*\}/);
+  });
+
+  it("getMyPendingCandidates applies the exclusion", () => {
+    const body = functionBody(src, "getMyPendingCandidates");
+    expect(body).toContain("excludeResolvedInterviewCandidatesSql");
+  });
+
+  it("getOtherRecruitersPendingCandidates applies the exclusion", () => {
+    const body = functionBody(src, "getOtherRecruitersPendingCandidates");
+    expect(body).toContain("excludeResolvedInterviewCandidatesSql");
+  });
+
+  it("uses the alias the queries actually declare", () => {
+    const myBody = functionBody(src, "getMyPendingCandidates");
+    const otherBody = functionBody(src, "getOtherRecruitersPendingCandidates");
+    expect(myBody).toMatch(/excludeResolvedInterviewCandidatesSql\(\s*["']ats_candidate["']\s*\)/);
+    expect(otherBody).toMatch(/excludeResolvedInterviewCandidatesSql\(\s*["']ats_candidate["']\s*\)/);
   });
 });

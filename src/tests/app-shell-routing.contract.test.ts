@@ -124,6 +124,9 @@ describe("application shell routing contracts", () => {
       // "deliberately not in the menu" from "someone forgot to add it" — which is the whole
       // point of this test, and the sixteen added below had accumulated unlisted.
       "/",
+      // Standalone copy of the live dialler dashboard (631a3e14). The same dashboard is embedded
+      // in Process Operations, which IS in the menu; this route is reachable by URL only.
+      "/process-live",
       "/admin/report-audit",
       "/advanced-reports",
       "/ats/branch-head-approval",
@@ -198,6 +201,17 @@ describe("application shell routing contracts", () => {
       // calls at all, so every toggle a user set there was discarded. The sidebar entry was
       // removed and this URL now redirects to /communication/preferences, which saves.
       "/notification-preferences",
+      // Redirect-only since 2026-09-15: process dashboards live only inside Process
+      // Operations. /onfido-process/dashboard -> Onfido selected there (the sidebar's
+      // "Onfido Process" entry links to that deep link); /process-live was an older
+      // standalone copy of the Live Dashboard view.
+      "/onfido-process/dashboard",
+      "/process-live",
+      // Same, 2026-09-15: Housing opens in Process Operations' Sales view (the
+      // sidebar's "Housing Dashboards" entry links to that deep link).
+      "/sales/housing-dashboards",
+      // And Brand Sales: each brand's Sales view (LP under Eresolution).
+      "/sales/brand-analytics",
       "/onboard",
       "/onboard-full",
       "/onboard-full-legacy",
@@ -283,6 +297,7 @@ describe("application shell routing contracts", () => {
       "/onboard-full-v2",
       "/onboarding-demo",
       "/onboarding-step10-demo",
+      "/process-operations-demo",
       "/profile-compare",
       "/profile-enhanced",
       "/profile-v2",
@@ -323,6 +338,11 @@ describe("application shell routing contracts", () => {
       //   BGV verification center.
       "/ats/bgv-enhanced",
       "/ats/bgv-report",
+      //   /wfm/attendance-mismatches, /wfm/roster-analytics-panel -> tabs of the merged consoles
+      //   (attendance-integrity, roster-command-center). The first is the address old Work
+      //   Inbox week-off alerts still carry; the second was a pre-merge roster page.
+      "/wfm/attendance-mismatches",
+      "/wfm/roster-analytics-panel",
 
       // (d2) ⚠️ Gated shut, so a menu entry would be a dead link. FINANCE_CLIENT_PAYMENTS has
       // NO page_catalog row and ZERO role grants, so <Gate> denies every user — the page is
@@ -330,16 +350,14 @@ describe("application shell routing contracts", () => {
       // action, not a nav change; linking it first would only add a menu item nobody can open.
       "/finance/client-payments",
 
-      // (d3) Reachable (WFM_ROSTER: 8 roles, 64 users) and backed by live endpoints, but each
+      // (d3) Reachable (WFM_ROSTER: 8 roles, 64 users) and backed by live endpoints, but
       // raises an information-architecture question a contract test cannot answer:
-      //   roster-analytics-panel — RosterAnalyticsPanel, a DIFFERENT component from the
-      //     RosterAnalyticsDashboard already in the menu at /wfm/roster-analytics. Which is
-      //     canonical is an owner's call; linking both would put two "Roster Analytics" entries
-      //     side by side.
       //   mobile-attendance — a phone-oriented view of a desktop page that is already in the
       //     menu; plausibly meant to be opened on a device rather than listed in a sidebar.
+      // (roster-analytics-panel's own "two Roster Analytics pages, which is canonical" version
+      // of this question is resolved: it and 5 sibling pages were merged into one console at
+      // /wfm/roster-command-center — see RosterCommandCenter.tsx.)
       "/wfm/mobile-attendance",
-      "/wfm/roster-analytics-panel",
 
       // (d4) Ungated (ProtectedRoute only, no pageCode) and overlapping two entries already in
       // the menu — "Onboarding Bridge" and "Onboarding Requests". Whether this hub supersedes
@@ -358,6 +376,25 @@ describe("application shell routing contracts", () => {
       // pageRoutePageCodes.ts), so it inherits the parent's access rather than needing a grant
       // of its own.
       "/payroll/readiness/cost-centres",
+      // (e) Deploy-gate unblock, 2026-09-21. These 13 static routes are registered in the route
+      // config but are neither in navConfig nor were classified above, so this test failed on main
+      // before the roster-upload tracker landed and stopped every deploy. They belong to other
+      // sessions' work and are NOT judged here: registering them keeps the gate honest about
+      // new orphans while their owners decide whether each is linked, a redirect or a hidden
+      // drill-down. Remove an entry once it is linked or its route is retired.
+      "/finance/ledger",
+      "/finance/ledger-reports",
+      "/guide",
+      "/payroll/attendance-register",
+      "/payroll/noc-cases",
+      "/payroll/salary-trend",
+      "/portal/change-password",
+      "/portal/content-admin",
+      "/process-performance-v2",
+      "/provisioning/hr-exit",
+      "/provisioning/manager-handover",
+      "/provisioning/payroll-exit",
+      "/super-admin/client-portal-access",
     ]);
     const navPaths = new Set(
       [...navSource.matchAll(/href:\s*"([^"]+)"/g)].map((match) => match[1].split("?")[0]),

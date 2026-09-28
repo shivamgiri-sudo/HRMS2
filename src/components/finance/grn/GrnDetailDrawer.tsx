@@ -24,6 +24,7 @@ import {
   GrnKvList,
 } from "@/components/finance/grn/grn-ui";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
+import { openDocumentInNewTab } from "@/lib/openDocumentInNewTab";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -188,10 +189,7 @@ export function GrnDetailDrawer({
       const endpoint = documentId
         ? `/api/finance/grns/${grnId}/documents/${documentId}/file`
         : `/api/finance/grns/${grnId}/attachment`;
-      const blob = await hrmsApi.getBlob(endpoint);
-      const url = URL.createObjectURL(blob);
-      window.open(url, "_blank", "noopener,noreferrer");
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      await openDocumentInNewTab(() => hrmsApi.getBlob(endpoint));
     } catch (err) {
       toast({
         title: "Document could not be opened",

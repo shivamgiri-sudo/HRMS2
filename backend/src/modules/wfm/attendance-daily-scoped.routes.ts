@@ -55,7 +55,12 @@ function safeId(value: unknown, field: string): string | null {
 export async function scopedAttendanceDailyHandler(req: AuthenticatedRequest, res: any) {
   const userId = req.authUser!.id;
   const isAdminHrWfm = await hasRole(userId, "admin", "hr", "wfm", "ceo");
-  const isManager = await hasRole(userId, "manager", "assistant_manager", "tl");
+  // "team_leader" alongside the legacy "tl" alias -- hasRole() matches role_key
+  // literally with no synonym expansion (accessGuard.ts), and live data shows
+  // 9 real accounts hold "team_leader" against only 2 holding "tl". Without
+  // this, those 9 real Team Leads fell through to the else-branch below and
+  // saw only their OWN attendance record instead of their team's.
+  const isManager = await hasRole(userId, "manager", "assistant_manager", "tl", "team_leader");
   const callerEmp = await getEmployeeForUser(userId);
 
   const page = Math.max(1, Number(req.query.page ?? 1) || 1);

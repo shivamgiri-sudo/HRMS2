@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Trophy } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { ErrorState } from "@/components/enterprise/ErrorState";
 import { PointsDisplay } from "@/components/engagement/PointsDisplay";
 import { TierBadge } from "@/components/engagement/TierBadge";
 import type { ApiResponse, LeaderboardEntry } from "@/components/engagement/types";
@@ -33,7 +34,7 @@ export default function NativeLeaderboard() {
             {periods.map((item) => <Button key={item} variant={period === item ? "default" : "outline"} size="sm" onClick={() => setPeriod(item)}>{item}</Button>)}
           </div>
         </div>
-        {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+        {error && <ErrorState title="Couldn't load leaderboard" description={error} />}
         <Card>
           <CardContent className="p-0">
             <div className="overflow-x-auto">

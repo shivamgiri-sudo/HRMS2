@@ -17,6 +17,26 @@ import { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { db as pool } from '../../db/mysql.js';
+import { lobWhere, readLobFilter } from '../../shared/lobFilter.js';
+
+/**
+ * Optional branch / process / LOB narrowing, on the employee alias `e`. Purely additive: an
+ * absent filter yields sql '' and no params (unchanged behaviour).
+ */
+export function buildInterventionEmployeeFilter(
+  q: { branchId?: unknown; processId?: unknown },
+  lob: Parameters<typeof lobWhere>[0]
+): { sql: string; params: string[] } {
+  const parts: string[] = [];
+  const params: string[] = [];
+  const branchId = typeof q.branchId === 'string' ? q.branchId.trim() : '';
+  const processId = typeof q.processId === 'string' ? q.processId.trim() : '';
+  if (branchId) { parts.push('AND e.branch_id = ?'); params.push(branchId); }
+  if (processId) { parts.push('AND e.process_id = ?'); params.push(processId); }
+  const l = lobWhere(lob);
+  if (l.sql) { parts.push(l.sql); params.push(...l.params); }
+  return { sql: parts.join(' '), params };
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -630,6 +650,9 @@ export async function getPendingInterventions(req: Request, res: Response) {
   try {
     const owner = (req.query.owner as string | undefined)?.trim() ?? null;
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const empFilter = buildInterventionEmployeeFilter(req.query, lob);
 
     // Build owner filter as a JSON_SEARCH condition when supplied
     const ownerClause = owner
@@ -637,6 +660,7 @@ export async function getPendingInterventions(req: Request, res: Response) {
       : '';
     const params: (string | number)[] = [];
     if (owner) params.push(owner);
+    params.push(...empFilter.params);
     params.push(limit);
 
     const sql = `
@@ -661,6 +685,7 @@ export async function getPendingInterventions(req: Request, res: Response) {
       WHERE r.action_taken = 0
         AND r.outcome = 'pending'
         ${ownerClause}
+        ${empFilter.sql}
       ORDER BY
         FIELD(r.risk_tier, 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'),
         r.generated_at ASC
@@ -685,7 +710,7 @@ export async function getPendingInterventions(req: Request, res: Response) {
     res.json({
       success: true,
       count: data.length,
-      filters: { owner: owner ?? null, limit },
+      filters: { owner: owner ?? null, limit, branchId: req.query.branchId ?? null, processId: req.query.processId ?? null, lobId: req.query.lobId ?? null },
       data,
       timestamp: new Date().toISOString()
     });
@@ -789,6 +814,15 @@ export async function markInterventionActioned(req: Request, res: Response) {
  */
 export async function getInterventionOutcomes(req: Request, res: Response) {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const empFilter = buildInterventionEmployeeFilter(req.query, lob);
+    // The table is employee-keyed but has no branch/process/LOB columns; narrow via a subquery so the
+    // unfiltered statement stays exactly as it was and no column names can become ambiguous.
+    const employeeScope = empFilter.sql
+      ? `
+      WHERE employee_id IN (SELECT e.id FROM mas_hrms.employees e WHERE 1=1 ${empFilter.sql})`
+      : '';
     const sql = `
       SELECT
         COUNT(*)                                               AS total_generated,
@@ -804,10 +838,12 @@ export async function getInterventionOutcomes(req: Request, res: Response) {
             END
           )
         , 1) AS avg_days_to_action
-      FROM mas_hrms.employee_retention_recommendation
+      FROM mas_hrms.employee_retention_recommendation${employeeScope}
     `;
 
-    const [rows] = await pool.query<OutcomeSummaryRow[]>(sql);
+    const [rows] = await (empFilter.params.length
+      ? pool.query<OutcomeSummaryRow[]>(sql, empFilter.params)
+      : pool.query<OutcomeSummaryRow[]>(sql));
     const row = rows[0];
 
     const retained = row?.retained_count ?? 0;

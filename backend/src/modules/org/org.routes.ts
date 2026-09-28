@@ -10,6 +10,7 @@ import {
   campaignService, costCentreService, gradeBandService,
   locationService, policyService, processService,
 } from "./org.service.js";
+import { resolveFinanceBranchScopeSet } from "../finance/finance-access-scope.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -27,6 +28,34 @@ router.use(requireAuth);
  * Reads the same authUser the rest of the app uses; returns undefined when it is absent so the
  * service simply skips the audit row rather than inventing an actor.
  */
+/**
+ * Who may see cost centres of EVERY branch in Org Masters (owner rule, 2026-09-24): super_admin,
+ * finance_head and payroll_head only. Everyone else - HR, admin, branch heads, recruiters - is held
+ * to the branch(es) they are assigned to.
+ */
+const ALL_BRANCH_COST_CENTRE_ROLES = new Set(["super_admin", "finance_head", "payroll_head"]);
+
+/**
+ * The branch ids a caller may see cost centres for. undefined = every branch. An empty array means
+ * "no branch" and the service turns it into an empty result - never into "no filter".
+ */
+async function costCentreBranchEntitlement(req: Request): Promise<string[] | undefined> {
+  const auth = (req as any).authUser;
+  if (!auth?.id) return [];
+  const roles = [auth.role, ...(Array.isArray(auth.roles) ? auth.roles : []), ...((req as any).userRoles ?? [])]
+    .filter((r): r is string => typeof r === "string")
+    .map((r) => r.toLowerCase());
+  if (roles.some((r) => ALL_BRANCH_COST_CENTRE_ROLES.has(r))) return undefined;
+  try {
+    // Deliberately no roles passed: the finance resolver would otherwise widen admin / hr_admin / ceo
+    // to every branch, which is not what Org Masters is allowed to do.
+    const scope = await resolveFinanceBranchScopeSet({ userId: String(auth.id), userRoles: [] });
+    return scope.mode === "all" ? [] : scope.branchIds;
+  } catch {
+    return [];
+  }
+}
+
 function orgActor(req: Request): { id: string; role: string } | undefined {
   const auth = (req as any).authUser;
   if (!auth?.id) return undefined;
@@ -141,26 +170,26 @@ function buildCrud(
 
 // Canonical filter source for all pages. Use this instead of building filters from employee/report rows.
 router.get("/filter-options", h(async (_req: Request, res: Response) => {
-  const [[managers], branches, departments, processes, costCentres, designations, locations] = await Promise.all([
-    db.execute<any[]>(
-      `SELECT e.id, e.employee_code,
-              COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS full_name
-         FROM employees e
-        WHERE e.active_status = 1
-          AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
-          AND EXISTS (SELECT 1 FROM employees team WHERE team.reporting_manager_id = e.id OR team.manager_id = e.id)
-        ORDER BY full_name ASC`
-    ),
-    branchService.list(),
-    departmentService.list(),
-    processService.list(),
-    costCentreService.list(),
-    designationService.list(),
-    locationService.list(),
-  ]);
+  const [managers] = await db.execute<any[]>(
+    `SELECT e.id, e.employee_code,
+            COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS full_name
+       FROM employees e
+      WHERE e.active_status = 1
+        AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'
+        AND EXISTS (SELECT 1 FROM employees team WHERE team.reporting_manager_id = e.id OR team.manager_id = e.id)
+      ORDER BY full_name ASC`
+  );
   res.json({
     success: true,
-    data: { branches, departments, processes, costCentres, designations, locations, managers },
+    data: {
+      branches: await branchService.list(),
+      departments: await departmentService.list(),
+      processes: await processService.list(),
+      costCentres: await costCentreService.list({ active_status: 1, limit: 500 }),
+      designations: await designationService.list(),
+      locations: await locationService.list(),
+      managers,
+    },
     meta: { activeOnly: true },
   });
 }));
@@ -185,7 +214,7 @@ router.get("/", h(async (_req: Request, res: Response) => {
     lobService.list(),
     locationService.list(),
     policyService.list(),
-    costCentreService.list(),
+    costCentreService.list({ active_status: 1, limit: 500 }),
     gradeBandService.list(),
     campaignService.list(),
   ]);
@@ -233,15 +262,25 @@ buildCrud("/processes",     processService);
 
 // Cost-centres: migration status (must be before :id route)
 router.get("/cost-centres/migration-status", h(async (_req: Request, res: Response) => {
-  const { total, orphaned } = await costCentreService.countOrphanedRecords();
+  const counts = await costCentreService.countOrphanedRecords();
+  const { total, orphaned } = counts;
+  // Name only the fields that are actually missing. The old message always listed all four,
+  // so it told users to go and assign a Branch to 406 cost centres that already have one.
+  const gaps = [
+    counts.missingClient  ? `Client (${counts.missingClient})`   : null,
+    counts.missingLob     ? `LOB (${counts.missingLob})`         : null,
+    counts.missingBranch  ? `Branch (${counts.missingBranch})`   : null,
+    counts.missingProcess ? `Process (${counts.missingProcess})` : null,
+  ].filter(Boolean).join(", ");
   res.json({
     success: true,
     data: {
-      total,
-      orphaned,
+      ...counts,
       migrationComplete: orphaned === 0,
+      // Creating a cost centre is no longer blocked by this backlog — see costCentreService.create.
+      blocksCreate: false,
       message: orphaned > 0
-        ? `${orphaned} of ${total} cost centre(s) need Client, LOB, Branch, and Process assigned.`
+        ? `${orphaned} of ${total} cost centre(s) are missing a relationship — ${gaps}. New cost centres can still be created.`
         : "All cost centres have required relationships.",
     },
   });
@@ -251,6 +290,7 @@ router.get("/cost-centres/migration-status", h(async (_req: Request, res: Respon
 router.get("/cost-centres", h(async (req: Request, res: Response) => {
   const { q, active_status, page, limit, branch_id, client_id, lob_id, process_id } = req.query;
   const options = {
+    branchIds: await costCentreBranchEntitlement(req),
     q: q as string | undefined,
     active_status: active_status as string | undefined,
     page: page ? parseInt(page as string, 10) : undefined,
@@ -302,6 +342,12 @@ router.get("/cost-centres/billing-summary", h(async (_req: Request, res: Respons
 router.get("/cost-centres/:id", h(async (req: Request, res: Response) => {
   const item = await costCentreService.getById(req.params.id);
   if (!item) return res.status(404).json({ error: "Not found" });
+  // Same branch entitlement as the list: another branch's cost centre answers as not found.
+  const entitled = await costCentreBranchEntitlement(req);
+  const itemBranch = (item as { branch_id?: string | null }).branch_id ?? null;
+  if (entitled && (!itemBranch || !entitled.includes(String(itemBranch)))) {
+    return res.status(404).json({ error: "Not found" });
+  }
   res.json({ data: item });
 }));
 

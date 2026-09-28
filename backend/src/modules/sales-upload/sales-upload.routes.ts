@@ -93,8 +93,10 @@ salesUploadRouter.get("/neemans-abc-cart-snap", h(async (req, res) => {
   const month = String(req.query.month ?? "").slice(0, 7) || new Date().toISOString().slice(0, 7);
   try {
     return res.json({ success: true, data: await svc.getNeemansAbcCartSnap(month) });
-  } catch {
-    return res.json({ success: true, _unavailable: true, data: [] });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[neemans-abc-cart-snap] error:", msg);
+    return res.json({ success: true, _unavailable: true, data: [], _error: msg });
   }
 }));
 
@@ -190,10 +192,24 @@ salesUploadRouter.post(
   })
 );
 
+// One batch for the Recent Uploads drill-down. Same roles as uploading: the
+// sample rows are the uploaded data itself, customer phone numbers included.
+salesUploadRouter.get(
+  "/batch/:batchId",
+  requireRole("super_admin", "admin", "sales", "operations_manager"),
+  h(async (req, res) => {
+    const batchId = String(req.params.batchId ?? "").trim();
+    if (!batchId) return res.status(400).json({ success: false, error: "batchId is required" });
+    const data = await svc.getUploadBatch(batchId);
+    if (!data) return res.status(404).json({ success: false, error: "No such upload batch" });
+    return res.json({ success: true, data });
+  })
+);
+
 salesUploadRouter.delete(
   "/batch/:batchId",
-  // Tighter than the uploads on purpose: deleteUploadBatch removes rows from seven tables
-  // plus the upload log, and it cannot be undone from the UI.
+  // Tighter than the uploads on purpose: deleteUploadBatch removes rows from every
+  // upload table plus the upload log, and it cannot be undone from the UI.
   requireRole("super_admin", "admin", "operations_manager"),
   h(async (req, res) => {
     const batchId = String(req.params.batchId ?? "").trim();
@@ -237,3 +253,75 @@ salesUploadRouter.post(
     return res.json({ success: true, data: result });
   })
 );
+
+// ── Neemans Weekly Stack Ranking ──────────────────────────────────────────────
+
+salesUploadRouter.get("/neemans-weekly-ranking", h(async (req, res) => {
+  const month = String(req.query.month ?? "").slice(0, 7) || new Date().toISOString().slice(0, 7);
+  try {
+    return res.json({ success: true, data: await svc.getNeemansWeeklyRanking(month) });
+  } catch {
+    return res.json({ success: true, _unavailable: true, data: { weeks: [], rows: [], monthlyTarget: null } });
+  }
+}));
+
+// ── AW Dashboard (read-only) ──────────────────────────────────────────────────
+
+salesUploadRouter.get("/aw-dashboard", h(async (req, res) => {
+  const month = String(req.query.month ?? "").slice(0, 7) || new Date().toISOString().slice(0, 7);
+  try {
+    return res.json({ success: true, data: await svc.getAwDashboard(month) });
+  } catch {
+    return res.json({ success: true, _unavailable: true, data: { kpis: {}, agents: [], mandate: [], months: [] } });
+  }
+}));
+
+// ── AW Upload Routes ──────────────────────────────────────────────────────────
+
+const AW_UPLOAD_HANDLERS = new Map<string, (buf: Buffer, by: string) => Promise<{ rowsInserted: number }>>([
+  ["aw-out",      svc.uploadAwOut],
+  ["aw-billing",  svc.uploadAwBilling],
+  ["aw-mandate",  svc.uploadAwMandate],
+  ["aw-inbound",  svc.uploadAwInbound],
+  ["aw-new-cdr",  svc.uploadAwNewCdr],
+]);
+
+salesUploadRouter.post(
+  "/upload-aw/:type",
+  requireRole("super_admin", "admin", "sales", "operations_manager"),
+  upload.single("file"),
+  h(async (req, res) => {
+    const handler = AW_UPLOAD_HANDLERS.get(String(req.params.type));
+    if (!handler) return res.status(400).json({ success: false, error: `Unknown AW upload type "${req.params.type}". Expected: ${[...AW_UPLOAD_HANDLERS.keys()].join(", ")}` });
+    if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded" });
+    const result = await handler(req.file.buffer, req.authUser?.email ?? "system");
+    return res.json({ success: true, rowsInserted: result.rowsInserted, data: result });
+  })
+);
+
+// ── BVO / Bellavita Repeat Dashboard ─────────────────────────────────────────
+
+salesUploadRouter.get("/bvo-dashboard", h(async (req, res) => {
+  const month = String(req.query.month ?? "").slice(0, 7) || (() => {
+    const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  })();
+  try {
+    return res.json({ success: true, data: await svc.getBvoDashboard(month) });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[bvo-dashboard] error:", msg);
+    return res.json({ success: true, _unavailable: true, data: { kpis: {}, daily: [], products: [], paymentMix: [], months: [] } });
+  }
+}));
+
+// ── LP Dashboard ──────────────────────────────────────────────────────────────
+
+salesUploadRouter.get("/lp-dashboard", h(async (req, res) => {
+  try {
+    return res.json({ success: true, data: await svc.getLpDashboard() });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[lp-dashboard] error:", msg);
+    return res.json({ success: true, _unavailable: true, data: { summary: [], agents: [], dispositions: [], trend: [] } });
+  }
+}));

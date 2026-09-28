@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 import express from "express";
+import path from "path";
+import fs from "fs";
 import { esiRegDocsRouter } from "../esi-reg-docs.routes.js";
 
 vi.mock("../../../db/mysql.js", () => ({
@@ -22,24 +24,43 @@ vi.mock("../../../middleware/authMiddleware.js", () => ({
   },
 }));
 
+/**
+ * Mirrors archiver 8's REAL shape: a named `ZipArchive` class, no callable default.
+ *
+ * The previous mock exported `default: vi.fn(...)` — the archiver <=7 factory —
+ * and that is precisely why this suite stayed green while every download in
+ * production threw "archiverLib is not a function" on its first line. archiver
+ * 8.0.0 (installed) exports only classes: Archiver, ZipArchive, TarArchive,
+ * JsonArchive. A mock that invents an API the package does not have cannot fail
+ * when the code calls an API the package does not have.
+ *
+ * So this is a class now. If archiver's shape changes again, the mock has to be
+ * updated to match the installed package before the suite can pass — which is
+ * the property that was missing.
+ */
+const { zipInstances } = vi.hoisted(() => ({ zipInstances: [] as any[] }));
+
 vi.mock("archiver", () => {
-  return {
-    default: vi.fn(() => {
-      let _dest: any = null;
-      const archiveMock = {
-        append: vi.fn().mockReturnThis(),
-        file: vi.fn().mockReturnThis(),
-        pipe: vi.fn((dest: any) => { _dest = dest; return archiveMock; }),
-        on: vi.fn().mockReturnThis(),
-        finalize: vi.fn(() => {
-          if (_dest && typeof _dest.end === "function") _dest.end();
-          return Promise.resolve();
-        }),
-      };
-      return archiveMock;
-    }),
-  };
+  // A constructor, not a factory: each `new ZipArchive()` records itself so a
+  // test can assert against the instance the code actually built (e.g. which
+  // files were archived), not one handed back by a shared factory mock.
+  const ZipArchive = vi.fn(function (this: any) {
+    let _dest: any = null;
+    this.append = vi.fn().mockReturnThis();
+    this.file = vi.fn().mockReturnThis();
+    this.on = vi.fn().mockReturnThis();
+    this.pipe = vi.fn((dest: any) => { _dest = dest; return this; });
+    this.finalize = vi.fn(() => {
+      if (_dest && typeof _dest.end === "function") _dest.end();
+      return Promise.resolve();
+    });
+    zipInstances.push(this);
+  });
+  return { ZipArchive, Archiver: ZipArchive };
 });
+
+/** The archive the code under test just constructed. */
+const lastArchive = () => zipInstances[zipInstances.length - 1];
 
 import { db } from "../../../db/mysql.js";
 
@@ -89,10 +110,16 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("streams a zip with manifest.txt when no files exist on disk", async () => {
+    // The employee row is queued; everything after it resolves EMPTY by default.
+    // appendEsiPack() looks up PAN, then Aadhaar, then identity, then the bank
+    // row, and finally writes an audit row — five reads and a write, where this
+    // test used to queue exactly three. Counting them here would pin the number
+    // of queries the pack makes, which is not the contract; "no documents exist"
+    // is. A trailing mockResolvedValue says that once, for however many lookups
+    // the pack grows to make.
     vi.mocked(db.execute)
       .mockResolvedValueOnce([[{ emp_code: "EMP001", first_name: "Alice", last_name: "Smith", esic_number: "123", photo_url: null, avatar_url: null }] as any, []])
-      .mockResolvedValueOnce([[] as any, []]) // no pan doc
-      .mockResolvedValueOnce([[] as any, []]); // no bank detail for PDF
+      .mockResolvedValue([[] as any, []]);
 
     const res = await request(app)
       .get("/api/payroll/esi-reg-docs/emp-1/download")
@@ -105,6 +132,59 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/zip/);
+  });
+
+  it("falls back to the candidate's onboarding-uploaded PAN/Aadhaar when employee_documents has nothing", async () => {
+    // Live 2026-09-08: employee_documents resolves ZERO PAN/Aadhaar files for the
+    // entire ESI-eligible population (434 of 436 rows are unreadable legacy://
+    // markers). candidate_onboarding_document is where a real file exists — 38
+    // of 567 employees. This pins that fallback actually fires and is included
+    // in the zip, not merely that the code compiles.
+    const onboardingRoot = path.resolve(process.cwd(), "private-storage", "onboarding-documents");
+    fs.mkdirSync(onboardingRoot, { recursive: true });
+    const pan = path.join(onboardingRoot, "esi-test-pan.jpg");
+    const aadhaar = path.join(onboardingRoot, "esi-test-aadhaar.jpg");
+    fs.writeFileSync(pan, "fake-pan-bytes");
+    fs.writeFileSync(aadhaar, "fake-aadhaar-bytes");
+
+    try {
+      vi.mocked(db.execute).mockImplementation(async (sql: unknown) => {
+        const s = String(sql);
+        if (s.includes("FROM employees WHERE id")) {
+          return [[{ emp_code: "EMP001", first_name: "Alice", last_name: "Smith", esic_number: "123", photo_url: null, avatar_url: null }], []] as any;
+        }
+        // employee_documents: nothing resolvable, matching live reality.
+        if (s.includes("FROM employee_documents")) return [[], []] as any;
+        // candidate_onboarding_document: a real PAN and a real Aadhaar file.
+        if (s.includes("FROM candidate_onboarding_document") && s.includes("'pan'")) {
+          return [[{ file_path: pan }], []] as any;
+        }
+        if (s.includes("FROM candidate_onboarding_document")) {
+          return [[{ file_path: aadhaar }], []] as any;
+        }
+        return [[], []] as any;
+      });
+
+      const res = await request(app)
+        .get("/api/payroll/esi-reg-docs/emp-1/download")
+        .buffer(true)
+        .parse((res: any, cb: any) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (c: Buffer) => chunks.push(c));
+          res.on("end", () => cb(null, Buffer.concat(chunks)));
+        });
+
+      expect(res.status).toBe(200);
+      // The mock ZipArchive records every archive.file() call; both real files
+      // must have reached it under the labels the pack promises.
+      const archived = lastArchive();
+      const namedFiles = archived.file.mock.calls.map((c: any[]) => c[1]?.name);
+      expect(namedFiles).toContain("PAN_Card.jpg");
+      expect(namedFiles).toContain("Aadhaar.jpg");
+    } finally {
+      fs.rmSync(pan, { force: true });
+      fs.rmSync(aadhaar, { force: true });
+    }
   });
 
   it("returns 404 when employee not found", async () => {
@@ -133,10 +213,13 @@ describe("POST /api/payroll/esi-reg-docs/bulk-download", () => {
   });
 
   it("returns 200 zip when valid employee_ids supplied", async () => {
+    // Employee list queued; every per-employee lookup after it resolves empty.
+    // Same reason as the single-download test: appendEsiPack() makes several
+    // reads per employee and pinning the count would test the implementation
+    // rather than "this employee has no documents".
     vi.mocked(db.execute)
       .mockResolvedValueOnce([[{ id: "emp-1", emp_code: "EMP001", name: "Alice Smith", esic_number: "123", photo_url: null, avatar_url: null }] as any, []])
-      .mockResolvedValueOnce([[] as any, []]) // no pan doc
-      .mockResolvedValueOnce([[] as any, []]); // no bank detail for PDF
+      .mockResolvedValue([[] as any, []]);
 
     const res = await request(app)
       .post("/api/payroll/esi-reg-docs/bulk-download")

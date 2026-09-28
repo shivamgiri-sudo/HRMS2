@@ -29,7 +29,7 @@ function first(columns: Map<string, SourceColumn>, candidates: string[]) {
 }
 
 function fmtDate(expression: string) {
-  return `CASE WHEN ${expression} IS NULL THEN NULL ELSE UPPER(DATE_FORMAT(${expression},'%d-%b-%Y')) END`;
+  return `CASE WHEN ${expression} IS NULL THEN NULL ELSE UPPER(DATE_FORMAT(${expression},'%d-%m-%Y')) END`;
 }
 
 async function safeRecruitment(

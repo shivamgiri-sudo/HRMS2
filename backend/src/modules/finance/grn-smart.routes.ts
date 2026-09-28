@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync } from "fs";
+import { promises as fsp } from "fs";
 import path from "path";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
@@ -32,7 +33,9 @@ const SMART_WRITE_ROLES = [
   "branch_head",
   "branch_admin",
 ] as const;
-const SMART_REVIEW_ROLES = ["branch_head", "finance_head", "super_admin"] as const;
+// 3-stage chain (owner ruling, 2026-09-12): Branch Head -> Accounts Head -> Finance Head. Must
+// list the same roles as GRN_REVIEW_ROLES in grn.routes.ts — see the comment there.
+const SMART_REVIEW_ROLES = ["branch_head", "accounts_head", "finance_head", "super_admin"] as const;
 const SMART_OVERRIDE_ROLES = ["finance_head", "super_admin"] as const;
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads", "grn-documents");
@@ -46,7 +49,7 @@ const storage = multer.diskStorage({
 });
 const ALLOWED_UPLOAD_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png", ".webp"];
 const ALLOWED_UPLOAD_MIME_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
-const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 30 * 1024 * 1024;
 const MAX_UPLOAD_FILES = 10;
 
 const upload = multer({
@@ -332,6 +335,126 @@ smartGrnRouter.post(
   }
 );
 
+/**
+ * Chunked upload for one large document (e.g. a 50+ page scanned PDF).
+ *
+ * The production reverse proxy refuses any request body over 20 MB with HTTP 413 before the API
+ * sees it, so a single large file could never be attached. The browser splits such a file into
+ * pieces of at most CHUNK_MAX_BYTES and sends them one per request; each piece is staged on disk
+ * and, when the last one arrives, the pieces are joined into one stored file and registered
+ * exactly like a direct upload (same registerDocuments call, same sha256, same access checks).
+ */
+const CHUNK_MAX_BYTES = 8 * 1024 * 1024;
+const CHUNKED_FILE_MAX_BYTES = 150 * 1024 * 1024;
+const CHUNK_MAX_COUNT = Math.ceil(CHUNKED_FILE_MAX_BYTES / CHUNK_MAX_BYTES);
+const CHUNK_STAGING_DIR = path.join(UPLOAD_DIR, ".chunks");
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MIME_BY_EXTENSION: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+};
+
+const chunkUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: CHUNK_MAX_BYTES, files: 1 },
+});
+
+function parseChunkRequest(req: SmartRequest) {
+  const body = req.body ?? {};
+  const uploadId = String(body.uploadId ?? "");
+  const index = Number(body.index);
+  const total = Number(body.total);
+  const fileName = String(body.fileName ?? "").trim();
+  const extension = path.extname(fileName).toLowerCase();
+  if (!UUID_PATTERN.test(uploadId)) throw new Error("Invalid upload id");
+  if (!Number.isInteger(total) || total < 1 || total > CHUNK_MAX_COUNT) {
+    throw new Error(`A chunked upload may have at most ${CHUNK_MAX_COUNT} parts (${CHUNKED_FILE_MAX_BYTES / (1024 * 1024)} MB)`);
+  }
+  if (!Number.isInteger(index) || index < 0 || index >= total) throw new Error("Invalid part number");
+  if (!fileName || !MIME_BY_EXTENSION[extension]) {
+    throw new Error(`"${fileName || "file"}" was not accepted: only ${ALLOWED_UPLOAD_EXTENSIONS.join(", ")} files can be attached.`);
+  }
+  return { uploadId, index, total, fileName, extension };
+}
+
+smartGrnRouter.post(
+  "/:id/documents/chunk",
+  requireWriteAccess,
+  requireRole(...SMART_WRITE_ROLES),
+  authorizeGrn,
+  (req: Request, res: Response, next: NextFunction) =>
+    chunkUpload.single("chunk")(req, res, (error: unknown) => {
+      if (error instanceof multer.MulterError) {
+        next(Object.assign(new Error(`Upload part rejected: ${error.code}`), { statusCode: 400, code: error.code }));
+        return;
+      }
+      next(error as any);
+    }),
+  async (req: SmartRequest, res) => {
+    try {
+      const chunk = req.file;
+      if (!chunk?.buffer?.length) {
+        res.status(400).json({ success: false, error: "Upload part is empty" });
+        return;
+      }
+      const { uploadId, index, total, fileName, extension } = parseChunkRequest(req);
+      // Scoped by GRN id as well as upload id, so one GRN can never complete another's upload.
+      const stagingDir = path.join(CHUNK_STAGING_DIR, `${req.params.id}-${uploadId}`);
+      await fsp.mkdir(stagingDir, { recursive: true });
+      await fsp.writeFile(path.join(stagingDir, String(index)), chunk.buffer);
+
+      const present = await fsp.readdir(stagingDir);
+      if (present.length < total) {
+        res.status(202).json({ success: true, data: { received: present.length, total } });
+        return;
+      }
+
+      const storedPath = path.join(UPLOAD_DIR, `${randomUUID()}${extension}`);
+      let size = 0;
+      try {
+        for (let part = 0; part < total; part += 1) {
+          const buffer = await fsp.readFile(path.join(stagingDir, String(part)));
+          size += buffer.length;
+          if (size > CHUNKED_FILE_MAX_BYTES) {
+            throw new Error(`"${fileName}" is larger than ${CHUNKED_FILE_MAX_BYTES / (1024 * 1024)} MB`);
+          }
+          await fsp.appendFile(storedPath, buffer);
+        }
+      } catch (assemblyError) {
+        await fsp.rm(storedPath, { force: true });
+        throw assemblyError;
+      } finally {
+        await fsp.rm(stagingDir, { recursive: true, force: true });
+      }
+
+      const user = actor(req);
+      const type = String(req.body?.documentType ?? "invoice") as
+        | "invoice" | "receipt" | "po" | "contract" | "supporting" | "other";
+      const data = await grnSmartService.registerDocuments(
+        req.params.id,
+        [{
+          originalName: fileName,
+          storedPath,
+          mimeType: MIME_BY_EXTENSION[extension],
+          fileSizeBytes: size,
+          documentType: type,
+          isPrimary: String(req.body?.isPrimary ?? "false") === "true",
+        }],
+        user.id
+      );
+      res.status(201).json({ success: true, data });
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Document upload failed",
+      });
+    }
+  }
+);
+
 smartGrnRouter.post(
   "/:id/documents/:documentId/analyze",
   requireWriteAccess,
@@ -533,7 +656,8 @@ smartGrnRouter.post(
         req.params.id,
         user.id,
         user.role,
-        req.body?.remarks ? String(req.body.remarks) : undefined
+        req.body?.remarks ? String(req.body.remarks) : undefined,
+        user.roles // Pass all roles for Head Office bypass detection
       );
       res.json(data);
     } catch (error) {
@@ -549,14 +673,15 @@ smartGrnRouter.post(
 //
 // onlyWhenSmart calls next("router") for a GRN with no allocations, handing it to the legacy
 // grnRouter mounted after this one. With the role gate in front of that decision, this router's
-// narrower SMART_REVIEW_ROLES was applied to legacy GRNs too, and a role that only the legacy
-// list grants was 403'd before it could ever fall through. Today that set is exactly
-// {accounts_head} — see GRN_REVIEW_ROLES in grn.routes.ts — and accounts_head is separately
-// unable to complete a review anyway (resolveFinanceStageRole for workflow "grn" yields only
-// branch_head or finance_head), so nothing user-visible changes right now. It is still the wrong
-// order: a router that intends to intercept must decide whether it is intercepting before it
-// applies its own authorization. requireWriteAccess and authorizeGrn stay in front, so an
-// unauthenticated or out-of-branch caller is still refused before any lookup of substance.
+// SMART_REVIEW_ROLES would apply to legacy GRNs too before they ever get a chance to fall
+// through — a role granted only by the legacy list's own set would 403 here first. It is still
+// the wrong order: a router that intends to intercept must decide whether it is intercepting
+// before it applies its own authorization. requireWriteAccess and authorizeGrn stay in front, so
+// an unauthenticated or out-of-branch caller is still refused before any lookup of substance.
+//
+// SMART_REVIEW_ROLES and GRN_REVIEW_ROLES (grn.routes.ts) are kept identical on purpose — both
+// now carry the same three-stage set (branch_head, accounts_head, finance_head, super_admin),
+// so which router actually intercepts a given GRN never changes who is allowed to review it.
 smartGrnRouter.post(
   "/:id/review",
   requireWriteAccess,
@@ -571,6 +696,7 @@ smartGrnRouter.post(
         userRoles: user.roles,
         currentStatus: String(req.financeGrn?.status ?? ""),
         workflow: "grn",
+        grnType: req.financeGrn?.grn_type ?? null,
       });
       const decision = String(req.body?.decision ?? "") as "approved" | "rejected";
       if (!("approved,rejected".split(",")).includes(decision)) {
@@ -584,9 +710,10 @@ smartGrnRouter.post(
         effectiveRole
       );
       if (data.paymentId) {
-        await import("./vendor-payment.service.js")
+        const createdPaymentId = data.paymentId;
+        void import("./vendor-payment.service.js")
           .then(({ vendorPaymentService }) =>
-            vendorPaymentService.auditCreatedPayment(data.paymentId!, user.id)
+            vendorPaymentService.auditCreatedPayment(createdPaymentId, user.id)
           )
           .catch(() => undefined);
       }

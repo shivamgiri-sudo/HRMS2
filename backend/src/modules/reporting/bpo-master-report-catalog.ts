@@ -290,6 +290,10 @@ export const BPO_MASTER_REPORTS: BpoMasterReportDefinition[] = [
       c("GROSS_EARNINGS", "currency", { sensitive: true }), c("LWP_DEDUCTION", "currency", { sensitive: true }),
       c("PF_EMPLOYEE", "currency", { sensitive: true }), c("PF_EMPLOYER", "currency", { sensitive: true }),
       c("ESIC_EMPLOYEE", "currency", { sensitive: true }), c("ESIC_EMPLOYER", "currency", { sensitive: true }),
+      // PROFESSIONAL_TAX: PT removed from active payroll 2026-09-11 (explicit
+      // stakeholder decision, company-wide, all states). Column kept, not deleted,
+      // for historical rows - it always resolves to 0 for runs after the removal
+      // (see payrollCalculate.service.ts resolveProfessionalTax).
       c("PROFESSIONAL_TAX", "currency", { sensitive: true }), c("TDS", "currency", { sensitive: true }),
       c("LOAN_DEDUCTION", "currency", { sensitive: true }), c("ADVANCE_DEDUCTION", "currency", { sensitive: true }),
       c("OTHER_DEDUCTION", "currency", { sensitive: true }), c("TOTAL_DEDUCTIONS", "currency", { sensitive: true }),

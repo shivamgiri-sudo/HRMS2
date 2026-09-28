@@ -2,8 +2,14 @@ import mysql from 'mysql2/promise';
 import type { RowDataPacket } from 'mysql2';
 import { env } from '../config/env.js';
 
+// dialer_db lives on the same physical server as mas_hrms/db_masmis (LAN
+// 192.168.10.6 / public 122.184.128.90 -- confirmed via @@server_id/@@hostname
+// match). Whichever address reaches that server can flip depending on the
+// dev/prod network at the time, so DIALER_DB_HOST defaults to DB_HOST when
+// unset, mirroring the exact fallback masmisDb.ts already uses for
+// MASMIS_DB_HOST. Only set DIALER_DB_HOST explicitly to pin it independently.
 const config: mysql.PoolOptions = {
-  host: env.DIALER_DB_HOST,
+  host: env.DIALER_DB_HOST || env.DB_HOST,
   port: env.DIALER_DB_PORT || 3306,
   user: env.DIALER_DB_USER,
   password: env.DIALER_DB_PASSWORD,

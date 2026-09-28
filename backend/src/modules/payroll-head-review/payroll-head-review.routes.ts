@@ -1,6 +1,7 @@
 import { Router, type NextFunction, type Response } from "express";
 import { requireAuth, requireWriteAccess, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { listSalaryStartDateMismatches } from "../payroll/salary-start-date.service.js";
 import * as svc from "./payroll-head-review.service.js";
 
 const router = Router();
@@ -9,7 +10,8 @@ const h = (fn: AsyncHandler) => (req: AuthenticatedRequest, res: Response, next:
   void fn(req, res).catch(next);
 };
 
-const REVIEWER_ROLES = ["payroll_head", "admin", "super_admin"] as const;
+// Only Payroll Head and Super Admin approve, reject, assign packages or change salary dates here; admin may view/fix but not approve.
+const REVIEWER_ROLES = ["payroll_head", "super_admin"] as const;
 // The reviewer is not the fixer: resubmit is for whoever can actually correct the
 // underlying document/BGV/bank/salary issue, not for payroll_head to loop back to
 // themselves.
@@ -26,6 +28,14 @@ const VIEWER_ROLES = ["payroll_head", "payroll_hr", "branch_head", "hr", "admin"
 // look up. This is the read-only listing half of that same access; getQueue() branch/process-
 // scopes payroll_hr/branch_head via buildScopeWhereClause, payroll_head/admin/super_admin still
 // see everything.
+// Payroll Head-approved employees whose salary start date differs across the stored copies
+// (employee record, HR validation row, package date, salary assignment). Read-only; the fix is
+// to re-save the date (PATCH /:employeeId/salary-start-date), which rewrites every copy.
+router.get("/salary-date-mismatches", requireAuth, requireRole(...REVIEWER_ROLES), h(async (_req, res) => {
+  const data = await listSalaryStartDateMismatches();
+  res.json({ success: true, data });
+}));
+
 router.get("/queue", requireAuth, requireRole(...VIEWER_ROLES), h(async (req: AuthenticatedRequest, res) => {
   const data = await svc.getQueue({
     status: typeof req.query.status === "string" ? req.query.status : undefined,
@@ -50,21 +60,25 @@ router.get("/:employeeId", requireAuth, requireRole(...VIEWER_ROLES), h(async (r
   res.json({ success: true, data });
 }));
 
+// Optional free-text reason. Mandatory (>= 5 chars) only when the date goes before joining or before
+// today - the service decides that, so a normal on-time assignment needs none.
+const reasonOf = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
+
 router.post("/:employeeId/package/assign", requireAuth, requireWriteAccess, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
-  const { package_id, effective_date } = req.body as Record<string, unknown>;
+  const { package_id, effective_date, reason } = req.body as Record<string, unknown>;
   if (!package_id || !effective_date) {
     return res.status(400).json({ success: false, message: "package_id and effective_date are required." });
   }
-  const data = await svc.assignPackage(req.params.employeeId, String(package_id), String(effective_date), req.authUser!.id);
+  const data = await svc.assignPackage(req.params.employeeId, String(package_id), String(effective_date), req.authUser!.id, req.authUser!.roles, reasonOf(reason));
   res.json({ success: true, data });
 }));
 
 router.post("/:employeeId/package/create-and-assign", requireAuth, requireWriteAccess, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
-  const { effective_date, ...packageData } = req.body as Record<string, unknown>;
+  const { effective_date, reason, ...packageData } = req.body as Record<string, unknown>;
   if (!effective_date) {
     return res.status(400).json({ success: false, message: "effective_date is required." });
   }
-  const data = await svc.createAndAssignPackage(req.params.employeeId, packageData, String(effective_date), req.authUser!.id);
+  const data = await svc.createAndAssignPackage(req.params.employeeId, packageData, String(effective_date), req.authUser!.id, req.authUser!.roles, reasonOf(reason));
   res.json({ success: true, data });
 }));
 
@@ -80,11 +94,11 @@ router.post("/:employeeId/package/accept", requireAuth, requireWriteAccess, requ
 // One-click approval: copies the offered salary (from ats_employment_offer set by Branch HR)
 // directly to salary_component_assignments without creating a catalog package.
 router.post("/:employeeId/package/approve-offered", requireAuth, requireWriteAccess, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
-  const { effective_date } = req.body as Record<string, unknown>;
+  const { effective_date, reason } = req.body as Record<string, unknown>;
   if (!effective_date) {
     return res.status(400).json({ success: false, message: "effective_date is required." });
   }
-  const data = await svc.approveOfferedPackage(req.params.employeeId, String(effective_date), req.authUser!.id);
+  const data = await svc.approveOfferedPackage(req.params.employeeId, String(effective_date), req.authUser!.id, req.authUser!.roles, reasonOf(reason));
   res.json({ success: true, data });
 }));
 
@@ -125,11 +139,11 @@ router.post("/:employeeId/reopen", requireAuth, requireWriteAccess, requireRole(
 }));
 
 router.patch("/:employeeId/salary-start-date", requireAuth, requireWriteAccess, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
-  const { salary_start_date } = req.body as Record<string, unknown>;
+  const { salary_start_date, reason } = req.body as Record<string, unknown>;
   if (!salary_start_date || typeof salary_start_date !== "string") {
     return res.status(400).json({ success: false, message: "salary_start_date (YYYY-MM-DD) is required." });
   }
-  const data = await svc.updateSalaryStartDate(req.params.employeeId, salary_start_date, req.authUser!.id);
+  const data = await svc.updateSalaryStartDate(req.params.employeeId, salary_start_date, req.authUser!.id, req.authUser!.roles, reasonOf(reason));
   res.json({ success: true, data });
 }));
 
@@ -142,7 +156,8 @@ router.patch("/:employeeId/assignment-effective-date", requireAuth, requireWrite
     req.params.employeeId,
     String(effective_date),
     String(req.authUser!.id),
-    String(reason)
+    String(reason),
+    req.authUser!.roles
   );
   res.json({ success: true, data });
 }));

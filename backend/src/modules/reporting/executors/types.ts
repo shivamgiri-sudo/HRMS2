@@ -11,6 +11,7 @@
  *   - companyId must appear in every executor query (WHERE employee.company_id = :companyId).
  */
 import type { RowDataPacket } from "mysql2";
+import { lobCondition, parseLobFilterParam } from "../../../shared/lobFilter.js";
 
 export interface ExecFilters {
   branchId?: string;
@@ -18,10 +19,18 @@ export interface ExecFilters {
   departmentId?: string;
   costCentreId?: string;
   designationId?: string;
+  /** lob_master.id, or "__none__" for employees with no LOB. Filters employees.lob_id (see shared/lobFilter.ts). */
+  lobId?: string;
   managerId?: string;
   employeeCode?: string;
+  employeeName?: string;
+  /** Narrowing-only explicit employee id list (attendance-register-monthly). Never widens scope. */
+  employeeIds?: string[];
   from?: string;
   to?: string;
+  /** DOJ range for employee-master: filter by date_of_joining (not tenure window) */
+  dojFrom?: string;
+  dojTo?: string;
   month?: string;
   year?: string;
   financialYear?: string;
@@ -325,13 +334,24 @@ export function appendFilterConditions(
     clauses.push(`${alias}.designation_id = ?`);
     params.push(String(filters.designationId));
   }
+  if (filters.lobId) {
+    const lobSql = lobCondition(parseLobFilterParam(filters.lobId), alias);
+    if (lobSql) {
+      clauses.push(lobSql.sql);
+      params.push(...lobSql.params);
+    }
+  }
   if (filters.managerId) {
     clauses.push(`(${alias}.reporting_manager_id = ? OR ${alias}.manager_id = ?)`);
     params.push(String(filters.managerId), String(filters.managerId));
   }
   if (filters.employeeCode) {
-    clauses.push(`${alias}.employee_code = ?`);
+    clauses.push(`UPPER(${alias}.employee_code) = UPPER(?)`);
     params.push(String(filters.employeeCode));
+  }
+  if (filters.employeeName) {
+    clauses.push(`CONCAT(${alias}.first_name, ' ', COALESCE(${alias}.last_name, '')) LIKE ?`);
+    params.push(`%${String(filters.employeeName)}%`);
   }
 }
 

@@ -29,6 +29,7 @@ import {
   HALF_DAY_STATUS,
 } from "../../../shared/attendanceStatus.js";
 import { resolveAccountNumber } from "../../../shared/fieldEncryption.js";
+import { getDebitAccountNumber } from "../../payroll/payroll-debit-account-config.service.js";
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
@@ -232,6 +233,10 @@ export const PAYROLL_REGISTER_BODY = `
            COALESCE(spl.gross_salary,0) AS gross_salary,
            COALESCE(spl.pf_employee,0) AS pf_employee,
            COALESCE(spl.esic_employee,0) AS esic_employee,
+           -- PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+           -- company-wide, all states): salary_prep_line.professional_tax is no longer
+           -- computed on new runs, so this column reads 0 for any run processed after
+           -- the removal. Column kept for historical runs already carrying a value.
            COALESCE(spl.professional_tax,0) AS professional_tax,
            COALESCE(spl.tds,0) AS tds,
            COALESCE(spl.lwp_deduction,0) AS lwp_deduction,
@@ -445,6 +450,11 @@ export async function bankAdvice(
     params.push(options.cursor);
   }
 
+  // Config-driven, not hardcoded — see payroll-debit-account-config.service.ts. Escaped and
+  // interpolated directly (rather than a `?` placeholder) so it cannot shift the positional
+  // params below, which are ordered to match the WHERE clause's own placeholders.
+  const debitAcNoLiteral = db.escape(await getDebitAccountNumber());
+
   const base = `
     SELECT spl.id AS _cursor,
            e.employee_code,
@@ -480,12 +490,12 @@ export async function bankAdvice(
             * three-letter month; upper-cased so it matches the bank's sample exactly rather than
             * "15-Jun-2026".
             */
-           '033005005852' AS debit_ac_no,
+           ${debitAcNoLiteral} AS debit_ac_no,
            ${bankField.includes("MASKED") ? "'***MASKED***' AS beneficiary_ac_no" : "e.bank_account_number AS beneficiary_ac_no"},
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS beneficiary_name,
            COALESCE(spl.net_salary,0) AS amt,
            CASE WHEN UPPER(LEFT(COALESCE(e.ifsc_code,''),4)) = 'ICIC' THEN 'Y' ELSE 'N' END AS pay_mod,
-           UPPER(DATE_FORMAT(LAST_DAY(STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d')), '%d-%b-%Y')) AS transfer_date,
+           UPPER(DATE_FORMAT(LAST_DAY(STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d')), '%d-%m-%Y')) AS transfer_date,
            ${ifscField.includes("MASKED") ? "'***MASKED***' AS ifsc" : "e.ifsc_code AS ifsc"},
            e.mobile AS bene_mobile_no,
            COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS bene_email_id
@@ -1009,6 +1019,10 @@ export async function neftTransferFile(
   )`);
   clauses.push("UPPER(TRIM(COALESCE(ebd.ifsc_code, e.ifsc_code, ''))) REGEXP '^[A-Z]{4}0[A-Z0-9]{6}$'");
 
+  // Config-driven, not hardcoded — see payroll-debit-account-config.service.ts and the same
+  // note on bankAdvice above.
+  const debitAcNoLiteral = db.escape(await getDebitAccountNumber());
+
   const base = `
     SELECT e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -1028,11 +1042,11 @@ export async function neftTransferFile(
             * is the company's own and constant per row. Date is DD-MMM-YYYY upper-cased to match
             * the sample exactly (15-JUN-2026, not 15-Jun-2026).
             */
-           '033005005852' AS debit_ac_no,
+           ${debitAcNoLiteral} AS debit_ac_no,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS beneficiary_name,
            MAX(COALESCE(spl.net_salary,0)) AS amt,
            CASE WHEN UPPER(LEFT(COALESCE(ebd.ifsc_code, e.ifsc_code, ''),4)) = 'ICIC' THEN 'Y' ELSE 'N' END AS pay_mod,
-           UPPER(DATE_FORMAT(LAST_DAY(STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d')), '%d-%b-%Y')) AS transfer_date,
+           UPPER(DATE_FORMAT(LAST_DAY(STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d')), '%d-%m-%Y')) AS transfer_date,
            e.mobile AS bene_mobile_no,
            COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS bene_email_id,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
@@ -1176,6 +1190,8 @@ export async function salarySheetExport(
       COALESCE(spl.tds_amount, spl.tds, 0) AS income_tax,
       COALESCE(spl.advance_recovery, 0) AS adv_paid,
       COALESCE(spl.loan_emi, 0) AS loan_ded,
+      -- PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+      -- company-wide, all states); reads 0 for every run processed after removal.
       COALESCE(spl.professional_tax, 0) AS pro_tax_deduction,
       COALESCE(spl.lwp_deduction, 0) AS leave_deduction,
       COALESCE(spl.other_deductions, 0) AS other_deduction,
@@ -1188,7 +1204,7 @@ export async function salarySheetExport(
       0 AS admin_chrg,
       COALESCE(esa.ctc_annual, 0) AS ctc,
       spr.id AS run_id,
-      DATE_FORMAT(spr.created_at, '%Y-%m-%d') AS sal_date,
+      DATE_FORMAT(spr.created_at, '%d-%m-%Y') AS sal_date,
       COALESCE(eu.uan, '') AS uan,
       COALESCE(e.epf_number, eu.member_id, '') AS epf_no,
       COALESCE(e.esic_number, '') AS esic_no,
@@ -1198,7 +1214,15 @@ export async function salarySheetExport(
       ebd.account_number AS ac_no_legacy,
       COALESCE(ebd.ifsc_code, '') AS ifsc_code,
       COALESCE(ebd.bank_name, '') AS ac_bank,
-      COALESCE(ebd.bank_branch, '') AS ac_branch
+      COALESCE(ebd.bank_branch, '') AS ac_branch,
+      -- Sourced from the Salary Transfer File workflow (bank-payment-readiness), not a real
+      -- cheque: previously hardcoded to "" / "" / today's date regardless of any real
+      -- transfer. ecs_number is the bank's transfer/ECS reference, transfer_date is the
+      -- payment date from that file, confirmed_at is when the number was recorded (i.e. the
+      -- file's upload/commit moment).
+      sti.ecs_number AS cheque_number_raw,
+      DATE_FORMAT(sti.transfer_date, '%Y-%m-%d') AS cheque_date_raw,
+      DATE_FORMAT(sti.confirmed_at, '%Y-%m-%d') AS print_date_raw
     FROM salary_prep_line spl
     JOIN salary_prep_run spr ON spr.id = spl.run_id
     JOIN employees e ON e.id = spl.employee_id
@@ -1210,6 +1234,8 @@ export async function salarySheetExport(
     LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
     LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id AND ebd.is_primary = 1 AND ebd.active_status = 1
     LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
+    LEFT JOIN salary_transfer_batch_item sti
+           ON sti.run_id = spr.id AND sti.employee_code = e.employee_code AND sti.status = 'confirmed'
     WHERE ${clauses.join(" AND ")}
     ORDER BY e.employee_code`;
 
@@ -1327,9 +1353,9 @@ export async function salarySheetExport(
       uan: row.uan,
       epf_no: row.epf_no,
       esic_no: row.esic_no,
-      cheque_number: "",
-      cheque_date: "",
-      print_date: new Date().toISOString().slice(0, 10),
+      cheque_number: row.cheque_number_raw ?? "",
+      cheque_date: row.cheque_date_raw ?? "",
+      print_date: row.print_date_raw ?? "",
       left_status: row.left_status,
       tax_total_gross: gross * 12,
       tax_section10: 0,

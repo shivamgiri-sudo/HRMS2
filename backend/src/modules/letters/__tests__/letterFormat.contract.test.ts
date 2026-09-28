@@ -108,8 +108,16 @@ describe("both letter callers use the resolver, not the dead columns", () => {
     });
 
     it(`${f} renders salary from the resolver`, () => {
-      expect(code).toContain("resolveAppointmentLetterSalary(");
-      expect(code).toContain("...toLetterRows(salary),");
+      // Both callers now go through letterSalaryRowsOrBlank(), which wraps
+      // resolveAppointmentLetterSalary() and degrades to BLANK rows rather than
+      // failing the whole letter when no Payroll-Head-approved package exists.
+      // These two render the offer/confirmation/experience templates, two of
+      // which print no salary at all, so a hard failure there would be a
+      // regression caused by a rule that was never about those letters.
+      // What this pin protects is unchanged: the salary comes from the resolver
+      // module, never from hand-read columns.
+      expect(code).toContain("letterSalaryRowsOrBlank(");
+      expect(code).toContain("...salaryRows,");
     });
 
     it(`${f} formats dates in IST and guards the name`, () => {

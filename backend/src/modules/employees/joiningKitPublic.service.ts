@@ -55,7 +55,7 @@ async function resolveToken(token: string): Promise<RowDataPacket> {
       throw Object.assign(new Error("These documents have already been signed. No further action is needed."),
         { statusCode: 410, code: "KIT_ALREADY_SIGNED" });
     }
-    reject("This signing link is no longer active. Please ask HR to resend it.");
+    reject("This signing link has been replaced by a newer one. Please check your email for the most recent message from MAS Callnet and use the link in that email.");
   }
   if (row.expires_at && new Date(String(row.expires_at)).getTime() < Date.now()) {
     throw Object.assign(new Error("This signing link has expired. Please ask HR to resend it."),

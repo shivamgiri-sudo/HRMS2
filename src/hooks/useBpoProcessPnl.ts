@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { hrmsApi } from "@/lib/hrmsApi";
 
@@ -71,6 +71,8 @@ export interface BpoPnlRow {
   bmc: number;
   bmcPctRevenue: number | null;
   grnVendorActual: number;
+  /** GRN Committed (reserved, ex-GST) — the part of grnVendorActual not yet consumed (2026-09-24). */
+  grnCommitted?: number;
   totalPeopleCost: number;
   peopleCostPctRevenue: number | null;
   contribution: number;
@@ -122,6 +124,8 @@ export interface BpoPnlSummary {
     bmc: number;
     bmcPctRevenue: number | null;
     grnVendorActual: number;
+    /** GRN Committed (reserved, ex-GST), included in grnVendorActual; absent on an older backend. */
+    grnCommitted?: number;
     totalPeopleCost: number;
     peopleCostPctRevenue: number | null;
     contribution: number;
@@ -201,6 +205,8 @@ export function useBpoProcessPnl(filters: BpoPnlFilters) {
       return response.data;
     },
     staleTime: 60_000,
+    // Keep the previous scope's figures on screen while a new branch/period loads.
+    placeholderData: keepPreviousData,
   });
 }
 

@@ -13,6 +13,8 @@ import {
   type ManualAllocationInput,
 } from "./branch-budget-allocation.service.js";
 import { isPeriodLocked } from "./finance-period-lock.js";
+import { budgetExGstSql, grnAllocationExGstSql } from "./pnl-ex-gst.js";
+import { budgetLineAvailableSql } from "./budget-tax-basis.js";
 
 import { refuse } from "./finance-error.js";
 import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
@@ -586,7 +588,8 @@ export interface CompanyConsolidationBranchAmount {
    *  prorated across this GRN's allocation rows by each row's share of the GRN total — so a
    *  partially_paid GRN contributes its real paid-so-far amount, not zero. */
   paidAmount: number;
-  /** Sum of grn_cost_allocation.pnl_cost_amount for allocations at lifecycle_status='consumed'
+  /** Sum of grn_cost_allocation's EX-GST amount (amount_without_tax; owner rule 2026-09-24 — was
+   *  pnl_cost_amount) for allocations at lifecycle_status='consumed'
    *  — the same filter vw_process_lob_grn_allocation uses to source real (not planned) P&L cost,
    *  so this lines up with what Process P&L actually booked, not what was budgeted. */
   bookedToPnlAmount: number;
@@ -645,7 +648,9 @@ export async function getCompanyBudgetConsolidation(
     executor.execute<RowDataPacket[]>(
       `SELECT a.budget_line_id,
               SUM(COALESCE(vpt.paid_amount, 0) * a.amount_with_tax / NULLIF(grn_totals.total_amount, 0)) paid_amount,
-              SUM(CASE WHEN a.lifecycle_status = 'consumed' THEN a.pnl_cost_amount ELSE 0 END) booked_amount
+              -- EX-GST (owner rule 2026-09-24: P&L GRN must be non-GST): booked-to-P&L is the
+              -- allocation's taxable value, the same basis readGrnSpend() books. Was pnl_cost_amount.
+              SUM(CASE WHEN a.lifecycle_status = 'consumed' THEN ${grnAllocationExGstSql("a")} ELSE 0 END) booked_amount
          FROM grn_cost_allocation a
          JOIN finance_budget_line l ON l.id = a.budget_line_id
          JOIN finance_budget_header h ON h.id = l.budget_id
@@ -1053,7 +1058,8 @@ export const branchBudgetService = {
               vm.vendor_name AS preferred_vendor_name,
               (l.quantity-l.reserved_quantity-l.consumed_quantity)
                 AS available_quantity,
-              (l.pnl_cost_amount-l.reserved_amount-l.consumed_amount)
+              -- Ex-GST headroom, the basis GRN approval enforces (budget-tax-basis.ts).
+              ${budgetLineAvailableSql("l")}
                 AS available_gross_amount
          FROM finance_budget_line l
          LEFT JOIN process_master pm ON pm.id = l.process_id
@@ -2073,9 +2079,16 @@ export const branchBudgetService = {
     remarks?: string,
     /** Per head/sub-head correction notes. Only meaningful when sending a budget back, so the
      *  branch admin is told which head/sub-head to fix rather than just "revise this budget". */
-    lineCorrections?: BudgetLineCorrectionInput[]
+    lineCorrections?: BudgetLineCorrectionInput[],
+    /** Every role the caller actually holds. `actorRole` is the role that OWNS the stage being
+     *  performed (resolveFinanceStageRole), so a Finance Head acting at the Branch Head stage
+     *  arrives as "branch_head" — the exemption below must look at what they hold, not that. */
+    callerRoles: string[] = []
   ) {
     const role = actorRole.toLowerCase();
+    const holdsMakerCheckerExemptRole = callerRoles.some((held) =>
+      MAKER_CHECKER_EXEMPT_ROLES.has(String(held).toLowerCase())
+    );
     if (!REVIEW_CAPABLE_ROLES.has(role)) {
       throw refuse(403, "BUDGET_NO_REVIEW_ROLE", `Role ${actorRole} cannot review branch budgets`);
     }
@@ -2139,7 +2152,7 @@ export const branchBudgetService = {
       // reviewer is still blocked. The approval log records each stage with the actor's name and
       // timestamp, so a single person completing multiple stages remains visible after the fact
       // rather than prevented up front.
-      if (decision === "approve" && !MAKER_CHECKER_EXEMPT_ROLES.has(role)) {
+      if (decision === "approve" && !MAKER_CHECKER_EXEMPT_ROLES.has(role) && !holdsMakerCheckerExemptRole) {
         const submittedBy = rows[0].submitted_by ? String(rows[0].submitted_by) : null;
         const bhApprovedBy = rows[0].branch_head_approved_by ? String(rows[0].branch_head_approved_by) : null;
         // Every actor who already touched this budget at or before the current stage. A reviewer
@@ -2278,7 +2291,8 @@ export const branchBudgetService = {
               vm.vendor_name AS preferred_vendor_name,
               (l.quantity-l.reserved_quantity-l.consumed_quantity)
                 AS available_quantity,
-              (l.pnl_cost_amount-l.reserved_amount-l.consumed_amount)
+              -- Ex-GST headroom, the basis GRN approval enforces (budget-tax-basis.ts).
+              ${budgetLineAvailableSql("l")}
                 AS available_gross_amount,
               -- Per-cost-centre headroom on a BRANCH-LEVEL line (cost_centre_id IS NULL).
               --
@@ -2293,7 +2307,13 @@ export const branchBudgetService = {
               -- nothing here blocks a GRN (owner decision 2026-08-19, warn rather than block).
               -- NULL when no cost centre was asked about, or when the line is already direct to
               -- one cost centre (in which case available_gross_amount is already the answer).
-              alloc.gross_amount AS cost_centre_allocated_amount,
+              --
+              -- Both advisory figures are EX-GST (owner rule 2026-09-24: P&L GRN and the budget it
+              -- is compared with are non-GST): the cost centre's planned share at its base_amount,
+              -- committed at amount_without_tax. They were gross_amount / amount_with_tax. The
+              -- enforcing available_gross_amount above moved to the same ex-GST basis on
+              -- 2026-09-24 (owner decision: GRN approval limit on the excluding-GST amount).
+              ${budgetExGstSql("alloc")} AS cost_centre_allocated_amount,
               COALESCE(committed.committed_amount, 0) AS cost_centre_committed_amount
          FROM finance_budget_line l
          JOIN finance_budget_header h ON h.id = l.budget_id
@@ -2305,8 +2325,8 @@ export const branchBudgetService = {
                AND l.cost_centre_id IS NULL
                AND alloc.cost_centre_id = ?
          LEFT JOIN (
-                SELECT budget_line_id, cost_centre_id, SUM(amount_with_tax) AS committed_amount
-                  FROM grn_cost_allocation
+                SELECT budget_line_id, cost_centre_id, SUM(${grnAllocationExGstSql("gca")}) AS committed_amount
+                  FROM grn_cost_allocation gca
                  WHERE lifecycle_status IN ('reserved', 'consumed')
                  GROUP BY budget_line_id, cost_centre_id
               ) committed
@@ -2336,7 +2356,8 @@ export const branchBudgetService = {
               vm.vendor_name AS preferred_vendor_name,
               (l.quantity-l.reserved_quantity-l.consumed_quantity)
                 AS available_quantity,
-              (l.pnl_cost_amount-l.reserved_amount-l.consumed_amount)
+              -- Ex-GST headroom, the basis GRN approval enforces (budget-tax-basis.ts).
+              ${budgetLineAvailableSql("l")}
                 AS available_gross_amount
          FROM finance_budget_line l
          JOIN finance_budget_header h ON h.id = l.budget_id
@@ -2753,9 +2774,12 @@ export const branchBudgetService = {
               -- The allocation table records lifecycle as a status plus timestamps, so the two
               -- amounts are derived from it — the same idiom this file already uses for
               -- booked_amount above. Aliased back to the original names so callers are unchanged.
-              ca.pnl_cost_amount AS allocation_amount,
-              CASE WHEN ca.lifecycle_status = 'reserved' THEN ca.pnl_cost_amount ELSE 0 END AS reserved_amount,
-              CASE WHEN ca.lifecycle_status = 'consumed' THEN ca.pnl_cost_amount ELSE 0 END AS consumed_amount,
+              -- EX-GST (owner rule 2026-09-24): the three allocation figures are the allocation's
+              -- taxable value (amount_without_tax), matching P&L GRN. They were pnl_cost_amount,
+              -- which is still returned on the GRN header above (gr.pnl_cost_amount) for reference.
+              ${grnAllocationExGstSql("ca")} AS allocation_amount,
+              CASE WHEN ca.lifecycle_status = 'reserved' THEN ${grnAllocationExGstSql("ca")} ELSE 0 END AS reserved_amount,
+              CASE WHEN ca.lifecycle_status = 'consumed' THEN ${grnAllocationExGstSql("ca")} ELSE 0 END AS consumed_amount,
               -- Added 2026-08-29 (migration 1630). This drill-through is already scoped to ONE
               -- funding line — every row here is, by definition, paid from lineId's own budget —
               -- which is exactly the view where "but who actually incurred it" is most likely to

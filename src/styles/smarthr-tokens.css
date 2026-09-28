@@ -9,17 +9,18 @@
 
 @layer base {
   :root {
-    /* ===== SmartHR Color Palette ===== */
-    /* Primary Blues */
-    --smarthr-primary-blue: 223 81% 61%;      /* #4361ee */
-    --smarthr-primary-light: 213 94% 68%;     /* #4dabf7 */
-    --smarthr-primary-dark: 235 81% 48%;      /* #3730a3 */
+    /* ===== SmartHR Compatibility Aliases → MAS Design System ===== */
+    /* These map legacy SmartHR variable names to the MAS token layer.  */
+    /* Do not add new raw SmartHR hex values; extend --color-* instead. */
+    --smarthr-primary-blue: 212 74% 41%;      /* aliased → MAS #1B6AB5 */
+    --smarthr-primary-light: 212 74% 60%;     /* lighter MAS blue */
+    --smarthr-primary-dark: 212 74% 30%;      /* pressed MAS blue */
 
-    /* Status Colors */
-    --smarthr-success: 142 76% 36%;           /* #10b981 */
-    --smarthr-warning: 38 92% 50%;            /* #f59e0b */
-    --smarthr-danger: 0 84% 60%;              /* #ef4444 */
-    --smarthr-info: 199 89% 48%;              /* #0ea5e9 */
+    /* Status aliases → MAS semantic state tokens */
+    --smarthr-success: 131 51% 45%;           /* aliased → MAS #3BAD49 */
+    --smarthr-warning: 33 97% 43%;            /* aliased → MAS #D97706 */
+    --smarthr-danger: 2 82% 51%;              /* aliased → MAS #E8231A */
+    --smarthr-info: 224 82% 55%;              /* aliased → MAS #1D4ED8 */
 
     /* Chart Colors (8-color palette) */
     --chart-blue: 223 81% 61%;                /* #4361ee */

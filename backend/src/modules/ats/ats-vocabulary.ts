@@ -215,6 +215,26 @@ export function canonicalBranch(value: unknown): string {
 }
 
 /**
+ * The reverse of canonicalBranch(): every raw spelling — aliases plus the canonical name
+ * itself — that a candidate row might carry in applied_for_branch for a given
+ * branch_master.branch_name. For widening an exact-match SQL filter (branch-scoped access
+ * control, the daily report) into an alias-aware one, so "which candidates belong to
+ * NOIDA-2" also catches the 1,862 rows recorded as "Okaya Centre" instead of missing them.
+ *
+ * Deliberately additive only: every name returned is a *confirmed* alias of
+ * `canonicalName` from BRANCH_CANONICAL above, so using this to build an `IN (...)` list
+ * can only ADD matching rows to a filter that already matched on the canonical name alone
+ * — it can never remove access that already worked.
+ */
+export function branchNameVariants(canonicalName: string): string[] {
+  const variants = new Set<string>([canonicalName]);
+  for (const [alias, canon] of Object.entries(BRANCH_CANONICAL)) {
+    if (canon === canonicalName) variants.add(alias);
+  }
+  return [...variants];
+}
+
+/**
  * The key a recruiter is grouped by: the case-folded name, deliberately NOT the foreign key.
  *
  * The obvious implementation — prefer `recruiter_assigned_id`, fall back to the name — is wrong

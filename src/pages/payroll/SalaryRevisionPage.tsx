@@ -1,3 +1,4 @@
+import { useDateLockMin } from '@/hooks/useDateLockMin';
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { hrmsApi } from '@/lib/hrmsApi';
@@ -72,7 +73,8 @@ function empName(e: EmployeeResult) {
   return e.full_name ?? `${e.first_name ?? ''} ${e.last_name ?? ''}`.trim();
 }
 
-const REVIEWER_ROLES = ['payroll_head', 'admin', 'super_admin'];
+// Admin can raise a revision but only Payroll Head / Super Admin approve one.
+const REVIEWER_ROLES = ['payroll_head', 'super_admin'];
 const FIXER_ROLES    = ['payroll_hr', 'branch_head', 'hr', 'admin', 'super_admin'];
 
 // ── Status Badge ──────────────────────────────────────────────────────────────
@@ -193,7 +195,7 @@ function EmployeePicker({
 
 function DetailDrawer({
   request, open, onClose,
-  isReviewer, onApprove, onReject,
+  isReviewer, onApprove, onReject, actionError,
 }: {
   request: RevisionRequest | null;
   open: boolean;
@@ -201,6 +203,7 @@ function DetailDrawer({
   isReviewer: boolean;
   onApprove: (id: number) => void;
   onReject: (id: number) => void;
+  actionError?: string | null;
 }) {
   if (!request) return null;
   return (
@@ -287,6 +290,12 @@ function DetailDrawer({
           </div>
         </div>
 
+        {isReviewer && request.status === 'pending' && actionError && (
+          <div role="alert" className="mx-4 mb-0 mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 flex-shrink-0">
+            {actionError}
+          </div>
+        )}
+
         {isReviewer && request.status === 'pending' && (
           <div className="border-t p-4 flex gap-3 flex-shrink-0">
             <Button variant="outline" onClick={() => onReject(request.id)}
@@ -350,6 +359,7 @@ function RejectDialog({
 // ── Bulk Submit Fields ────────────────────────────────────────────────────────
 
 function BulkSubmitFields({ onSuccess }: { onSuccess: () => void }) {
+  const dateMin = useDateLockMin();
   const [codes, setCodes]                   = useState('');
   const [newDate, setNewDate]               = useState('');
   const [reason, setReason]                 = useState('');
@@ -453,6 +463,7 @@ function BulkSubmitFields({ onSuccess }: { onSuccess: () => void }) {
         <Input
           type="date"
           value={newDate}
+          min={dateMin}
           onChange={(e) => { setNewDate(e.target.value); setResults(null); }}
           className="rounded-xl h-9 text-sm"
         />
@@ -531,6 +542,7 @@ function BulkSubmitFields({ onSuccess }: { onSuccess: () => void }) {
 // ── Submit Form (Fixer view) ───────────────────────────────────────────────────
 
 function SubmitForm({ onSuccess }: { onSuccess: () => void }) {
+  const dateMin = useDateLockMin();
   const [mode, setMode] = useState<'single' | 'bulk'>('single');
   const [employee, setEmployee] = useState<EmployeeResult | null>(null);
   const [newDate, setNewDate] = useState('');
@@ -611,7 +623,7 @@ function SubmitForm({ onSuccess }: { onSuccess: () => void }) {
             <Label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               New Salary Date <span className="text-red-500">*</span>
             </Label>
-            <Input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)}
+            <Input type="date" value={newDate} min={dateMin} onChange={(e) => setNewDate(e.target.value)}
               className="rounded-xl h-9 text-sm" />
           </div>
         </div>
@@ -720,23 +732,31 @@ export default function SalaryRevisionPage() {
   const myQuery = useQuery({
     queryKey: ['salary-revision-mine'],
     queryFn: () =>
-      hrmsApi.get<{ success: boolean; data: RevisionRequest[] }>(`/api/salary-revision?status=pending`)
+      hrmsApi.get<{ success: boolean; data: RevisionRequest[] }>(`/api/salary-revision/mine`)
         .then((r) => r.data ?? []),
     enabled: isResolved && isFixer && !isReviewer,
   });
 
+  // Review failures (including the not-before-today date lock) must be visible in the drawer,
+  // otherwise a refused Approve looks like nothing happened.
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
   const approveMut = useMutation({
     mutationFn: (id: number) =>
       hrmsApi.post(`/api/salary-revision/${id}/review`, { action: 'approve' }),
+    onMutate: () => setReviewError(null),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['salary-revision'] });
       setDrawer(null);
     },
+    onError: (e: any) => setReviewError(e?.message ?? 'Approval failed.'),
   });
 
   const rejectMut = useMutation({
     mutationFn: ({ id, remarks }: { id: number; remarks: string }) =>
       hrmsApi.post(`/api/salary-revision/${id}/review`, { action: 'reject', remarks }),
+    onMutate: () => setReviewError(null),
+    onError: (e: any) => setReviewError(e?.message ?? 'Rejection failed.'),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['salary-revision'] });
       setDrawer(null); setRejectTarget(null);
@@ -799,6 +819,11 @@ export default function SalaryRevisionPage() {
       {/* ── Reviewer Layout ── */}
       {isReviewer && (
         <>
+          {/* A branch admin / admin is a reviewer by role but is also a requester: without the form
+              they saw only the approval queue and could not raise a request (MAS50351). */}
+          {isFixer && (
+            <SubmitForm onSuccess={() => qc.invalidateQueries({ queryKey: ['salary-revision'] })} />
+          )}
           {/* KPI tiles */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <KpiTile label="Pending Approval" value={requests.filter((r) => r.status === 'pending').length} tone="amber" Icon={Clock3} />
@@ -875,8 +900,9 @@ export default function SalaryRevisionPage() {
       <DetailDrawer
         request={drawer}
         open={!!drawer}
-        onClose={() => setDrawer(null)}
+        onClose={() => { setDrawer(null); setReviewError(null); }}
         isReviewer={isReviewer}
+        actionError={reviewError}
         onApprove={(id) => approveMut.mutate(id)}
         onReject={(id) => { setRejectTarget(id); }}
       />

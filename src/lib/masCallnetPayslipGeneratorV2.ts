@@ -39,7 +39,6 @@ interface MasCallnetPayslipData {
   incentive: number;
   pf: number;
   esic: number;
-  pt: number;
   tds: number;
   lwpDeduction: number;
   loan: number;
@@ -275,7 +274,7 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
   // ── DEDUCTIONS SECTION ────────────────────────────────────────────────────────
   // Use the authoritative net/gross from payroll rather than recomputing,
   // since LWP is already reflected in reduced gross (not a cash deduction from net)
-  const computedDeductions = data.pf + data.esic + data.pt + data.tds + data.loan + data.adDed + data.otherDed;
+  const computedDeductions = data.pf + data.esic + data.tds + data.loan + data.adDed + data.otherDed;
   const totalDeductions = (data.grossSalary && data.netSalary)
     ? (data.grossSalary - data.netSalary)
     : computedDeductions;
@@ -290,7 +289,6 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
         { content: "DEDUCTIONS", styles: { ...dedHeaderStyle, halign: "left" as const } },
         { content: "PF", styles: dedHeaderStyle },
         { content: "ESIC", styles: dedHeaderStyle },
-        { content: "PT", styles: dedHeaderStyle },
         { content: "TDS", styles: dedHeaderStyle },
         { content: "Loan", styles: dedHeaderStyle },
         { content: "Advance", styles: dedHeaderStyle },
@@ -303,7 +301,6 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
         { content: "Amount (Rs.)", styles: { fillColor: [240, 245, 255] as [number, number, number], fontStyle: "bold" as const, textColor: MCN_NAVY as [number, number, number], fontSize: 7 } },
         { content: formatINR(data.pf), styles: dedValueStyle },
         { content: formatINR(data.esic), styles: dedValueStyle },
-        { content: formatINR(data.pt), styles: dedValueStyle },
         { content: formatINR(data.tds), styles: dedValueStyle },
         { content: formatINR(data.loan), styles: dedValueStyle },
         { content: formatINR(data.adDed), styles: dedValueStyle },
@@ -321,14 +318,14 @@ export async function generateMasCallnetPayslip(data: MasCallnetPayslipData): Pr
       textColor: [0, 0, 0],
       valign: "middle",
     },
-    // 24 + (7 x 19.6) + 20.8 = 182 = CONTENT_W. The label column needs ~24mm so
+    // 24 + (6 x 22.87) + 20.8 = 182 = CONTENT_W. The label column needs ~24mm so
     // "DEDUCTIONS" stays on one line instead of breaking into "DEDUCTI / ONS".
+    // (PT column removed — Professional Tax deduction discontinued company-wide.)
     columnStyles: {
       0: { cellWidth: 24, halign: "left", fontSize: 7 },
-      1: { cellWidth: 19.6 }, 2: { cellWidth: 19.6 }, 3: { cellWidth: 19.6 },
-      4: { cellWidth: 19.6 }, 5: { cellWidth: 19.6 }, 6: { cellWidth: 19.6 },
-      7: { cellWidth: 19.6 },
-      8: { cellWidth: 20.8 },
+      1: { cellWidth: 22.87 }, 2: { cellWidth: 22.87 }, 3: { cellWidth: 22.87 },
+      4: { cellWidth: 22.87 }, 5: { cellWidth: 22.87 }, 6: { cellWidth: 22.87 },
+      7: { cellWidth: 20.8 },
     },
     headStyles: { minCellHeight: 7 },
     bodyStyles: { minCellHeight: 7 },

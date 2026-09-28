@@ -6,10 +6,13 @@ async function testEndpoint() {
   // First, login to get JWT token
   console.log('1. Logging in...');
 
-  const loginData = JSON.stringify({
-    email: 'admin@mascallnet.com',
-    password: 'Admin@123'
-  });
+  const email = process.env.TEST_ADMIN_EMAIL;
+  const password = process.env.TEST_ADMIN_PASSWORD;
+  if (!email || !password) {
+    console.error('Set TEST_ADMIN_EMAIL and TEST_ADMIN_PASSWORD env vars before running this script.');
+    process.exit(1);
+  }
+  const loginData = JSON.stringify({ email, password });
 
   const loginOptions = {
     hostname: 'localhost',

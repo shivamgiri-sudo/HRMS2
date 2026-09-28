@@ -43,7 +43,8 @@ import {
   X,
 } from "lucide-react";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
 import { useAuth } from "@/contexts/AuthContext";
 import { useEmployeeProfile } from "@/hooks/useEmployeeProfile";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
@@ -284,7 +285,7 @@ function UnifiedSidebar({
       <div className="reference-corporate-profile-wrap">
         <Link to="/profile" onClick={onNavigate} className="reference-corporate-profile">
           <Avatar className="h-9 w-9 border border-white/70">
-            <AvatarImage src={normalizeMediaUrl(avatarUrl)} alt={name} />
+            <AuthedAvatarImage src={normalizeMediaUrl(avatarUrl)} alt={name} />
             <AvatarFallback className="bg-white text-xs font-bold text-[#0b3a75]">{initials(name)}</AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
@@ -313,7 +314,7 @@ function UnifiedTopbar({ onMenu, name, role, avatarUrl }: { onMenu: () => void; 
         <button className="reference-topbar-alert" type="button" aria-label="Messages"><Mail className="h-[19px] w-[19px]" /><span>5</span></button>
         <div className="reference-topbar-profile">
           <Avatar className="h-8 w-8">
-            <AvatarImage src={normalizeMediaUrl(avatarUrl)} alt={name} />
+            <AuthedAvatarImage src={normalizeMediaUrl(avatarUrl)} alt={name} />
             <AvatarFallback className="bg-[#eaf1fb] text-xs font-bold text-[#0b3a75]">{initials(name)}</AvatarFallback>
           </Avatar>
           <div className="hidden min-w-0 sm:block">

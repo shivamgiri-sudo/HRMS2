@@ -327,6 +327,23 @@ function consumedPct(consumed: number, budgeted: number) {
   return budgeted > 0 ? Math.round((consumed / budgeted) * 100) : 0;
 }
 
+/** What a budget line can actually carry: its EX-GST ceiling — the same figure GRN approval
+ *  enforces since 2026-09-24 (backend budget-tax-basis.ts budgetLineCeiling()). base_amount, with
+ *  the legacy zero-default guard: 0 means "not populated", so fall back to gross − tax, then to
+ *  pnl_cost_amount / gross. Was pnl_cost_amount (base + non-recoverable GST). */
+function spendableBudget(line: { base_amount?: unknown; gross_amount?: unknown; tax_amount?: unknown; pnl_cost_amount?: unknown }) {
+  const base = Number(line.base_amount ?? 0) || 0;
+  if (base !== 0) return base;
+  const derived = (Number(line.gross_amount ?? 0) || 0) - (Number(line.tax_amount ?? 0) || 0);
+  if (derived !== 0) return derived;
+  return Number(line.pnl_cost_amount ?? line.gross_amount ?? 0) || 0;
+}
+
+/** Headroom exactly as budgetConsumptionService.reserve() computes it at GRN approval. */
+function lineAvailableBudget(line: { base_amount?: unknown; gross_amount?: unknown; tax_amount?: unknown; pnl_cost_amount?: unknown; reserved_amount?: unknown; consumed_amount?: unknown }) {
+  return spendableBudget(line) - Number(line.reserved_amount ?? 0) - Number(line.consumed_amount ?? 0);
+}
+
 function statusLabel(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
@@ -748,10 +765,11 @@ export default function BranchBudgetManagementWorkspace() {
       const subHead = l.sub_head ?? null;
       const key = `${l.head}|${subHead ?? ""}`;
       const entry = map.get(key) ?? { head: l.head, subHead, planned: 0, reserved: 0, consumed: 0, available: 0 };
-      entry.planned += Number(l.gross_amount ?? 0);
+      // Non-GST spendable budget, the basis GRN approval checks — see lineAvailableBudget().
+      entry.planned += spendableBudget(l);
       entry.reserved += Number(l.reserved_amount ?? 0);
       entry.consumed += Number(l.consumed_amount ?? 0);
-      entry.available += Number(l.available_gross_amount ?? 0);
+      entry.available += lineAvailableBudget(l);
       map.set(key, entry);
     });
     return [...map.values()].sort((a, b) => a.head.localeCompare(b.head) || (a.subHead ?? "").localeCompare(b.subHead ?? ""));
@@ -789,10 +807,11 @@ export default function BranchBudgetManagementWorkspace() {
       const subHead = l.sub_head ?? null;
       const key = `${l.head}|${subHead ?? ""}`;
       const entry = map.get(key) ?? { head: l.head, subHead, planned: 0, reserved: 0, consumed: 0, available: 0 };
-      entry.planned += Number(l.gross_amount ?? 0);
+      // Non-GST spendable budget, the basis GRN approval checks — see lineAvailableBudget().
+      entry.planned += spendableBudget(l);
       entry.reserved += Number(l.reserved_amount ?? 0);
       entry.consumed += Number(l.consumed_amount ?? 0);
-      entry.available += Number(l.available_gross_amount ?? 0);
+      entry.available += lineAvailableBudget(l);
       map.set(key, entry);
     });
     return [...map.values()].sort((a, b) => a.head.localeCompare(b.head) || (a.subHead ?? "").localeCompare(b.subHead ?? ""));
@@ -943,14 +962,21 @@ export default function BranchBudgetManagementWorkspace() {
   /** Footer totals for the Variance tab — that table had no totals row at all (unlike Cost
    *  Centre's ccTotals above), so Branch/Finance Head had no at-a-glance branch-level figure
    *  without adding every line up by hand. */
+  /* Budgeted and Available here are on the SAME basis the GRN approval gate uses:
+   *   spendable budget = ex-GST base_amount (since 2026-09-24; was pnl_cost_amount)
+   *   available        = base_amount - reserved - consumed  (= backend available_gross_amount)
+   * reserved/consumed are stored on that basis (the invoice taxable value on ITC lines), so
+   * subtracting them from the GST-inclusive gross_amount overstated Available by the line's
+   * recoverable GST and showed headroom that Branch Head approval then refused
+   * (NOIDA-2 Office Rent, Sep 2026: tab showed 5,93,503, gate allowed 4,21,603). */
   const varianceTotals = useMemo(() => {
     const lines = detailQuery.data?.lines ?? [];
     return lines.reduce(
       (acc, line) => ({
-        budgeted: acc.budgeted + Number(line.gross_amount ?? 0),
-        reserved: acc.reserved + Number(line.reserved_amount ?? 0),
-        consumed: acc.consumed + Number(line.consumed_amount ?? 0),
-        available: acc.available + Number(line.available_gross_amount ?? 0),
+        budgeted:  acc.budgeted  + spendableBudget(line),
+        reserved:  acc.reserved  + Number(line.reserved_amount ?? 0),
+        consumed:  acc.consumed  + Number(line.consumed_amount ?? 0),
+        available: acc.available + lineAvailableBudget(line),
       }),
       { budgeted: 0, reserved: 0, consumed: 0, available: 0 }
     );
@@ -968,24 +994,25 @@ export default function BranchBudgetManagementWorkspace() {
     for (const line of detailQuery.data?.lines ?? []) {
       const k = `${line.head}|${line.sub_head ?? ""}`;
       const row = map.get(k);
+      const lineAvailable = lineAvailableBudget(line);
       if (row) {
-        row.budgeted  += Number(line.gross_amount ?? 0);
+        row.budgeted  += spendableBudget(line);
         row.reserved  += Number(line.reserved_amount ?? 0);
         row.consumed  += Number(line.consumed_amount ?? 0);
-        row.available += Number(line.available_gross_amount ?? 0);
+        row.available += lineAvailable;
         row.lineIds.push(String(line.id));
       } else {
         map.set(k, {
           key: k, head: String(line.head), subHead: line.sub_head ?? null,
-          budgeted:  Number(line.gross_amount ?? 0),
+          budgeted:  spendableBudget(line),
           reserved:  Number(line.reserved_amount ?? 0),
           consumed:  Number(line.consumed_amount ?? 0),
-          available: Number(line.available_gross_amount ?? 0),
+          available: lineAvailable,
           lineIds: [String(line.id)],
         });
       }
     }
-    return [...map.values()];
+    return [...map.values()].sort((a, b) => a.head.localeCompare(b.head) || (a.subHead ?? "").localeCompare(b.subHead ?? ""));
   }, [detailQuery.data?.lines]);
   /** Data-quality signals surfaced as warning banners in both tabs.
    *  consumptionDrift: variance tab consumed exceeds CC tab total consumed — simple GRNs that
@@ -1076,7 +1103,7 @@ export default function BranchBudgetManagementWorkspace() {
   });
   const { data: costCentreResponse } = useQuery({
     queryKey: ["budget-cost-centres"],
-    queryFn: () => hrmsApi.get<any>("/api/org/cost-centres?limit=500"),
+    queryFn: () => hrmsApi.get<any>("/api/org/cost-centres?active_status=1&limit=500"),
   });
   const { data: vendorResponse } = useQuery({
     queryKey: ["budget-vendors"],
@@ -1283,15 +1310,29 @@ export default function BranchBudgetManagementWorkspace() {
    *  button (ExportButton disables itself on an empty array) rather than exporting nothing. */
   const exportRows = useMemo(() => {
     if (tab === "plan" || tab === "variance") {
-      return (detailQuery.data?.lines ?? []).map((line) => ({
-        Head: line.head,
-        "Sub-head": line.sub_head ?? "",
-        Item: line.item_name,
-        Budgeted: Number(line.gross_amount ?? 0),
-        Reserved: Number(line.reserved_amount ?? 0),
-        Consumed: Number(line.consumed_amount ?? 0),
-        Available: Number(line.available_gross_amount ?? 0),
-      }));
+      const lines = (detailQuery.data?.lines ?? [])
+        .map((line) => ({
+          Head: line.head,
+          "Sub-head": line.sub_head ?? "",
+          Item: line.item_name,
+          Budgeted: spendableBudget(line),
+          Reserved: Number(line.reserved_amount ?? 0),
+          Consumed: Number(line.consumed_amount ?? 0),
+          Available: lineAvailableBudget(line),
+        }))
+        // Sort alphabetically by Head, then Sub-head
+        .sort((a, b) => a.Head.localeCompare(b.Head) || (a["Sub-head"] ?? "").localeCompare(b["Sub-head"] ?? ""));
+      // Add totals row at the end
+      const totals = {
+        Head: "TOTAL",
+        "Sub-head": "",
+        Item: "",
+        Budgeted: lines.reduce((sum, l) => sum + l.Budgeted, 0),
+        Reserved: lines.reduce((sum, l) => sum + l.Reserved, 0),
+        Consumed: lines.reduce((sum, l) => sum + l.Consumed, 0),
+        Available: lines.reduce((sum, l) => sum + l.Available, 0),
+      };
+      return [...lines, totals];
     }
     if (tab === "cost-centre") {
       return utilizationByCostCentre.flatMap((cc) =>
@@ -2495,7 +2536,7 @@ export default function BranchBudgetManagementWorkspace() {
                   <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
                     <span className="font-semibold text-amber-700">Reserved</span> = committed to a GRN approved by Branch Head, awaiting Finance Head ·{" "}
                     <span className="font-semibold text-emerald-700">Consumed</span> = fully approved spend ·{" "}
-                    <span className="font-semibold text-slate-600">Available</span> = gross − reserved − consumed.
+                    <span className="font-semibold text-slate-600">Available</span> = non-GST budget − reserved − consumed, the same figure GRN approval checks.
                     {" "}Rs 0.00 means nothing committed yet, not missing data.
                   </p>
                 </CardHeader>
@@ -2892,7 +2933,7 @@ export default function BranchBudgetManagementWorkspace() {
                           <tr className="border-b bg-slate-50">
                             <th className="h-8 px-3 text-left font-medium text-slate-500">Head</th>
                             <th className="h-8 px-3 text-left font-medium text-slate-500">Sub-head</th>
-                            <th className="h-8 px-3 text-right font-medium text-slate-500">Budgeted</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500" title="Spendable budget: excludes GST recoverable as input tax credit, the same basis GRN approval checks against">Budgeted</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Reserved</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Consumed</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Available</th>
@@ -3176,7 +3217,7 @@ export default function BranchBudgetManagementWorkspace() {
                           <tr className="border-b bg-slate-50">
                             <th className="h-8 px-3 text-left font-medium text-slate-500">Cost Centre</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Budget Lines</th>
-                            <th className="h-8 px-3 text-right font-medium text-slate-500">Budgeted</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500" title="Spendable budget: excludes GST recoverable as input tax credit, the same basis GRN approval checks against">Budgeted</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Reserved</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Consumed</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Available</th>
@@ -3838,7 +3879,7 @@ function UtilizationBreakdown({
             <tr className="border-b bg-slate-50">
               <th className="h-8 px-3 text-left font-medium text-slate-500">Head</th>
               <th className="h-8 px-3 text-left font-medium text-slate-500">Sub-head</th>
-              <th className="h-8 px-3 text-right font-medium text-slate-500">Planned</th>
+              <th className="h-8 px-3 text-right font-medium text-slate-500" title="Non-GST budget (GST recoverable as input tax credit excluded)">Planned</th>
               <th className="h-8 px-3 text-right font-medium text-slate-500">Reserved</th>
               <th className="h-8 px-3 text-right font-medium text-slate-500">Consumed</th>
               <th className="h-8 px-3 text-right font-medium text-slate-500">Available</th>

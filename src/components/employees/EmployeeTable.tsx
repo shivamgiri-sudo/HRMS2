@@ -7,7 +7,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -56,6 +58,8 @@ export interface Employee {
   designation: string;
   joinDate: string;
   salaryStartDate: string;
+  /** Empty for active employees; set once `date_of_exit` is recorded. */
+  exitDate?: string;
   status: "active" | "inactive" | "onboarding" | "offboarded";
   profileIncomplete?: boolean;
 }
@@ -78,7 +82,7 @@ interface EmployeeTableProps {
 }
 
 export function EmployeeTable({
-  employees,
+  employees: employeesProp,
   onView,
   onEdit,
   onResetPassword,
@@ -92,6 +96,7 @@ export function EmployeeTable({
   onSelectionChange,
   onBulkAction,
 }: EmployeeTableProps) {
+  const employees = Array.isArray(employeesProp) ? employeesProp : [];
   const handleSort = (key: string) => {
     onSort?.(key as keyof Employee);
   };
@@ -270,6 +275,12 @@ export function EmployeeTable({
                 <span className="text-[var(--text-muted)]">Salary start date</span>
                 <span className="text-right font-semibold">{employee.salaryStartDate || "-"}</span>
               </div>
+              {employee.exitDate && (
+                <div className="flex justify-between gap-3">
+                  <span className="text-[var(--text-muted)]">Exit / last working day</span>
+                  <span className="text-right font-semibold">{employee.exitDate}</span>
+                </div>
+              )}
             </div>
           </MobileRecordCard>
         ))}
@@ -364,6 +375,7 @@ export function EmployeeTable({
                   >
                     Status
                   </SortableTableHead>
+                  <TableHead className="w-[130px]">Exit / Last Working Day</TableHead>
                 </>
               ) : (
                 <>
@@ -378,6 +390,7 @@ export function EmployeeTable({
                   <TableHead>Join Date</TableHead>
                   <TableHead className="w-[130px]">Salary Start Date</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="w-[130px]">Exit / Last Working Day</TableHead>
                 </>
               )}
               <TableHead className="text-right">Actions</TableHead>
@@ -423,7 +436,7 @@ export function EmployeeTable({
                 <TableCell>
                   <div className="flex items-center gap-3">
                     <Avatar className="h-10 w-10">
-                      <AvatarImage src={employee.avatar} />
+                      <AuthedAvatarImage src={normalizeMediaUrl(employee.avatar)} />
                       <AvatarFallback>
                         {employee.name.split(" ").map((n) => n[0]).join("")}
                       </AvatarFallback>
@@ -460,6 +473,7 @@ export function EmployeeTable({
                 <TableCell>
                   <StatusBadgeV2 status={employee.status} />
                 </TableCell>
+                <TableCell className="text-muted-foreground">{employee.exitDate || "-"}</TableCell>
                 <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>

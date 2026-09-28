@@ -1,9 +1,10 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Building2, Users, Activity, Upload, Plus, Search, Edit2,
   TrendingUp, Download, Link2, Trash2,
-  Globe, Mail, MapPin, BarChart3
+  Globe, Mail, MapPin, BarChart3, KeyRound, ClipboardList
 } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -70,6 +71,10 @@ interface PortalUser {
   access_level: string;
   /** The portal's actual tenant boundary — which processes this client may open. */
   process_ids?: string[];
+  /** null on the 27 of 28 live accounts seeded before migration 1814's password-login
+   *  system existed -- those can only sign in via email OTP or admin impersonation until
+   *  a login is generated via generateLoginMutation below. */
+  login_id?: string | null;
   last_login_at?: string;
   login_count: number;
   is_active: boolean;
@@ -180,6 +185,7 @@ function ProcessScopePicker({
 }
 
 export default function EnhancedClientMaster() {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("clients");
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -195,6 +201,9 @@ export default function EnhancedClientMaster() {
   const [createScopeIds, setCreateScopeIds] = useState<string[]>([]);
   const [newUser, setNewUser] = useState({ clientId: "", email: "", name: "", designation: "" });
   const [selectedUser, setSelectedUser] = useState<PortalUser | null>(null);
+  /** Shown once, right after a portal user is created — the plaintext password is never
+   *  retrievable again after this dialog closes (see createUserMutation's own comment). */
+  const [generatedCredentials, setGeneratedCredentials] = useState<{ loginId: string; temporaryPassword: string; portalUrl?: string } | null>(null);
 
   // Deactivate dialog state — replaces prompt()
   const [showDeactivateDialog, setShowDeactivateDialog] = useState(false);
@@ -332,16 +341,29 @@ export default function EnhancedClientMaster() {
   const createUserMutation = useMutation({
     // POST /api/portal/internal/client-users (admin/hr). The endpoint has existed since the
     // portal was built and nothing in the frontend called it, so every client portal login
-    // had to be created directly in the database.
+    // had to be created directly in the database. It now also generates a login_id/password
+    // (ProcessName_mas / ProcessName@2026, derived from the user's first assigned process)
+    // and returns the one-time plaintext password in generatedCredentials -- never stored,
+    // never retrievable again after this response, same convention as the staff
+    // temp-password flow.
     mutationFn: async (data: {
       clientId: string; email: string; name: string; designation?: string; processIds: string[];
-    }) => hrmsApi.post("/api/portal/internal/client-users", data),
-    onSuccess: () => {
+    }) =>
+      // Response shape is the raw client_user row (portal.controller.ts's createClientUser),
+      // not the enriched PortalUser this page's list view uses (that comes from a different
+      // endpoint, GET /api/portal-users) -- only generatedCredentials is actually read here.
+      hrmsApi.post<{ data: Record<string, unknown>; generatedCredentials?: { loginId: string; temporaryPassword: string; portalUrl?: string } }>(
+        "/api/portal/internal/client-users", data
+      ),
+    onSuccess: (res) => {
       toast.success("Portal user created");
       queryClient.invalidateQueries({ queryKey: ["portal-users"] });
       setShowCreateUserDialog(false);
       setNewUser({ clientId: "", email: "", name: "", designation: "" });
       setCreateScopeIds([]);
+      if (res.generatedCredentials) {
+        setGeneratedCredentials(res.generatedCredentials);
+      }
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.message || error.response?.data?.error || "Failed to create portal user");
@@ -374,6 +396,27 @@ export default function EnhancedClientMaster() {
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.message || "Failed to deactivate user");
+    },
+  });
+
+  // (Re)generate login_id/password for a portal user, whether they never had one (the 27
+  // of 28 live accounts that predate the password-login system) or need a reset. Same
+  // one-time-plaintext-reveal convention as createUserMutation above -- reuses the same
+  // generatedCredentials dialog rather than a second one.
+  const generateLoginMutation = useMutation({
+    mutationFn: async (id: string) =>
+      hrmsApi.post<{ generatedCredentials: { loginId: string; temporaryPassword: string; portalUrl?: string } }>(
+        `/api/portal/internal/client-users/${id}/generate-login`
+      ),
+    onSuccess: (res) => {
+      toast.success("Portal login generated");
+      queryClient.invalidateQueries({ queryKey: ["portal-users"] });
+      if (res.generatedCredentials) {
+        setGeneratedCredentials(res.generatedCredentials);
+      }
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || error.response?.data?.message || "Failed to generate portal login");
     },
   });
 
@@ -490,6 +533,10 @@ export default function EnhancedClientMaster() {
               Comprehensive client and portal user management
             </p>
           </div>
+          <Button variant="outline" onClick={() => navigate("/portal/content-admin")}>
+            <ClipboardList className="h-4 w-4 mr-2" />
+            Manage Portal Content
+          </Button>
         </div>
 
         {/* Stats Cards */}
@@ -799,8 +846,9 @@ export default function EnhancedClientMaster() {
                 <DialogHeader>
                   <DialogTitle>Add Portal User</DialogTitle>
                   <DialogDescription>
-                    Creates a client login for the portal at /portal/login. They sign in by email OTP
-                    and see only the processes selected below.
+                    Creates a client login for the portal. A Login ID and one-time password are
+                    generated automatically from the first process selected below (they can also
+                    sign in by email OTP instead). The client sees only the processes selected here.
                   </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleCreateUserSubmit} className="space-y-4">
@@ -846,6 +894,52 @@ export default function EnhancedClientMaster() {
                     </Button>
                   </div>
                 </form>
+              </DialogContent>
+            </Dialog>
+
+            {/* One-time credentials display — shown right after creation. The plaintext
+                password is never stored and cannot be retrieved again once this closes; if
+                the client loses it, use "Reactivate"/edit flows to reset rather than expecting
+                to look it up here later. */}
+            <Dialog open={!!generatedCredentials} onOpenChange={(open) => { if (!open) setGeneratedCredentials(null); }}>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Portal Login Created</DialogTitle>
+                  <DialogDescription>
+                    Share these with the client now — the password will not be shown again after
+                    you close this dialog.
+                  </DialogDescription>
+                </DialogHeader>
+                {generatedCredentials && (
+                  <div className="space-y-3">
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Login ID</Label>
+                      <div className="font-mono text-sm bg-muted rounded px-3 py-2 mt-1">
+                        {generatedCredentials.loginId}
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Temporary Password</Label>
+                      <div className="font-mono text-sm bg-muted rounded px-3 py-2 mt-1">
+                        {generatedCredentials.temporaryPassword}
+                      </div>
+                    </div>
+                    {generatedCredentials.portalUrl && (
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Portal URL</Label>
+                        <div className="font-mono text-xs bg-muted rounded px-3 py-2 mt-1 break-all">
+                          {generatedCredentials.portalUrl}
+                        </div>
+                      </div>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      They will be required to set a new password on first login.
+                    </p>
+                  </div>
+                )}
+                <div className="flex justify-end">
+                  <Button onClick={() => setGeneratedCredentials(null)}>Done</Button>
+                </div>
               </DialogContent>
             </Dialog>
 
@@ -950,6 +1044,7 @@ export default function EnhancedClientMaster() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>User</TableHead>
+                        <TableHead>Portal Login</TableHead>
                         <TableHead>Access Level</TableHead>
                         <TableHead>Last Login</TableHead>
                         <TableHead>Logins</TableHead>
@@ -968,6 +1063,13 @@ export default function EnhancedClientMaster() {
                                 <div className="text-xs text-muted-foreground">{user.designation}</div>
                               )}
                             </div>
+                          </TableCell>
+                          <TableCell>
+                            {user.login_id ? (
+                              <span className="font-mono text-xs">{user.login_id}</span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">No password login yet</span>
+                            )}
                           </TableCell>
                           <TableCell>
                             <Badge variant="outline">{user.access_level || "READ_ONLY"}</Badge>
@@ -994,6 +1096,15 @@ export default function EnhancedClientMaster() {
                               >
                                 <Edit2 className="h-3 w-3 mr-1" />
                                 Edit
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={generateLoginMutation.isPending}
+                                onClick={() => generateLoginMutation.mutate(user.id)}
+                              >
+                                <KeyRound className="h-3 w-3 mr-1" />
+                                {user.login_id ? "Reset Login" : "Generate Login"}
                               </Button>
                               {user.is_active ? (
                                 <Button

@@ -5,6 +5,7 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import type {
   Channel, ProviderConfig, SaveProviderConfigDTO, AnyProviderType,
 } from './communication.types.js';
+import { clearSendBlockCache } from './providers/send-block.js';
 
 const ALG = 'aes-256-gcm';
 
@@ -40,6 +41,8 @@ interface ProviderConfigRow extends RowDataPacket {
   provider_type: AnyProviderType;
   config_json: unknown;
   is_enabled: number;
+  send_blocked?: number;
+  block_reason?: string | null;
   test_ok: number | null;
   test_error: string | null;
   test_at: string | null;
@@ -53,6 +56,10 @@ function rowToConfig(r: RowDataPacket): ProviderConfig {
     provider_type: r.provider_type as AnyProviderType,
     config_json: typeof r.config_json === 'string' ? JSON.parse(r.config_json) : (r.config_json ?? {}),
     is_enabled: !!(r.is_enabled),
+    // Both default OFF when the column is absent (migration 1674 not yet applied), so the
+    // Emergency Stop control simply reads as "not paused" rather than throwing on an old schema.
+    send_blocked: !!(r.send_blocked),
+    block_reason: (r.block_reason as string) ?? null,
     test_ok: r.test_ok == null ? null : !!(r.test_ok),
     test_error: (r.test_error as string) ?? null,
     test_at: (r.test_at as string) ?? null,
@@ -62,7 +69,7 @@ function rowToConfig(r: RowDataPacket): ProviderConfig {
 export const providerConfigService = {
   async listAll(): Promise<ProviderConfig[]> {
     const [rows] = await db.execute<ProviderConfigRow[]>(
-      'SELECT id, channel, provider_type, config_json, is_enabled, test_ok, test_error, test_at FROM communication_provider_config ORDER BY channel',
+      'SELECT id, channel, provider_type, config_json, is_enabled, send_blocked, block_reason, test_ok, test_error, test_at FROM communication_provider_config ORDER BY channel',
     );
     return rows.map(rowToConfig);
   },
@@ -104,6 +111,23 @@ export const providerConfigService = {
     if (result.affectedRows === 0) {
       throw Object.assign(new Error(`No configuration found for channel: ${channel}. Run database migrations first.`), { statusCode: 404 });
     }
+  },
+
+  /**
+   * The genuine kill switch — see send-block.ts. Unlike setEnabled(), this actually stops the
+   * channel from sending: providerFactory checks it before building any real provider.
+   */
+  async setSendBlocked(channel: Channel, blocked: boolean, reason: string | null, userId: string): Promise<void> {
+    const [result] = await db.execute<ResultSetHeader>(
+      `UPDATE communication_provider_config
+          SET send_blocked = ?, block_reason = ?, blocked_by = ?, blocked_at = ?
+        WHERE channel = ?`,
+      [blocked ? 1 : 0, blocked ? (reason || null) : null, blocked ? userId : null, blocked ? new Date() : null, channel],
+    );
+    if (result.affectedRows === 0) {
+      throw Object.assign(new Error(`No configuration found for channel: ${channel}. Run database migrations first.`), { statusCode: 404 });
+    }
+    clearSendBlockCache();
   },
 
   async saveTestResult(channel: Channel, ok: boolean, error: string | null, userId: string): Promise<void> {

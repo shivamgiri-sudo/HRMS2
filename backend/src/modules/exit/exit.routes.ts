@@ -7,6 +7,9 @@ import { ffService } from "./ff.service.js";
 import { computeFfPreview } from "./ff-compute.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { canViewEmployee } from "../../shared/enterpriseScope.js";
+import { isInReportingSpan } from "../../shared/reportingSpan.js";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { narrowDashboardScope, resolveDashboardScope } from "../../shared/dashboardScope.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response, NextFunction } from "express";
@@ -20,6 +23,7 @@ import {
   saveExitInterview,
 } from "./exit-intelligence.service.js";
 import { resignationRouter } from "./resignation.routes.js";
+import { transitionExitStatus } from "./exit.service.js";
 
 export const exitRouter = Router();
 exitRouter.use(requireAuth);
@@ -27,10 +31,33 @@ exitRouter.use(requireAuth);
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
   (req: AuthenticatedRequest, res: Response, next: NextFunction) => fn(req, res).catch(next);
 
+export const CLEARANCE_ROLE_MAP: Record<string, string[]> = {
+  manager:    ['manager','assistant_manager','process_manager','branch_head'],
+  hr:         ['hr','admin'],
+  compliance: ['hr','admin'],
+  assets:     ['admin','hr'],
+  it:         ['it','admin'],
+  wfm:        ['wfm','admin'],
+  payroll:    ['payroll','payroll_head','hr'],
+  finance:    ['finance','payroll_head'],
+};
+
+const CLEARANCE_BYPASS = new Set(['super_admin','admin']);
+
+export function canClearTask(area: string, callerRoles: string[]): boolean {
+  if (callerRoles.some(r => CLEARANCE_BYPASS.has(r))) return true;
+  const allowed = CLEARANCE_ROLE_MAP[area] ?? [];
+  return callerRoles.some(r => allowed.includes(r));
+}
+
 exitRouter.get(
   "/command-center",
-  requireRole("admin", "hr", "manager", "finance", "payroll", "ceo"),
-  h(async (_req, res) => res.json({ success: true, data: await getExitCommandCenter() }))
+  requireRole("admin", "hr", "manager", "finance", "payroll", "ceo", "super_admin", "payroll_head", "wfm", "branch_head", "process_manager"),
+  h(async (req, res) => {
+    const actorUserId = req.authUser!.id;
+    const actorRoles: string[] = req.authUser!.roles ?? [];
+    return res.json({ success: true, data: await getExitCommandCenter({ actorUserId, actorRoles }) });
+  })
 );
 
 exitRouter.get(
@@ -49,6 +76,13 @@ exitRouter.post("/", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const isPrivileged = await hasRole(userId, "admin", "hr", "manager");
 
+  // Who is raising this, recorded from the caller's own roles rather than from the body.
+  // A non-privileged caller can only ever raise their own exit (enforced immediately below),
+  // so 'employee' is a fact for them. A privileged caller is acting on someone else's record.
+  (req as unknown as { exitInitiatedBy?: string }).exitInitiatedBy = !isPrivileged
+    ? "employee"
+    : (await hasRole(userId, "admin", "hr")) ? "hr" : "manager";
+
   if (!isPrivileged) {
     const emp = await getEmployeeForUser(userId);
     if (!emp) {
@@ -63,9 +97,132 @@ exitRouter.post("/", h(async (req: AuthenticatedRequest, res: Response) => {
   return exitController.createExitRequest(req, res);
 }));
 
+// Every valid owner_role value createDefaultClearanceTasks() can assign a task to.
+// 'it' added 2026-09-15 alongside migration 1772 — "IT access closure" moved from
+// owner_role='admin' to 'it', which is a real, distinct role (not automatically covered
+// by any of the others below).
+// Trainer clearance ("LMS and certification closure") was removed from the exit process
+// (owner ruling 2026-09-15) — dropped from this list and from createDefaultClearanceTasks.
+const CLEARANCE_OWNER_ROLES = ["manager", "hr", "admin", "wfm", "payroll", "it"] as const;
+type ClearanceOwnerRole = typeof CLEARANCE_OWNER_ROLES[number];
+
+// GET /api/exit/clearance/queue — cross-employee clearance queue for the caller's own
+// role(s) (or, for admin/hr/super_admin, any role via ?owner_role=). Registered BEFORE
+// /:id/clearance below so Express does not try to match "clearance" as an :id.
+exitRouter.get(
+  "/clearance/queue",
+  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm", "it"),
+  h(async (req, res) => {
+    const userId = req.authUser!.id;
+    const isPrivileged = await hasRole(userId, "admin", "hr", "super_admin");
+
+    const [roleRows] = await db.execute<RowDataPacket[]>(
+      `SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1`,
+      [userId],
+    );
+    const callerRoles = roleRows.map((r) => String(r.role_key));
+
+    let ownerRoles: ClearanceOwnerRole[];
+    const requestedOwnerRole = typeof req.query.owner_role === "string" ? req.query.owner_role : undefined;
+    if (isPrivileged) {
+      // Admin/hr/super_admin may look at any single queue, or — with none supplied —
+      // every queue at once, matching their existing unrestricted canViewEmployee bypass.
+      ownerRoles = requestedOwnerRole && (CLEARANCE_OWNER_ROLES as readonly string[]).includes(requestedOwnerRole)
+        ? [requestedOwnerRole as ClearanceOwnerRole]
+        : [...CLEARANCE_OWNER_ROLES];
+    } else {
+      // Non-privileged callers are forced to their own held role(s) — an owner_role param
+      // cannot be used to look at another role's queue. An empty intersection (a role
+      // combination that owns none of the 9 areas) returns an empty page, not a 403: the
+      // requireRole gate above already vouches for platform-level access to this endpoint.
+      ownerRoles = CLEARANCE_OWNER_ROLES.filter((r) => callerRoles.includes(r));
+    }
+    if (ownerRoles.length === 0) {
+      return res.json({ success: true, data: [], pagination: { page: 1, limit: 50, total: 0 } });
+    }
+
+    const statusParam = typeof req.query.status === "string" && req.query.status.trim()
+      ? req.query.status.split(",").map((s) => s.trim()).filter(Boolean)
+      : ["pending", "in_progress", "blocked"];
+    const allowedStatuses = new Set(["pending", "in_progress", "cleared", "blocked", "waived"]);
+    const statuses = statusParam.filter((s) => allowedStatuses.has(s));
+    if (statuses.length === 0) statuses.push("pending", "in_progress", "blocked");
+
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+    const offset = (page - 1) * limit;
+
+    const conds: string[] = [
+      `t.owner_role IN (${ownerRoles.map(() => "?").join(",")})`,
+      `t.status IN (${statuses.map(() => "?").join(",")})`,
+    ];
+    const params: unknown[] = [...ownerRoles, ...statuses];
+
+    if (typeof req.query.clearance_area === "string" && req.query.clearance_area.trim()) {
+      conds.push("t.clearance_area = ?");
+      params.push(req.query.clearance_area.trim());
+    }
+
+    if (!isPrivileged) {
+      // Branch/process row-scope, same helper the IT-provisioning queue already uses —
+      // avoids an N+1 canViewEmployee call per row on what is now a cross-employee list.
+      const roleContext = await getUserRoleContext(userId);
+      const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
+      const scoped = await narrowDashboardScope(baseScope, "", "");
+      if (scoped.branchIds.length) {
+        conds.push(`e.branch_id IN (${scoped.branchIds.map(() => "?").join(",")})`);
+        params.push(...scoped.branchIds);
+      }
+    }
+
+    const where = conds.join(" AND ");
+    const [countRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total
+         FROM exit_clearance_task t
+         JOIN exit_request er ON er.id = t.exit_request_id
+         JOIN employees e ON e.id = t.employee_id
+        WHERE ${where}`,
+      params,
+    );
+    const total = Number(countRows[0]?.total ?? 0);
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT t.id, t.exit_request_id, t.employee_id, t.clearance_area, t.task_title,
+              t.task_description, t.owner_role, t.due_date, t.status, t.remarks,
+              t.attachment_url, t.cleared_by, t.cleared_at, t.created_at, t.updated_at,
+              e.full_name AS employee_name, e.employee_code,
+              b.branch_name, p.process_name,
+              er.status AS exit_status, er.last_working_day_confirmed, er.last_working_day_proposed,
+              nc.status AS noc_case_status
+         FROM exit_clearance_task t
+         JOIN exit_request er ON er.id = t.exit_request_id
+         JOIN employees e ON e.id = t.employee_id
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN process_master p ON p.id = e.process_id
+         LEFT JOIN (
+           SELECT exit_request_id, status,
+                  ROW_NUMBER() OVER (PARTITION BY exit_request_id ORDER BY created_at DESC) AS rn
+             FROM noc_case
+         ) nc ON nc.exit_request_id = er.id AND nc.rn = 1
+        WHERE ${where}
+        ORDER BY FIELD(t.status,'blocked','pending','in_progress','cleared','waived'), t.due_date
+        LIMIT ${limit} OFFSET ${offset}`,
+      // LIMIT/OFFSET interpolated, not bound: this mysql2 version rejects a bound "LIMIT ?"
+      // with "Incorrect arguments to mysqld_stmt_execute" (same class of bug already hit in
+      // roster-audit and getTeamWorkItems above). Safe here — both are clamped integers
+      // (Math.min/Math.max above), never request-controlled strings.
+      params,
+    );
+
+    return res.json({ success: true, data: rows, pagination: { page, limit, total } });
+  })
+);
+
 exitRouter.get(
   "/:id/clearance",
-  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm"),
+  // "it" added 2026-09-15 alongside migration 1772 (IT access closure retargeted admin ->
+  // it). "trainer" removed same day — trainer clearance dropped from the exit process.
+  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm", "it"),
   h(async (req, res) => {
     // manager/finance/payroll/wfm previously had no scope check at all here and could list
     // clearance tasks for any exit request in any branch/process just by supplying its :id
@@ -104,34 +261,80 @@ exitRouter.post(
 
 exitRouter.patch(
   "/:id/clearance/:taskId",
-  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm"),
+  // "it" added 2026-09-15 alongside migration 1772. "trainer" removed same day.
+  requireRole("admin", "hr", "manager", "finance", "payroll", "wfm", "it"),
   h(async (req, res) => {
-    const status = String(req.body?.status ?? "cleared");
+    // When only attachment_url is sent (no status in body), treat as an attachment-only
+    // update — do not change status, remarks, cleared_by or cleared_at. Bug 1+2 fix:
+    // the old default of "cleared" silently auto-cleared the task on every upload.
+    const statusProvided = req.body?.status != null;
+    const status = statusProvided ? String(req.body.status) : null;
     const allowed = new Set(["pending", "in_progress", "cleared", "blocked", "waived"]);
-    if (!allowed.has(status)) return res.status(400).json({ success: false, message: "Invalid clearance status" });
+    if (status !== null && !allowed.has(status)) return res.status(400).json({ success: false, message: "Invalid clearance status" });
 
     // Same gap as GET /:id/clearance above, on the actual mutating/approval action this
     // time: manager/finance/payroll/wfm could clear or waive any exit's clearance task in
-    // any branch/process (delta-audit 2026-08-14, P1). This does not gate on the task's own
-    // owner_role (e.g. an hr user clearing a wfm-owned task) — whether cross-functional
-    // clearance should be allowed is a business-policy question, out of scope for a row-scope
-    // fix; only the branch/process boundary is enforced here.
+    // any branch/process (delta-audit 2026-08-14, P1). clearance_area is also fetched here
+    // so the role gate below can check it.
     const [taskRows] = await db.execute<RowDataPacket[]>(
-      `SELECT employee_id FROM exit_clearance_task WHERE id = ? AND exit_request_id = ?`,
+      `SELECT employee_id, clearance_area FROM exit_clearance_task WHERE id = ? AND exit_request_id = ?`,
       [req.params.taskId, req.params.id]
     );
-    const employeeId = (taskRows[0] as any)?.employee_id;
+    const task = taskRows[0] as any;
+    const employeeId = task?.employee_id;
     if (!employeeId) return res.status(404).json({ success: false, message: "Clearance task not found" });
     if (!(await canViewEmployee(req.authUser!.id, String(employeeId)))) {
       return res.status(403).json({ success: false, message: "This exit request is outside your assigned scope" });
     }
 
+    // Role gate: only roles mapped to this clearance area may mark it cleared or waived.
+    // super_admin and admin bypass all area restrictions.
+    const newStatus: string | null = status;
+    if (newStatus !== null && ['cleared', 'waived'].includes(newStatus)) {
+      const callerRoles: string[] = req.authUser!.roles ?? [];
+      if (!canClearTask(task.clearance_area, callerRoles)) {
+        return res.status(403).json({
+          success: false,
+          code: 'clearance_role_mismatch',
+          message: `The ${task.clearance_area} clearance area can only be cleared by: ${(CLEARANCE_ROLE_MAP[task.clearance_area] ?? []).join(', ')}.`,
+        });
+      }
+      if (newStatus === 'waived' && !req.body.clearing_reason?.trim()) {
+        return res.status(400).json({ success: false, code: 'reason_required', message: 'clearing_reason is required when waiving a task.' });
+      }
+    }
+
+    // Resolve actor name for audit columns
+    const [actorRows] = await db.execute<RowDataPacket[]>(
+      `SELECT CONCAT_WS(' ', first_name, last_name) AS full_name FROM employees WHERE user_id = ? LIMIT 1`,
+      [req.authUser!.id]
+    );
+    const actorName = (actorRows[0] as any)?.full_name ?? String(req.authUser!.id);
+    const actorRole = (req.authUser!.roles ?? [])[0] ?? 'unknown';
+
+    const attachmentUrl = req.body?.attachment_url != null ? String(req.body.attachment_url) : undefined;
     await db.execute(
       `UPDATE exit_clearance_task
-          SET status = ?, remarks = ?, cleared_by = CASE WHEN ? IN ('cleared','waived') THEN ? ELSE cleared_by END,
-              cleared_at = CASE WHEN ? IN ('cleared','waived') THEN NOW() ELSE cleared_at END
+          SET status           = COALESCE(?, status),
+              remarks          = COALESCE(?, remarks),
+              attachment_url   = COALESCE(?, attachment_url),
+              cleared_by       = CASE WHEN COALESCE(?, status) IN ('cleared','waived') THEN ? ELSE cleared_by END,
+              cleared_at       = CASE WHEN COALESCE(?, status) IN ('cleared','waived') THEN NOW() ELSE cleared_at END,
+              cleared_by_name  = CASE WHEN COALESCE(?, status) IN ('cleared','waived') THEN ? ELSE cleared_by_name END,
+              cleared_by_role  = CASE WHEN COALESCE(?, status) IN ('cleared','waived') THEN ? ELSE cleared_by_role END,
+              clearing_reason  = CASE WHEN COALESCE(?, status) IN ('cleared','waived') THEN ? ELSE clearing_reason END
         WHERE id = ? AND exit_request_id = ?`,
-      [status, req.body?.remarks ?? null, status, req.authUser!.id, status, req.params.taskId, req.params.id]
+      [
+        status,                              // COALESCE(?, status)      — null keeps existing
+        req.body?.remarks ?? null,            // COALESCE(?, remarks)     — null keeps existing
+        attachmentUrl ?? null,                // COALESCE(?, attachment_url)
+        status, req.authUser!.id,             // cleared_by CASE
+        status,                               // cleared_at CASE
+        status, actorName,                    // cleared_by_name CASE
+        status, actorRole,                    // cleared_by_role CASE
+        status, req.body?.clearing_reason ?? null,  // clearing_reason CASE
+        req.params.taskId, req.params.id,
+      ]
     );
     return res.json({ success: true, message: "Clearance updated" });
   })
@@ -280,7 +483,12 @@ exitRouter.get("/:id", h(async (req: AuthenticatedRequest, res: Response) => {
   if (!isPrivileged) {
     const emp = await getEmployeeForUser(userId);
     if (!emp) return res.status(403).json({ success: false, message: "Forbidden" });
-    (req as any).resolvedEmployeeId = emp.id;
+    // A TL (team) or AM (each TL's team) may read the exit of someone in their span - view only.
+    const [spanRows] = await db.execute<RowDataPacket[]>(`SELECT employee_id FROM exit_request WHERE id = ?`, [req.params.id]);
+    const spanEmployeeId = (spanRows[0] as any)?.employee_id;
+    if (!(spanEmployeeId && (await isInReportingSpan(userId, String(spanEmployeeId))))) {
+      (req as any).resolvedEmployeeId = emp.id;
+    }
   } else {
     // The privileged branch had no row-level scope check at all — unlike GET
     // /:id/clearance and PATCH /:id/clearance/:taskId in this same file (delta-audit
@@ -308,7 +516,11 @@ exitRouter.get("/:id", h(async (req: AuthenticatedRequest, res: Response) => {
 // ─────────────────────────────────────────────────────────────────────────────
 exitRouter.get(
   "/:id/full",
-  requireRole("admin", "hr", "manager", "finance", "payroll"),
+  // "wfm" added — the new per-role clearance pages/sections all open this same drawer for
+  // their row-level drill-down (Drill-Down Mandate), and it owns real clearance tasks
+  // (roster/client-ID deactivation). "it" added 2026-09-15 alongside migration 1772 (IT
+  // access closure retargeted admin -> it). "trainer" removed same day.
+  requireRole("admin", "hr", "manager", "assistant_manager", "tl", "team_leader", "finance", "payroll", "wfm", "it"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
 
@@ -321,7 +533,7 @@ exitRouter.get(
     );
     const scopeEmployeeId = (scopeRows[0] as any)?.employee_id;
     if (!scopeEmployeeId) return res.status(404).json({ success: false, message: "Exit request not found" });
-    if (!(await canViewEmployee(req.authUser!.id, String(scopeEmployeeId)))) {
+    if (!(await canViewEmployee(req.authUser!.id, String(scopeEmployeeId))) && !(await isInReportingSpan(req.authUser!.id, String(scopeEmployeeId)))) {
       return res.status(403).json({ success: false, message: "This exit request is outside your assigned scope" });
     }
 
@@ -341,8 +553,15 @@ exitRouter.get(
          LEFT JOIN employees e ON e.id = er.employee_id
          LEFT JOIN branch_master b ON b.id = e.branch_id
          LEFT JOIN process_master p ON p.id = e.process_id
-         LEFT JOIN departments d ON d.id = e.department_id
-         LEFT JOIN designations des ON des.id = e.designation_id
+         -- department_master / designation_master. Same defect, same cause as the
+         -- notice-period query in manpower-risk.routes.ts: the tables named
+         -- "departments" and "designations" do not exist in mas_hrms and never have,
+         -- so this whole statement raised ER_NO_SUCH_TABLE and GET /:id/full returned
+         -- 500. That is the only endpoint NoticePeriodDrawer.tsx calls, so the
+         -- drill-down drawer never rendered for any exit. The SELECT list already used
+         -- the _master column names (dept_name / designation_name).
+         LEFT JOIN department_master d ON d.id = e.department_id
+         LEFT JOIN designation_master des ON des.id = e.designation_id
          LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
         WHERE er.id = ?
         LIMIT 1`,
@@ -367,14 +586,24 @@ exitRouter.get(
       [id]
     );
 
-    // Clearance tasks
+    // Clearance tasks. "id" and "owner_role" were previously omitted from this SELECT —
+    // the drawer rendered each task read-only with no way to identify which row a
+    // Clear/Waive action should PATCH, which is exactly why that action never existed here.
     const [clearanceRows] = await db.execute<RowDataPacket[]>(
-      `SELECT clearance_area, task_title, status, due_date, remarks, cleared_at
+      `SELECT id, clearance_area, owner_role, task_title, status, due_date, remarks, attachment_url, cleared_at
          FROM exit_clearance_task
         WHERE exit_request_id = ?
         ORDER BY clearance_area, created_at`,
       [id]
     );
+
+    // NOC case status — read-only display, latest case for this exit (see A6: a plain
+    // LEFT JOIN would fan out on the one live exit with more than one noc_case row).
+    const [nocRows] = await db.execute<RowDataPacket[]>(
+      `SELECT status FROM noc_case WHERE exit_request_id = ? ORDER BY created_at DESC LIMIT 1`,
+      [id]
+    );
+    const noc_case_status = (nocRows[0] as RowDataPacket | undefined)?.status ?? null;
 
     // Notice days served / remaining (only meaningful in accepted/notice_serving)
     let notice_days_served: number | null = null;
@@ -398,6 +627,7 @@ exitRouter.get(
         notice_days_remaining,
         timeline: logRows,
         clearance_tasks: clearanceRows,
+        noc_case_status,
       },
     });
   })
@@ -474,6 +704,58 @@ exitRouter.get(
     const data = await computeFfPreview(req.params.exitRequestId);
     return res.json({ success: true, data });
   }),
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FSM transition routes — dedicated endpoints for the new 4-state flow
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Manager approves voluntary resignation → notice_active
+exitRouter.patch(
+  '/:id/approve',
+  requireRole('manager', 'assistant_manager', 'process_manager', 'branch_head', 'admin', 'hr', 'super_admin'),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const actor = { userId: req.authUser!.id, userRole: (req.authUser!.roles ?? ['manager'])[0] };
+    await transitionExitStatus(id, 'notice_active', actor, {
+      lwdOverride: req.body.lwd_override,
+      lwdOverrideReason: req.body.lwd_override_reason,
+    });
+    return res.json({ success: true });
+  })
+);
+
+// Manager returns (push-back) with reason
+exitRouter.patch(
+  '/:id/return',
+  requireRole('manager', 'assistant_manager', 'process_manager', 'branch_head', 'admin', 'hr', 'super_admin'),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    if (!req.body.reason?.trim()) return res.status(400).json({ success: false, message: 'reason is required' });
+    const actor = { userId: req.authUser!.id, userRole: (req.authUser!.roles ?? ['manager'])[0] };
+    await transitionExitStatus(id, 'returned', actor, { reason: req.body.reason });
+    return res.json({ success: true });
+  })
+);
+
+// Employee revokes own resignation (also callable by admin/hr on behalf)
+exitRouter.patch(
+  '/:id/revoke',
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+    const [rows] = await db.execute<RowDataPacket[]>('SELECT employee_id FROM exit_request WHERE id = ? LIMIT 1', [id]);
+    const rec = rows[0] as any;
+    if (!rec) return res.status(404).json({ success: false, message: 'Not found' });
+    const callerEmployee = await getEmployeeForUser(req.authUser!.id);
+    const callerRoles: string[] = req.authUser!.roles ?? [];
+    const isPrivileged = callerRoles.some(r => ['admin', 'hr', 'super_admin'].includes(r));
+    if (!isPrivileged && (!callerEmployee || callerEmployee.id !== rec.employee_id)) {
+      return res.status(403).json({ success: false, message: 'You can only revoke your own resignation.' });
+    }
+    const actor = { userId: req.authUser!.id, userRole: callerRoles[0] ?? 'employee' };
+    await transitionExitStatus(id, 'revoked', actor, { reason: req.body.reason });
+    return res.json({ success: true });
+  })
 );
 
 // ── Resignation Routes (mounted sub-router) ───────────────────────────────────

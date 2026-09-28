@@ -46,6 +46,10 @@ export const CreatePackageSchema = z.object({
   gross:             moneyField,
   epf_employee:      moneyField,
   esic_employee:     moneyField,
+  // PT removed 2026-09-11 per user decision — still accepted on the wire so old
+  // clients don't get a validation error, but payrollMasters.service.ts's
+  // amtColumn() forces this to 0 on every create/update regardless of what is
+  // submitted here.
   professional_tax:  moneyField,
   net_in_hand:       moneyField,
   epf_employer:      moneyField,
@@ -56,6 +60,14 @@ export const CreatePackageSchema = z.object({
 });
 
 export const UpdatePackageSchema = CreatePackageSchema.partial();
+
+/** For creating one package definition across multiple branches/cost-centres in one shot. */
+export const BulkCreatePackageSchema = CreatePackageSchema
+  .omit({ branch_name: true, cost_centre_code: true })
+  .extend({
+    branch_names:      z.array(z.string().min(1)).min(1, 'Select at least one branch'),
+    cost_centre_codes: z.array(z.string()).optional().default([]),
+  });
 
 export const CreateMatrixEntrySchema = z.object({
   department_id: z.string().uuid(),

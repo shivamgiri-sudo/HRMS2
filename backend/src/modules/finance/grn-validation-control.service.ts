@@ -2,8 +2,14 @@ import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
 import { grnSmartService } from "./grn-smart.service.js";
 import { assertGrnTypeSupported } from "./grn-type-support.js";
+import { notifyGrnStage } from "./grn-notify.js";
+import { runInBackground } from "./grn-background.js";
+import { notifyGrnSubmittedEmail, notifyGrnAccountsHeadPendingEmail } from "./grn.notifications.js";
+import { qualifiesForHeadOfficeBypass } from "./grn-head-office-bypass.js";
+import { budgetConsumptionService } from "../process-pnl/budget-consumption.service.js";
 
 const NON_OVERRIDABLE_VALIDATIONS = new Set(["LOB_ATTRIBUTION"]);
 
@@ -109,9 +115,54 @@ async function addLobAttributionValidation(grnId: string) {
   );
 }
 
+/**
+ * Vendor GRNs need an invoice/supporting attachment before they can ever become a payable
+ * record — vendor-payment.service.ts's createFromGrn() has always hard-refused to run
+ * without one. Until now that check only fired AFTER Finance Head approval, inside the same
+ * transaction as the status UPDATE — so on a real approval it rolled the whole thing back
+ * (loud, just late), but a one-time backfill script that set status directly via raw SQL
+ * (backfill-vendor-grn-approved-status.cjs) bypassed review() — and therefore this check —
+ * entirely, leaving 58 real, live GRNs (₹11.35L, Aug–Sep 2026) sitting at
+ * 'finance_head_approved' with no payable record and no way for anyone to discover why.
+ * Confirmed live: 0 of those 58 ever produced a vendor_payment_tracking row.
+ *
+ * Moving the same rule here — into the shared validation framework submit() AND review()
+ * both already call — surfaces it at submission (so it can no longer reach approval without
+ * one) and gives it the existing override mechanism (audited, reasoned, revocable) for the
+ * genuine exception, instead of a hard, silent block or an unaudited free pass.
+ */
+async function addVendorAttachmentValidation(grnId: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT grn_type, attachment_path, attachment_file_path
+       FROM grn_request WHERE id = ? LIMIT 1`,
+    [grnId],
+  );
+  const grn = rows[0] as any;
+  if (!grn || grn.grn_type !== "vendor") return;
+  const hasAttachment = !!(grn.attachment_path || grn.attachment_file_path);
+  await db.execute(
+    `INSERT INTO grn_validation_result
+      (id, grn_request_id, validation_code, severity, validation_status,
+       is_blocking, message, details_json)
+     VALUES (?, ?, 'VENDOR_INVOICE_ATTACHMENT', ?, ?, ?, ?, ?)`,
+    [
+      randomUUID(),
+      grnId,
+      hasAttachment ? "info" : "error",
+      hasAttachment ? "passed" : "failed",
+      hasAttachment ? 0 : 1,
+      hasAttachment
+        ? "Invoice/supporting attachment is on file"
+        : "Vendor GRN has no invoice/supporting attachment — required before it can become payable",
+      JSON.stringify({ hasAttachment }),
+    ],
+  );
+}
+
 async function effectiveValidation(grnId: string) {
   const fresh = await grnSmartService.revalidate(grnId);
   await addLobAttributionValidation(grnId);
+  await addVendorAttachmentValidation(grnId);
   const results = await applyOverridesToLatestResults(grnId);
   const blocking = results.filter(
     (item) => Number(item.is_blocking) === 1 && String(item.validation_status) === "failed"
@@ -229,11 +280,13 @@ export const grnValidationControlService = {
     grnId: string,
     actorUserId: string,
     actorRole: string,
-    remarks?: string
+    remarks?: string,
+    userRoles?: string[]
   ) {
     // P0-2: Provision GRNs have no accounting lifecycle — fail closed before any validation.
     const [typeRows] = await db.execute<RowDataPacket[]>(
-      `SELECT grn_type, grn_number, branch_id, accounting_period, financial_year
+      `SELECT grn_type, grn_number, branch_id, accounting_period, financial_year,
+              vendor_name, amount_with_tax, amount, budget_line_id, quantity, amount_without_tax
          FROM grn_request WHERE id = ? LIMIT 1`,
       [grnId]
     );
@@ -247,6 +300,35 @@ export const grnValidationControlService = {
           .join("; ")}`
       );
     }
+
+    const grn = typeRows[0] as any;
+    const submittedGrnNumber = grn.grn_number ? String(grn.grn_number) : null;
+    const submittedBranchId = grn.branch_id ? String(grn.branch_id) : null;
+    const submittedVendorName = grn.vendor_name ? String(grn.vendor_name) : null;
+    const submittedAmount = Number(grn.amount_with_tax ?? grn.amount ?? 0) || null;
+
+    /*
+     * HEAD OFFICE BYPASS (owner ruling, 2026-09-23):
+     *
+     * When Finance Head raises a GRN at Head Office branch, the 3-stage approval chain
+     * is shortened: Branch Head approval is skipped (Finance Head is senior) and Finance
+     * Head approval is skipped (no self-approval). Only Accounts Head reviews.
+     *
+     * On submit: reserve allocations (via grnSmartService) and go directly to branch_head_approved
+     * (pending Accounts Head review) instead of submitted (pending Branch Head review).
+     */
+    const headOfficeBypass = await qualifiesForHeadOfficeBypass(
+      submittedBranchId,
+      actorRole,
+      userRoles
+    );
+
+    if (headOfficeBypass) {
+      // Use grnSmartService.submit which handles allocation reservation for bypass
+      const result = await grnSmartService.submit(grnId, actorUserId, actorRole, remarks, userRoles);
+      return { ...result, validation };
+    }
+
     // Owner ruling: a GRN number is assigned at FINAL (Finance Head) approval, not here — see
     // resolveGrnNumberOnSubmit's caller in grn-smart.service.ts's review(). Submission used to
     // allocate one (2026-08-27 fix for the two-submit-paths bug, see grn-number-on-submit.ts's
@@ -266,10 +348,17 @@ export const grnValidationControlService = {
     await audit("GRN_SUBMIT", grnId, actorUserId, actorRole, {
       validation_score: validation.score,
       effective_blocking_count: 0,
-      grn_number: typeRows[0].grn_number ?? null,
+      grn_number: grn.grn_number ?? null,
       remarks,
     });
-    return { success: true, newStatus: "submitted", grnNumber: typeRows[0].grn_number ?? null, validation };
+    // Same fix as grnSmartService.review() — this is the submit path every allocation-aware GRN
+    // actually goes through (requireAllocationsForSubmit hard-blocks anything without
+    // allocations rather than falling through), so it needed the same wiring grn.service.ts's
+    // submit() had but this path never reached. See grn-notify.ts's header.
+    runInBackground("submit-alert", () =>
+      notifyGrnStage(grnId, submittedGrnNumber, submittedBranchId, submittedVendorName, submittedAmount, "branch_head"));
+    runInBackground("submit-email", () => notifyGrnSubmittedEmail(grnId));
+    return { success: true, newStatus: "submitted", grnNumber: grn.grn_number ?? null, validation };
   },
 
   async review(

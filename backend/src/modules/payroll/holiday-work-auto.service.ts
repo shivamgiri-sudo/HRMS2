@@ -228,7 +228,10 @@ async function calculateDailyRate(employeeId: string, basis: string): Promise<nu
         esicEmployeePct: 0.75,
         esicWageLimit: 21000,
         pfWageLimit: 15000,
-        professionalTax: 200,
+        // PT removed 2026-09-11 per user decision — always 0, kept for API shape
+        // compatibility. This was previously a hardcoded 200, itself never a
+        // configured value.
+        professionalTax: 0,
         tds: 0,
         basicPct: effectiveBasicPct,
         hraPct: effectiveHraPct,

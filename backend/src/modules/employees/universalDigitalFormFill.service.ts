@@ -1003,24 +1003,20 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
 
   const attendanceSource = await resolveAttendanceSource(employee);
 
-  // Gross is the contractual monthly remuneration the employee signs against.
-  //
-  // Priority order (highest to lowest):
-  //   1. salary_package_master.gross — the authoritative offer figure assigned
-  //      by Payroll Head. This is exactly the number the appointment letter PDF
-  //      salary table already prints, so both documents now agree.
-  //   2. employee_salary_snapshot.gross — covers existing/legacy employees who
-  //      were never assigned through the package master flow.
-  //   3. Component sum — snapshot exists but gross column is 0 (DEFAULT 0 on
-  //      that table, so 0 ≠ null and a ?? fallback never fires). 15,518 rows.
-  //   4. ctc_offered (guarded) — last resort; see guard below.
-  //   5. null (blank on contract) — honest; fabricated zero is not.
+  // The appendix prints the CTC the Payroll Head assigned and approved
+  // (salary_package_master.ctc, monthly). Owner ruling 2026-09-26: it must be that
+  // figure for every employee, not the payslip gross. Source is exclusively the
+  // approved + accepted package review so no unapproved figure is ever printed.
+  // salary_component_assignments is NOT consulted for amounts: an active row may
+  // exist without an approved review (264 employees measured 2026-09-08).
   const [[packageRow]] = await db.execute<RowDataPacket[]>(
-    `SELECT p.gross AS package_gross
-       FROM salary_component_assignments a
-       JOIN salary_package_master p ON p.id = a.package_id
-      WHERE a.employee_id = ? AND a.status = 'active' AND a.package_id IS NOT NULL
-      ORDER BY a.effective_date DESC
+    `SELECT p.ctc AS package_gross
+       FROM employee_payroll_head_review r
+       JOIN salary_package_master p ON p.id = r.salary_package_id
+      WHERE r.employee_id = ?
+        AND r.status = 'approved'
+        AND r.package_accepted = 1
+        AND r.salary_package_id IS NOT NULL
       LIMIT 1`,
     [employeeId],
   ).catch(() => [[null] as unknown as RowDataPacket[], []]);
@@ -2110,7 +2106,7 @@ export async function generateChecklistDraft(
       })
     : persisted) as RowDataPacket[];
   const fieldMaps = await fieldMapsForTemplate(checklist.template_id, checklist.document_code);
-  const replacements = Object.fromEntries([
+  const replacements: Record<string, string> = Object.fromEntries([
     ...values.map((value) => [String(value.field_key), String(value.value_text ?? "")]),
     ...fieldMaps
       .filter((map) => safeTrim(map.placeholder_token))
@@ -2119,6 +2115,26 @@ export async function generateChecklistDraft(
         return [String(map.placeholder_token).replace(/^\{\{|\}\}$/g, ""), String(fieldValue?.value_text ?? "")];
       }),
   ]);
+
+  // For structured-PDF documents (hasStructuredPdf), the renderer substitutes
+  // every {{token}} from replacements. If a default field (e.g. relation_prefix)
+  // was never seeded into document_template_field_map — which happens for
+  // long-standing checklists created before that field was added — it would
+  // not be in `values` and would render as blank underscores. Re-derive any
+  // missing defaults directly from sourceContext here so the PDF is always
+  // complete regardless of DB field-map coverage.
+  if (hasStructuredPdf(checklist.document_code)) {
+    const sourceCtx = await buildSourceContext(checklist.employee_id, checklist.candidate_id);
+    const defaultFields = fieldsForDocument(checklist.document_code);
+    for (const field of defaultFields) {
+      if (replacements[field.field_key] != null && replacements[field.field_key] !== "") continue;
+      const derived = deriveFieldValue(
+        { source_path: field.source_path ?? null, field_type: field.field_type ?? "text", masking_rule: null, checked_when: null } as import("mysql2").RowDataPacket,
+        sourceCtx,
+      );
+      if (derived.value_text) replacements[field.field_key] = String(derived.value_text);
+    }
+  }
   let outputFileName = `${checklist.document_code.toLowerCase()}-draft.pdf`;
   let content: Buffer;
 

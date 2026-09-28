@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
+// CartesianGrid intentionally not imported — clean plain background, no gridlines.
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   FunnelChart, Funnel, LabelList,
 } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -113,7 +114,6 @@ export function SalesFunnelPanel({ from, to, clientId, queryKey }: Props) {
                 margin={{ top: 0, right: 12, left: 0, bottom: 0 }}
                 barSize={12}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
                 <XAxis type="number" tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false} />
                 <YAxis
                   dataKey="CompetitorName"

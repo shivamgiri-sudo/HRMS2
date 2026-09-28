@@ -1,10 +1,12 @@
 import { useMemo, useState } from "react";
-import { Check, Database, FileSpreadsheet, Loader2, Plus, Trash2, Upload, X } from "lucide-react";
+import { Check, Database, FileSpreadsheet, Loader2, Plus, RotateCcw, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   useDataSource,
   useDataSources,
+  useDeleteDataSource,
+  useRestoreDataSource,
   useDeleteSourceField,
   useSaveDataSource,
   useSaveSourceField,
@@ -34,19 +36,45 @@ import {
 const SOURCE_TYPE_LABEL: Record<string, string> = {
   local_query: "A table in this system",
   integration_connector: "An external database",
-  google_sheet_csv: "A live Google Sheet",
   upload: "Spreadsheet upload",
   manual: "Typed in or uploaded",
 };
 
 const AGGREGATES = ["SUM", "AVG", "COUNT", "MIN", "MAX", "NONE"] as const;
 
+/**
+ * The formats the backend will accept, with the shape spelled out.
+ *
+ * Kept in step with DATE_FORMATS in kpi-studio.sources.ts, which is where they are
+ * validated before reaching SQL. Showing an example rather than only the pattern
+ * matters: %d-%m-%Y and %m-%d-%Y are indistinguishable to most people until a
+ * date after the 12th of a month silently stops parsing.
+ */
+const DATE_FORMAT_OPTIONS = [
+  { value: "%d-%m-%Y", label: "Day-Month-Year — 31-08-2026" },
+  { value: "%d/%m/%Y", label: "Day/Month/Year — 31/08/2026" },
+  { value: "%m/%d/%Y", label: "Month/Day/Year — 08/31/2026" },
+  { value: "%Y-%m-%d", label: "Year-Month-Day — 2026-08-31" },
+  { value: "%Y/%m/%d", label: "Year/Month/Day — 2026/08/31" },
+  { value: "%d-%b-%Y", label: "Day-Mon-Year — 31-Aug-2026" },
+  { value: "%d %b %Y", label: "Day Mon Year — 31 Aug 2026" },
+  { value: "%Y-%m-%d %H:%i:%s", label: "Year-Month-Day with time — 2026-08-31 14:05:00" },
+  { value: "%d-%m-%Y %H:%i:%s", label: "Day-Month-Year with time — 31-08-2026 14:05:00" },
+  { value: "excel_serial", label: "Excel serial number — 46174 (a spreadsheet exported as values)" },
+] as const;
+
 export function DataSourceManager() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const sources = useDataSources();
+  // Retired sources are fetched here (and only here) so they can be brought back.
+  const sources = useDataSources(true);
+  const all = sources.data ?? [];
+  const live = all.filter((source) => source.active_status !== 0);
+  const retired = all.filter((source) => source.active_status === 0);
+  const [showRetired, setShowRetired] = useState(false);
+  const restoreSource = useRestoreDataSource();
   const detail = useDataSource(selectedId);
   const saveSource = useSaveDataSource();
   const capability = useStudioCapability();
@@ -61,6 +89,7 @@ export function DataSourceManager() {
     employee_key_column: "",
     employee_key_kind: "employee_code",
     date_column: "",
+    date_format: "",
     csv_url: "",
     sheet_tab: "",
     // How this source's rows map to a process, for process-level metrics.
@@ -87,6 +116,7 @@ export function DataSourceManager() {
         employee_key_column: "",
         employee_key_kind: "employee_code",
         date_column: "",
+    date_format: "",
         csv_url: "",
         process_key_kind: "none",
         process_key_column: "",
@@ -176,62 +206,8 @@ export function DataSourceManager() {
                 </label>
               )}
 
-              {newSource.source_type === "google_sheet_csv" && (
-                <>
-                  <label className="block">
-                    <span className="mb-1 block text-xs font-medium text-slate-700">Published CSV link</span>
-                    <Input
-                      value={newSource.csv_url}
-                      onChange={(event) => setNewSource((previous) => ({ ...previous, csv_url: event.target.value }))}
-                      placeholder="https://docs.google.com/spreadsheets/d/e/…/pub?output=csv"
-                      className="text-xs"
-                    />
-                    <span className="mt-1 block text-[11px] leading-snug text-slate-500">
-                      In the sheet: File → Share → Publish to web → choose the tab → Comma-separated
-                      values (.csv) → Publish, then paste the link here. The sheet is read live, so
-                      edits show up on the next calculation.
-                    </span>
-                  </label>
-
-                  {/* Stated plainly because it is a property of Google's publish feature, the data is
-                      employee performance, and the person configuring it is the only one who can
-                      decide whether that is acceptable. */}
-                  <p className="rounded-lg border border-amber-300 bg-amber-50 p-2 text-[11px] leading-snug text-amber-900">
-                    Publishing makes the sheet readable by anyone who has the link, without signing
-                    in. Only publish a sheet whose contents you are content to expose that way, and
-                    keep the link private.
-                  </p>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-medium text-slate-700">Employee code column</span>
-                      <Input
-                        value={newSource.employee_key_column}
-                        onChange={(event) =>
-                          setNewSource((previous) => ({ ...previous, employee_key_column: event.target.value }))
-                        }
-                        placeholder="Employee Code"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-medium text-slate-700">Date column</span>
-                      <Input
-                        value={newSource.date_column}
-                        onChange={(event) => setNewSource((previous) => ({ ...previous, date_column: event.target.value }))}
-                        placeholder="Audit Date"
-                      />
-                    </label>
-                  </div>
-                  <span className="block text-[11px] leading-snug text-slate-500">
-                    These are the column HEADINGS as typed in the sheet. Capitalisation and spacing do
-                    not matter.
-                  </span>
-                </>
-              )}
-
               {newSource.source_type !== "manual" &&
-                newSource.source_type !== "upload" &&
-                newSource.source_type !== "google_sheet_csv" && (
+                newSource.source_type !== "upload" && (
                 <>
                   <label className="block">
                     <span className="mb-1 block text-xs font-medium text-slate-700">Table</span>
@@ -278,6 +254,41 @@ export function DataSourceManager() {
                     />
                   </label>
 
+                  {/* Offered only where the schema carries it, so the form never
+                      collects something the backend would reject. A dropdown, not
+                      a text box: the set is closed, and a typed format that is
+                      subtly wrong parses to NULL for every row rather than
+                      erroring — the date filter then matches nothing and the
+                      source looks empty instead of misconfigured. */}
+                  {capability.data?.dateFormat && (
+                    <label className="block">
+                      <span className="mb-1 block text-xs font-medium text-slate-700">
+                        Is that column text rather than a date?
+                      </span>
+                      <select
+                        value={newSource.date_format}
+                        onChange={(event) =>
+                          setNewSource((previous) => ({ ...previous, date_format: event.target.value }))
+                        }
+                        className="w-full cursor-pointer rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                      >
+                        <option value="">No — it is a real date column</option>
+                        {DATE_FORMAT_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="mt-1 block text-[11px] leading-snug text-slate-500">
+                        Only if the column stores dates as text. Left as a real date, a text column
+                        is compared as a STRING — a month filter then returns the wrong rows without
+                        any error. Parsing cannot use an index, so a large table is slow to read:
+                        3 million order rows take about 50 seconds, which is fine overnight and slow
+                        to sit and watch.
+                      </span>
+                    </label>
+                  )}
+
                   {/* Process mapping. Only offered once the schema supports it, so
                       the form never collects something the backend will reject. */}
                   {capability.data?.processGrain && (
@@ -296,7 +307,17 @@ export function DataSourceManager() {
                           <option value="none">Not a process source (per-employee only)</option>
                           <option value="constant">Every row here belongs to one process</option>
                           <option value="column">A column says which client each row is</option>
+                          <option value="employee">Look it up from the employee on each row</option>
                         </select>
+                        {/* The option most of this system's own tables need: they
+                            carry an employee and no process at all. */}
+                        {newSource.process_key_kind === "employee" && (
+                          <span className="mt-1 block text-[11px] leading-snug text-slate-500">
+                            Joins the employee record to find their process. Needs the employee column
+                            above, and only works for a table in this system's own database — not a
+                            connector.
+                          </span>
+                        )}
                       </label>
 
                       {newSource.process_key_kind !== "none" && (
@@ -368,7 +389,7 @@ export function DataSourceManager() {
           )}
 
           <div className="space-y-1">
-            {(sources.data ?? []).map((source) => (
+            {live.map((source) => (
               <button
                 key={source.id}
                 type="button"
@@ -400,6 +421,49 @@ export function DataSourceManager() {
               </p>
             )}
           </div>
+
+          {/* Retired sources stay listed, quietly. A retirement that hid the source
+              forever would make one mis-click cost every field configured on it. */}
+          {retired.length > 0 && (
+            <div className="space-y-1 border-t border-slate-200 pt-3">
+              <button
+                type="button"
+                onClick={() => setShowRetired((open) => !open)}
+                className="w-full cursor-pointer text-left text-[11px] font-medium uppercase tracking-wide text-slate-400 hover:text-slate-600"
+              >
+                {showRetired ? "Hide" : "Show"} retired ({retired.length})
+              </button>
+              {showRetired &&
+                retired.map((source) => (
+                  <div
+                    key={source.id}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-2"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm text-slate-500 line-through">{source.source_name}</span>
+                      <span className="block text-[11px] text-slate-400">
+                        {SOURCE_TYPE_LABEL[source.source_type] ?? source.source_type}
+                      </span>
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 shrink-0 px-2 text-[11px] text-indigo-600 hover:text-indigo-700"
+                      disabled={restoreSource.isPending}
+                      onClick={() =>
+                        restoreSource.mutate(source.id, {
+                          onSuccess: () =>
+                            setMessage({ ok: true, text: `${source.source_name} is back, with its fields.` }),
+                          onError: (error) => setMessage({ ok: false, text: (error as Error).message }),
+                        })
+                      }
+                    >
+                      <RotateCcw className="mr-1 h-3 w-3" /> Restore
+                    </Button>
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
 
         {/* ── Field editor ── */}
@@ -417,7 +481,7 @@ export function DataSourceManager() {
               <Loader2 className="h-4 w-4 animate-spin" /> Loading…
             </p>
           ) : detail.data ? (
-            <FieldEditor source={detail.data} />
+            <FieldEditor source={detail.data} onRetired={() => setSelectedId(null)} />
           ) : null}
         </div>
       </div>
@@ -425,7 +489,7 @@ export function DataSourceManager() {
   );
 }
 
-function FieldEditor({ source }: { source: DataSourceSummary & { fields: Array<any> } }) {
+function FieldEditor({ source, onRetired }: { source: DataSourceSummary & { fields: Array<any> }; onRetired: () => void }) {
   const columns = useSourceColumns(
     source.source_type === "manual" || source.source_type === "upload" ? null : source.id,
   );
@@ -434,6 +498,9 @@ function FieldEditor({ source }: { source: DataSourceSummary & { fields: Array<a
   // Its own capability read rather than a prop: a stale prop is how a form ends
   // up offering a control the database cannot store.
   const capability = useStudioCapability();
+  const retireSource = useDeleteDataSource();
+  const [confirmRetire, setConfirmRetire] = useState(false);
+  const [retireError, setRetireError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [draft, setDraft] = useState({ field_name: "", display_name: "", source_column: "", aggregate_fn: "SUM", unit: "" });
@@ -477,13 +544,48 @@ function FieldEditor({ source }: { source: DataSourceSummary & { fields: Array<a
 
   return (
     <div className="space-y-4">
-      <header>
-        <h3 className="text-base font-semibold text-slate-900">{source.source_name}</h3>
-        <p className="mt-0.5 text-xs text-slate-500">
-          {SOURCE_TYPE_LABEL[source.source_type] ?? source.source_type}
-          {source.source_object ? ` · ${source.source_object}` : ""}
-          {source.integration_key ? ` · ${source.integration_key}` : ""}
-        </p>
+      <header className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold text-slate-900">{source.source_name}</h3>
+          <p className="mt-0.5 text-xs text-slate-500">
+            {SOURCE_TYPE_LABEL[source.source_type] ?? source.source_type}
+            {source.source_object ? ` · ${source.source_object}` : ""}
+            {source.integration_key ? ` · ${source.integration_key}` : ""}
+          </p>
+        </div>
+        <div className="shrink-0 text-right">
+          {confirmRetire ? (
+            <div className="flex items-center gap-1.5">
+              <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]"
+                      onClick={() => setConfirmRetire(false)}>
+                Cancel
+              </Button>
+              <Button size="sm" className="h-7 bg-rose-600 px-2 text-[11px] hover:bg-rose-700"
+                      disabled={retireSource.isPending}
+                      onClick={() => {
+                        setRetireError(null);
+                        retireSource.mutate(source.id, {
+                          onSuccess: () => { setConfirmRetire(false); onRetired(); },
+                          onError: (e) => setRetireError((e as Error).message),
+                        });
+                      }}>
+                {retireSource.isPending ? "Retiring…" : "Yes, retire"}
+              </Button>
+            </div>
+          ) : (
+            <Button size="sm" variant="ghost"
+                    className="h-7 px-2 text-[11px] text-slate-400 hover:text-rose-600"
+                    onClick={() => { setRetireError(null); setConfirmRetire(true); }}>
+              <Trash2 className="mr-1 h-3 w-3" />
+              Retire source
+            </Button>
+          )}
+          {/* The refusal names the KPIs still reading it, which is the whole
+              point of asking the server rather than hiding the button. */}
+          {retireError && (
+            <p className="mt-1 max-w-xs text-[11px] leading-relaxed text-rose-600">{retireError}</p>
+          )}
+        </div>
       </header>
 
       {/* Existing fields */}

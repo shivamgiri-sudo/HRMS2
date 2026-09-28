@@ -78,6 +78,42 @@ import {
   type MonthSplitValue,
 } from "./sections/MonthSplitPanel";
 
+/** The production reverse proxy refuses request bodies over 20 MB with HTTP 413. Files up to
+ *  DIRECT_UPLOAD_MAX_BYTES go in one request; bigger ones (a 50+ page scanned PDF) are sent in
+ *  UPLOAD_CHUNK_BYTES pieces to /documents/chunk and joined on the server. The ceiling matches
+ *  CHUNKED_FILE_MAX_BYTES in grn-smart.routes.ts. */
+const MAX_GRN_ATTACHMENT_MB = 150;
+const MAX_GRN_ATTACHMENT_BYTES = MAX_GRN_ATTACHMENT_MB * 1024 * 1024;
+const DIRECT_UPLOAD_MAX_BYTES = 15 * 1024 * 1024;
+const UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
+
+async function uploadGrnDocument(grnId: string, file: File, isPrimary: boolean): Promise<WorkspaceDocument[]> {
+  if (file.size <= DIRECT_UPLOAD_MAX_BYTES) {
+    const body = new FormData();
+    body.append("files", file);
+    body.append("documentType", "invoice");
+    // Only the first file is primary; later requests send an index that matches none of theirs.
+    body.append("primaryIndex", isPrimary ? "0" : "-1");
+    return unwrapList(await hrmsApi.postForm<any>(`/api/finance/grns/${grnId}/documents`, body)) as WorkspaceDocument[];
+  }
+  const uploadId = crypto.randomUUID();
+  const total = Math.ceil(file.size / UPLOAD_CHUNK_BYTES);
+  let response: any = null;
+  for (let index = 0; index < total; index += 1) {
+    const body = new FormData();
+    body.append("uploadId", uploadId);
+    body.append("index", String(index));
+    body.append("total", String(total));
+    body.append("fileName", file.name);
+    body.append("documentType", "invoice");
+    body.append("isPrimary", String(isPrimary));
+    // Text fields first: multer only sees fields that precede the file part.
+    body.append("chunk", file.slice(index * UPLOAD_CHUNK_BYTES, (index + 1) * UPLOAD_CHUNK_BYTES), file.name);
+    response = await hrmsApi.postForm<any>(`/api/finance/grns/${grnId}/documents/chunk`, body);
+  }
+  return unwrapList(response) as WorkspaceDocument[];
+}
+
 /** Methods offered for GRN's auto-split, restricted to what's computable from a single batched
  *  driver fetch. "meter_wise" has no client formula (server-only). "grade_weighted_headcount"'s
  *  real weight is a server-side blended-CTC calculation — the client stand-in branch-budget
@@ -318,14 +354,6 @@ function parsePaymentTermDays(raw: unknown): number | null {
   const days = Number(match[0]);
   if (!Number.isInteger(days) || days < 0 || days > 365) return null;
   return days;
-}
-
-function addDays(dateString: string, days: number) {
-  if (!dateString) return "";
-  const date = new Date(`${dateString}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return "";
-  date.setDate(date.getDate() + Number(days || 0));
-  return date.toISOString().slice(0, 10);
 }
 
 function daysBetween(from: string, to: string) {
@@ -761,7 +789,7 @@ export function BudgetLinkedGrnForm({
         // (`row.included && ...`) treats undefined as excluded — so whenever the re-seed effect
         // did not happen to run after this prefill, editing a saved GRN dropped every
         // cost-centre allocation on save. The re-seed effect's own default is
-        // `existing?.included ?? hasBudgetLine`, which preserves whatever is set here.
+        // `existing?.included ?? false`, which preserves whatever is set here.
         [...ccMap.entries()].map(([ccKey, data]) => ({
           key: crypto.randomUUID(),
           costCentreKey: ccKey,
@@ -782,17 +810,18 @@ export function BudgetLinkedGrnForm({
   // ── Cascade: cost centre → head → sub-head → (item, only when ambiguous) ──
 
   const costCentreOptions = useMemo<SearchableOption[]>(() => {
+    // Build the active CC id set so budget-line entries for inactive/closed CCs are excluded.
+    const activeCCIds = new Set(activeCostCentres.map((cc) => cc.id));
     const seen = new Map<string, string>();
     budgetLines.forEach((line) => {
       const key = line.cost_centre_id ?? NO_COST_CENTRE;
+      // Skip CCs from budget lines that are no longer active — the backend validates
+      // active_status=1 at save time, so showing inactive ones only causes confusion.
+      if (key !== NO_COST_CENTRE && !activeCCIds.has(key)) return;
       if (!seen.has(key)) {
         seen.set(key, line.cost_centre_name ?? "Branch (no cost centre)");
       }
     });
-    // Merge in every active cost centre for the branch, not only ones that already have a
-    // budget line — mirrors vendorCostCentreGroups' use of the same activeCostCentres list.
-    // Without this, a cost centre with no budget line raised yet couldn't be selected at all,
-    // which cascaded into Head/Sub-head being unreachable for it too.
     activeCostCentres.forEach((cc) => {
       if (!seen.has(cc.id)) {
         seen.set(cc.id, cc.costCentreName || cc.costCentreCode || "Cost centre");
@@ -1127,16 +1156,10 @@ export function BudgetLinkedGrnForm({
   useEffect(() => {
     setCostCentreSplits((current) => {
       if (!vendorCostCentreGroups.length) return current.length ? [] : current;
-      // Only count cost centres WITH budget lines for the equal split
-      const groupsWithBudgetLines = vendorCostCentreGroups.filter((g) => g.lines.length > 0);
-      const equalPct = groupsWithBudgetLines.length > 0
-        ? Math.round((100 / groupsWithBudgetLines.length) * 1_000_000) / 1_000_000
-        : 0;
       return vendorCostCentreGroups.map((group) => {
         const existing = current.find((row) => row.costCentreKey === group.costCentreKey);
         // For branch-common expenses, lines may not have a specific budget line ID per CC
         const firstLineId = group.lines[0]?.id ?? "";
-        const hasBudgetLine = group.lines.length > 0;
         // Only preserve an existing selection when the group still has budget lines AND the
         // previously chosen line is still among them. When lines.length === 0 the old ID is stale
         // (the line was depleted or the head/subhead no longer matches) and must be cleared.
@@ -1145,9 +1168,9 @@ export function BudgetLinkedGrnForm({
           key: existing?.key ?? crypto.randomUUID(),
           costCentreKey: group.costCentreKey,
           budgetLineId: stillValid ? existing!.budgetLineId : firstLineId,
-          percentage: existing?.percentage ?? (hasBudgetLine ? equalPct : 0),
-          // Auto-exclude cost centres without budget lines; preserve user choice for existing rows
-          included: existing?.included ?? hasBudgetLine,
+          // No cost centre is pre-selected: the raiser must tick each one themselves.
+          percentage: existing?.percentage ?? 0,
+          included: existing?.included ?? false,
         };
       });
     });
@@ -1176,7 +1199,20 @@ export function BudgetLinkedGrnForm({
   }, [invoiceComponents, form.amount]);
 
   function updateCostCentreSplit(key: string, patch: Partial<CostCentreSplitDraft>) {
-    setCostCentreSplits((current) => current.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+    setCostCentreSplits((current) => {
+      const next = current.map((row) => (row.key === key ? { ...row, ...patch } : row));
+      if (patch.included === undefined) return next;
+      // Ticking/unticking keeps an untouched (all-equal or all-zero) split at equal shares of the
+      // ticked rows; a split the raiser has already hand-edited is left exactly as they set it.
+      const previouslyIncluded = current.filter((row) => row.included);
+      const untouched = previouslyIncluded.every((row) => row.percentage === previouslyIncluded[0].percentage);
+      if (!untouched) return next;
+      const includedNow = next.filter((row) => row.included);
+      const equalPct = includedNow.length
+        ? Math.round((100 / includedNow.length) * 1_000_000) / 1_000_000
+        : 0;
+      return next.map((row) => ({ ...row, percentage: row.included ? equalPct : 0 }));
+    });
   }
 
   /** Resets every INCLUDED row to an equal percentage share — the common case, and a one-click
@@ -1730,6 +1766,8 @@ export function BudgetLinkedGrnForm({
     setForm(EMPTY_FORM);
     setAllocations([newAllocation()]);
     setCostCentreSplits([]);
+    setCostCentreSplitMethod("equal_split");
+    setDirectCostCentreKey("");
     setInvoiceComponents([newInvoiceComponent()]);
     setFiles([]);
     setCreated(null);
@@ -2018,15 +2056,22 @@ export function BudgetLinkedGrnForm({
 
       let uploadedDocuments: WorkspaceDocument[] = [];
       if (files.length) {
-        const body = new FormData();
-        files.forEach((file) => body.append("files", file));
-        body.append("documentType", "invoice");
-        body.append("primaryIndex", "0");
-        const uploadResponse = await hrmsApi.postForm<any>(
-          `/api/finance/grns/${current.id}/documents`,
-          body
-        );
-        uploadedDocuments = unwrapList(uploadResponse) as WorkspaceDocument[];
+        // One file at a time (large ones in pieces) — see uploadGrnDocument() for the 413 story.
+        for (const [index, file] of files.entries()) {
+          try {
+            const documents = await uploadGrnDocument(String(current.id), file, index === 0);
+            uploadedDocuments = [...uploadedDocuments, ...documents];
+          } catch (uploadError) {
+            const tooLarge =
+              (uploadError as { status?: number } | null)?.status === 413 ||
+              /413|too large/i.test(uploadError instanceof Error ? uploadError.message : String(uploadError));
+            throw new Error(
+              tooLarge
+                ? `"${file.name}" is too large to upload. Compress it and try again.`
+                : `Could not upload "${file.name}": ${uploadError instanceof Error ? uploadError.message : String(uploadError)}`
+            );
+          }
+        }
         setFiles([]);
       }
 
@@ -2192,13 +2237,16 @@ export function BudgetLinkedGrnForm({
 
   const actionButtons = (
     <div className="flex gap-2">
-      <GrnIconButton
-        onClick={() => resetForm()}
-        aria-label={created ? "Start a new GRN" : "Clear form"}
-        title={created ? "Start a new GRN" : "Clear form"}
+      <Button
+        type="button"
+        variant="default"
+        className="flex-1 md:flex-none"
+        disabled={persistMutation.isPending}
+        onClick={() => resetForm({ navigateAway: false })}
       >
         <RotateCcw className="h-3.5 w-3.5" />
-      </GrnIconButton>
+        Cancel draft
+      </Button>
       <Button
         className="flex-1 md:flex-none"
         disabled={persistMutation.isPending || submitted}
@@ -2722,22 +2770,12 @@ export function BudgetLinkedGrnForm({
                                 || extractStateCodeFromGstin(gstin)
                                 || "");
                             const termDays = parsePaymentTermDays(picked?.payment_terms);
-                            // The due date is a function of the vendor's terms and the bill date,
-                            // so a new vendor re-derives it. With no terms mapped there is nothing
-                            // to derive from, and whatever is on screen is left as it stands.
-                            const seededDue =
-                              termDays !== null && current.billDate
-                                ? (vendorChanged || !current.dueDate
-                                  ? addDays(current.billDate, termDays)
-                                  : current.dueDate)
-                                : current.dueDate;
                             return {
                               ...current,
                               vendorId: value,
                               vendorGstin: gstin,
                               vendorStateCode: vendorState,
                               paymentTermsDays: termDays ?? current.paymentTermsDays,
-                              dueDate: seededDue,
                             };
                           });
                         }}
@@ -2859,10 +2897,6 @@ export function BudgetLinkedGrnForm({
                         subHead: "",
                         budgetLineId: "",
                         lateInvoiceReason: "",
-                        dueDate:
-                          current.dueDate || !billDate
-                            ? current.dueDate
-                            : addDays(billDate, current.paymentTermsDays),
                       }));
                       setAllocations([newAllocation()]);
                       setInvoiceComponents([newInvoiceComponent()]);
@@ -3195,6 +3229,13 @@ export function BudgetLinkedGrnForm({
             ) : null
           )}
 
+          {Boolean(form.branchId) && Boolean(effectivePeriod) && !linesLoading &&
+           activeCostCentres.length > 0 && (!form.head || !form.subHead) && (
+            <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-[12px] text-blue-800">
+              Select an expense <strong>Head</strong> and <strong>Sub-head</strong> above to load the cost-centre split and the Apply button.
+            </div>
+          )}
+
           {Boolean(form.branchId) && Boolean(effectivePeriod) && !linesLoading && vendorCostCentreGroups.length > 0 && (
             <CostCentreSplitEditor
               groups={vendorCostCentreGroups}
@@ -3281,7 +3322,7 @@ export function BudgetLinkedGrnForm({
                     Tap to attach invoice/receipt
                   </span>
                   <span className="ml-2 text-[11px] text-grn-ink-soft">
-                    PDF, JPG, PNG, WEBP · max 10 files
+                    PDF, JPG, PNG, WEBP · max 10 files, {MAX_GRN_ATTACHMENT_MB} MB each
                   </span>
                 </div>
                 <input
@@ -3290,7 +3331,16 @@ export function BudgetLinkedGrnForm({
                   accept=".pdf,.jpg,.jpeg,.png,.webp"
                   className="sr-only"
                   onChange={(event) => {
-                    const incoming = Array.from(event.target.files ?? []);
+                    const picked = Array.from(event.target.files ?? []);
+                    const oversize = picked.filter((f) => f.size > MAX_GRN_ATTACHMENT_BYTES);
+                    if (oversize.length) {
+                      toast({
+                        title: "File too large",
+                        description: `${oversize.map((f) => f.name).join(", ")} is over ${MAX_GRN_ATTACHMENT_MB} MB. Compress or split it before attaching.`,
+                        variant: "destructive",
+                      });
+                    }
+                    const incoming = picked.filter((f) => f.size <= MAX_GRN_ATTACHMENT_BYTES);
                     setFiles((prev) => {
                       const existingNames = new Set(prev.map((f) => f.name));
                       return [...prev, ...incoming.filter((f) => !existingNames.has(f.name))];

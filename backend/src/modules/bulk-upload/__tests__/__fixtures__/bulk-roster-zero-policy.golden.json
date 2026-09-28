@@ -1,0 +1,116 @@
+{
+  "rosterAssignment": [
+    {
+      "sql": "INSERT INTO wfm_roster_assignment\n             (id, cycle_id, employee_id, roster_date, shift_template_id, is_week_off, shift_start_time, shift_end_time, roster_status, publish_status, decision_source, system_decision_reason)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'published', 'published', 'bulk_upload', ?)\n           ON DUPLICATE KEY UPDATE\n             shift_template_id = VALUES(shift_template_id),\n             is_week_off = VALUES(is_week_off),\n             shift_start_time = VALUES(shift_start_time),\n             shift_end_time = VALUES(shift_end_time),\n             decision_source = 'bulk_upload',\n             system_decision_reason = VALUES(system_decision_reason),\n             updated_at = NOW()",
+      "params": [
+        "<uuid>",
+        "cycle-1",
+        "emp-MAS001",
+        "2026-08-17",
+        "shift-1",
+        0,
+        "10:00",
+        "19:00",
+        "n"
+      ]
+    },
+    {
+      "sql": "UPDATE upload_batch_row SET row_status='imported', created_entity_type='wfm_roster_assignment', created_entity_id=? WHERE id=?",
+      "params": [
+        "<uuid>",
+        "r-MAS001-2026-08-17"
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_assignment\n             (id, cycle_id, employee_id, roster_date, shift_template_id, is_week_off, shift_start_time, shift_end_time, roster_status, publish_status, decision_source, system_decision_reason)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'published', 'published', 'bulk_upload', ?)\n           ON DUPLICATE KEY UPDATE\n             shift_template_id = VALUES(shift_template_id),\n             is_week_off = VALUES(is_week_off),\n             shift_start_time = VALUES(shift_start_time),\n             shift_end_time = VALUES(shift_end_time),\n             decision_source = 'bulk_upload',\n             system_decision_reason = VALUES(system_decision_reason),\n             updated_at = NOW()",
+      "params": [
+        "<uuid>",
+        "cycle-1",
+        "emp-MAS002",
+        "2026-08-23",
+        null,
+        1,
+        null,
+        null,
+        "n"
+      ]
+    },
+    {
+      "sql": "UPDATE upload_batch_row SET row_status='imported', created_entity_type='wfm_roster_assignment', created_entity_id=? WHERE id=?",
+      "params": [
+        "<uuid>",
+        "r-MAS002-2026-08-23"
+      ]
+    },
+    {
+      "sql": "UPDATE upload_batch SET batch_status=?, imported_rows=?, imported_by=?, imported_at=NOW(), updated_at=NOW()\n       WHERE id=?",
+      "params": [
+        "imported",
+        2,
+        "user-1",
+        "batch-1"
+      ]
+    }
+  ],
+  "shiftRoster": [
+    {
+      "sql": "INSERT INTO weekly_roster_cycle\n             (id, week_start_date, week_end_date, status, created_by, process_id, branch_id)\n           VALUES (?, ?, ?, 'draft', ?, ?, ?)",
+      "params": [
+        "<uuid>",
+        "2026-08-17",
+        "2026-08-23",
+        "user-1",
+        "proc-1",
+        "br-1"
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_assignment\n               (id, cycle_id, employee_id, roster_date, shift_template_id, is_week_off, shift_start_time, shift_end_time, roster_status, publish_status, decision_source, system_decision_reason)\n             VALUES (?,?,?,?,?,?,?,?,'published','published','bulk_upload',?),(?,?,?,?,?,?,?,?,'published','published','bulk_upload',?),(?,?,?,?,?,?,?,?,'published','published','bulk_upload',?)\n             ON DUPLICATE KEY UPDATE\n               shift_template_id = VALUES(shift_template_id),\n               is_week_off = VALUES(is_week_off),\n               shift_start_time = VALUES(shift_start_time),\n               shift_end_time = VALUES(shift_end_time),\n               decision_source = 'bulk_upload',\n               system_decision_reason = VALUES(system_decision_reason),\n               updated_at = CURRENT_TIMESTAMP",
+      "params": [
+        "<uuid>",
+        "<uuid>",
+        "emp-MAS001",
+        "2026-08-17",
+        "shift-1",
+        0,
+        "09:00",
+        "18:00",
+        null,
+        "<uuid>",
+        "<uuid>",
+        "emp-MAS001",
+        "2026-08-18",
+        "shift-1",
+        0,
+        "09:00",
+        "18:00",
+        null,
+        "<uuid>",
+        "<uuid>",
+        "emp-MAS001",
+        "2026-08-23",
+        null,
+        1,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "sql": "UPDATE upload_batch_row SET row_status='imported', created_entity_type='wfm_roster_assignment', created_entity_id=? WHERE id=?",
+      "params": [
+        "<uuid>",
+        "w-1"
+      ]
+    },
+    {
+      "sql": "UPDATE upload_batch SET batch_status=?, imported_rows=?, imported_by=?, imported_at=NOW(), updated_at=NOW()\n       WHERE id=?",
+      "params": [
+        "imported",
+        1,
+        "user-1",
+        "batch-2"
+      ]
+    }
+  ]
+}

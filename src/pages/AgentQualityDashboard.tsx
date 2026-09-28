@@ -179,7 +179,7 @@ export default function AgentQualityDashboard() {
                 {weaknessLoading ? (
                   <PanelSkeleton />
                 ) : weakness ? (
-                  <WeaknessPanel weaknessAreas={weakness.weakness_areas} />
+                  <WeaknessPanel weaknessAreas={weakness.weakness_areas ?? []} />
                 ) : (
                   <Card className="p-6 text-center text-slate-500">
                     No weakness data available

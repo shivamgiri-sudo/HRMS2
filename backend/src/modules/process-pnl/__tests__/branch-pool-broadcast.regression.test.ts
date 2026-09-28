@@ -170,11 +170,13 @@ describe("bpoPnlAllocationOverlayService.getSummary — GRN/legacy pool no longe
       if (sql.includes("information_schema.tables")) {
         return params[0] === "grn_cost_allocation" ? [{ 1: 1 }] : [];
       }
+      // The view carries ex_gst_amount (sql/1852, owner rule 2026-09-24: P&L GRN is ex-GST).
+      if (sql.includes("information_schema.columns") && sql.includes("ex_gst_amount")) return [{ 1: 1 }];
       if (sql.includes("vw_process_pnl_grn_allocation")) {
-        // One branch-level (process_id NULL) GRN-allocation-view pool row.
+        // One branch-level (process_id NULL) GRN-allocation-view pool row, read AS amount.
         return [{
           process_id: null, branch_id: BRANCH_ID, period_code: PERIOD,
-          pnl_bucket: "bmc_non_people", pnl_cost_amount: SHARED_POOL_AMOUNT,
+          pnl_bucket: "bmc_non_people", amount: SHARED_POOL_AMOUNT,
           allocation_count: 1, freshness: null,
         }];
       }

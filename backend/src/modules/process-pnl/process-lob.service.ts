@@ -13,6 +13,7 @@ import {
 import { bpoPnlAllocationOverlayService } from "./bpo-pnl-allocation-overlay.service.js";
 import type { BpoPnlRow } from "./bpo-pnl.service.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
+import { peopleCostSqlForColumns } from "./pnl-people-cost.js";
 
 type LobStatus = "draft" | "approved" | "inactive";
 type PlanStatus = "draft" | "approved" | "locked";
@@ -171,6 +172,17 @@ interface LobCostComponentRow extends RowDataPacket {
 
 interface DirectLobData {
   revenue: ReturnType<typeof calculateRevenue>;
+  /**
+   * Whether process_delivery_actual actually holds a row for this LOB this
+   * period — checked directly, not inferred from calculateRevenue's summed
+   * units. The two disagree in exactly the case that matters: a fixed_monthly
+   * rule reports billableUnits=1 with zero delivery rows (it doesn't need
+   * any), so a truthy check on summed units reads that as "delivery data
+   * available" when none exists — and would misread it the other way for a
+   * LOB that reported a real, validated zero-delivery day. See dataStatus.delivery
+   * below, which is what this actually exists to make honest.
+   */
+  hasDeliveryData: boolean;
   agentSalary: number;
   dscPeople: number;
   agentHeadcount: number;
@@ -286,6 +298,7 @@ function numericOrNull(value: unknown) {
 function defaultDirectData(): DirectLobData {
   return {
     revenue: calculateRevenue([], [], []),
+    hasDeliveryData: false,
     agentSalary: 0,
     dscPeople: 0,
     agentHeadcount: 0,
@@ -323,6 +336,27 @@ function addCostComponent(target: DirectLobData, type: string, amount: number) {
 
 function sum<T>(values: T[], selector: (value: T) => number) {
   return values.reduce((total, value) => total + selector(value), 0);
+}
+
+/**
+ * dataStatus.delivery for one LOB row — extracted so it can be pinned down by
+ * a unit test without mocking getProcessSummary's whole dependency chain,
+ * the same way allocateAmountByWeights already is.
+ *
+ * Deliberately NOT `hasDeliveryData ? "available" : "missing"`: a
+ * fixed_monthly-only LOB never needs a delivery row to bill correctly, so
+ * calling that "missing" would put a warning on a real, fully-correct ₹
+ * figure. "missing" is reserved for the one case that actually matters —
+ * revenue depends on delivered/accepted/billable units and none were ever
+ * recorded, so recognizedRevenue below is a computed zero or minimum-
+ * commitment top-up, not a confirmed measurement.
+ */
+export function deliveryDataStatus(
+  hasDeliveryData: boolean,
+  rules: Array<{ billingModel: string }>,
+): "available" | "missing" | "not_required" {
+  if (hasDeliveryData) return "available";
+  return rules.some((rule) => rule.billingModel !== "fixed_monthly") ? "missing" : "not_required";
 }
 
 export function allocateAmountByWeights(
@@ -498,6 +532,7 @@ async function loadRevenueData(processId: string, period: string, lobIds: string
       }));
     const item = direct.get(lobId)!;
     item.revenue = calculateRevenue(ruleInputs, deliveryInputs, componentInputs);
+    item.hasDeliveryData = deliveryInputs.length > 0;
     item.freshness = deliveries
       .filter((row) => String(row.process_lob_id) === lobId && row.updated_at)
       .map((row) => String(row.updated_at))
@@ -526,18 +561,12 @@ async function loadPayrollCosts(processId: string, period: string, direct: Map<s
   const runIds = runs.map((row) => String(row.id));
 
   const salaryColumns = await listColumns("salary_prep_line");
-  const gross = salaryColumns.has("gross_salary") ? "COALESCE(spl.gross_salary,0)" : "0";
-  const pf = salaryColumns.has("pf_employer") ? "COALESCE(spl.pf_employer,0)" : "0";
-  const esic = salaryColumns.has("esic_employer") ? "COALESCE(spl.esic_employer,0)" : "0";
-  const gratuity = salaryColumns.has("gratuity")
-    ? "COALESCE(spl.gratuity,0)"
-    : salaryColumns.has("basic")
-      ? "COALESCE(spl.basic,0) * 0.0481"
-      : "0";
+  // People Cost rule (pnl-people-cost.ts): CTC paid less other/loan/advance/LWP deductions.
+  const peopleCost = peopleCostSqlForColumns("spl", salaryColumns);
   const { start, end } = monthRange(period);
   const rows = await queryRows<LobPayrollRow>(
     `SELECT a.process_lob_id, a.cost_bucket,
-            SUM((${gross} + ${pf} + ${esic} + ${gratuity}) * a.allocation_pct / 100) loaded_cost,
+            SUM(${peopleCost} * a.allocation_pct / 100) loaded_cost,
             COUNT(DISTINCT a.employee_id) employee_count,
             SUM(a.allocation_pct) allocation_pct_total
        FROM salary_prep_line spl
@@ -1080,7 +1109,7 @@ export const processLobService = {
         planStatus: plan?.status ?? "missing",
         dataStatus: {
           revenue: item.revenue.rules.length ? "configured" : "missing_rule",
-          delivery: item.revenue.deliveredUnits || item.revenue.billableUnits ? "available" : "missing",
+          delivery: deliveryDataStatus(item.hasDeliveryData, item.revenue.rules),
           payroll: payrollSource.available ? "available" : "unavailable",
           grn: grnSource.available ? "available" : "unavailable",
         },

@@ -1,11 +1,14 @@
 import { useState } from "react";
-import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
+import { Link } from "react-router-dom";
+import { AlertTriangle, CheckCircle2, RefreshCw, Settings2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { PnlDrilldownDrawer } from "@/components/finance/pnl/PnlDrilldownDrawer";
 import type { PnlDrilldownMetric, PnlDrilldownParams } from "@/hooks/usePnlDrilldown";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePnlLiveReconciliation, type PnlReconciliationRow } from "@/hooks/usePnlLiveReconciliation";
+import { costCentreText } from "./costCentreLabel";
+import { pnlLabel, pnlTooltip } from "./pnlLabels";
 
 function money(value: number | null | undefined, compact = true) {
   return new Intl.NumberFormat("en-IN", {
@@ -29,8 +32,22 @@ function issueLabel(issue: string) {
 
 function statusTone(status: string) {
   if (status === "ACTUAL") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (status === "ACCRUAL" || status === "PARTIAL") return "border-amber-200 bg-amber-50 text-amber-700";
+  if (status === "ACCRUAL" || status === "PARTIAL" || status === "ESTIMATED") return "border-amber-200 bg-amber-50 text-amber-700";
   return "border-rose-200 bg-rose-50 text-rose-700";
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function periodLabel(period: string | null | undefined) {
+  if (!period || !/^\d{4}-\d{2}$/.test(period)) return period ?? "";
+  const [y, m] = period.split("-");
+  return `${MONTHS[Number(m) - 1]}-${y.slice(2)}`;
+}
+
+function estimateTitle(row: PnlReconciliationRow) {
+  const basis = row.estimateSource === "configured"
+    ? "lines configured under P&L Configuration > Seat billing"
+    : `the ${periodLabel(row.estimateSourcePeriod)} invoice`;
+  return `Estimated: seat rate x seats from ${basis}. Replaced by the invoice once it is raised.`;
 }
 
 function sortRows(rows: PnlReconciliationRow[]) {
@@ -58,11 +75,16 @@ const CELL_METRIC: Record<string, PnlDrilldownMetric> = {
 export function PnlReconciliationPanel({
   period,
   branchId,
+  clientId,
+  search,
 }: {
   period: string;
   branchId?: string;
+  /** The page's Client / Search filters (audit item 19) — narrow to the matching processes' cost centres. */
+  clientId?: string;
+  search?: string;
 }) {
-  const query = usePnlLiveReconciliation(period, { branchIds: branchId ? [branchId] : [] });
+  const query = usePnlLiveReconciliation(period, { branchIds: branchId ? [branchId] : [], clientId, search });
   const data = query.data;
   /* Declared above the loading/error early returns so the hook order stays stable across renders. */
   const [drilldown, setDrilldown] = useState<{ params: PnlDrilldownParams; label: string } | null>(null);
@@ -85,22 +107,55 @@ export function PnlReconciliationPanel({
     );
   }
 
-  const metricCards = [
-    { label: "Recognised revenue", value: money(data.totals.revenue) },
-    { label: "Invoice revenue", value: money(data.totals.revenueInvoice) },
+  // Labels and tooltips from the shared P&L glossary (audit items 23/24/28), so each concept has the
+  // same name here as on CEO Overview, the header strip and the Statement.
+  const metricCards: Array<{ label: string; value: string; hint?: string; danger?: boolean; estimated?: boolean }> = [
+    { label: pnlLabel("RECOGNISED_REVENUE"), value: money(data.totals.revenue), hint: pnlTooltip("RECOGNISED_REVENUE") },
+    { label: pnlLabel("INVOICED_REVENUE"), value: money(data.totals.revenueInvoice), hint: pnlTooltip("INVOICED_REVENUE") },
     { label: "Accrued top-up", value: money(data.totals.revenueAccrual) },
-    { label: "Payroll cost", value: money(data.totals.payrollCost) },
-    { label: "GRN actual", value: money(data.totals.grnActual) },
     {
-      // BUG-7: this reconciliation view computes OP as recognisedRevenue - payrollCost - grnActual,
-      // a simplified 3-line check with no DSC/BMC/overhead split or allocation layer. It is a
-      // quick sanity check, not the full waterfall the Statement tab produces — label it as such
-      // so it isn't mistaken for the authoritative Operating Profit figure.
-      label: "Indicative OP (simplified)",
+      // Seat rate x seats for cost centres with no invoice or provision yet — see pnl-seat-billing.service.ts.
+      label: `Estimated (seat rate) · ${data.totals.estimatedCostCentres ?? 0} CC`,
+      value: money(data.totals.revenueEstimated ?? 0),
+      estimated: (data.totals.revenueEstimated ?? 0) > 0,
+    },
+    { label: "Revenue per day (seat run-rate)", value: money(data.totals.perDayRevenue ?? 0) },
+    { label: pnlLabel("PEOPLE_COST"), value: money(data.totals.payrollCost), hint: pnlTooltip("PEOPLE_COST") },
+    { label: pnlLabel("GRN_CONSUMED"), value: money(data.totals.grnActual), hint: pnlTooltip("GRN_CONSUMED") },
+    {
+      // Approved GRN that has not been fully consumed yet — real committed spend, for every month
+      // (owner rule 2026-09-24), folded into the cost side so OP is not overstated.
+      label: pnlLabel("GRN_COMMITTED"),
+      value: money(data.totals.grnEstimated ?? 0),
+      hint: pnlTooltip("GRN_COMMITTED"),
+      estimated: (data.totals.grnEstimated ?? 0) > 0,
+    },
+    {
+      // BUG-7: this view computes OP as Recognised Revenue − People Cost − GRN (consumed + committed),
+      // with no DSC/BMC split or allocation layer — not the Statement's waterfall. Formerly
+      // Indicative OP (simplified); now named "Operating Profit (contribution)", the same name and
+      // figure as CEO Overview, and distinct from the Statement's "Operating Profit" (tooltip says how).
+      label: pnlLabel("OPERATING_PROFIT_CONTRIBUTION"),
       value: money(data.totals.operatingProfit),
+      hint: pnlTooltip("OPERATING_PROFIT_CONTRIBUTION"),
       danger: data.totals.operatingProfit < 0,
     },
-    { label: "Margin", value: percent(data.totals.marginPct), danger: (data.totals.marginPct ?? 0) < 0 },
+    { label: pnlLabel("OPERATING_MARGIN"), value: percent(data.totals.marginPct), hint: pnlTooltip("OPERATING_MARGIN"), danger: (data.totals.marginPct ?? 0) < 0 },
+    {
+      // Depreciation + finance cost + tax, entered by Finance under P&L Configuration >
+      // Below-the-line costs — company-wide only, never allocated to a branch or cost centre.
+      label: "Below-the-line (depreciation + finance cost + tax)",
+      value: money(data.totals.belowTheLineTotal ?? 0),
+      estimated: (data.totals.belowTheLineTotal ?? 0) === 0,
+    },
+    {
+      // Deeper than "Operating Profit (contribution)" above: also subtracts depreciation, finance cost and tax,
+      // matching the owner's own manual P&L (EBITDA -> EBDTA -> PBT/PAT). Company-wide only.
+      label: "True Bottom Line (PAT)",
+      value: money(data.totals.truePat ?? data.totals.operatingProfit),
+      danger: (data.totals.truePat ?? data.totals.operatingProfit) < 0,
+    },
+    { label: "True Bottom Line %", value: percent(data.totals.truePatPct ?? null), danger: (data.totals.truePatPct ?? 0) < 0 },
     { label: "Active cost centres", value: String(data.totals.activeCostCentres) },
   ];
   const topRows = sortRows(data.rows).slice(0, 80);
@@ -115,9 +170,16 @@ export function PnlReconciliationPanel({
           <span className="text-sm font-medium text-slate-700">{data.company}</span>
           <span className="text-xs text-slate-500">Generated {new Date(data.generatedAt).toLocaleString()}</span>
         </div>
-        <Button size="sm" variant="outline" onClick={() => void query.refetch()}>
-          <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Refresh
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="outline" asChild>
+            <Link to={`/finance/process-pnl/configuration?tab=seatbilling&period=${period}`}>
+              <Settings2 className="mr-1.5 h-3.5 w-3.5" /> Seat billing settings
+            </Link>
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => void query.refetch()}>
+            <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Refresh
+          </Button>
+        </div>
       </div>
 
       {data.blockers.length > 0 && (
@@ -133,9 +195,9 @@ export function PnlReconciliationPanel({
 
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {metricCards.map((item) => (
-          <div key={item.label} className="rounded-md border border-slate-200 bg-white p-3">
+          <div key={item.label} title={item.hint} className="rounded-md border border-slate-200 bg-white p-3">
             <p className="text-[11px] font-medium uppercase text-slate-500">{item.label}</p>
-            <p className={`mt-1 text-lg font-semibold tabular-nums ${item.danger ? "text-rose-700" : "text-slate-900"}`}>{item.value}</p>
+            <p className={`mt-1 text-lg font-semibold tabular-nums ${item.danger ? "text-rose-700" : item.estimated ? "text-amber-700" : "text-slate-900"}`}>{item.value}</p>
           </div>
         ))}
       </div>
@@ -169,10 +231,10 @@ export function PnlReconciliationPanel({
               <thead className="sticky top-0 bg-slate-50 text-[11px] uppercase text-slate-500">
                 <tr>
                   <th className="px-3 py-2">Branch</th>
-                  <th className="px-3 py-2 text-right">Revenue</th>
-                  <th className="px-3 py-2 text-right">Payroll</th>
-                  <th className="px-3 py-2 text-right">GRN</th>
-                  <th className="px-3 py-2 text-right" title="Indicative OP (simplified) — Revenue minus payroll minus GRN only; no DSC/BMC/overhead split">OP*</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("RECOGNISED_REVENUE")}>{pnlLabel("RECOGNISED_REVENUE")}</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("PEOPLE_COST")}>{pnlLabel("PEOPLE_COST")}</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("INDIRECT_COST")}>{pnlLabel("INDIRECT_COST")}</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("OPERATING_PROFIT_CONTRIBUTION")}>{pnlLabel("OPERATING_PROFIT_CONTRIBUTION")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -181,7 +243,10 @@ export function PnlReconciliationPanel({
                     <td className="px-3 py-2 font-medium text-slate-800">{branch.branchName}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{money(branch.revenue)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{money(branch.payrollCost)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{money(branch.grnActual)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums" title={branch.grnEstimated ? `Includes ${money(branch.grnEstimated)} reserved (not yet consumed)` : undefined}>
+                      {money(branch.grnActual + (branch.grnEstimated ?? 0))}
+                      {(branch.grnEstimated ?? 0) > 0 && <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-amber-800">Est</span>}
+                    </td>
                     <td className={`px-3 py-2 text-right font-semibold tabular-nums ${branch.operatingProfit < 0 ? "text-rose-700" : "text-emerald-700"}`}>
                       {money(branch.operatingProfit)}
                       <span className="ml-1 text-[11px] font-normal text-slate-500">{percent(branch.marginPct)}</span>
@@ -206,11 +271,12 @@ export function PnlReconciliationPanel({
                   <th className="px-3 py-2">Branch</th>
                   <th className="px-3 py-2 text-right">Invoice</th>
                   <th className="px-3 py-2 text-right">Accrual</th>
-                  <th className="px-3 py-2 text-right">Revenue</th>
-                  <th className="px-3 py-2 text-right">Payroll</th>
-                  <th className="px-3 py-2 text-right">GRN</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("RECOGNISED_REVENUE")}>{pnlLabel("RECOGNISED_REVENUE")}</th>
+                  <th className="px-3 py-2 text-right" title="Monthly seat billing divided by days in the month">Per day</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("PEOPLE_COST")}>{pnlLabel("PEOPLE_COST")}</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("INDIRECT_COST")}>{pnlLabel("INDIRECT_COST")}</th>
                   <th className="px-3 py-2 text-right">Budget</th>
-                  <th className="px-3 py-2 text-right" title="Indicative OP (simplified) — Revenue minus payroll minus GRN only; no DSC/BMC/overhead split">OP*</th>
+                  <th className="px-3 py-2 text-right" title={pnlTooltip("OPERATING_PROFIT_CONTRIBUTION")}>{pnlLabel("OPERATING_PROFIT_CONTRIBUTION")}</th>
                   <th className="px-3 py-2">Issues</th>
                 </tr>
               </thead>
@@ -219,7 +285,10 @@ export function PnlReconciliationPanel({
                   <tr key={row.costCentreId} className="border-t align-top">
                     <td className="px-3 py-2">
                       <p className="font-medium text-slate-800">{row.costCentreCode}</p>
-                      <p className="truncate text-[11px] text-slate-500">{row.costCentreName}</p>
+                      {/* The process the cost centre serves; its own name only when that says something the code does not. */}
+                      <p className="max-w-[240px] truncate text-[11px] text-slate-500" title={row.costCentreProcess ?? row.costCentreName}>
+                        {row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : "")}
+                      </p>
                     </td>
                     <td className="px-3 py-2 text-slate-600">{row.branchName}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{money(row.revenueInvoice)}</td>
@@ -228,15 +297,21 @@ export function PnlReconciliationPanel({
                       className="cursor-pointer px-3 py-2 text-right font-medium tabular-nums transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"
                       onClick={() => setDrilldown({
                         params: { metric: CELL_METRIC.recognisedRevenue, period, costCentreId: row.costCentreId },
-                        label: `${row.costCentreCode} - ${row.costCentreName}`,
+                        label: costCentreText(row.costCentreCode, row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : null)),
                       })}
-                      title="View the underlying rows"
-                    >{money(row.recognisedRevenue)}</td>
+                      title={row.revenueBasis === "ESTIMATED" ? estimateTitle(row) : "View the underlying rows"}
+                    >
+                      {row.revenueBasis === "ESTIMATED" && (
+                        <span className="mr-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-amber-800">Est</span>
+                      )}
+                      {money(row.recognisedRevenue)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-500">{row.perDayRevenue ? money(row.perDayRevenue) : "—"}</td>
                     <td
                       className="cursor-pointer px-3 py-2 text-right tabular-nums transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"
                       onClick={() => setDrilldown({
                         params: { metric: CELL_METRIC.payrollCost, period, costCentreId: row.costCentreId },
-                        label: `${row.costCentreCode} - ${row.costCentreName}`,
+                        label: costCentreText(row.costCentreCode, row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : null)),
                       })}
                       title="View the underlying rows"
                     >{money(row.payrollCost)}</td>
@@ -244,15 +319,18 @@ export function PnlReconciliationPanel({
                       className="cursor-pointer px-3 py-2 text-right tabular-nums transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"
                       onClick={() => setDrilldown({
                         params: { metric: CELL_METRIC.grnActual, period, costCentreId: row.costCentreId },
-                        label: `${row.costCentreCode} - ${row.costCentreName}`,
+                        label: costCentreText(row.costCentreCode, row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : null)),
                       })}
-                      title="View the underlying rows"
-                    >{money(row.grnActual)}</td>
+                      title={row.grnEstimated ? `Includes ${money(row.grnEstimated)} reserved (not yet consumed) — click to view the consumed and reserved GRNs` : "View the underlying rows"}
+                    >
+                      {money(row.grnActual + (row.grnEstimated ?? 0))}
+                      {(row.grnEstimated ?? 0) > 0 && <span className="ml-1 rounded bg-amber-100 px-1 py-0.5 text-[9px] font-semibold uppercase text-amber-800">Est</span>}
+                    </td>
                     <td
                       className="cursor-pointer px-3 py-2 text-right tabular-nums transition-colors duration-200 hover:bg-blue-50 hover:text-blue-700"
                       onClick={() => setDrilldown({
                         params: { metric: CELL_METRIC.allocatedBudget, period, costCentreId: row.costCentreId },
-                        label: `${row.costCentreCode} - ${row.costCentreName}`,
+                        label: costCentreText(row.costCentreCode, row.costCentreProcess ?? (row.costCentreName !== row.costCentreCode ? row.costCentreName : null)),
                       })}
                       title="View the underlying rows"
                     >{money(row.allocatedBudget)}</td>
@@ -278,7 +356,11 @@ export function PnlReconciliationPanel({
         <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
           <p className="mb-2 text-sm font-semibold">Unmapped Items</p>
           {data.exceptions.map((item) => (
-            <p key={item.code}>{item.label}: {item.count.toLocaleString("en-IN")} rows, {money(item.amount)}</p>
+            <p key={item.code}>
+              {item.label}: {item.count.toLocaleString("en-IN")} rows, {money(item.amount)}
+              {/* Since 2026-09-15 this payroll is in company and branch cost (MAS wages), just in no cost-centre row. */}
+              {item.code === "PAYROLL_UNMAPPED_COST_CENTRE" && (data.totals.unallocatedPayroll ?? 0) > 0 && " — included in company and branch cost; map these staff to a cost centre to attribute it."}
+            </p>
           ))}
         </div>
       )}

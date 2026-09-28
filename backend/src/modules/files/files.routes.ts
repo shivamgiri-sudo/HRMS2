@@ -5,10 +5,9 @@ import fs from "fs";
 import { randomUUID } from "crypto";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
-import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireAuth, verifyAuthenticatedActor } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { authService } from "../auth/auth.service.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { verifyToken as verifyCandidatePortalToken } from "../ats/candidate-portal.service.js";
 import {
@@ -27,6 +26,8 @@ import {
 import { authorizeDocumentAccess } from "./documentVaultAuth.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { db } from "../../db/mysql.js";
+import { HUB_ROLES, restrictLobOnlyFileCategory } from "../bulk-upload/bulk-role-restriction.js";
+import { verifyPhotoAccessToken } from "./photo-access-token.js";
 
 // SECURITY: Document authorization is ALWAYS enforced.
 // The flag now controls audit verbosity, not authorization bypass.
@@ -46,6 +47,8 @@ const MAGIC_BYTES: Record<string, Uint8Array[]> = {
   ".xlsx": [new Uint8Array([0x50, 0x4b, 0x03, 0x04])],
   ".csv": [], // Text file, no magic bytes
   ".txt": [], // Text file, no magic bytes
+  ".eml": [], // MIME text, no fixed magic bytes
+  ".msg": [new Uint8Array([0xd0, 0xcf, 0x11, 0xe0])], // Outlook .msg = OLE compound (same as .doc)
 };
 
 function validateFileMagicBytes(filePath: string, ext: string): boolean {
@@ -93,6 +96,7 @@ const storage = multer.diskStorage({
 const ALLOWED_EXTENSIONS = new Set([
   ".pdf", ".jpg", ".jpeg", ".png", ".webp",
   ".doc", ".docx", ".xls", ".xlsx", ".xlsb", ".csv", ".txt",
+  ".eml", ".msg",
 ]);
 
 const upload = multer({
@@ -137,7 +141,7 @@ async function resolveCandidateFileActor(req: AuthenticatedRequest): Promise<
     };
   }
 
-  const user = authService.verifyAccessToken(token);
+  const user = await verifyAuthenticatedActor(token);
   if (!user) return null;
   const ctx = await getUserRoleContext(user.id).catch(() => null);
   const role = ctx?.primaryRole ?? null;
@@ -239,7 +243,7 @@ router.get(
 
     if (authHeader?.startsWith("Bearer ")) {
       const token = authHeader.replace("Bearer ", "").trim();
-      const user = authService.verifyAccessToken(token);
+      const user = await verifyAuthenticatedActor(token);
       if (user) {
         actorUserId = user.id;
         const ctx = await getUserRoleContext(user.id).catch(() => null);
@@ -247,8 +251,16 @@ router.get(
       }
     }
 
-    // SECURITY: Require authentication for employee photos
-    if (!actorUserId) {
+    // Fall back to a short-lived signed token scoped to this exact filename —
+    // used by pages with no logged-in session to attach a Bearer header from
+    // (e.g. the public employee-verify page), see photo-access-token.ts.
+    let viaScopedToken = false;
+    if (!actorUserId && verifyPhotoAccessToken(safeFile, String(req.query.t ?? ""))) {
+      viaScopedToken = true;
+    }
+
+    // SECURITY: Require authentication (or a valid scoped token) for employee photos
+    if (!actorUserId && !viaScopedToken) {
       await logDocumentAccess({
         storedPath: filePath,
         actorType: "anonymous",
@@ -269,7 +281,7 @@ router.get(
     await logDocumentAccess({
       storedPath: filePath,
       actorUserId,
-      actorType: "employee",
+      actorType: viaScopedToken ? "public-verify-token" : "employee",
       action: "view",
       accessResult: "allowed",
       ipAddress: req.ip,
@@ -297,7 +309,8 @@ router.get(
 router.post(
   "/upload",
   requireAuth,
-  requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"),
+  requireRole(...HUB_ROLES),
+  restrictLobOnlyFileCategory,
   (req: any, res: any, next: any) => {
     upload.single("file")(req, res, (err) => {
       if (err instanceof multer.MulterError) {
@@ -468,7 +481,7 @@ router.get(
       if (!authHeader?.startsWith("Bearer ")) {
         return res.status(401).json({ error: "Authentication required" });
       }
-      const user = authService.verifyAccessToken(authHeader.replace("Bearer ", "").trim());
+      const user = await verifyAuthenticatedActor(authHeader.replace("Bearer ", "").trim());
       if (!user) {
         return res.status(401).json({ error: "Invalid session" });
       }

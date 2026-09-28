@@ -24,6 +24,8 @@ import { logger } from "../../logger.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { QualityAggregationService } from "./quality-aggregation.service.js";
 import { cacheInstance } from "../../lib/cache/quality-cache.js";
+import { getShivamgiriPool } from "../../db/shivamgiriDb.js";
+import type { RowDataPacket } from "mysql2/promise";
 
 export const qualityAggregationRouter = Router();
 
@@ -281,6 +283,59 @@ qualityAggregationRouter.get(
       });
     }
   })
+);
+
+// GET /api/agent/apr — self-service AHT / APR trend (last 30 days, scoped to calling agent)
+qualityAggregationRouter.get(
+  "/apr",
+  requireAuth,
+  requireAgent,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const employeeCode = (req as unknown as { agentCode?: string }).agentCode;
+
+      if (!employeeCode) {
+        return res.status(403).json({ success: false, error: "Agent code not found for this user" });
+      }
+
+      const now = new Date();
+      const to = req.query.to ? String(req.query.to) : now.toISOString().slice(0, 10);
+      const fromDate = new Date(now);
+      fromDate.setDate(fromDate.getDate() - 30);
+      const from = req.query.from ? String(req.query.from)
+        : `${fromDate.getFullYear()}-${String(fromDate.getMonth() + 1).padStart(2, "0")}-${String(fromDate.getDate()).padStart(2, "0")}`;
+
+      const pool = getShivamgiriPool();
+      const [rows] = await pool.execute<RowDataPacket[]>(`
+        SELECT
+          apr.UserID             AS agent_code,
+          DATE_FORMAT(apr.ReportDate, '%Y-%m-%d') AS date,
+          apr.Calls              AS calls,
+          TIME_TO_SEC(COALESCE(apr.AHT, '00:00:00'))        AS aht_seconds,
+          TIME_TO_SEC(COALESCE(apr.Login_Time, '00:00:00'))  AS login_seconds,
+          TIME_TO_SEC(COALESCE(apr.Net_Login, '00:00:00'))   AS net_login_seconds,
+          CASE WHEN TIME_TO_SEC(COALESCE(apr.Login_Time,'00:00:00')) > 0
+            THEN ROUND(
+              (TIME_TO_SEC(COALESCE(apr.BIO,'00:00:00')) + TIME_TO_SEC(COALESCE(apr.LUNCH,'00:00:00')) +
+               TIME_TO_SEC(COALESCE(apr.QA,'00:00:00')) + TIME_TO_SEC(COALESCE(apr.TRAINING,'00:00:00')) +
+               TIME_TO_SEC(COALESCE(apr.DISMX,'00:00:00'))) /
+              TIME_TO_SEC(COALESCE(apr.Login_Time,'00:00:00')) * 100, 1)
+            ELSE NULL
+          END AS shrinkage_pct
+        FROM Shivamgiri.apr apr
+        WHERE apr.UserID COLLATE utf8mb4_unicode_ci = ?
+          AND apr.ReportDate BETWEEN ? AND ?
+        ORDER BY apr.ReportDate ASC
+        LIMIT 31
+      `, [employeeCode, from, to]);
+
+      return res.json({ success: true, data: rows });
+    } catch (err) {
+      logger.error("Agent APR endpoint error:", err);
+      const msg = err instanceof Error ? err.message : "APR data unavailable";
+      return res.json({ success: true, data: [], _error: msg });
+    }
+  }
 );
 
 export default qualityAggregationRouter;

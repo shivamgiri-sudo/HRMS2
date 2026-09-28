@@ -130,7 +130,7 @@ async function getEmployee(employeeId: string): Promise<EmployeeRow | null> {
     `SELECT id, employee_code,
             COALESCE(NULLIF(TRIM(full_name),''), TRIM(CONCAT(first_name,' ',COALESCE(last_name,'')))) AS employee_name
        FROM employees
-      WHERE id = ?
+      WHERE id = ? AND active_status = 1
       LIMIT 1`,
     [employeeId],
   );
@@ -210,9 +210,9 @@ attendanceManualOverrideRouter.post("/manual-overrides", h(async (req, res) => {
     return res.status(400).json({ success: false, error: "reason is mandatory and must be at least 10 characters" });
   }
 
-  // Safety 1: employee must exist
+  // Safety 1: employee must exist and be active (exited employees must not receive new attendance)
   const employee = await getEmployee(employee_id);
-  if (!employee) return res.status(404).json({ success: false, error: "Employee not found" });
+  if (!employee) return res.status(409).json({ success: false, error: "Employee not found or is inactive (exited). Attendance cannot be marked for an exited employee." });
 
   // Safety 2: attendance_daily_record must exist (we fetch old values from it)
   const current = await getCurrentAttendance(employee_id, attendance_date);

@@ -27,6 +27,9 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { evaluateFormula } from './kpi-formula.engine.js';
+// Already matches both 1213 (deadlock) and 1205 (lock wait). This module simply
+// was not using it.
+import { withDeadlockRetry } from '../../shared/deadlockRetry.js';
 import {
   getStudioCapability,
   getDefinitionSourceIds,
@@ -161,8 +164,14 @@ async function loadSourcesWithFields(
   const [sourceRows] = await db.execute<RowDataPacket[]>(
     // config_json is required, not optional: it carries the published CSV link for a Google Sheet
     // source, so omitting it makes every sheet-backed KPI fail with "no published link".
+    // date_format has to be selected too, not just date_column. Without it every
+    // source object reaches buildProcessQueryPlan with date_format undefined, so
+    // dateExpression falls through to the bare column and a text date is compared
+    // as a STRING -- which is the precise failure its own comment warns about, and
+    // it returns a confident wrong row set rather than an error. An excel_serial
+    // source returns zero rows; a '%d-%m-%Y' source silently returns the wrong month.
     `SELECT id, source_code, source_name, source_type, integration_key, source_object,
-            employee_key_column, employee_key_kind, date_column, config_json${processCols}
+            employee_key_column, employee_key_kind, date_column, date_format, config_json${processCols}
        FROM kpi_studio_data_source
       WHERE id IN (${sourceIds.map(() => '?').join(',')}) AND active_status = 1`,
     [...sourceIds],
@@ -324,6 +333,107 @@ export async function computeStudioKpis(options: ComputeOptions): Promise<Comput
  * to that through processSource.metricCode, so a metric reads the same whether
  * the number was typed in by hand or computed here.
  */
+/**
+ * The two numbers a plain ratio was built from, ready to be summed over a period.
+ *
+ * A stored daily rate is a completed division, and the parts are gone. Averaging
+ * those rates over a month is not the month's rate whenever daily volumes differ
+ * — the same "mean of ratios is not the ratio of sums" error process grain
+ * exists to avoid a level down. Keeping the parts lets a reader compute
+ * SUM(numerator)/SUM(denominator) and get the real figure.
+ *
+ * Returned ALREADY SCALED into the metric's own unit, so a reader divides one by
+ * the other and needs to know nothing about which function produced them:
+ * PCT(a, b) yields a*100 and b, SAFE_DIV(a, b) yields a and b.
+ *
+ * Deliberately narrow. Only a formula that is nothing but one ratio call over two
+ * bare field names qualifies; a banded IF or a CLAMP has no numerator to speak of,
+ * and guessing one would produce a period figure that looks exact and is not.
+ * Anything else returns null, which is the signal that the average is the best
+ * available answer and should be labelled as such.
+ */
+/**
+ * Whether 1685 has landed. Cached like the other capability probes, and for the
+ * same reason: this file ships before its migration is guaranteed to be applied,
+ * and naming a column that does not exist turns a working compute into a crash.
+ */
+let rollupColumnsPresent: boolean | null = null;
+async function processMetricRollupSupported(): Promise<boolean> {
+  if (rollupColumnsPresent !== null) return rollupColumnsPresent;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS n FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'process_metric_actual'
+          AND COLUMN_NAME IN ('rollup_numerator', 'rollup_denominator')`,
+    );
+    rollupColumnsPresent = Number((rows as any[])[0]?.n ?? 0) === 2;
+  } catch {
+    rollupColumnsPresent = false;
+  }
+  return rollupColumnsPresent;
+}
+
+/** Exposed so a test, or a process that has just run 1685, can re-probe. */
+export function resetProcessMetricRollupProbe(): void {
+  rollupColumnsPresent = null;
+}
+
+export function ratioParts(
+  formula: string,
+  inputs: Record<string, number | null>,
+): { numerator: number; denominator: number } | null {
+  const text = String(formula ?? '').trim();
+  const opened = /^(PCT|SAFE_DIV)\s*\(/i.exec(text);
+  if (!opened || !text.endsWith(')')) return null;
+  const fn = opened[1];
+
+  // The two arguments of the top-level call, split at the comma that is not
+  // inside a nested call. Anything richer than one ratio -- a CLAMP wrapped
+  // around it, an IF choosing between two -- is refused below, because summing
+  // the parts of those does not reconstruct the whole.
+  const inner = text.slice(opened[0].length, -1);
+  let depth = 0;
+  let split = -1;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    else if (ch === ',' && depth === 0) {
+      if (split !== -1) return null; // three arguments: not a ratio
+      split = i;
+    }
+  }
+  if (split === -1) return null;
+
+  // Each side is evaluated as a formula in its own right, so a compound
+  // numerator works: occupancy is PCT(talk + dispo, talk + dispo + wait), and
+  // summing those two sides across days still gives the period's real ratio
+  // because both are linear in the inputs. Restricted to + and the field names
+  // themselves for exactly that reason -- an expression that is not additive
+  // (a CLAMP, a threshold) would not survive being summed.
+  const numeratorExpr = inner.slice(0, split);
+  const denominatorExpr = inner.slice(split + 1);
+  const additive = /^[\s()]*[A-Za-z_][A-Za-z0-9_]*(\s*\+\s*[A-Za-z_][A-Za-z0-9_]*)*[\s()]*$/;
+  if (!additive.test(numeratorExpr) || !additive.test(denominatorExpr)) return null;
+
+  const numeratorResult = evaluateFormula(numeratorExpr, inputs);
+  const denominatorResult = evaluateFormula(denominatorExpr, inputs);
+  if (numeratorResult.error || denominatorResult.error) return null;
+
+  const numerator = numeratorResult.value;
+  const denominator = denominatorResult.value;
+  if (typeof numerator !== 'number' || typeof denominator !== 'number') return null;
+  // A zero denominator has no ratio to contribute. Storing it would make a later
+  // SUM/SUM correct anyway, but storing the pair for a day that produced no value
+  // is misleading, and SAFE_DIV already resolved that day to null.
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) return null;
+
+  return {
+    numerator: fn.toUpperCase() === 'PCT' ? numerator * 100 : numerator,
+    denominator,
+  };
+}
+
 async function computeProcessGrainDefinitions(
   definitions: DefinitionRow[],
   options: ComputeOptions,
@@ -363,12 +473,31 @@ async function computeProcessGrainDefinitions(
     // applies to, which is meaningless when there are no people involved.
     const merged = new Map<string, Map<string, number | null>>();
     const fieldNames: string[] = [];
+    // Resolved BEFORE any source is read, so a run scoped to one process does not
+    // pay to scan another's. A process-grain definition takes its process from the
+    // source's mapping, not from its own scope, so this is the only place the
+    // answer is known.
+    // An employee-kind source describes a shape, not a client, so the definition's
+    // own scope says which process it is being read for. Every other kind carries
+    // the process on the source itself.
     let processId: string | null = null;
+    for (const entry of entries) {
+      const src = entry.source as { process_id?: string | null; process_key_kind?: string | null };
+      const mapped = src.process_key_kind === 'employee'
+        ? (definition.process_id ?? src.process_id ?? null)
+        : (src.process_id ?? null);
+      if (mapped) { processId = mapped; break; }
+    }
+
+    // Asking to compute one process must not silently recompute every other one.
+    // Beyond the wasted scan, a targeted rerun would rewrite another client's
+    // figures from whatever their source happens to return at that moment — so a
+    // source that is briefly unreadable would replace good numbers with none.
+    if (options.processId && processId && processId !== options.processId) continue;
 
     for (const entry of entries) {
       const source = entry.source as any;
-      processId = processId ?? (source.process_id ?? null);
-      const read = await readProcessGrainValues(source, entry.fields, options.date, options.date);
+      const read = await readProcessGrainValues(source, entry.fields, options.date, options.date, processId);
       if (read.error) {
         result.source_failures.push({ source_code: source.source_code, error: read.error });
         continue;
@@ -416,6 +545,40 @@ async function computeProcessGrainDefinitions(
 
       if (evaluated.value === null || evaluated.value === undefined) {
         result.no_data++;
+
+        // Recorded as NULL rather than skipped, so that "there is no longer a
+        // reading here" actually reaches the table.
+        //
+        // Skipping left whatever was written before untouched, which meant a
+        // correction never propagated: excluding implausible 24-hour shifts from
+        // the biometric source turned several days into no_data, and those days
+        // kept showing the very averages the exclusion was meant to remove — one
+        // process still reporting a 19-hour mean shift after the fix.
+        //
+        // Safe because this branch is only reached when the source WAS read and
+        // the formula legitimately produced nothing. A source that could not be
+        // read at all fails earlier, is counted in source_failures, and never
+        // arrives here, so an unreachable database still cannot erase good
+        // numbers.
+        if (!options.dryRun) {
+          const nulls = (await processMetricRollupSupported())
+            ? ', rollup_numerator = NULL, rollup_denominator = NULL'
+            : '';
+          await withDeadlockRetry(() =>
+            db.execute(
+              `UPDATE process_metric_actual
+                  SET actual_value = NULL${nulls}, note = ?
+                WHERE process_id = ? AND metric_key = ? AND score_date = ?`,
+              [
+                `KPI Studio definition ${definition.id} — no reading for this day`,
+                processId,
+                definition.metric_code,
+                date,
+              ],
+            ),
+          );
+        }
+
         if (result.sample.length < 20) {
           result.sample.push({
             employee_code: `process:${processId.slice(0, 8)}`,
@@ -429,15 +592,54 @@ async function computeProcessGrainDefinitions(
       }
 
       if (!options.dryRun) {
-        await db.execute(
-          `INSERT INTO process_metric_actual
-             (id, process_id, metric_key, score_date, actual_value, source, source_connector_key, note)
-           VALUES (UUID(), ?, ?, ?, ?, 'connector', NULL, ?)
-           ON DUPLICATE KEY UPDATE
-             actual_value = VALUES(actual_value),
-             source       = 'connector',
-             note         = VALUES(note)`,
-          [processId, definition.metric_code, date, evaluated.value, `KPI Studio definition ${definition.id}`],
+        // Written only where the schema carries the columns, so this runs
+        // unchanged on a database that has not had 1685 applied — the same rule
+        // every other capability-gated write in this module follows.
+        const parts = (await processMetricRollupSupported())
+          ? ratioParts(definition.formula_expression as string, inputs)
+          : null;
+        const rollupCols = (await processMetricRollupSupported())
+          ? ', rollup_numerator, rollup_denominator'
+          : '';
+        const rollupValues = (await processMetricRollupSupported())
+          ? ', ?, ?'
+          : '';
+        const rollupUpdate = (await processMetricRollupSupported())
+          ? `
+             rollup_numerator   = VALUES(rollup_numerator),
+             rollup_denominator = VALUES(rollup_denominator),`
+          : '';
+        // Retried, because a bulk run contends with itself and with whatever else
+        // is writing. A single lock-wait timeout was leaving one process-day with
+        // no reading at all during a 52-process sweep — recorded in
+        // source_failures, so visible, but a permanent gap for a condition that
+        // resolves on its own in milliseconds.
+        await withDeadlockRetry(
+          () =>
+            db.execute(
+              `INSERT INTO process_metric_actual
+                 (id, process_id, metric_key, score_date, actual_value, source, source_connector_key, note${rollupCols})
+               VALUES (UUID(), ?, ?, ?, ?, 'connector', NULL, ?${rollupValues})
+               ON DUPLICATE KEY UPDATE
+                 actual_value = VALUES(actual_value),${rollupUpdate}
+                 source       = 'connector',
+                 note         = VALUES(note)`,
+              [
+                processId,
+                definition.metric_code,
+                date,
+                evaluated.value,
+                `KPI Studio definition ${definition.id}`,
+                ...(rollupCols ? [parts?.numerator ?? null, parts?.denominator ?? null] : []),
+              ],
+            ),
+          {
+            onRetry: (attempt, error) =>
+              console.warn(
+                `[kpi-studio] ${definition.metric_code} ${date}: lock contention, attempt ${attempt} — ` +
+                  `${(error as Error).message}`,
+              ),
+          },
         );
       }
       result.written++;
@@ -894,5 +1096,184 @@ export async function explainMetricForEmployee(
     reason_summary: [...reasonCounts.entries()]
       .map(([reason, count]) => ({ reason, days: count }))
       .sort((left, right) => right.days - left.days),
+  };
+}
+
+// ─── Process-grain preview ───────────────────────────────────────────────────────────────────
+
+export interface ProcessPreviewDay {
+  date: string;
+  inputs: Record<string, number | null>;
+  value: number | null;
+  status: 'computed' | 'no_data' | 'error';
+  reason?: string;
+}
+
+export interface ProcessPreviewResult {
+  ok: boolean;
+  message?: string;
+  formula: string;
+  from: string;
+  to: string;
+  process_id: string | null;
+  days: ProcessPreviewDay[];
+  /** The average of the days that produced a number. Null when none did. */
+  value: number | null;
+  rows_read: number;
+  source_error?: string;
+}
+
+/**
+ * The process-grain half of the "test it" button.
+ *
+ * previewFormula answers "what does this formula give for THIS PERSON today". A process
+ * metric has no person — AL% for BLABLIBLU is one number for the whole process — so that
+ * function cannot test one, and until this existed a process KPI could only be configured
+ * blind: save it, wait for the nightly compute, and find out the next morning whether the
+ * formula read anything at all.
+ *
+ * It runs over a date RANGE rather than a single day, because that is how a process metric
+ * is read and because one day is a poor test: a formula can look fine on a day the source
+ * happened to be quiet. Each day is reported separately, with the values that produced it.
+ */
+export async function previewProcessFormula(input: {
+  formula: string;
+  dataSourceId: string;
+  extraSourceIds?: string[];
+  from: string;
+  to: string;
+  /** Which client to test, for a source that finds its process via the employee. */
+  processId?: string | null;
+}): Promise<ProcessPreviewResult> {
+  const today = new Date().toISOString().slice(0, 10);
+  const from = ISO_DATE.test(input.from) ? input.from : today;
+  const to = ISO_DATE.test(input.to) ? input.to : from;
+
+  const base: ProcessPreviewResult = {
+    ok: false,
+    formula: input.formula,
+    from,
+    to,
+    process_id: null,
+    days: [],
+    value: null,
+    rows_read: 0,
+  };
+
+  if (from > to) return { ...base, message: 'The start date is after the end date' };
+
+  const capability = await getStudioCapability();
+  if (!capability.tables) {
+    return { ...base, message: 'KPI Studio schema is not installed on this database' };
+  }
+  // Without 1680 a source carries no process mapping, so there is nothing to read
+  // a process metric from. Saying so beats returning an empty result that reads
+  // as "your formula found nothing".
+  if (!capability.processGrain) {
+    return {
+      ...base,
+      message:
+        'Process-level metrics need migration 1680_kpi_studio_process_grain.sql, which this ' +
+        'database does not have yet. Until it is applied, a source cannot be mapped to a process.',
+    };
+  }
+
+  const sourceIds = [...new Set([input.dataSourceId, ...(input.extraSourceIds ?? [])].filter(Boolean))];
+  const sources = await loadSourcesWithFields(sourceIds);
+  const entries = sourceIds
+    .map((sourceId) => sources.get(sourceId))
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+  if (!entries.length) return { ...base, message: 'Data source not found or inactive' };
+  const allFields = entries.flatMap((entry) => entry.fields);
+  if (!allFields.length) return { ...base, message: 'This data source has no fields configured yet' };
+
+  // Merged exactly the way computeProcessGrainDefinitions merges, so a formula that
+  // previews cannot then fail at compute time for a reason the preview never showed.
+  const merged = new Map<string, Map<string, number | null>>();
+  const failures: string[] = [];
+  let processId: string | null = null;
+  let rowsRead = 0;
+
+  for (const entry of entries) {
+    const source = entry.source as any;
+    processId = processId
+      ?? (source.process_key_kind === 'employee' ? (input.processId ?? source.process_id) : source.process_id)
+      ?? null;
+    const read = await readProcessGrainValues(source, entry.fields, from, to, processId);
+    if (read.error) {
+      failures.push(`${source.source_code}: ${read.error}`);
+      continue;
+    }
+    rowsRead += read.rowsRead;
+    for (const [date, bucket] of read.values) {
+      const target = merged.get(date) ?? new Map<string, number | null>();
+      for (const [name, value] of bucket) target.set(name, value);
+      merged.set(date, target);
+    }
+  }
+
+  const sourceError = failures.length ? failures.join(' · ') : undefined;
+
+  if (!processId) {
+    return {
+      ...base,
+      rows_read: rowsRead,
+      source_error: sourceError,
+      message:
+        'None of these sources is mapped to a process. Set "This source belongs to" on the ' +
+        'source before a process-level KPI can read it.',
+    };
+  }
+
+  if (!merged.size) {
+    return {
+      ...base,
+      process_id: processId,
+      rows_read: rowsRead,
+      source_error: sourceError,
+      message: sourceError
+        ? 'The data source could not be read'
+        : 'The source returned no rows for these dates. Try a range the data actually covers.',
+    };
+  }
+
+  const fieldNames = [...new Set(allFields.map((field) => field.field_name))];
+  const days: ProcessPreviewDay[] = [];
+
+  for (const date of [...merged.keys()].sort()) {
+    const bucket = merged.get(date)!;
+    const inputs: Record<string, number | null> = {};
+    for (const name of fieldNames) inputs[name] = bucket.get(name) ?? null;
+
+    const evaluated = evaluateFormula(input.formula, inputs);
+    if (evaluated.error) {
+      days.push({ date, inputs, value: null, status: 'error', reason: evaluated.error });
+    } else if (evaluated.value === null || evaluated.value === undefined) {
+      days.push({ date, inputs, value: null, status: 'no_data', reason: evaluated.nullReason });
+    } else {
+      days.push({ date, inputs, value: evaluated.value, status: 'computed' });
+    }
+  }
+
+  // The headline is the mean of the days that produced a number — NOT of every day
+  // in the range. A day the source was silent is absent, not a zero, and averaging
+  // a zero in would quietly understate every metric this previews.
+  const computed = days.filter((day) => day.status === 'computed' && day.value !== null);
+  const value = computed.length
+    ? computed.reduce((total, day) => total + (day.value as number), 0) / computed.length
+    : null;
+
+  return {
+    ok: true,
+    formula: input.formula,
+    from,
+    to,
+    process_id: processId,
+    days,
+    value,
+    rows_read: rowsRead,
+    source_error: sourceError,
+    message: computed.length ? undefined : 'No day in this range produced a number',
   };
 }

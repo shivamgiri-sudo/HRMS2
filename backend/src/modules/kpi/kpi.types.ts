@@ -66,8 +66,9 @@ export interface KpiMetricSummary {
   target_value: number;
   actual_value: number | null;
   weight_pct: number;
-  achievement_pct: number;
+  achievement_pct: number | null;
   direction: string;
+  status?: "pending" | "submitted";
 }
 
 export interface KpiSummary {

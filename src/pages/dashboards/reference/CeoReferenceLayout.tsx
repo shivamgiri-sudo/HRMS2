@@ -60,7 +60,7 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
   // a confident "no revenue at risk" for a pipeline that has never run. The P&L service now
   // returns null plus this reason instead of a false zero — see resolveRevenueAtRisk in
   // canonical-pnl.service.ts.
-  const revenueGapUnavailable = read(asRecord(data.pnl).kpis, "revenueAtRiskUnavailable");
+  const revenueGapUnavailable = read(asRecord(data.pnl), "kpis", "revenueAtRiskUnavailable");
   const revenueGapReason = typeof revenueGapUnavailable === "string" && revenueGapUnavailable
     ? "Revenue-risk feed not generated"
     : null;

@@ -6,17 +6,32 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 
 import { env } from "../../config/env.js";
 import { db } from "../../db/mysql.js";
+import { listSignedAppointmentLetters } from "./employeeSignedAppointmentLetter.service.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { hasAnyRole, hasScopedAccess, getUserRoleKeys } from "../../shared/scopeAccess.js";
 import { analyzeEmployeeJoiningDocument } from "./employeeJoiningDocumentAnalysis.service.js";
 import { esignWithUrl, generateClientTransactionId, sanitizeProviderPayload, luckpayClient } from "../integrations/luckpay/luckpay.client.js";
 import { generateChecklistDraft } from "./universalDigitalFormFill.service.js";
+import { generateDraftWithTimeout } from "./joiningKitDraftRepair.service.js";
+import { KIT_DOCUMENT_CODES } from "./joiningKitAssembly.service.js";
 import { templateFileExists } from "./joiningDocumentTemplatePath.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { emailService } from "../communication/email.service.js";
 import { buildJoiningDocEsignEmailHtml, buildEpfComplianceReviewEmailHtml } from "../ats/ats.email.service.js";
 
 const STORAGE_ROOT = path.resolve(process.cwd(), "private-storage", "employee-joining-documents");
+
+/**
+ * EPF forms arrive pre-filled from statutory data the employee already gave at
+ * onboarding (EPF_DECLARATION = Form 11, EPF_NOMINATION_FORM2 = Form 2) and are
+ * reviewed/confirmed by the employee on their own track, not signed through the
+ * joining-kit Aadhaar eSign flow with the other 6 documents. Owner directive
+ * (2026-09-18): they should not count toward the mandatory joining-document
+ * completion tracker — an employee who has signed every kit document was
+ * showing 75% (6 of 8) instead of 100% (6 of 6) while these two sat at
+ * 'employee_review_pending' for an unrelated, separately-tracked reason.
+ */
+export const COMPLETION_EXCLUDED_DOCUMENT_CODES = ["EPF_DECLARATION", "EPF_NOMINATION_FORM2"] as const;
 
 /**
  * True when a stored joining-document file is readable on THIS machine.
@@ -170,6 +185,8 @@ type EmployeeDocumentTarget = {
   department_id: string | null;
   reporting_manager_id: string | null;
   manager_id: string | null;
+  process_name: string | null;
+  reporting_manager_name: string | null;
   date_of_joining: string | null;
   candidate_id: string | null;
   joining_document_status: string | null;
@@ -282,12 +299,16 @@ export async function getEmployeeDocumentTarget(employeeId: string): Promise<Emp
           e.department_id,
           e.reporting_manager_id,
           e.manager_id,
+          pm.process_name,
+          COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name,
           e.date_of_joining,
           ob.candidate_id,
           ${includeStatus ? "e.joining_document_status" : "NULL"} AS joining_document_status,
           e.joining_document_completion_pct
          FROM employees e
          LEFT JOIN ats_onboarding_bridge ob ON ob.employee_id = e.id
+         LEFT JOIN process_master pm ON pm.id = e.process_id
+         LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
         WHERE e.id = ?
         LIMIT 1`,
       [employeeId],
@@ -391,16 +412,19 @@ async function auditDocumentAction(input: {
 }
 
 async function ensureChecklistRows(target: EmployeeDocumentTarget, actorUserId?: string | null) {
-  const [templates] = await db.execute<RowDataPacket[]>(
-    `SELECT id, document_code, document_name, template_version, requires_candidate_esign, requires_hr_upload, is_mandatory
-       FROM employee_joining_document_template
-      WHERE active_status = 1
-      ORDER BY is_mandatory DESC, document_name ASC`,
-  );
-  const [existing] = await db.execute<RowDataPacket[]>(
-    `SELECT document_code FROM employee_joining_document_checklist WHERE employee_id = ?`,
-    [target.id],
-  );
+  // Independent reads — run together instead of one after the other.
+  const [[templates], [existing]] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT id, document_code, document_name, template_version, requires_candidate_esign, requires_hr_upload, is_mandatory
+         FROM employee_joining_document_template
+        WHERE active_status = 1
+        ORDER BY is_mandatory DESC, document_name ASC`,
+    ),
+    db.execute<RowDataPacket[]>(
+      `SELECT document_code FROM employee_joining_document_checklist WHERE employee_id = ?`,
+      [target.id],
+    ),
+  ]);
   const existingCodes = new Set((existing as RowDataPacket[]).map((row) => String(row.document_code)));
 
   for (const template of templates as RowDataPacket[]) {
@@ -467,23 +491,33 @@ export async function recalculateDocumentProgress(employeeId: string) {
         SUM(CASE WHEN mandatory = 1 AND status IN ('verified', 'signed_verified', 'completed', 'esign_completed', 'wet_signed_uploaded') THEN 1 ELSE 0 END) AS mandatory_completed,
         SUM(CASE WHEN status IN ('verified', 'signed_verified', 'completed', 'esign_completed', 'wet_signed_uploaded') THEN 1 ELSE 0 END) AS completed_count
        FROM employee_joining_document_checklist
-      WHERE employee_id = ?`,
-    [employeeId],
+      WHERE employee_id = ?
+        AND document_code NOT IN (${COMPLETION_EXCLUDED_DOCUMENT_CODES.map(() => "?").join(",")})`,
+    [employeeId, ...COMPLETION_EXCLUDED_DOCUMENT_CODES],
   );
   const row = (rows as RowDataPacket[])[0];
   const total = Number(row?.mandatory_count ?? row?.total_count ?? 0);
   const done = Number(row?.mandatory_completed ?? row?.completed_count ?? 0);
   const pct = total > 0 ? Number(((done / total) * 100).toFixed(2)) : 0;
   const status = total > 0 && done >= total ? "completed" : done > 0 ? "in_progress" : "pending";
+  const epf = await getEpfFormsStatus(employeeId);
 
+  // The WHERE guard below is the whole optimization: this function is the single
+  // writer and runs on every plain GET of the joining-documents page (as well as
+  // after every real change), so on a GET where nothing actually changed since
+  // last time it turned every page view into two unconditional writes — binlog
+  // entries and row locks for a value that was already correct. MySQL still
+  // matches the row and reports it, it just doesn't rewrite it when nothing in
+  // the SET differs, so a real change is never silently skipped.
   try {
     await db.execute(
       `UPDATE employees
           SET joining_document_status = ?,
               joining_document_completion_pct = ?,
               joining_document_completed_at = CASE WHEN ? = 'completed' THEN COALESCE(joining_document_completed_at, NOW()) ELSE NULL END
-        WHERE id = ?`,
-      [status, pct, status, employeeId],
+        WHERE id = ?
+          AND (joining_document_status <> ? OR joining_document_completion_pct <> ?)`,
+      [status, pct, status, employeeId, status, pct],
     );
   } catch (error) {
     if (!isMissingJoiningDocumentStatusColumn(error)) throw error;
@@ -491,8 +525,9 @@ export async function recalculateDocumentProgress(employeeId: string) {
       `UPDATE employees
           SET joining_document_completion_pct = ?,
               joining_document_completed_at = CASE WHEN ? = 'completed' THEN COALESCE(joining_document_completed_at, NOW()) ELSE NULL END
-        WHERE id = ?`,
-      [pct, status, employeeId],
+        WHERE id = ?
+          AND joining_document_completion_pct <> ?`,
+      [pct, status, employeeId, pct],
     );
   }
 
@@ -502,8 +537,9 @@ export async function recalculateDocumentProgress(employeeId: string) {
           SET joining_document_status = ?,
               joining_document_completion_pct = ?,
               joining_document_completed_at = CASE WHEN ? = 'completed' THEN COALESCE(joining_document_completed_at, NOW()) ELSE NULL END
-        WHERE employee_id = ?`,
-      [status, pct, status, employeeId],
+        WHERE employee_id = ?
+          AND (joining_document_status <> ? OR joining_document_completion_pct <> ?)`,
+      [status, pct, status, employeeId, status, pct],
     );
   } catch (error) {
     if (!isMissingJoiningDocumentStatusColumn(error)) throw error;
@@ -511,10 +547,36 @@ export async function recalculateDocumentProgress(employeeId: string) {
       `UPDATE ats_onboarding_bridge
           SET joining_document_completion_pct = ?,
               joining_document_completed_at = CASE WHEN ? = 'completed' THEN COALESCE(joining_document_completed_at, NOW()) ELSE NULL END
-        WHERE employee_id = ?`,
-      [pct, status, employeeId],
+        WHERE employee_id = ?
+          AND joining_document_completion_pct <> ?`,
+      [pct, status, employeeId, pct],
     ).catch(() => undefined);
   }
+
+  return { status, pct, epfFormsStatus: epf.status, epfFormsPending: epf.pending };
+}
+
+/**
+ * EPF_DECLARATION / EPF_NOMINATION_FORM2 are deliberately excluded from
+ * joining_document_status/pct (owner directive, 2026-09-18 — see
+ * COMPLETION_EXCLUDED_DOCUMENT_CODES above) because they're reviewed on a
+ * separate track. That directive was about the completion GATE, not about
+ * hiding that they're still outstanding — so this reports their own status
+ * next to it instead of folding them back into the main percentage.
+ */
+async function getEpfFormsStatus(employeeId: string): Promise<{ status: "completed" | "pending"; pending: string[] }> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT document_code, document_name, status
+       FROM employee_joining_document_checklist
+      WHERE employee_id = ?
+        AND document_code IN (${COMPLETION_EXCLUDED_DOCUMENT_CODES.map(() => "?").join(",")})`,
+    [employeeId, ...COMPLETION_EXCLUDED_DOCUMENT_CODES],
+  );
+  const terminal = new Set(["verified", "signed_verified", "completed", "esign_completed", "wet_signed_uploaded", "employee_confirmed"]);
+  const pending = (rows as RowDataPacket[])
+    .filter((r) => !terminal.has(String(r.status)))
+    .map((r) => String(r.document_name ?? r.document_code));
+  return { status: pending.length === 0 ? "completed" : "pending", pending };
 }
 
 function resolveRoleForUpload(ownerType: string): FileRole {
@@ -917,20 +979,33 @@ const JOINING_TO_GENERAL_DOC_TYPE: Record<string, string[]> = {
 export async function getJoiningDocumentPack(employeeId: string, userId: string) {
   const access = await resolveEmployeeDocumentAccessContext(userId, employeeId);
   await ensureChecklistRows(access.target, userId);
-  await recalculateDocumentProgress(employeeId);
-  const checklist = await getChecklistBundle(employeeId);
+  const progress = await recalculateDocumentProgress(employeeId);
 
-  // Cross-reference: fetch general employee_documents and attach matching ones to checklist items
-  let generalDocs: RowDataPacket[] = [];
-  try {
-    const [rows] = await db.execute<RowDataPacket[]>(
+  // Three independent reads, run together rather than one after another —
+  // none of them depends on the others' result.
+  const [checklist, generalDocs, auditRows, signedAppointmentLetters] = await Promise.all([
+    getChecklistBundle(employeeId),
+    db.execute<RowDataPacket[]>(
       `SELECT doc_type, doc_name, file_url, verified
          FROM employee_documents
         WHERE employee_id = ? AND file_url IS NOT NULL AND file_url <> ''`,
       [employeeId],
-    );
-    generalDocs = rows;
-  } catch (_e) { /* table may not exist */ }
+    ).then(([rows]) => rows as RowDataPacket[]).catch(() => [] as RowDataPacket[]),
+    db.execute<RowDataPacket[]>(
+      `SELECT action_type, remarks, actor_type, created_at, document_code
+         FROM employee_joining_document_audit_log
+        WHERE employee_id = ?
+        ORDER BY created_at DESC
+        LIMIT 20`,
+      [employeeId],
+    ).then(([rows]) => rows as RowDataPacket[]),
+    // The letter the employee signed with Aadhaar eSign (read-only, from the
+    // appointment-letter tables). It must never take the whole pack down.
+    listSignedAppointmentLetters(employeeId, access).catch((error: unknown) => {
+      console.warn("[joining-documents] signed appointment letters unavailable:", error instanceof Error ? error.message : error);
+      return [];
+    }),
+  ]);
 
   const checklistWithLinks = checklist.map((item) => {
     if (item.latest_file_id) return item; // already has its own file
@@ -949,15 +1024,6 @@ export async function getJoiningDocumentPack(employeeId: string, userId: string)
     };
   });
 
-  const [auditRows] = await db.execute<RowDataPacket[]>(
-    `SELECT action_type, remarks, actor_type, created_at, document_code
-       FROM employee_joining_document_audit_log
-      WHERE employee_id = ?
-      ORDER BY created_at DESC
-      LIMIT 20`,
-    [employeeId],
-  );
-
   return {
     employee: {
       id: access.target.id,
@@ -965,8 +1031,10 @@ export async function getJoiningDocumentPack(employeeId: string, userId: string)
       full_name: access.target.full_name,
       official_email: access.target.official_email,
       mobile: access.target.mobile,
-      joining_document_status: access.target.joining_document_status,
-      joining_document_completion_pct: access.target.joining_document_completion_pct ?? 0,
+      joining_document_status: progress.status,
+      joining_document_completion_pct: progress.pct,
+      epf_forms_status: progress.epfFormsStatus,
+      epf_forms_pending: progress.epfFormsPending,
       candidate_id: access.target.candidate_id,
     },
     permissions: {
@@ -977,6 +1045,7 @@ export async function getJoiningDocumentPack(employeeId: string, userId: string)
     },
     checklist: checklistWithLinks,
     audit: auditRows,
+    signed_appointment_letters: signedAppointmentLetters,
   };
 }
 
@@ -1421,6 +1490,9 @@ export async function createJoiningDocumentEsignRequest(params: {
       const expiryStr = expiryDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
       const emailHtml = buildJoiningDocEsignEmailHtml({
         employeeName: access.target.full_name ?? access.target.employee_code ?? "Employee",
+        employeeCode: access.target.employee_code,
+        processName: access.target.process_name,
+        reportingManagerName: access.target.reporting_manager_name,
         documentName: checklist.document_name,
         signLink: tokenLink,
         expiryStr,
@@ -2365,6 +2437,13 @@ export async function handleJoiningDocumentEsignWebhook(input: {
     provider_reference_id: string | null;
   }) | undefined;
   if (!tx) {
+    // Not a joining document: it may be an appointment letter's acceptance session.
+    // The callback payload is not trusted for the outcome — the provider is asked.
+    const { syncAppointmentEsignByClientTransaction } = await import("../letters/appointmentLetterEsign.service.js");
+    const appointment = clientTransactionId
+      ? await syncAppointmentEsignByClientTransaction(clientTransactionId)
+      : null;
+    if (appointment) return { matched: true, processed: appointment.state === "completed", result: appointment };
     return { matched: false, processed: false };
   }
 
@@ -2547,6 +2626,9 @@ export async function createPublicTokenForEpfReview(params: {
         .toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
       const html = buildEpfComplianceReviewEmailHtml({
         employeeName: target.full_name ?? target.employee_code ?? "Employee",
+        employeeCode: target.employee_code,
+        processName: target.process_name,
+        reportingManagerName: target.reporting_manager_name,
         reviewLink,
         expiryStr,
       });
@@ -2622,10 +2704,32 @@ export async function autoGenerateJoiningDocuments(
     [employeeId],
   );
 
+  // Kit documents first. This loop runs detached after the HTTP response, so if
+  // one heavy document (the EPF acroforms) hangs or the process dies mid-loop,
+  // every document after it starves. Putting the six kit documents ahead of the
+  // acroform ones means such a stall can no longer block a kit. The sort is
+  // stable: the original ordering is kept within each group.
+  const kitCodes: readonly string[] = KIT_DOCUMENT_CODES;
+  const orderedRows = [
+    ...(checklistRows as RowDataPacket[]).filter((r) => kitCodes.includes(String(r.document_code))),
+    ...(checklistRows as RowDataPacket[]).filter((r) => !kitCodes.includes(String(r.document_code))),
+  ];
+
   let generated = 0;
-  for (const row of checklistRows as RowDataPacket[]) {
+  let skippedForPayrollApproval = 0;
+  for (const row of orderedRows) {
+    // EMPLOYMENT_CONTRACT must wait for payroll head approval — it prints the final
+    // remuneration from the approved salary package, which doesn't exist yet at
+    // employee creation time. Generating it now would bake in employee_salary_snapshot.gross
+    // (take-home + deductions) instead of the approved CTC. The payroll head approval
+    // flow triggers generation of this document when the package is finalized.
+    if (row.document_code === 'EMPLOYMENT_CONTRACT') {
+      skippedForPayrollApproval++;
+      continue;
+    }
     try {
-      await generateChecklistDraft(String(row.checklist_id), actorUserId);
+      // Bounded wait: a timed-out document is logged below and the loop moves on.
+      await generateDraftWithTimeout(String(row.checklist_id), actorUserId);
       generated++;
     } catch (err: unknown) {
       console.error('[autoGenerateJoiningDocuments] Failed to generate draft for checklist item:', {
@@ -2643,5 +2747,83 @@ export async function autoGenerateJoiningDocuments(
     employeeId,
     totalChecklist: checklistRows.length,
     draftsGenerated: generated,
+    skippedForPayrollApproval,
   });
+
+  await logChecklistRowsWithoutFile(employeeId);
+}
+
+/**
+ * One summary line naming any eSign checklist rows that still have no generated
+ * file after the loop, so a stalled run is visible in the logs without having
+ * to compare rows and files by hand. EMPLOYMENT_CONTRACT is left out: it is
+ * skipped above by design until the Payroll Head approves. Never throws.
+ */
+async function logChecklistRowsWithoutFile(employeeId: string): Promise<void> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT c.document_code
+         FROM employee_joining_document_checklist c
+        WHERE c.employee_id = ? AND c.action_type = 'esign'
+          AND c.document_code <> 'EMPLOYMENT_CONTRACT'
+          AND NOT EXISTS (
+            SELECT 1 FROM employee_joining_document_file f
+             WHERE f.checklist_id = c.id AND f.deleted_at IS NULL
+               AND f.file_role IN ('generated', 'hr_uploaded')
+          )
+        ORDER BY c.document_code`,
+      [employeeId],
+    );
+    const missing = (rows as RowDataPacket[]).map((r) => String(r.document_code));
+    if (missing.length > 0) {
+      console.warn('[autoGenerateJoiningDocuments] eSign checklist rows still without a file:', {
+        employeeId,
+        missingCount: missing.length,
+        documentCodes: missing,
+      });
+    }
+  } catch (err: unknown) {
+    console.warn('[autoGenerateJoiningDocuments] Could not run the missing-file summary:',
+      err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Generates the EMPLOYMENT_CONTRACT document for an employee after payroll head approval.
+ *
+ * autoGenerateJoiningDocuments deliberately skips EMPLOYMENT_CONTRACT at employee creation
+ * because the contract appendix prints the final remuneration from the approved salary
+ * package, which doesn't exist until the payroll head assigns a package. This function is
+ * called from payroll-head-review.service.ts when the package is approved.
+ *
+ * If the checklist item doesn't exist (template disabled, employee created before checklist
+ * was set up), this function does nothing — the kit will proceed without the contract, and
+ * HR can add it manually if needed.
+ */
+export async function generateEmploymentContractForEmployee(
+  employeeId: string,
+  actorUserId: string,
+): Promise<{ generated: boolean; checklistId: string | null }> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT c.id AS checklist_id
+       FROM employee_joining_document_checklist c
+       JOIN employee_joining_document_template t ON t.id = c.template_id
+      WHERE c.employee_id = ?
+        AND c.document_code = 'EMPLOYMENT_CONTRACT'
+        AND t.template_storage_path IS NOT NULL
+        AND t.active_status = 1
+      LIMIT 1`,
+    [employeeId],
+  );
+
+  const checklistId = rows[0]?.checklist_id ? String(rows[0].checklist_id) : null;
+  if (!checklistId) {
+    console.log('[generateEmploymentContractForEmployee] No EMPLOYMENT_CONTRACT checklist item found:', { employeeId });
+    return { generated: false, checklistId: null };
+  }
+
+  await generateChecklistDraft(checklistId, actorUserId);
+  await recalculateDocumentProgress(employeeId);
+
+  return { generated: true, checklistId };
 }

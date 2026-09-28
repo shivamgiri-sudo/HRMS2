@@ -32,8 +32,11 @@ import {
   businessMonth,
 } from "./leave-balance-format.js";
 import { buildCatalogWorkbook } from "./catalog-workbook.js";
+import { ATTENDANCE_SOURCE_SHEET_CODE, loadAttendanceSourceSheet } from "./executors/attendance-source-sheet.executor.js";
+import { buildAttendanceSourceWorkbook } from "../wfm/attendance-source-sheet.xlsx.js";
 import type { CatalogWorkbookColumn } from "./catalog-workbook.js";
 import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from "./report-audit.service.js";
+import { readLobFilter } from "../../shared/lobFilter.js";
 
 /** Report codes that render through the business-mandated Leave Balance workbook. */
 const LEAVE_BALANCE_CODES = new Set(["leave-balance", "leave-balance-export"]);
@@ -43,7 +46,7 @@ const LEAVE_BALANCE_CODES = new Set(["leave-balance", "leave-balance-export"]);
  * carries the catalog's exact labels ("SR#", "LEAVE TYPE", "LEAVE REQUST DATE")
  * instead of the generic builder's uppercased row keys.
  */
-export const CATALOG_FORMAT_CODES = new Set(["leave-utilization", "attendance-register-monthly"]);
+export const CATALOG_FORMAT_CODES = new Set(["leave-utilization", "attendance-register-monthly", "employee-master"]);
 
 export const reportSuiteRouter = Router();
 reportSuiteRouter.use(requireAuth);
@@ -207,9 +210,19 @@ reportSuiteRouter.get("/catalog", h(async (_req, res) => res.json({ success: tru
 // ── GET /api/reports/suite/:code/export ──────────────────────────────────────
 // Immediate XLSX download.
 // super_admin: allowed for ALL reports regardless of sensitivity.
-// All other roles: only internal/confidential reports with ≤5000 rows.
+// All other roles: only internal/confidential reports with ≤80000 rows.
 // Returns 403 if not allowed, 422 if row count > cap or file > 20 MB.
-const EXPORT_ROW_CAP = Number(process.env.REPORT_IMMEDIATE_EXPORT_ROWS ?? 5000);
+//
+// 80,000 (was 50,000, raised again 2026-09-11): employee-master's own row cap
+// raise yesterday (a1826655) widened its DEFAULT population from active-only
+// (990) to active+inactive (59,029, confirmed live against mas_hrms) so its
+// new Employee Status column would actually carry both values -- but left
+// the cap short of that real population, so the export failed outright
+// (TOO_LARGE) for every caller, every time, regardless of role. This cap is
+// shared across every report in the suite, not employee-master-specific;
+// 80,000 gives real headroom over the current largest known population
+// rather than being tuned to exactly one report's row count today.
+const EXPORT_ROW_CAP = Number(process.env.REPORT_IMMEDIATE_EXPORT_ROWS ?? 80000);
 const EXPORT_BYTE_CAP = Number(process.env.REPORT_ATTACHMENT_MAX_BYTES ?? 20_971_520);
 const IMMEDIATE_LEVELS = new Set<SensitivityLevel>(['internal', 'confidential']);
 
@@ -241,10 +254,17 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
   }
 
   // Build ExecFilters from query string
+  const lobParsed = readLobFilter(req, res);
+  if (!lobParsed) return;
   const filters: ExecFilters = {
+    lobId:          req.query.lobId ? String(req.query.lobId) : undefined,
     branchId:       req.query.branchId    as string | undefined,
     processId:      req.query.processId   as string | undefined,
     departmentId:   req.query.departmentId as string | undefined,
+    // Was never forwarded here (or in the preview branch below), so the Employee Status
+    // dropdown (headcount, employee-master, manager-mapping, org-structure-snapshot,
+    // cost-centre-headcount) silently did nothing regardless of what a user picked.
+    employeeStatus: req.query.employeeStatus as string | undefined,
     from:           req.query.from        as string | undefined,
     to:             req.query.to          as string | undefined,
     month:          req.query.month       as string | undefined,
@@ -254,6 +274,8 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
     aonBucket:      req.query.aonBucket   as string | undefined,
     cohortMonth:    req.query.cohortMonth as string | undefined,
     dimension:      req.query.dimension   as string | undefined,
+    dojFrom:        req.query.dojFrom     as string | undefined,
+    dojTo:          req.query.dojTo       as string | undefined,
   };
 
   // Fetch at most EXPORT_ROW_CAP + 1 rows to detect overflow
@@ -264,6 +286,55 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
     includeTotal: false,
     mode: 'export',
   };
+
+  // ── Attendance Source Sheet: colour-coded Status / Cosec / APR per date ──────
+  // A flat one-row-per-employee export cannot carry the per-day colours or the three columns
+  // per date, so this code builds its own workbook (same builder as the Attendance page's
+  // Source Sheet download) from the complete filtered population.
+  if (code === ATTENDANCE_SOURCE_SHEET_CODE) {
+    let sheet;
+    try {
+      sheet = await loadAttendanceSourceSheet(filters, scope, EXPORT_ROW_CAP);
+    } catch (err) {
+      res.status(500).json({
+        error: 'REPORT_GENERATION_FAILED',
+        message: 'Report generation failed. Please try again or request the report by email.',
+      });
+      return;
+    }
+    if (sheet.total > EXPORT_ROW_CAP) {
+      res.status(422).json({
+        error: 'TOO_LARGE',
+        message: 'Result exceeds download limit. Narrow by branch or process, or request the report by email.',
+        rowCount: sheet.total,
+        limit: EXPORT_ROW_CAP,
+      });
+      return;
+    }
+    const wb = buildAttendanceSourceWorkbook(sheet.month, sheet.days, sheet.employees);
+    const buffer = Buffer.from(await wb.xlsx.writeBuffer());
+    if (buffer.length > EXPORT_BYTE_CAP) {
+      res.status(422).json({
+        error: 'FILE_TOO_LARGE',
+        message: 'Generated file exceeds size limit. Narrow by branch or process, or request the report by email.',
+      });
+      return;
+    }
+    await recordReportAuditEvent({
+      reportRequestId: `export-${userId}-${code}-${Date.now()}`,
+      eventType: REPORT_AUDIT_EVENTS.EXPORT_DOWNLOAD ?? 'EXPORT_DOWNLOAD',
+      actorType: 'user',
+      reportCode: code,
+      message: `Immediate XLSX export: ${sheet.employees.length} employees, ${buffer.length} bytes`,
+      metadataJson: { userId, rowCount: sheet.employees.length, fileSizeBytes: buffer.length, code, month: sheet.month },
+    }).catch(() => {});
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="attendance-source-sheet-${sheet.month}.xlsx"`);
+    res.setHeader('Cache-Control', 'no-store, no-cache');
+    res.setHeader('Content-Length', buffer.length);
+    res.send(buffer);
+    return;
+  }
 
   let result;
   try {
@@ -491,7 +562,9 @@ function getReportMeta(code: string) {
         { key: "gross_salary", label: "Gross Salary", format: "currency", align: "right" },
         { key: "pf_employee", label: "PF (Employee)", format: "currency", align: "right" },
         { key: "esic_employee", label: "ESIC (Employee)", format: "currency", align: "right" },
-        { key: "professional_tax", label: "PT", format: "currency", align: "right" },
+        // PT column removed 2026-09-11: Professional Tax discontinued company-wide
+        // by explicit stakeholder decision. Clean, low-risk removal — the
+        // underlying query still selects professional_tax elsewhere untouched.
         { key: "tds", label: "TDS", format: "currency", align: "right" },
         { key: "lwp_deduction", label: "LWP Deduction", format: "currency", align: "right" },
         { key: "total_deductions", label: "Total Deductions", format: "currency", align: "right" },
@@ -553,36 +626,25 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
   let sql = "";
 
   switch (code) {
-    case "employee-master":
-      // Was branch-only (addScopedEmployeeFilters); the export path for this same code calls
-      // employeeMaster in executors/employee.executor.ts, which uses the full
-      // appendScopeConditions (branch AND process AND department AND cost centre). A
-      // process-scoped viewer saw more employees on screen than their own export allowed.
-      // See addFullScopedEmployeeFilters in reporting-access.ts.
-      await addFullScopedEmployeeFilters(req, clauses, params);
-      // Had no active predicate at all, so the "Employee Master" export returned all 58,627
-      // employee rows ever created — 57,502 of them inactive. Same 52x overstatement that
-      // cc_headcount had, and it is why employee-master and headcount could never be
-      // reconciled against each other. active_status = 1 is the agreed definition and brings
-      // this to 1,125, matching headcount's population exactly.
-      clauses.push("e.active_status = 1");
-      sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
-                    e.official_email, e.mobile, e.employment_status, e.date_of_joining, e.date_of_exit,
-                    COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
-                    COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
-                    COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-                    COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
-                    COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
-                    COALESCE(NULLIF(m.full_name,''), CONCAT(m.first_name,' ',COALESCE(m.last_name,''))) AS reporting_manager
-               FROM employees e
-               LEFT JOIN branch_master b ON b.id = e.branch_id
-               LEFT JOIN department_master d ON d.id = e.department_id
-               LEFT JOIN process_master p ON p.id = e.process_id
-               LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-               LEFT JOIN employees m ON m.id = COALESCE(e.reporting_manager_id, e.manager_id)
-              WHERE ${clauses.length ? clauses.join(" AND ") : "1=1"}
-              ORDER BY e.employee_code`;
-      break;
+    // "employee-master" now falls through to executeReport(), same as "headcount",
+    // "new-join-export" and "salary-sheet-export" below. This inline case previously
+    // fixed a real scoping bug (see git history) but its own SELECT only ever listed 13
+    // columns, while the catalog (src/lib/report-catalog.ts) declares 74 — every other
+    // column silently rendered blank on screen. The export path (GET /:code/export)
+    // already called executeReport() -> employeeMaster() in executors/employee.executor.ts
+    // and returned the full 74 columns with equivalent-or-stricter scoping
+    // (appendScopeConditions covers branch AND process AND department AND cost centre,
+    // superseding what addFullScopedEmployeeFilters did here), so screen and download now
+    // run the same query and can no longer disagree.
+    //
+    // Behaviour change, deliberate: the inline case unconditionally forced
+    // active_status = 1. The executor only does that when the UI's Employee Status filter
+    // asks for it (default: no filter = both active and inactive), matching the catalog's
+    // own description ("Complete employee directory ... one row per employee"). The
+    // Employee Status dropdown already existed in the UI but did nothing — see the
+    // `employeeStatus` addition to execFilters below, in both this preview branch and the
+    // /export handler above.
+    //
     // "headcount" now falls through to executeReport(). The inline copy kept the
     // superseded definition (active_status AND employment_status) and, because an
     // inline case wins over the executor, it was still serving 1,123 where every other
@@ -665,6 +727,9 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
                     spl.gross_salary AS gross_earnings,
                     COALESCE(spl.pf_employee, 0) AS pf,
                     COALESCE(spl.esic_employee, 0) AS esi,
+                    -- PT removed from active payroll 2026-09-11 (explicit stakeholder
+                    -- decision, company-wide, all states); reads 0 on every run
+                    -- processed after the removal.
                     COALESCE(spl.professional_tax, 0) AS professional_tax,
                     COALESCE(spl.tds_amount, 0) AS tds,
                     COALESCE(spl.advance_recovery, 0) AS loan_deduction,
@@ -1329,6 +1394,9 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                     spr.total_employees,
                     SUM(spl.pf_employee) + SUM(spl.pf_employer) AS total_pf,
                     SUM(spl.esic_employee) + SUM(spl.esic_employer) AS total_esic,
+                    -- PT removed from active payroll 2026-09-11 (explicit stakeholder
+                    -- decision, company-wide, all states) — no longer a filing
+                    -- obligation, so this column reads 0 for runs after the removal.
                     SUM(spl.professional_tax) AS total_pt
                FROM salary_prep_run spr
                LEFT JOIN salary_prep_line spl ON spl.run_id = spr.id
@@ -2133,6 +2201,10 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     }
 
     case "pt-slab-master": {
+      // PT removed from active payroll 2026-09-11 (explicit stakeholder decision,
+      // company-wide, all states). Left wired for historical/audit lookup of the
+      // slab configuration that was in force while PT was still deducted; no new
+      // slabs are being configured or applied to any run going forward.
       const state = String(req.query.state ?? "");
       if (state) { clauses.push("psc.state_code = ?"); params.push(state); }
       sql = `SELECT psc.state_code, psc.state_name,
@@ -2930,7 +3002,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const to = dateParam(req.query.to, from);
       if (req.query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(req.query.branchId)); }
       clauses.push("adr.record_date BETWEEN ? AND ?"); params.push(from, to);
-      sql = `SELECT DATE_FORMAT(adr.record_date,'%Y-%m-%d') AS report_date,
+      sql = `SELECT DATE_FORMAT(adr.record_date,'%d-%m-%Y') AS report_date,
                     COUNT(DISTINCT e.id) AS active_agents,
                     SUM(CASE WHEN adr.attendance_status IN ('present','half_day','week_off_worked') THEN 1 ELSE 0 END) AS present_count,
                     ROUND(SUM(adr.dialler_minutes) / 60, 2) AS total_login_hours,
@@ -2943,8 +3015,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                LEFT JOIN kpi_daily_actual kda ON kda.employee_id = adr.employee_id
                  AND kda.record_date = adr.record_date AND kda.source = 'apr'
               WHERE ${clauses.join(" AND ")}
-              GROUP BY DATE_FORMAT(adr.record_date,'%Y-%m-%d')
-              ORDER BY report_date DESC`;
+              GROUP BY adr.record_date
+              ORDER BY adr.record_date DESC`;
       break;
     }
 
@@ -3058,8 +3130,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
         SELECT
           e.employee_code,
           CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
-          DATE_FORMAT(e.date_of_joining,  '%Y-%m-%d') AS date_of_joining,
-          DATE_FORMAT(e.date_of_leaving,  '%Y-%m-%d') AS date_of_leaving,
+          DATE_FORMAT(e.date_of_joining,  '%d-%m-%Y') AS date_of_joining,
+          DATE_FORMAT(e.date_of_leaving,  '%d-%m-%Y') AS date_of_leaving,
           COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
           COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
           ipr.request_type,
@@ -3197,7 +3269,10 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       // Attempt executor layer for codes not yet in the switch above.
       const userId = (req as any).authUser?.id as string;
       const execScope = await resolveFullScope(userId);
+      const lobParsed = readLobFilter(req, res);
+      if (!lobParsed) return;
       const execFilters: ExecFilters = {
+        lobId:        req.query.lobId ? String(req.query.lobId) : undefined,
         branchId:     req.query.branchId     as string | undefined,
         processId:    req.query.processId    as string | undefined,
         departmentId: req.query.departmentId as string | undefined,
@@ -3205,6 +3280,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
         designationId: req.query.designationId as string | undefined,
         managerId:    req.query.managerId    as string | undefined,
         employeeCode: req.query.employeeCode as string | undefined,
+        employeeName: req.query.employeeName as string | undefined,
+        employeeStatus: req.query.employeeStatus as string | undefined,
         from:         req.query.from         as string | undefined,
         to:           req.query.to           as string | undefined,
         month:        req.query.month        as string | undefined,
@@ -3216,6 +3293,8 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
         aonBucket:    req.query.aonBucket    as string | undefined,
         cohortMonth:  req.query.cohortMonth  as string | undefined,
         dimension:    req.query.dimension    as string | undefined,
+        dojFrom:      req.query.dojFrom      as string | undefined,
+        dojTo:        req.query.dojTo        as string | undefined,
       };
       const execOffset = Number(req.query.offset ?? 0);
       const execLimit  = limit > 0 ? limit : 100;

@@ -17,6 +17,52 @@
  * keeps the conservative inclusive behaviour rather than silently under-charging a budget.
  */
 
+import { budgetExGstSql } from "./pnl-ex-gst.js";
+
+/*
+ * THE BUDGET CEILING A GRN IS CHECKED AGAINST — EX-GST (owner decision 2026-09-24: "GRN approval
+ * limit: move to the excluding-GST amount").
+ *
+ * Before: the ceiling was pnl_cost_amount (base + NON-recoverable GST) while every charge written
+ * to reserved_amount / consumed_amount has, since 1c3c1d83 (2026-08-31), been the invoice's
+ * taxable value (budgetCostRatio below). On a line with non-recoverable GST that compared a
+ * GST-inclusive ceiling against ex-GST spend: a base-100 / GST-18 line allowed 118 of ex-GST
+ * spend before refusing. Reporting (pnl-ex-gst.ts, the Variance/Utilization tabs) already shows
+ * the line as a 100 budget, so the approval gate is now on that same basis.
+ *
+ * The ceiling is the line's base_amount, with the same zero-default guard as pnl-ex-gst.ts
+ * (0 = not populated → gross − tax → pnl_cost_amount), so a legacy line never reads as zero.
+ * Stored columns are untouched; only which one the gate reads changed.
+ */
+
+/** SQL: a budget line's ex-GST ceiling. */
+export function budgetLineCeilingSql(alias = "l"): string {
+  return budgetExGstSql(alias);
+}
+
+/**
+ * SQL: a budget line's remaining headroom on the ex-GST basis — ceiling minus what is reserved
+ * and consumed. Callers keep aliasing it `available_gross_amount` (a legacy name every consumer and
+ * the frontend reads); the value is ex-GST.
+ */
+export function budgetLineAvailableSql(alias = "l"): string {
+  return `(${budgetLineCeilingSql(alias)} - COALESCE(${alias}.reserved_amount, 0) - COALESCE(${alias}.consumed_amount, 0))`;
+}
+
+function finiteOrZero(value: unknown): number {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** JS mirror of budgetLineCeilingSql() for a row already in hand (e.g. a line locked FOR UPDATE). */
+export function budgetLineCeiling(line: Readonly<Record<string, unknown>>): number {
+  const base = finiteOrZero(line.base_amount);
+  if (base !== 0) return base;
+  const derived = finiteOrZero(line.gross_amount) - finiteOrZero(line.tax_amount);
+  if (derived !== 0) return derived;
+  return finiteOrZero(line.pnl_cost_amount);
+}
+
 /** Budget lines whose planned amount carries no tax, so tax must not be consumed against them. */
 export const NON_TAXABLE_TREATMENTS = new Set(["non_gst", "exempt"]);
 

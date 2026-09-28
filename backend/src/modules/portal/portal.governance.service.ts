@@ -20,14 +20,37 @@ export const portalGovernanceService = {
       ];
     }
 
+    // governance_activity_master has no process_id column -- it is one shared, global
+    // catalog of canonical activities (see 012_client_portal.sql's header comment and its
+    // 11-row seed), scoped to a specific process only via governance_checklist_log's own
+    // process_id column. It should therefore contain 11 distinct rows total, forever.
+    //
+    // Live-checked while wiring this into a client-facing route for the first time: the
+    // table actually holds 418 rows -- the same 11 (activity_name, level, frequency)
+    // combinations repeated 38 times each with a fresh random id (each row's id defaults
+    // to UUID(), and 012_client_portal.sql's INSERT IGNORE ... VALUES (UUID(), ...) mints a
+    // new id on every run, so re-running that migration script never no-ops the way
+    // INSERT IGNORE normally would -- it only skips a literal duplicate id, not a
+    // duplicate activity). A naive join against every row would show a client the same 11
+    // activities 38 times over. GROUP BY the canonical identity (name/level/frequency)
+    // rather than a's own id, and MIN(a.id) to pick one representative id per group so the
+    // LEFT JOIN against governance_checklist_log (also keyed by that id) still works --
+    // whichever duplicate's id happens to be picked, completedCount for THIS process only
+    // ever accumulates under whichever id updateLog was actually called with, so a
+    // representative id is only correct as long as everyone (client read + admin write)
+    // resolves the same one. Documented here rather than fixed at the data layer (deleting
+    // 407 duplicate rows) because that is a real schema cleanup decision, not something to
+    // do silently as a side effect of wiring a route.
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
-         a.id AS activity_id, a.activity_name, a.level, a.frequency, a.required_count,
-         COALESCE(l.completed_count, 0) AS completed_count
+         MIN(a.id) AS activity_id, a.activity_name, a.level, a.frequency,
+         MAX(a.required_count) AS required_count,
+         COALESCE(MAX(l.completed_count), 0) AS completed_count
        FROM governance_activity_master a
        LEFT JOIN governance_checklist_log l
          ON l.activity_id = a.id AND l.process_id = ? AND l.period = ?
        WHERE a.active_status = 1
+       GROUP BY a.activity_name, a.level, a.frequency
        ORDER BY FIELD(a.level,'analyst','tl','process_manager','branch_head'), a.activity_name`,
       [processId, period]
     );

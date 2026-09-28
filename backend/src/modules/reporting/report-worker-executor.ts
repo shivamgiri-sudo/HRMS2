@@ -249,6 +249,8 @@ export async function executeReportForWorker(
                 COALESCE(spl.gross_salary,0) AS gross_salary,
                 COALESCE(spl.pf_employee,0) AS pf_employee,
                 COALESCE(spl.esic_employee,0) AS esic_employee,
+                -- PT removed from active payroll 2026-09-11 (explicit stakeholder
+                -- decision, company-wide, all states); reads 0 on runs after removal.
                 COALESCE(spl.professional_tax,0) AS professional_tax,
                 COALESCE(spl.tds,0) AS tds,
                 COALESCE(spl.lwp_deduction,0) AS lwp_deduction,

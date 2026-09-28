@@ -6,7 +6,8 @@ import { missingTdsConfigKeys } from "./statutory-regime.js";
 // The closed-run set was `["locked", "disbursed"]`, which matched no row in
 // production — runs finish as FINALIZED — so this guard never fired.
 import { isRunClosed, CLOSED_RUN_STATUSES_SQL } from "./run-status.js";
-import { isProfessionalTaxExempt } from "./professional-tax-states.js";
+// PT removed 2026-09-11 per user decision — professional-tax-states.ts is no longer
+// consumed here; kept in the tree for historical reference only, not deleted.
 import {
   EMPLOYMENT_END_DATE_SELECT,
   employmentWindowPredicate,
@@ -465,56 +466,19 @@ export function calculateTds(
 // ─── Professional Tax from Slab ───────────────────────────────────────────────
 
 /**
- * Look up PT amount for a given state and monthly income from pt_slab_master.
- * Falls back to 200 if no matching slab is found.
+ * PT removed 2026-09-11 per user decision — full company-wide removal across all
+ * states. This previously looked up pt_amount from pt_slab_master (and consulted
+ * professional-tax-states.ts for genuinely-exempt states vs configuration gaps).
+ * That table is kept for historical reference only (additive-only rule — nothing
+ * dropped), but is no longer queried for live calculation: this always resolves
+ * to 0 now, unconditionally, for every state. Signature kept unchanged for API/
+ * caller shape compatibility (ats/salary.calculator.ts, running-salary.service.ts,
+ * payroll-compliance's own copy).
  */
 export async function getPtFromSlab(
-  stateCode: string,
-  monthlyIncome: number
+  _stateCode: string,
+  _monthlyIncome: number
 ): Promise<number> {
-  // Case-insensitive match on state_code (abbreviation) OR state_name (full name)
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT pt_amount FROM pt_slab_master
-      WHERE (LOWER(state_code) = LOWER(?) OR LOWER(state_name) = LOWER(?))
-        AND is_active = 1
-        AND income_from <= FLOOR(?)
-        AND (income_to IS NULL OR income_to >= FLOOR(?))
-      ORDER BY income_from DESC
-      LIMIT 1`,
-    [stateCode, stateCode, monthlyIncome, monthlyIncome]
-  );
-  const row = (rows as Array<{ pt_amount: number }>)[0];
-  if (row) return Number(row.pt_amount);
-
-  const [anyRows] = await db.execute<RowDataPacket[]>(
-    `SELECT 1 FROM pt_slab_master
-      WHERE (LOWER(state_code) = LOWER(?) OR LOWER(state_name) = LOWER(?)) AND is_active = 1
-      LIMIT 1`,
-    [stateCode, stateCode]
-  );
-
-  if ((anyRows as RowDataPacket[]).length === 0) {
-    // No slab rows for this state. That means one of two very different things,
-    // and treating them alike is how an under-deduction hides:
-    //
-    //   the state levies no PT   -> 0 is the correct answer. Uttar Pradesh and
-    //                               Delhi are in this position and account for
-    //                               831 employees.
-    //   nobody configured it yet -> 0 is an under-deduction, and the shortfall
-    //                               is the employer's liability. Punjab levies
-    //                               PT and has no rows here.
-    //
-    // The table cannot tell them apart, so the exempt states are named
-    // explicitly and anything else is reported as the configuration gap it is.
-    if (isProfessionalTaxExempt(stateCode)) return 0;
-    throw new Error(
-      `Professional tax is not configured for state "${stateCode}". Add its slabs to ` +
-      `pt_slab_master, or record the state as PT-exempt if it levies none. ` +
-      `No amount is assumed, because zero would be an under-deduction if the state does levy PT.`,
-    );
-  }
-
-  // State has slabs but the income falls below the lowest bracket → genuinely 0.
   return 0;
 }
 
@@ -539,6 +503,15 @@ interface EmployeeRow {
   employee_id: string;
   employee_code: string;
   prep_line_id?: string | null;
+  /**
+   * Set from spl_existing.manual_override_locked (migration 1697). When true, this employee's
+   * row was patched directly outside this engine — e.g. the 2026-09-08 db_bill reconciliation
+   * override — and must be skipped entirely on recalculation, the same way a G11-blocked or
+   * not-yet-started employee is skipped below. Without this, any recalculation of a locked
+   * employee silently discards the override and replaces it with freshly computed figures; this
+   * already happened once in production (MAS63361) before the guard existed.
+   */
+  is_manual_override_locked?: boolean | number;
   ctc_annual: number;
   basic_pct: number;
   hra_pct: number;
@@ -577,36 +550,21 @@ interface StatutoryRow {
 }
 
 /**
- * Professional tax for one employee.
+ * PT removed 2026-09-11 per user decision — full company-wide removal.
  *
- * PT is levied by the STATE. An employee whose branch has no state therefore
- * has no determinable liability, and no organisation-wide amount could be
- * correct for them.
- *
- * This previously fell back to a hardcoded 200 — a number nobody configured;
- * statutory_config has never held a professional_tax key. In the 2026-03 run
- * alone that deducted ₹200 from 172 employees whose branch had no state
- * (₹34,400), while employees in Uttar Pradesh and Delhi — states with no
- * professional tax at all — correctly paid nothing.
- *
- * Stopping and naming the branch is recoverable in a single edit. Silently
- * deducting from someone who owes nothing is not.
- *
- * Where the state IS known, getPtFromSlab resolves it, including returning 0 for
- * states that levy no PT. That path was always correct and is unchanged.
+ * This used to throw when an employee's branch had no state (PT is a state
+ * levy, so an indeterminate state meant an indeterminate liability), which
+ * blocked that employee out of the run entirely via pt_blocked_employees. With
+ * PT removed there is nothing to determine and nothing to block on — this now
+ * always resolves to 0 for every employee, state known or not. Signature and
+ * the async contract are kept unchanged so every caller keeps compiling.
  */
 export async function resolveProfessionalTax(
-  employeeCode: string,
-  stateCode: string | null | undefined,
-  monthlyGross: number,
+  _employeeCode: string,
+  _stateCode: string | null | undefined,
+  _monthlyGross: number,
 ): Promise<number> {
-  if (!stateCode) {
-    throw new Error(
-      `Professional tax cannot be determined for ${employeeCode}: their branch has no state set. ` +
-      `PT is levied per state, so no default is applied. Set the branch's state and re-run.`,
-    );
-  }
-  return getPtFromSlab(stateCode, monthlyGross);
+  return 0;
 }
 
 /**
@@ -631,11 +589,13 @@ export function buildStatutoryRow(statConfig: Record<string, number>): Statutory
     esic_employer_pct: statConfig["esic_employer_pct"] ?? 3.25,
     esic_wage_limit:   statConfig["esic_wage_limit"]   ?? 21000,
     pf_wage_limit:     statConfig["pf_wage_limit"]     ?? 15000,
-    // No `?? 200`. Professional tax is a state levy with no sensible
-    // organisation-wide default, and statutory_config has never held this key —
-    // that constant was a number nobody approved. resolveProfessionalTax stops
-    // the run rather than guessing.
-    professional_tax:  statConfig["professional_tax"]  ?? 0,
+    // PT removed 2026-09-11 per user decision — hardcoded 0 regardless of what
+    // statConfig carries, not just defaulted when absent. Kept for API shape
+    // compatibility (this field was already unconsumed by the calc call below,
+    // which uses the separately-resolved `professionalTax` variable, itself
+    // now always 0 via resolveProfessionalTax). A leftover statutory_config row
+    // must not be able to revive a PT deduction here.
+    professional_tax:  0,
   };
 }
 
@@ -775,6 +735,21 @@ export async function calculatePayrollRunScoped(
     empParams.push(...scopedEmployeeIds);
   }
 
+  // Manual override lock (migration 1697). Kept OUT of empConds deliberately — excluding a
+  // locked employee from `employees` here would also remove them from `currentIds` a few lines
+  // below, and the stale-row reconciliation block treats "not in currentIds" as "no longer
+  // eligible for this run" and DELETES their salary_prep_line row (see the block above staleRows,
+  // for employees with no acknowledged payslip). That is the opposite of what a lock means: keep
+  // the employee eligible, just skip recomputing and overwriting their figures. The actual skip
+  // is applied per-employee inside the calculation loop below, next to the existing G11 and
+  // salary_start_date skips. Kill switch: payroll_config_flags('dbbill_manual_override_lock_enabled').
+  const [overrideLockFlagRows] = await db.execute<RowDataPacket[]>(
+    `SELECT config_value FROM payroll_config_flags
+      WHERE branch_id IS NULL AND process_id IS NULL
+        AND config_key = 'dbbill_manual_override_lock_enabled' LIMIT 1`
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const overrideLockEnabled = !overrideLockFlagRows.length || overrideLockFlagRows[0].config_value !== 'false';
+
   // Payroll Head mandatory salary/journey review gate (migration 1541). Additive
   // only: an employee with NO row in employee_payroll_head_review — every employee
   // created before this gate existed, forever — is unaffected, because NOT EXISTS
@@ -818,6 +793,7 @@ export async function calculatePayrollRunScoped(
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id, e.employee_code,
             spl_existing.id AS prep_line_id,
+            spl_existing.manual_override_locked AS is_manual_override_locked,
             esa.ctc_annual, esa.structure_id, ss.basic_pct, ss.hra_pct,
             bm.state AS state_code,
             -- cost_centre_id is stamped onto the payroll line below. employees.cost_centre_id is
@@ -856,7 +832,18 @@ export async function calculatePayrollRunScoped(
               WHERE a.employee_id = e.id AND a.active_status = 1
               ORDER BY a.effective_from DESC, a.created_at DESC
               LIMIT 1))
-       JOIN salary_structure_master ss      ON ss.id = esa.structure_id
+       -- LEFT, not JOIN: an employee assigned salary directly via salary_component_assignments
+       -- (no structure template — esa.structure_id NULL) has no salary_structure_master row to
+       -- match. An INNER JOIN here silently dropped that employee from empRows entirely — not
+       -- underpaid, excluded from the run altogether — which the Step 7 salary resolution below
+       -- (scaRow-first, structure-template fallback) never got a chance to run for. Confirmed live
+       -- 2026-09-16: 104 active employees carry esa.structure_id IS NULL, 73 with a real active
+       -- salary_component_assignments row (including MAS63459/RAVIKAR MISHRA), and every one of
+       -- them eligible for the August 2026 run (by effective_from) was missing from its
+       -- salary_prep_line. ss.basic_pct/hra_pct below already tolerate NULL via the ?? 40 / ?? 20
+       -- fallback in the hasFixedComponents===false branch only, which a scaRow-resolved employee
+       -- never takes, so this changes nothing for the ~14,455 structure-based employees.
+       LEFT JOIN salary_structure_master ss ON ss.id = esa.structure_id
        LEFT JOIN process_master pm          ON pm.id = e.process_id
        LEFT JOIN branch_master bm           ON bm.id = e.branch_id
        LEFT JOIN salary_prep_line spl_existing
@@ -1000,6 +987,96 @@ export async function calculatePayrollRunScoped(
    */
   const ptBlockedEmployees: Array<{ employee_id: string; employee_code: string; reason: string }> = [];
 
+  // Pre-batch reads: one query per data type for all employees, eliminating N+1 inside the loop.
+  const loopMonthStart = `${run.run_month}-01`;
+  const loopMonthEnd   = `${run.run_month}-${String(daysInMonth).padStart(2, "0")}`;
+  const empIds = employees.map((e) => e.employee_id);
+  const empIdPh = () => empIds.map(() => "?").join(", ");
+
+  const desigByEmp = new Map<string, { designation_name: string; dept_name: string }>();
+  if (empIds.length > 0) {
+    const [dRows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id, COALESCE(dm.designation_name, '') AS designation_name, COALESCE(dept.dept_name, '') AS dept_name
+         FROM employees e
+         LEFT JOIN designation_master dm  ON dm.id  = e.designation_id
+         LEFT JOIN department_master dept ON dept.id = e.department_id
+        WHERE e.id IN (${empIdPh()})`,
+      empIds,
+    );
+    for (const r of dRows as any[]) desigByEmp.set(r.id as string, r);
+  }
+
+  const adrCountByEmp = new Map<string, number>();
+  if (empIds.length > 0) {
+    const [cntRows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_id, COUNT(*) AS cnt
+         FROM attendance_daily_record
+        WHERE employee_id IN (${empIdPh()})
+          AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
+        GROUP BY employee_id`,
+      [...empIds, loopMonthStart, loopMonthEnd],
+    );
+    for (const r of cntRows as any[]) adrCountByEmp.set(r.employee_id as string, Number(r.cnt));
+  }
+
+  const attByEmp = new Map<string, AttendanceRow>();
+  if (empIds.length > 0) {
+    const [aRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         adr.employee_id,
+         COUNT(CASE WHEN adr.attendance_status NOT IN ('week_off','holiday') THEN 1 END) AS working_days,
+         COUNT(CASE WHEN adr.attendance_status = 'present'        THEN 1 END) AS present_days,
+         COUNT(CASE WHEN adr.attendance_status = 'leave_approved' THEN 1 END) AS leave_days,
+         COALESCE(SUM(adr.lwp_value), 0)                                       AS lwp_days,
+         COALESCE(SUM(adr.late_mark), 0)                                       AS late_marks,
+         COALESCE(SUM(CASE WHEN adr.attendance_source = 'dialler'
+                            THEN adr.raw_minutes / 60.0 END), NULL)            AS dialer_hours
+       FROM attendance_daily_record adr
+       WHERE adr.employee_id IN (${empIdPh()})
+         AND DATE(CONVERT_TZ(adr.record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
+       GROUP BY adr.employee_id`,
+      [...empIds, loopMonthStart, loopMonthEnd],
+    );
+    for (const r of aRows as any[]) attByEmp.set(r.employee_id as string, r as unknown as AttendanceRow);
+  }
+
+  const paidBaseByEmp = new Map<string, number>();
+  if (empIds.length > 0) {
+    const [pbRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         adr.employee_id,
+         COALESCE(SUM(
+           CASE
+             WHEN adr.attendance_status = 'present'        THEN 1.0
+             WHEN adr.attendance_status = 'late'           THEN 1.0
+             WHEN adr.attendance_status = 'half_day'       THEN 0.5
+             WHEN adr.attendance_status = 'leave_approved' THEN 1.0
+             ELSE 0
+           END
+         ), 0) AS paid_base
+       FROM attendance_daily_record adr
+       WHERE adr.employee_id IN (${empIdPh()})
+         AND DATE(CONVERT_TZ(adr.record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
+       GROUP BY adr.employee_id`,
+      [...empIds, loopMonthStart, loopMonthEnd],
+    );
+    for (const r of pbRows as any[]) paidBaseByEmp.set(r.employee_id as string, Number(r.paid_base));
+  }
+
+  const wfmPresentByEmp = new Map<string, number>();
+  if (empIds.length > 0) {
+    const [wRows] = await db.execute<RowDataPacket[]>(
+      `SELECT s.employee_id,
+              COUNT(CASE WHEN s.current_status IN ('Logged Out','Logged In') THEN 1 END) AS present_days
+         FROM wfm_attendance_session s
+        WHERE s.employee_id IN (${empIdPh()})
+          AND s.session_date BETWEEN ? AND ?
+        GROUP BY s.employee_id`,
+      [...empIds, loopMonthStart, loopMonthEnd],
+    );
+    for (const r of wRows as any[]) wfmPresentByEmp.set(r.employee_id as string, Number((r as any).present_days));
+  }
+
   try {
   for (const emp of employees) {
     const monthStart = `${run.run_month}-01`;
@@ -1007,6 +1084,14 @@ export async function calculatePayrollRunScoped(
 
     // G11: Skip employees with unresolved attendance issues when payroll gate is enabled
     if (blockedEmployeeIds.has(emp.employee_id)) {
+      continue;
+    }
+
+    // Manual override lock (migration 1697): this row was patched directly outside the engine
+    // (e.g. the 2026-09-08 db_bill reconciliation override) and must not be recomputed. Leaving
+    // the row entirely untouched -- no INSERT, no UPDATE -- is the point: recomputing and then
+    // discarding the result would still cost the query time and risk a partial write on error.
+    if (overrideLockEnabled && Number(emp.is_manual_override_locked) === 1) {
       continue;
     }
 
@@ -1021,55 +1106,18 @@ export async function calculatePayrollRunScoped(
     }
     processedCount++;
 
-    // Step 1: Load designation and department to determine attendance source
-    // Use conn (transaction connection) for all reads inside the loop to ensure
-    // a consistent snapshot and avoid dirty reads from concurrent payroll runs.
-    const [desigRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT dm.designation_name, dept.dept_name
-       FROM employees e
-       LEFT JOIN designation_master dm ON dm.id = e.designation_id
-       LEFT JOIN department_master dept ON dept.id = e.department_id
-       WHERE e.id = ? LIMIT 1`,
-      [emp.employee_id]
-    );
-    const desig = (desigRows[0] as any) ?? {};
+    // Step 1: Designation / department from the pre-batched map (no per-employee query).
+    const desig = desigByEmp.get(emp.employee_id) ?? { designation_name: '', dept_name: '' };
     const isOpsExecutive =
       /executive/i.test(desig.designation_name ?? '') &&
       /operations/i.test(desig.dept_name ?? '');
 
-    // Check if attendance_daily_record has been populated for this employee+month.
-    // record_date is stored as UTC datetime; compare in IST (+05:30) to avoid off-by-one on month boundaries.
-    const [adrCountRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt FROM attendance_daily_record
-       WHERE employee_id = ?
-         AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?`,
-      [emp.employee_id, monthStart, monthEnd]
-    );
-    const hasEngineData = Number((adrCountRows[0] as any).cnt ?? 0) > 0;
+    // hasEngineData / att / paidBase — looked up from pre-batched maps (no per-employee queries).
+    const hasEngineData = (adrCountByEmp.get(emp.employee_id) ?? 0) > 0;
 
     let att: AttendanceRow;
-
     if (hasEngineData) {
-      // Use attendance_daily_record — role-aware (dialler/biometric) with half-days, leaves, holidays
-      const [attRows] = await db.execute<RowDataPacket[]>(
-        `SELECT
-           ? AS employee_id,
-           (SELECT COUNT(*) FROM attendance_daily_record
-            WHERE employee_id = ?
-              AND DATE(CONVERT_TZ(record_date, '+00:00', '+05:30')) BETWEEN ? AND ?
-              AND attendance_status NOT IN ('week_off','holiday')) AS working_days,
-           COUNT(CASE WHEN adr.attendance_status = 'present'        THEN 1 END) AS present_days,
-           COUNT(CASE WHEN adr.attendance_status = 'leave_approved' THEN 1 END) AS leave_days,
-           COALESCE(SUM(adr.lwp_value), 0)                                       AS lwp_days,
-           COALESCE(SUM(adr.late_mark), 0)                                       AS late_marks,
-           COALESCE(SUM(CASE WHEN adr.attendance_source = 'dialler'
-                              THEN adr.raw_minutes / 60.0 END), NULL)            AS dialer_hours
-         FROM attendance_daily_record adr
-         WHERE adr.employee_id = ?
-           AND DATE(CONVERT_TZ(adr.record_date, '+00:00', '+05:30')) BETWEEN ? AND ?`,
-        [emp.employee_id, emp.employee_id, monthStart, monthEnd, emp.employee_id, monthStart, monthEnd]
-      );
-      att = (attRows as AttendanceRow[])[0] ?? {
+      att = attByEmp.get(emp.employee_id) ?? {
         employee_id: emp.employee_id,
         working_days: defaultWorkingDays,
         present_days: defaultWorkingDays,
@@ -1079,53 +1127,22 @@ export async function calculatePayrollRunScoped(
         dialer_hours: null,
       };
     } else {
-      // Fallback: legacy session-count query (no attendance engine data yet)
-      const [attRows] = await db.execute<RowDataPacket[]>(
-        `SELECT
-           ? AS employee_id,
-           ? AS working_days,
-           COUNT(CASE WHEN s.current_status IN ('Logged Out','Logged In') THEN 1 END) AS present_days,
-           0 AS leave_days,
-           (? - COUNT(CASE WHEN s.current_status IN ('Logged Out','Logged In') THEN 1 END)) AS lwp_days,
-           0 AS late_marks,
-           NULL AS dialer_hours
-         FROM wfm_attendance_session s
-         WHERE s.employee_id = ? AND s.session_date BETWEEN ? AND ?`,
-        [emp.employee_id, defaultWorkingDays, defaultWorkingDays, emp.employee_id, monthStart, monthEnd]
-      );
-      att = (attRows as AttendanceRow[])[0] ?? {
+      const wfmPresent = wfmPresentByEmp.get(emp.employee_id) ?? 0;
+      att = {
         employee_id: emp.employee_id,
         working_days: defaultWorkingDays,
-        present_days: defaultWorkingDays,
+        present_days: wfmPresent,
         leave_days: 0,
-        lwp_days: 0,
+        lwp_days: defaultWorkingDays - wfmPresent,
         late_marks: 0,
         dialer_hours: null,
       };
     }
 
-    // Step 2: Paid base calculation
-    // present(1) + half_day(0.5) + all approved leave types(1 each)
-    // Use attendance_daily_record which already has status per day
-    const [paidBaseRows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         COALESCE(SUM(
-           CASE
-             WHEN adr.attendance_status = 'present'         THEN 1.0
-             WHEN adr.attendance_status = 'late'            THEN 1.0
-             WHEN adr.attendance_status = 'half_day'        THEN 0.5
-             WHEN adr.attendance_status = 'leave_approved'  THEN 1.0
-             ELSE 0
-           END
-         ), 0) AS paid_base
-       FROM attendance_daily_record adr
-       WHERE adr.employee_id = ?
-         AND DATE(CONVERT_TZ(adr.record_date, '+00:00', '+05:30')) BETWEEN ? AND ?`,
-      [emp.employee_id, monthStart, monthEnd]
-    );
-    let paidBase = Number((paidBaseRows[0] as any)?.paid_base ?? 0);
-    // Fallback when attendance engine has no data yet
-    if (!hasEngineData) paidBase = att.present_days + att.leave_days;
+    // Step 2: Paid base — from pre-batched map; fallback for employees with no ADR data.
+    let paidBase = hasEngineData
+      ? (paidBaseByEmp.get(emp.employee_id) ?? 0)
+      : att.present_days + att.leave_days;
 
     // Step 4: Week-off eligibility and holiday resolution
     //

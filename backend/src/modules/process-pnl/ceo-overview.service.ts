@@ -1,6 +1,44 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
+import { getCurrentDateIST } from "../../shared/istDate.js";
+import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
+import { readGrnSpend, type GrnSpendRow } from "./pnl-actuals.service.js";
+import { isEstimateWindow } from "./pnl-seat-billing.service.js";
+import { payrollAttributionSql } from "./pnl-cost-centre-override.service.js";
+import { ccProcessJoin, ccProcessNameSql, costCentreLabel } from "./cost-centre-label.js";
+import { budgetByBranchId, entriesForCodes, readBudgetEntries as readBudgetEntriesUncached, sumAmount, topUpsForCodes } from "./pnl-budget-source.js";
+import { cachedPnlRead } from "./pnl-read-cache.js";
+import { peopleCostSql } from "./pnl-people-cost.js";
+
+/*
+ * PER-REQUEST DEDUP (2026-09-24). One overview asks for the same month's revenue / people / spend /
+ * budget several times over: the headline, marginTrend's current month, grnExistsCompanyWide and
+ * buildFocus's company-wide spend, and — for the YTD strip — every month again inside each
+ * neighbouring month's trend. The readers below are memoised per (period, scope, IST date) for 60s
+ * with single-flight (pnl-read-cache.ts), so each distinct read runs once. The date is in the key
+ * because the reserved-GRN / seat-estimate window is measured from today. Values are shared:
+ * callers only read them.
+ */
+function readBudgetEntries(period: string) {
+  return cachedPnlRead("ceo:budget-entries", { period }, () => readBudgetEntriesUncached(period));
+}
+const scopeKey = (period: string, s: CeoScope) => ({
+  period,
+  branchIds: s.branchIds,
+  processIds: s.processIds,
+  costCentreIds: s.costCentreIds,
+  asOf: getCurrentDateIST(),
+});
+function memoRevenueByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
+  return cachedPnlRead("ceo:revenue-by-branch", scopeKey(period, s), () => revenueByBranch(period, s));
+}
+function memoPeopleByBranch(period: string, s: CeoScope): Promise<Map<string, { cost: number; staff: number }>> {
+  return cachedPnlRead("ceo:people-by-branch", scopeKey(period, s), () => peopleByBranch(period, s));
+}
+function memoSpendByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
+  return cachedPnlRead("ceo:spend-by-branch", scopeKey(period, s), () => spendByBranch(period, s));
+}
 
 /**
  * The CEO view of the P&L: one figure per branch, and a ranked list of where profit is leaking.
@@ -16,7 +54,7 @@ import { tableExists } from "../../shared/dbHelpers.js";
  *   revenue  billing_invoice_particular_snapshot   (what clients were invoiced)
  *   people   salary_prep_line                      (what payroll actually paid)
  *   spend    grn_entry_line_snapshot               (what was raised, rejections excluded)
- *   budget   finance_budget_line_snapshot          (what was planned)
+ *   budget   pnl-budget-source.ts                  (what was planned: HRMS budget, db_bill mirror fallback)
  *
  * THE FINDINGS THIS SURFACES ARE REAL, NOT ILLUSTRATIVE
  * ----------------------------------------------------
@@ -44,6 +82,8 @@ export interface CeoBranchRow {
   flag: string | null;
   isCostCentre: boolean;
   isClosed: boolean;
+  /** Seat-rate estimate included in `revenue` for cost centres not invoiced yet (0 when none). */
+  revenueEstimated?: number;
 }
 
 export interface CeoOpportunity {
@@ -135,6 +175,8 @@ export interface CeoFocus {
 export interface CeoOverview {
   period: string;
   revenue: number;
+  /** Portion of `revenue` that is the seat-rate estimate (same figure as Live P&L), 0 when none. */
+  revenueEstimated: number;
   peopleCost: number;
   indirectCost: number;
   operatingProfit: number;
@@ -153,7 +195,7 @@ export interface CeoOverview {
    */
   options: {
     processes: { id: string; name: string }[];
-    costCentres: { id: string; code: string }[];
+    costCentres: { id: string; code: string; processName: string | null }[];
     branches: { id: string; name: string }[];
   };
   /** Present only when exactly one process or cost centre is selected. */
@@ -168,6 +210,17 @@ export interface CeoOverview {
    * normal case.
    */
   exceptions: { code: string; label: string; count: number; amount: number }[];
+  /**
+   * Part of the headline that belongs to no branch row (no branch on the cost centre / employee, or
+   * a branch id missing from branch_master). Included in the headline whenever no branch is
+   * selected, so headline minus the branch rows equals this. All zero under a branch selection.
+   */
+  unbranched?: { revenue: number; revenueEstimated: number; peopleCost: number; staffPaid: number; indirectCost: number };
+  /**
+   * No GRN maps to any MAS cost centre this month (company-wide) while people cost exists — every
+   * margin on this tab is NA. Same condition and meaning as Live P&L's `idcMissing`.
+   */
+  idcMissing?: boolean;
 }
 
 const n = (v: unknown): number => {
@@ -277,7 +330,7 @@ async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string,
               ccm.branch_id AS branch_id, SUM(p.amount) AS invoice_amount
          FROM billing_invoice_particular_snapshot p
          LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                ON ccm.cost_centre_code
                  = p.cost_centre_code COLLATE utf8mb4_unicode_ci
         WHERE ${invWhere.join(" AND ")}
         GROUP BY p.cost_centre_code COLLATE utf8mb4_unicode_ci, ccm.branch_id
@@ -288,7 +341,7 @@ async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string,
               SUM(CASE WHEN ps.billing_amt > 0 THEN ps.billing_amt ELSE ps.provision_amt END) AS provision_amount
          FROM billing_provision_snapshot ps
          LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                ON ccm.cost_centre_code
                  = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
         WHERE ${provWhere.join(" AND ")}
         GROUP BY ps.cost_centre_code COLLATE utf8mb4_unicode_ci, ccm.branch_id
@@ -307,7 +360,7 @@ async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string,
        SELECT ccm.branch_id AS branch_id, -cn.total_amt AS amount
          FROM billing_credit_note_snapshot cn
          LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                ON ccm.cost_centre_code
                  = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
         WHERE ${creditWhere.join(" AND ")}` : ""}
      ) combined
@@ -316,7 +369,7 @@ async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string,
        SELECT ccm.branch_id AS branch_id, p.amount AS amount
          FROM billing_invoice_particular_snapshot p
          LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                ON ccm.cost_centre_code
                  = p.cost_centre_code COLLATE utf8mb4_unicode_ci
         WHERE ${invWhere.join(" AND ")}
        ${hasCreditNote ? `
@@ -324,7 +377,7 @@ async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string,
        SELECT ccm.branch_id AS branch_id, -cn.total_amt AS amount
          FROM billing_credit_note_snapshot cn
          LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                ON ccm.cost_centre_code
                  = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
         WHERE ${creditWhere.join(" AND ")}` : ""}
      ) combined
@@ -360,11 +413,24 @@ let lastIdcContamination: { count: number; amount: number } | null = null;
  */
 async function idcContaminationCheck(period: string): Promise<void> {
   lastIdcContamination = null;
-  if (!(await tableExists("salary_prep_line"))) return;
+  lastIdcContamination = await idcContaminationFor(period);
+}
+
+/**
+ * The IDC-contamination finding for ONE period. getCeoOverview reads this for its own month rather
+ * than the module-level lastIdcContamination, which is overwritten by whichever peopleByBranch call
+ * finishes last — marginTrend reads three earlier months concurrently, so the global could carry a
+ * neighbouring month's finding.
+ */
+function idcContaminationFor(period: string): Promise<{ count: number; amount: number } | null> {
+  return cachedPnlRead("ceo:idc-contamination", { period }, () => readIdcContamination(period));
+}
+
+async function readIdcContamination(period: string): Promise<{ count: number; amount: number } | null> {
+  if (!(await tableExists("salary_prep_line"))) return null;
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) AS cnt,
-            SUM(COALESCE(l.gross_salary, 0) + COALESCE(l.pf_employer, 0)
-              + COALESCE(l.esic_employer, 0) + COALESCE(l.gratuity, 0)) AS amt
+            SUM(${peopleCostSql("l")}) AS amt
        FROM salary_prep_line l
        JOIN salary_prep_run r ON r.id = l.run_id
        JOIN employees e ON e.id = l.employee_id
@@ -372,38 +438,91 @@ async function idcContaminationCheck(period: string): Promise<void> {
     [period],
   );
   const count = n(rows[0]?.cnt);
-  if (count > 0) lastIdcContamination = { count, amount: n(rows[0]?.amt) };
+  return count > 0 ? { count, amount: n(rows[0]?.amt) } : null;
 }
 
 async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, { cost: number; staff: number }>> {
   const out = new Map<string, { cost: number; staff: number }>();
   if (!(await tableExists("salary_prep_line"))) return out;
   await idcContaminationCheck(period);
+  // Cost-centre scope filters on the EFFECTIVE cost centre (post-override), so selecting 576 also
+  // picks up 577's staff whose pay is now mapped to it — same rule as readPayroll()'s GROUP BY.
+  //
+  // WHICH BRANCH a person's pay counts against (2026-09-23, canonical rule — keep in step with
+  // pnl-reconciliation.service.ts readPayroll/readUnallocatedPayroll): the branch of their
+  // EFFECTIVE cost centre (post-override) — where they actually worked and were billed — falling
+  // back to the employee's home branch (e.branch_id) only when they have no cost centre at all.
+  // This used to group by e.branch_id alone, so a person posted to another branch's cost centre
+  // counted against a different branch here than on Live P&L. Deliberate remaining difference:
+  // this tab keeps payroll on a non-MAS cost centre (owner rule, "does NOT filter payroll by
+  // company" test) while Live P&L's rows are MAS cost centres only.
+  // The Statement's branch view (bpo-pnl.service.ts getPayrollPeople) follows the same rule since
+  // 2026-09-23. PROCESS scope (owner rule, same date): an employee mapped to a payroll cost centre
+  // counts under the MAPPED cost centre's process (payrollAttributionSql effectiveProcessExpr), not
+  // their home process as well — the Statement's process view uses the same expression.
+  const ov = await payrollAttributionSql({
+    employeeIdExpr: "e.id", homeCostCentreExpr: "e.cost_centre_id",
+    homeBranchExpr: "e.branch_id", homeProcessExpr: "e.process_id", ccAlias: "pcc",
+  });
   const where: string[] = ["r.run_month = ?"];
   const params: unknown[] = [period];
   if (s.processIds.length) {
-    where.push(`e.process_id IN (${marks(s.processIds)})`);
+    where.push(`${ov.effectiveProcessExpr} IN (${marks(s.processIds)})`);
     params.push(...s.processIds);
   }
   if (s.costCentreIds.length) {
-    where.push(`e.cost_centre_id IN (${marks(s.costCentreIds)})`);
+    where.push(`${ov.effectiveCostCentreExpr} IN (${marks(s.costCentreIds)})`);
     params.push(...s.costCentreIds);
   }
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.branch_id AS branch_id,
+    `SELECT ${ov.effectiveBranchExpr} AS branch_id,
             COUNT(*) AS staff,
-            SUM(COALESCE(l.gross_salary, 0)
-              + COALESCE(l.pf_employer, 0)
-              + COALESCE(l.esic_employer, 0)
-              + COALESCE(l.gratuity, 0)) AS cost
+            SUM(${peopleCostSql("l")}) AS cost
        FROM salary_prep_line l
        JOIN salary_prep_run r ON r.id = l.run_id
        JOIN employees e ON e.id = l.employee_id
+       ${ov.join}
       WHERE ${where.join(" AND ")}
-      GROUP BY e.branch_id`,
+      GROUP BY ${ov.effectiveBranchExpr}`,
     params,
   );
   for (const r of rows) {
+    out.set(r.branch_id ? String(r.branch_id) : "", { cost: n(r.cost), staff: n(r.staff) });
+  }
+  if (out.size > 0 || !(await tableExists("pnl_running_salary_snapshot"))) return out;
+
+  // Same fallback as pnl-reconciliation.service.ts's readPayroll() (2026-09-16 finding: it existed
+  // there and worked, but nothing had ever triggered it for September — see
+  // pnl-running-salary-refresh.worker.ts). This tab reached the same "no final payroll yet" state
+  // and, without this, disagreed with Live P&L on people cost for every open month: Live P&L
+  // correctly showed Rs 58.07 L accrued for Sep-26 company-wide while this tab showed Rs 0 and
+  // margin NA. COUNT(*) not DISTINCT, matching that fallback: one row per employee per period.
+  // It stays CTC (earned till date): the snapshot has no deduction columns, so the People Cost
+  // rule in pnl-people-cost.ts cannot be applied to it.
+  const ovSnapshot = await payrollAttributionSql({
+    employeeIdExpr: "s.employee_id", homeCostCentreExpr: "s.cost_centre_id",
+    homeBranchExpr: "s.branch_id", homeProcessExpr: "s.process_id", ccAlias: "pcc",
+  });
+  const runningWhere: string[] = ["s.period_code = ?"];
+  const runningParams: unknown[] = [period];
+  if (s.processIds.length) {
+    runningWhere.push(`${ovSnapshot.effectiveProcessExpr} IN (${marks(s.processIds)})`);
+    runningParams.push(...s.processIds);
+  }
+  if (s.costCentreIds.length) {
+    runningWhere.push(`${ovSnapshot.effectiveCostCentreExpr} IN (${marks(s.costCentreIds)})`);
+    runningParams.push(...s.costCentreIds);
+  }
+  const [runningRows] = await db.execute<RowDataPacket[]>(
+    `SELECT ${ovSnapshot.effectiveBranchExpr} AS branch_id,
+            COUNT(*) AS staff, SUM(s.earned_salary_till_date) AS cost
+       FROM pnl_running_salary_snapshot s
+       ${ovSnapshot.join}
+      WHERE ${runningWhere.join(" AND ")}
+      GROUP BY ${ovSnapshot.effectiveBranchExpr}`,
+    runningParams,
+  );
+  for (const r of runningRows) {
     out.set(r.branch_id ? String(r.branch_id) : "", { cost: n(r.cost), staff: n(r.staff) });
   }
   return out;
@@ -423,70 +542,39 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
  * the CEO's own headline spend figure.
  *
  * Same resolution as that fix, for the same reason: the app's own consumed allocation is the
- * PRIMARY source — it carries pnl_cost_amount (proper non-recoverable-GST treatment) which the
+ * PRIMARY source — it carries a recorded tax split (read ex-GST since 2026-09-24) which the
  * mirror's flat l.amount does not — and the mirror UNION only ever contributes a GRN number the
  * app has not captured, via the same NOT EXISTS guard.
  */
 async function spendByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
+  // 2026-09-23: a grouping over pnl-actuals.service.ts's readGrnSpend(), the single GRN reader
+  // shared with the P&L Statement and Live P&L — same legs, same accounting_period, same
+  // OWN_COMPANY_SQL rule, same ex-GST amount (amount_without_tax, 2026-09-24), same mirror dedup guard. This tab previously had
+  // its own copy that never counted ordinary (non-Smart) GRNs without allocation rows. Scope
+  // (cost centres / processes) is applied inside the reader to every leg alike.
   const out = new Map<string, number>();
-
-  const appWhere: string[] = ["a.lifecycle_status = 'consumed'", "gr.accounting_period = ?"];
-  const appParams: unknown[] = [period];
-  if (s.costCentreIds.length) {
-    appWhere.push(`ccm.id IN (${marks(s.costCentreIds)})`);
-    appParams.push(...s.costCentreIds);
-  }
-  if (s.processIds.length) {
-    appWhere.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
-                               WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
-    appParams.push(...s.processIds);
-  }
-  const [appRows] = await db.execute<RowDataPacket[]>(
-    `SELECT ccm.branch_id AS branch_id, SUM(a.pnl_cost_amount) AS amount
-       FROM grn_cost_allocation a
-       JOIN grn_request gr ON gr.id = a.grn_request_id
-       LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
-      WHERE ${appWhere.join(" AND ")}
-      GROUP BY ccm.branch_id`,
-    appParams,
-  );
-  for (const r of appRows) out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));
-
-  if (await tableExists("grn_entry_line_snapshot")) {
-    const where: string[] = ["g.period_code = ?", "g.is_rejected = 0", OWN_COMPANY_SQL];
-    const params: unknown[] = [period];
-    if (s.costCentreIds.length) {
-      where.push(`ccm.id IN (${marks(s.costCentreIds)})`);
-      params.push(...s.costCentreIds);
-    }
-    if (s.processIds.length) {
-      where.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
-                              WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
-      params.push(...s.processIds);
-    }
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT ccm.branch_id AS branch_id, SUM(l.amount) AS amount
-         FROM grn_entry_line_snapshot l
-         JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
-         LEFT JOIN cost_centre_master ccm
-                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-                 = l.cost_centre_code COLLATE utf8mb4_unicode_ci
-        WHERE ${where.join(" AND ")}
-          AND NOT EXISTS (
-                SELECT 1
-                  FROM grn_request gr2
-                  JOIN grn_cost_allocation a2 ON a2.grn_request_id = gr2.id
-                 WHERE gr2.grn_number = g.grn_no
-                   AND a2.lifecycle_status = 'consumed'
-              )
-        GROUP BY ccm.branch_id`,
-      params,
-    );
+  const add = (rows: GrnSpendRow[]) => {
     for (const r of rows) {
-      const key = r.branch_id ? String(r.branch_id) : "";
-      out.set(key, (out.get(key) ?? 0) + n(r.amount));
+      const key = r.branchId ?? "";
+      out.set(key, (out.get(key) ?? 0) + r.amount);
     }
-  }
+  };
+  const scope = { costCentreIds: s.costCentreIds, processIds: s.processIds };
+
+  // Committed-not-yet-consumed GRN ('reserved', ex-GST) for EVERY period — owner rule 2026-09-24:
+  // "Reserved + Consumed should be there in P&L". It used to be read only inside the open estimate
+  // window (isEstimateWindow), which dropped Aug-26's Rs 36,719 reserved once Aug left the window.
+  // The seat-rate revenue estimate keeps that window; GRN reserved is real approved spend, not a
+  // projection, so it does not. Same real spend pnl-reconciliation.service.ts's readGrnCommitted()
+  // and the Statement's "GRN Committed (reserved)" line read. 'draft' is never counted.
+  // Folded straight into indirectCost (no separate label yet, unlike revenueEstimated).
+  // The two legs are independent reads, so they run together; summed in the same order as before.
+  const [consumed, reserved] = await Promise.all([
+    readGrnSpend(period, "consumed", scope),
+    readGrnSpend(period, "reserved", scope),
+  ]);
+  add(consumed);
+  add(reserved);
 
   return out;
 }
@@ -523,39 +611,24 @@ async function spendByBranch(period: string, s: CeoScope): Promise<Map<string, n
  * True sanctioned FY2026-27 budget: 126.03 + 42.11 = Rs 168.14 L.
  */
 async function budgetByBranch(period: string): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
-  if (!(await tableExists("finance_budget_line_snapshot"))) return out;
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT branch_id, SUM(amount) AS amount FROM (
-        SELECT bm.id AS branch_id, l.amount AS amount
-          FROM finance_budget_line_snapshot l
-          JOIN finance_budget_snapshot b
-            ON b.bill_source_id = l.budget_source_id AND b.period_code = l.period_code
-          LEFT JOIN (
-                SELECT MIN(id) AS id, UPPER(TRIM(branch_name)) AS nm
-                  FROM branch_master GROUP BY UPPER(TRIM(branch_name))
-              ) bm ON bm.nm COLLATE utf8mb4_unicode_ci
-                    = UPPER(TRIM(b.branch_name)) COLLATE utf8mb4_unicode_ci
-         WHERE l.period_code = ? AND l.expense_type = 'CostCenter'
-           AND b.active_status = 1 AND b.is_rejected = 0
-        UNION ALL
-        -- Header-level top-ups: one row per budget, so they cannot be joined through the lines
-        -- without multiplying by the line count.
-        SELECT bm.id, b.reopen_additional_amount
-          FROM finance_budget_snapshot b
-          LEFT JOIN (
-                SELECT MIN(id) AS id, UPPER(TRIM(branch_name)) AS nm
-                  FROM branch_master GROUP BY UPPER(TRIM(branch_name))
-              ) bm ON bm.nm COLLATE utf8mb4_unicode_ci
-                    = UPPER(TRIM(b.branch_name)) COLLATE utf8mb4_unicode_ci
-         WHERE b.period_code = ? AND b.active_status = 1 AND b.is_rejected = 0
-           AND b.reopen_additional_amount <> 0
-     ) sanctioned
-      GROUP BY branch_id`,
-    [period, period],
-  );
-  for (const r of rows) out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));
-  return out;
+  // 2026-09-23 (owner rule): the shared budget reader — HRMS finance_budget_header/line for any
+  // branch + month with an ACTIVE HRMS budget, the db_bill mirror (with the filters and top-ups
+  // described above) only where HRMS has none. See pnl-budget-source.ts.
+  return budgetByBranchId(await readBudgetEntries(period));
+}
+
+/**
+ * Approved budget for a set of cost centre CODES: their lines, plus mirror header-level top-ups
+ * ONLY where every line of that budget is one of these codes (see focusBudgetTopUps — audit item
+ * 16; a shared budget's top-up is never pro-rated, it is returned as `sharedTopUps` so the caller
+ * can say so). Used by the focus panel and by the YTD strip under a process / cost-centre scope,
+ * so both report the same figure. Same shared reader (and HRMS-first rule) as budgetByBranch.
+ */
+async function budgetForCodes(period: string, codes: string[]): Promise<{ budget: number; sharedTopUps: number }> {
+  if (codes.length === 0) return { budget: 0, sharedTopUps: 0 };
+  const entries = await readBudgetEntries(period);
+  const topUps = topUpsForCodes(entries, codes);
+  return { budget: sumAmount(entriesForCodes(entries, codes)) + topUps.attributable, sharedTopUps: topUps.shared };
 }
 
 /**
@@ -642,7 +715,7 @@ async function billingCompleteness(
             COUNT(*) AS line_count, SUM(p.amount) AS amount
        FROM billing_invoice_particular_snapshot p
        LEFT JOIN cost_centre_master ccm
-              ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+              ON ccm.cost_centre_code
                = p.cost_centre_code COLLATE utf8mb4_unicode_ci
       WHERE ${where.join(" AND ")}
       GROUP BY p.period_code, ccm.branch_id`,
@@ -716,7 +789,7 @@ function findOpportunities(branches: CeoBranchRow[], unbranchedPeople: number): 
 
   // Revenue with nobody posted to it. The margin is not performance, it is an attribution error,
   // and it understates whichever branch is really carrying those people by the same amount.
-  for (const b of branches.filter((x) => x.revenue > 0 && x.peopleCost <= 0)) {
+  for (const b of branches.filter((x) => x.revenue > 0 && x.peopleCost <= 0 && x.flag !== PAYROLL_PENDING_FLAG)) {
     found.push({
       id: `no-payroll-${b.branchName}`,
       severity: "critical",
@@ -850,7 +923,79 @@ function findOpportunities(branches: CeoBranchRow[], unbranchedPeople: number): 
  * overview passes — the trend is a shape, not a drill-down, and paying 1.7s per point for it
  * would make the page slower than the engine it replaced.
  */
-async function marginTrend(endPeriod: string, s: CeoScope): Promise<CeoTrendPoint[]> {
+/**
+ * Seat-rate estimate per branch for cost centres the month has not invoiced yet (2026-09-15, owner
+ * decision to align this tab with Live P&L). Read from getPnlReconciliation — the Live P&L — so both
+ * tabs add exactly the same figure: invoices, then provisions, then seat rate x seats, only inside
+ * the open billing window (current + previous IST month). Never under a process filter, because
+ * cost centres carry no process. Cached briefly: the overview and its trend ask for the same month.
+ */
+/**
+ * An estimated month whose payroll has not run: the estimate is there but the cost line is not, so
+ * a margin would read ~80% (Live P&L shows NA for the same month). Only when an estimate is in
+ * play — an invoiced branch with no payroll is still the attribution finding it always was.
+ */
+const PAYROLL_PENDING_FLAG = "payroll not run yet";
+function payrollPending(peopleCost: number, estimated: number): boolean {
+  return estimated > 0 && peopleCost <= 0;
+}
+
+/**
+ * Does ANY GRN (indirect cost) map to a MAS cost centre for this month, company-wide?
+ *
+ * Same rule as Live P&L's `idcMissing` (pnl-reconciliation.service.ts): its readGrn() is
+ * company-wide whatever the branch filter, and it counts reserved GRN as IDC data for every
+ * period (owner rule 2026-09-24) — exactly what spendByBranch() reads. When no GRN exists anywhere the overhead
+ * data is absent rather than nil (March 2026 read 40.6% with Rs 0 of indirect cost), so the margin
+ * is NA. Audit item 11: CEO Overview used to show that misleading margin while Live P&L blanked it.
+ *
+ * `spend` is the caller's already-read spendByBranch() map; with no process/cost-centre scope it is
+ * company-wide already (spendByBranch never narrows by branch), so no extra query is needed.
+ */
+async function grnExistsCompanyWide(period: string, s: CeoScope, spend: Map<string, number>): Promise<boolean> {
+  if (!s.processIds.length && !s.costCentreIds.length) return spend.size > 0;
+  const all = await memoSpendByBranch(period, { branchIds: [], processIds: [], costCentreIds: [] });
+  return all.size > 0;
+}
+
+const estimateCache = new Map<string, { at: number; value: Promise<Map<string, number>> }>();
+function estimateByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
+  if (s.processIds.length || !isEstimateWindow(period, getCurrentDateIST())) return Promise.resolve(new Map());
+  const key = `${period}|${[...s.branchIds].sort().join(",")}|${[...s.costCentreIds].sort().join(",")}`;
+  const hit = estimateCache.get(key);
+  if (hit && Date.now() - hit.at < 60_000) return hit.value;
+  const value = (async () => {
+    const out = new Map<string, number>();
+    try {
+      const rec = await getPnlReconciliation(period, { branchIds: s.branchIds });
+      const only = new Set(s.costCentreIds);
+      for (const row of rec.rows) {
+        if (!(row.revenueEstimated > 0) || !row.branchId) continue;
+        if (only.size && !only.has(row.costCentreId)) continue;
+        out.set(row.branchId, (out.get(row.branchId) ?? 0) + row.revenueEstimated);
+      }
+    } catch {
+      // Supplementary: if the estimate cannot be read, invoiced revenue still stands on its own.
+    }
+    return out;
+  })();
+  estimateCache.set(key, { at: Date.now(), value });
+  if (estimateCache.size > 40) estimateCache.delete(estimateCache.keys().next().value as string);
+  return value;
+}
+
+/**
+ * `inScope` decides which branch keys of the per-branch maps count toward a trend month. It MUST be
+ * the same rule the headline uses (getCeoOverview's branchKeyInHeadline), because the current month
+ * is overwritten with the headline figures while prior months are summed here — a looser rule here
+ * put company-wide bars beside a branch-scoped current month (audit item 10: revenueByBranch,
+ * peopleByBranch and spendByBranch do not apply s.branchIds themselves).
+ */
+async function marginTrend(
+  endPeriod: string,
+  s: CeoScope,
+  inScope: (branchKey: string) => boolean = () => true,
+): Promise<CeoTrendPoint[]> {
   const [year, month] = endPeriod.split("-").map(Number);
   const periods: string[] = [];
   for (let back = 3; back >= 0; back--) {
@@ -864,18 +1009,22 @@ async function marginTrend(endPeriod: string, s: CeoScope): Promise<CeoTrendPoin
    * three queries each, every one waiting on the last for no reason — the months are independent.
    * Issuing them together brings the page back to roughly the cost of a single month.
    */
-  const sum = (m: Map<string, number>) => [...m.values()].reduce((a, b) => a + b, 0);
+  const sum = (m: Map<string, number>) =>
+    [...m.entries()].reduce((a, [key, value]) => (inScope(key) ? a + value : a), 0);
   return Promise.all(
     periods.map(async (period) => {
-      const [rev, ppl, spend] = await Promise.all([
-        revenueByBranch(period, s), peopleByBranch(period, s), spendByBranch(period, s),
+      const [rev, ppl, spend, est] = await Promise.all([
+        memoRevenueByBranch(period, s), memoPeopleByBranch(period, s), memoSpendByBranch(period, s), estimateByBranch(period, s),
       ]);
-      const revenue = sum(rev);
-      const people = [...ppl.values()].reduce((a, b) => a + b.cost, 0);
+      const revenue = sum(rev) + sum(est);
+      const people = [...ppl.entries()].reduce((a, [key, p]) => (inScope(key) ? a + p.cost : a), 0);
       const operatingProfit = revenue - people - sum(spend);
+      const idcMissing = people > 0 && !(await grnExistsCompanyWide(period, s, spend));
       return {
         period, revenue, operatingProfit,
-        marginPct: revenue > 0 ? (operatingProfit / revenue) * 100 : null,
+        marginPct: revenue > 0 && !payrollPending(people, sum(est)) && !idcMissing
+          ? (operatingProfit / revenue) * 100
+          : null,
       };
     }),
   );
@@ -923,11 +1072,12 @@ async function filterOptions(period: string, scope: CeoScope) {
     : "";
   const costCentres = hasInvoice
     ? (await db.execute<RowDataPacket[]>(
-        `SELECT DISTINCT ccm.id AS id, ccm.cost_centre_code AS code
+        `SELECT DISTINCT ccm.id AS id, ccm.cost_centre_code AS code, ${ccProcessNameSql()} AS process_name
            FROM billing_invoice_particular_snapshot p
            JOIN cost_centre_master ccm
-             ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+             ON ccm.cost_centre_code
               = p.cost_centre_code COLLATE utf8mb4_unicode_ci
+           ${ccProcessJoin()}
           WHERE p.period_code = ?
             AND ccm.active_status = 1
           ${costCentreBranchCondition}
@@ -938,7 +1088,9 @@ async function filterOptions(period: string, scope: CeoScope) {
 
   return {
     processes: processes.map((r: RowDataPacket) => ({ id: String(r.id), name: String(r.name) })),
-    costCentres: costCentres.map((r: RowDataPacket) => ({ id: String(r.id), code: String(r.code) })),
+    costCentres: costCentres.map((r: RowDataPacket) => ({
+      id: String(r.id), code: String(r.code), processName: r.process_name ? String(r.process_name) : null,
+    })),
   };
 }
 
@@ -988,9 +1140,14 @@ async function buildFocus(
     staffZeroPaid = n(paid[0]?.zero_paid);
   } else if (costCentreId) {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT cost_centre_code FROM cost_centre_master WHERE id = ? LIMIT 1`, [costCentreId],
+      `SELECT cost_centre_code,
+              COALESCE((SELECT NULLIF(TRIM(pm.process_name), '') FROM process_master pm WHERE pm.id = cost_centre_master.process_id LIMIT 1),
+                       NULLIF(TRIM(process_name_bill), ''), NULLIF(TRIM(billing_client_name), '')) AS process_name
+         FROM cost_centre_master WHERE id = ? LIMIT 1`, [costCentreId],
     );
-    label = rows[0]?.cost_centre_code ? String(rows[0].cost_centre_code) : "Cost centre";
+    label = rows[0]?.cost_centre_code
+      ? costCentreLabel(String(rows[0].cost_centre_code), rows[0].process_name ? String(rows[0].process_name) : null)
+      : "Cost centre";
   }
 
   // Invoice lines and budget both key on the cost centre CODE, so resolve the codes in scope once.
@@ -1008,9 +1165,8 @@ async function buildFocus(
     const codeMarks = marks(codeList);
 
     // Guard: snapshot tables may not exist for this period
-    const [hasInvoiceSnap, hasBudgetSnap, hasGrnSnap] = await Promise.all([
+    const [hasInvoiceSnap, hasGrnSnap] = await Promise.all([
       tableExists("billing_invoice_particular_snapshot"),
-      tableExists("finance_budget_line_snapshot"),
       tableExists("grn_entry_line_snapshot"),
     ]);
 
@@ -1023,20 +1179,17 @@ async function buildFocus(
       invoiceLines = n(inv[0]?.n);
     }
 
-    // Approved budgets only — see budgetByBranch. Summing every mirrored row counts 367 rows
-    // that never got past the first approval.
-    if (hasBudgetSnap) {
-      const [bud] = await db.execute<RowDataPacket[]>(
-        `SELECT COALESCE(SUM(l.amount), 0) AS a
-           FROM finance_budget_line_snapshot l
-           JOIN finance_budget_snapshot b
-             ON b.bill_source_id = l.budget_source_id AND b.period_code = l.period_code
-          WHERE l.period_code = ? AND l.expense_type = 'CostCenter'
-            AND l.expense_type_name IN (${codeMarks})
-            AND b.active_status = 1 AND b.is_rejected = 0`,
-        [period, ...codeList],
-      );
-      budget = n(bud[0]?.a);
+    // Not gated on the mirror table any more: the budget may come from HRMS (pnl-budget-source.ts).
+    {
+      const scoped = await budgetForCodes(period, codeList);
+      budget = scoped.budget;
+      if (scoped.sharedTopUps !== 0) {
+        notes.push(
+          `${lakh(scoped.sharedTopUps)} of sanctioned top-ups sit on budgets shared with other cost centres `
+          + `and are not included in the budget above — a header-level top-up names no cost centre, `
+          + `so it is not split by guesswork.`,
+        );
+      }
     }
 
     // Does this cost centre carry its whole branch's overhead? If so the margin is a contribution,
@@ -1049,34 +1202,11 @@ async function buildFocus(
       // de-duplicated figure against a doubled one would have thrown the 95% "is this really the
       // whole branch's overhead" heuristic off by roughly 2x on any branch with real Smart GRN
       // activity. Same fix, same reason: see spendByBranch()'s own banner.
-      const [appGrn] = await db.execute<RowDataPacket[]>(
-        `SELECT COALESCE(SUM(a.pnl_cost_amount), 0) AS a
-           FROM grn_cost_allocation a
-           JOIN grn_request gr ON gr.id = a.grn_request_id
-           LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
-          WHERE a.lifecycle_status = 'consumed'
-            AND gr.accounting_period = ?
-            AND ccm.branch_id = ?`,
-        [period, branchId],
-      );
-      const [branchGrn] = await db.execute<RowDataPacket[]>(
-        `SELECT COALESCE(SUM(l.amount), 0) AS a
-           FROM grn_entry_line_snapshot l
-           JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
-           LEFT JOIN cost_centre_master ccm
-                  ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-                   = l.cost_centre_code COLLATE utf8mb4_unicode_ci
-          WHERE g.period_code = ? AND g.is_rejected = 0 AND ccm.branch_id = ?
-            AND NOT EXISTS (
-                  SELECT 1
-                    FROM grn_request gr2
-                    JOIN grn_cost_allocation a2 ON a2.grn_request_id = gr2.id
-                   WHERE gr2.grn_number = g.grn_no
-                     AND a2.lifecycle_status = 'consumed'
-                )`,
-        [period, branchId],
-      );
-      const branchTotal = n(appGrn[0]?.a) + n(branchGrn[0]?.a);
+      // 2026-09-23: the branch total now comes from spendByBranch() itself (unscoped), i.e. the
+      // shared readGrnSpend() reader — so the two sides of this ratio are built identically,
+      // including OWN_COMPANY_SQL, which this copy's mirror leg never applied.
+      const branchSpend = await spendByBranch(period, { branchIds: [], processIds: [], costCentreIds: [] });
+      const branchTotal = branchSpend.get(branchId) ?? 0;
       if (branchTotal > 0 && totals.indirectCost / branchTotal >= 0.95) {
         notes.push(
           `The indirect figure is effectively the whole branch's overhead (${lakh(branchTotal)}) `
@@ -1115,11 +1245,33 @@ async function buildFocus(
   };
 }
 
-export async function getCeoOverview(period: string, filters: CeoFilters = {}): Promise<CeoOverview> {
+/**
+ * CEO Overview for a period and scope. Cached for 60s with single-flight (pnl-read-cache.ts). The key
+ * is the MERGED scope (branch / process / cost-centre lists, after the route folded in the caller's
+ * branch entitlement and client/search process ids) plus the IST date, so two scopes can never share
+ * a result and repeat views of the same scope share one computation.
+ */
+export function getCeoOverview(period: string, filters: CeoFilters = {}): Promise<CeoOverview> {
+  const scope = scopeOf(filters);
+  return cachedPnlRead("ceo-overview", scopeKey(period, scope), () => buildCeoOverview(period, filters));
+}
+
+/**
+ * `headlineOnly` skips the parts no headline figure depends on — the trend, filter options, billing
+ * completeness, focus panel and opportunities — for callers that read only revenue / people cost /
+ * indirect cost / operating profit (getYtdSummary). Every figure it does return is computed by the
+ * identical code path.
+ */
+async function buildCeoOverview(
+  period: string,
+  filters: CeoFilters = {},
+  opts: { headlineOnly?: boolean } = {},
+): Promise<CeoOverview> {
+  const headlineOnly = opts.headlineOnly === true;
   const scope = scopeOf(filters);
   const selectedBranches = new Set(scope.branchIds);
   const empty: CeoOverview = {
-    period, revenue: 0, peopleCost: 0, indirectCost: 0, operatingProfit: 0,
+    period, revenue: 0, revenueEstimated: 0, peopleCost: 0, indirectCost: 0, operatingProfit: 0,
     marginPct: null, staffPaid: 0, revenuePerHead: null, branches: [], opportunities: [],
     trend: [], options: { processes: [], costCentres: [], branches: [] }, focus: null,
     billing: { lines: 0, baselineLines: 0, pctOfBaseline: null, incomplete: false, gaps: [] },
@@ -1128,17 +1280,46 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
   };
   if (!/^\d{4}-\d{2}$/.test(period)) return empty;
 
-  const [branchRows] = await db.execute<RowDataPacket[]>(
+  /*
+   * branch_master is read in parallel with the money reads rather than before them: only the trend
+   * and billing-completeness need it, so they chain off it while revenue / people / spend / budget /
+   * estimate / IDC run at once.
+   */
+  const branchRowsPromise = db.execute<RowDataPacket[]>(
     `SELECT id, branch_name, active_status FROM branch_master`,
-  );
+  ).then(([rows]) => rows);
+  const [revenue, people, spend, budget, estimate, idcContamination, branchRows] = await Promise.all([
+    memoRevenueByBranch(period, scope), memoPeopleByBranch(period, scope),
+    memoSpendByBranch(period, scope), budgetByBranch(period),
+    estimateByBranch(period, scope),
+    idcContaminationFor(period),
+    branchRowsPromise,
+  ]);
   const nameOfBranch = (id: string) =>
     String(branchRows.find((r) => String(r.id) === id)?.branch_name ?? "Unnamed");
-  const [revenue, people, spend, budget, trend, options, billing] = await Promise.all([
-    revenueByBranch(period, scope), peopleByBranch(period, scope),
-    spendByBranch(period, scope), budgetByBranch(period),
-    marginTrend(period, scope), filterOptions(period, scope),
-    billingCompleteness(period, scope, nameOfBranch),
-  ]);
+
+  // A selected branch id stands for every duplicate spelling of that branch in branch_master (the
+  // same expansion the headline's `selected` filter applies below via t.ids.some(...)), so the
+  // trend's prior months count exactly the branch keys the headline counts for the current month.
+  const normBranchName = (r: RowDataPacket) => String(r.branch_name ?? "").trim().toUpperCase();
+  const selectedBranchNames = new Set(
+    branchRows.filter((r) => selectedBranches.has(String(r.id))).map(normBranchName),
+  );
+  const selectedBranchKeys = new Set(
+    branchRows.filter((r) => selectedBranchNames.has(normBranchName(r))).map((r) => String(r.id)),
+  );
+  const branchKeyInHeadline = (key: string): boolean =>
+    selectedBranches.size === 0 || selectedBranchKeys.has(key);
+
+  // Started now, awaited below: they overlap with the row building and the IDC / focus reads.
+  const trendPromise = headlineOnly ? Promise.resolve<CeoTrendPoint[]>([]) : marginTrend(period, scope, branchKeyInHeadline);
+  const optionsPromise = headlineOnly
+    ? Promise.resolve({ processes: [], costCentres: [] } as Awaited<ReturnType<typeof filterOptions>>)
+    : filterOptions(period, scope);
+  const billingPromise = headlineOnly ? Promise.resolve(empty.billing) : billingCompleteness(period, scope, nameOfBranch);
+  const grnExistsPromise = grnExistsCompanyWide(period, scope, spend);
+  // Never left unhandled while the synchronous row building runs; each is awaited below.
+  for (const pending of [trendPromise, optionsPromise, billingPromise, grnExistsPromise]) pending.catch(() => undefined);
 
   /*
    * branch_master holds duplicates — three rows spell Head Office three ways — and each carries
@@ -1177,7 +1358,8 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
     const ids = branchRows
       .filter((r) => String(r.branch_name ?? "").trim().toUpperCase() === entry.name.trim().toUpperCase())
       .map((r) => String(r.id));
-    const rev = ids.reduce((t, i) => t + (revenue.get(i) ?? 0), 0);
+    const est = ids.reduce((t, i) => t + (estimate.get(i) ?? 0), 0);
+    const rev = ids.reduce((t, i) => t + (revenue.get(i) ?? 0), 0) + est;
     const pay = ids.reduce(
       (t, i) => {
         const p = people.get(i);
@@ -1221,11 +1403,14 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
       indirectCost: idc,
       budget: ids.reduce((t, i) => t + (budget.get(i) ?? 0), 0),
       operatingProfit: op,
-      marginPct: rev > 0 && !isCostCentre && !isClosed ? (op / rev) * 100 : null,
+      marginPct: rev > 0 && !isCostCentre && !isClosed && !payrollPending(pay.cost, est) ? (op / rev) * 100 : null,
       revenuePerHead: pay.staff > 0 ? rev / pay.staff : null,
-      flag: rev > 0 && pay.cost <= 0 ? "no payroll attributed" : null,
+      flag: payrollPending(pay.cost, est)
+        ? PAYROLL_PENDING_FLAG
+        : rev > 0 && pay.cost <= 0 ? "no payroll attributed" : null,
       isCostCentre,
       isClosed,
+      revenueEstimated: est,
     };
     traded.push({ row, ids, hiddenAsClosed });
   }
@@ -1260,21 +1445,79 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
     }),
     { revenue: 0, peopleCost: 0, indirectCost: 0, staffPaid: 0 },
   );
-  const operatingProfit = totals.revenue - totals.peopleCost - totals.indirectCost;
+  let revenueEstimated = allRows.reduce((acc, b) => acc + (b.revenueEstimated ?? 0), 0);
   const unbranched = people.get("")?.staff ?? 0;
+  /*
+   * Money that reaches no branch_master row — the "" key (a cost centre / employee with no branch)
+   * or a branch id that no longer exists in branch_master. It belongs to no branch row, but it is
+   * still MAS money, so the headline carries it whenever NO BRANCH is selected (a branch selection
+   * genuinely cannot contain it). The trend's prior months already counted these buckets (they sum
+   * the maps directly), so the headline — which replaces the trend's current month — must too.
+   *
+   * Audit item 25 (2026-09-23): only payroll's "" bucket used to be added here, and only in the
+   * fully unfiltered view, so unbranched revenue and GRN were silently dropped from the headline
+   * while the same buckets stayed in every prior trend month. The old "a process/cost-centre filter
+   * cannot contain someone with no branch" reasoning was also not true: a selected cost centre with
+   * no branch_id keys its revenue, GRN and payroll to "" in revenueByBranch/spendByBranch/
+   * peopleByBranch. Exposed as `unbranched` so the gap between the branch rows and the headline is
+   * explained rather than silent.
+   */
+  const knownBranchIds = new Set(branchRows.map((r) => String(r.id)));
+  const outsideBranches = (m: Map<string, number>) =>
+    [...m.entries()].reduce((t, [key, v]) => (knownBranchIds.has(key) ? t : t + v), 0);
+  const unbranchedTotals = { revenue: 0, revenueEstimated: 0, peopleCost: 0, staffPaid: 0, indirectCost: 0 };
+  if (!scope.branchIds.length) {
+    unbranchedTotals.revenueEstimated = outsideBranches(estimate);
+    unbranchedTotals.revenue = outsideBranches(revenue) + unbranchedTotals.revenueEstimated;
+    unbranchedTotals.indirectCost = outsideBranches(spend);
+    for (const [key, p] of people) {
+      if (knownBranchIds.has(key)) continue;
+      unbranchedTotals.peopleCost += p.cost;
+      unbranchedTotals.staffPaid += p.staff;
+    }
+    totals.revenue += unbranchedTotals.revenue;
+    totals.indirectCost += unbranchedTotals.indirectCost;
+    totals.peopleCost += unbranchedTotals.peopleCost;
+    totals.staffPaid += unbranchedTotals.staffPaid;
+    revenueEstimated += unbranchedTotals.revenueEstimated;
+  }
+  const operatingProfit = totals.revenue - totals.peopleCost - totals.indirectCost;
+  // Live P&L's idcMissing rule (audit item 11): no GRN mapped anywhere in the company this month,
+  // with people cost present, means the overhead data is absent — every margin on the tab is NA,
+  // exactly as Live P&L blanks its totals, branch and row margins under the same condition.
+  const focusPromise = headlineOnly
+    ? Promise.resolve(null)
+    : buildFocus(period, scope, {
+        revenue: totals.revenue,
+        peopleCost: totals.peopleCost,
+        indirectCost: totals.indirectCost,
+        staffPaid: totals.staffPaid,
+      });
+  focusPromise.catch(() => undefined);
+  const idcMissing = totals.peopleCost > 0 && !(await grnExistsPromise);
+  if (idcMissing) {
+    for (const t of traded) t.row.marginPct = null;
+  }
+  const headlineMargin = totals.revenue > 0 && !payrollPending(totals.peopleCost, revenueEstimated) && !idcMissing
+    ? (operatingProfit / totals.revenue) * 100
+    : null;
+
+  const [trend, options, billing, focus] = await Promise.all([trendPromise, optionsPromise, billingPromise, focusPromise]);
 
   return {
     period,
     ...totals,
+    revenueEstimated,
+    unbranched: unbranchedTotals,
     operatingProfit,
-    marginPct: totals.revenue > 0 ? (operatingProfit / totals.revenue) * 100 : null,
+    marginPct: headlineMargin,
     revenuePerHead: totals.staffPaid > 0 ? totals.revenue / totals.staffPaid : null,
     branches,
     closedBranchesHidden,
     billing,
     // A narrowed view compares nothing against nothing, and a branch-scoped user must not be shown
     // findings computed across branches they cannot see.
-    opportunities: scope.branchIds.length || scope.processIds.length || scope.costCentreIds.length
+    opportunities: headlineOnly || scope.branchIds.length || scope.processIds.length || scope.costCentreIds.length
       ? []
       : findOpportunities(allRows, unbranched),
     /*
@@ -1283,15 +1526,11 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
      * beside a headline of 17.8%: the same figure, on the same card, twice. The current month is
      * replaced with the headline so the two can never disagree.
      */
-    focus: await buildFocus(period, scope, {
-      revenue: totals.revenue,
-      peopleCost: totals.peopleCost,
-      indirectCost: totals.indirectCost,
-      staffPaid: totals.staffPaid,
-    }),
+    focus: focus && idcMissing ? { ...focus, marginPct: null } : focus,
+    idcMissing,
     trend: trend.map((point) =>
       point.period === period
-        ? { ...point, revenue: totals.revenue, operatingProfit, marginPct: totals.revenue > 0 ? (operatingProfit / totals.revenue) * 100 : null }
+        ? { ...point, revenue: totals.revenue, operatingProfit, marginPct: headlineMargin }
         : point,
     ),
     options: {
@@ -1304,12 +1543,12 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
         .filter((b) => b.id)
         .sort((a, b) => a.name.localeCompare(b.name)),
     },
-    exceptions: lastIdcContamination
+    exceptions: idcContamination
       ? [{
           code: "PAYROLL_IDC_CODE_IN_MAS_HRMS",
           label: "IDC-coded payroll present in MAS Callnet's own P&L",
-          count: lastIdcContamination.count,
-          amount: lastIdcContamination.amount,
+          count: idcContamination.count,
+          amount: idcContamination.amount,
         }]
       : [],
   };
@@ -1325,9 +1564,62 @@ export interface CeoYtdSummary {
   totalBudget: number;
   marginPct: number | null;
   monthly: Array<{ period: string; revenue: number; peopleCost: number; indirectCost: number; operatingProfit: number; budget: number }>;
+  /** The scope every figure above was computed under (empty lists = company-wide), so the page can
+   *  label the strip instead of leaving the reader to guess. */
+  scope?: { branchIds: string[]; processIds: string[]; costCentreIds: string[] };
 }
 
-export async function getYtdSummary(upToMonth: string, filters: CeoFilters = {}): Promise<CeoYtdSummary> {
+/**
+ * Approved budget for a CEO scope — the budget counterpart of the scoped money figures.
+ *   - process / cost-centre scope: the budget lines of the cost centres in scope (budgetForCodes,
+ *     the focus panel's rule), narrowed to the selected branches when a branch is also chosen;
+ *   - branch scope only: budgetByBranch() for every duplicate spelling of the selected branches
+ *     (the same expansion the headline applies);
+ *   - no scope: every branch.
+ */
+async function scopedBudget(period: string, s: CeoScope): Promise<number> {
+  if (s.processIds.length || s.costCentreIds.length) {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (s.costCentreIds.length) {
+      where.push(`ccm.id IN (${marks(s.costCentreIds)})`);
+      params.push(...s.costCentreIds);
+    }
+    if (s.processIds.length) {
+      where.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
+                             WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
+      params.push(...s.processIds);
+    }
+    if (s.branchIds.length) {
+      where.push(`ccm.branch_id IN (${marks(s.branchIds)})`);
+      params.push(...s.branchIds);
+    }
+    const [codes] = await db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT ccm.cost_centre_code AS code FROM cost_centre_master ccm WHERE ${where.join(" AND ")}`,
+      params,
+    );
+    return (await budgetForCodes(period, codes.map((r) => String(r.code ?? "")).filter(Boolean))).budget;
+  }
+  const byBranch = await budgetByBranch(period);
+  if (!s.branchIds.length) return [...byBranch.values()].reduce((t, v) => t + v, 0);
+  const [branchRows] = await db.execute<RowDataPacket[]>(`SELECT id, branch_name FROM branch_master`);
+  const norm = (r: RowDataPacket) => String(r.branch_name ?? "").trim().toUpperCase();
+  const selectedNames = new Set(branchRows.filter((r) => s.branchIds.includes(String(r.id))).map(norm));
+  const keys = new Set(branchRows.filter((r) => selectedNames.has(norm(r))).map((r) => String(r.id)));
+  return [...byBranch.entries()].reduce((t, [key, v]) => (keys.has(key) ? t + v : t), 0);
+}
+
+/**
+ * Financial-year-to-date totals for a scope. Cached for 60s with single-flight, keyed like
+ * getCeoOverview (merged scope + IST date) plus the up-to month. Each month is the headline-only
+ * build of the same overview (identical revenue / people / indirect / OP), so the trend, filter
+ * options and billing probe no month's total uses are not computed twelve times over.
+ */
+export function getYtdSummary(upToMonth: string, filters: CeoFilters = {}): Promise<CeoYtdSummary> {
+  return cachedPnlRead("ceo-ytd-summary", { ...scopeKey(upToMonth, scopeOf(filters)), upTo: upToMonth }, () => buildYtdSummary(upToMonth, filters));
+}
+
+async function buildYtdSummary(upToMonth: string, filters: CeoFilters = {}): Promise<CeoYtdSummary> {
   // Indian financial year: April (month 4) to March (month 3)
   const [y, m] = upToMonth.split("-").map(Number);
   const fyStartYear = m >= 4 ? y : y - 1;
@@ -1344,14 +1636,17 @@ export async function getYtdSummary(upToMonth: string, filters: CeoFilters = {})
 
   const monthly: CeoYtdSummary["monthly"] = [];
   let totalRevenue = 0, totalPeopleCost = 0, totalIndirectCost = 0, totalBudget = 0, totalOp = 0;
+  const scope = scopeOf(filters);
 
   await Promise.all(
     months.map(async (period) => {
-      const [overview, budgetMap] = await Promise.all([
-        getCeoOverview(period, filters),
-        budgetByBranch(period),
+      // Budget under the SAME scope as the money beside it (audit item 18): this summed every
+      // branch's budget whatever the filter, so a branch-scoped YTD strip compared that branch's
+      // indirect spend against the whole company's budget.
+      const [overview, budget] = await Promise.all([
+        buildCeoOverview(period, filters, { headlineOnly: true }),
+        scopedBudget(period, scope),
       ]);
-      const budget = Array.from(budgetMap.values()).reduce((s, v) => s + v, 0);
       monthly.push({ period, revenue: overview.revenue, peopleCost: overview.peopleCost, indirectCost: overview.indirectCost, operatingProfit: overview.operatingProfit, budget });
     })
   );
@@ -1376,6 +1671,7 @@ export async function getYtdSummary(upToMonth: string, filters: CeoFilters = {})
     totalBudget,
     marginPct: totalRevenue > 0 ? (totalOperatingProfit / totalRevenue) * 100 : null,
     monthly,
+    scope,
   };
 }
 

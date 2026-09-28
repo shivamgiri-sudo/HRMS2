@@ -32,10 +32,13 @@ import {
   X, Zap,
 } from "lucide-react";
 import { PWAInstallBanner } from "@/components/layout/PWAInstallBanner";
+import { MandatoryTrainingPopup } from "@/components/quality-learning/MandatoryTrainingPopup";
+import { RequisitionExpiryDecisionDialog } from "@/components/requisition/RequisitionExpiryDecisionDialog";
 import { TopBar } from "@/components/layout/TopBar";
 import { SidebarNav } from "@/components/layout/SidebarNav";
 import { navGroups } from "@/components/layout/navConfig";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
 import { Button } from "@/components/ui/button";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
 import { useAuth } from "@/contexts/AuthContext";
@@ -223,7 +226,7 @@ function DashboardLayoutShell({ children, subheader }: Props) {
           style={{ background: "var(--sidebar-surface-1)" }}
         >
           <Avatar className="h-14 w-14 flex-shrink-0 ring-2 ring-white/70">
-            <AvatarImage src={normalizeMediaUrl(myProfile?.avatar_url)} alt="My photo" />
+            <AuthedAvatarImage src={normalizeMediaUrl(myProfile?.avatar_url)} alt="My photo" />
             <AvatarFallback
               className="text-base font-bold"
               style={{ background: "#3BAD49", color: "#fff" }}
@@ -264,6 +267,8 @@ function DashboardLayoutShell({ children, subheader }: Props) {
     <InsideDashboardLayout.Provider value={true}>
     <div className="min-h-dvh" style={{ background: "var(--surface-page)" }}>
       <PWAInstallBanner />
+      <MandatoryTrainingPopup />
+      <RequisitionExpiryDecisionDialog />
 
       {/* Mobile overlay — glass blur backdrop */}
       {sidebarOpen && (
@@ -367,7 +372,7 @@ function DashboardLayoutShell({ children, subheader }: Props) {
           }}
         >
           <Avatar className="h-9 w-9 flex-shrink-0 ring-2 ring-white/25">
-            <AvatarImage src={normalizeMediaUrl(myProfile?.avatar_url)} alt="My photo" />
+            <AuthedAvatarImage src={normalizeMediaUrl(myProfile?.avatar_url)} alt="My photo" />
             <AvatarFallback
               className="text-sm font-bold"
               style={{ background: "#3BAD49", color: "#fff" }}

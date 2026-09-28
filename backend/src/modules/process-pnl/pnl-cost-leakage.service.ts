@@ -1,6 +1,10 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
+import { ccProcessJoin, ccProcessNameSql, costCentreLabel } from "./cost-centre-label.js";
+// GRN amounts here are EX-GST (owner rule 2026-09-24: P&L GRN must be non-GST); they were
+// COALESCE(pnl_cost_amount, amount_with_tax), which carried non-recoverable / full GST.
+import { grnRequestExGstSql } from "./pnl-ex-gst.js";
 
 /**
  * Cost Leakage Review — money that is real, but that no process's P&L can see.
@@ -91,13 +95,15 @@ async function stafflessCostCentres(from: string, to: string): Promise<LeakageBu
   if ((await tableExists("cost_centre_master")) && (await tableExists("grn_request"))) {
     const [result] = await db.execute<RowDataPacket[]>(
       `SELECT ccm.id, ccm.cost_centre_code, ccm.cost_centre_name, bm.branch_name,
+              MAX(${ccProcessNameSql()}) AS process_name,
               COUNT(g.id) AS grn_count,
-              SUM(COALESCE(g.pnl_cost_amount, g.amount_with_tax)) AS amount
+              SUM(${grnRequestExGstSql("g")}) AS amount
          FROM cost_centre_master ccm
          JOIN grn_request g
            ON g.cost_centre_id = ccm.id AND ${LIVE_GRN_STATUS}
           AND g.accounting_period BETWEEN ? AND ?
          LEFT JOIN branch_master bm ON bm.id = ccm.branch_id
+         ${ccProcessJoin()}
         WHERE ccm.active_status = 1
           AND NOT EXISTS (SELECT 1 FROM employees e
                            WHERE e.cost_centre_id = ccm.id AND e.active_status = 1)
@@ -110,7 +116,10 @@ async function stafflessCostCentres(from: string, to: string): Promise<LeakageBu
       amount += n(r.amount);
       rows.push({
         id: String(r.id),
-        label: String(r.cost_centre_name ?? r.cost_centre_code ?? "Unnamed cost centre"),
+        label: r.cost_centre_code
+          ? costCentreLabel(String(r.cost_centre_code), r.process_name ? String(r.process_name)
+            : r.cost_centre_name && r.cost_centre_name !== r.cost_centre_code ? String(r.cost_centre_name) : null)
+          : String(r.cost_centre_name ?? "Unnamed cost centre"),
         detail: [r.branch_name, `${n(r.grn_count)} GRN${n(r.grn_count) === 1 ? "" : "s"}`]
           .filter(Boolean).join(" · "),
         count: n(r.grn_count),
@@ -151,7 +160,7 @@ async function unlinkedGrnCurrentFy(from: string, upTo: string): Promise<Leakage
               CASE WHEN g.cost_centre_id IS NULL OR TRIM(g.cost_centre_id) = ''
                    THEN 'no_cost_centre' ELSE 'has_cost_centre' END AS kind,
               COUNT(*) AS grn_count,
-              SUM(COALESCE(g.pnl_cost_amount, g.amount_with_tax)) AS amount
+              SUM(${grnRequestExGstSql("g")}) AS amount
          FROM grn_request g
         WHERE ${LIVE_GRN_STATUS} AND ${NO_ALLOCATION}
           AND g.accounting_period BETWEEN ? AND ?
@@ -198,7 +207,7 @@ async function excludedTreatmentSpend(from: string, to: string): Promise<Leakage
   if ((await tableExists("finance_expense_sub_head_master")) && (await tableExists("grn_request"))) {
     const [result] = await db.execute<RowDataPacket[]>(
       `SELECT sh.sub_head_name, sh.pnl_treatment, COUNT(*) AS grn_count,
-              SUM(COALESCE(g.pnl_cost_amount, g.amount_with_tax)) AS amount
+              SUM(${grnRequestExGstSql("g")}) AS amount
          FROM grn_request g
          JOIN finance_expense_sub_head_master sh
            ON UPPER(TRIM(sh.sub_head_name)) COLLATE utf8mb4_unicode_ci
@@ -246,7 +255,7 @@ async function legacyUnlinkedGrn(from: string): Promise<LeakageBucket> {
   if ((await tableExists("grn_request")) && (await tableExists("grn_cost_allocation"))) {
     const [result] = await db.execute<RowDataPacket[]>(
       `SELECT LEFT(g.accounting_period, 4) AS yr, COUNT(*) AS grn_count,
-              SUM(COALESCE(g.pnl_cost_amount, g.amount_with_tax)) AS amount
+              SUM(${grnRequestExGstSql("g")}) AS amount
          FROM grn_request g
         WHERE ${LIVE_GRN_STATUS} AND ${NO_ALLOCATION} AND g.accounting_period < ?
         GROUP BY yr
@@ -374,7 +383,7 @@ export async function getStafflessCostCentreSpend(
   const fy = financeYearBounds(period);
   const [result] = await db.execute<RowDataPacket[]>(
     `SELECT g.id, g.grn_number, g.accounting_period, g.head, g.sub_head, g.bill_date, g.status,
-            COALESCE(g.pnl_cost_amount, g.amount_with_tax) AS amount
+            ${grnRequestExGstSql("g")} AS amount
        FROM grn_request g
       WHERE g.cost_centre_id = ?
         AND ${LIVE_GRN_STATUS}

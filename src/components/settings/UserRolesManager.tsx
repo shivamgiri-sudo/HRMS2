@@ -16,10 +16,78 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Pencil, Ban, CheckCircle, Loader2, Search, ChevronLeft, ChevronRight,
-  Shield, UserX, Clock, RefreshCcw, Plus, Trash2, MapPin, X,
+  Shield, UserX, Clock, RefreshCcw, Plus, Trash2, MapPin, X, ChevronDown,
 } from "lucide-react";
+
+interface MultiOption { value: string; label: string; hint?: string | null }
+
+/** Checkbox list with a "Select all" row, for granting several branches/processes in one go. */
+function MultiCheckSelect({
+  options, selected, onChange, placeholder, disabled, emptyText,
+}: {
+  options: MultiOption[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+  placeholder: string;
+  disabled?: boolean;
+  emptyText: string;
+}) {
+  const allSelected = options.length > 0 && selected.length === options.length;
+  const someSelected = selected.length > 0 && !allSelected;
+  const summary =
+    selected.length === 0
+      ? placeholder
+      : selected.length === 1
+        ? options.find((o) => o.value === selected[0])?.label ?? "1 selected"
+        : allSelected
+          ? `All selected (${options.length})`
+          : `${selected.length} selected`;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={disabled}
+          className="flex h-10 w-full items-center justify-between rounded-xl border border-input bg-background px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <span className={selected.length === 0 ? "text-muted-foreground truncate" : "truncate"}>{summary}</span>
+          <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-[220px] p-1" align="start">
+        {options.length === 0 ? (
+          <p className="px-3 py-2 text-sm text-slate-400">{emptyText}</p>
+        ) : (
+          <div className="max-h-72 overflow-y-auto">
+            <label className="flex cursor-pointer items-center gap-2 rounded-md border-b px-3 py-2 text-sm font-semibold hover:bg-slate-50">
+              <Checkbox
+                checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                onCheckedChange={(c) => onChange(c ? options.map((o) => o.value) : [])}
+              />
+              Select all ({options.length})
+            </label>
+            {options.map((o) => (
+              <label key={o.value} className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-1.5 text-sm hover:bg-slate-50">
+                <Checkbox
+                  checked={selected.includes(o.value)}
+                  onCheckedChange={(c) =>
+                    onChange(c ? [...selected, o.value] : selected.filter((v) => v !== o.value))
+                  }
+                />
+                <span className="truncate">{o.label}</span>
+                {o.hint && <span className="text-xs text-slate-400">({o.hint})</span>}
+              </label>
+            ))}
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -183,14 +251,14 @@ export function UserRolesManager() {
   // Dialogs
   const [roleDialogUser, setRoleDialogUser] = useState<UserRow | null>(null);
   const [addRole, setAddRole] = useState<string>("");
-  const [addBranchId, setAddBranchId] = useState<string>("");
-  const [addProcessId, setAddProcessId] = useState<string>("");
+  const [addBranchIds, setAddBranchIds] = useState<string[]>([]);
+  const [addProcessIds, setAddProcessIds] = useState<string[]>([]);
   // The "map an existing role" panel below. Separate state from the add-role flow because every
   // user who needs mapping already HOLDS their role — all 16 hr accounts do — so mapping could
   // not be done at all while scope assignment only happened at the moment a role was granted.
   const [scopeRole, setScopeRole] = useState<string>("");
-  const [scopeBranchId, setScopeBranchId] = useState<string>("");
-  const [scopeProcessId, setScopeProcessId] = useState<string>("");
+  const [scopeBranchIds, setScopeBranchIds] = useState<string[]>([]);
+  const [scopeProcessIds, setScopeProcessIds] = useState<string[]>([]);
   const [removeRole, setRemoveRole] = useState<string>("");
   const [blockDialogUser, setBlockDialogUser] = useState<UserRow | null>(null);
 
@@ -229,24 +297,24 @@ export function UserRolesManager() {
   // Processes for the branch being chosen. The endpoint filters to processes that actually have
   // active employees in that branch, so the list offers real postings rather than the full 132.
   const { data: addProcesses = [] } = useQuery<ProcessRow[]>({
-    queryKey: ["access-processes", addBranchId],
+    queryKey: ["access-processes", addBranchIds.length === 1 ? addBranchIds[0] : ""],
     queryFn: async () => {
-      const qs = addBranchId ? `?branchId=${encodeURIComponent(addBranchId)}` : "";
+      const qs = `?branchId=${encodeURIComponent(addBranchIds[0])}`;
       const res = await hrmsApi.get<{ data: ProcessRow[] }>(`/api/access/processes${qs}`);
       return res.data ?? [];
     },
-    enabled: !!addBranchId,
+    enabled: addBranchIds.length === 1,
     staleTime: 5 * 60 * 1000,
   });
 
   const { data: scopeProcesses = [] } = useQuery<ProcessRow[]>({
-    queryKey: ["access-processes", scopeBranchId],
+    queryKey: ["access-processes", scopeBranchIds.length === 1 ? scopeBranchIds[0] : ""],
     queryFn: async () => {
-      const qs = scopeBranchId ? `?branchId=${encodeURIComponent(scopeBranchId)}` : "";
+      const qs = `?branchId=${encodeURIComponent(scopeBranchIds[0])}`;
       const res = await hrmsApi.get<{ data: ProcessRow[] }>(`/api/access/processes${qs}`);
       return res.data ?? [];
     },
-    enabled: !!scopeBranchId,
+    enabled: scopeBranchIds.length === 1,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -347,7 +415,8 @@ export function UserRolesManager() {
   const openRoleDialog = (u: UserRow) => {
     setRoleDialogUser(u);
     setAddRole("");
-    setAddBranchId("");
+    setAddBranchIds([]);
+    setAddProcessIds([]);
     setRemoveRole(u.roles[0] ?? "");
   };
 
@@ -362,18 +431,43 @@ export function UserRolesManager() {
     if (!roleDialogUser || !addRole) return;
     await assignRoleMutation.mutateAsync({ userId: roleDialogUser.id, roleKey: addRole });
     setRoleDialogUser((prev) => prev ? { ...prev, roles: [...prev.roles, addRole] } : prev);
-    if (isBranchScoped && addBranchId) {
-      assignScopeMutation.mutate({
-        userId: roleDialogUser.id,
-        roleKey: addRole,
-        branchId: addBranchId,
-        processId: isProcessScoped && addProcessId ? addProcessId : undefined,
-      });
+    if (isBranchScoped && addBranchIds.length > 0) {
+      await assignScopes(roleDialogUser.id, addRole, addBranchIds, isProcessScoped ? addProcessIds : []);
     } else if (!isBranchScoped) {
       toast({ title: "Role assigned" });
     }
     setAddRole("");
-    setAddBranchId("");
+    setAddBranchIds([]);
+    setAddProcessIds([]);
+  };
+
+  /** One scope row per branch (whole branch), or per process when a single branch is narrowed. */
+  const assignScopes = async (userId: string, roleKey: string, branchIds: string[], processIds: string[]) => {
+    const rows = branchIds.length === 1 && processIds.length > 0
+      ? processIds.map((processId) => ({ branchId: branchIds[0], processId }))
+      : branchIds.map((branchId) => ({ branchId, processId: undefined as string | undefined }));
+    let done = 0;
+    try {
+      for (const row of rows) {
+        await hrmsApi.post("/api/access/roles/assign-scope", {
+          user_id: userId,
+          role_key: roleKey,
+          scope_type: row.processId ? "process" : "branch",
+          branch_id: row.branchId,
+          process_id: row.processId ?? null,
+        });
+        done += 1;
+      }
+      toast({ title: `${done} scope mapping${done === 1 ? "" : "s"} assigned` });
+    } catch (e) {
+      toast({
+        title: "Scope error",
+        description: `${done} of ${rows.length} assigned. ${e instanceof Error ? e.message : ""}`,
+        variant: "destructive",
+      });
+    } finally {
+      queryClient.invalidateQueries({ queryKey: ["user-scopes", userId] });
+    }
   };
 
   const handleRemoveRole = () => {
@@ -659,7 +753,7 @@ export function UserRolesManager() {
                   <Plus className="h-3.5 w-3.5" /> Add Role
                 </p>
                 <div className="flex gap-2">
-                  <Select value={addRole} onValueChange={(v) => { setAddRole(v); setAddBranchId(""); setAddProcessId(""); }}>
+                  <Select value={addRole} onValueChange={(v) => { setAddRole(v); setAddBranchIds([]); setAddProcessIds([]); }}>
                     <SelectTrigger className="flex-1 text-sm rounded-xl">
                       <SelectValue placeholder="Select role to add…" />
                     </SelectTrigger>
@@ -683,7 +777,7 @@ export function UserRolesManager() {
                   <Button
                     size="sm"
                     onClick={handleAddRole}
-                    disabled={!addRole || isPending || (isBranchScoped && !addBranchId)}
+                    disabled={!addRole || isPending || (isBranchScoped && addBranchIds.length === 0)}
                     className="rounded-xl shrink-0"
                   >
                     {isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add"}
@@ -696,50 +790,30 @@ export function UserRolesManager() {
                       <MapPin className="h-3 w-3" />
                       Select branch for this role (required for proper data scoping)
                     </p>
-                    <Select value={addBranchId} onValueChange={(v) => { setAddBranchId(v); setAddProcessId(""); }}>
-                      <SelectTrigger className="text-sm rounded-xl">
-                        <SelectValue placeholder="Choose branch…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {branches.length === 0 ? (
-                          <SelectItem value="__none__" disabled>No branches found</SelectItem>
-                        ) : (
-                          branches.map((b) => (
-                            <SelectItem key={b.id} value={b.id}>
-                              {b.branch_name}
-                              {b.branch_code && <span className="ml-2 text-xs text-slate-400">({b.branch_code})</span>}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
+                    <MultiCheckSelect
+                      options={branches.map((b) => ({ value: b.id, label: b.branch_name, hint: b.branch_code }))}
+                      selected={addBranchIds}
+                      onChange={(v) => { setAddBranchIds(v); setAddProcessIds([]); }}
+                      placeholder="Choose branch(es)…"
+                      emptyText="No branches found"
+                    />
                   </div>
                 )}
 
                 {/* Optional process narrowing, once a branch is chosen */}
-                {isBranchScoped && isProcessScoped && addBranchId && (
+                {isBranchScoped && isProcessScoped && addBranchIds.length === 1 && (
                   <div className="space-y-1.5">
                     <p className="text-xs text-slate-500 font-semibold flex items-center gap-1">
                       <MapPin className="h-3 w-3" />
-                      Narrow to one process (optional — leave blank for the whole branch)
+                      Narrow to specific processes (optional — leave blank for the whole branch)
                     </p>
-                    <Select value={addProcessId} onValueChange={setAddProcessId}>
-                      <SelectTrigger className="text-sm rounded-xl">
-                        <SelectValue placeholder="Whole branch" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {addProcesses.length === 0 ? (
-                          <SelectItem value="__none__" disabled>No processes with active staff in this branch</SelectItem>
-                        ) : (
-                          addProcesses.map((pr) => (
-                            <SelectItem key={pr.id} value={pr.id}>
-                              {pr.process_name}
-                              {pr.process_code && <span className="ml-2 text-xs text-slate-400">({pr.process_code})</span>}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
+                    <MultiCheckSelect
+                      options={addProcesses.map((pr) => ({ value: pr.id, label: pr.process_name, hint: pr.process_code }))}
+                      selected={addProcessIds}
+                      onChange={setAddProcessIds}
+                      placeholder="Whole branch"
+                      emptyText="No processes with active staff in this branch"
+                    />
                   </div>
                 )}
               </div>
@@ -758,7 +832,7 @@ export function UserRolesManager() {
                     mapping sees nothing on those pages rather than everything.
                   </p>
                   <div className="grid gap-2 sm:grid-cols-3">
-                    <Select value={scopeRole} onValueChange={(v) => { setScopeRole(v); setScopeBranchId(""); setScopeProcessId(""); }}>
+                    <Select value={scopeRole} onValueChange={(v) => { setScopeRole(v); setScopeBranchIds([]); setScopeProcessIds([]); }}>
                       <SelectTrigger className="text-sm rounded-xl">
                         <SelectValue placeholder="Role…" />
                       </SelectTrigger>
@@ -768,52 +842,44 @@ export function UserRolesManager() {
                         ))}
                       </SelectContent>
                     </Select>
-                    <Select value={scopeBranchId} onValueChange={(v) => { setScopeBranchId(v); setScopeProcessId(""); }}>
-                      <SelectTrigger className="text-sm rounded-xl">
-                        <SelectValue placeholder="Branch…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {branches.map((b) => (
-                          <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Select value={scopeProcessId} onValueChange={setScopeProcessId} disabled={!scopeBranchId}>
-                      <SelectTrigger className="text-sm rounded-xl">
-                        <SelectValue placeholder={scopeBranchId ? "Whole branch" : "Pick a branch first"} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {scopeProcesses.length === 0 ? (
-                          <SelectItem value="__none__" disabled>No processes with active staff in this branch</SelectItem>
-                        ) : (
-                          scopeProcesses.map((pr) => (
-                            <SelectItem key={pr.id} value={pr.id}>{pr.process_name}</SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
+                    <MultiCheckSelect
+                      options={branches.map((b) => ({ value: b.id, label: b.branch_name }))}
+                      selected={scopeBranchIds}
+                      onChange={(v) => { setScopeBranchIds(v); setScopeProcessIds([]); }}
+                      placeholder="Branch(es)…"
+                      emptyText="No branches found"
+                    />
+                    <MultiCheckSelect
+                      options={scopeProcesses.map((pr) => ({ value: pr.id, label: pr.process_name }))}
+                      selected={scopeProcessIds}
+                      onChange={setScopeProcessIds}
+                      disabled={scopeBranchIds.length !== 1}
+                      placeholder={
+                        scopeBranchIds.length === 0
+                          ? "Pick a branch first"
+                          : scopeBranchIds.length > 1
+                            ? "Whole branches"
+                            : "Whole branch"
+                      }
+                      emptyText="No processes with active staff in this branch"
+                    />
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs text-slate-400">
-                      {scopeProcessId
-                        ? "Grants this one process in this branch."
-                        : scopeBranchId
-                          ? "Grants the whole branch. Add one row per process to narrow it."
+                      {scopeProcessIds.length > 0
+                        ? `Grants ${scopeProcessIds.length} process${scopeProcessIds.length === 1 ? "" : "es"} in this branch.`
+                        : scopeBranchIds.length > 0
+                          ? `Grants ${scopeBranchIds.length === 1 ? "the whole branch" : `${scopeBranchIds.length} whole branches`}. Pick exactly one branch to narrow to processes.`
                           : ""}
                     </p>
                     <Button
                       size="sm"
                       className="rounded-xl shrink-0"
-                      disabled={!scopeRole || !scopeBranchId || assignScopeMutation.isPending}
+                      disabled={!scopeRole || scopeBranchIds.length === 0 || assignScopeMutation.isPending}
                       onClick={() => {
-                        if (!roleDialogUser || !scopeRole || !scopeBranchId) return;
-                        assignScopeMutation.mutate({
-                          userId: roleDialogUser.id,
-                          roleKey: scopeRole,
-                          branchId: scopeBranchId,
-                          processId: scopeProcessId || undefined,
-                        });
-                        setScopeProcessId("");
+                        if (!roleDialogUser || !scopeRole || scopeBranchIds.length === 0) return;
+                        void assignScopes(roleDialogUser.id, scopeRole, scopeBranchIds, scopeProcessIds);
+                        setScopeProcessIds([]);
                       }}
                     >
                       {assignScopeMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add mapping"}

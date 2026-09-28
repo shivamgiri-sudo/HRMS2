@@ -162,6 +162,12 @@ export const RISK_MAP: Record<string, { label: string; cls: string }> = {
 
 // ─── Pure helpers ──────────────────────────────────────────────────────────────
 
+/**
+ * @deprecated kept only in case an untouched call site still imports this name.
+ * New code should use qualityScoreTone() from "@/lib/qualityScoreFormatting",
+ * which is the single source of truth for quality-score conditional formatting
+ * across every dashboard page.
+ */
 export function scoreIntent(score: number): "good" | "warning" | "critical" | "neutral" {
   if (score >= 80) return "good";
   if (score >= 65) return "warning";

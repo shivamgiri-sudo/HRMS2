@@ -1,0 +1,358 @@
+<title>Payment Voucher Walkthrough</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --bg: #f6f5f0; --surface: #ffffff; --surface-2: #efedE4;
+    --ink: #14213d; --ink-soft: #2c3550; --muted: #5b6474;
+    --line: #d9d3c4; --line-strong: #c3bca8;
+    --accent: #0f6b4c; --accent-soft: #e3efe6;
+    --brass: #9c6b2e; --brass-soft: #f2e6d2;
+    --warn: #a8401f; --warn-soft: #f6e4dc;
+    --shadow: 0 1px 2px rgba(20,33,61,.05), 0 8px 24px rgba(20,33,61,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #11151f; --surface: #1a2030; --surface-2: #212840;
+      --ink: #ece9e0; --ink-soft: #cfd3e0; --muted: #9aa3b8;
+      --line: #313a52; --line-strong: #3c4664;
+      --accent: #3fc98f; --accent-soft: #1c3a2f;
+      --brass: #e0ab5c; --brass-soft: #3a2f1c;
+      --warn: #e2775a; --warn-soft: #3c2420;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 28px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #11151f; --surface: #1a2030; --surface-2: #212840;
+    --ink: #ece9e0; --ink-soft: #cfd3e0; --muted: #9aa3b8;
+    --line: #313a52; --line-strong: #3c4664;
+    --accent: #3fc98f; --accent-soft: #1c3a2f;
+    --brass: #e0ab5c; --brass-soft: #3a2f1c;
+    --warn: #e2775a; --warn-soft: #3c2420;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 28px rgba(0,0,0,.35);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 40px 24px 90px; }
+
+  .masthead { padding-bottom: 20px; margin-bottom: 34px; border-bottom: 2px solid var(--ink); }
+  .kicker { font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); font-weight: 600; margin: 0 0 10px; }
+  h1 { font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600; font-size: clamp(28px, 4vw, 40px); line-height: 1.1; margin: 0 0 10px; text-wrap: balance; }
+  .dek { color: var(--muted); font-size: 15px; line-height: 1.6; margin: 0; max-width: 62ch; }
+
+  /* Table of contents */
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+  .toc a {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--ink-soft);
+    text-decoration: none; border: 1px solid var(--line); border-radius: 999px; padding: 6px 13px;
+    background: var(--surface); transition: border-color .15s, color .15s;
+  }
+  .toc a:hover { border-color: var(--accent); color: var(--accent); }
+  .toc a b { color: var(--brass); margin-right: 5px; }
+
+  /* Page section */
+  .page-section { margin-bottom: 46px; scroll-margin-top: 20px; }
+  .page-head {
+    display: flex; align-items: flex-start; gap: 14px; margin-bottom: 16px;
+  }
+  .page-num {
+    font-family: "IBM Plex Serif", serif; font-weight: 700; font-size: 20px; color: var(--surface);
+    background: var(--ink); width: 38px; height: 38px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center; flex: none;
+  }
+  .page-head-text { flex: 1; min-width: 0; }
+  .page-head h2 { font-family: "IBM Plex Serif", serif; font-size: 21px; font-weight: 600; margin: 0 0 4px; }
+  .crumb {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--muted);
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
+  .crumb .seg { background: var(--surface-2); border-radius: 4px; padding: 2px 7px; }
+  .crumb .path { color: var(--accent); }
+
+  .page-card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: var(--shadow); overflow: hidden;
+  }
+  .page-card-top {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 14px 18px; border-bottom: 1px solid var(--line); background: var(--surface-2);
+  }
+  .purpose { font-size: 13px; color: var(--ink-soft); line-height: 1.5; margin: 0; max-width: 56ch; }
+  .role-badge {
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase;
+    font-weight: 700; padding: 4px 10px; border-radius: 5px; white-space: nowrap; flex: none;
+  }
+
+  .steps { list-style: none; margin: 0; padding: 18px 18px 6px; counter-reset: step; }
+  .steps li {
+    counter-increment: step; position: relative; padding: 0 0 18px 34px; font-size: 13.6px; line-height: 1.6; color: var(--ink-soft);
+  }
+  .steps li::before {
+    content: counter(step); position: absolute; left: 0; top: 0;
+    width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft); color: var(--accent);
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .steps li:not(:last-child)::after {
+    content: ""; position: absolute; left: 11px; top: 22px; bottom: 0; width: 1px; background: var(--line);
+  }
+  .steps li b { color: var(--ink); font-weight: 600; }
+  .steps li code {
+    font-family: "IBM Plex Mono", monospace; font-size: 11.8px; background: var(--surface-2);
+    padding: 1px 6px; border-radius: 3px; color: var(--ink);
+  }
+  .field-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+  .field-tag {
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px; background: var(--surface-2); color: var(--muted);
+    border: 1px solid var(--line); border-radius: 4px; padding: 2px 7px;
+  }
+
+  .result-strip {
+    display: flex; align-items: center; gap: 10px; margin: 0 18px 18px; padding: 11px 14px;
+    background: var(--accent-soft); border-left: 3px solid var(--accent); border-radius: 6px;
+    font-size: 12.8px; color: var(--ink-soft); line-height: 1.5;
+  }
+  .result-strip.warn { background: var(--warn-soft); border-left-color: var(--warn); }
+  .result-strip b { color: var(--ink); }
+  .result-icon { flex: none; font-family: "IBM Plex Mono", monospace; font-weight: 700; font-size: 13px; }
+
+  .role-fh { background: var(--brass-soft); color: var(--brass); }
+  .role-ceo { background: #dfe3ee; color: #3a4374; }
+  .role-ah { background: var(--accent-soft); color: var(--accent); }
+  .role-admin { background: var(--surface); color: var(--muted); border: 1px solid var(--line); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .role-ceo { background: #232b48; color: #9fa8d6; } }
+  :root[data-theme="dark"] .role-ceo { background: #232b48; color: #9fa8d6; }
+
+  .sidenote {
+    font-size: 12.5px; color: var(--muted); background: var(--surface-2); border: 1px dashed var(--line-strong);
+    border-radius: 8px; padding: 10px 14px; margin: 0 18px 18px; line-height: 1.55;
+  }
+
+  footer {
+    margin-top: 50px; padding-top: 18px; border-top: 1px solid var(--line);
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--muted);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="kicker">MAS Callnet PeopleOS &middot; Finance Module</p>
+    <h1>Payment Voucher Walkthrough</h1>
+    <p class="dek">Six screens, in the order you'd actually touch them: set up the masters once, then raise, approve, release, and reconcile every month after. Each section below is one real page &mdash; where to find it, who does it, and exactly what to click.</p>
+    <nav class="toc" aria-label="Jump to a page">
+      <a href="#p1"><b>1</b>Bank Directory</a>
+      <a href="#p2"><b>2</b>Ledger Heads</a>
+      <a href="#p3"><b>3</b>Bank Accounts</a>
+      <a href="#p4"><b>4</b>Payment Vouchers</a>
+      <a href="#p5"><b>5</b>Bank Ledger</a>
+      <a href="#p6"><b>6</b>Bank Reconciliation</a>
+    </nav>
+  </header>
+
+  <!-- ============ PAGE 1: BANK DIRECTORY ============ -->
+  <section class="page-section" id="p1">
+    <div class="page-head">
+      <span class="page-num">1</span>
+      <div class="page-head-text">
+        <h2>Bank Directory</h2>
+        <div class="crumb"><span class="seg">Finance</span>&rarr;<span class="seg path">/finance/bank-directory</span></div>
+      </div>
+    </div>
+    <div class="page-card">
+      <div class="page-card-top">
+        <p class="purpose">The list of banks you can pick from when adding a company bank account. Only needs a visit when your bank isn't already on the list.</p>
+        <span class="role-badge role-admin">Finance Admin</span>
+      </div>
+      <ol class="steps">
+        <li>Click <b>Add Bank</b>, top right.</li>
+        <li>Fill in <b>Bank Name</b> (e.g. "IDFC First Bank"), optionally <b>Bank Code</b> and <b>IFSC Prefix</b> &mdash; exactly 4 letters, the first 4 characters of any of that bank's IFSC codes (e.g. <code>IDFB</code>). Typed in lowercase, it's uppercased for you automatically.
+          <div class="field-tags"><span class="field-tag">Bank Name*</span><span class="field-tag">Bank Code</span><span class="field-tag">IFSC Prefix</span></div>
+        </li>
+        <li>Click <b>Add</b>. The new bank now appears in the dropdown on the Bank Accounts page.</li>
+        <li>To fix a typo or retire a bank later, click its row &rarr; <b>Edit</b>, or <b>Deactivate</b> to hide it from new selections without touching accounts already using it.</li>
+      </ol>
+      <div class="result-strip"><span class="result-icon">&rarr;</span>Feeds the <b>Bank</b> dropdown on <a href="#p3" style="color:inherit">Company Bank Accounts</a>.</div>
+    </div>
+  </section>
+
+  <!-- ============ PAGE 2: LEDGER HEADS ============ -->
+  <section class="page-section" id="p2">
+    <div class="page-head">
+      <span class="page-num">2</span>
+      <div class="page-head-text">
+        <h2>Ledger Heads</h2>
+        <div class="crumb"><span class="seg">Finance</span>&rarr;<span class="seg path">/finance/ledger-heads</span></div>
+      </div>
+    </div>
+    <div class="page-card">
+      <div class="page-card-top">
+        <p class="purpose">The chart of accounts &mdash; what a voucher or a reconciliation adjustment is actually paying. Eight heads exist already (Vendor Payables, TDS Payable, Bank Charges&hellip;); add a new one only when a payment genuinely needs a head that isn't there.</p>
+        <span class="role-badge role-admin">Finance Admin</span>
+      </div>
+      <ol class="steps">
+        <li>Click <b>New Ledger Head</b>.</li>
+        <li>Enter the <b>Account Name</b> (e.g. "GST Payable"), pick an <b>Account Type</b> &mdash; Expense, Payable, Receivable, Income, Bank Charge, or Other &mdash; and the <b>Tally Ledger Name</b>, the exact name this head has inside Tally.
+          <div class="field-tags"><span class="field-tag">Account Name*</span><span class="field-tag">Account Type*</span><span class="field-tag">Tally Ledger Name*</span></div>
+        </li>
+        <li>Click <b>Create</b>. It's immediately selectable everywhere a ledger head is picked.</li>
+        <li>Click any row to <b>Edit</b> its name/type/Tally mapping, or <b>Deactivate</b> a head you no longer want offered on new records.</li>
+      </ol>
+      <div class="result-strip"><span class="result-icon">&rarr;</span>Feeds the <b>Payable Account</b> dropdown on Payment Vouchers, and the <b>Ledger Head</b> dropdown when posting a reconciliation adjustment.</div>
+    </div>
+  </section>
+
+  <!-- ============ PAGE 3: BANK ACCOUNTS ============ -->
+  <section class="page-section" id="p3">
+    <div class="page-head">
+      <span class="page-num">3</span>
+      <div class="page-head-text">
+        <h2>Company Bank Accounts</h2>
+        <div class="crumb"><span class="seg">Finance</span>&rarr;<span class="seg path">/finance/bank-accounts</span></div>
+      </div>
+    </div>
+    <div class="page-card">
+      <div class="page-card-top">
+        <p class="purpose">The company's own paying accounts &mdash; the base every voucher and the running bank ledger are built on.</p>
+        <span class="role-badge role-admin">Finance Admin</span>
+      </div>
+      <ol class="steps">
+        <li>Click <b>New Bank Account</b>.</li>
+        <li>Pick the <b>Bank</b> (from the Bank Directory), name the account (e.g. "HDFC Current Account &mdash; HQ"), enter the <b>Account Number</b> and <b>IFSC Code</b>, pick the owning <b>Branch</b>, and enter the <b>Tally Ledger Name</b> &mdash; kept separate from the account name on purpose, so renaming the account inside HRMS never breaks a Tally export.
+          <div class="field-tags"><span class="field-tag">Bank*</span><span class="field-tag">Account Name*</span><span class="field-tag">Account Number</span><span class="field-tag">IFSC Code*</span><span class="field-tag">Branch*</span><span class="field-tag">Tally Ledger Name*</span><span class="field-tag">Opening Balance</span></div>
+        </li>
+        <li>Set the <b>Opening Balance</b> &mdash; only meaningful when the account is first created; every period after this, Bank Reconciliation carries the balance forward automatically.</li>
+        <li>Click <b>Create Account</b>. Click any row afterward for the full drill-down: masked account number, IFSC, Tally ledger, and its audit trail &mdash; with <b>Edit</b> and <b>Close Account</b> / <b>Reactivate</b> actions.</li>
+      </ol>
+      <div class="result-strip"><span class="result-icon">&rarr;</span>Feeds the <b>Bank Account</b> dropdown on Payment Vouchers, and is what the Bank Ledger and Reconciliation are scoped to, one account at a time.</div>
+    </div>
+  </section>
+
+  <!-- ============ PAGE 4: PAYMENT VOUCHERS ============ -->
+  <section class="page-section" id="p4">
+    <div class="page-head">
+      <span class="page-num">4</span>
+      <div class="page-head-text">
+        <h2>Payment Vouchers</h2>
+        <div class="crumb"><span class="seg">Finance</span>&rarr;<span class="seg path">/finance/payment-vouchers</span></div>
+      </div>
+    </div>
+
+    <div class="page-card" style="margin-bottom:14px;">
+      <div class="page-card-top">
+        <p class="purpose">Raise a payment request. This step only records intent &mdash; nothing moves yet.</p>
+        <span class="role-badge role-fh">Finance Head</span>
+      </div>
+      <ol class="steps">
+        <li>Click <b>Raise Voucher</b>, top right.</li>
+        <li>Choose the <b>Purpose</b>: <code>Vendor GRN Payment</code> (clearing what's owed on a received-goods note) or <code>Imprest Float Replenishment</code> (topping up a branch manager's float). A manager already flagged as low on their sanctioned float shows a red <b>Needs Replenishment</b> tag in the picker.</li>
+        <li>For a GRN payment, pick the specific <b>GRN</b> &mdash; its outstanding balance and any TDS already withheld show inline, and the <b>Amount</b> field pre-fills with the suggested net (balance minus TDS). For a top-up, pick the <b>Imprest Manager</b>.
+          <div class="field-tags"><span class="field-tag">Purpose*</span><span class="field-tag">GRN or Imprest Manager*</span><span class="field-tag">Amount*</span></div>
+        </li>
+        <li>Pick the <b>Bank Account</b> it will pay from and the <b>Payable Account</b> (ledger head), then add <b>Remarks</b> and a <b>Reason</b>.
+          <div class="field-tags"><span class="field-tag">Bank Account*</span><span class="field-tag">Payable Account*</span><span class="field-tag">Remarks</span><span class="field-tag">Reason</span></div>
+        </li>
+        <li>Click <b>Raise Voucher</b>. It appears under the <b>Awaiting CEO</b> tab with status badge <b>Awaiting CEO</b>.</li>
+      </ol>
+    </div>
+
+    <div class="page-card" style="margin-bottom:14px;">
+      <div class="page-card-top">
+        <p class="purpose">Decide the voucher &mdash; a yes/no on amount and purpose. Doesn't move any money itself.</p>
+        <span class="role-badge role-ceo">CEO</span>
+      </div>
+      <ol class="steps">
+        <li>Open the <b>Awaiting CEO</b> tab, click a row to open its drawer.</li>
+        <li>Review the <b>Approval Progress</b> track at the top and the voucher's details below it.</li>
+        <li>Click <b>Approve</b> &mdash; or type a reason in the text box and click <b>Reject</b>. A rejected voucher stops here permanently; its reason is shown to whoever raised it.</li>
+      </ol>
+      <div class="sidenote">The CEO cannot be the same person who raised the voucher &mdash; enforced on the server, not just hidden in the UI.</div>
+    </div>
+
+    <div class="page-card">
+      <div class="page-card-top">
+        <p class="purpose">Actually execute the transfer. The only step that moves real money and writes the Bank Ledger.</p>
+        <span class="role-badge role-ah">Accounts Head</span>
+      </div>
+      <ol class="steps">
+        <li>Open the <b>Awaiting Release</b> tab, click the voucher.</li>
+        <li>After sending the payment through your bank, come back and fill in the <b>Payment Mode</b> (Cheque, NEFT, RTGS, IMPS, UPI, Cash, Bank Transfer, Adjustment, or Other), the <b>Payment Date</b>, and the <b>Transaction Ref / UTR / Cheque No.</b>
+          <div class="field-tags"><span class="field-tag">Payment Mode*</span><span class="field-tag">Payment Date*</span><span class="field-tag">Transaction Ref</span></div>
+        </li>
+        <li>Click <b>Release Payment</b>. Status flips to <b>Released</b>, and this is the moment that posts the entry into the Bank Ledger &mdash; and, for a GRN payment with TDS withheld, a second balancing entry to TDS Payable in the same transaction.</li>
+      </ol>
+      <div class="result-strip"><span class="result-icon">&rarr;</span>Appears immediately on the <a href="#p5" style="color:inherit">Bank Ledger</a> page for that bank account.</div>
+    </div>
+  </section>
+
+  <!-- ============ PAGE 5: BANK LEDGER ============ -->
+  <section class="page-section" id="p5">
+    <div class="page-head">
+      <span class="page-num">5</span>
+      <div class="page-head-text">
+        <h2>Bank Ledger</h2>
+        <div class="crumb"><span class="seg">Finance</span>&rarr;<span class="seg path">/finance/bank-ledger</span></div>
+      </div>
+    </div>
+    <div class="page-card">
+      <div class="page-card-top">
+        <p class="purpose">Read-only running bank book &mdash; every released voucher and reconciliation adjustment, in order, with a running balance. Nothing here is ever hand-edited.</p>
+        <span class="role-badge role-ah">Accounts Head / Finance</span>
+      </div>
+      <ol class="steps">
+        <li>Pick the <b>Bank Account</b> and a <b>date range</b> at the top.</li>
+        <li>Scan the Credit/Debit table &mdash; each row names the voucher, who raised/approved/released it, and the running balance after it.</li>
+        <li>Click <b>Export CSV</b> for a spreadsheet, or <b>Tally XML</b> for an import-ready file. The amber banner above the table tells you whether this range is still provisional or already final &mdash; see <a href="#p6" style="color:inherit">Bank Reconciliation</a> for what decides that.</li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- ============ PAGE 6: BANK RECONCILIATION ============ -->
+  <section class="page-section" id="p6">
+    <div class="page-head">
+      <span class="page-num">6</span>
+      <div class="page-head-text">
+        <h2>Bank Reconciliation</h2>
+        <div class="crumb"><span class="seg">Finance</span>&rarr;<span class="seg path">/finance/bank-reconciliation</span></div>
+      </div>
+    </div>
+
+    <div class="page-card" style="margin-bottom:14px;">
+      <div class="page-card-top">
+        <p class="purpose">Once a month (or whenever your statement arrives): match HRMS against what the bank actually shows.</p>
+        <span class="role-badge role-ah">Accounts Head</span>
+      </div>
+      <ol class="steps">
+        <li>Pick the <b>Bank Account</b>. If there's no period already open, click <b>Start New Period</b> and set the <b>From</b>/<b>To</b> dates &mdash; From is pre-filled to the day after your last closed period.</li>
+        <li>Under <b>Reconcile</b>, choose your statement file (<code>.csv</code>, <code>.xlsx</code> or <code>.xls</code>) and click <b>Read Columns</b>.</li>
+        <li>Map the columns once: which uploaded column is <b>Date</b>, <b>Description</b>, <b>Reference</b>, and either separate <b>Debit</b>/<b>Credit</b> columns or one signed <b>Amount</b> column. This mapping is remembered for this account's next upload.</li>
+        <li>Click <b>Upload &amp; Auto-Match</b>. A summary tells you how many lines matched automatically by exact amount within &plusmn;15 days &mdash; the rest need your eye.</li>
+        <li>For each line still in <b>Unmatched Statement Lines</b>: click <b>Match</b> to pick the HRMS entry it corresponds to, or <b>Post Adjustment</b> for something the bank shows that HRMS never recorded (a bank charge, interest credited) &mdash; pick the <b>Ledger Head</b> and add a <b>Narration</b>. A wrong manual match here won't be accepted; the amounts must agree exactly.</li>
+        <li>In <b>Resolved Lines</b>, a matched (not adjusted) line can still be <b>Unmatch</b>ed if you picked wrong &mdash; any time before the period is closed.</li>
+      </ol>
+    </div>
+
+    <div class="page-card">
+      <div class="page-card-top">
+        <p class="purpose">Close the period &mdash; the step that actually locks the books for this range.</p>
+        <span class="role-badge role-ah">Accounts Head</span>
+      </div>
+      <ol class="steps">
+        <li>In <b>Reconciliation Summary</b>, type the <b>Statement Closing Balance</b> &mdash; the figure printed on the real bank statement.</li>
+        <li>The page shows how many lines are resolved out of the total. <b>Close Period</b> stays disabled until every line is resolved.</li>
+        <li>Click <b>Close Period</b>. The server checks the numbers actually balance &mdash; HRMS's closing balance, minus anything still outstanding, must equal what you typed. If it doesn't, closing is refused and the exact rupee difference is shown, so you know what to chase down rather than guess.</li>
+        <li>Once closed, that period moves to the <b>History</b> tab. Click it any time for the full breakdown &mdash; balances, who closed it and when, and matched/unmatched/adjusted counts.</li>
+        <li>Made a mistake after closing? Only the <b>most recently closed</b> period can be reopened &mdash; from its drawer, click <b>Reopen This Period</b> and type a reason. A period that an even-later period has already closed over can't be reopened, to protect the running chain of opening balances.</li>
+      </ol>
+      <div class="result-strip"><span class="result-icon">&rarr;</span>Once closed, every entry in that range flips the Tally export on the <a href="#p5" style="color:inherit">Bank Ledger</a> page from provisional to <b>final</b>.</div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Payment Voucher System &middot; operating guide</span>
+    <span>bank-directory &middot; ledger-heads &middot; bank-accounts &middot; payment-vouchers &middot; bank-ledger &middot; bank-reconciliation</span>
+  </footer>
+
+</div>

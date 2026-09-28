@@ -1,31 +1,140 @@
-import { Router, Request, Response } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import { requireRole } from "../../middleware/requireRole.js";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import path from "path";
 import fs from "fs";
+import { randomUUID } from "crypto";
+import multer from "multer";
 import PDFDocument from "pdfkit";
-import * as _archiverNs from "archiver";
-import type { ArchiverOptions, Archiver as ArchiverInstance } from "archiver";
+import { ZipArchive } from "archiver";
+import type { Archiver as ArchiverInstance } from "archiver";
+import { resolveOnboardingDocumentFile } from "../ats/onboardingDocumentPath.js";
 
-const archiverLib = ((_archiverNs as unknown as { default?: unknown }).default ??
-  _archiverNs) as (format: string, options?: ArchiverOptions) => ArchiverInstance;
+/**
+ * archiver 8 removed the callable factory.
+ *
+ * This module used `archiver('zip', opts)` through a CJS-interop shim:
+ *
+ *   const archiverLib = (ns.default ?? ns) as (format, options) => Archiver
+ *
+ * archiver 8.0.0 (installed) exports only classes — Archiver, ZipArchive,
+ * TarArchive, JsonArchive — and no `default`. So the shim resolved to the
+ * namespace OBJECT and calling it threw "archiverLib is not a function" at the
+ * first line of every download. The cast is why it type-checked: it asserted a
+ * call signature the module has not had since the upgrade.
+ *
+ * Verified against the installed package before changing it: `new
+ * ZipArchive({...})` yields the same instance API this code already uses —
+ * pipe, file, append, finalize.
+ *
+ * The identical shim is still in ats.joiningDocumentsTracker.service.ts and
+ * fails the same way; flagged separately rather than fixed blind from here.
+ */
+function newZipArchive(): ArchiverInstance {
+  return new ZipArchive({ zlib: { level: 9 } }) as unknown as ArchiverInstance;
+}
 
 const UPLOADS_ROOT = path.resolve(
   new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"),
   "../../../../uploads"
 );
 
+const ESI_DOCS_DIR = path.join(UPLOADS_ROOT, "esi-docs");
+fs.mkdirSync(ESI_DOCS_DIR, { recursive: true });
+
+const esiDocUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, ESI_DOCS_DIR),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
+      cb(null, `${randomUUID()}${ext}`);
+    },
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB — client compresses to ≤100 KB before sending
+  fileFilter: (_req, file, cb) => {
+    const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
+    if (allowed.has(file.mimetype)) return cb(null, true);
+    return cb(new Error("Only JPG, PNG or WebP images are allowed"));
+  },
+});
+
 export const esiRegDocsRouter = Router();
 esiRegDocsRouter.use(requireAuth);
 
-const ESI_ROLES = ["payroll_branch", "payroll_head", "super_admin"] as const;
+/**
+ * Async error boundary.
+ *
+ * Every route here was a bare `async` handler. Express 4 does not catch a
+ * rejected promise from one, so it became an unhandled rejection and Node 24
+ * exits the process on those — which is exactly what happened twice while
+ * testing this file: one bad SQL bind and one bad archiver call each took the
+ * ENTIRE backend down, not just the request. Wrapping them turns a
+ * whole-service outage into a 500 on one endpoint.
+ *
+ * `next(err)` rather than a local response, so the existing error handler still
+ * decides the body — except once the archive has begun streaming, when the
+ * headers are already sent and the only honest move is to destroy the socket so
+ * the client sees a truncated download instead of a valid-looking short zip.
+ */
+type AsyncRoute = (req: Request, res: Response) => Promise<unknown>;
+const h = (fn: AsyncRoute) => (req: Request, res: Response, next: NextFunction) => {
+  void fn(req, res).catch((err: unknown) => {
+    if (res.headersSent) {
+      console.error("[esi-reg-docs] failed mid-stream:", err instanceof Error ? err.message : err);
+      return res.destroy();
+    }
+    return next(err);
+  });
+};
+
+/**
+ * Who may pull ESI registration packs.
+ *
+ * `payroll_hr` was missing and `payroll_branch` does not exist. Checked live
+ * 2026-09-08: user_roles carries payroll, payroll_admin, payroll_head and
+ * payroll_hr — there is no payroll_branch row anywhere, so of the three names
+ * above only payroll_head (2 holders) and super_admin (6) ever worked.
+ *
+ * Payroll HR is the role that actually does ESI registration, and it was locked
+ * out of every endpoint here. A previous session found the resulting 403s and
+ * hid the tab from payroll_hr rather than granting it, which turned a broken
+ * control into an invisible one. The owner confirmed on 2026-09-08 that Payroll
+ * HR and the Payroll Head are exactly the two who need this, so payroll_hr is
+ * granted here and the tab is shown to it again.
+ *
+ * payroll_branch is kept: it costs nothing while unheld, and dropping a name
+ * another session may be provisioning towards would be a silent revocation.
+ *
+ * `payroll` IS the grant that reaches Payroll HR, and naming payroll_hr alone
+ * does nothing. Proven live 2026-09-08 with a real token for sheelu.verma, who
+ * holds payroll_hr in both user_roles and user_assignment_scope: the request was
+ * refused, and requireRole logged her roles as [employee, hr, payroll,
+ * recruiter] — no payroll_hr at all.
+ *
+ * The cause is DASHBOARD_ROLE_ALIASES in shared/dashboardAccessRegistry.ts,
+ * which maps `payroll_hr -> payroll`. getUserRoleKeys() puts every resolved role
+ * through it, so a payroll_hr user reaches requireRole already rewritten to
+ * `payroll`, and a route listing "payroll_hr" can never match one. That alias
+ * makes payroll_hr and payroll the same principal to every RBAC check in the
+ * system, so granting `payroll` here is not a widening decision this route gets
+ * to make differently — the two cannot be separated without changing the alias,
+ * which is a system-wide RBAC change and deliberately not made here.
+ *
+ * payroll_hr is kept in the list even though it is unreachable today: it is what
+ * this route MEANS, and it starts working by itself if the alias is ever removed.
+ *
+ * NOTE: appointmentLetter.routes.ts carries the opposite claim — "payroll_hr has
+ * no alias in the role model ... requireRole('payroll') does NOT admit a
+ * payroll_hr user". That is backwards, and its ISSUE_ROLES has the same hole.
+ */
+const ESI_ROLES = ["payroll", "payroll_hr", "payroll_branch", "payroll_head", "super_admin"] as const;
 
 esiRegDocsRouter.get(
   "/esi-reg-docs",
   requireRole(...ESI_ROLES),
-  async (req: Request, res: Response) => {
+  h(async (req: Request, res: Response) => {
     const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
     const limit = parseInt(String(req.query.limit ?? "50"), 10);
     if (limit > 200) {
@@ -35,8 +144,57 @@ esiRegDocsRouter.get(
     const branchId = req.query.branch_id as string | undefined;
     const search = req.query.search as string | undefined;
 
+    /**
+     * LIMIT/OFFSET are interpolated, not bound.
+     *
+     * This endpoint had never returned a row: `LIMIT ? OFFSET ?` through
+     * db.execute() is a PREPARED statement, and MySQL will not accept a bound
+     * parameter in those positions — it answers ER_WRONG_ARGUMENTS (errno 1210,
+     * "Incorrect arguments to mysqld_stmt_execute"). The route has no error
+     * wrapper, so the rejection went unhandled and took the whole backend
+     * process down with it, not merely this request.
+     *
+     * It went unnoticed because the role list separately locked out everyone who
+     * would have called it. Two bugs, each hiding the other.
+     *
+     * Interpolation is safe here only because both values are coerced to bounded
+     * integers first and can never carry user text: limit is already rejected
+     * above if > 200, page is Math.max(1, parseInt(...)). Number.isFinite guards
+     * the NaN that parseInt("abc") returns, which would otherwise interpolate
+     * the literal text NaN into the SQL.
+     */
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 50;
+    const safeOffset = Number.isFinite(offset) && offset > 0 ? Math.floor(offset) : 0;
+
+    // active_status = 1 is the load-bearing one. Without it this listed every
+    // employee who ever held an ESI flag, terminated or not: 12,858 rows live on
+    // 2026-09-08 against 567 who are actually on the payroll. An ESI
+    // REGISTRATION queue made mostly of people who left is not a long list, it
+    // is the wrong list — and the bulk download would have built document packs
+    // for them.
+    //
+    // The population itself was inverted (found 2026-09-12): this is meant to be
+    // "ESI-eligible employees who are NOT YET registered", i.e. who still need
+    // registration. The condition instead read `esic_number IS NOT NULL OR
+    // esi_eligible = 1`, which is "already has a number OR is flagged eligible" —
+    // an OR that ADMITS anyone with a number, rather than a check that EXCLUDES
+    // them. That is the opposite population: it mixed people who already have an
+    // ESIC number in with people who don't, so "not registered" was never
+    // isolated from "already registered" on this screen.
+    //
+    // Fixed to AND NOT registered: eligible per the HRMS-native flag (never a
+    // wage-threshold guess — same doctrine as statutory-applicability.service.ts,
+    // eligibility is a fact to be told, not inferred) AND no ESIC number on file
+    // yet, checked against BOTH places a number can live. `employees.esic_number`
+    // is the field this route reads for display, but a number can also be
+    // recorded on `employee_statutory_info.esi_number` (see COALESCE usage in
+    // reporting/executors/employee.executor.ts line 628) without ever being
+    // backfilled onto `employees`. Checking only `esic_number` would have shown
+    // some already-registered employees as "not registered" too.
     const whereParts: string[] = [
-      `(e.esic_number IS NOT NULL OR esi.esi_eligible = 1)`,
+      `e.active_status = 1`,
+      `esi.esi_eligible = 1`,
+      `COALESCE(NULLIF(e.esic_number, ''), NULLIF(esi.esi_number, '')) IS NULL`,
       `e.employment_status != 'terminated'`,
     ];
     const params: unknown[] = [];
@@ -67,10 +225,22 @@ esiRegDocsRouter.get(
          CONCAT(e.first_name, ' ', COALESCE(e.last_name,'')) AS name,
          COALESCE(b.branch_name, '')                       AS branch,
          e.esic_number,
-         (SELECT COUNT(*) FROM employee_documents ed
-          WHERE ed.employee_id = e.id
-            AND ed.doc_category = 'pan') > 0
-                                                          AS pan_ready,
+         -- PAN is "available" when ANY of three sources has it:
+         -- 1. pan_number directly on employees (direct HR entry)
+         -- 2. employee_documents with doc_category='pan' (uploaded via profile)
+         -- 3. candidate_onboarding_document via ATS bridge (most common path:
+         --    38 of 567 ESI-eligible employees have it here, 0 in source 2)
+         (
+           (e.pan_number IS NOT NULL AND e.pan_number != '')
+           OR (SELECT COUNT(*) FROM employee_documents ed
+               WHERE ed.employee_id = e.id AND ed.doc_category = 'pan') > 0
+           OR EXISTS (
+               SELECT 1 FROM candidate_onboarding_document d
+               JOIN ats_onboarding_bridge ab ON ab.candidate_id = d.candidate_id
+               WHERE ab.employee_id = e.id AND d.deleted_at IS NULL
+                 AND LOWER(d.doc_type) IN ('pan', 'pan card', 'pan_card')
+           )
+         )                                                AS pan_ready,
          (SELECT id FROM employee_documents ed
           WHERE ed.employee_id = e.id
             AND ed.doc_category = 'pan'
@@ -84,14 +254,18 @@ esiRegDocsRouter.get(
          (SELECT COUNT(*) FROM employee_bank_detail ebd
           WHERE ebd.employee_id = e.id
             AND ebd.ifsc_code IS NOT NULL AND ebd.ifsc_code != '') > 0
-                                                          AS bank_ready
+                                                          AS bank_ready,
+         (SELECT file_url FROM employee_documents ed
+          WHERE ed.employee_id = e.id
+            AND ed.doc_category = 'bank' AND ed.doc_type = 'bank_passbook'
+          ORDER BY ed.created_at DESC LIMIT 1)            AS bank_passbook_url
        FROM employees e
        LEFT JOIN employee_statutory_info esi ON esi.employee_id = e.id
        LEFT JOIN branch_master b ON b.id = e.branch_id
        WHERE ${whereClause}
        ORDER BY e.employee_code
-       LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+       LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+      params
     );
 
     const employees = (rows as RowDataPacket[]).map((r) => ({
@@ -99,23 +273,140 @@ esiRegDocsRouter.get(
       pan_ready: !!r.pan_ready,
       photo_ready: !!r.photo_ready,
       bank_ready: !!r.bank_ready,
+      bank_passbook_ready: !!r.bank_passbook_url,
     }));
 
     return res.json({ employees, total: Number(total), page, limit });
-  }
+  })
+);
+
+// ── Photo upload (ESI section) ────────────────────────────────────────────────
+// Reuses the employee-photos store so the existing photo_url / avatar_url chain
+// (ID card, dashboards, ZIP pack) picks it up automatically.
+esiRegDocsRouter.post(
+  "/:id/photo",
+  requireRole(...ESI_ROLES),
+  (req: Request, res: Response, next: NextFunction) => {
+    esiDocUpload.single("photo")(req, res, (err: unknown) => {
+      if (err instanceof multer.MulterError) {
+        return res.status(400).json({ success: false, error: err.message });
+      }
+      if (err) return res.status(400).json({ success: false, error: String(err) });
+      return next();
+    });
+  },
+  h(async (req: Request, res: Response) => {
+    const employeeId = String(req.params.id ?? "").trim();
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (!file) return res.status(400).json({ success: false, error: "No image uploaded" });
+
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM employees WHERE id = ? LIMIT 1",
+      [employeeId],
+    );
+    if (!empRows.length) {
+      fs.unlinkSync(file.path);
+      return res.status(404).json({ success: false, error: "Employee not found" });
+    }
+
+    const photosDir = path.join(UPLOADS_ROOT, "employee-photos");
+    fs.mkdirSync(photosDir, { recursive: true });
+    const ext = path.extname(file.filename).toLowerCase() || ".jpg";
+    const finalName = `${employeeId}${ext}`;
+    const finalPath = path.join(photosDir, finalName);
+
+    for (const oldExt of [".jpg", ".jpeg", ".png", ".webp"]) {
+      const old = path.join(photosDir, `${employeeId}${oldExt}`);
+      if (old !== file.path && old !== finalPath && fs.existsSync(old)) fs.unlinkSync(old);
+    }
+    fs.renameSync(file.path, finalPath);
+
+    const fileUrl = `/api/files/employee-photos/${finalName}`;
+    await db.execute(
+      "UPDATE employees SET photo_url = ?, avatar_url = ?, updated_at = NOW() WHERE id = ?",
+      [fileUrl, fileUrl, employeeId],
+    );
+    return res.json({ success: true, photo_url: fileUrl });
+  })
+);
+
+// ── Bank passbook upload ───────────────────────────────────────────────────────
+// Stored in employee_documents with doc_category='bank', doc_type='bank_passbook'.
+// The ESI ZIP pack already includes this file once bank_passbook_url is set.
+esiRegDocsRouter.post(
+  "/:id/bank-passbook",
+  requireRole(...ESI_ROLES),
+  (req: Request, res: Response, next: NextFunction) => {
+    esiDocUpload.single("photo")(req, res, (err: unknown) => {
+      if (err instanceof multer.MulterError) {
+        return res.status(400).json({ success: false, error: err.message });
+      }
+      if (err) return res.status(400).json({ success: false, error: String(err) });
+      return next();
+    });
+  },
+  h(async (req: Request, res: Response) => {
+    const employeeId = String(req.params.id ?? "").trim();
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (!file) return res.status(400).json({ success: false, error: "No image uploaded" });
+
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM employees WHERE id = ? LIMIT 1",
+      [employeeId],
+    );
+    if (!empRows.length) {
+      fs.unlinkSync(file.path);
+      return res.status(404).json({ success: false, error: "Employee not found" });
+    }
+
+    const fileUrl = `/api/files/esi-docs/${file.filename}`;
+    const actorId = (req as any).authUser?.id ?? null;
+
+    await db.execute(
+      `INSERT INTO employee_documents
+         (id, employee_id, doc_type, doc_category, doc_name, file_url, uploaded_by, created_at)
+       VALUES (?, ?, 'bank_passbook', 'bank', 'Bank Passbook', ?, ?, NOW())`,
+      [randomUUID(), employeeId, fileUrl, actorId],
+    );
+    return res.json({ success: true, bank_passbook_url: fileUrl });
+  })
 );
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-async function generateBankInfoPdf(employeeId: string): Promise<Buffer> {
+/**
+ * This used to be `generateBankInfoPdf` — the only document this route always
+ * generates, and it only ever carried bank fields (name, ESIC number, masked
+ * account). That is not an ESI registration document: ESIC's Declaration Form
+ * needs DOB, gender, marital status, father's/husband's name, address, mobile
+ * and nominee details too, and Payroll HR was getting a bank slip instead.
+ *
+ * Every field below already exists and is populated on `employees` — confirmed
+ * live 2026-09-10 via schema-snapshot.json — this was a wiring gap, not a data
+ * gap. Bank details still come from `employee_bank_detail` (the same source
+ * the rest of this file uses), joined against `employees` for everything else
+ * in one query rather than two.
+ */
+async function generateEsiDeclarationPdf(employeeId: string): Promise<Buffer> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ebd.bank_name, ebd.account_number, ebd.ifsc_code, ebd.account_type,
-            CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS name,
-            e.employee_code, e.esic_number
-     FROM employee_bank_detail ebd
-     JOIN employees e ON e.id = ebd.employee_id
-     WHERE ebd.employee_id = ?
-     ORDER BY ebd.created_at DESC LIMIT 1`,
+    `SELECT
+       e.employee_code, e.esic_number, e.uan_number, e.epf_number,
+       e.pan_number, e.aadhaar_number,
+       CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS name,
+       e.father_name, e.gender, e.marital_status, e.date_of_birth,
+       COALESCE(e.mobile, e.personal_phone)               AS mobile,
+       e.nominee_name, e.nominee_relation,
+       COALESCE(e.address1, e.address_line1)               AS address1,
+       COALESCE(e.address2, e.address_line2)               AS address2,
+       e.city, e.state, e.pincode,
+       ebd.bank_name, ebd.account_number, ebd.ifsc_code, ebd.account_type
+     FROM employees e
+     LEFT JOIN employee_bank_detail ebd
+       ON ebd.employee_id = e.id
+      AND ebd.id = (SELECT id FROM employee_bank_detail
+                     WHERE employee_id = e.id ORDER BY created_at DESC LIMIT 1)
+     WHERE e.id = ?
+     LIMIT 1`,
     [employeeId]
   );
   const row = (rows as RowDataPacket[])[0];
@@ -127,28 +418,65 @@ async function generateBankInfoPdf(employeeId: string): Promise<Buffer> {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
-    doc.fontSize(16).font("Helvetica-Bold").text("ESI Registration — Bank Information", { align: "center" });
+    doc.fontSize(16).font("Helvetica-Bold").text("ESI Registration — Declaration Form", { align: "center" });
     doc.moveDown();
 
     if (!row) {
-      doc.fontSize(12).font("Helvetica").text("Bank details not on record for this employee.");
-    } else {
-      const mask = (acct: string) => acct ? `****${acct.slice(-4)}` : "Not provided";
-      doc.fontSize(12).font("Helvetica");
-      const fields: [string, string][] = [
-        ["Employee Code", row.employee_code ?? ""],
-        ["Employee Name", row.name ?? ""],
-        ["ESIC Number", row.esic_number ?? "Not assigned"],
-        ["Bank Name", row.bank_name ?? ""],
-        ["Account Number (Masked)", mask(row.account_number ?? "")],
-        ["IFSC Code", row.ifsc_code ?? ""],
-        ["Account Type", row.account_type ?? ""],
-      ];
-      for (const [label, value] of fields) {
-        doc.font("Helvetica-Bold").text(`${label}: `, { continued: true });
-        doc.font("Helvetica").text(value);
-      }
+      doc.fontSize(12).font("Helvetica").text("Employee record not found.");
+      doc.end();
+      return;
     }
+
+    const fmtDate = (d: unknown) => {
+      if (!d) return "Not provided";
+      const parsed = new Date(d as string);
+      return Number.isNaN(parsed.getTime()) ? "Not provided" : parsed.toLocaleDateString("en-IN");
+    };
+    const val = (v: unknown) => (v === null || v === undefined || v === "" ? "Not provided" : String(v));
+    const address = [row.address1, row.address2, row.city, row.state, row.pincode]
+      .filter((p) => p !== null && p !== undefined && p !== "")
+      .join(", ");
+
+    const section = (title: string) => {
+      doc.moveDown(0.5);
+      doc.fontSize(12).font("Helvetica-Bold").fillColor("#333").text(title);
+      doc.fillColor("#000");
+      doc.moveDown(0.2);
+    };
+    const field = (label: string, value: string) => {
+      doc.fontSize(11).font("Helvetica-Bold").text(`${label}: `, { continued: true });
+      doc.font("Helvetica").text(value);
+    };
+
+    section("Employee Identity");
+    field("Employee Code", val(row.employee_code));
+    field("Employee Name", val(row.name));
+    field("Father's / Husband's Name", val(row.father_name));
+    field("Date of Birth", fmtDate(row.date_of_birth));
+    field("Gender", val(row.gender));
+    field("Marital Status", val(row.marital_status));
+    field("Mobile Number", val(row.mobile));
+
+    section("Statutory Identifiers");
+    field("ESIC Number", val(row.esic_number ?? "Not assigned"));
+    field("UAN Number", val(row.uan_number));
+    field("EPF Number", val(row.epf_number));
+    field("PAN Number", val(row.pan_number));
+    field("Aadhaar Number", val(row.aadhaar_number));
+
+    section("Address");
+    field("Residential Address", address || "Not provided");
+
+    section("Nominee Details");
+    field("Nominee Name", val(row.nominee_name));
+    field("Relation with Employee", val(row.nominee_relation));
+
+    section("Bank Details (for ESI benefit disbursal)");
+    field("Bank Name", val(row.bank_name));
+    field("Account Number", val(row.account_number));
+    field("IFSC Code", val(row.ifsc_code));
+    field("Account Type", val(row.account_type));
+
     doc.end();
   });
 }
@@ -163,6 +491,133 @@ function urlToLocalPath(fileUrl: string | null): string | null {
 function fileExists(filePath: string | null): boolean {
   if (!filePath) return false;
   try { return fs.statSync(filePath).isFile(); } catch { return false; }
+}
+
+/**
+ * Build one employee's ESI registration pack into `archive`, under `prefix`.
+ *
+ * Single and bulk download used to carry two copies of this, which is how they
+ * came to disagree: neither included the Aadhaar, but only the CSV export
+ * noticed that ESI registration needs it. One builder means a document added
+ * here appears in both, and the manifest can never describe a different set of
+ * files from the one actually written.
+ *
+ * Every document is optional by design. A missing file is recorded in the
+ * manifest as a named gap rather than failing the download — Payroll HR needs
+ * the pack for the documents that DO exist, plus a list of what to chase.
+ *
+ * Returns the manifest lines so the caller can also count what was found.
+ */
+async function appendEsiPack(
+  archive: ArchiverInstance,
+  emp: { id: string; employee_code: string; name: string; photo_url?: string | null; avatar_url?: string | null },
+  prefix: string,
+): Promise<{ manifest: string[]; found: number; missing: number }> {
+  const at = (n: string) => (prefix ? `${prefix}/${n}` : n);
+  const manifest: string[] = [`ESI Registration Documents — ${emp.name} (${emp.employee_code})\n`];
+  let found = 0, missing = 0;
+
+  // doc_category is the stable axis here, not doc_type: identity holds 27,165
+  // rows as 'POI' plus a handful of 'POI_1'/'POI_4', and a separate 'aadhaar'
+  // category holds 2. Matching the category catches all of them.
+  //
+  // In practice this NEVER resolves for the ESI-eligible population: verified
+  // live 2026-09-08, zero of 436 employee_documents rows in that scope carry an
+  // /api/files/... URL this can read — 434 are `legacy://document_master/...`
+  // markers left by a one-way db_bill import that copied the ROW but never the
+  // file bytes (backend/src/modules/migration/migrateDocumentsFromLegacy.ts),
+  // and 2 point at a different server's absolute filesystem path. It stays
+  // first in the chain because it is the correct source for anything uploaded
+  // through THIS app's own document flow, present or future.
+  const byCategory = async (category: string, docType?: string): Promise<string | null> => {
+    const sql = docType
+      ? `SELECT file_url FROM employee_documents WHERE employee_id = ? AND doc_category = ? AND doc_type = ? ORDER BY created_at DESC LIMIT 1`
+      : `SELECT file_url FROM employee_documents WHERE employee_id = ? AND doc_category = ? ORDER BY created_at DESC LIMIT 1`;
+    const params = docType ? [emp.id, category, docType] : [emp.id, category];
+    const [rows] = await db.execute<RowDataPacket[]>(sql, params)
+      .catch(() => [[]] as unknown as [RowDataPacket[]]);
+    return urlToLocalPath((rows as RowDataPacket[])[0]?.file_url ?? null);
+  };
+
+  /**
+   * PAN/Aadhaar, sourced from the candidate's OWN onboarding upload.
+   *
+   * This is what actually resolves. Before a candidate becomes an employee,
+   * they upload PAN/Aadhaar through the ATS onboarding flow into
+   * `candidate_onboarding_document`, whose `file_path` is a real absolute path
+   * under `private-storage/onboarding-documents/` on THIS server — verified
+   * live: 1,699 real files on disk, resolvable via the same
+   * `resolveOnboardingDocumentFile()` the candidate-document viewer already
+   * uses (it also survives the Windows-dev-path / cwd-mismatch cases recorded
+   * there). Checked live 2026-09-08: 38 of 567 ESI-eligible employees have a
+   * real PAN or Aadhaar here — zero via employee_documents.
+   *
+   * `doc_type` is free text with several live spellings per document
+   * (`pan`/`PAN Card`/`pan_card`, `Aadhaar`/`aadhaar_card`/`aadhar`), so this
+   * matches on a normalised set rather than one literal string.
+   */
+  const fromCandidateOnboarding = async (types: string[]): Promise<string | null> => {
+    const placeholders = types.map(() => "?").join(",");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT d.file_path
+         FROM candidate_onboarding_document d
+         JOIN ats_onboarding_bridge ab ON ab.candidate_id = d.candidate_id
+        WHERE ab.employee_id = ? AND d.deleted_at IS NULL AND LOWER(d.doc_type) IN (${placeholders})
+        ORDER BY d.uploaded_at DESC LIMIT 1`,
+      [emp.id, ...types],
+    ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+    return resolveOnboardingDocumentFile((rows as RowDataPacket[])[0]?.file_path ?? null);
+  };
+
+  const docs: Array<{ label: string; localPath: string | null; note: string }> = [
+    {
+      label: "PAN_Card",
+      localPath: (await byCategory("pan")) ?? (await fromCandidateOnboarding(["pan", "pan card", "pan_card"])),
+      note: "PAN document not available — upload it on the employee profile",
+    },
+    // Aadhaar is mandatory for ESI registration and was in no version of this
+    // pack, though the CSV export has carried the aadhaar NUMBER since
+    // 2026-09-02. A number without the scan does not complete a registration.
+    {
+      label: "Aadhaar",
+      localPath:
+        (await byCategory("aadhaar")) ??
+        (await byCategory("identity")) ??
+        (await fromCandidateOnboarding(["aadhaar", "aadhaar_card", "aadhar"])),
+      note: "Aadhaar / identity proof not available",
+    },
+    { label: "Photo", localPath: urlToLocalPath(emp.photo_url ?? emp.avatar_url ?? null), note: "Employee photo not available" },
+    { label: "Bank_Passbook", localPath: await byCategory("bank", "bank_passbook"), note: "Bank passbook photo not uploaded" },
+  ];
+
+  for (const d of docs) {
+    if (fileExists(d.localPath)) {
+      archive.file(d.localPath!, { name: at(`${d.label}${path.extname(d.localPath!)}`) });
+      manifest.push(`OK  ${d.label}${path.extname(d.localPath!)}`);
+      found++;
+    } else {
+      manifest.push(`--  ${d.note}`);
+      missing++;
+    }
+  }
+
+  // Always generated rather than fetched, so it exists even when nothing was
+  // uploaded — which for most of this population is the only content the pack
+  // would otherwise have. Carries the actual ESI Declaration Form fields (DOB,
+  // gender, marital status, father's/husband's name, address, mobile, nominee),
+  // not just bank details — see generateEsiDeclarationPdf().
+  try {
+    archive.append(await generateEsiDeclarationPdf(emp.id), { name: at("ESI_Declaration_Form.pdf") });
+    manifest.push("OK  ESI_Declaration_Form.pdf");
+    found++;
+  } catch {
+    manifest.push("--  ESI Declaration Form could not be generated");
+    missing++;
+  }
+
+  manifest.push(`\n${found} document(s) included, ${missing} missing.`);
+  archive.append(manifest.join("\n"), { name: at("manifest.txt") });
+  return { manifest, found, missing };
 }
 
 async function writeAuditLog(
@@ -188,7 +643,7 @@ async function writeAuditLog(
 esiRegDocsRouter.get(
   "/esi-reg-docs/:employeeId/download",
   requireRole(...ESI_ROLES),
-  async (req: Request, res: Response) => {
+  h(async (req: Request, res: Response) => {
     const { employeeId } = req.params;
     const actorId = (req as any).authUser?.id ?? "unknown";
 
@@ -200,58 +655,36 @@ esiRegDocsRouter.get(
     );
     if (!empRow) return res.status(404).json({ error: "Employee not found" });
 
-    const [[panDoc]] = await db.execute<RowDataPacket[]>(
-      `SELECT file_url FROM employee_documents
-       WHERE employee_id = ? AND doc_category = 'pan'
-       ORDER BY created_at DESC LIMIT 1`,
-      [employeeId]
-    );
-
     const date = new Date().toISOString().slice(0, 10);
     const filename = `ESI_Docs_${empRow.employee_code}_${date}.zip`;
 
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
-    const archive = archiverLib("zip", { zlib: { level: 9 } });
+    const archive = newZipArchive();
     archive.pipe(res);
     archive.on("error", (err: Error) => console.error("[esi-reg-docs] archive error", err));
 
-    const manifest: string[] = [`ESI Registration Documents — ${empRow.name} (${empRow.employee_code})\n`];
+    const packed = await appendEsiPack(
+      archive,
+      {
+        id: employeeId,
+        employee_code: String(empRow.employee_code ?? ""),
+        name: String(empRow.name ?? ""),
+        photo_url: empRow.photo_url,
+        avatar_url: empRow.avatar_url,
+      },
+      "",
+    );
 
-    const panPath = urlToLocalPath((panDoc as RowDataPacket | undefined)?.file_url ?? null);
-    if (fileExists(panPath)) {
-      const ext = path.extname(panPath!);
-      archive.file(panPath!, { name: `PAN_Card${ext}` });
-      manifest.push("✓ PAN_Card" + ext);
-    } else {
-      manifest.push("✗ PAN document not available — please upload in employee profile");
-    }
-
-    const photoPath = urlToLocalPath(empRow.photo_url ?? empRow.avatar_url ?? null);
-    if (fileExists(photoPath)) {
-      const ext = path.extname(photoPath!);
-      archive.file(photoPath!, { name: `Photo${ext}` });
-      manifest.push("✓ Photo" + ext);
-    } else {
-      manifest.push("✗ Employee photo not available");
-    }
-
-    try {
-      const bankPdf = await generateBankInfoPdf(employeeId);
-      archive.append(bankPdf, { name: "Bank_Information.pdf" });
-      manifest.push("✓ Bank_Information.pdf");
-    } catch {
-      manifest.push("✗ Bank information could not be generated");
-    }
-
-    archive.append(manifest.join("\n"), { name: "manifest.txt" });
     await archive.finalize();
 
     await writeAuditLog("esi_reg_doc_download", actorId, employeeId, {
       employee_code: empRow.employee_code,
+      documents_included: packed.found,
+      documents_missing: packed.missing,
     });
-  }
+  })
 );
 
 // ── Route: Bulk ZIP download ──────────────────────────────────────────────────
@@ -259,7 +692,7 @@ esiRegDocsRouter.get(
 esiRegDocsRouter.post(
   "/esi-reg-docs/bulk-download",
   requireRole(...ESI_ROLES),
-  async (req: Request, res: Response) => {
+  h(async (req: Request, res: Response) => {
     const { employee_ids } = req.body as { employee_ids?: string[] };
     if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
       return res.status(400).json({ error: "employee_ids must be a non-empty array" });
@@ -273,7 +706,7 @@ esiRegDocsRouter.post(
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="ESI_Bulk_Docs_${date}.zip"`);
 
-    const archive = archiverLib("zip", { zlib: { level: 9 } });
+    const archive = newZipArchive();
     archive.pipe(res);
     archive.on("error", (err: Error) => console.error("[esi-reg-docs] bulk archive error", err));
 
@@ -285,44 +718,32 @@ esiRegDocsRouter.post(
       employee_ids
     );
 
+    // One folder per employee inside the single zip, so Payroll HR opens the
+    // archive and finds a ready-made folder per registration rather than a flat
+    // pile of files they have to sort by filename.
+    const index: string[] = ["Employee Code,Employee Name,Documents Included,Documents Missing"];
     for (const emp of rows as RowDataPacket[]) {
-      const folder = `${emp.employee_code}_${(emp.name as string).replace(/\s+/g, "_")}`;
-      const manifest: string[] = [`ESI Docs — ${emp.name} (${emp.employee_code})\n`];
-
-      const [[panDoc]] = await db.execute<RowDataPacket[]>(
-        `SELECT file_url FROM employee_documents
-         WHERE employee_id = ? AND doc_category = 'pan'
-         ORDER BY created_at DESC LIMIT 1`,
-        [emp.id]
+      // Sanitised, because an employee name reaches a zip ENTRY PATH here: a
+      // name carrying "/" or ".." would place the file outside its own folder.
+      const safeName = String(emp.name ?? "").replace(/[^A-Za-z0-9 _-]/g, "").trim().replace(/\s+/g, "_");
+      const safeCode = String(emp.employee_code ?? "").replace(/[^A-Za-z0-9_-]/g, "");
+      const packed = await appendEsiPack(
+        archive,
+        {
+          id: String(emp.id),
+          employee_code: String(emp.employee_code ?? ""),
+          name: String(emp.name ?? ""),
+          photo_url: emp.photo_url,
+          avatar_url: emp.avatar_url,
+        },
+        `${safeCode}_${safeName}`,
       );
-      const panPath = urlToLocalPath((panDoc as RowDataPacket | undefined)?.file_url ?? null);
-      if (fileExists(panPath)) {
-        const ext = path.extname(panPath!);
-        archive.file(panPath!, { name: `${folder}/PAN_Card${ext}` });
-        manifest.push("✓ PAN_Card" + ext);
-      } else {
-        manifest.push("✗ PAN document not available");
-      }
-
-      const photoPath = urlToLocalPath(emp.photo_url ?? emp.avatar_url ?? null);
-      if (fileExists(photoPath)) {
-        const ext = path.extname(photoPath!);
-        archive.file(photoPath!, { name: `${folder}/Photo${ext}` });
-        manifest.push("✓ Photo" + ext);
-      } else {
-        manifest.push("✗ Photo not available");
-      }
-
-      try {
-        const bankPdf = await generateBankInfoPdf(emp.id as string);
-        archive.append(bankPdf, { name: `${folder}/Bank_Information.pdf` });
-        manifest.push("✓ Bank_Information.pdf");
-      } catch {
-        manifest.push("✗ Bank info unavailable");
-      }
-
-      archive.append(manifest.join("\n"), { name: `${folder}/manifest.txt` });
+      index.push(`${emp.employee_code},"${String(emp.name ?? "").replace(/"/g, '""')}",${packed.found},${packed.missing}`);
     }
+
+    // A top-level index, so a 200-employee archive can be checked without
+    // opening 200 manifests to find which packs are short of a document.
+    archive.append(index.join("\n"), { name: "INDEX.csv" });
 
     await archive.finalize();
 
@@ -330,7 +751,7 @@ esiRegDocsRouter.post(
       employee_ids,
       count: employee_ids.length,
     });
-  }
+  })
 );
 
 // ── Route: CSV export ─────────────────────────────────────────────────────────
@@ -338,12 +759,18 @@ esiRegDocsRouter.post(
 esiRegDocsRouter.get(
   "/esi-reg-docs/export-csv",
   requireRole(...ESI_ROLES),
-  async (req: Request, res: Response) => {
+  h(async (req: Request, res: Response) => {
     const actorId = (req as any).authUser?.id ?? "unknown";
     const branchId = req.query.branch_id as string | undefined;
 
+    // Same scope as the list above, deliberately — an export that disagrees with
+    // the screen it was exported from is worse than no export. See the fix note
+    // on the list query above: this must select eligible-but-not-yet-registered
+    // employees, not the inverted "already has a number OR eligible" population.
     const whereParts = [
-      `(e.esic_number IS NOT NULL OR esi.esi_eligible = 1)`,
+      `e.active_status = 1`,
+      `esi.esi_eligible = 1`,
+      `COALESCE(NULLIF(e.esic_number, ''), NULLIF(esi.esi_number, '')) IS NULL`,
       `e.employment_status != 'terminated'`,
     ];
     const params: unknown[] = [];
@@ -352,23 +779,46 @@ esiRegDocsRouter.get(
       params.push(branchId);
     }
 
+    // All ESI Form 1 fields in the same sequence used to fill the ESIC portal,
+    // plus doc-readiness columns so Payroll HR can see at a glance what is missing.
+    // account_number is unmasked: this CSV is a controlled HR export, not a
+    // client-facing document, and ESI registration requires the full account number.
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          e.employee_code,
          CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS name,
-         COALESCE(b.branch_name, '')                       AS branch,
-         e.esic_number,
+         COALESCE(e.father_name, '')                        AS father_name,
+         e.date_of_birth,
+         e.gender,
+         e.marital_status,
+         COALESCE(e.mobile, e.personal_phone, '')           AS mobile,
+         COALESCE(e.address1, e.address_line1, '')          AS address1,
+         COALESCE(e.address2, e.address_line2, '')          AS address2,
+         COALESCE(e.city, '')                               AS city,
+         COALESCE(e.state, '')                              AS state,
+         COALESCE(e.pincode, '')                            AS pincode,
          e.pan_number,
-         -- ESI registration needs the Aadhaar as well as the PAN, and this export never
-         -- carried it. employees.aadhaar_number is the populated source (1,050 of 1,116
-         -- active); employee_statutory_info.aadhaar_id is the fallback for the rows that
-         -- were written through the statutory path instead. Added 2026-09-02.
          COALESCE(NULLIF(e.aadhaar_number, ''), NULLIF(esi.aadhaar_id, '')) AS aadhaar_number,
-         (SELECT ebd.bank_name FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS bank_name,
-         (SELECT ebd.account_number FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS account_number,
-         (SELECT ebd.ifsc_code FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS ifsc_code,
-         (SELECT ebd.account_type FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS account_type,
-         (SELECT COUNT(*) FROM employee_documents ed WHERE ed.employee_id = e.id AND ed.doc_category = 'pan') > 0 AS pan_ready,
+         e.esic_number,
+         COALESCE(b.branch_name, '')                        AS branch,
+         e.uan_number,
+         e.epf_number,
+         COALESCE(e.nominee_name, '')                       AS nominee_name,
+         COALESCE(e.nominee_relation, '')                   AS nominee_relation,
+         (SELECT ebd.bank_name        FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS bank_name,
+         (SELECT ebd.account_number   FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS account_number,
+         (SELECT ebd.ifsc_code        FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS ifsc_code,
+         (SELECT ebd.account_type     FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS account_type,
+         (
+           (e.pan_number IS NOT NULL AND e.pan_number != '')
+           OR (SELECT COUNT(*) FROM employee_documents ed WHERE ed.employee_id = e.id AND ed.doc_category = 'pan') > 0
+           OR EXISTS (
+               SELECT 1 FROM candidate_onboarding_document d
+               JOIN ats_onboarding_bridge ab ON ab.candidate_id = d.candidate_id
+               WHERE ab.employee_id = e.id AND d.deleted_at IS NULL
+                 AND LOWER(d.doc_type) IN ('pan', 'pan card', 'pan_card')
+           )
+         )                                                  AS pan_ready,
          (e.photo_url IS NOT NULL OR e.avatar_url IS NOT NULL) AS photo_ready,
          (SELECT COUNT(*) FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id AND ebd.ifsc_code IS NOT NULL) > 0 AS bank_ready
        FROM employees e
@@ -379,20 +829,49 @@ esiRegDocsRouter.get(
       params
     );
 
-    const mask = (acct: string | null) => (acct ? `****${acct.slice(-4)}` : "");
+    const fmtDate = (d: unknown) => {
+      if (!d) return "";
+      const parsed = new Date(d as string);
+      return Number.isNaN(parsed.getTime()) ? "" : parsed.toLocaleDateString("en-IN");
+    };
+    const q = (s: unknown) => `"${String(s ?? "").replace(/"/g, '""')}"`;
 
-    const header = "Emp Code,Name,Branch,ESIC Number,PAN Number,Aadhaar Number,Bank Name,Account Number (Masked),IFSC Code,Account Type,PAN Ready,Photo Ready,Bank Ready\n";
+    // Column sequence matches ESI Form 1 / ESIC portal registration fields
+    const header = [
+      "Emp Code", "Name", "Father / Husband Name", "Date of Birth", "Gender",
+      "Marital Status", "Mobile", "Address Line 1", "Address Line 2", "City",
+      "State", "Pincode", "PAN Number", "Aadhaar Number", "ESIC Number",
+      "Branch / Establishment", "UAN Number", "EPF Number",
+      "Nominee Name", "Nominee Relation",
+      "Bank Name", "Account Number", "IFSC Code", "Account Type",
+      "PAN Ready", "Photo Ready", "Bank Ready",
+    ].join(",") + "\n";
+
     const csvRows = (rows as RowDataPacket[])
       .map((r) =>
         [
           r.employee_code,
-          `"${(r.name ?? "").replace(/"/g, '""')}"`,
-          `"${(r.branch ?? "").replace(/"/g, '""')}"`,
-          r.esic_number ?? "",
+          q(r.name),
+          q(r.father_name),
+          fmtDate(r.date_of_birth),
+          r.gender ?? "",
+          r.marital_status ?? "",
+          r.mobile ?? "",
+          q(r.address1),
+          q(r.address2),
+          q(r.city),
+          q(r.state),
+          r.pincode ?? "",
           r.pan_number ?? "",
           r.aadhaar_number ?? "",
-          `"${(r.bank_name ?? "").replace(/"/g, '""')}"`,
-          mask(r.account_number ?? null),
+          r.esic_number ?? "",
+          q(r.branch),
+          r.uan_number ?? "",
+          r.epf_number ?? "",
+          q(r.nominee_name),
+          q(r.nominee_relation),
+          q(r.bank_name),
+          r.account_number ?? "",
           r.ifsc_code ?? "",
           r.account_type ?? "",
           r.pan_ready ? "Yes" : "No",
@@ -408,5 +887,5 @@ esiRegDocsRouter.get(
     res.send("\uFEFF" + header + csvRows);
 
     await writeAuditLog("esi_reg_csv_export", actorId, null, { branch_id: branchId ?? "all" });
-  }
+  })
 );

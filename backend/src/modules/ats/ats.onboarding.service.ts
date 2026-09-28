@@ -1,12 +1,15 @@
-import { randomUUID, createHash } from 'crypto';
+import { randomUUID } from 'crypto';
 import { RowDataPacket, PoolConnection } from 'mysql2/promise';
 import { db } from '../../db/mysql.js';
+import { hashPiiForMatch } from '../../shared/piiHash.js';
 import { env } from '../../config/env.js';
 import { hasScopedAccess } from '../../shared/scopeAccess.js';
 import { recordBranchHeadDecision, revertBranchHeadDecision } from './branch-head-approval.record.js';
 import { resolveEmployeeIdForAuthUser, resolveBranchHeadScope } from './branch-head-scope.js';
 import { inboxService } from '../inbox/inbox.service.js';
 import { calculateSalary, SalaryComponents } from './salary.calculator.js';
+import { resolveBandPct } from './band-package-ratio.service.js';
+import { parseCtcInput } from './ctc-parser.js';
 import {
   sendOnboardingTokenEmail,
   sendBankResubmitEmail,
@@ -15,17 +18,14 @@ import {
   sendRejectedEmail,
 } from './ats.email.service.js';
 import { createTemporaryPasswordCredential } from '../auth/tempPassword.service.js';
-import { getIstDateString } from '../../utils/dateUtils.js';
+import { getIstDateString, assertNotBeforeToday, canBackdateDates } from '../../utils/dateUtils.js';
 import { providerFactory } from '../communication/providers/provider.factory.js';
 import { buildSMS } from '../communication/smartping-dlt-registry.js';
 import { hasLiveSelfieDocument } from './onboarding-full.service.js';
 
 // ── PII Helpers ───────────────────────────────────────────────────────────────
 
-function hashPii(value: unknown): string | null {
-  if (value == null || value === '') return null;
-  return createHash('sha256').update(String(value)).digest('hex');
-}
+const hashPii = hashPiiForMatch;
 
 function maskAadhaar(value: unknown): string | null {
   if (value == null || value === '') return null;
@@ -202,10 +202,15 @@ export async function sendOnboardingToken(
     try {
       const smsProvider = providerFactory.getProvider('sms');
       const { dltContentId, body: smsBody } = buildSMS('onboarding_link', { name: cand.full_name });
-      await withDeliveryTimeout(
+      const smsResult = await withDeliveryTimeout(
         smsProvider.send(cand.mobile, dltContentId, smsBody),
         `SMS delivery for ${candidateId}`,
       );
+      // A provider resolves {success:false} rather than throwing on a deliverable-but-failed
+      // send (e.g. paused via communication_provider_config.send_blocked), and withDeliveryTimeout
+      // resolves null on a timeout rather than throwing either — awaiting either without checking
+      // reported smsSent=true regardless, silently.
+      if (!smsResult?.success) throw new Error(smsResult?.error ?? 'SMS provider reported failure');
       smsSent = true;
     } catch (smsErr) {
       // SMS failure must not block token generation — log and continue
@@ -439,15 +444,49 @@ export async function submitProfile(token: string, profile: Record<string, unkno
 
 // ── HR: List Onboarding Requests ──────────────────────────────────────────────
 
+/**
+ * Capped at the most recent 500, owner-approved 2026-09-22 as a quick fix for
+ * the page taking 13.5s to load: this had no LIMIT at all, joined 6 tables plus
+ * 2 correlated per-row subqueries, and returned the entire onboarding-request
+ * history on every load — the page then filters/counts all of it client-side
+ * (search box, status tabs) the same way the Appointment Letters queue already
+ * caps at 200 for the same reason (see that queue's own comment). A request
+ * older than the 500 most recent will drop out of the list and its tab count
+ * until real server-side pagination + counts replace this — accepted tradeoff
+ * for now, not the final shape.
+ */
 export async function listOnboardingRequests(scopeFilter: { sql: string; params: unknown[] }) {
-  const [rows] = await db.execute<RowDataPacket[]>(
+  // db.query, not db.execute — load-bearing. Measured live 2026-09-22: this exact
+  // SQL/data ran in 561ms via a direct mysql client (text protocol) but 8.7s
+  // through db.execute() (prepared/binary protocol) — MySQL's prepared-statement
+  // planner picked a far worse plan for this multi-join query than the ad-hoc
+  // text-protocol planner did. Same fix already applied to the joining-documents
+  // tracker's main query for the identical reason (see that file's own comment);
+  // this query just hadn't been touched yet.
+  const [rows] = await db.query<RowDataPacket[]>(
     `SELECT r.id, r.status, r.created_at,
             c.id AS candidate_id, c.candidate_code, c.full_name, c.mobile,
             c.email, c.profile_status, c.applied_for_process,
             c.candidate_status,
             r.branch_id,
             COALESCE(b.branch_name, c.branch_display_name, c.branch_text, c.applied_for_branch) AS branch_name,
+            -- applied_for_process is VARCHAR holding a process_master id on some rows
+            -- (e.g. entered via a cost-centre-linked offer) and a process name on
+            -- others (e.g. typed on the walk-in form) — same ambiguity already
+            -- handled in listPendingApprovals() above; resolve it the same way here
+            -- so this list stops printing raw process_master UUIDs to HR.
+            (SELECT proc.process_name FROM process_master proc
+              WHERE proc.id = c.applied_for_process OR proc.process_name = c.applied_for_process
+              ORDER BY (proc.id = c.applied_for_process) DESC, proc.process_name
+              LIMIT 1) AS process_name,
+            -- The raw label, only when it is not an unresolved id — showing a raw
+            -- UUID is worse than showing nothing.
+            CASE
+              WHEN c.applied_for_process REGEXP '^[0-9a-f]{8}-[0-9a-f]{4}-' THEN NULL
+              ELSE NULLIF(TRIM(c.applied_for_process), '')
+            END AS process_raw,
             o.id AS offer_id, o.status AS offer_status, o.offered_ctc,
+            o.date_of_joining AS offer_date_of_joining, o.date_of_salary AS offer_date_of_salary,
             ob.employee_id, e.employee_code,
             e.joining_document_status, e.joining_document_completion_pct,
             p.profile_status AS form_step,
@@ -465,7 +504,8 @@ export async function listOnboardingRequests(scopeFilter: { sql: string; params:
      LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
      LEFT JOIN candidate_onboarding_bank_detail bank ON bank.candidate_id = c.id
      WHERE (${scopeFilter.sql})
-     ORDER BY r.created_at DESC`,
+     ORDER BY r.created_at DESC
+     LIMIT 500`,
     scopeFilter.params,
   );
   return rows;
@@ -535,6 +575,74 @@ export async function clearCandidateNotJoining(candidateId: string, actorUserId:
     entity_id: candidateId,
   });
   return { candidateId };
+}
+
+// ── HR/Admin: Change a candidate's onboarding branch ─────────────────────────
+//
+// ats_onboarding_request.branch_id is written once, at request creation
+// (INSERT above), and nothing has ever updated it since — there was no route,
+// button or admin tool to fix a branch entered wrong at intake. That same
+// column is what listOnboardingRequests() joins for the displayed branch name
+// AND what buildScopeWhereClause() keys branch-HR visibility on
+// (backend/src/shared/scopeAccess.ts) — so a wrong branch here is not cosmetic,
+// it silently hides the candidate from the correct branch HR's queue with no
+// error anywhere. ats_candidate.applied_for_branch (edited via the general
+// PUT /candidates/:id) is a *different*, free-text column and does not affect
+// either of those — updating it alone does not fix visibility.
+export async function changeCandidateBranch(
+  candidateId: string,
+  newBranchId: string,
+  actorUserId: string,
+  reason: string,
+): Promise<{ candidateId: string; branchId: string; branchName: string }> {
+  const trimmedReason = String(reason ?? '').trim();
+  if (!trimmedReason) {
+    throw Object.assign(new Error('A reason is required to change a candidate\'s branch'), { statusCode: 400 });
+  }
+
+  const [branchRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, branch_name FROM branch_master WHERE id = ? AND active_status = 1 LIMIT 1`,
+    [newBranchId],
+  );
+  const newBranch = (branchRows as RowDataPacket[])[0];
+  if (!newBranch) {
+    throw Object.assign(new Error('Branch not found or inactive'), { statusCode: 400 });
+  }
+
+  const [reqRows] = await db.execute<RowDataPacket[]>(
+    `SELECT r.id AS request_id, r.branch_id AS old_branch_id, b.branch_name AS old_branch_name
+       FROM ats_onboarding_request r
+       LEFT JOIN branch_master b ON b.id = r.branch_id
+      WHERE r.candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const existing = (reqRows as RowDataPacket[])[0];
+  if (!existing) {
+    throw Object.assign(new Error('No onboarding request found for this candidate'), { statusCode: 404 });
+  }
+
+  if (existing.old_branch_id === newBranchId) {
+    return { candidateId, branchId: newBranchId, branchName: String(newBranch.branch_name) };
+  }
+
+  await db.execute(
+    `UPDATE ats_onboarding_request SET branch_id = ?, updated_at = NOW() WHERE candidate_id = ?`,
+    [newBranchId, candidateId],
+  );
+
+  const { logSensitiveAction } = await import('../../shared/auditLog.js');
+  await logSensitiveAction({
+    actor_user_id: actorUserId,
+    action_type: 'CANDIDATE_BRANCH_CHANGED',
+    module_key: 'ats_onboarding',
+    entity_type: 'ats_onboarding_request',
+    entity_id: String(existing.request_id),
+    reason: trimmedReason,
+    old_value_json: { branch_id: existing.old_branch_id ?? null, branch_name: existing.old_branch_name ?? null },
+    new_value_json: { branch_id: newBranchId, branch_name: newBranch.branch_name },
+  });
+
+  return { candidateId, branchId: newBranchId, branchName: String(newBranch.branch_name) };
 }
 
 // ── HR: Send Progress Reminder to Candidate ──────────────────────────────────
@@ -619,10 +727,14 @@ export async function sendOnboardingProgressReminder(
   if (row.mobile) {
     try {
       const waProvider = providerFactory.getProvider('whatsapp');
-      await withDeliveryTimeout(
+      const waResult = await withDeliveryTimeout(
         waProvider.send(row.mobile, 'Onboarding Reminder', whatsappBody),
         `reminder WhatsApp for ${candidateId}`,
       );
+      // Same class of gap as the SMS site above: a resolved {success:false} (e.g. paused via
+      // send_blocked) or a withDeliveryTimeout timeout (resolves null) is not a thrown error, so
+      // it must be checked explicitly or this channel is reported delivered regardless.
+      if (!waResult?.success) throw new Error(waResult?.error ?? 'WhatsApp provider reported failure');
       sent.push('whatsapp');
     } catch (e) {
       console.error('[reminder] WhatsApp failed for', candidateId, e instanceof Error ? e.message : String(e));
@@ -708,6 +820,14 @@ async function deriveSalaryValidationFromOffer(candidateId: string, actorUserId:
     [candidateId],
   );
 
+  // Clamp date_of_salary to date_of_joining if somehow it arrived earlier — this
+  // should never happen after the saveOffer() guard, but a raw DB row or a future
+  // caller that bypasses that path must not propagate a bad value downstream.
+  const dojStr  = String(o.date_of_joining ?? '').slice(0, 10);
+  const dosRaw  = blankToNull(o.date_of_salary);
+  const dosStr  = dosRaw ? String(dosRaw).slice(0, 10) : null;
+  const safeDos = dosStr && dojStr && dosStr < dojStr ? null : dosRaw; // null → COALESCE falls back to joining_date
+
   if (existing[0]) {
     await db.execute(
       `UPDATE ats_payroll_hr_validation
@@ -722,13 +842,14 @@ async function deriveSalaryValidationFromOffer(candidateId: string, actorUserId:
       // salary_start_date = COALESCE(?, joining_date): "" is not the NULL
       // sentinel, so a blank salary-start date threw ER_TRUNCATED_WRONG_VALUE
       // instead of falling back to the joining date.
-      [empType, o.gross, o.date_of_joining, blankToNull(o.date_of_salary),
+      [empType, o.gross, o.date_of_joining, safeDos,
        o.department_id ?? null, o.designation_id ?? null, o.cost_centre ?? null,
        o.reporting_manager_id ?? null, o.branch_id ?? null,
        o.basic ?? null, o.hra ?? null, o.conveyance ?? null, o.special_allowance ?? null,
        payrollHrId, String(existing[0].id)],
     );
   } else {
+    const ssdForInsert = safeDos ?? o.date_of_joining; // always >= date_of_joining
     await db.execute(
       `INSERT INTO ats_payroll_hr_validation
          (id, candidate_id, branch_id, payroll_hr_id, employment_type,
@@ -740,7 +861,7 @@ async function deriveSalaryValidationFromOffer(candidateId: string, actorUserId:
        o.department_id ?? null, o.designation_id ?? null, o.cost_centre ?? null,
        o.reporting_manager_id ?? null,
        o.gross, o.basic ?? null, o.hra ?? null, o.conveyance ?? null, o.special_allowance ?? null,
-       o.date_of_joining, o.date_of_salary ?? o.date_of_joining],
+       o.date_of_joining, ssdForInsert],
     );
   }
 
@@ -787,9 +908,10 @@ export async function saveOffer(
   offerData: Record<string, unknown>,
   createdBy: string,
   submit: boolean,
+  actorRoles?: readonly string[],
 ) {
   const [existing] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM ats_employment_offer WHERE onboarding_request_id = ?`,
+    `SELECT id, date_of_joining, date_of_salary FROM ats_employment_offer WHERE onboarding_request_id = ?`,
     [requestId],
   );
 
@@ -816,17 +938,112 @@ export async function saveOffer(
     bhEmail = (bhRows as RowDataPacket[])[0]?.email ?? null;
   }
 
-  const [bandRows] = await db.execute<RowDataPacket[]>(
-    `SELECT basic_pct, hra_pct FROM salary_band_master WHERE band_code = ?`,
-    [offerData.salary_band ?? 'D'],
-  ).catch(() => [[] as RowDataPacket[]]);
-  const band = (bandRows as RowDataPacket[])[0] ?? { basic_pct: 40, hra_pct: 40 };
-  const components: SalaryComponents = calculateSalary(
-    Number(offerData.offered_ctc),
-    Number(band.basic_pct),
-    Number(band.hra_pct),
-    false,
+  // Parsed once, defensively -- offerData.offered_ctc arrives as a plain number from
+  // the current frontend, but this is the one place a comma/period-grouped string
+  // (a direct API call, or a future caller) would otherwise silently corrupt the
+  // whole offer. See ctc-parser.ts for the exact bug this closes.
+  const annualCtcInput = parseCtcInput(offerData.offered_ctc);
+  if (annualCtcInput === null || !Number.isFinite(annualCtcInput) || annualCtcInput <= 0) {
+    throw Object.assign(
+      new Error(`Offered CTC "${String(offerData.offered_ctc)}" could not be read as a valid amount.`),
+      { statusCode: 400 },
+    );
+  }
+
+  // salary_band_master has no basic_pct/hra_pct columns -- that lookup always
+  // threw and silently defaulted to 40/40 for every band. Derive the split
+  // from salary_package_master instead: the canonical master Payroll Head's
+  // tools already read. See band-package-ratio.service.ts.
+  const band = await resolveBandPct(
+    typeof offerData.salary_band === 'string' ? offerData.salary_band : null,
+    annualCtcInput / 12,
   );
+  // Default true (deduct) to match the column's own DB default when a caller
+  // omits the field entirely — only an explicit false opts the candidate out.
+  const pfEligible = offerData.pf_eligible !== false && offerData.pf_eligible !== 0;
+  const esiEligible = offerData.esi_eligible !== false && offerData.esi_eligible !== 0;
+  let stateCode: string | null = null;
+  if (req.branch_id) {
+    const [stateRows] = await db.execute<RowDataPacket[]>(
+      `SELECT state FROM branch_master WHERE id = ? LIMIT 1`,
+      [req.branch_id],
+    ).catch(() => [[] as RowDataPacket[]] as [RowDataPacket[]]);
+    stateCode = (stateRows as RowDataPacket[])[0]?.state ?? null;
+  }
+  const components: SalaryComponents = await calculateSalary(
+    annualCtcInput,
+    band.basicPct,
+    band.hraPct,
+    false,
+    undefined,
+    pfEligible,
+    esiEligible,
+    stateCode,
+  );
+
+  // Persisted so an out-of-band CTC carries its justification with it, not just
+  // a transient flag the request forgets the moment it is handled -- an
+  // approver reading this offer later (Branch Head or Payroll Head) has no
+  // other way to know WHY it bypassed the band-range check below.
+  const isProposedException = Boolean(offerData.is_proposed_exception)
+    && String(offerData.proposed_reason ?? '').trim().length > 0;
+  const proposedExceptionReason = isProposedException
+    ? String(offerData.proposed_reason).trim().slice(0, 500)
+    : null;
+
+  // A submitted offer's CTC/gross/net feed straight into both the Branch Head
+  // and Payroll Head approval screens -- both read ats_employment_offer
+  // directly, so this is the one canonical place that value comes from.
+  // Nothing before this point rejected a non-positive or nonsensically low
+  // "Monthly CTC" -- a blank/zero field (client-side validation only checked
+  // truthiness, so the *string* "0" passed) or a fat-fingered figure like
+  // "16.5" instead of "16,500" was silently saved. That produced ₹0 (or
+  // near-₹0) CTC/gross rows with a negative net-in-hand once the flat
+  // professional-tax deduction was applied on top, mixed in with correctly
+  // priced offers in the same queue. Guarded once, here, for every caller.
+  if (submit) {
+    const monthlyCtc = components.offered_ctc;
+    if (!Number.isFinite(monthlyCtc) || monthlyCtc <= 0) {
+      throw Object.assign(
+        new Error('Monthly CTC must be greater than zero to submit an offer.'),
+        { statusCode: 400 },
+      );
+    }
+    if (!isProposedException) {
+      const [slabRows] = await db.execute<RowDataPacket[]>(
+        `SELECT slab_from, slab_to FROM salary_band_master WHERE band_code = ? AND active_status = 1`,
+        [offerData.salary_band ?? null],
+      ).catch(() => [[] as RowDataPacket[]]);
+      const slab = (slabRows as RowDataPacket[])[0];
+      if (slab && (monthlyCtc < Number(slab.slab_from) || monthlyCtc > Number(slab.slab_to))) {
+        throw Object.assign(
+          new Error(
+            `Monthly CTC ₹${monthlyCtc.toLocaleString('en-IN')} is outside Band ${offerData.salary_band}'s ` +
+            `range (₹${Number(slab.slab_from).toLocaleString('en-IN')}–₹${Number(slab.slab_to).toLocaleString('en-IN')}). ` +
+            `Pick a package from the salary master or correct the CTC.`
+          ),
+          { statusCode: 400 },
+        );
+      }
+    }
+  }
+
+  // date_of_salary must not precede date_of_joining — same data-integrity rule as
+  // employee.service.ts. Caught here for every save path (draft + submit).
+  const _doj = String(offerData.date_of_joining ?? '').slice(0, 10);
+  const _dos = String(offerData.date_of_salary ?? '').slice(0, 10);
+  if (_doj && _dos && _dos < _doj) {
+    throw Object.assign(
+      new Error(`Salary start date (${_dos}) cannot be before date of joining (${_doj}).`),
+      { statusCode: 400, code: 'SALARY_START_BEFORE_JOINING' }
+    );
+  }
+
+  // Date lock: joining / salary dates cannot be set (or moved) to before today.
+  const _prev = (existing as RowDataPacket[])[0];
+  const _allowPast = canBackdateDates(actorRoles);
+  assertNotBeforeToday(_doj, 'Date of joining', _prev?.date_of_joining, _allowPast);
+  assertNotBeforeToday(_dos, 'Salary start date', _prev?.date_of_salary, _allowPast);
 
   const status = submit ? 'submitted' : 'draft';
   const submittedAt = submit ? new Date() : null;
@@ -845,6 +1062,8 @@ export async function saveOffer(
          da = ?, special_allowance = ?, other_allowance = ?, bonus = ?, gross = ?,
          pf_employee = ?, pf_employer = ?, esic_employee = ?, esic_employer = ?,
          professional_tax = ?, gratuity = ?, admin_charges = ?, net_in_hand = ?,
+         pf_eligible = ?, esi_eligible = ?,
+         is_proposed_exception = ?, proposed_exception_reason = ?,
          status = ?, submitted_at = ?, updated_at = NOW()
        WHERE id = ?`,
       [
@@ -856,6 +1075,8 @@ export async function saveOffer(
         components.da, components.special_allowance, components.other_allowance, components.bonus, components.gross,
         components.pf_employee, components.pf_employer, components.esic_employee, components.esic_employer,
         components.professional_tax, components.gratuity, components.admin_charges, components.net_in_hand,
+        pfEligible ? 1 : 0, esiEligible ? 1 : 0,
+        isProposedException ? 1 : 0, proposedExceptionReason,
         status, submittedAt,
         offerId,
       ],
@@ -869,8 +1090,10 @@ export async function saveOffer(
           salary_band, offered_ctc, basic, hra, conveyance, da, special_allowance,
           other_allowance, bonus, gross, pf_employee, pf_employer, esic_employee, esic_employer,
           professional_tax, gratuity, admin_charges, net_in_hand,
+          pf_eligible, esi_eligible,
+          is_proposed_exception, proposed_exception_reason,
           status, created_by, submitted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         offerId, requestId, req.candidate_id,
         offerData.emp_type ?? 'OnRoll', offerData.date_of_joining, offerData.date_of_salary ?? null,
@@ -881,6 +1104,8 @@ export async function saveOffer(
         components.da, components.special_allowance, components.other_allowance, components.bonus, components.gross,
         components.pf_employee, components.pf_employer, components.esic_employee, components.esic_employer,
         components.professional_tax, components.gratuity, components.admin_charges, components.net_in_hand,
+        pfEligible ? 1 : 0, esiEligible ? 1 : 0,
+        isProposedException ? 1 : 0, proposedExceptionReason,
         status, createdBy, submittedAt,
       ],
     );
@@ -995,82 +1220,20 @@ export async function saveOffer(
 // ── Branch Head: List Pending Approvals ───────────────────────────────────────
 
 export async function listPendingApprovals(scopeFilter: { sql: string; params: unknown[] }) {
+  // Step 1: main query — no correlated subqueries, just the base columns.
+  // process_name / process_is_designation / payroll_* are resolved below from
+  // three pre-batch queries, reducing N+1 (5 subqueries × N offers) to 3 fixed
+  // round-trips regardless of queue size.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT o.id AS offer_id, o.offered_ctc, o.gross, o.net_in_hand,
             o.emp_type, o.date_of_joining, o.salary_band, o.status AS offer_status,
+            o.is_proposed_exception, o.proposed_exception_reason,
             r.id AS request_id, r.branch_id,
             c.id AS candidate_id, c.candidate_code, c.full_name, c.email, c.mobile,
             c.father_name, c.date_of_birth, c.profile_status,
+            c.applied_for_process,
             b.branch_name,
-            -- Cost centre and process, so the branch head can see WHAT they are
-            -- approving a head against and not just who. The offer already
-            -- carries the cost centre; nothing surfaced it.
-            cc.cost_centre_code, cc.cost_centre_name, cc.client_name,
-            -- Process is not on the offer and not on the cost centre either —
-            -- cost_centre_master.process_id is NULL on every row in production,
-            -- so it cannot be the source. It comes from the candidate, where
-            -- applied_for_process is VARCHAR holding a process_master id on some
-            -- rows and a process name on others; resolve both.
-            -- Scalar subqueries, not joins. Both masters hold duplicate names —
-            -- 'Team Leader' is in designation_master twice, and process_master
-            -- has two 'BSS-OTHERS', two 'C-SAT', two 'CMG -OTHERS' — so a join
-            -- returns the candidate once per duplicate and the branch head sees
-            -- the same person listed twice. A scalar subquery cannot fan out.
-            -- Both tables are ~130 rows, so the OR costs nothing here.
-            (SELECT p.process_name FROM process_master p
-              WHERE p.id = c.applied_for_process OR p.process_name = c.applied_for_process
-              ORDER BY (p.id = c.applied_for_process) DESC, p.process_name
-              LIMIT 1) AS process_name,
-            -- 93 candidates hold a DESIGNATION in applied_for_process rather
-            -- than a process — 'Quality Analyst' (62), 'Team Leader' (26),
-            -- 'Operations' (5). Echoing that as the process is worse than
-            -- showing nothing: it reads as a real mapping and the branch head
-            -- has no way to tell. Flagged so the UI can say what is wrong.
-            EXISTS (SELECT 1 FROM designation_master d
-                     WHERE d.designation_name = c.applied_for_process) AS process_is_designation,
-            -- The raw label, only when it is neither an unresolved id nor a
-            -- designation. Values like 'Housing' and 'GPI' are real campaigns
-            -- that simply are not in process_master, and are worth showing as
-            -- unverified rather than hiding.
-            CASE
-              WHEN c.applied_for_process REGEXP '^[0-9a-f]{8}-[0-9a-f]{4}-' THEN NULL
-              ELSE NULLIF(TRIM(c.applied_for_process), '')
-            END AS process_raw,
-            -- Whether Payroll HR has validated this salary. Employee creation
-            -- requires it (validateSalaryLock), so without this the branch head
-            -- clicks Approve and gets a failure they cannot act on. Surfaced on
-            -- the row so the blocker is visible before the click.
-            -- True when the salary can be established for this offer: either a
-            -- validation row already exists, or the offer carries the figures
-            -- to derive one at approve time. Reporting merely "does a row
-            -- exist" would warn about offers that approve perfectly well.
-            (
-              EXISTS (
-                SELECT 1 FROM ats_payroll_hr_validation pv
-                 WHERE pv.candidate_id = c.id AND pv.validation_status = 'validated'
-              )
-              OR (o.gross IS NOT NULL AND o.date_of_joining IS NOT NULL)
-            ) AS payroll_validated,
-            -- The two dates Payroll HR actually commits to, which are NOT the
-            -- same field as o.date_of_joining above. That column is whatever was
-            -- typed into the Employment Offer form -- in practice the ATS
-            -- walk-in date -- and the UI now labels it as such. These are the
-            -- operative ones: joining_date is day 1 in office and
-            -- salary_start_date is when salary generation begins, both written
-            -- by POST /api/ats/payroll-hr/validate.
-            --
-            -- Scalar subqueries for the reason given above: candidate_id carries
-            -- only INDEX idx_candidate, with no unique constraint, so a join
-            -- would fan the candidate out once per validation row the day a
-            -- second one is written. Ordered so the newest validation wins.
-            (SELECT pv2.joining_date FROM ats_payroll_hr_validation pv2
-              WHERE pv2.candidate_id = c.id
-              ORDER BY pv2.validated_at DESC, pv2.created_at DESC
-              LIMIT 1) AS payroll_joining_date,
-            (SELECT pv3.salary_start_date FROM ats_payroll_hr_validation pv3
-              WHERE pv3.candidate_id = c.id
-              ORDER BY pv3.validated_at DESC, pv3.created_at DESC
-              LIMIT 1) AS payroll_salary_start_date
+            cc.cost_centre_code, cc.cost_centre_name, cc.client_name
      FROM ats_employment_offer o
      JOIN ats_onboarding_request r ON r.id = o.onboarding_request_id
      JOIN ats_candidate c ON c.id = r.candidate_id
@@ -1078,10 +1241,97 @@ export async function listPendingApprovals(scopeFilter: { sql: string; params: u
      LEFT JOIN cost_centre_master cc ON cc.id = o.cost_centre
      WHERE o.status = 'submitted'
        AND (${scopeFilter.sql})
-     ORDER BY o.submitted_at ASC`,
+     ORDER BY o.submitted_at ASC
+     LIMIT 500`,
     scopeFilter.params,
   );
-  return rows;
+
+  if (rows.length === 0) return [];
+
+  // Step 2: process_master (≈130 rows) — load once, build two lookup Maps.
+  // A join would fan out a candidate whenever process_master holds duplicate
+  // names ('BSS-OTHERS' ×2, 'C-SAT' ×2, etc.). Maps resolve both id and name
+  // without fan-out.
+  const [procRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, process_name FROM process_master`,
+  );
+  const procById  = new Map<string, string>();
+  const procByName = new Map<string, string>();
+  for (const p of procRows as any[]) {
+    procById.set(String(p.id), String(p.process_name));
+    if (!procByName.has(String(p.process_name))) {
+      procByName.set(String(p.process_name), String(p.process_name));
+    }
+  }
+
+  // Step 3: designation_master names — for the "applied_for_process is actually
+  // a designation" flag. Load once, store in a Set for O(1) lookup.
+  const [desigRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT designation_name FROM designation_master`,
+  );
+  const desigNames = new Set<string>((desigRows as any[]).map((d) => String(d.designation_name)));
+
+  // Step 4: payroll validations — one query for all candidates in this batch.
+  // Replaces three correlated subqueries (has_validated, joining_date,
+  // salary_start_date) per row. ROW_NUMBER picks the newest validation row;
+  // MAX(CASE WHEN validation_status='validated') checks any row in history.
+  const candidateIds = [...new Set((rows as any[]).map((r) => String(r.candidate_id)))];
+  const pvMap = new Map<string, { hasValidated: boolean; joiningDate: string | null; salaryStartDate: string | null }>();
+  if (candidateIds.length > 0) {
+    const ph = candidateIds.map(() => '?').join(',');
+    const [pvRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         pv.candidate_id,
+         MAX(CASE WHEN pv.validation_status = 'validated' THEN 1 ELSE 0 END) AS has_validated,
+         MAX(CASE WHEN pv.rn = 1 THEN pv.joining_date       ELSE NULL END)   AS latest_joining_date,
+         MAX(CASE WHEN pv.rn = 1 THEN pv.salary_start_date  ELSE NULL END)   AS latest_salary_start_date
+       FROM (
+         SELECT candidate_id, validation_status, joining_date, salary_start_date,
+                ROW_NUMBER() OVER (
+                  PARTITION BY candidate_id
+                  ORDER BY COALESCE(validated_at, created_at) DESC
+                ) AS rn
+         FROM ats_payroll_hr_validation
+         WHERE candidate_id IN (${ph})
+       ) pv
+       GROUP BY pv.candidate_id`,
+      candidateIds,
+    );
+    for (const r of pvRows as any[]) {
+      pvMap.set(String(r.candidate_id), {
+        hasValidated:    Number(r.has_validated) === 1,
+        joiningDate:     (r.latest_joining_date    as string | null) ?? null,
+        salaryStartDate: (r.latest_salary_start_date as string | null) ?? null,
+      });
+    }
+  }
+
+  // Step 5: enrich each row in JS — all lookups are O(1) Map/Set operations.
+  return (rows as any[]).map((row) => {
+    const afp = row.applied_for_process as string | null;
+    const processName = afp
+      ? (procById.get(afp) ?? procByName.get(afp) ?? null)
+      : null;
+    const processIsDesignation = afp ? desigNames.has(afp) : false;
+    const processRaw = afp && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(afp)
+      ? (afp.trim() || null)
+      : null;
+
+    const pv = pvMap.get(String(row.candidate_id));
+    const payrollValidated =
+      (pv?.hasValidated === true) ||
+      (row.gross != null && row.date_of_joining != null);
+
+    return {
+      ...row,
+      process_name:            processName,
+      process_is_designation:  processIsDesignation ? 1 : 0,
+      process_raw:             processRaw,
+      payroll_validated:       payrollValidated ? 1 : 0,
+      payroll_joining_date:    pv?.joiningDate     ?? null,
+      payroll_salary_start_date: pv?.salaryStartDate ?? null,
+    };
+  });
 }
 
 // ── Branch Head: Approve ──────────────────────────────────────────────────────

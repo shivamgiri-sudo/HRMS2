@@ -19,7 +19,7 @@
  */
 
 /** Statuses an exit can leave behind. Anything here must never be auto-reactivated. */
-export const TERMINAL_EXIT_STATUSES = ["inactive", "terminated", "absconded"] as const;
+export const TERMINAL_EXIT_STATUSES = ["inactive", "terminated", "absconded", "not_joined"] as const;
 
 export type TerminalExitStatus = (typeof TERMINAL_EXIT_STATUSES)[number];
 
@@ -49,6 +49,11 @@ export function nonReactivatableSqlList(): string {
  * an absconding, and that is the more specific fact. 'abandonment' maps to the same status —
  * it is the same event under a different label, and having two statuses for it would mean
  * every downstream filter has to remember both.
+ *
+ * 'did_not_join' maps to 'not_joined' — an employee ID was created but the person never
+ * actually started. Kept distinct from 'absconded' (left after actually joining) so
+ * exit/attrition reporting can tell the two apart, rather than reusing 'terminated' or
+ * 'absconded' for an event that is factually neither.
  */
 export function employmentStatusForExit(
   exitType: string | null | undefined,
@@ -56,6 +61,7 @@ export function employmentStatusForExit(
 ): TerminalExitStatus {
   const sub = String(exitSubType ?? "").trim().toLowerCase();
   if (sub === "absconding" || sub === "abandonment") return "absconded";
+  if (sub === "did_not_join") return "not_joined";
   if (sub === "termination") return "terminated";
 
   const type = String(exitType ?? "").trim().toLowerCase();

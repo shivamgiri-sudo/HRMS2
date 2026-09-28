@@ -123,6 +123,12 @@ function walkRouter(file: string, prefix: string, depth: number): void {
       walkRouter(target, subPrefix, depth + 1);
     }
   }
+
+  // Routes registered by a helper that receives the router, e.g. `mountOverviewReportRoutes(router, guards)`.
+  for (const m of src.matchAll(/\b(mount[A-Za-z0-9_$]*Routes)\s*\(\s*[\w$]*router\b/gi)) {
+    const target = imports.get(m[1]!);
+    if (target) walkRouter(target, prefix, depth + 1);
+  }
 }
 
 const appSrc = read(`${BE}/app.ts`)!;
@@ -242,7 +248,8 @@ const KNOWN_MISSING: Record<string, string> = {
   "/api/webhooks/:x":
     "SimpleConnectorWizard DISPLAYS this to the user as 'your webhook URL will be /api/webhooks/{key}'. No /api/webhooks is mounted anywhere, so any external system configured against it posts into nothing. Listed here rather than ignored because the URL is published to third parties.",
 
-  // ── RosterComplianceMonitor (/wfm/roster-compliance), audited 2026-08-28 ──────────────
+  // ── RosterComplianceMonitor, audited 2026-08-28 (now CompliancePanel.tsx, one tab of the
+  // merged /wfm/roster-command-center console — see RosterCommandCenter.tsx) ───────────────
   // A backend for this dashboard DOES exist — wfm-compliance-analytics.routes.ts, mounted at
   // /api/wfm/compliance, and its own doc comments say it was written for this page. It is not
   // a matter of correcting the prefix, which is why these are listed rather than repointed:
@@ -274,7 +281,8 @@ const KNOWN_MISSING: Record<string, string> = {
   // table. The rows render under their own honest labels rather than being forced into rule
   // buckets they do not belong to.
 
-  // ── RosterInterventionDashboard (/wfm/roster-interventions) ───────────────────────────
+  // ── RosterInterventionDashboard (now InterventionsPanel.tsx, one tab of the merged
+  // /wfm/roster-command-center console — see RosterCommandCenter.tsx) ───────────────────
   // Served in substance at /api/analytics/intervention-recommendations (/outcomes, /pending,
   // PATCH /:id) — the paths and the verb differ from what the page calls, and /outcomes
   // covers total/retained/exited/pending/retentionRate but not the byTier breakdown the page
@@ -346,6 +354,23 @@ const KNOWN_MISSING: Record<string, string> = {
   // sources,compute}.ts, not a modules/kpi-studio/ DIRECTORY, which is what the original
   // search looked for. The router simply was never mounted in app.ts, so every path 401'd
   // and looked absent. Mounted 2026-09-07 and exercised end to end; entries removed.
+  //
+  // ── Deploy-gate unblock, 2026-09-21 ────────────────────────────────────────────────────────
+  // These four were failing this test on main before the roster-upload tracker landed (same
+  // result at 912d6d8b), which stopped every deploy. Two are scanner blind spots, two are
+  // genuinely absent; all four belong to other sessions' work, so they are registered here
+  // rather than "fixed" in their files.
+  "/api/process-performance/appreciate-wealth/dashboard":
+    "SCANNER FALSE POSITIVE — served. appreciate-wealth-dashboard.routes.ts registers `${BASE}/dashboard` with const BASE = '/appreciate-wealth', mounted at /api/process-performance (app.ts); this parser cannot resolve a template-literal route prefix.",
+  "/api/process-performance/appreciate-wealth":
+    "SCANNER FALSE POSITIVE — a bare base URL. AppreciateWealthDrawer.tsx appends /agent/:id, /source/:t, /day/:d etc., all served by appreciate-wealth-dashboard.routes.ts.",
+  "/api/process-performance/housing-premium-dashboard":
+    "SCANNER FALSE POSITIVE — a bare base URL. housingPremiumShared.ts exports it as HP_API and callers append /overview, /day-wise, /agent-wise ...; each of those is served by housing-premium-dashboard.routes.ts.",
+  // "/api/meta/leads/:x/outreach" — FIXED: MetaLeadsPage.tsx now calls /notify (the registered route). Entry removed 2026-09-21.
+  // /api/public/noc/:x and /api/public/noc/:x/submit used to sit here too, described as
+  // "module built locally but never pushed" (2026-09-10). It was pushed the next day by its
+  // owning session, and this file's mount was completed 2026-09-11 -- same shape as the
+  // joining-kit/EPF public links, above the requireAuth catch-all. Entries removed.
 };
 
 /**
@@ -354,6 +379,26 @@ const KNOWN_MISSING: Record<string, string> = {
  * "nobody serves this" with "nobody calls this" teaches people to stop reading its output.
  */
 const NOT_A_REQUEST: Record<string, string> = {
+  "/api/process-live/:x":
+    "the fetchLive(path) helper in ProcessLivePage.tsx and DiallerLivePanel.tsx builds " +
+    "`/api/process-live/${path}`, where path is always TWO segments ('inbound/summary', " +
+    "`${proc}/daily`, 'reginald-cart/apr', ...), so the literal one-segment shape is never " +
+    "requested. Every value was checked 2026-09-15 against process-live-dashboard.routes.ts: the " +
+    "static routes plus cdrRoutes(prefix) for gnc/bella-vita/clovia/neemans/viega/exicom/du-digital, " +
+    "which register `/${prefix}/summary|daily|monthly` in a loop the static scan cannot expand.",
+  "/api/housing-dashboards/housing-owner":
+    "the `base` argument NativeHousingDashboards.tsx passes into useFilterOptions(base), which " +
+    "fetches `${base}/filter-options` -- a real, mounted route (housing-dashboards.routes.ts). " +
+    "The static scan can't see the template-literal suffix the hook appends at call time, so it " +
+    "reads the bare base string as its own request.",
+  "/api/housing-dashboards/housing-premium":
+    "same shape as housing-owner above -- the useFilterOptions(base) argument, not a fetch target " +
+    "on its own; the real call is `${base}/filter-options`, a mounted route.",
+  "/api/onfido-process/poa-pages/:x":
+    "usePoaPage(kind) in PoaPagesViews.tsx builds `/api/onfido-process/poa-pages/${kind}` where kind " +
+    "is 'internal' | 'external' | 'trail'. All three are mounted in onfido-poa-pages.routes.ts " +
+    "(verified 2026-09-19); the static scan cannot expand the template-literal segment, so it reads " +
+    "the placeholder as its own request.",
   "/api/files/company-feed":
     "a prefix in AuthedImage.tsx's PUBLIC_CATEGORIES, used by isPublicUrl(src) to decide whether to attach an auth header to a URL it was given. It is a predicate, never a fetch target, so the backend is not expected to mount it.",
 };

@@ -258,6 +258,44 @@ const PrivacyPolicy = () => {
         </div>
       </section>
 
+      {/* META Lead Ads data — required by Meta's App Review "User Data Deletion" checklist.
+          This section exists specifically so this page satisfies that requirement when Meta
+          reviews the Data Deletion Instructions URL for app 1417125387021526
+          ("MAS HRMS Lead integration"). Kept separate from the DPDP grievance-officer block
+          above because the two go to different teams and describe different data flows. */}
+      <section className="py-12">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+          <Card className="max-w-4xl mx-auto border-2 border-blue-100 bg-blue-50/40">
+            <CardContent className="p-8">
+              <div className="flex items-start gap-4">
+                <div className="p-3 rounded-xl bg-blue-100 text-blue-700 shrink-0">
+                  <Database className="h-6 w-6" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-semibold mb-2">Facebook &amp; Instagram Lead Ads Data</h2>
+                  <p className="text-muted-foreground text-sm leading-relaxed mb-4">
+                    We use the Meta Graph API to receive job-applicant information (name, phone number,
+                    email address, and any other answers you provide) when you submit a Lead Ad form for
+                    one of our job openings on Facebook or Instagram. We use this information solely to
+                    evaluate your application and contact you about the role — we do not sell it or share
+                    it with third parties, and it is not used for advertising.
+                  </p>
+                  <div className="rounded-xl border-2 border-blue-200 bg-white p-5 space-y-2">
+                    <p className="text-sm font-bold text-slate-800">To request deletion of your Lead Ad data</p>
+                    <p className="text-sm text-muted-foreground">
+                      Email <a href="mailto:hr.noida@teammas.in" className="text-primary font-semibold hover:underline">hr.noida@teammas.in</a>{" "}
+                      with the phone number or email address you used on the form, and the name of the role
+                      you applied for. We will delete your submitted data within 30 days and confirm by email
+                      once complete.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+
       <Footer />
     </div>
   );

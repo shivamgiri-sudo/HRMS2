@@ -152,6 +152,7 @@ export type HiringFilters = {
   search?: string;
   page?: number;
   limit?: number;
+  export?: string;
 };
 
 interface BranchNameRow extends RowDataPacket {
@@ -894,8 +895,11 @@ export async function listHiringActivity(userId: string, role: string | undefine
     }
   }
 
-  const page = Math.max(1, Math.trunc(Number(filters.page) || 1));
-  const limit = Math.min(Math.max(1, Math.trunc(Number(filters.limit) || 50)), 100);
+  const isExport = filters.export === "1";
+  const page = isExport ? 1 : Math.max(1, Math.trunc(Number(filters.page) || 1));
+  const limit = isExport
+    ? Math.min(Math.max(1, Math.trunc(Number(filters.limit) || 10000)), 10000)
+    : Math.min(Math.max(1, Math.trunc(Number(filters.limit) || 50)), 100);
   const offset = (page - 1) * limit;
 
   const [rows] = await db.execute<RowDataPacket[]>(

@@ -25,7 +25,7 @@ import { REPORT_CATALOG } from '../modules/reporting/report-catalog.js';
 // ── Configuration (all values from env) ───────────────────────────────────────
 const WORKER_NAME             = 'report-generation';
 const INTERVAL_MS             = 30_000;
-const STALE_PROCESSING_MINUTES = 10;
+const STALE_PROCESSING_MINUTES = Number(process.env.REPORT_STALE_PROCESSING_MINUTES ?? 25);
 const CHUNK_SIZE              = Number(process.env.REPORT_WORKER_CHUNK_SIZE ?? 5_000);
 const MAX_ROWS                = Number(process.env.REPORT_MAX_XLSX_ROWS ?? 100_000);
 const ATTACHMENT_MAX_BYTES    = Number(process.env.REPORT_ATTACHMENT_MAX_BYTES ?? 20_971_520); // 20 MB
@@ -377,6 +377,9 @@ async function processOneRequest(): Promise<void> {
       scopeSummary,
       rows:                  allRows,
       totalRows:             totalWritten,
+      // Restricted reports use a signed download link — file size cap only applies
+      // to email attachments, so skip it for link-delivery sensitivity levels.
+      skipSizeCap:           requiresSecureLink(sensitivityLevel),
     });
 
     const filename = buildSecureFilename(req.report_name_snapshot, req.request_reference);

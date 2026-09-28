@@ -39,6 +39,8 @@ import { hrmsApi } from "@/lib/hrmsApi";
 export interface GridRow {
   employeeId: string;
   employeeName: string;
+  lobId?: string | null;
+  lobName?: string | null;
   rosterDate: string;
   assignmentId: string | null;
   shiftTemplateId: string | null;
@@ -64,6 +66,8 @@ interface Props {
   processId: string;
   branchId?: string;
   employeeSearch?: string;
+  /** LOB filter: uuid or "__none__"; empty = all. */
+  lobId?: string;
   onAssigned?: () => void;
 }
 
@@ -94,15 +98,16 @@ function templateLabel(t: ShiftTemplateOption): string {
   return `${t.shift_name}${times}`;
 }
 
-export default function RosterPivotGrid({ cycleId, processId, branchId, employeeSearch, onAssigned }: Props) {
+export default function RosterPivotGrid({ cycleId, processId, branchId, employeeSearch, lobId, onAssigned }: Props) {
   const queryClient = useQueryClient();
 
   const gridQuery = useQuery({
-    queryKey: ["roster-builder", "grid", cycleId, branchId ?? null, employeeSearch ?? null],
+    queryKey: ["roster-builder", "grid", cycleId, branchId ?? null, employeeSearch ?? null, ...(lobId ? [lobId] : [])],
     queryFn: async () => {
       const params = new URLSearchParams({ cycleId });
       if (branchId) params.set("branchId", branchId);
       if (employeeSearch) params.set("employeeSearch", employeeSearch);
+      if (lobId) params.set("lobId", lobId);
       const res = await hrmsApi.get<{ rows: GridRow[] }>(`/api/wfm/roster-builder/grid?${params.toString()}`);
       return res.rows ?? [];
     },
@@ -133,11 +138,11 @@ export default function RosterPivotGrid({ cycleId, processId, branchId, employee
 
   const { dates, employees } = useMemo(() => {
     const dateSet = new Set<string>();
-    const byEmployee = new Map<string, { name: string; cells: Map<string, GridRow> }>();
+    const byEmployee = new Map<string, { name: string; lobName: string | null; cells: Map<string, GridRow> }>();
     for (const row of rows ?? []) {
       const date = toIsoDate(row.rosterDate);
       dateSet.add(date);
-      const bucket = byEmployee.get(row.employeeId) ?? { name: row.employeeName, cells: new Map<string, GridRow>() };
+      const bucket = byEmployee.get(row.employeeId) ?? { name: row.employeeName, lobName: row.lobName ?? null, cells: new Map<string, GridRow>() };
       bucket.cells.set(date, row);
       byEmployee.set(row.employeeId, bucket);
     }
@@ -193,9 +198,14 @@ export default function RosterPivotGrid({ cycleId, processId, branchId, employee
             </tr>
           </thead>
           <tbody>
-            {employees.map(({ employeeId, name, cells }) => (
+            {employees.map(({ employeeId, name, lobName, cells }) => (
               <tr key={employeeId} className="border-b border-slate-100">
-                <td className="p-2 font-bold text-slate-800">{name}</td>
+                <td className="p-2 font-bold text-slate-800">
+                  {name}
+                  <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-semibold ${lobName ? "bg-indigo-50 text-indigo-700" : "bg-slate-100 text-slate-400"}`}>
+                    {lobName ?? "Unassigned"}
+                  </span>
+                </td>
                 {dates.map((date) => {
                   const cell = cells.get(date);
                   if (!cell) {

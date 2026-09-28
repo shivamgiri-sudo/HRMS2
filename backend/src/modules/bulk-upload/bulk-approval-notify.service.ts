@@ -33,6 +33,8 @@ export interface DiscardedLine {
   rowNo: number;
   employeeCode: string;
   employeeName?: string | null;
+  processName?: string | null;
+  reportingManagerName?: string | null;
   amount?: number | null;
   reason: string;
 }
@@ -123,6 +125,8 @@ function buildHtml(params: {
       <td style="padding:6px 10px;border:1px solid #e2e8f0;color:#64748b">${l.rowNo}</td>
       <td style="padding:6px 10px;border:1px solid #e2e8f0;font-weight:600">${escapeHtml(l.employeeCode)}</td>
       <td style="padding:6px 10px;border:1px solid #e2e8f0">${escapeHtml(l.employeeName ?? "")}</td>
+      <td style="padding:6px 10px;border:1px solid #e2e8f0">${escapeHtml(l.processName ?? "")}</td>
+      <td style="padding:6px 10px;border:1px solid #e2e8f0">${escapeHtml(l.reportingManagerName ?? "")}</td>
       <td style="padding:6px 10px;border:1px solid #e2e8f0;text-align:right">${
         l.amount === null || l.amount === undefined
           ? ""
@@ -138,7 +142,7 @@ function buildHtml(params: {
        <div style="overflow-x:auto">
          <table style="border-collapse:collapse;font-size:12px;width:100%">
            <thead><tr>
-             ${["Row #", "Employee Code", "Employee", "Amount", "Reason"]
+             ${["Row #", "Employee Code", "Employee", "Process", "Reporting Manager", "Amount", "Reason"]
                .map(
                  (h) =>
                    `<th style="padding:6px 10px;border:1px solid #cbd5e1;background:#f8fafc;text-align:left">${h}</th>`,

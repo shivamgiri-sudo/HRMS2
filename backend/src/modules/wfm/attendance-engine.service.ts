@@ -1938,7 +1938,7 @@ export const attendanceEngineService = {
 
     try {
       const { inboxService } = await import('../inbox/inbox.service.js');
-      const actionUrl = `/wfm/attendance-mismatches?employeeId=${employeeId}&date=${date}`;
+      const actionUrl = `/wfm/attendance-integrity?tab=mismatches&employeeId=${employeeId}&fromDate=${date}&toDate=${date}`;
       const [existing] = await db.execute<RowDataPacket[]>(
         `SELECT id FROM work_inbox_item
          WHERE user_id = ? AND type = 'attendance_week_off_worked'

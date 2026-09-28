@@ -9,6 +9,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { resolveCostCentreScope } from "./payroll-run-scope.service.js";
 import { getMonthCoverage } from "./payroll-run-coverage.service.js";
+import { getRunLineCoverage } from "./payroll-line-coverage.service.js";
 import { MonthOutputError, resolveOutputRunIds, runIdPlaceholders } from "./payroll-month-outputs.service.js";
 import { requireWFMAccess } from "../../middleware/requireWFMAccess.js";
 import { payrollRunLimiter } from "../../middleware/rateLimiter.js";
@@ -16,6 +17,8 @@ import { buildScopeWhereClause, hasAnyRole as hasAnyRoleAsync, hasScopedAccess, 
 import { statutoryRegimeForFinancialYear } from "./statutory-regime.js";
 import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
 import { getPartAAvailability } from "./tds-certificate-part-a.service.js";
+import { computeForm16Data } from "./form16-data.service.js";
+import { generateForm16CertificatePdf } from "./form16-certificate.service.js";
 import { resolvePii } from "../../shared/piiCiphertext.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
@@ -31,6 +34,7 @@ import { payrollGovernanceService } from "./payroll-governance.service.js";
 import { assertRunEditable } from "./payrollWindowGuard.js";
 import { isRunClosed, runRankSql } from "./run-status.js";
 import { payslipService } from "./payslip.service.js";
+import { getPayslipLockState } from "./salary-transfer.service.js";
 import { taxDeclarationService } from "./taxDeclaration.service.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
 import { buildBankReadinessReport } from "./bank-payment-readiness.service.js";
@@ -1508,6 +1512,17 @@ router.get("/payslip/:runId/:employeeId", h(async (req: AuthenticatedRequest, re
     }
   }
 
+  // Payslip lock, employee self-service only — Payroll/HR access keeps following the existing
+  // role/scope policy above unchanged, per the salary-transfer spec. Additive: an employee
+  // whose run has no salary_transfer_batch_item row at all sees no gate, exactly as before
+  // this feature existed.
+  if (isSelf) {
+    const lock = await getPayslipLockState(employeeId, runId);
+    if (lock.locked) {
+      return res.status(423).json({ success: false, code: "PAYSLIP_LOCKED", message: lock.reason });
+    }
+  }
+
   const raw = await payslipService.getPayslip(employeeId, runId);
   // Parse run_month (YYYY-MM) into numeric month/year for frontend
   const [runYear, runMon] = (raw.run_month ?? '').split('-').map(Number);
@@ -1925,250 +1940,106 @@ router.get(
       }
     }
 
-    // Load run
-    const [runRows] = await db.execute<RowDataPacket[]>(
-      "SELECT run_month FROM salary_prep_run WHERE id = ? LIMIT 1",
-      [runId]
-    );
-    const run = (runRows as Array<{ run_month: string }>)[0];
-    if (!run) return res.status(404).json({ success: false, message: "Run not found" });
-
-    // Existence guard only. The certificate's figures are summed across the
-    // whole financial year below; this just confirms the employee actually
-    // belongs to the run the caller named, so an arbitrary runId cannot be used
-    // to pull a certificate for someone who was never in it.
-    const [lineRows] = await db.execute<RowDataPacket[]>(
-      `SELECT 1 AS present
-         FROM salary_prep_line spl
-        WHERE spl.run_id = ? AND spl.employee_id = ? LIMIT 1`,
-      [runId, employeeId]
-    );
-    if ((lineRows as RowDataPacket[]).length === 0) {
-      return res.status(404).json({ success: false, message: "Payroll line not found for employee" });
-    }
-
-    // Load employee details
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      // PAN comes from employees, not employee_documents. employee_documents is the file store —
-      // its columns are doc_type, doc_name, file_url and friends, with no pan_number at all — so
-      // `ed.pan_number` made this query fail outright:
-      //
-      //   ER_BAD_FIELD_ERROR: Unknown column 'ed.pan_number' in 'field list'
-      //
-      // Verified against mas_hrms. This is GET /form16-data/:runId/:employeeId, so Form 16 — a
-      // statutory certificate that cannot be issued without a PAN — returned nothing for anyone,
-      // employee or payroll. employees.pan_number exists and is populated for 915 of the 1,125
-      // active employees; the remaining 210 now render an empty PAN instead of failing the whole
-      // request, which is the same treatment every other nullable field here already gets.
-      //
-      // The employee_documents join went with it: `ed` was referenced for pan_number and nothing
-      // else, so it was scanning a 207,616-row table to contribute one column that did not exist.
-      `SELECT CONCAT_WS(' ', e.first_name, e.last_name) AS name,
-              e.pan_number AS pan, e.pan_number_encrypted,
-              dm.designation_name AS designation,
-              e.date_of_joining
-         FROM employees e
-         LEFT JOIN designation_master dm  ON dm.id = e.designation_id
-        WHERE e.id = ? LIMIT 1`,
-      [employeeId]
-    );
-    const emp = (empRows as Array<{
-      name: string; pan: string | null; pan_number_encrypted: string | null; designation: string | null; date_of_joining: string | null;
-    }>)[0];
-    if (emp) {
-      emp.pan = resolvePii(emp.pan_number_encrypted, emp.pan).value;
-    }
-
-    // Derive financial year for declaration lookup
-    const [yr, mo] = run.run_month.split("-").map(Number);
-    const fyStart = mo >= 4 ? yr : yr - 1;
-    const financialYear = `${fyStart}-${fyStart + 1}`;
-    const legacyFinancialYear = `${fyStart}-${String(fyStart + 1).slice(2)}`;
-
-    // Load tax declaration
-    const [declRows] = await db.execute<RowDataPacket[]>(
-      `SELECT declared_hra, declared_80c, declared_80d, regime
-         FROM tax_declaration
-        WHERE employee_id = ? AND financial_year IN (?, ?)
-        ORDER BY financial_year = ? DESC
-        LIMIT 1`,
-      [employeeId, financialYear, legacyFinancialYear, financialYear]
-    );
-    const decl = (declRows as Array<{
-      declared_hra: number; declared_80c: number; declared_80d: number; regime: string;
-    }>)[0] ?? null;
-
-    /**
-     * Actual amounts paid across the financial year — not one month annualised.
-     *
-     * This previously reported the run's monthly gross and multiplied it by 12.
-     * That is wrong for anyone who joined or left mid-year, had a salary
-     * revision, took LWP, or received a bonus, incentive or arrears — which in
-     * practice is most people. A TDS certificate reports what was actually paid
-     * and actually deducted, so it is summed from the payroll lines themselves.
-     *
-     * Only finalized runs count: a draft or cancelled run is not money paid.
-     *
-     * A month can hold several runs — a re-run, a correction, an abandoned
-     * draft — and exactly one is canonical for that month: the most-progressed
-     * status, newest on a tie. Summing all of them would double-count a
-     * corrected month, so ROW_NUMBER picks one line per month, matching the
-     * convention the payroll analytics endpoints already follow.
-     */
-    const fyFirstMonth = `${fyStart}-04`;
-    const fyLastMonth  = `${fyStart + 1}-03`;
-
-    const [fyRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*)                                   AS months_paid,
-              COALESCE(SUM(gross_salary), 0)             AS gross_salary,
-              COALESCE(SUM(tds_deducted), 0)             AS tds_deducted,
-              COALESCE(SUM(professional_tax), 0)         AS professional_tax,
-              COALESCE(SUM(pf_employee), 0)              AS pf_employee,
-              MIN(run_month)                             AS first_month,
-              MAX(run_month)                             AS last_month
-         FROM (
-           SELECT spr.run_month,
-                  spl.gross_salary,
-                  COALESCE(NULLIF(spl.tds_amount, 0), spl.tds) AS tds_deducted,
-                  spl.professional_tax,
-                  spl.pf_employee,
-                  ROW_NUMBER() OVER (
-                    PARTITION BY spr.run_month
-                    ORDER BY FIELD(spr.status, 'disbursed', 'finalized', 'locked', 'approved', 'completed'),
-                             spr.created_at DESC
-                  ) AS rn
-             FROM salary_prep_line spl
-             JOIN salary_prep_run spr ON spr.id = spl.run_id
-            WHERE spl.employee_id = ?
-              AND spr.run_month BETWEEN ? AND ?
-              -- 'finalized' is the status payroll actually settles runs in (see run-status.ts);
-              -- omitting it here excluded most production months from TDS certificates.
-              AND spr.status IN ('locked', 'finalized', 'approved', 'disbursed', 'completed')
-              AND spl.status NOT IN ('excluded', 'blocked')
-         ) canonical
-        WHERE canonical.rn = 1`,
-      [employeeId, fyFirstMonth, fyLastMonth]
-    );
-    const fy = (fyRows as Array<{
-      months_paid: number; gross_salary: number; tds_deducted: number;
-      professional_tax: number; pf_employee: number;
-      first_month: string | null; last_month: string | null;
-    }>)[0];
-
-    const grossSalary  = Number(fy?.gross_salary ?? 0);
-    const tdsDeducted  = Number(fy?.tds_deducted ?? 0);
-    const professionalTax = Number(fy?.professional_tax ?? 0);
-    const monthsPaid   = Number(fy?.months_paid ?? 0);
-
-    // Resolved for the financial year the certificate covers, and with no
-    // fallback: a certificate computed from a guessed standard deduction is a
-    // tax document stating a figure nobody approved, and the employee files
-    // their return on it. Refusing is recoverable; a wrong Form 16/130 is not.
-    const fyConfig = await loadFlatStatutoryConfig(`${fyStart}-04-01`);
-    const standardDeduction = fyConfig["tds_standard_deduction"];
-    if (standardDeduction === undefined) {
+    // Part B is computed by the shared service (form16-data.service.ts) so the
+    // JSON here and the certificate PDF (form16-certificate.service.ts) render
+    // exactly the same figures. Access control stays above, in this route.
+    const result = await computeForm16Data(runId, employeeId);
+    if (!result.ok) {
+      if (result.kind === "run_not_found") {
+        return res.status(404).json({ success: false, message: "Run not found" });
+      }
+      if (result.kind === "line_not_found") {
+        return res.status(404).json({ success: false, message: "Payroll line not found for employee" });
+      }
+      // missing_config
       return res.status(409).json({
         success: false,
         message:
           "Cannot issue the certificate: tds_standard_deduction has no active configuration " +
-          `effective for FY ${fyStart}-${String(fyStart + 1).slice(2)}. Seed and activate it, then retry.`,
-        data: { missing_config_keys: ["tds_standard_deduction"] },
+          `effective for FY ${result.financialYearLabel}. Seed and activate it, then retry.`,
+        data: { missing_config_keys: result.missingKeys },
       });
     }
 
-    // Professional tax is deductible from salary income (s.16(iii) of the 1961
-    // Act), so it reduces taxable income alongside the standard deduction.
-    const totalDeductions = standardDeduction
-      + professionalTax
-      + (decl ? Number(decl.declared_hra) + Number(decl.declared_80c) + Number(decl.declared_80d) : 0);
-    const netTaxableIncome = Math.max(0, grossSalary - totalDeductions);
+    return res.json({ success: true, data: result.data });
+  })
+);
 
-    // Which Act governs the year this certificate covers, and therefore what the
-    // certificate is called. The Income-tax Act, 2025 renamed the salary TDS
-    // certificate from Form 16 to Form 130 with effect from 1 April 2026, so a
-    // certificate for FY 2026-27 is a Form 130 while one reissued for FY 2025-26
-    // remains a Form 16. Resolved from the financial year covered, never from
-    // today's date — otherwise reprinting an older year would relabel it wrongly.
-    const regime = statutoryRegimeForFinancialYear(fyStart);
+// GET /api/payroll/form16-certificate/:runId/:employeeId/pdf
+// The actual Form 16 / Form 130 Part B certificate as a printable PDF, built
+// from the same computeForm16Data figures the /form16-data JSON returns. Same
+// access rule as that endpoint: an employee may pull their own, payroll roles
+// may pull anyone within their scope.
+router.get(
+  "/form16-certificate/:runId/:employeeId/pdf",
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { runId, employeeId } = req.params;
 
-    // Part A — tax deposited, challan and BSR codes, TRACES verification — is
-    // issued by TRACES from the quarterly return and cannot be produced here.
-    // Reporting its state alongside Part B is what stops this response being
-    // mistaken for a complete certificate: without a verified Part A it is half
-    // a document, and an employee filing from it would be missing the half that
-    // proves the tax was actually deposited.
-    const partA = await getPartAAvailability(employeeId, fyStart);
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    const isSelf = Boolean(callerEmp && callerEmp.id === employeeId);
+    if (!isSelf) {
+      const isPayrollRole = await hasRole(req.authUser!.id, "admin", "hr", "finance", "payroll");
+      if (!isPayrollRole) {
+        return res.status(403).json({ success: false, message: "Forbidden" });
+      }
+      const [targetRows] = await db.execute<RowDataPacket[]>(
+        "SELECT branch_id, process_id, department_id FROM employees WHERE id = ? LIMIT 1",
+        [employeeId]
+      );
+      const target = (targetRows as RowDataPacket[])[0] as { branch_id: string | null; process_id: string | null; department_id: string | null } | undefined;
+      const scoped = await hasScopedAccess(req.authUser!.id, ["hr", "finance", "payroll"], {
+        branchId: target?.branch_id ?? null, processId: target?.process_id ?? null, departmentId: target?.department_id ?? null, employeeId,
+      });
+      if (!scoped) {
+        return res.status(403).json({ success: false, message: "Forbidden" });
+      }
+    }
 
-    return res.json({
-      success: true,
-      data: {
-        financial_year: financialYear,
-        period: run.run_month,
-        // Additive: existing consumers are unaffected, and a client that renders
-        // this instead of a hardcoded "Form 16" is correct for every year.
-        /**
-         * Completeness of the certificate, stated rather than implied.
-         *
-         * Part B below is produced here. Part A comes from TRACES and cannot
-         * be. `is_complete` is false until a verified Part A exists, so a
-         * client can say "your Part B is ready, Part A is pending" instead of
-         * presenting half a document as a whole one.
-         */
-        part_a: {
-          status: partA.status,
-          available: partA.verified,
-          certificate_number: partA.certificateNumber,
-          vault_document_id: partA.vaultDocumentId,
-          covers_quarters: partA.coversQuarters,
-          message: partA.message,
-        },
-        is_complete: partA.verified,
-        statutory: {
-          act: regime.actName,
-          certificate_form: regime.salaryCertificateForm,
-          certificate_label: `Form ${regime.salaryCertificateForm}`,
-          salary_tds_section: regime.salaryTdsSection,
-          quarterly_return_form: regime.quarterlyReturnForm,
-          rebate_section: regime.rebateSection,
-          period_term: regime.periodTerm,
-        },
-        employee: {
-          name: emp?.name ?? "",
-          pan: emp?.pan ?? null,
-          designation: emp?.designation ?? null,
-          period: `Apr ${fyStart} – Mar ${fyStart + 1}`,
-        },
-        // Annual actuals, summed from finalized payroll lines for this FY.
-        gross_salary: grossSalary,
-        standard_deduction: standardDeduction,
-        professional_tax: professionalTax,
-        tds_deducted: tdsDeducted,
-        net_taxable_income: netTaxableIncome,
-        /**
-         * How much of the year this certificate actually rests on.
-         *
-         * A mid-year joiner legitimately has fewer than 12 months; a year with
-         * unfinalized runs does not. The reader cannot tell those apart from the
-         * totals alone, so the basis is stated rather than implied — and
-         * `is_partial_year` marks anything short of a full twelve.
-         */
-        basis: {
-          months_paid: monthsPaid,
-          first_month: fy?.first_month ?? null,
-          last_month: fy?.last_month ?? null,
-          is_partial_year: monthsPaid > 0 && monthsPaid < 12,
-          financial_year_range: `${fyFirstMonth} to ${fyLastMonth}`,
-        },
-        declaration: decl
-          ? {
-              hra: Number(decl.declared_hra),
-              "80c": Number(decl.declared_80c),
-              "80d": Number(decl.declared_80d),
-              regime: decl.regime,
-            }
-          : null,
+    const result = await generateForm16CertificatePdf(runId, employeeId);
+    if (!result.ok) {
+      if (result.kind === "run_not_found") {
+        return res.status(404).json({ success: false, message: "Run not found" });
+      }
+      if (result.kind === "line_not_found") {
+        return res.status(404).json({ success: false, message: "Payroll line not found for employee" });
+      }
+      // missing_config
+      return res.status(409).json({
+        success: false,
+        message:
+          "Cannot issue the certificate: tds_standard_deduction has no active configuration " +
+          `effective for FY ${result.financialYearLabel}. Seed and activate it, then retry.`,
+        data: { missing_config_keys: result.missingKeys },
+      });
+    }
+
+    const safeName = (result.data.employee.name || employeeId)
+      .replace(/[^a-zA-Z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 40) || employeeId;
+    const filename = `${result.certificateLabel.replace(/\s+/g, "")}_PartB_${safeName}_FY${result.data.financial_year}.pdf`;
+
+    void logSensitiveAction({
+      actor_user_id: req.authUser!.id,
+      action_type: "FORM16_CERTIFICATE_ISSUED",
+      module_key: "payroll",
+      entity_type: "employee",
+      entity_id: employeeId,
+      change_summary: {
+        runId,
+        financial_year: result.data.financial_year,
+        certificate: result.certificateLabel,
+        gross_salary: result.data.gross_salary,
+        tds_deducted: result.data.tds_deducted,
+        self: isSelf,
       },
+      req,
     });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+    res.setHeader("Content-Length", String(result.pdf.length));
+    return res.send(result.pdf);
   })
 );
 
@@ -2903,27 +2774,73 @@ router.get("/month/:month/neft-export", requireRole("admin", "super_admin", "fin
 
 // ─── Payroll Validation / Rejection (Head Payroll) ───────────────────────────
 
+// GET /api/payroll/runs/:id/line-coverage — who worked this month and holds no pay in this run
+router.get("/runs/:id/line-coverage", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    return res.json({ success: true, data: await getRunLineCoverage(req.params.id) });
+  }));
+
 // PATCH /api/payroll/runs/:id/validate — Head Payroll validates a run (unlocks NEFT export)
 router.patch("/runs/:id/validate", requireAuth, h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   if (!(await hasAnyRoleAsync(userId, "payroll_head", "super_admin"))) {
     return res.status(403).json({ success: false, message: "Only Head Payroll can validate a payroll run" });
   }
-  const { note } = req.body as { note?: string };
+  const { note, acknowledgeCoverageGaps } = req.body as { note?: string; acknowledgeCoverageGaps?: boolean };
   const [runRows] = await db.execute("SELECT id, status, validation_status FROM salary_prep_run WHERE id = ? LIMIT 1", [req.params.id]);
   const run = (runRows as any[])[0];
   if (!run) return res.status(404).json({ success: false, message: "Run not found" });
   if (run.validation_status === "validated") return res.status(400).json({ success: false, message: "Already validated" });
 
+  /*
+   * Nobody who worked leaves this gate unpaid without somebody saying so out loud.
+   *
+   * Validation is the point of no return: it unlocks the NEFT export, and after the run locks,
+   * isRunClosed() correctly refuses to recompute it — so a gap that survives this moment stops
+   * being a recalculation and becomes an arrears decision about people who have mostly already
+   * left. That is precisely what 2026-07 cost: 63 employees, 292 recorded working days, Rs 1.76
+   * lakh, discovered five weeks after the run locked.
+   *
+   * Not a hard refusal. A gap can be a deliberate call — someone withheld pending an enquiry, a
+   * structure the business has decided not to assign — and a payroll that cannot be signed off at
+   * all is worse than one signed off knowingly. So it blocks by default and takes an explicit
+   * acknowledgement, which is recorded with the count and the days in payroll_validation_log,
+   * where the sign-off already lives. Silence is what this removes, not authority.
+   */
+  const coverage = await getRunLineCoverage(req.params.id);
+  if (!coverage.clean && acknowledgeCoverageGaps !== true) {
+    return res.status(409).json({
+      success: false,
+      code: "COVERAGE_GAPS",
+      message:
+        `${coverage.gapsWithAttendance} employee(s) worked ${coverage.unpaidAttendanceDays} recorded day(s) ` +
+        `this month and hold no pay in this run. Recalculate the run, or re-submit with ` +
+        `acknowledgeCoverageGaps: true to validate anyway.`,
+      data: coverage,
+    });
+  }
+
   await db.execute(
     `UPDATE salary_prep_run SET validation_status = 'validated', validated_by = ?, validated_at = NOW() WHERE id = ?`,
     [userId, req.params.id]
   );
+  // The acknowledgement is appended to the note rather than stored in a column of its own: this is
+  // the record somebody reads when asking "was this known at sign-off", and it has to answer that
+  // without a schema change on the audit table.
+  const reason = coverage.clean
+    ? (note ?? null)
+    : `${note ? note + " | " : ""}coverage gaps acknowledged: ${coverage.gapsWithAttendance} employee(s), ` +
+      `${coverage.unpaidAttendanceDays} unpaid recorded day(s) [` +
+      coverage.gaps.filter((g) => g.attendanceDays > 0).map((g) => g.employeeCode).join(",") + "]";
   await db.execute(
     `INSERT INTO payroll_validation_log (id, run_id, action, actor_id, actor_role, reason, created_at) VALUES (UUID(), ?, 'validated', ?, ?, ?, NOW())`,
-    [req.params.id, userId, req.authUser!.role, note ?? null]
+    [req.params.id, userId, req.authUser!.role, reason]
   );
-  return res.json({ success: true, message: "Payroll run validated. NEFT export is now unlocked." });
+  return res.json({
+    success: true,
+    message: "Payroll run validated. NEFT export is now unlocked.",
+    coverageGapsAcknowledged: coverage.clean ? 0 : coverage.gapsWithAttendance,
+  });
 }));
 
 // PATCH /api/payroll/runs/:id/reject-validation — Head Payroll rejects a run

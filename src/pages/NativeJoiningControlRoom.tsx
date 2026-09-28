@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, ClipboardCheck, ExternalLink, FileText, Loader2, RefreshCw, Search, Send, ShieldCheck, UserCheck } from "lucide-react";
 import { Link } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -12,7 +12,10 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { SecureDocumentList } from "@/components/documents/SecureDocumentList";
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { AddressBgvPanel } from "@/components/bgv/AddressBgvPanel";
-import { INDIA_STATES } from "@/data/indiaStatesCities";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useDateLockMin } from "@/hooks/useDateLockMin";
+import { BGV_REPORT_ROLES } from "@/lib/bgvReportAccess";
+import { ErrorState } from "@/components/enterprise/ErrorState";
 
 type QueueRow = {
   candidate_id: string;
@@ -159,7 +162,6 @@ const blankStatutory = {
   uan: "",
   pf_applicable: true,
   esi_applicable: false,
-  professional_tax_state: "",
   nominee_name: "",
   nominee_relationship: "",
   nominee_dob: "",
@@ -238,7 +240,6 @@ function seedStatutoryForm(saved: any, profile: OnboardingProfile) {
     ...row,
     epf_member: firstFilled(row.epf_member === "unknown" ? "" : row.epf_member, epfFromProfile) || "unknown",
     uan: firstFilled(row.uan, p.uan_number, p.epf_number),
-    professional_tax_state: firstFilled(row.professional_tax_state, p.present_state, p.permanent_state),
     nominee_name: firstFilled(row.nominee_name, p.nominee_name),
     nominee_relationship: firstFilled(row.nominee_relationship, p.nominee_relation),
     nominee_dob: toDateInput(firstFilled(row.nominee_dob, p.nominee_date_of_birth)),
@@ -410,6 +411,10 @@ function ProvisioningTaskCard({ task }: { task: ProvisioningTask }) {
 }
 
 export default function NativeJoiningControlRoom() {
+  const { hasAnyRole } = useWorkforceAccess();
+  const salaryDateMin = useDateLockMin();
+  // BGV report / address panel: admin, branch HR and branch manager/head only (API enforces it too).
+  const canViewBgvReport = hasAnyRole(...BGV_REPORT_ROLES);
   const [queue, setQueue] = useState<QueueRow[]>([]);
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -420,6 +425,7 @@ export default function NativeJoiningControlRoom() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const esignRecheckFiredFor = React.useRef<string | null>(null);
 
   const selected = useMemo(() => queue.find((row) => row.candidate_id === selectedId) || null, [queue, selectedId]);
 
@@ -444,7 +450,7 @@ export default function NativeJoiningControlRoom() {
       setDetail(res.data);
       setDateForm({
         ...blankDates,
-        salary_start_date: res.data.offer?.date_of_salary || res.data.payroll?.salary_start_date || "",
+        salary_start_date: res.data.payroll?.salary_start_date || res.data.offer?.date_of_salary || "",
         attendance_effective_from: res.data.payroll?.attendance_effective_from || "",
         statutory_effective_from: res.data.payroll?.statutory_effective_from || "",
         payroll_month_effective: res.data.payroll?.payroll_month_effective || "",
@@ -459,10 +465,20 @@ export default function NativeJoiningControlRoom() {
   };
 
   useEffect(() => { loadQueue(); }, []);
-  useEffect(() => { if (selectedId) loadDetail(selectedId); }, [selectedId]);
+  useEffect(() => {
+    if (selectedId) {
+      esignRecheckFiredFor.current = null; // reset so the new candidate gets a fresh check
+      loadDetail(selectedId);
+    }
+  }, [selectedId]);
 
   const saveDates = async () => {
     if (!selectedId) return;
+    const joiningDate = detail?.offer?.date_of_joining;
+    if (dateForm.salary_start_date && joiningDate && dateForm.salary_start_date < joiningDate) {
+      setError(`Salary start date (${dateForm.salary_start_date}) cannot be before joining date (${joiningDate}).`);
+      return;
+    }
     setBusy(true);
     setMessage("");
     setError("");
@@ -492,6 +508,20 @@ export default function NativeJoiningControlRoom() {
       setError(err.message || `Unable to save ${section}`);
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Called automatically when the E-Sign tab is opened — fires the provider recheck
+  // without touching `busy` or showing a message so it doesn't disrupt the HR flow.
+  const silentEsignRecheck = async (candidateId: string) => {
+    if (esignRecheckFiredFor.current === candidateId) return; // already checked this session
+    esignRecheckFiredFor.current = candidateId;
+    try {
+      await hrmsApi.post(`/api/ats/joining-control-room/candidates/${candidateId}/esign/recheck`, {});
+      const res = await hrmsApi.get<{ success: boolean; data: Detail }>(`/api/ats/joining-control-room/candidates/${candidateId}`);
+      setDetail(res.data);
+    } catch {
+      // Silently swallow — the manual "Check e-sign status now" button is still there
     }
   };
 
@@ -543,7 +573,7 @@ export default function NativeJoiningControlRoom() {
 
         <OnboardingTabBar />
 
-        {error && <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+        {error && <ErrorState title="Couldn't load joining queue" description={error} onRetry={() => void loadQueue()} className="mb-3" />}
         {message && <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div>}
 
         <div className="grid gap-4 xl:grid-cols-[440px_1fr]">
@@ -649,7 +679,16 @@ export default function NativeJoiningControlRoom() {
                   )}
                 </div>
 
-                <Tabs defaultValue="summary" className="p-4">
+                <Tabs defaultValue="summary" className="p-4"
+                  onValueChange={(tab) => {
+                    // Auto-pull fresh eSign status when HR opens the tab, unless the kit
+                    // is already fully completed — avoids a stale "esign_initiated" display
+                    // caused by the reconciliation worker's backoff schedule (up to 60 min).
+                    if (tab === "esign" && selectedId && detail?.esign?.kit_status !== "completed") {
+                      void silentEsignRecheck(selectedId);
+                    }
+                  }}
+                >
                   <TabsList className="mb-4 flex h-auto flex-wrap justify-start">
                     {[
                       ["summary", "Summary"],
@@ -982,10 +1021,18 @@ export default function NativeJoiningControlRoom() {
                         <Label htmlFor="salary_start_date" className="text-xs font-medium text-slate-600">
                           Salary Start Date
                         </Label>
-                        <TextInput form={dateForm} setForm={setDateForm} name="salary_start_date" type="date" />
-                        <p className="text-[11px] text-slate-400">
-                          Date salary generation begins. Defaults to joining date if left blank.
-                        </p>
+                        <input
+                          type="date"
+                          className={`h-10 rounded border px-3 text-sm${dateForm.salary_start_date && detail?.offer?.date_of_joining && dateForm.salary_start_date < detail.offer.date_of_joining ? ' border-red-500 bg-red-50' : ' border-slate-300'}`}
+                          value={dateForm.salary_start_date ?? ""}
+                          min={[detail?.offer?.date_of_joining, salaryDateMin].filter(Boolean).sort().pop()}
+                          onChange={(e) => setDateForm({ ...dateForm, salary_start_date: e.target.value })}
+                        />
+                        {dateForm.salary_start_date && detail?.offer?.date_of_joining && dateForm.salary_start_date < detail.offer.date_of_joining ? (
+                          <p className="text-[11px] text-red-600">Cannot be before joining date ({detail.offer.date_of_joining}).</p>
+                        ) : (
+                          <p className="text-[11px] text-slate-400">Date salary generation begins. Defaults to joining date if left blank.</p>
+                        )}
                       </div>
                       <Field label="Attendance Effective From">
                         <TextInput form={dateForm} setForm={setDateForm} name="attendance_effective_from" type="date" />
@@ -1010,7 +1057,7 @@ export default function NativeJoiningControlRoom() {
 
                   <TabsContent value="bgv" className="grid gap-4">
                     {/* PDF shortcut — same button present in BGV Verification Center */}
-                    <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    {canViewBgvReport && <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                       <span className="text-sm font-semibold text-slate-700">BGV Report PDF</span>
                       <a href={`/bgv-report-view/${detail.summary.candidate_id}`} target="_blank" rel="noopener noreferrer">
                         <Button size="sm" variant="outline" className="gap-2">
@@ -1018,8 +1065,8 @@ export default function NativeJoiningControlRoom() {
                           View / Download PDF
                         </Button>
                       </a>
-                    </div>
-                    <AddressBgvPanel candidateId={detail.summary.candidate_id} />
+                    </div>}
+                    {canViewBgvReport && <AddressBgvPanel candidateId={detail.summary.candidate_id} />}
                     <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4">
                       <div className="text-sm font-semibold">Name/Document Match</div>
                       <div className="mt-2 text-sm text-slate-600">Review per-document name match in Documents tab.</div>
@@ -1091,21 +1138,6 @@ export default function NativeJoiningControlRoom() {
                         </select>
                       </Field>
                       <Field label="UAN"><TextInput form={statutoryForm} setForm={setStatutoryForm} name="uan" /></Field>
-                      {/* Professional tax is levied per state — a closed set, so a dropdown,
-                          not the free-text Input this used to be. */}
-                      <Field label="Professional Tax State">
-                        <select className="h-10 rounded border px-3" value={statutoryForm.professional_tax_state || ""} onChange={(e) => setStatutoryForm({ ...statutoryForm, professional_tax_state: e.target.value })}>
-                          <option value="">Select state</option>
-                          {INDIA_STATES.map((state) => (
-                            <option key={state} value={state}>{state}</option>
-                          ))}
-                          {/* A pre-filled value from an older free-text row may not be in the
-                              master list; keep it selectable rather than silently blanking it. */}
-                          {statutoryForm.professional_tax_state && !INDIA_STATES.includes(statutoryForm.professional_tax_state) && (
-                            <option value={statutoryForm.professional_tax_state}>{statutoryForm.professional_tax_state} (as recorded)</option>
-                          )}
-                        </select>
-                      </Field>
                       <Field label="Nominee Name"><TextInput form={statutoryForm} setForm={setStatutoryForm} name="nominee_name" /></Field>
                       <Field label="Nominee Relationship">
                         <select className="h-10 rounded border px-3" value={statutoryForm.nominee_relationship || ""} onChange={(e) => setStatutoryForm({ ...statutoryForm, nominee_relationship: e.target.value })}>

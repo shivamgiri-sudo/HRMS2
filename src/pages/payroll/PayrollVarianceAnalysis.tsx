@@ -94,7 +94,6 @@ interface PrepLine {
   esic_employee?: string | number;
   esic_employer?: string | number;
   tds?: string | number;
-  professional_tax?: string | number;
   incentive_total?: string | number;
   overtime_amount?: string | number;
   total_deductions?: string | number;
@@ -231,7 +230,6 @@ const COMPONENTS: Array<{ key: keyof PrepLine; label: string; money: boolean }> 
   { key: "pf_employer",       label: "PF (Employer)",     money: true },
   { key: "esic_employee",     label: "ESIC (Employee)",   money: true },
   { key: "esic_employer",     label: "ESIC (Employer)",   money: true },
-  { key: "professional_tax",  label: "Professional Tax",  money: true },
   { key: "tds",               label: "TDS",               money: true },
   { key: "total_deductions",  label: "Total Deductions",  money: true },
   { key: "paid_working_days", label: "Paid Working Days", money: false },

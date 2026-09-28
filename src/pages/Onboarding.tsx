@@ -15,7 +15,9 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge, normalizeStatus } from "@/components/ui/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { AuthedAvatarImage } from "@/components/ui/AuthedAvatarImage";
+import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
@@ -1279,7 +1281,7 @@ const Onboarding = () => {
                           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                             <div className="flex items-center gap-4">
                               <Avatar className="h-12 w-12">
-                                <AvatarImage src={employee.avatar_url || undefined} />
+                                <AuthedAvatarImage src={normalizeMediaUrl(employee.avatar_url)} />
                                 <AvatarFallback>
                                   {name.split(" ").map((n) => n[0]).join("")}
                                 </AvatarFallback>
@@ -1515,7 +1517,7 @@ const Onboarding = () => {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <Avatar className="h-16 w-16">
-                      <AvatarImage src={selectedEmployee.avatar_url || undefined} />
+                      <AuthedAvatarImage src={normalizeMediaUrl(selectedEmployee.avatar_url)} />
                       <AvatarFallback className="text-lg">
                         {`${selectedEmployee.first_name} ${selectedEmployee.last_name}`.split(" ").map((n: string) => n[0]).join("")}
                       </AvatarFallback>

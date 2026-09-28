@@ -6,6 +6,55 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 
+/**
+ * Latest Payment Voucher raised against each vendor_payment_tracking row, as a joinable
+ * subquery. Shared verbatim by listPayments() and getPayment() so the grid and the drill-down
+ * can never disagree about a due's voucher state.
+ *
+ * ROW_NUMBER() picks the most recently raised voucher per due — a due can accumulate several
+ * over time (raised, rejected, raised again), and only the newest one governs what the page
+ * may do now. The full history is a separate query in getPayment().
+ *
+ * Reads through payment_voucher_grn_allocation, whose idx_pvga_grn index covers
+ * vendor_payment_tracking_id, so this join stays cheap at grid page sizes.
+ */
+const LATEST_VOUCHER_JOIN = `
+  LEFT JOIN (
+    SELECT pvga.vendor_payment_tracking_id,
+           pv.id AS voucher_id,
+           pv.voucher_number,
+           pv.status AS voucher_status,
+           pv.raised_at AS voucher_raised_at,
+           pv.ceo_approved_at AS voucher_ceo_approved_at,
+           pv.released_at AS voucher_released_at,
+           pv.rejection_reason AS voucher_rejection_reason,
+           ROW_NUMBER() OVER (
+             PARTITION BY pvga.vendor_payment_tracking_id ORDER BY pv.raised_at DESC, pv.id DESC
+           ) AS rn
+      FROM payment_voucher_grn_allocation pvga
+      JOIN payment_voucher pv ON pv.id = pvga.payment_voucher_id
+  ) pvl ON pvl.vendor_payment_tracking_id = vpt.id AND pvl.rn = 1`;
+
+/**
+ * Voucher statuses that mean "a voucher is mid-flight for this due".
+ *
+ * 'released' is excluded because the money has already moved — the pre-existing
+ * Paid/balance guards cover that case. 'rejected' is excluded because it is terminal and must
+ * not block a fresh voucher or a direct dispatch.
+ *
+ * DUPLICATED, DELIBERATELY: vendor-payment-ledger.service.ts's dispatch() enforces the same
+ * set in SQL inside its own row lock. The UI gate and the server guard must agree; if you
+ * change one, change the other.
+ */
+const ACTIVE_VOUCHER_STATUSES = ["raised", "ceo_approved", "changes_requested"];
+
+function withActiveVoucherFlag(row: RowDataPacket): Record<string, any> {
+  return {
+    ...(row as Record<string, any>),
+    active_voucher: ACTIVE_VOUCHER_STATUSES.includes(String(row.voucher_status ?? "")),
+  };
+}
+
 export interface VendorPaymentFilters {
   financialYear?: string;
   month?: string;
@@ -25,6 +74,15 @@ export interface VendorPaymentFilters {
   subHead?: string;
   vendorId?: string;
   paymentStatus?: string;
+  /**
+   * True outstanding balance, independent of payment_status label — a row can carry any status
+   * while still owing money (e.g. "Partially Paid"), and the reverse is also possible in this
+   * legacy-backed table. Consumers that need "what can still be paid" (the Payment Voucher
+   * raise form's vendor/GRN pickers) must ask for this instead of paging through
+   * ORDER BY due_date ASC and filtering client-side: with 200+ already-settled legacy rows
+   * sorted first, a plain LIMIT 200 can return zero outstanding rows even when many exist.
+   */
+  outstandingOnly?: boolean;
   dueDateFrom?: string;
   dueDateTo?: string;
   search?: string;
@@ -143,7 +201,11 @@ export const vendorPaymentService = {
   },
 
   async listPayments(filters: VendorPaymentFilters) {
-    const conditions: string[] = ["1=1"];
+    // IDC/... GRNs are the db_bill legacy petty-cash import (CompId 2), bulk-inserted under a
+    // migration-sentinel created_by — never raised live through this app. They carry no vendor,
+    // invoice or process, so they clutter this grid with unreadable blank rows. Kept in the
+    // database for audit; just excluded from the working view. Owner ruling 2026-09-16.
+    const conditions: string[] = ["1=1", "(vpt.grn_number IS NULL OR vpt.grn_number NOT LIKE 'IDC/%')"];
     const params: unknown[] = [];
 
     if (filters.financialYear) {
@@ -195,6 +257,9 @@ export const vendorPaymentService = {
       conditions.push("vpt.payment_status = ?");
       params.push(filters.paymentStatus);
     }
+    if (filters.outstandingOnly) {
+      conditions.push("vpt.balance_amount > 0");
+    }
     if (filters.dueDateFrom) {
       conditions.push("vpt.due_date >= ?");
       params.push(filters.dueDateFrom);
@@ -236,7 +301,20 @@ export const vendorPaymentService = {
               -- chasing payment, so joining beats asking them to open each GRN.
               g.invoice_number,
               g.bill_date,
-              g.billing_cycle_status
+              g.billing_cycle_status,
+              -- Reverse visibility into the Payment Voucher workflow. A due can be paid two
+              -- ways — the direct dispatch on this page, or a voucher raised on
+              -- /finance/payment-vouchers that CEO approves and Finance Head releases. Both
+              -- write the same vendor_payment_tracking row, so this page has to show whether a
+              -- voucher is already in flight, otherwise Accounts would pay something the CEO
+              -- is still deciding on.
+              pvl.voucher_id,
+              pvl.voucher_number,
+              pvl.voucher_status,
+              pvl.voucher_raised_at,
+              pvl.voucher_ceo_approved_at,
+              pvl.voucher_released_at,
+              pvl.voucher_rejection_reason
          FROM vendor_payment_tracking vpt
          LEFT JOIN bank_master bm ON bm.id = vpt.bank_id
          LEFT JOIN branch_master b ON b.id = vpt.branch_id
@@ -244,21 +322,22 @@ export const vendorPaymentService = {
          LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
          LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
          LEFT JOIN grn_request g ON g.id = vpt.grn_request_id
+         ${LATEST_VOUCHER_JOIN}
          ${where}
-        ORDER BY vpt.due_date ASC, vpt.created_at ASC
+        ORDER BY vpt.due_date DESC, vpt.created_at DESC
         LIMIT ${limit} OFFSET ${offset}`,
       params
     );
 
     return {
-      rows,
+      rows: rows.map(withActiveVoucherFlag),
       total: Number(countRows[0]?.total ?? 0),
       page,
       limit,
     };
   },
 
-  async getPayment(id: string) {
+  async getPayment(id: string): Promise<Record<string, any> | null> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT vpt.*,
               bm.bank_name AS bank_master_name,
@@ -268,30 +347,70 @@ export const vendorPaymentService = {
               ccm.cost_centre_name,
               vm.vendor_type,
               vm.contact_email,
-              vm.contact_phone
+              vm.contact_phone,
+              pvl.voucher_id,
+              pvl.voucher_number,
+              pvl.voucher_status,
+              pvl.voucher_raised_at,
+              pvl.voucher_ceo_approved_at,
+              pvl.voucher_released_at,
+              pvl.voucher_rejection_reason
          FROM vendor_payment_tracking vpt
          LEFT JOIN bank_master bm ON bm.id = vpt.bank_id
          LEFT JOIN branch_master b ON b.id = vpt.branch_id
          LEFT JOIN process_master pm ON pm.id = vpt.process_id
          LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
          LEFT JOIN vendor_master vm ON vm.id = vpt.vendor_id
+         ${LATEST_VOUCHER_JOIN}
         WHERE vpt.id = ?
         LIMIT 1`,
       [id]
     );
-    return rows[0] ?? null;
+    if (!rows[0]) return null;
+
+    // Every voucher ever raised against this due, newest first — the drill-down mandate wants
+    // the whole approval history, not just the current one. Kept as a second query rather than
+    // widening the join: one due can carry N vouchers and a join would multiply the base row.
+    const [voucherHistory] = await db.execute<RowDataPacket[]>(
+      `SELECT pv.id, pv.voucher_number, pv.status, pv.amount AS voucher_amount,
+              pv.raised_by, pv.raised_at, pv.ceo_approved_by, pv.ceo_approved_at,
+              pv.released_by, pv.released_at, pv.rejection_reason,
+              pvga.allocated_amount
+         FROM payment_voucher_grn_allocation pvga
+         JOIN payment_voucher pv ON pv.id = pvga.payment_voucher_id
+        WHERE pvga.vendor_payment_tracking_id = ?
+        ORDER BY pv.raised_at DESC, pv.id DESC`,
+      [id]
+    );
+
+    return { ...withActiveVoucherFlag(rows[0]), voucher_history: voucherHistory };
   },
 
+  /**
+   * externalConnection: pass the caller's own PoolConnection to run this inside a larger
+   * transaction instead of opening/committing one of its own — payment-voucher.service.ts's
+   * release() needs this update, the bank_account_ledger_entry insert and the payment_voucher
+   * status transition to commit or roll back together. Mirrors createFromGrn's existing
+   * `connection?: PoolConnection` parameter in this same file.
+   *
+   * When an externalConnection is supplied, this method does not begin/commit/rollback, does
+   * not fire the post-commit logSensitiveAction (the caller does that once, after ITS commit,
+   * covering both this update and its own event), and does not re-read the row via
+   * this.getPayment() — that would run on a different connection and could read the
+   * pre-transaction row before the caller commits. The caller is expected to log and re-read.
+   */
   async updatePayment(
     id: string,
     payload: UpdatePaymentPayload,
     actorUserId: string,
-    actorRole?: string
+    actorRole?: string,
+    externalConnection?: PoolConnection
   ) {
-    const connection = await db.getConnection();
+    const owns = !externalConnection;
+    const connection = externalConnection ?? await db.getConnection();
     let auditSummary: Record<string, unknown> = {};
     try {
-      await connection.beginTransaction();
+      if (owns) await connection.beginTransaction();
       const [rows] = await connection.execute<RowDataPacket[]>(
         `SELECT *
            FROM vendor_payment_tracking
@@ -473,13 +592,15 @@ export const vendorPaymentService = {
         auditSummary,
         connection
       );
-      await connection.commit();
+      if (owns) await connection.commit();
     } catch (error) {
-      await connection.rollback();
+      if (owns) await connection.rollback();
       throw error;
     } finally {
-      connection.release();
+      if (owns) connection.release();
     }
+
+    if (!owns) return null;
 
     await logSensitiveAction({
       actor_user_id: actorUserId,
@@ -581,7 +702,16 @@ export const vendorPaymentService = {
   async createFromGrn(
     grnId: string,
     actorUserId: string,
-    connection?: PoolConnection
+    connection?: PoolConnection,
+    // One-time-remediation escape hatch ONLY — the live submit/review path never passes this
+    // (grn-validation-control.service.ts's VENDOR_INVOICE_ATTACHMENT check already blocks a
+    // vendor GRN from reaching approval without one, with its own audited override mechanism
+    // for a genuine case-by-case exception). This exists solely for
+    // scripts/remediate-attachmentless-approved-vendor-grn-backlog.ts, which needed a single
+    // documented reason to unblock 58 real, already-approved GRNs a raw-SQL backfill script
+    // (backfill-vendor-grn-approved-status.cjs) put in an inconsistent state by setting status
+    // directly and skipping this function — and every remaining call, past and future, entirely.
+    remediationReason?: string,
   ) {
     const executor = connection ?? db;
     const [rows] = await executor.execute<RowDataPacket[]>(
@@ -599,7 +729,8 @@ export const vendorPaymentService = {
     if (!grn.vendor_id || !grn.vendor_name) {
       throw new Error("Vendor GRN has no canonical Vendor Master mapping");
     }
-    if (!grn.attachment_path && !grn.attachment_file_path) {
+    const hasAttachment = !!(grn.attachment_path || grn.attachment_file_path);
+    if (!hasAttachment && !remediationReason?.trim()) {
       throw new Error("Vendor GRN has no invoice/supporting attachment");
     }
 
@@ -660,6 +791,15 @@ export const vendorPaymentService = {
     if (!connection) {
       await this.auditCreatedPayment(id, actorUserId);
     }
+    if (!hasAttachment && remediationReason?.trim()) {
+      await writeFinanceAudit(
+        "VENDOR_PAYMENT_ROW_CREATED_WITHOUT_ATTACHMENT",
+        id,
+        actorUserId,
+        undefined,
+        { grn_id: grnId, grn_number: grn.grn_number, due_amount: dueAmount, reason: remediationReason.trim() },
+      );
+    }
     return id;
   },
 
@@ -683,6 +823,7 @@ export const vendorPaymentService = {
         WHERE ${branchClause}
           AND vpt.payment_status NOT IN ('Paid','Closed')
           AND vpt.due_date IS NOT NULL
+          AND (vpt.grn_number IS NULL OR vpt.grn_number NOT LIKE 'IDC/%')
         ORDER BY days_overdue DESC, vpt.due_date`,
       branchParams
     );
@@ -730,10 +871,28 @@ export const vendorPaymentService = {
          LEFT JOIN grn_request gr ON gr.id = vpt.grn_request_id
          LEFT JOIN branch_master b ON b.id = vpt.branch_id
         WHERE vpt.vendor_id = ? AND ${branchClause}${periodClause}
+          AND (vpt.grn_number IS NULL OR vpt.grn_number NOT LIKE 'IDC/%')
         ORDER BY gr.bill_date DESC, gr.grn_number`,
       extraParams
     );
     return rows;
+  },
+
+  /**
+   * Vendor's currently available advance/on-account balance — the latest vendor_advance_ledger
+   * running balance, or 0 if this vendor has never had an advance voucher released. Same
+   * "latest balance_after wins" logic payment-voucher.service.ts's own private copy of this
+   * query uses internally during raise()/release() — this is the read-only, externally-callable
+   * twin, backing the Raise form's inline balance display and the Vendor Payment Dispatch page's
+   * advance badge. A single trivial SELECT, not worth importing across modules for.
+   */
+  async getAdvanceBalance(vendorId: string): Promise<number> {
+    const [[last]] = await db.execute<RowDataPacket[]>(
+      `SELECT balance_after FROM vendor_advance_ledger
+        WHERE vendor_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [vendorId],
+    );
+    return last ? Number((last as any).balance_after) : 0;
   },
 
   async auditCreatedPayment(id: string, actorUserId: string) {
@@ -843,5 +1002,15 @@ export const vendorPaymentService = {
       pendingBalance: Number(row.pending_balance ?? 0),
       ready: pendingCount === 0,
     };
+  },
+
+  async getScopeBranchNames(scope: FinanceBranchScope): Promise<string[]> {
+    if (scope.mode === "all" || scope.branchIds.length === 0) return [];
+    const placeholders = scope.branchIds.map(() => "?").join(", ");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT branch_name FROM branch_master WHERE id IN (${placeholders})`,
+      scope.branchIds
+    );
+    return rows.map((row) => String(row.branch_name)).filter(Boolean);
   },
 };

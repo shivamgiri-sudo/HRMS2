@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { VendorSheet } from '@/components/finance/vendor/VendorSheet';
 import {
   FileText, Info, Loader2, RefreshCw,
@@ -77,6 +78,11 @@ export default function NativeVendorManagement() {
   const [sheetMode, setSheetMode] = useState<'create' | 'edit' | 'detail'>('detail');
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetInitialTab, setSheetInitialTab] = useState<'identity' | 'mapping'>('identity');
+
+  // Contract drill-down. The Contracts tab table had no row drill-down at all — rows were not
+  // even clickable — despite every field a drawer needs (notes, full value, vendor) already
+  // sitting in the fetched row. No separate detail fetch needed for that reason.
+  const [contractDrawer, setContractDrawer] = useState<Contract | null>(null);
 
   // ── Data
   // Vendor search runs on the server. vendorService.list already supports `q` and `limit`, and
@@ -446,7 +452,11 @@ export default function NativeVendorManagement() {
                   </TableHeader>
                   <TableBody>
                     {contracts.map(c => (
-                      <TableRow key={c.id} className="hover:bg-slate-50/60 transition-colors">
+                      <TableRow
+                        key={c.id}
+                        className="cursor-pointer hover:bg-slate-50/60 transition-colors"
+                        onClick={() => setContractDrawer(c)}
+                      >
                         <TableCell className="font-mono text-xs text-slate-400">{c.contract_code}</TableCell>
                         <TableCell>
                           <p className="font-semibold text-slate-900 text-sm">{c.title}</p>
@@ -568,6 +578,52 @@ export default function NativeVendorManagement() {
         onSaved={() => { void refV(); void refMapping(); }}
         initialTab={sheetInitialTab}
       />
+
+      {/* ── Contract drill-down drawer ── */}
+      <Sheet open={!!contractDrawer} onOpenChange={(o) => { if (!o) setContractDrawer(null); }}>
+        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-2xl">
+          {contractDrawer && (
+            <>
+              <SheetHeader>
+                <SheetTitle className="flex items-center gap-2 text-sm">
+                  <span className="font-mono text-xs text-slate-400">{contractDrawer.contract_code}</span>
+                  {contractDrawer.title}
+                  <span className={`ml-auto inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-bold capitalize ${CONTRACT_STATUS_COLOR[contractDrawer.status] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                    {contractDrawer.status}
+                  </span>
+                </SheetTitle>
+              </SheetHeader>
+
+              <div className="mt-4 space-y-5">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Contract</p>
+                  <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                    <dt className="text-slate-500">Type</dt>
+                    <dd className="capitalize text-slate-900">{contractDrawer.contract_type}</dd>
+                    <dt className="text-slate-500">Vendor</dt>
+                    <dd className="text-slate-900">{contractDrawer.vendor_name ?? '—'}</dd>
+                    <dt className="text-slate-500">Start date</dt>
+                    <dd className="text-slate-900">{contractDrawer.start_date}</dd>
+                    <dt className="text-slate-500">End date</dt>
+                    <dd className="text-slate-900">{contractDrawer.end_date ?? 'Open'}</dd>
+                    <dt className="text-slate-500">Contract value</dt>
+                    <dd className="font-semibold text-slate-900">
+                      {contractDrawer.value != null ? `₹${Number(contractDrawer.value).toLocaleString('en-IN')}` : '—'}
+                    </dd>
+                  </dl>
+                </div>
+
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Notes</p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
+                    {contractDrawer.notes || 'None'}
+                  </p>
+                </div>
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
     </DashboardLayout>
   );
 }

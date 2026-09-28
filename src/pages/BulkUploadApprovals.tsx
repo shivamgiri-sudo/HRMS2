@@ -17,6 +17,7 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
+import { toast } from "sonner";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { BatchCostCentreReview } from "@/components/bulk-upload/BatchCostCentreReview";
@@ -548,10 +549,20 @@ export default function BulkUploadApprovals() {
         await load();
         setNotice(outcome.notice);
         if (outcome.error) setError(outcome.error);
+        // The drawer just closed, so the top-of-page banner alone is easy to miss —
+        // a toast puts the result in front of the approver regardless of scroll position.
+        if (outcome.error) {
+          toast.error(outcome.error);
+        } else {
+          toast.success(outcome.notice, {
+            description: decision === "approve" ? "Batch approved." : "Batch rejected.",
+          });
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : `Could not ${decision} this batch.`;
         await load();
         setError(message);
+        toast.error(message);
       } finally {
         setDeciding(null);
         setDecisionProgress(null);
@@ -688,6 +699,7 @@ export default function BulkUploadApprovals() {
       });
       setDiscardOutcome(res.data);
       setNotice(res.message);
+      toast.success(res.message);
       const succeededIds = new Set(res.data.filter((r) => r.success).map((r) => r.entityId));
       setSelectedEntityIds((prev) => new Set([...prev].filter((id) => !succeededIds.has(id))));
       setDiscardReason("");
@@ -696,7 +708,9 @@ export default function BulkUploadApprovals() {
       // wiping the outcome banner or trimmed selection this just set.
       await refreshHistoryRows(openHistoryBatch);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not discard the selected rows.");
+      const message = err instanceof Error ? err.message : "Could not discard the selected rows.";
+      setError(message);
+      toast.error(message);
     } finally {
       setDiscarding(false);
     }

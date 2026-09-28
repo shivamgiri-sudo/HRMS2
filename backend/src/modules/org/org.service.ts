@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 
 import { blankToNull } from "../../shared/sql-values.js";
+import { notDialDeskProcessSql, ownCompanyBranchSql, ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 import { syncCostCentreRelatedTables } from "../../shared/cost-centre-sync.js";
 import { clearBranchLetterheadCache } from "./branchAddress.service.js";
 // ── Whitelisted master tables to prevent SQL injection ────────────────────────
@@ -36,6 +37,12 @@ interface ListOptions {
   entityType?: string;
   employeeId?: string;
   branch_id?: string;
+  /**
+   * Branch entitlement of the caller. Undefined = every branch (super_admin, finance_head,
+   * payroll_head). An EMPTY array means "entitled to no branch" and returns nothing - never
+   * "no filter".
+   */
+  branchIds?: string[];
   client_id?: string;
   lob_id?: string;
   process_id?: string;
@@ -101,6 +108,14 @@ async function listActive(table: string, orderCol = "created_at", options: ListO
 
   const whereClauses: string[] = [];
   const params: any[] = [];
+
+  // DialDesk (IDC entity) branches and processes never surface in HRMS (owner rule 2026-09-24).
+  if (table === "branch_master") whereClauses.push(ownCompanyBranchSql(""));
+  if (table === "process_master") {
+    const processIdentity = "REPLACE(REPLACE(LOWER(CONCAT_WS(' ', process_name, process_code, client_name)), ' ', ''), '-', '')";
+    for (const marker of ["dialdesk", "ispark", "dataconnect"]) whereClauses.push(`${processIdentity} NOT LIKE '%${marker}%'`);
+    whereClauses.push(`(branch_id IS NULL OR branch_id IN (SELECT id FROM branch_master WHERE ${ownCompanyBranchSql("")}))`);
+  }
 
   // Active status filter
   if (options.active_status === "0" || options.active_status === 0) {
@@ -588,28 +603,69 @@ async function logCostCentreChange(
 
 export const costCentreService = {
   async list(options: ListOptions = {}) {
-    const { q, active_status, page, limit, employeeId, branch_id, client_id, lob_id, process_id } = options;
+    const { q, active_status, page, limit, employeeId, branch_id, branchIds, client_id, lob_id, process_id } = options;
     const whereClauses: string[] = [];
     const params: (string | number)[] = [];
 
-    // Status filter
+    // MAS Callnet only: IDC / Pikquick cost centres must not appear anywhere in HRMS.
+    whereClauses.push(ownCompanyCostCentreSql("cc"));
+
+    // Status filter - when fetching "active" cost centres, also require status='active'.
+    // 83 cost centres have active_status=1 but status='closed', and 85 have status='draft'.
+    // Those shouldn't appear in operational dropdowns (offer creation, employee assignment, etc).
     if (active_status === "0" || active_status === 0) {
       whereClauses.push("cc.active_status = 0");
     } else if (active_status === "all") {
       // No filter
     } else {
-      whereClauses.push("cc.active_status = 1"); // Default
+      whereClauses.push("cc.active_status = 1");
+      whereClauses.push("cc.status = 'active'"); // Exclude draft and closed
+      // A cost centre cannot be operational under a branch that has been closed. Without this the
+      // GRN and every other picker kept offering cost centres flagged active whose branch is
+      // closed (39 IDC + 1 Pikquick on 2026-09-24). No branch at all still passes.
+      whereClauses.push("COALESCE(b.active_status, 1) = 1");
     }
 
-    // Search filter
+    /**
+     * Search filter.
+     *
+     * `cc.client_name` is searched alongside the joined `cl.client_name`, and that is the
+     * whole fix. The SELECT below already displays COALESCE(cl.client_name, cc.client_name),
+     * but the search looked only at the JOINED column - and `cc.client_id` is NULL on all
+     * ~940 rows, so the join produces NULL and the clause can never match. The list therefore
+     * SHOWED the client name it refused to search on.
+     *
+     * Reported 2026-09-08 as "Satya Retails is not showing in mas_hrms". The row
+     * (BSS/OB/Noida/1045 / SATYA E-COM SERVICES LIMITED) had been imported that morning and
+     * was visible in the table; typing "Satya" filtered it away. A search that answers "no
+     * such record" about a record it is displaying is worse than a slow one - the user's next
+     * move is to create a duplicate.
+     *
+     * `cc.process_name_bill` is included for the same reason as `p.process_name`:
+     * cost_centre_master.process_id is populated on 24 of 937 rows, so the joined process name
+     * is almost always NULL while the billing campaign name is the one people actually use.
+     */
     if (q && q.trim()) {
-      whereClauses.push("(cc.cost_centre_name LIKE ? OR cc.cost_centre_code LIKE ? OR cl.client_name LIKE ? OR p.process_name LIKE ?)");
-      params.push(`%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`);
+      whereClauses.push(
+        "(cc.cost_centre_name LIKE ? OR cc.cost_centre_code LIKE ? OR cl.client_name LIKE ?" +
+        " OR cc.client_name LIKE ? OR cc.billing_client_name LIKE ?" +
+        " OR p.process_name LIKE ? OR cc.process_name_bill LIKE ?)"
+      );
+      const term = `%${q.trim()}%`;
+      params.push(term, term, term, term, term, term, term);
     }
 
     // Relationship filters — same axes the Add/Edit form already requires (client, LOB,
     // branch, process), now usable to narrow the list too.
     if (branch_id)  { whereClauses.push("cc.branch_id = ?");  params.push(branch_id); }
+    if (branchIds) {
+      if (branchIds.length === 0) {
+        whereClauses.push("1=0");
+      } else {
+        whereClauses.push(`cc.branch_id IN (${branchIds.map(() => "?").join(",")})`);
+        params.push(...branchIds);
+      }
+    }
     if (client_id)  { whereClauses.push("cc.client_id = ?");  params.push(client_id); }
     if (lob_id)     { whereClauses.push("cc.lob_id = ?");     params.push(lob_id); }
     if (process_id) { whereClauses.push("cc.process_id = ?"); params.push(process_id); }
@@ -680,16 +736,39 @@ export const costCentreService = {
   getById: (id: string) => getById("cost_centre_master", id),
   setStatus: (id: string, status: number, actor?: OrgActor) => setStatus("cost_centre_master", id, status, actor),
 
-  async countOrphanedRecords(): Promise<{ total: number; orphaned: number }> {
+  /**
+   * How many active cost centres are missing a relationship, and WHICH one.
+   *
+   * The per-field counts exist because the single `orphaned` number was reported to users as
+   * "406 of 406 need Client, LOB, Branch, and Process assigned", which is wrong in a way that
+   * wastes their time: branch_id is set on all 406. The real gap is client_id and lob_id (406
+   * each) and process_id (384). Naming a field that is already complete sends someone to check
+   * 406 records for a problem that is not there.
+   */
+  async countOrphanedRecords(): Promise<{
+    total: number; orphaned: number;
+    missingClient: number; missingLob: number; missingBranch: number; missingProcess: number;
+  }> {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*) AS total,
-         SUM(CASE WHEN client_id IS NULL OR lob_id IS NULL OR branch_id IS NULL OR process_id IS NULL THEN 1 ELSE 0 END) AS orphaned
+         SUM(CASE WHEN client_id IS NULL OR lob_id IS NULL OR branch_id IS NULL OR process_id IS NULL THEN 1 ELSE 0 END) AS orphaned,
+         SUM(client_id  IS NULL) AS missing_client,
+         SUM(lob_id     IS NULL) AS missing_lob,
+         SUM(branch_id  IS NULL) AS missing_branch,
+         SUM(process_id IS NULL) AS missing_process
        FROM cost_centre_master
        WHERE active_status = 1`
     );
-    const row = rows[0] ?? { total: 0, orphaned: 0 };
-    return { total: Number(row.total), orphaned: Number(row.orphaned) };
+    const row = rows[0] ?? {};
+    return {
+      total: Number(row.total ?? 0),
+      orphaned: Number(row.orphaned ?? 0),
+      missingClient: Number(row.missing_client ?? 0),
+      missingLob: Number(row.missing_lob ?? 0),
+      missingBranch: Number(row.missing_branch ?? 0),
+      missingProcess: Number(row.missing_process ?? 0),
+    };
   },
 
   async create(data: {
@@ -706,14 +785,25 @@ export const costCentreService = {
     hours_per_fte_per_day?: number;
     billing_type?: string;
   }) {
-    // Check for orphaned records - block creation until all are migrated
-    const { orphaned } = await this.countOrphanedRecords();
-    if (orphaned > 0) {
-      throw Object.assign(
-        new Error(`Cannot create new cost centre: ${orphaned} existing cost centre(s) need migration. Please assign Client, LOB, Branch, and Process to all existing cost centres first.`),
-        { statusCode: 400 }
-      );
-    }
+    /**
+     * There used to be a global gate here: creation was refused while ANY active cost centre
+     * was missing client_id / lob_id / branch_id / process_id.
+     *
+     * It could never open. On 2026-09-08 that was 406 of 406 — client_id and lob_id are NULL
+     * on every single row (branch_id, notably, is set on all of them), because nothing has ever
+     * populated those two FKs: the db_bill import carries the client as TEXT in
+     * cost_centre_master.client_name. Clearing the gate by migration would have meant first
+     * hand-creating ~650 client_master records, since 696 distinct client names appear on cost
+     * centres and only 17 of them match one of the 44 clients that exist.
+     *
+     * So the Add Cost Centre button was permanently dead, and the only way a cost centre could
+     * enter HRMS was the db_bill importer. Blocking correct NEW data because OLD data is
+     * incomplete is backwards — the legacy backlog is a to-do, not a reason to refuse today's
+     * work. The banner on Org Masters still reports it.
+     *
+     * What is enforced instead is that the record BEING CREATED is complete, below. Decision
+     * taken with the business 2026-09-08.
+     */
 
     // Validate all required fields
     if (!data.client_id?.trim()) {
@@ -729,6 +819,29 @@ export const costCentreService = {
       throw Object.assign(new Error("Process is required for cost centre"), { statusCode: 400 });
     }
 
+    /**
+     * Denormalised copies of the client and company, resolved once here.
+     *
+     * cost_centre_master.client_name is not redundant with client_id — it is the column the
+     * whole application actually reads. The list displays
+     * COALESCE(cl.client_name, cc.client_name) and searches both; reports, the P&L and the
+     * db_bill importer all populate and read the text column. Leaving it NULL on a
+     * UI-created cost centre would make that row the odd one out among ~940, findable only
+     * through the FK join, and would reintroduce the exact split that made "Satya" unsearchable.
+     * The FK stays authoritative; this is a copy kept in step, written here and in update().
+     */
+    const [[clientRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT client_name FROM client_master WHERE id = ? LIMIT 1`,
+      [data.client_id.trim()]
+    );
+    const clientName = (clientRow as { client_name?: string } | undefined)?.client_name ?? null;
+
+    const [[branchRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT company_name FROM branch_master WHERE id = ? LIMIT 1`,
+      [data.branch_id.trim()]
+    );
+    const companyName = (branchRow as { company_name?: string } | undefined)?.company_name ?? null;
+
     const id = randomUUID();
     await db.execute(
       // current_mandate, billing_days_per_month, hours_per_fte_per_day and billing_type are NOT
@@ -739,10 +852,16 @@ export const costCentreService = {
       // (0 / 26 / 8.00 / "seat"), so dropping them from the statement loses nothing and lets the
       // row actually be created. The optional fields stay on the signature: callers already pass
       // them and rejecting that would be a second, pointless break.
+      //
+      // status and active_status are stated explicitly rather than left to the column defaults.
+      // status defaults to 'draft', which would have made every UI-created cost centre differ
+      // from all ~940 imported ones (all 'active') for a workflow — draft -> pending_l1 ->
+      // pending_l2 -> approved -> active — that nothing currently drives, so the row would sit
+      // in draft forever with no way out. Business decision 2026-09-08: created active.
       `INSERT INTO cost_centre_master
          (id, cost_centre_code, cost_centre_name, client_id, lob_id, branch_id, process_id, department_id,
-          working_days_per_week)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          working_days_per_week, client_name, company_name, status, active_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         data.cost_centre_code,
@@ -753,6 +872,14 @@ export const costCentreService = {
         data.process_id.trim(),
         data.department_id?.trim() || null,
         data.working_days_per_week ?? 6,
+        clientName,
+        companyName,
+        // Bound, not inlined as literals: cost-centre-create-columns.contract.test.ts holds the
+        // invariant that the column list and the placeholder list are the same length, and that
+        // invariant is what catches a parameter shifted by one — a class of bug MySQL reports
+        // far from its cause. Worth keeping intact for the sake of two constants.
+        "active",
+        1,
       ]
     );
     await syncCostCentreRelatedTables({
@@ -795,6 +922,15 @@ export const costCentreService = {
          process_id = COALESCE(NULLIF(?, ''), process_id),
          department_id = COALESCE(NULLIF(?, ''), department_id),
          working_days_per_week = COALESCE(?, working_days_per_week),
+         -- Re-point the denormalised client text at whatever client_id now holds, and only
+         -- when a client was actually supplied. Without this a re-assigned cost centre keeps
+         -- displaying and matching its OLD client in every screen that reads client_name,
+         -- while the FK says something else - the two-copies-of-one-fact trap that made
+         -- "Satya" unsearchable in the first place.
+         client_name = CASE
+           WHEN NULLIF(?, '') IS NULL THEN client_name
+           ELSE COALESCE((SELECT cl.client_name FROM client_master cl WHERE cl.id = ?), client_name)
+         END,
          updated_at = NOW()
        WHERE id = ?`,
       [
@@ -805,6 +941,8 @@ export const costCentreService = {
         data.process_id ?? null,
         data.department_id ?? null,
         data.working_days_per_week ?? null,
+        data.client_id ?? null,
+        data.client_id ?? null,
         id,
       ]
     );
@@ -834,11 +972,16 @@ export const costCentreService = {
     }
 
     await db.execute(
+      // client_name is carried across with client_id for the same reason as in create() and
+      // update(): it is the column the list, the search and the reports actually read, so a
+      // migrated cost centre whose FK moved but whose text did not would show one client and
+      // belong to another.
       `UPDATE cost_centre_master SET
          client_id = ?,
          lob_id = ?,
          branch_id = ?,
          process_id = ?,
+         client_name = COALESCE((SELECT cl.client_name FROM client_master cl WHERE cl.id = ?), client_name),
          updated_at = NOW()
        WHERE id = ?`,
       [
@@ -846,6 +989,7 @@ export const costCentreService = {
         data.lob_id.trim(),
         data.branch_id.trim(),
         data.process_id.trim(),
+        data.client_id.trim(),
         id,
       ]
     );
@@ -945,6 +1089,9 @@ export const processService = {
     } else {
       whereClauses.push("pm.active_status = 1"); // Default
     }
+
+    // DialDesk is an IDC entity, never a MAS Callnet process (owner rule 2026-09-24).
+    whereClauses.push(notDialDeskProcessSql("pm", "bm"));
 
     // Search filter
     if (q && q.trim()) {

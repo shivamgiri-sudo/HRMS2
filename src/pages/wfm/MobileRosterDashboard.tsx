@@ -34,11 +34,14 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { hrmsApi } from '@/lib/hrmsApi';
+import { LobSelect } from '@/components/wfm/LobSelect';
+import { LobBadge } from '@/components/wfm/LobBadge';
 
 interface TeamMember {
   employeeId: string;
   employeeCode: string;
   employeeName: string;
+  lobName?: string | null;
   status: 'present' | 'absent' | 'late' | 'on_leave' | 'week_off';
   shiftName: string;
   loginTime?: string;
@@ -75,11 +78,12 @@ const statusLabels: Record<string, string> = {
 export default function MobileRosterDashboard() {
   const [selectedFilter, setSelectedFilter] = useState<string>('all');
   const [showActions, setShowActions] = useState(false);
+  const [lobId, setLobId] = useState('');
 
   const { data: teamData, isLoading, refetch, isFetching } = useQuery({
-    queryKey: ['mobile-team-status'],
+    queryKey: ['mobile-team-status', lobId],
     queryFn: async () => {
-      const res = await hrmsApi.get('/roster-analytics/team-status-mobile');
+      const res = await hrmsApi.get(`/roster-analytics/team-status-mobile${lobId ? `?lobId=${encodeURIComponent(lobId)}` : ''}`);
       return res.data;
     },
     refetchInterval: 60000, // Auto-refresh every minute
@@ -196,7 +200,7 @@ export default function MobileRosterDashboard() {
                   <SheetTitle>Quick Navigation</SheetTitle>
                 </SheetHeader>
                 <div className="mt-6 space-y-2">
-                  <Link to="/wfm/roster-command-center" className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-100">
+                  <Link to="/wfm/roster-command-center?tab=live" className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-100">
                     <BarChart3 className="w-5 h-5 text-indigo-600" />
                     <span>Command Center</span>
                   </Link>
@@ -204,7 +208,7 @@ export default function MobileRosterDashboard() {
                     <Calendar className="w-5 h-5 text-indigo-600" />
                     <span>Full Roster View</span>
                   </Link>
-                  <Link to="/wfm/roster-interventions" className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-100">
+                  <Link to="/wfm/roster-command-center?tab=interventions" className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-100">
                     <AlertTriangle className="w-5 h-5 text-amber-600" />
                     <span>At-Risk Employees</span>
                   </Link>
@@ -212,7 +216,7 @@ export default function MobileRosterDashboard() {
                     <Bell className="w-5 h-5 text-indigo-600" />
                     <span>Notifications</span>
                   </Link>
-                  <Link to="/wfm/roster-audit" className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-100">
+                  <Link to="/wfm/roster-command-center?tab=audit" className="flex items-center gap-3 p-3 rounded-lg hover:bg-slate-100">
                     <Settings className="w-5 h-5 text-slate-600" />
                     <span>Audit Trail</span>
                   </Link>
@@ -256,6 +260,10 @@ export default function MobileRosterDashboard() {
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="px-4 pb-2">
+        <LobSelect processId="" value={lobId} onChange={setLobId} includeUnassigned className="h-9 w-full bg-white" />
       </div>
 
       {/* Filter Pills */}
@@ -316,6 +324,7 @@ export default function MobileRosterDashboard() {
                   <p className="text-xs text-gray-500">
                     {member.employeeCode} • {member.shiftName}
                   </p>
+                  {member.lobName !== undefined && <LobBadge name={member.lobName} />}
                   <div className="flex items-center gap-2 mt-1">
                     <Badge
                       className={`text-[10px] ${statusColors[member.status].bg} ${statusColors[member.status].text}`}
@@ -401,7 +410,7 @@ export default function MobileRosterDashboard() {
             <Calendar className="w-5 h-5" />
             <span className="text-[10px] mt-0.5">Schedule</span>
           </Link>
-          <Link to="/wfm/roster-analytics" className="flex flex-col items-center py-2 px-4 text-gray-400">
+          <Link to="/wfm/roster-command-center?tab=analytics" className="flex flex-col items-center py-2 px-4 text-gray-400">
             <TrendingUp className="w-5 h-5" />
             <span className="text-[10px] mt-0.5">Analytics</span>
           </Link>

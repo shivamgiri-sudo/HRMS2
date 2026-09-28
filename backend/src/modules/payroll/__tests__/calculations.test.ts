@@ -102,44 +102,38 @@ describe('Payroll Calculations', () => {
     });
   });
 
-  describe('Professional Tax (PT) Calculation', () => {
-    const calculatePT = (gross: number, state: string = 'Maharashtra'): number => {
-      // Maharashtra PT slabs (most common)
-      if (state === 'Maharashtra') {
-        if (gross <= 5000) return 0;
-        if (gross <= 10000) return 175;
-        return 200;
-      }
-
-      // Karnataka PT slabs
-      if (state === 'Karnataka') {
-        if (gross <= 15000) return 0;
-        if (gross <= 20000) return 150;
-        return 200;
-      }
-
-      return 0; // Other states
+  describe('Professional Tax (PT) Calculation -- removed 2026-09-11', () => {
+    // Professional Tax has been explicitly approved for full removal from
+    // payroll, company-wide, across every state, go-forward only
+    // (stakeholder-confirmed, not a guess -- see payrollCalculate.service.ts
+    // resolveProfessionalTax/getPtFromSlab, which now unconditionally return 0).
+    // These tests used to pin the Maharashtra/Karnataka state slab formulas;
+    // they now pin that no state slab produces a nonzero figure any more,
+    // matching the real engine's PT-free behavior instead of asserting a
+    // formula that no longer runs anywhere in the product.
+    const calculatePT = (_gross: number, _state: string = 'Maharashtra'): number => {
+      return 0;
     };
 
-    it('should calculate Maharashtra PT slabs', () => {
+    it('returns 0 for Maharashtra regardless of gross (slab formula removed)', () => {
       expect(calculatePT(4000, 'Maharashtra')).toBe(0);
-      expect(calculatePT(7000, 'Maharashtra')).toBe(175);
-      expect(calculatePT(15000, 'Maharashtra')).toBe(200);
+      expect(calculatePT(7000, 'Maharashtra')).toBe(0);
+      expect(calculatePT(15000, 'Maharashtra')).toBe(0);
     });
 
-    it('should calculate Karnataka PT slabs', () => {
+    it('returns 0 for Karnataka regardless of gross (slab formula removed)', () => {
       expect(calculatePT(10000, 'Karnataka')).toBe(0);
-      expect(calculatePT(18000, 'Karnataka')).toBe(150);
-      expect(calculatePT(25000, 'Karnataka')).toBe(200);
+      expect(calculatePT(18000, 'Karnataka')).toBe(0);
+      expect(calculatePT(25000, 'Karnataka')).toBe(0);
     });
 
-    it('should return 0 for other states', () => {
+    it('returns 0 for every other state', () => {
       expect(calculatePT(15000, 'Gujarat')).toBe(0);
     });
 
-    it('should handle exact slab boundaries', () => {
+    it('returns 0 at former slab boundaries too', () => {
       expect(calculatePT(5000, 'Maharashtra')).toBe(0);
-      expect(calculatePT(10000, 'Maharashtra')).toBe(175);
+      expect(calculatePT(10000, 'Maharashtra')).toBe(0);
     });
   });
 
@@ -314,12 +308,9 @@ describe('Payroll Calculations', () => {
       };
     };
 
-    const calculatePT = (gross: number, state: string): number => {
-      if (state === 'Maharashtra') {
-        if (gross <= 5000) return 0;
-        if (gross <= 10000) return 175;
-        return 200;
-      }
+    // Professional Tax removed 2026-09-11 (see the describe block above) --
+    // always 0 now, no state slab is consulted any more.
+    const calculatePT = (_gross: number, _state: string): number => {
       return 0;
     };
 
@@ -351,7 +342,7 @@ describe('Payroll Calculations', () => {
       expect(result.gross).toBe(50000);
       expect(result.pf).toBeGreaterThan(0);
       expect(result.esi).toBe(0); // Above ESI limit
-      expect(result.pt).toBe(200);
+      expect(result.pt).toBe(0); // PT removed 2026-09-11
       expect(result.net).toBeLessThan(result.gross);
     });
 
@@ -359,7 +350,7 @@ describe('Payroll Calculations', () => {
       const result = calculateNetSalary(15000);
 
       expect(result.esi).toBeGreaterThan(0);
-      expect(result.pt).toBe(200);
+      expect(result.pt).toBe(0); // PT removed 2026-09-11
     });
 
     it('should calculate correct deductions order', () => {

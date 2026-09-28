@@ -44,6 +44,9 @@ export interface PnlDrilldownParams {
   /** Narrows people cost to one statement line (Agent Salary / DSC People / BMC People) so the
    *  drilldown total matches the cell clicked rather than the sum of all three. */
   peopleBucket?: PnlPeopleBucket;
+  /** Narrows the indirect (GRN) drilldown to one Statement line: GRN Consumed ("consumed") or
+   *  GRN Committed (reserved) ("reserved"). Omitted = both, which is Total Indirect Cost. */
+  grnKind?: "consumed" | "reserved";
 }
 
 export function usePnlDrilldown(params: PnlDrilldownParams | null) {
@@ -63,6 +66,7 @@ export function usePnlDrilldown(params: PnlDrilldownParams | null) {
       if (params!.processId) search.set("processId", params!.processId);
       if (params!.costCentreId) search.set("costCentreId", params!.costCentreId);
       if (params!.peopleBucket) search.set("peopleBucket", params!.peopleBucket);
+      if (params!.grnKind) search.set("grnKind", params!.grnKind);
       const response = await hrmsApi.get<{ success: boolean; data: PnlDrilldownResult }>(
         `/api/finance/pnl/drilldown?${search.toString()}`
       );

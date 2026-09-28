@@ -5,6 +5,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { formatISTDate } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { BGV_REPORT_ROLES } from "@/lib/bgvReportAccess";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -96,7 +97,9 @@ const CHECK_LABELS: Record<string, string> = {
 
 export default function NativeBGVVerificationCenter() {
   const { user } = useAuth();
-  const { roleKeys } = useWorkforceAccess();
+  const { roleKeys, hasAnyRole } = useWorkforceAccess();
+  // The HR Report tab (and its API) is limited to admin, branch HR and branch manager/head.
+  const canViewBgvReport = hasAnyRole(...BGV_REPORT_ROLES);
   const role = (user as any)?.role ?? "";
   // Mirrors the backend's own view-level grants for this module (bgv-verification.routes.ts
   // GET /queue, /candidates, /candidates/:id, /status/:id, /report — branch_hr and the other
@@ -252,7 +255,7 @@ export default function NativeBGVVerificationCenter() {
         <Tabs defaultValue="api-checks" className="space-y-4">
           <TabsList>
             <TabsTrigger value="api-checks">API Checks &amp; Vendor Dispatch</TabsTrigger>
-            <TabsTrigger value="hr-report">HR Report &amp; Documents</TabsTrigger>
+            {canViewBgvReport && <TabsTrigger value="hr-report">HR Report &amp; Documents</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="api-checks">
@@ -514,13 +517,13 @@ export default function NativeBGVVerificationCenter() {
             </div>
           </TabsContent>
 
-          <TabsContent value="hr-report">
+          {canViewBgvReport && <TabsContent value="hr-report">
             <BGVReportTab
               candidateId={selectedId}
               candidateEmail={queue.find(q => q.candidate_id === selectedId)?.email}
               candidateName={queue.find(q => q.candidate_id === selectedId)?.full_name}
             />
-          </TabsContent>
+          </TabsContent>}
         </Tabs>
       </div>
     </DashboardLayout>

@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import type { ProcessPnlRecord } from "@/hooks/useProcessPnl";
+import { pnlLabel } from "./pnlLabels";
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat("en-IN", {
@@ -42,11 +43,11 @@ export function ProcessProfitabilityTable({
               <th className="px-4 py-3 text-left">Rate source</th>
               <th className="px-4 py-3 text-right">Contracted seats</th>
               <th className="px-4 py-3 text-right">Billable HC</th>
-              <th className="px-4 py-3 text-right">Active HC</th>
+              <th className="px-4 py-3 text-right">{pnlLabel("ACTIVE_HEADCOUNT")}</th>
               <th className="px-4 py-3 text-right">Revenue MTD</th>
               <th className="px-4 py-3 text-right">Direct cost</th>
-              <th className="px-4 py-3 text-right">Indirect cost</th>
-              <th className="px-4 py-3 text-right">Operating profit</th>
+              <th className="px-4 py-3 text-right">{pnlLabel("INDIRECT_COST")}</th>
+              <th className="px-4 py-3 text-right">{pnlLabel("OPERATING_PROFIT")}</th>
               <th className="px-4 py-3 text-right">Profit variance</th>
               <th className="px-4 py-3 text-right">OP margin</th>
               <th className="px-4 py-3 text-right">Revenue leakage</th>

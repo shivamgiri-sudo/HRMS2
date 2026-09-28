@@ -27,6 +27,7 @@ interface PendingTask {
   description?: string;
   entity_type?: string;
   entity_id?: string;
+  item_type?: string;
   action_url?: string;
   priority: string;
   tat_deadline?: string;
@@ -511,11 +512,26 @@ function ActionSheet({
   const [recordLoading, setRecordLoading] = useState(false);
   const [recordError, setRecordError] = useState("");
   const canReviewFixDrafts = useHasRole("super_admin");
+  const isAwolSuspected = task?.source === "work_item" && task?.item_type === "AWOL_SUSPECTED";
+  const [awolLastWorkedDate, setAwolLastWorkedDate] = useState("");
+  const [awolLoading, setAwolLoading] = useState(false);
+  const [awolActing, setAwolActing] = useState<"confirm" | "reject" | null>(null);
 
   useEffect(() => {
     setRemarks("");
     setFullRecord(null);
     setRecordError("");
+    setAwolLastWorkedDate("");
+    if (task?.source === "work_item" && task?.item_type === "AWOL_SUSPECTED") {
+      setAwolLoading(true);
+      hrmsApi
+        .get<{ success: boolean; data: { lastWorkedDate: string | null } }>(
+          `/api/work-inbox/${task.id}/awol-context`,
+        )
+        .then((r) => setAwolLastWorkedDate(r.data?.lastWorkedDate ?? ""))
+        .catch(() => setAwolLastWorkedDate(""))
+        .finally(() => setAwolLoading(false));
+    }
     if (!task?.entity_type || !task?.entity_id) return;
     setTlLoading(true);
     const workItemParam = task.source === "work_item" ? `?workItemId=${encodeURIComponent(task.id)}` : "";
@@ -540,7 +556,44 @@ function ActionSheet({
         .catch((err) => setRecordError(err instanceof Error ? err.message : "Failed to load full record"))
         .finally(() => setRecordLoading(false));
     }
-  }, [task?.entity_type, task?.entity_id, task?.source, task?.id]);
+  }, [task?.entity_type, task?.entity_id, task?.source, task?.id, task?.item_type]);
+
+  const handleAwolConfirm = async () => {
+    if (!task || !awolLastWorkedDate) return;
+    setAwolActing("confirm");
+    try {
+      await hrmsApi.post(`/api/work-inbox/${task.id}/awol/confirm`, {
+        lastWorkedDate: awolLastWorkedDate,
+        remarks: remarks || undefined,
+      });
+      await onComplete(task.id, remarks);
+      setRemarks("");
+      onClose();
+    } catch (err) {
+      import("sonner").then(({ toast }) => {
+        toast.error(err instanceof Error ? err.message : "Could not confirm absconding.");
+      });
+    } finally {
+      setAwolActing(null);
+    }
+  };
+
+  const handleAwolReject = async () => {
+    if (!task || !remarks.trim()) return;
+    setAwolActing("reject");
+    try {
+      await hrmsApi.post(`/api/work-inbox/${task.id}/awol/reject`, { remarks });
+      await onComplete(task.id, remarks);
+      setRemarks("");
+      onClose();
+    } catch (err) {
+      import("sonner").then(({ toast }) => {
+        toast.error(err instanceof Error ? err.message : "Could not dismiss this item.");
+      });
+    } finally {
+      setAwolActing(null);
+    }
+  };
 
   const handleAct = async () => {
     if (!task) return;
@@ -688,7 +741,49 @@ function ActionSheet({
                 </a>
               </Button>
             )}
-            {task.source === "derived" ? (
+            {isAwolSuspected ? (
+              <div className="flex w-full flex-col gap-3">
+                <div>
+                  <p className="mb-1 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                    Last date actually worked
+                  </p>
+                  <input
+                    type="date"
+                    value={awolLastWorkedDate}
+                    onChange={(e) => setAwolLastWorkedDate(e.target.value)}
+                    disabled={awolLoading}
+                    className="w-full rounded-xl border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  />
+                  {awolLoading && <p className="mt-1 text-[10px] text-slate-400">Checking attendance…</p>}
+                  {!awolLoading && !awolLastWorkedDate && (
+                    <p className="mt-1 text-[10px] text-amber-700">
+                      No attendance on record — confirm only if you know the last day worked.
+                    </p>
+                  )}
+                </div>
+                <div className="flex gap-3">
+                  <Button
+                    size="sm"
+                    onClick={() => void handleAwolReject()}
+                    disabled={awolActing !== null || !remarks.trim()}
+                    variant="outline"
+                    className="flex-1 gap-1.5 border-red-300 text-red-700 hover:bg-red-50"
+                  >
+                    {awolActing === "reject" ? <Loader className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+                    Not Absconding
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => void handleAwolConfirm()}
+                    disabled={awolActing !== null || !awolLastWorkedDate}
+                    className="flex-1 gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    {awolActing === "confirm" ? <Loader className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                    Confirm Absconding
+                  </Button>
+                </div>
+              </div>
+            ) : task.source === "derived" ? (
               <>
                 <Button
                   size="sm"
@@ -1273,6 +1368,9 @@ export default function NativeWorkInbox() {
     try {
       if (task.source === "tat") {
         await hrmsApi.post(`/api/governance/tat/tasks/${id}/complete`, { remarks: remarks || undefined });
+      } else if (task.source === "work_item" && task.item_type === "AWOL_SUSPECTED") {
+        // Already completed server-side by /awol/confirm or /awol/reject — this call only
+        // needs to run the shared recordActed bookkeeping below, not hit the API again.
       } else if (task.source === "work_item") {
         await hrmsApi.post(`/api/work-inbox/${id}/complete`, { remarks: remarks || undefined });
       } else if (task.source === "derived") {

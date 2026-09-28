@@ -6,23 +6,62 @@
 import { Router } from 'express';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
+import { readLobFilter } from '../../shared/lobFilter.js';
 import {
   generateManagerDailyDigests,
   generateBranchDashboard,
   detectUnplannedAbsences,
   generateWeeklyShrinkageReport,
   type ManagerDailyDigest,
+  type RosterIntelligenceScope,
 } from './roster-intelligence.service.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import { getUserRoleContext } from '../../shared/roleResolver.js';
+import { resolveDashboardScopeForRequest } from '../../shared/dashboardScope.js';
 
 const router = Router();
 
 router.use(requireAuth);
 
+// ADMIN_ROLES: used only by the /manager-digest (singular) self-service endpoint below,
+// to decide whether the caller may view someone else's digest rather than just their own —
+// unrelated to the Roster Console's Live Monitoring tab and left untouched by the
+// branch_head/wfm-only ruling (see LIVE_MONITORING_ROLES).
 const ADMIN_ROLES = ['super_admin', 'admin', 'hr', 'wfm'];
 const MANAGER_ROLES = ['super_admin', 'admin', 'hr', 'wfm', 'branch_head', 'manager', 'operations_manager', 'process_manager'];
+// Owner ruling 2026-09-14: the Roster Console's Live Monitoring tab
+// (page_code WFM_ROSTER_LIVE_MONITORING, migration 1766) is branch_head + wfm only —
+// admin/hr's prior access to these 5 endpoints is revoked. super_admin needs no entry:
+// requireRole() unconditionally allows it regardless of the list passed in.
+// branch_wfm, process_manager, operations_manager added 2026-09-16, owner-specified:
+// "branch WFM, Branch head, Process manager (respective process), Operations manager
+// (respective process) and super admin (All branch)".
+const LIVE_MONITORING_ROLES = ['super_admin', 'wfm', 'branch_head', 'branch_wfm', 'process_manager', 'operations_manager'];
+
+/**
+ * Resolves the caller's branch/process scope for the 4 Live Monitoring data endpoints below
+ * (unplanned-absences, manager-digests, and their send-* triggers). `wfm` and `super_admin`
+ * keep the org-wide access the 2026-09-14 ruling already gave them — unrestricted (undefined)
+ * is not the same as "scope not checked": every other LIVE_MONITORING_ROLES member (branch_head,
+ * branch_wfm, process_manager, operations_manager) is resolved to their real
+ * user_assignment_scope row, per the owner's explicit "respective process"/"respective branch"
+ * requirement, and fails CLOSED (empty arrays, matching detectUnplannedAbsences's own
+ * convention) rather than falling through to unrestricted on an unresolvable scope.
+ */
+export async function resolveLiveMonitoringScope(req: AuthenticatedRequest): Promise<RosterIntelligenceScope | undefined> {
+  const user = req.authUser!;
+  try {
+    const context = await getUserRoleContext(user.id);
+    if (context.primaryRole === 'wfm' || context.primaryRole === 'super_admin') return undefined;
+    const scope = await resolveDashboardScopeForRequest(user, context.primaryRole);
+    if (scope.level === 'ORG_ALL') return undefined;
+    return { branchIds: scope.branchIds, processIds: scope.processIds };
+  } catch {
+    return { branchIds: [], processIds: [] };
+  }
+}
 
 /**
  * GET /api/roster-intelligence/manager-digest
@@ -101,10 +140,11 @@ router.get('/manager-digest', requireRole(...MANAGER_ROLES), async (req, res) =>
  * GET /api/roster-intelligence/manager-digests
  * Get digests for ALL managers (admin only) - for batch email sending
  */
-router.get('/manager-digests', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get('/manager-digests', requireRole(...LIVE_MONITORING_ROLES), async (req, res) => {
   try {
     const date = req.query.date ? String(req.query.date) : undefined;
-    const digests = await generateManagerDailyDigests(date);
+    const scope = await resolveLiveMonitoringScope(req as AuthenticatedRequest);
+    const digests = await generateManagerDailyDigests(date, scope);
     res.json({ digests, count: digests.length });
   } catch (err: any) {
     console.error('[roster-intelligence] manager-digests error:', err);
@@ -132,7 +172,7 @@ router.get('/branch-dashboard/:branchId', requireRole(...MANAGER_ROLES), async (
  * GET /api/roster-intelligence/branch-dashboards
  * Get dashboards for ALL branches (admin only)
  */
-router.get('/branch-dashboards', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get('/branch-dashboards', requireRole(...LIVE_MONITORING_ROLES), async (req, res) => {
   try {
     const date = req.query.date ? String(req.query.date) : undefined;
 
@@ -156,11 +196,17 @@ router.get('/branch-dashboards', requireRole(...ADMIN_ROLES), async (req, res) =
  * GET /api/roster-intelligence/unplanned-absences
  * Detect current unplanned absences (for real-time alerts)
  */
-router.get('/unplanned-absences', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.get('/unplanned-absences', requireRole(...LIVE_MONITORING_ROLES), async (req, res) => {
   try {
     const date = req.query.date ? String(req.query.date) : undefined;
     const gracePeriod = req.query.gracePeriod ? parseInt(String(req.query.gracePeriod), 10) : 30;
-    const alerts = await detectUnplannedAbsences(date, gracePeriod);
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const processId = req.query.processId ? String(req.query.processId) : undefined;
+    const scope = await resolveLiveMonitoringScope(req as AuthenticatedRequest);
+    // branchId/processId/lobId only NARROW within the RBAC scope (they are extra ANDed conditions).
+    const alerts = await detectUnplannedAbsences(date, gracePeriod, scope, { branchId, processId, lob });
 
     // Group by manager for easier processing
     const byManager = new Map<string, typeof alerts>();
@@ -210,12 +256,13 @@ router.get('/weekly-shrinkage/:branchId', requireRole(...MANAGER_ROLES), async (
  * POST /api/roster-intelligence/send-manager-digests
  * Trigger sending of manager daily digests (called by cron or manually)
  */
-router.post('/send-manager-digests', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/send-manager-digests', requireRole(...LIVE_MONITORING_ROLES), async (req, res) => {
   try {
     const date = req.body.date ? String(req.body.date) : undefined;
     const dryRun = req.body.dryRun === true;
+    const scope = await resolveLiveMonitoringScope(req as AuthenticatedRequest);
 
-    const digests = await generateManagerDailyDigests(date);
+    const digests = await generateManagerDailyDigests(date, scope);
 
     if (dryRun) {
       res.json({
@@ -270,12 +317,13 @@ router.post('/send-manager-digests', requireRole(...ADMIN_ROLES), async (req, re
  * POST /api/roster-intelligence/send-unplanned-alerts
  * Send real-time alerts to managers for unplanned absences
  */
-router.post('/send-unplanned-alerts', requireRole(...ADMIN_ROLES), async (req, res) => {
+router.post('/send-unplanned-alerts', requireRole(...LIVE_MONITORING_ROLES), async (req, res) => {
   try {
     const gracePeriod = req.body.gracePeriod ? parseInt(String(req.body.gracePeriod), 10) : 30;
     const dryRun = req.body.dryRun === true;
+    const scope = await resolveLiveMonitoringScope(req as AuthenticatedRequest);
 
-    const alerts = await detectUnplannedAbsences(undefined, gracePeriod);
+    const alerts = await detectUnplannedAbsences(undefined, gracePeriod, scope);
 
     // Group by manager
     const byManager = new Map<string, { email: string | null; name: string | null; alerts: typeof alerts }>();

@@ -218,6 +218,32 @@ describe("DEFECT 5 — monthly cap overlap-day counting (prorateMonthlyCredit as
     expect(result).toBe(0);
   });
 
+  // The scheduled CL/ML credit does NOT use the proration above — it is a whole day or
+  // nothing. Applying proration to it is what put 0.3 Casual Leave on the Employee Stat
+  // Card for 24-Aug joiners; a fraction of a day is a balance nobody can apply for.
+  describe("isAccruingInMonth — scheduled CL/ML is a whole day or nothing", () => {
+    it("accrues for an employee who joined before the credit month", () => {
+      expect(leavePolicyService.isAccruingInMonth("2025-01-15", 7, 2026)).toBe(true);
+    });
+
+    it("accrues the FULL day for someone who joined late in the credit month", () => {
+      // The regression case: 24-Aug in a 31-day month used to yield 8/31 → 0.3 of a day.
+      expect(leavePolicyService.isAccruingInMonth("2026-08-24", 8, 2026)).toBe(true);
+    });
+
+    it("accrues on the last day of the credit month", () => {
+      expect(leavePolicyService.isAccruingInMonth("2026-08-31", 8, 2026)).toBe(true);
+    });
+
+    it("does not accrue for someone who joins after the credit month", () => {
+      expect(leavePolicyService.isAccruingInMonth("2026-09-01", 8, 2026)).toBe(false);
+    });
+
+    it("does not accrue for a credit month in a year before the employee joined", () => {
+      expect(leavePolicyService.isAccruingInMonth("2026-01-05", 12, 2025)).toBe(false);
+    });
+  });
+
   // Document the cross-month cap arithmetic that DEFECT 5 was about.
   it("in-month days for Jan 31 – Feb 01 leave counted as 1 day in January", () => {
     // This is the scenario the SQL fix resolves. Verified via daysIntersectWithMonth

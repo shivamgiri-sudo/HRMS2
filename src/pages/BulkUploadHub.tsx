@@ -11,6 +11,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge";
 import { AprBulkUpload } from "@/components/attendance/AprBulkUpload";
+import { OnfidoUtilizationBulkUpload } from "@/components/quality-dashboard/OnfidoUtilizationBulkUpload";
 import {
   ProductivityUpload,
   canUseProductivityTab,
@@ -29,6 +30,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { isLobOnlyHubUser } from "@/lib/bulkUploadAccess";
 
 type UploadTemplate = {
   id: string;
@@ -102,7 +104,15 @@ const BULK_UPLOAD_BUCKET = "hrms-bulk-uploads";
 // practical request size long before that — one file this size in a single POST is
 // megabytes of JSON and risks the same silent-timeout failure the comment below already
 // worked around once for smaller files.
-const STAGE_CHUNK_SIZE = 2000;
+//
+// 2000 -> 1000 (2026-09-09): a 2000-row single INSERT holds its locks on
+// upload_batch_row for long enough that several Onfido DOC_RAW files uploaded minutes apart
+// collided and lost the DB's patience — "Lock wait timeout exceeded", the whole chunk's rows
+// never saved, 6 files (~137k rows) silently staged as zero rows despite the batch header
+// claiming otherwise. The backend now retries a lost lock conflict on this exact write (see
+// withDeadlockRetry in bulk-upload.routes.ts), but a smaller chunk means a shorter lock hold
+// in the first place — fewer collisions to need retrying, not just a faster recovery from one.
+const STAGE_CHUNK_SIZE = 1000;
 
 const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   EMPLOYEE_MASTER: "import_upload_batch",
@@ -111,6 +121,7 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   ASSET_MASTER: "import_asset_upload_batch",
   BRANCH_MASTER: "import_branch_upload_batch",
   LOB_MASTER: "import_lob_upload_batch",
+  EMPLOYEE_LOB_MAPPING: "import_employee_lob_batch",
   DESIGNATION_MASTER: "import_designation_upload_batch",
   OFFICIAL_EMAIL_UPDATE: "import_official_email_update_batch",
   REPORTING_MANAGER_UPDATE: "import_reporting_manager_update_batch",
@@ -143,12 +154,121 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   ONFIDO_DOC_ESCALATION_CRQ: "import_onfido_crq_batch",
   ONFIDO_POA_RAW: "import_onfido_poa_raw_batch",
   ONFIDO_POA_TRIAL_RAW: "import_onfido_poa_trial_batch",
+  ONFIDO_POA_EXTERNAL_RAW: "import_onfido_poa_external_batch",
+  ONFIDO_GD_MCN_SLA: "import_onfido_gd_mcn_sla_batch",
   ONFIDO_POA_QUALITY: "import_onfido_poa_quality_batch",
   ONFIDO_DOC_EXTERNAL_AUDIT: "import_onfido_external_audit_batch",
   ONFIDO_DOC_ETM: "import_onfido_doc_etm_batch",
   ONFIDO_POA_ETM: "import_onfido_poa_etm_batch",
   ONFIDO_TASK_SKIP: "import_onfido_task_skip_batch",
   ONFIDO_AGENT_DAILY: "import_onfido_agent_daily_batch",
+  // Clovia process raw-data reports — email daily, chat daily, CRM disposition
+  CLOVIA_EMAIL_DAILY: "import_clovia_email_daily_batch",
+  CLOVIA_CHAT_DAILY: "import_clovia_chat_daily_batch",
+  CLOVIA_CRM_DISPOSITION: "import_clovia_crm_disposition_batch",
+  CLOVIA_FEEDBACK: "import_clovia_feedback_batch",
+  // GS1 India dashboard uploads (migration 1769). Backend import + dispatch already exist; without
+  // these entries the hub said "Import mapping for GS1_EMAIL_DAILY is not enabled yet." at the last step.
+  GS1_EMAIL_DAILY: "import_gs1_email_daily_batch",
+  GS1_DATAKART_DAILY: "import_gs1_datakart_daily_batch",
+  GS1_APPROVAL_AUDIT: "import_gs1_approval_audit_batch",
+  // Active templates whose backend import + dispatch exist but that had no entry here, so they
+  // stopped at the last step with "Import mapping for X is not enabled yet." Each rpc below is
+  // handled in backend bulk-dispatch.ts and listed in KNOWN_IMPORT_RPCS.
+  AW_CHAT_MASMIS: "import_aw_chat_batch",
+  BIRLANU_SALE_MASMIS: "import_birlanu_sale_batch",
+  BIRLANU_APR_MASMIS: "import_birlanu_apr_batch",
+  CL_APR_MASMIS: "import_cl_apr_batch",
+  CL_CHAT_MASMIS: "import_cl_chat_batch",
+  CL_DISPO_MASMIS: "import_cl_dispo_batch",
+  CL_EMAIL_RAW_MASMIS: "import_cl_email_raw_batch",
+  CL_FEEDBACK_MASMIS: "import_cl_feedback_batch",
+  CL_IB_CDR_MASMIS: "import_cl_ib_cdr_batch",
+  CL_OUTBOUND_MASMIS: "import_cl_outbound_batch",
+  CL_QUALITY_MASMIS: "import_cl_quality_batch",
+  CL_RECHURN_CALL_MASMIS: "import_cl_rechurn_call_batch",
+  DALMIA_APR: "import_dalmia_apr_batch",
+  DOMESTIC_BILLING_APPROVED_HC: "import_domestic_billing_approved_hc_batch",
+  GNC_CHAT_MASMIS: "import_gnc_chat_batch",
+  LP_FEEDBACK_APR_MASMIS: "import_lp_feedback_apr_batch",
+  LP_FEEDBACK_CDR_MASMIS: "import_lp_feedback_cdr_batch",
+  LP_ONBOARDING_APR_MASMIS: "import_lp_onboarding_apr_batch",
+  LP_ONBOARDING_CDR_MASMIS: "import_lp_onboarding_cdr_batch",
+  NEEMANS_AGENT_DETAILS_MASMIS: "import_neemans_agent_details_batch",
+  NEEMANS_CHAT_MASMIS: "import_neemans_chat_batch",
+  NEEMANS_MONTH_TARGET_MASMIS: "import_neemans_month_target_batch",
+  OWNER_SALE_MASMIS: "import_owner_sale_batch",
+  OWNER_CDR_MASMIS: "import_owner_cdr_batch",
+  OWNER_AGENT_DETAILS_MASMIS: "import_owner_agent_details_batch",
+  PRE_SALE_MASMIS: "import_pre_sale_batch",
+  PRE_CDR_MASMIS: "import_pre_cdr_batch",
+  PRE_AGENT_DETAILS_MASMIS: "import_pre_agent_details_batch",
+  SATYA_ALLOCATION_MASMIS: "import_satya_allocation_batch",
+  SATYA_CDR_MASMIS: "import_satya_cdr_batch",
+  // Bella / BVO / Neemans MASMIS — write into db_masmis tables used by My Dashboards
+  BB_SALE_MASMIS: "import_bb_sale_masmis_batch",
+  BB_APR_MASMIS: "import_bb_apr_masmis_batch",
+  BVO_REPEAT_CDR_MASMIS: "import_bvo_repeat_cdr_masmis_batch",
+  BVO_REPEAT_ALLOCATION_MASMIS: "import_bvo_repeat_allocation_masmis_batch",
+  BB_CART_MASMIS: "import_bb_cart_masmis_batch",
+  BB_CHAT_MASMIS: "import_bb_chat_masmis_batch",
+  BVO_ORDER_EXPORT_MASMIS: "import_bvo_order_export_masmis_batch",
+  NEEMANS_SALE_RAW_MASMIS: "import_neemans_sale_raw_masmis_batch",
+  NEEMANS_ALLOCATION_MASMIS: "import_neemans_allocation_masmis_batch",
+  NEEMANS_CART_MASMIS: "import_neemans_cart_masmis_batch",
+  NEEMANS_APR_MASMIS: "import_neemans_apr_masmis_batch",
+  // AW (Aarohan Wealth) MASMIS — write into db_masmis.aw_* tables
+  AW_OUT_MASMIS: "import_aw_out_masmis_batch",
+  AW_BILLING_MASMIS: "import_aw_billing_masmis_batch",
+  AW_MANDATE_MASMIS: "import_aw_mandate_masmis_batch",
+  AW_INBOUND_MASMIS: "import_aw_inbound_masmis_batch",
+  AW_NEW_CDR_MASMIS: "import_aw_new_cdr_masmis_batch",
+  // GNC MASMIS
+  GNC_SALE_MASMIS: "import_gnc_sale_masmis_batch",
+  GNC_ALLOCATION_MASMIS: "import_gnc_allocation_masmis_batch",
+  GNC_APR: "import_gnc_apr_batch",
+  // Bla Bli Blu process uploads
+  BLA_BLI_BLU_DD_TAGGING: "import_bla_bli_blu_dd_tagging_batch",
+  BLA_BLI_BLU_AUTO_CALLBACK: "import_bla_bli_blu_auto_callback_batch",
+  BLA_BLI_BLU_AFTER_HOUR: "import_bla_bli_blu_after_hour_batch",
+  BLA_BLI_BLU_CALL_DISPOSITION: "import_bla_bli_blu_call_disposition_batch",
+  BLA_BLI_BLU_SHOPIFY_SALES: "import_bla_bli_blu_shopify_sales_batch",
+  // Housing process uploads
+  HOUSING_PREMIUM_SALE_RAW: "import_housing_premium_sale_raw_batch",
+  HOUSING_PREMIUM_AGENT_TARGET: "import_housing_premium_agent_target_batch",
+  HOUSING_OWNER_SALE_RAW: "import_housing_owner_sale_raw_batch",
+  HOUSING_OWNER_INCENTIVE: "import_housing_owner_incentive_batch",
+  HOUSING_OWNER_LEAD_PIPELINE: "import_housing_owner_lead_pipeline_batch",
+  // LP process uploads
+  LP_APR_DAILY: "import_lp_apr_daily_batch",
+  LP_LEADS_REGIONAL: "import_lp_leads_regional_batch",
+  LP_LEADS_NON_REGIONAL: "import_lp_leads_non_regional_batch",
+  LP_CR_REPORT_REGIONAL: "import_lp_cr_report_regional_batch",
+  LP_CR_REPORT_NON_REGIONAL: "import_lp_cr_report_non_regional_batch",
+  // DU Digital uploads
+  DU_APR_KOREA: "import_du_apr_korea_batch",
+  DU_APR_THAILAND: "import_du_apr_thailand_batch",
+  DU_TEAM_MAPPING_KOREA: "import_du_team_mapping_korea_batch",
+  DU_TEAM_MAPPING_THAILAND: "import_du_team_mapping_thailand_batch",
+  // Other process uploads
+  EMAIL_TICKET_DAILY: "import_email_ticket_daily_batch",
+  REGINALD_ABANDONED_CART_SALES: "import_reginald_abandoned_cart_sales_batch",
+  BELLA_TARGET_PLAN: "import_bella_target_plan_batch",
+  COMPLIANCE_AUDIT: "import_compliance_audit_batch",
+  PROCESS_MANUAL_KPI: "import_process_manual_kpi_batch",
+  PROCESS_DELIVERY: "import_process_delivery_batch",
+  // Bella Repeat alignment
+  BELLA_REPEAT_ALIGNMENT: "import_bella_repeat_alignment_batch",
+  // Bla Bli Blu Overall Sales (curated workbook sheet)
+  BLA_BLI_BLU_OVERALL_SALES: "import_bla_bli_blu_overall_sales_batch",
+  // Remaining Clovia uploads
+  CLOVIA_QUALITY_AUDIT: "import_clovia_quality_audit_batch",
+  CLOVIA_RECHURN_CALLS: "import_clovia_rechurn_calls_batch",
+  CLOVIA_TEAM_ALIGNMENT: "import_clovia_team_alignment_batch",
+  // Dalmia uploads
+  DALMIA_AFTER_HOUR: "import_dalmia_after_hour_batch",
+  DALMIA_DD_RAW: "import_dalmia_dd_batch",
+  DALMIA_OUTBOUND_RAW: "import_dalmia_outbound_batch",
 };
 
 function getImportRpc(uploadTypeCode: string) {
@@ -304,6 +424,27 @@ function getTemplateHeaders(template: UploadTemplate) {
   return headers;
 }
 
+/** Whitespace- and case-insensitive header identity, so " Avail% " / "Yes/No" vs "Yes/NO"
+ *  never blocks an upload over a difference that carries no meaning. */
+function headerKey(value: string) {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/** Alternate spellings a template accepts for one of its headers (server-supplied in
+ *  validation_rules.header_aliases; e.g. the source system's own "Occopancy%" typo).
+ *  Returns normalized alias -> normalized canonical header. */
+function getHeaderAliasMap(template: UploadTemplate): Map<string, string> {
+  const map = new Map<string, string>();
+  const raw = (template.validation_rules as { header_aliases?: unknown } | null | undefined)?.header_aliases;
+  if (raw && typeof raw === "object") {
+    for (const [canonical, aliases] of Object.entries(raw as Record<string, unknown>)) {
+      if (!Array.isArray(aliases)) continue;
+      for (const alias of aliases) map.set(headerKey(String(alias)), headerKey(canonical));
+    }
+  }
+  return map;
+}
+
 /**
  * Drops only TRAILING blank entries (a genuinely blank header/value in the middle stays,
  * since that is a real structural problem worth surfacing). Excel's used-range can declare
@@ -421,18 +562,23 @@ function buildCsvHealth(
   parsed: CsvParseResult
 ): CsvHealth {
   const expectedHeaders = getTemplateHeaders(template);
-  const uploadedHeaderSet = new Set(parsed.headers);
-  const expectedHeaderSet = new Set(expectedHeaders);
+  const aliasMap = getHeaderAliasMap(template);
+  const canonicalKey = (header: string) => {
+    const key = headerKey(header);
+    return aliasMap.get(key) ?? key;
+  };
+  const uploadedKeySet = new Set(parsed.headers.map(canonicalKey));
+  const expectedKeySet = new Set(expectedHeaders.map(headerKey));
 
   const missingHeaders = expectedHeaders.filter(
-    (header) => !uploadedHeaderSet.has(header)
+    (header) => !uploadedKeySet.has(headerKey(header))
   );
   const unknownHeaders = parsed.headers.filter(
-    (header) => header && !expectedHeaderSet.has(header)
+    (header) => header && !expectedKeySet.has(canonicalKey(header))
   );
   const wrongOrder =
     expectedHeaders.length === parsed.headers.length &&
-    expectedHeaders.some((header, index) => header !== parsed.headers[index]);
+    expectedHeaders.some((header, index) => headerKey(header) !== canonicalKey(parsed.headers[index]));
 
   return {
     headers: parsed.headers,
@@ -823,6 +969,23 @@ function getUploadTypeAllowedValues(uploadTypeCode: string): string[] {
         "",
         "status:  available | assigned | maintenance | retired | lost",
         "Date format: DD-MM-YYYY  (e.g. 16-05-2026)",
+      ];
+    case "EMPLOYEE_LOB_MAPPING":
+      return [
+        "── ALLOWED VALUES ──────────────────────────────────────────────",
+        "",
+        "employee_code: an ACTIVE employee inside your branch/process scope (e.g. MAS00001)",
+        "cost_centre_code: an OPEN MAS Callnet cost centre in the employee's branch",
+        "process_code: an ACTIVE process in your scope and in the employee's branch",
+        "lob_code: an ACTIVE LOB code from LOB Master (e.g. POA)",
+        "",
+        "cost_centre_code, process_code and lob_code accept the master's code, or its exact",
+        "name when that name is unique (a shared name is rejected — use the code).",
+        "The LOB must already be mapped to the process. If a row is rejected with",
+        "\"LOB X is not mapped to process Y\", add it first under WFM > Process LOB Mapping.",
+        "A row is applied only if EVERY check passes; otherwise the whole row is rejected.",
+        "All four cells are required on every row; this upload cannot clear a value.",
+        "Only the first row for an employee_code is processed; repeats are rejected.",
       ];
     case "SHIFT_ROTATION_TYPE_UPDATE":
       return [
@@ -1218,7 +1381,7 @@ function TdsUploadTab() {
 
 // ── Main BulkUploadHub ─────────────────────────────────────────────────────────
 
-type HubTab = "master" | "apr" | "productivity" | "deduction-types" | "tds-upload";
+type HubTab = "master" | "apr" | "productivity" | "deduction-types" | "tds-upload" | "onfido_utilization";
 
 export default function BulkUploadHub() {
   const { user } = useAuth();
@@ -1237,8 +1400,13 @@ export default function BulkUploadHub() {
     ["super_admin", "hr_admin", "payroll", "payroll_head", "finance"].includes(r)
   );
   const canUploadTds = roleKeys.some((r) => ["payroll_head", "super_admin"].includes(r));
+  // branch_wfm / ho_wfm / wfm_spoc use this page for Employee LOB Mapping only. The API filters
+  // /templates to that one type and refuses everything else; this just keeps the page from
+  // offering tabs and buttons that would only ever 403 for them.
+  const lobOnlyUser = isLobOnlyHubUser(roleKeys);
 
   const effectiveTab: HubTab =
+    lobOnlyUser ? "master" :
     activeTab === "productivity" && !canUploadProductivity ? "master" :
     activeTab === "deduction-types" && !canManageDeductionTypes ? "master" :
     activeTab === "tds-upload" && !canUploadTds ? "master" :
@@ -1500,10 +1668,6 @@ export default function BulkUploadHub() {
 
   function validateRows(template: UploadTemplate, rows: CsvRow[]) {
     const requiredColumns = template.required_columns || [];
-    const allowedColumns = new Set([
-      ...(template.required_columns || []),
-      ...(template.optional_columns || []),
-    ]);
 
     return rows.map((row, index) => {
       const errors: string[] = [];
@@ -1516,11 +1680,10 @@ export default function BulkUploadHub() {
         }
       });
 
-      Object.keys(row).forEach((column) => {
-        if (column && !allowedColumns.has(column)) {
-          errors.push(`Unknown column: ${column}`);
-        }
-      });
+      // Extra columns beyond required_columns/optional_columns are NOT flagged as errors here.
+      // Real-world exports routinely carry columns the template doesn't list (or a typo'd header
+      // name) -- rejecting the whole row over an unrecognized column blocked every row of a real
+      // Onfido GD/MCN/POA file that had nothing wrong with its actual required data.
 
       ["HireDate", "DateOfBirth", "AttendanceDate", "RosterDate", "EffectiveDate", "PayrollMonth"].forEach((column) => {
         const value = String(row[column] || "").trim();
@@ -1571,9 +1734,11 @@ export default function BulkUploadHub() {
     // real "Audit Data" sheet LAST, after six person-specific pivot/scratch tabs
     // ("Extraction Only", "AM TL Wise", "Rohit Only", ...) — blindly reading
     // SheetNames[0] would have staged one of those instead.
+    const aliasMap = template ? getHeaderAliasMap(template) : new Map<string, string>();
+    const canonicalKey = (c: string) => aliasMap.get(headerKey(c)) ?? headerKey(c);
     const expected = new Set([
       ...(template?.required_columns || []), ...(template?.optional_columns || []),
-    ].map((c) => c.trim()));
+    ].map((c) => headerKey(c)));
     let bestSheetName = workbook.SheetNames[0]!;
     let bestScore = -1;
     // Tie-break on fewest extra/unknown columns, not just first-sheet-wins: two
@@ -1592,8 +1757,8 @@ export default function BulkUploadHub() {
         const firstRow = XLSX.utils.sheet_to_json(sheet, { header: 1, range: 0 })[0] as unknown[] | undefined;
         if (!firstRow) continue;
         const headerCells = firstRow.map((cell) => String(cell ?? "").trim()).filter((c) => c !== "");
-        const score = headerCells.filter((c) => expected.has(c)).length;
-        const extra = headerCells.filter((c) => !expected.has(c)).length;
+        const score = headerCells.filter((c) => expected.has(canonicalKey(c))).length;
+        const extra = headerCells.filter((c) => !expected.has(canonicalKey(c))).length;
         if (score > bestScore || (score === bestScore && extra < bestExtra)) {
           bestScore = score;
           bestExtra = extra;
@@ -1882,16 +2047,18 @@ export default function BulkUploadHub() {
               >
                 Master Data Upload
               </button>
-              <button
-                onClick={() => setActiveTab("apr")}
-                className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-                  effectiveTab === "apr"
-                    ? "bg-white text-slate-950 shadow-sm"
-                    : "text-slate-500 hover:text-slate-700"
-                }`}
-              >
-                APR / Dialler Attendance
-              </button>
+              {!lobOnlyUser && (
+                <button
+                  onClick={() => setActiveTab("apr")}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                    effectiveTab === "apr"
+                      ? "bg-white text-slate-950 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  APR / Dialler Attendance
+                </button>
+              )}
               {canUploadProductivity && (
                 <button
                   type="button"
@@ -1934,6 +2101,18 @@ export default function BulkUploadHub() {
                   TDS Upload
                 </button>
               )}
+              <button
+                type="button"
+                onClick={() => setActiveTab("onfido_utilization")}
+                aria-pressed={effectiveTab === "onfido_utilization"}
+                className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                  effectiveTab === "onfido_utilization"
+                    ? "bg-white text-slate-950 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                Onfido Utilization
+              </button>
             </div>
           </section>
 
@@ -1957,6 +2136,12 @@ export default function BulkUploadHub() {
 
           {canUploadTds && effectiveTab === "tds-upload" && (
             <TdsUploadTab />
+          )}
+
+          {effectiveTab === "onfido_utilization" && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <OnfidoUtilizationBulkUpload />
+            </section>
           )}
 
           {effectiveTab === "master" && activeImportBatchId && (
@@ -2435,7 +2620,7 @@ export default function BulkUploadHub() {
                                   total, or the batch is sitting in the legacy 'approved'
                                   state — both mean this batch has rows that never
                                   reached a final outcome. See reconcileBatch above. */}
-                              {(batch.batch_status === "approved" ||
+                              {!lobOnlyUser && (batch.batch_status === "approved" ||
                                 batch.imported_rows + batch.error_rows < batch.total_rows) && (
                                 <button
                                   onClick={() => reconcileBatch(batch)}
@@ -2638,14 +2823,22 @@ function BatchRowsDialog({
       });
       const newBatchId = batchRes.data.id;
 
-      // 2. Stage the (edited) failed rows
+      // 2. Stage the (edited) failed rows. This is the exact call that silently lost
+      // BATCH-1788948395588-R6909's 14 resubmitted rows: the batch header (step 1, just
+      // above) had already been created and shown "14 valid" by the time this INSERT hit
+      // a database deadlock, and the default 30s timeout meant the browser gave up and
+      // moved on before the server even finished failing — so no error ever surfaced,
+      // and the batch was left claiming rows it never actually saved. The server now
+      // retries a lost deadlock on this write automatically (see withDeadlockRetry in
+      // bulk-upload.routes.ts), but that retry needs headroom to run before the browser
+      // gives up on it — 60s matches the import call's own timeout just below.
       const stagingPayload = failedRows.map((row) => ({
         row_no: row.row_no,
         raw_data: Object.fromEntries(dataKeys.map((k) => [k, getCellValue(row, k)])),
         row_status: "pending",
         error_messages: [],
       }));
-      await hrmsApi.post(`/api/bulk-upload/batches/${newBatchId}/rows`, stagingPayload);
+      await hrmsApi.post(`/api/bulk-upload/batches/${newBatchId}/rows`, stagingPayload, 60000);
 
       // 3. Run import. It answers 202 and keeps working, so wait it out by polling
       // rather than by holding the request open past the proxy timeout.

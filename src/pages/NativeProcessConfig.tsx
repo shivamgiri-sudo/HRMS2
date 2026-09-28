@@ -66,34 +66,6 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "sla",     label: "Client SLA" },
 ];
 
-const PT_STATES = [
-  { code: "AP", name: "Andhra Pradesh" },
-  { code: "AS", name: "Assam" },
-  { code: "BR", name: "Bihar" },
-  { code: "CG", name: "Chhattisgarh" },
-  { code: "GA", name: "Goa" },
-  { code: "GJ", name: "Gujarat" },
-  { code: "HR", name: "Haryana" },
-  { code: "HP", name: "Himachal Pradesh" },
-  { code: "JH", name: "Jharkhand" },
-  { code: "KA", name: "Karnataka" },
-  { code: "KL", name: "Kerala" },
-  { code: "MP", name: "Madhya Pradesh" },
-  { code: "MH", name: "Maharashtra" },
-  { code: "ML", name: "Meghalaya" },
-  { code: "OD", name: "Odisha" },
-  { code: "PB", name: "Punjab" },
-  { code: "RJ", name: "Rajasthan" },
-  { code: "TN", name: "Tamil Nadu" },
-  { code: "TS", name: "Telangana" },
-  { code: "TR", name: "Tripura" },
-  { code: "UK", name: "Uttarakhand" },
-  { code: "UP", name: "Uttar Pradesh" },
-  { code: "WB", name: "West Bengal" },
-  { code: "DL", name: "Delhi" },
-  { code: "PY", name: "Puducherry" },
-];
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function InfoBadge({ label, value }: { label: string; value: string | number }) {
@@ -209,7 +181,6 @@ function PayrollRulesTab({ processId }: { processId: string }) {
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
 
   const [workingDays, setWorkingDays] = useState("26");
-  const [ptState, setPtState] = useState("MH");
   const [structureId, setStructureId] = useState("");
 
   useEffect(() => {
@@ -226,7 +197,6 @@ function PayrollRulesTab({ processId }: { processId: string }) {
         const cfg = statRes.data ?? {};
         setStatutory(cfg);
         setWorkingDays(String(cfg.workingDays ?? 26));
-        setPtState(String(cfg.ptState ?? "MH"));
         setStructureId(String(cfg.defaultSalaryStructureId ?? ""));
       })
       .catch((err: unknown) =>
@@ -242,7 +212,6 @@ function PayrollRulesTab({ processId }: { processId: string }) {
       await hrmsApi.put(`/api/processes/${processId}/configuration`, {
         values: {
           workingDays: Number(workingDays),
-          ptState,
           defaultSalaryStructureId: structureId || null,
         },
       });
@@ -293,27 +262,6 @@ function PayrollRulesTab({ processId }: { processId: string }) {
           <p className="mt-1 text-xs text-slate-400">
             Saved for this process: {statutory.workingDays ?? 26}
           </p>
-        </div>
-
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-            PT State Code
-          </label>
-          <div className="relative">
-            <select
-              value={ptState}
-              onChange={(e) => setPtState(e.target.value)}
-              className="w-full appearance-none rounded-xl border border-slate-200 pl-3 pr-8 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {PT_STATES.map((s) => (
-                <option key={s.code} value={s.code}>
-                  {s.code} — {s.name}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          </div>
-          <p className="mt-1 text-xs text-slate-400">Determines which PT slab applies</p>
         </div>
 
         <div>

@@ -1,0 +1,402 @@
+{
+  "generateDraft": [
+    {
+      "sql": "DELETE wra FROM wfm_roster_assignment wra LEFT JOIN wfm_roster_assignment_control wrac ON wrac.assignment_id = wra.id WHERE wra.plan_id = ? AND wra.publish_status <> 'published' AND (wrac.change_lock_status IS NULL OR wrac.change_lock_status <> 'locked') AND NOT EXISTS ( SELECT 1 FROM attendance_daily_record adr WHERE adr.employee_id = wra.employee_id AND adr.record_date = wra.roster_date AND adr.is_locked = 1 )",
+      "params": [
+        "plan-1"
+      ]
+    },
+    {
+      "sql": "DELETE FROM wfm_roster_assignment_control WHERE plan_id = ? AND change_lock_status <> 'locked'",
+      "params": [
+        "plan-1"
+      ]
+    },
+    {
+      "sql": "DELETE FROM wfm_roster_conflict_log WHERE plan_id = ?",
+      "params": [
+        "plan-1"
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_assignment (id, employee_id, shift_id, plan_id, roster_date, roster_status, shift_start_time, shift_end_time, branch_name, process_name, publish_status) VALUES (?, ?, ?, ?, ?, 'Rostered', ?, ?, ?, ?, 'draft') ON DUPLICATE KEY UPDATE shift_id = VALUES(shift_id), shift_start_time = VALUES(shift_start_time), shift_end_time = VALUES(shift_end_time), roster_status = VALUES(roster_status), publish_status = 'draft'",
+      "params": [
+        "<uuid>",
+        "emp-A",
+        null,
+        "plan-1",
+        "2026-08-31",
+        "09:00:00",
+        "18:00:00",
+        "Branch One",
+        "Proc One"
+      ]
+    },
+    {
+      "sql": "INSERT IGNORE INTO wfm_roster_assignment_control (assignment_id, plan_id, change_lock_status, acknowledgement_required, acknowledgement_status) VALUES (?, ?, 'draft_editable', 0, 'not_required')",
+      "params": [
+        "<uuid>",
+        "plan-1"
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_assignment (id, employee_id, shift_id, plan_id, roster_date, roster_status, shift_start_time, shift_end_time, branch_name, process_name, publish_status) VALUES (?, ?, ?, ?, ?, 'Rostered', ?, ?, ?, ?, 'draft') ON DUPLICATE KEY UPDATE shift_id = VALUES(shift_id), shift_start_time = VALUES(shift_start_time), shift_end_time = VALUES(shift_end_time), roster_status = VALUES(roster_status), publish_status = 'draft'",
+      "params": [
+        "<uuid>",
+        "emp-A",
+        null,
+        "plan-1",
+        "2026-09-01",
+        "09:00:00",
+        "18:00:00",
+        "Branch One",
+        "Proc One"
+      ]
+    },
+    {
+      "sql": "INSERT IGNORE INTO wfm_roster_assignment_control (assignment_id, plan_id, change_lock_status, acknowledgement_required, acknowledgement_status) VALUES (?, ?, 'draft_editable', 0, 'not_required')",
+      "params": [
+        "<uuid>",
+        "plan-1"
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_assignment (id, employee_id, shift_id, plan_id, roster_date, roster_status, shift_start_time, shift_end_time, branch_name, process_name, publish_status) VALUES (?, ?, ?, ?, ?, 'Rostered', ?, ?, ?, ?, 'draft') ON DUPLICATE KEY UPDATE shift_id = VALUES(shift_id), shift_start_time = VALUES(shift_start_time), shift_end_time = VALUES(shift_end_time), roster_status = VALUES(roster_status), publish_status = 'draft'",
+      "params": [
+        "<uuid>",
+        "emp-B",
+        null,
+        "plan-1",
+        "2026-09-02",
+        "09:00:00",
+        "18:00:00",
+        "Branch One",
+        "Proc One"
+      ]
+    },
+    {
+      "sql": "INSERT IGNORE INTO wfm_roster_assignment_control (assignment_id, plan_id, change_lock_status, acknowledgement_required, acknowledgement_status) VALUES (?, ?, 'draft_editable', 0, 'not_required')",
+      "params": [
+        "<uuid>",
+        "plan-1"
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_assignment (id, employee_id, shift_id, plan_id, roster_date, roster_status, is_week_off, shift_start_time, shift_end_time, branch_name, process_name, publish_status) VALUES (?, ?, NULL, ?, ?, 'Week Off', 1, NULL, NULL, ?, ?, 'draft') ON DUPLICATE KEY UPDATE roster_status = 'Week Off', is_week_off = 1, shift_id = NULL, shift_start_time = NULL, shift_end_time = NULL, publish_status = 'draft'",
+      "params": [
+        "<uuid>",
+        "emp-A",
+        "plan-1",
+        "2026-09-02",
+        "Branch One",
+        "Proc One"
+      ]
+    },
+    {
+      "sql": "INSERT IGNORE INTO wfm_roster_assignment_control (assignment_id, plan_id, change_lock_status, acknowledgement_required, acknowledgement_status) VALUES (?, ?, 'draft_editable', 0, 'not_required')",
+      "params": [
+        "<uuid>",
+        "plan-1"
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_assignment (id, employee_id, shift_id, plan_id, roster_date, roster_status, shift_start_time, shift_end_time, branch_name, process_name, publish_status) VALUES (?, ?, ?, ?, ?, 'Rostered', ?, ?, ?, ?, 'draft') ON DUPLICATE KEY UPDATE shift_id = VALUES(shift_id), shift_start_time = VALUES(shift_start_time), shift_end_time = VALUES(shift_end_time), roster_status = VALUES(roster_status), publish_status = 'draft'",
+      "params": [
+        "<uuid>",
+        "emp-A",
+        null,
+        "plan-1",
+        "2026-09-03",
+        "09:00:00",
+        "18:00:00",
+        "Branch One",
+        "Proc One"
+      ]
+    },
+    {
+      "sql": "INSERT IGNORE INTO wfm_roster_assignment_control (assignment_id, plan_id, change_lock_status, acknowledgement_required, acknowledgement_status) VALUES (?, ?, 'draft_editable', 0, 'not_required')",
+      "params": [
+        "<uuid>",
+        "plan-1"
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_assignment (id, employee_id, shift_id, plan_id, roster_date, roster_status, shift_start_time, shift_end_time, branch_name, process_name, publish_status) VALUES (?, ?, ?, ?, ?, 'Rostered', ?, ?, ?, ?, 'draft') ON DUPLICATE KEY UPDATE shift_id = VALUES(shift_id), shift_start_time = VALUES(shift_start_time), shift_end_time = VALUES(shift_end_time), roster_status = VALUES(roster_status), publish_status = 'draft'",
+      "params": [
+        "<uuid>",
+        "emp-A",
+        null,
+        "plan-1",
+        "2026-09-04",
+        "09:00:00",
+        "18:00:00",
+        "Branch One",
+        "Proc One"
+      ]
+    },
+    {
+      "sql": "INSERT IGNORE INTO wfm_roster_assignment_control (assignment_id, plan_id, change_lock_status, acknowledgement_required, acknowledgement_status) VALUES (?, ?, 'draft_editable', 0, 'not_required')",
+      "params": [
+        "<uuid>",
+        "plan-1"
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_assignment (id, employee_id, shift_id, plan_id, roster_date, roster_status, shift_start_time, shift_end_time, branch_name, process_name, publish_status) VALUES (?, ?, ?, ?, ?, 'Rostered', ?, ?, ?, ?, 'draft') ON DUPLICATE KEY UPDATE shift_id = VALUES(shift_id), shift_start_time = VALUES(shift_start_time), shift_end_time = VALUES(shift_end_time), roster_status = VALUES(roster_status), publish_status = 'draft'",
+      "params": [
+        "<uuid>",
+        "emp-A",
+        null,
+        "plan-1",
+        "2026-09-05",
+        "09:00:00",
+        "18:00:00",
+        "Branch One",
+        "Proc One"
+      ]
+    },
+    {
+      "sql": "INSERT IGNORE INTO wfm_roster_assignment_control (assignment_id, plan_id, change_lock_status, acknowledgement_required, acknowledgement_status) VALUES (?, ?, 'draft_editable', 0, 'not_required')",
+      "params": [
+        "<uuid>",
+        "plan-1"
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_assignment (id, employee_id, shift_id, plan_id, roster_date, roster_status, shift_start_time, shift_end_time, branch_name, process_name, publish_status) VALUES (?, ?, ?, ?, ?, 'Rostered', ?, ?, ?, ?, 'draft') ON DUPLICATE KEY UPDATE shift_id = VALUES(shift_id), shift_start_time = VALUES(shift_start_time), shift_end_time = VALUES(shift_end_time), roster_status = VALUES(roster_status), publish_status = 'draft'",
+      "params": [
+        "<uuid>",
+        "emp-A",
+        null,
+        "plan-1",
+        "2026-09-06",
+        "09:00:00",
+        "18:00:00",
+        "Branch One",
+        "Proc One"
+      ]
+    },
+    {
+      "sql": "INSERT IGNORE INTO wfm_roster_assignment_control (assignment_id, plan_id, change_lock_status, acknowledgement_required, acknowledgement_status) VALUES (?, ?, 'draft_editable', 0, 'not_required')",
+      "params": [
+        "<uuid>",
+        "plan-1"
+      ]
+    },
+    {
+      "sql": "DELETE FROM wfm_roster_conflict_log WHERE plan_id = ? AND conflict_type IN ('slot_shortage','no_requirement','low_coverage')",
+      "params": [
+        "plan-1"
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_conflict_log (id, plan_id, assignment_id, employee_id, roster_date, conflict_type, severity, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "params": [
+        "<uuid>",
+        "plan-1",
+        null,
+        null,
+        "2026-08-31",
+        "slot_shortage",
+        "high",
+        "2026-08-31 09:00-18:00: planned 0, target 1, gap 1."
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_conflict_log (id, plan_id, assignment_id, employee_id, roster_date, conflict_type, severity, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "params": [
+        "<uuid>",
+        "plan-1",
+        null,
+        null,
+        "2026-09-01",
+        "slot_shortage",
+        "high",
+        "2026-09-01 09:00-18:00: planned 0, target 1, gap 1."
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_conflict_log (id, plan_id, assignment_id, employee_id, roster_date, conflict_type, severity, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "params": [
+        "<uuid>",
+        "plan-1",
+        null,
+        null,
+        "2026-09-02",
+        "slot_shortage",
+        "high",
+        "2026-09-02 09:00-18:00: planned 0, target 1, gap 1."
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_conflict_log (id, plan_id, assignment_id, employee_id, roster_date, conflict_type, severity, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "params": [
+        "<uuid>",
+        "plan-1",
+        null,
+        null,
+        "2026-09-03",
+        "slot_shortage",
+        "high",
+        "2026-09-03 09:00-18:00: planned 0, target 1, gap 1."
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_conflict_log (id, plan_id, assignment_id, employee_id, roster_date, conflict_type, severity, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "params": [
+        "<uuid>",
+        "plan-1",
+        null,
+        null,
+        "2026-09-04",
+        "slot_shortage",
+        "high",
+        "2026-09-04 09:00-18:00: planned 0, target 1, gap 1."
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_conflict_log (id, plan_id, assignment_id, employee_id, roster_date, conflict_type, severity, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "params": [
+        "<uuid>",
+        "plan-1",
+        null,
+        null,
+        "2026-09-05",
+        "slot_shortage",
+        "high",
+        "2026-09-05 09:00-18:00: planned 0, target 1, gap 1."
+      ]
+    },
+    {
+      "sql": "INSERT INTO wfm_roster_conflict_log (id, plan_id, assignment_id, employee_id, roster_date, conflict_type, severity, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "params": [
+        "<uuid>",
+        "plan-1",
+        null,
+        null,
+        "2026-09-06",
+        "slot_shortage",
+        "high",
+        "2026-09-06 09:00-18:00: planned 0, target 1, gap 1."
+      ]
+    }
+  ],
+  "importCommit": {
+    "NEW|null|SHIFT": [
+      {
+        "sql": "INSERT IGNORE INTO wfm_roster_assignment (id, employee_id, roster_date, assignment_type, is_week_off, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, created_at) VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'DRAFT', ?, NOW())",
+        "params": [
+          "uuid-E1",
+          "2026-08-24",
+          "SHIFT",
+          0,
+          "10:00",
+          "19:00",
+          1
+        ]
+      }
+    ],
+    "NEW|null|WEEK_OFF": [
+      {
+        "sql": "INSERT IGNORE INTO wfm_roster_assignment (id, employee_id, roster_date, assignment_type, is_week_off, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, created_at) VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'DRAFT', ?, NOW())",
+        "params": [
+          "uuid-E1",
+          "2026-08-24",
+          "WEEK_OFF",
+          1,
+          null,
+          null,
+          1
+        ]
+      }
+    ],
+    "NEW|cycle-1|SHIFT": [
+      {
+        "sql": "INSERT IGNORE INTO wfm_roster_assignment (id, employee_id, roster_date, assignment_type, is_week_off, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, cycle_id, created_at) VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, NOW())",
+        "params": [
+          "uuid-E1",
+          "2026-08-24",
+          "SHIFT",
+          0,
+          "10:00",
+          "19:00",
+          1,
+          "cycle-1"
+        ]
+      }
+    ],
+    "NEW|cycle-1|WEEK_OFF": [
+      {
+        "sql": "INSERT IGNORE INTO wfm_roster_assignment (id, employee_id, roster_date, assignment_type, is_week_off, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, cycle_id, created_at) VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, NOW())",
+        "params": [
+          "uuid-E1",
+          "2026-08-24",
+          "WEEK_OFF",
+          1,
+          null,
+          null,
+          1,
+          "cycle-1"
+        ]
+      }
+    ],
+    "UPDATE|null|SHIFT": [
+      {
+        "sql": "INSERT INTO wfm_roster_assignment (id, employee_id, roster_date, assignment_type, is_week_off, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, created_at) VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'DRAFT', ?, NOW()) ON DUPLICATE KEY UPDATE assignment_type = VALUES(assignment_type), is_week_off = VALUES(is_week_off), shift_start_time = VALUES(shift_start_time), shift_end_time = VALUES(shift_end_time), lifecycle_state = 'DRAFT', import_batch_id = VALUES(import_batch_id)",
+        "params": [
+          "uuid-E1",
+          "2026-08-24",
+          "SHIFT",
+          0,
+          "10:00",
+          "19:00",
+          1
+        ]
+      }
+    ],
+    "UPDATE|null|WEEK_OFF": [
+      {
+        "sql": "INSERT INTO wfm_roster_assignment (id, employee_id, roster_date, assignment_type, is_week_off, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, created_at) VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'DRAFT', ?, NOW()) ON DUPLICATE KEY UPDATE assignment_type = VALUES(assignment_type), is_week_off = VALUES(is_week_off), shift_start_time = VALUES(shift_start_time), shift_end_time = VALUES(shift_end_time), lifecycle_state = 'DRAFT', import_batch_id = VALUES(import_batch_id)",
+        "params": [
+          "uuid-E1",
+          "2026-08-24",
+          "WEEK_OFF",
+          1,
+          null,
+          null,
+          1
+        ]
+      }
+    ],
+    "UPDATE|cycle-1|SHIFT": [
+      {
+        "sql": "INSERT INTO wfm_roster_assignment (id, employee_id, roster_date, assignment_type, is_week_off, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, cycle_id, created_at) VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, NOW()) ON DUPLICATE KEY UPDATE assignment_type = VALUES(assignment_type), is_week_off = VALUES(is_week_off), shift_start_time = VALUES(shift_start_time), shift_end_time = VALUES(shift_end_time), lifecycle_state = 'DRAFT', import_batch_id = VALUES(import_batch_id), cycle_id = VALUES(cycle_id)",
+        "params": [
+          "uuid-E1",
+          "2026-08-24",
+          "SHIFT",
+          0,
+          "10:00",
+          "19:00",
+          1,
+          "cycle-1"
+        ]
+      }
+    ],
+    "UPDATE|cycle-1|WEEK_OFF": [
+      {
+        "sql": "INSERT INTO wfm_roster_assignment (id, employee_id, roster_date, assignment_type, is_week_off, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, cycle_id, created_at) VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, NOW()) ON DUPLICATE KEY UPDATE assignment_type = VALUES(assignment_type), is_week_off = VALUES(is_week_off), shift_start_time = VALUES(shift_start_time), shift_end_time = VALUES(shift_end_time), lifecycle_state = 'DRAFT', import_batch_id = VALUES(import_batch_id), cycle_id = VALUES(cycle_id)",
+        "params": [
+          "uuid-E1",
+          "2026-08-24",
+          "WEEK_OFF",
+          1,
+          null,
+          null,
+          1,
+          "cycle-1"
+        ]
+      }
+    ]
+  }
+}

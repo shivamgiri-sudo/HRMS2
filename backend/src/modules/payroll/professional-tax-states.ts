@@ -1,4 +1,11 @@
 /**
+ * PT removed from active payroll computation per explicit user decision
+ * 2026-09-11 — full company-wide removal across all states. This master
+ * config is now inert/unused; kept for historical reference only, not
+ * deleted per additive-only rule.
+ */
+
+/**
  * Which Indian states levy professional tax, and which genuinely do not.
  *
  * WHY THIS DISTINCTION HAS TO BE EXPLICIT

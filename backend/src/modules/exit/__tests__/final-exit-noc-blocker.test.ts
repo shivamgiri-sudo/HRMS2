@@ -1,110 +1,70 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 /**
- * NOC must block the final "exited" transition (2026-08-27).
+ * The "exited" transition is gated by nothing but the FSM edge.
  *
- * noc.service.ts has exported nocValidated() since it was written, and a repo-wide search
- * found ZERO callers: the upload/validate workflow recorded a decision nothing downstream
- * consulted. F&F approval and disbursal contained no NOC reference at all, so a leaver could
- * be marked exited — and settled — with the NOC missing or rejected, while every operational
- * doc described NOC as the gate on release.
+ * Rulings:
+ *   - NOC: 2026-09-16 — NOC gates money/paperwork, not the exit date itself.
+ *   - F&F: 2026-09-18 — same reasoning.
+ *   - Clearance: 2026-09-26 — generate clearance must not block the exit gate either.
+ *     Open tasks are only counted and reported (`pendingAtExit`); they keep blocking
+ *     F&F approval (ff-approval-guard.compat.routes.ts) and the NOC-gated payout steps.
  *
- * These tests pin the three behaviours that matter:
- *   1. NOC required + not validated  -> blocker present (this fails without the fix)
- *   2. NOC required + validated      -> no NOC blocker
- *   3. NOC not required              -> no NOC blocker, and nocValidated is never consulted
- *      (so the gate cannot fire for a leaver the business never wanted a NOC from)
- *
- * Plus the deliberate non-fatal case: a throwing NOC lookup must NOT block the exit, because
- * refusing every exit on a failed query is a worse outage than the gap being closed.
+ * openClearanceAtExit() therefore returns a count and never throws a blocker.
  */
 
-const { dbExecute, nocRequiredMock, nocValidatedMock } = vi.hoisted(() => ({
-  dbExecute: vi.fn(),
-  nocRequiredMock: vi.fn(),
-  nocValidatedMock: vi.fn(),
-}));
+const { dbExecute } = vi.hoisted(() => ({ dbExecute: vi.fn() }));
 
 vi.mock("../../../db/mysql.js", () => ({
   db: { execute: dbExecute, query: dbExecute },
 }));
-vi.mock("../../payroll/noc.service.js", () => ({
-  nocRequired: nocRequiredMock,
-  nocValidated: nocValidatedMock,
+vi.mock("../../../middleware/authMiddleware.js", () => ({
+  requireAuth: (_r: any, _s: any, n: any) => n(),
 }));
-vi.mock("../../../middleware/authMiddleware.js", () => ({ requireAuth: (_r: any, _s: any, n: any) => n() }));
-vi.mock("../../../shared/accessGuard.js", () => ({ getEmployeeForUser: vi.fn() }));
+vi.mock("../../../shared/accessGuard.js", () => ({
+  getEmployeeForUser: vi.fn(),
+}));
 vi.mock("../../../shared/scopeAccess.js", () => ({
-  buildScopeWhereClause: vi.fn(), hasAnyRole: vi.fn(), hasScopedAccess: vi.fn(),
+  buildScopeWhereClause: vi.fn(),
+  hasAnyRole: vi.fn(),
+  hasScopedAccess: vi.fn(),
 }));
 vi.mock("../exit.service.js", () => ({ exitService: {} }));
 
 const EXIT_ID = "exit-req-1";
-const EMP_ID = "emp-1";
 
-/**
- * finalExitBlockers is module-private, so drive it through the same three queries it issues,
- * in order: open clearance tasks, latest F&F row, then the exit_request -> employee_id lookup
- * this fix added. Everything upstream is set to "clean" so the only blocker that can appear
- * is the NOC one under test.
- */
-function primeCleanExit() {
+function primeDb(clearanceOpenCount: number) {
   dbExecute.mockReset();
-  dbExecute
-    .mockResolvedValueOnce([[{ open_count: 0 }]])                                  // clearance
-    .mockResolvedValueOnce([[{ status: "approved", is_ff_provisional: 0 }]])       // F&F
-    .mockResolvedValueOnce([[{ employee_id: EMP_ID }]]);                           // employee lookup
+  dbExecute.mockResolvedValueOnce([[{ open_count: clearanceOpenCount }]]);
 }
 
-async function loadBlockers() {
+async function loadCounter() {
   vi.resetModules();
   const mod: any = await import("../exit.secure.routes.js");
-  return mod.__testFinalExitBlockers ?? null;
+  return mod.__testOpenClearanceAtExit ?? null;
 }
 
-describe("finalExitBlockers — NOC gate", () => {
-  beforeEach(() => {
-    nocRequiredMock.mockReset();
-    nocValidatedMock.mockReset();
+describe("openClearanceAtExit — reports open clearance, never blocks exit", () => {
+  it("returns the open task count so the API can report pendingAtExit", async () => {
+    const openClearanceAtExit = await loadCounter();
+    expect(openClearanceAtExit).toBeTypeOf("function");
+    primeDb(3);
+
+    await expect(openClearanceAtExit(EXIT_ID)).resolves.toBe(3);
   });
 
-  it("blocks the exit when a NOC is required and not validated", async () => {
-    const finalExitBlockers = await loadBlockers();
-    expect(finalExitBlockers, "finalExitBlockers must be exported for test").toBeTypeOf("function");
-    primeCleanExit();
-    nocRequiredMock.mockResolvedValue({ required: true, reason: "FNF settlement pending" });
-    nocValidatedMock.mockResolvedValue(false);
+  it("returns 0 when all clearance tasks are cleared or waived", async () => {
+    const openClearanceAtExit = await loadCounter();
+    primeDb(0);
 
-    const blockers = await finalExitBlockers(EXIT_ID);
-
-    expect(blockers.some((b: string) => b.includes("NOC not validated"))).toBe(true);
-    expect(blockers.some((b: string) => b.includes("FNF settlement pending"))).toBe(true);
-    expect(nocValidatedMock).toHaveBeenCalledWith(EMP_ID, "fnf");
+    await expect(openClearanceAtExit(EXIT_ID)).resolves.toBe(0);
   });
 
-  it("allows the exit when the required NOC is validated", async () => {
-    const finalExitBlockers = await loadBlockers();
-    primeCleanExit();
-    nocRequiredMock.mockResolvedValue({ required: true, reason: "FNF settlement pending" });
-    nocValidatedMock.mockResolvedValue(true);
+  it("issues exactly one DB query — no F&F or NOC lookups", async () => {
+    const openClearanceAtExit = await loadCounter();
+    primeDb(0);
 
-    expect(await finalExitBlockers(EXIT_ID)).toEqual([]);
-  });
-
-  it("never consults NOC validation when no NOC is required", async () => {
-    const finalExitBlockers = await loadBlockers();
-    primeCleanExit();
-    nocRequiredMock.mockResolvedValue({ required: false, reason: null });
-
-    expect(await finalExitBlockers(EXIT_ID)).toEqual([]);
-    expect(nocValidatedMock).not.toHaveBeenCalled();
-  });
-
-  it("does not block the exit when the NOC lookup itself throws", async () => {
-    const finalExitBlockers = await loadBlockers();
-    primeCleanExit();
-    nocRequiredMock.mockRejectedValue(new Error("connection lost"));
-
-    expect(await finalExitBlockers(EXIT_ID)).toEqual([]);
+    await openClearanceAtExit(EXIT_ID);
+    expect(dbExecute).toHaveBeenCalledTimes(1);
   });
 });

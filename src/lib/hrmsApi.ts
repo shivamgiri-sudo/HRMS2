@@ -105,12 +105,32 @@ async function parseResponse(res: Response): Promise<unknown> {
   return text;
 }
 
+/**
+ * Friendly text for the proxy-layer statuses a real deploy restart produces (nginx answers
+ * before the backend is listening again). These never carry a JSON body, so without this map
+ * `buildApiError` below would otherwise surface nginx's raw HTML error page as the error
+ * message — seen live 2026-09-22 on the Branch Ledger tab mid-deploy (a raw
+ * "<html><title>502 Bad Gateway</title>..." string rendered straight into the UI).
+ */
+const GATEWAY_STATUS_MESSAGES: Record<number, string> = {
+  502: "The server is temporarily unavailable. This usually happens for a few minutes during a deploy — please try again shortly.",
+  503: "The service is temporarily unavailable. Please try again in a moment.",
+  504: "The server took too long to respond. Please try again.",
+};
+
+/** A non-JSON error body that is HTML (an nginx/proxy error page) rather than plain text. */
+function looksLikeHtml(text: string): boolean {
+  return /^\s*<(!doctype|html)/i.test(text) || /<\/html>\s*$/i.test(text.trim());
+}
+
 function buildApiError(status: number, payload: unknown, fallbackMessage: string): HrmsApiError {
   const errorPayload = payload as { error?: unknown; message?: unknown; code?: unknown } | null;
   const raw = errorPayload?.error ?? errorPayload?.message ?? (typeof payload === "string" ? payload : null);
   let message: string;
 
-  if (typeof raw === "string") {
+  if (typeof raw === "string" && looksLikeHtml(raw)) {
+    message = GATEWAY_STATUS_MESSAGES[status] ?? fallbackMessage;
+  } else if (typeof raw === "string") {
     message = raw;
   } else if (raw && typeof raw === "object") {
     const fieldErrors = (raw as Record<string, unknown>).fieldErrors;
@@ -138,10 +158,26 @@ export function getHrmsApiErrorStatus(error: unknown): number | null {
   return typeof status === "number" ? status : null;
 }
 
-async function fetchOnce(normalizedPath: string, method: string, body: unknown, timeoutMs: number): Promise<Response> {
+export function getHrmsApiErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== "object" || !("code" in error)) return null;
+  const code = (error as HrmsApiError).code;
+  return typeof code === "string" ? code : null;
+}
+
+async function fetchOnce(
+  normalizedPath: string,
+  method: string,
+  body: unknown,
+  timeoutMs: number,
+  externalSignal?: AbortSignal,
+): Promise<Response> {
   const headers = getAuthHeader();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // Caller-supplied cancellation (e.g. react-query's signal on a filter change) aborts the same fetch.
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
   try {
     return await fetch(`${HRMS_API_URL}${normalizedPath}`, {
       method,
@@ -152,24 +188,26 @@ async function fetchOnce(normalizedPath: string, method: string, body: unknown, 
     });
   } catch (err: unknown) {
     if (err instanceof DOMException && err.name === "AbortError") {
+      if (externalSignal?.aborted) throw err; // cancelled by the caller, not a timeout
       throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s. The server is still processing — please refresh to check the result.`);
     }
     throw err;
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", onExternalAbort);
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown, timeoutMs = 30000): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, timeoutMs = 30000, signal?: AbortSignal): Promise<T> {
   const normalizedPath = normalizeRequestPath(path);
 
-  let res = await fetchOnce(normalizedPath, method, body, timeoutMs);
+  let res = await fetchOnce(normalizedPath, method, body, timeoutMs, signal);
 
   // On 401, try a silent token refresh once and retry the original request
   if (res.status === 401 && !path.includes("/api/auth/")) {
     const refreshed = await refreshAccessToken();
     if (refreshed) {
-      res = await fetchOnce(normalizedPath, method, body, timeoutMs);
+      res = await fetchOnce(normalizedPath, method, body, timeoutMs, signal);
     }
   }
 
@@ -360,6 +398,28 @@ async function requestBlob(path: string): Promise<Blob> {
 }
 
 /**
+ * POST + binary response. Exists for downloads whose selection is too large for a GET query
+ * string — e.g. hundreds of employee_ids for a bank-file export blew past the URL length limit
+ * (a real 414 caught live, 2026-09-11: 797 ids in a query string). A GET+blob download stays the
+ * default everywhere else; only use this where the payload genuinely cannot fit a URL.
+ */
+async function requestPostBlob(path: string, body: unknown): Promise<Blob> {
+  const headers = getAuthHeader();
+  const normalizedPath = normalizeRequestPath(path);
+  const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
+    method: "POST",
+    credentials: "include",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+  return res.blob();
+}
+
+/**
  * The envelope essentially every HRMS endpoint returns.
  *
  * Used as the DEFAULT type argument below. Without a default, `T` collapsed to `unknown`, so the
@@ -381,7 +441,8 @@ export interface HrmsEnvelope<T = any> {
 }
 
 export const hrmsApi = {
-  get: <T = HrmsEnvelope>(path: string, timeoutMs?: number) => request<T>("GET", path, undefined, timeoutMs),
+  get: <T = HrmsEnvelope>(path: string, timeoutMs?: number, signal?: AbortSignal) =>
+    request<T>("GET", path, undefined, timeoutMs, signal),
   post: <T = HrmsEnvelope>(path: string, body?: unknown, timeoutMs?: number) => request<T>("POST", path, body, timeoutMs),
   put: <T = HrmsEnvelope>(path: string, body?: unknown) => request<T>("PUT", path, body),
   patch: <T = HrmsEnvelope>(path: string, body?: unknown) => request<T>("PATCH", path, body),
@@ -394,4 +455,5 @@ export const hrmsApi = {
   getRaw: (path: string) => requestRaw("GET", path),
   postForm: <T>(path: string, body: FormData) => requestForm<T>(path, body),
   getBlob: (path: string) => requestBlob(path),
+  postBlob: (path: string, body?: unknown) => requestPostBlob(path, body),
 };

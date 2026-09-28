@@ -145,11 +145,12 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
   const pfEmployer     = record.pfEmployer     ?? 0;
   const esicEmployee   = record.esicEmployee   ?? 0;
   const esicEmployer   = record.esicEmployer   ?? 0;
-  const professionalTax= record.professionalTax?? 0;
   const tdsAmount      = record.tdsAmount      ?? 0;
   const lwpDeduction   = record.lwpDeduction   ?? 0;
   const advanceRecovery= record.advanceRecovery?? 0;
   const otherDeductions= record.otherDeductions?? 0;
+  const professionalTax= record.professionalTax?? 0;
+  const loanDeduction  = record.loanDeduction  ?? 0;
 
   // Helper to get earning amount by component code
   const getEarning = (code: string): number => {
@@ -509,19 +510,19 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                               </td>
                             </tr>
                           )}
-                          {professionalTax > 0 && (
-                            <tr className="border-b">
-                              <td className="py-1.5 text-muted-foreground">Professional Tax</td>
-                              <td className="py-1.5 text-right font-mono font-semibold text-destructive">
-                                -{fmt(professionalTax)}
-                              </td>
-                            </tr>
-                          )}
                           {tdsAmount > 0 && (
                             <tr className="border-b">
                               <td className="py-1.5 text-muted-foreground">TDS (Income Tax)</td>
                               <td className="py-1.5 text-right font-mono font-semibold text-destructive">
                                 -{fmt(tdsAmount)}
+                              </td>
+                            </tr>
+                          )}
+                          {professionalTax > 0 && (
+                            <tr className="border-b">
+                              <td className="py-1.5 text-muted-foreground">Professional Tax</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-destructive">
+                                -{fmt(professionalTax)}
                               </td>
                             </tr>
                           )}
@@ -541,6 +542,14 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                               </td>
                             </tr>
                           )}
+                          {loanDeduction > 0 && (
+                            <tr className="border-b">
+                              <td className="py-1.5 text-muted-foreground">Loan EMI</td>
+                              <td className="py-1.5 text-right font-mono font-semibold text-destructive">
+                                -{fmt(loanDeduction)}
+                              </td>
+                            </tr>
+                          )}
                           {otherDeductions > 0 && (
                             <tr className="border-b">
                               <td className="py-1.5 text-muted-foreground">Other Deductions</td>
@@ -549,9 +558,10 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                               </td>
                             </tr>
                           )}
-                          {pfEmployee === 0 && esicEmployee === 0 && professionalTax === 0 &&
-                           tdsAmount === 0 && lwpDeduction === 0 && advanceRecovery === 0 &&
-                           otherDeductions === 0 && record.totalDeductions > 0 && (
+                          {pfEmployee === 0 && esicEmployee === 0 &&
+                           tdsAmount === 0 && professionalTax === 0 && lwpDeduction === 0 &&
+                           advanceRecovery === 0 && loanDeduction === 0 && otherDeductions === 0 &&
+                           record.totalDeductions > 0 && (
                             <tr className="border-b">
                               <td className="py-1.5 text-muted-foreground">Deductions</td>
                               <td className="py-1.5 text-right font-mono font-semibold text-destructive">

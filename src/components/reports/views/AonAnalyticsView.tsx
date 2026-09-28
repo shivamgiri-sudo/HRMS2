@@ -956,7 +956,14 @@ function CohortSurvival({ from, to, branchId, designationId }: { from: string; t
  * '%Y-%m')`), so pushing it directly as the chip's `value` is correct here, not a display-name
  * bug.
  */
-function CohortRow({ c }: { c: { cohort: string; joined: number; left30: number } & Record<string, number | null> }) {
+// Not `{...} & Record<string, number | null>` — that intersection is self-contradictory the
+// moment a named field's own type (cohort: string) disagrees with the index signature's value
+// type (number | null), which TypeScript only surfaces once a real object is assigned rather than
+// at the type declaration itself. Named explicitly instead, matching the real shape built below.
+function CohortRow({ c }: { c: {
+  cohort: string; joined: number; left30: number; left90: number;
+  "Survived 30d": number | null; "Survived 60d": number | null; "Survived 90d": number | null;
+} }) {
   const { pushChip, openEmployeeList } = useDrillDown();
   return (
     <tr

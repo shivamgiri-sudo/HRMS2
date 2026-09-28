@@ -193,3 +193,153 @@ describe("field filters", () => {
     expect(plan.params).toContain("VDCL");
   });
 });
+
+/**
+ * A date stored as text.
+ *
+ * Client tables keep dates as varchar constantly. db_masmis.bvo_order_export has
+ * 3,050,861 order rows whose order_date reads "01-01-2025" — DD-MM-YYYY in a
+ * varchar — alongside financial_status ('paid' vs 'COD') and total, which is
+ * precisely the source for Prepaid % and Net Revenue.
+ *
+ * The danger is not that such a column fails. It is that it SUCCEEDS: comparing
+ * `order_date >= '2026-08-01'` compares strings, "01-01-2025" sorts after that
+ * bound, and a month filter returns a confident and completely wrong set of rows
+ * with no error anywhere.
+ */
+describe("date stored as text", () => {
+  const TEXT_DATE_SOURCE = {
+    ...CONSTANT_SOURCE,
+    source_object: "bvo_order_export",
+    date_column: "order_date",
+    date_format: "%d-%m-%Y",
+  };
+
+  it("parses the column everywhere the date is used", () => {
+    const plan = buildProcessQueryPlan(TEXT_DATE_SOURCE as never, FIELDS, "2026-08-01", "2026-08-31");
+    // Both WHERE bounds, the SELECT and the GROUP BY. Parsing in the filter while
+    // grouping on the raw text would bucket rows by their spelling and produce one
+    // group per distinct string.
+    const occurrences = plan.sql.match(/STR_TO_DATE\(`order_date`, '%d-%m-%Y'\)/g) ?? [];
+    expect(occurrences.length).toBe(4);
+    expect(plan.sql).not.toMatch(/`order_date` >=/);
+  });
+
+  it("leaves a real date column alone", () => {
+    const plan = buildProcessQueryPlan(CONSTANT_SOURCE as never, FIELDS, "2026-08-01", "2026-08-31");
+    expect(plan.sql).not.toContain("STR_TO_DATE");
+    expect(plan.sql).toContain("`order_date` >=");
+  });
+
+  it("refuses a format that is not on the list, rather than interpolating it", () => {
+    // The format is interpolated, not bound, so this is the injection boundary.
+    const evil = { ...TEXT_DATE_SOURCE, date_format: "%Y') OR 1=1 -- " };
+    expect(() => buildProcessQueryPlan(evil as never, FIELDS, "2026-08-01", "2026-08-31"))
+      .toThrow(/Unsupported date format/);
+  });
+
+  it("still binds the date bounds as parameters", () => {
+    const plan = buildProcessQueryPlan(TEXT_DATE_SOURCE as never, FIELDS, "2026-08-01", "2026-08-31");
+    expect(plan.params).toContain("2026-08-01");
+    expect(plan.params).toContain("2026-08-31");
+  });
+});
+
+/**
+ * Finding the process through the employee.
+ *
+ * Almost none of this system's own operational tables carries a process column:
+ * cosec_daily_agg, wfm_roster_assignment, biometric_attendance_log and the WFH
+ * snapshot are keyed by employee alone. Without a join they cannot back a process
+ * metric at all, which is roughly 1.1M rows of roster and punctuality data out of
+ * reach.
+ *
+ * The join brings a second table into the query, and from that moment every
+ * column has to say which table it came from — `status` and `created_at` exist on
+ * both sides of plenty of these.
+ */
+describe("process looked up from the employee", () => {
+  const EMPLOYEE_SOURCE = {
+    ...CONSTANT_SOURCE,
+    source_type: "local_query",
+    source_object: "cosec_daily_agg",
+    date_column: "first_punch_in",
+    employee_key_column: "employee_code",
+    employee_key_kind: "employee_code",
+    process_key_kind: "employee" as const,
+    process_id: "p-bella",
+  };
+
+  it("joins employees and filters on their process", () => {
+    const plan = buildProcessQueryPlan(EMPLOYEE_SOURCE as never, FIELDS, "2026-09-01", "2026-09-05");
+    expect(plan.sql).toContain("JOIN employees e ON e.`employee_code` = s.`employee_code`");
+    expect(plan.sql).toContain("e.process_id = ?");
+    expect(plan.params).toContain("p-bella");
+  });
+
+  it("qualifies every source column, so nothing is ambiguous across the join", () => {
+    const plan = buildProcessQueryPlan(EMPLOYEE_SOURCE as never, FIELDS, "2026-09-01", "2026-09-05");
+    // The date and both aggregates must name the source table explicitly.
+    expect(plan.sql).toContain("s.`first_punch_in`");
+    expect(plan.sql).toContain("SUM(s.`prepaid_flag`)");
+    expect(plan.sql).toContain("COUNT(s.`id`)");
+    // A bare backticked column would be the ambiguity this guards against.
+    expect(plan.sql).not.toMatch(/[^.]`first_punch_in`/);
+  });
+
+  it("joins on the id when the source is keyed by employee id", () => {
+    const byId = { ...EMPLOYEE_SOURCE, employee_key_column: "employee_id", employee_key_kind: "employee_id" };
+    const plan = buildProcessQueryPlan(byId as never, FIELDS, "2026-09-01", "2026-09-05");
+    expect(plan.sql).toContain("JOIN employees e ON e.`id` = s.`employee_id`");
+  });
+
+  it("refuses it for a connector, whose server has no employees table", () => {
+    const remote = { ...EMPLOYEE_SOURCE, source_type: "integration_connector", integration_key: "dialer_1" };
+    expect(() => buildProcessQueryPlan(remote as never, FIELDS, "2026-09-01", "2026-09-05"))
+      .toThrow(/only works for a table in this system/i);
+  });
+
+  it("leaves a constant-mapped source completely unqualified", () => {
+    const plan = buildProcessQueryPlan(CONSTANT_SOURCE as never, FIELDS, "2026-08-01", "2026-08-31");
+    expect(plan.sql).not.toContain("JOIN employees");
+    expect(plan.sql).not.toContain("s.`");
+  });
+});
+
+/**
+ * Text present, or absent.
+ *
+ * A free-text column records "nothing to say" as an empty string about as often
+ * as NULL, so is_null answers only half the question — and `ne ''` cannot answer
+ * the other half, because a filter carrying an empty value is refused as a likely
+ * mistake, which it usually is. Voice-of-Customer comments are exactly this
+ * shape: 27% of audited calls carry a negative logistics remark and the rest
+ * hold '' or NULL indistinguishably.
+ */
+describe("is_blank / is_not_blank", () => {
+  const withFilter = (op: string) => [{
+    field_name: "commented", source_column: "id", aggregate_fn: "COUNT", source_expression: null,
+    filter_json: JSON.stringify([{ column: "voc_note", op, value: null }]),
+  }] as never[];
+
+  it("counts a column that actually holds text", () => {
+    const plan = buildProcessQueryPlan(CONSTANT_SOURCE as never, withFilter("is_not_blank"), "2026-08-01", "2026-08-31");
+    expect(plan.sql).toContain("`voc_note` IS NOT NULL AND TRIM(`voc_note`) <> ''");
+  });
+
+  it("treats NULL and empty alike when asking for blank", () => {
+    const plan = buildProcessQueryPlan(CONSTANT_SOURCE as never, withFilter("is_blank"), "2026-08-01", "2026-08-31");
+    expect(plan.sql).toContain("`voc_note` IS NULL OR TRIM(`voc_note`) = ''");
+  });
+
+  it("trims, so a cell holding one space is not a comment", () => {
+    const plan = buildProcessQueryPlan(CONSTANT_SOURCE as never, withFilter("is_not_blank"), "2026-08-01", "2026-08-31");
+    expect(plan.sql).toContain("TRIM(");
+  });
+
+  it("binds no parameter, because the operator carries the whole condition", () => {
+    const plan = buildProcessQueryPlan(CONSTANT_SOURCE as never, withFilter("is_not_blank"), "2026-08-01", "2026-08-31");
+    // Only the two date bounds.
+    expect(plan.params).toEqual(["2026-08-01", "2026-08-31"]);
+  });
+});

@@ -26,7 +26,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Building2, CalendarDays, Plus, Pencil, Trash2, Loader2, ShieldAlert, Users, Hash, Globe, MapPin, ShieldCheck, ShieldQuestion, FlaskConical, Stamp } from "lucide-react";
+import { Building2, CalendarDays, Plus, Pencil, Trash2, Loader2, ShieldAlert, Users, Hash, Globe, MapPin, ShieldCheck, ShieldQuestion, FlaskConical, Stamp, GraduationCap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useDepartments } from "@/hooks/useDepartments";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -38,6 +38,7 @@ import { EmployeeCodeSettings } from "@/components/settings/EmployeeCodeSettings
 import DomainWhitelistSettings from "@/components/settings/DomainWhitelistSettings";
 import OfficeLocationSettings from "@/components/settings/OfficeLocationSettings";
 import CompanySealSettings from "@/components/settings/CompanySealSettings";
+import QualityLearningSettings from "@/components/settings/QualityLearningSettings";
 
 // Fetch leave types from MySQL backend
 const useLeaveTypes = () => {
@@ -795,6 +796,13 @@ const Settings = () => {
                 <span className="sm:hidden">BGV</span>
               </TabsTrigger>
             )}
+            {isAdmin && (
+              <TabsTrigger value="quality-learning" className="w-full justify-center gap-2 sm:w-auto">
+                <GraduationCap className="h-4 w-4" />
+                <span className="hidden sm:inline">Quality-Learning</span>
+                <span className="sm:hidden">Q&amp;L</span>
+              </TabsTrigger>
+            )}
             {isSuperAdmin && (
               <TabsTrigger value="dev-tools" className="w-full justify-center gap-2 sm:w-auto">
                 <FlaskConical className="h-4 w-4" />
@@ -1095,6 +1103,13 @@ const Settings = () => {
           {isAdmin && (
             <TabsContent value="bgv-config" className="mt-6">
               <BgvProviderSettings />
+            </TabsContent>
+          )}
+
+          {/* Quality-Learning Governance Tab - Admin Only */}
+          {isAdmin && (
+            <TabsContent value="quality-learning" className="mt-6">
+              <QualityLearningSettings />
             </TabsContent>
           )}
 

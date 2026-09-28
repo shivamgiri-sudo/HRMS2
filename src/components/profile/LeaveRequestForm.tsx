@@ -181,7 +181,30 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
   };
 
   const selectedBalance = leaveTypeId && !isUnpaid ? leaveBalances[leaveTypeId] : null;
-  const exceedsBalance = !!selectedBalance && effectiveDays > 0 && (selectedBalance.remaining - effectiveDays) < 0;
+
+  // CL and ML draw from ONE shared yearly pool at approval — see POOL_PARTNER_CODE in
+  // backend/src/modules/leave/leave.service.ts: a CL shortfall is covered by whatever ML is
+  // left, and vice versa. Gating on the selected type's own remaining blocked requests the
+  // approver would have paid out of the partner bucket (live example: CL 1.0 + ML 2.0, and a
+  // 2-day CL request the form refused while the pool held 3). The server is the authority on
+  // this rule, so the button follows the pool the server actually spends from. Non-pooled
+  // types have no partner and behave exactly as before. (2026-09-08)
+  const POOL_PARTNER_CODE: Record<string, string> = { CL: "ML", ML: "CL" };
+  const selectedTypeCode = leaveTypes.find((t) => t.id === leaveTypeId)?.code ?? null;
+  const partnerBalance = useMemo(() => {
+    const partnerCode = selectedTypeCode ? POOL_PARTNER_CODE[selectedTypeCode] : undefined;
+    if (!partnerCode) return null;
+    const partnerType = leaveTypes.find((t) => t.code === partnerCode);
+    return partnerType ? leaveBalances[partnerType.id] ?? null : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTypeCode, leaveTypes, leaveBalances]);
+  // null (not 0) when there is no balance row at all, so a missing row stays permissive
+  // exactly as it did before — the server treats that as an administrative gap too.
+  const spendableRemaining = selectedBalance
+    ? selectedBalance.remaining + (partnerBalance?.remaining ?? 0)
+    : null;
+
+  const exceedsBalance = spendableRemaining !== null && effectiveDays > 0 && (spendableRemaining - effectiveDays) < 0;
   const isValid = leaveTypeId && startDate && endDate && effectiveDays > 0 && reason.trim().length >= 10 && !exceedsBalance;
 
   return (
@@ -289,11 +312,19 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
                   {selectedBalance.remaining} of {selectedBalance.total} days
                 </span>
               </div>
+              {partnerBalance && (
+                <div className="flex items-center justify-between mt-1">
+                  <span className="text-muted-foreground">Shared CL + ML pool</span>
+                  <span className="font-semibold text-primary">{spendableRemaining} days</span>
+                </div>
+              )}
               {daysCount > 0 && (
                 <div className="flex items-center justify-between mt-1 pt-1 border-t">
                   <span className="text-muted-foreground">After this request</span>
-                  <span className={cn("font-semibold", (selectedBalance.remaining - effectiveDays) < 0 ? "text-destructive" : "text-primary")}>
-                    {selectedBalance.remaining - effectiveDays} days
+                  {/* Measured against the pool the approver actually spends from, so this
+                      number can never read negative while the Submit button stays enabled. */}
+                  <span className={cn("font-semibold", ((spendableRemaining ?? 0) - effectiveDays) < 0 ? "text-destructive" : "text-primary")}>
+                    {(spendableRemaining ?? 0) - effectiveDays} days
                   </span>
                 </div>
               )}
@@ -304,7 +335,8 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
             <Alert variant="destructive">
               <AlertTriangle className="h-4 w-4" />
               <AlertDescription>
-                Not enough leave balance. You can apply for at most {selectedBalance?.remaining} day{selectedBalance?.remaining !== 1 ? "s" : ""}.
+                Not enough leave balance. You can apply for at most {spendableRemaining} day{spendableRemaining !== 1 ? "s" : ""}
+                {partnerBalance ? " from your shared CL + ML pool" : ""}.
               </AlertDescription>
             </Alert>
           )}

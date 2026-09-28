@@ -2,13 +2,9 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { ProcessCard, HeadlineMetric, PortalRag } from "./portal.types.js";
 import { getKpiScorecardsForProcessId } from "../process-performance/kpi-scorecard.service.js";
+import { portalKpiEngine } from "./portal.kpi-engine.service.js";
 
 const HEADLINE_METRICS = ["CSAT", "AHT", "FCR"];
-
-// Lower is more urgent -- an unrated process sorts after every rated one, real
-// or not: "we don't know yet" is not the same claim as "green", and should not
-// look calmer than an amber process that is at least being measured.
-const RAG_PRIORITY: Record<PortalRag, number> = { red: 0, amber: 1, no_data: 2, green: 3 };
 
 function computeRag(achievementPct: number): "green" | "amber" | "red" {
   if (achievementPct >= 100) return "green";
@@ -24,10 +20,32 @@ function mapScorecardRag(rag: "good" | "warn" | "crit" | null): "green" | "amber
   return null;
 }
 
-/** Only a REAL reading (red/amber/green) may move a card off "no_data" -- and only toward
- *  something more urgent than what it already holds, never back toward calm. */
+/**
+ * Only a REAL reading (red/amber/green) may move a card off "no_data" -- and once it has
+ * a real reading, only a MORE urgent one may replace it, never a calmer one overwriting a
+ * worse one already found.
+ *
+ * The card's rag starts at "no_data" (priority 2), which sits between amber (1) and green
+ * (3) specifically so an unmeasured process never LOOKS calmer than an amber one that is at
+ * least being watched. But comparing every incoming reading's priority against the card's
+ * CURRENT priority breaks the very first transition: a green reading (3) is never "more
+ * urgent" than no_data (2), so a process whose only real readings are green could never
+ * clear "no_data" -- confirmed live for GS1, whose two real headline metrics are both green
+ * (achievement >= 100%) yet the card stayed "no_data" until this fix. No process on the
+ * platform could ever show a true "green" card because of this.
+ *
+ * Fix: "no_data" is not a real classification and must never be compared against as if it
+ * were one. The first real reading always sets the card's rag outright; every reading after
+ * that follows the real red/amber/green urgency ordering (RAG_PRIORITY_REAL) among themselves.
+ */
+const RAG_PRIORITY_REAL: Record<"red" | "amber" | "green", number> = { red: 0, amber: 1, green: 2 };
 function escalate(card: ProcessCard, rag: "green" | "amber" | "red"): void {
-  if (RAG_PRIORITY[rag] < RAG_PRIORITY[card.rag]) card.rag = rag;
+  if (card.rag === "no_data") {
+    card.rag = rag;
+    return;
+  }
+  if (card.rag !== "red" && card.rag !== "amber" && card.rag !== "green") return;
+  if (RAG_PRIORITY_REAL[rag] < RAG_PRIORITY_REAL[card.rag]) card.rag = rag;
 }
 
 function computeAchievement(actual: number, target: number, direction: string): number {
@@ -144,15 +162,35 @@ export const portalOverviewService = {
     // 4 registered processes) -- a second, newer source alongside the legacy
     // kpi_assignment/kpi_score one above, never a replacement for it, since other
     // processes may only ever have legacy data.
-    // '2026-09-31' is not a valid DATE literal for every month; day 0 of next
-    // month is always that month's real last day.
+    //
+    // Window MUST match portal.kpi.service.ts's periodToRange (current month + 6 months
+    // back). This used to query only the current calendar month: a process whose latest
+    // reading landed a few days into a prior month (confirmed live for GS1, whose most
+    // recent kpi_daily_actual rows are dated in August while this ran in September) showed
+    // "no_data" on the Executive Home overview while the same process's own Performance
+    // tab, reading the wider window, showed real green metrics -- two pages of the same
+    // portal disagreeing about whether a process has any data at all.
     const [cpYear, cpMonth] = currentPeriod.split("-").map(Number);
     const lastDayOfMonth = new Date(cpYear, cpMonth, 0).getDate();
-    const currentMonthRange = { from: `${currentPeriod}-01`, to: `${currentPeriod}-${String(lastDayOfMonth).padStart(2, "0")}` };
-    for (const processId of processMap.keys()) {
-      const rows = await getKpiScorecardsForProcessId(processId, currentMonthRange).catch(() => null);
+    const sixMonthsBackDate = new Date(cpYear, cpMonth - 1 - 6, 1);
+    const sixMonthWindow = {
+      from: `${sixMonthsBackDate.getFullYear()}-${String(sixMonthsBackDate.getMonth() + 1).padStart(2, "0")}-01`,
+      to: `${currentPeriod}-${String(lastDayOfMonth).padStart(2, "0")}`,
+    };
+    // Fetched in parallel rather than one process at a time -- each call does several DB
+    // round trips (kpi_daily_actual, process_metric_actual, and for some registry entries a
+    // dialer_db CDR lookup on a remote host), so a sequential loop scaled the whole
+    // overview's latency linearly with process count. A client with 5 processes was paying
+    // 5x the per-process round-trip cost serially; Promise.all collapses that to the cost
+    // of the slowest single process instead.
+    const processIdList = Array.from(processMap.keys());
+    const scorecardResults = await Promise.all(
+      processIdList.map((processId) => getKpiScorecardsForProcessId(processId, sixMonthWindow).catch(() => null))
+    );
+    for (let i = 0; i < processIdList.length; i++) {
+      const rows = scorecardResults[i];
       if (!rows) continue;
-      const card = processMap.get(processId)!;
+      const card = processMap.get(processIdList[i])!;
       for (const r of rows) {
         if (r.availability !== "ok") continue; // no real reading -- must not move the card
         const rag = mapScorecardRag(r.rag);
@@ -168,6 +206,46 @@ export const portalOverviewService = {
           rag,
         });
         escalate(card, rag);
+      }
+    }
+
+    // Fourth: portal.kpi-engine.service.ts -- the same real, generalizable engine now
+    // powering the Performance tab (portal.kpi.service.ts's tryKpiEngine) for every
+    // process outside the 4-process registry above. Without this pass, a process like
+    // Onfido would show real KPI scorecards on its own Performance tab (computed by this
+    // exact engine) while its Overview card stayed stuck on "no_data" forever, because
+    // this file's two enrichment passes above only ever look at the dead
+    // kpi_assignment/kpi_template_metric path and the 4-process registry -- the same class
+    // of "two pages of the same portal disagreeing" bug this file's own escalate()/window
+    // comments already document and fixed once before. Uses computeHeadlineMetrics
+    // (worst-RAG-first, built for exactly this) rather than the full metric set, since a
+    // card only has room for a small headline, same as the registry pass above.
+    //
+    // Deliberately does NOT gate on whether the registry pass already found something for
+    // this process: a process could have BOTH a registry entry that itself supplies no
+    // headline metrics for the current window (registry entries with notTrackedNote, or a
+    // gap in that specific pipeline) and real engine-computed data, and the card should
+    // show whichever pass found something real, following the same non-destructive
+    // escalate() merge every earlier pass in this function already uses.
+    const engineResults = await Promise.all(
+      processIdList.map((processId) => portalKpiEngine.computeHeadlineMetrics(processId, currentPeriod).catch(() => null)),
+    );
+    for (let i = 0; i < processIdList.length; i++) {
+      const metrics = engineResults[i];
+      if (!metrics) continue;
+      const card = processMap.get(processIdList[i])!;
+      for (const m of metrics) {
+        if (m.rag === "no_data" || m.actual == null) continue; // no real reading -- must not move the card
+        card.headline_metrics.push({
+          metric_code: m.metric_code,
+          metric_name: m.metric_name,
+          unit: m.unit,
+          actual: m.actual,
+          target: m.target,
+          achievement_pct: m.achievement_pct,
+          rag: m.rag,
+        });
+        escalate(card, m.rag);
       }
     }
 

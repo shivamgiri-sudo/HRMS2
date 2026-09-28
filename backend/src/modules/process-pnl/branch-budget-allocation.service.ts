@@ -7,6 +7,8 @@ import { getBranchMeterConsumption, type MeterUtilityType } from "./meter.servic
 import { getCostCentreGradeWeightedCost } from "./grade-engine.service.js";
 
 import { refuse } from "./finance-error.js";
+import { ccProcessJoin, ccProcessNameSql } from "./cost-centre-label.js";
+import { ownCompanyCostCentreSql } from "../../shared/ownCompanyCostCentre.js";
 /**
  * Branch Budget foundation (PR 2): normalized cost-centre allocation for branch-planned budget
  * lines. Reuses the shared allocatePoolAmount() primitive (bpo-pnl.calculation.ts) so branch
@@ -179,6 +181,12 @@ export async function listActiveCostCentres(
   // least one cost centre has active_status = 1 but a close_date years in the past (the flag was
   // never updated when it closed). Excluding closed/not-yet-live rows here prevents a stale or
   // future cost centre from silently appearing as an allocation/statement column.
+  // active_status also doesn't distinguish "closed" from "never approved": 85 cost centres sit at
+  // status='draft' (and others at pending_l1/pending_l2/rejected/revision_required) while still
+  // carrying active_status=1, so without a status check they showed up as valid GRN cost-centre
+  // split targets — verified live on AHMEDABAD-JALDARSHAN (AVORE E-BIKE, SBI CREDIT CARDS, Buddy 4
+  // Study and others, all status='draft'). Mirrors the same fix already applied to
+  // costCentreService.list() (org.service.ts) for the Org Masters / offer-creation dropdown.
   // Which process a cost centre serves is NOT cost_centre_master.process_id — that column is NULL
   // on every live row. The mapping that actually exists runs through the people: the process of the
   // employees posted to the cost centre. This is the same derivation /api/org/cost-centres uses, so
@@ -198,7 +206,8 @@ export async function listActiveCostCentres(
               NULLIF(TRIM(ccm.client_name), '')
             ) AS resolved_process_name
        FROM cost_centre_master ccm
-      WHERE ccm.branch_id = ? AND ccm.active_status = 1
+      WHERE ccm.branch_id = ? AND ccm.active_status = 1 AND ccm.status = 'active'
+        AND ${ownCompanyCostCentreSql("ccm")}
         AND (ccm.close_date IS NULL OR ccm.close_date > CURDATE())
         AND (ccm.go_live_date IS NULL OR ccm.go_live_date <= CURDATE())
       ORDER BY ccm.cost_centre_name`,
@@ -816,9 +825,10 @@ export async function resyncLineAllocations(
 
 export async function getLineAllocations(budgetLineId: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT a.*, ccm.cost_centre_name, ccm.cost_centre_code
+    `SELECT a.*, ccm.cost_centre_name, ccm.cost_centre_code, ${ccProcessNameSql()} AS cost_centre_process
        FROM finance_budget_line_allocation a
        LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
+       ${ccProcessJoin()}
       WHERE a.budget_line_id = ?
       ORDER BY ccm.cost_centre_name`,
     [budgetLineId]

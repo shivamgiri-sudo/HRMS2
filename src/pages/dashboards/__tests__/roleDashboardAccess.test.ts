@@ -68,6 +68,9 @@ describe("role dashboard access", () => {
   it("routes each newly catalogued head role to its own function", () => {
     expect(resolveRoleDashboardVariant(["employee", "it_head"])).toBe("it_manager");
     expect(resolveRoleDashboardVariant(["employee", "tq_head"])).toBe("quality");
-    expect(resolveRoleDashboardVariant(["employee", "branch_head"])).toBe("manager");
+    // branch_head was added to wfm_attendance's allowedRoleKeys 2026-09-16 (branch heads own
+    // everything happening in their branch's WFM/attendance data), and wfm_attendance outranks
+    // manager in RESOLUTION_PRIORITY — so a plain branch_head now resolves there, not to manager.
+    expect(resolveRoleDashboardVariant(["employee", "branch_head"])).toBe("wfm_attendance");
   });
 });

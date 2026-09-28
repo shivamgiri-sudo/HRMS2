@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { shiftPeriod } from "../canonical-pnl.service.js";
-import { allocateAmountByWeights } from "../process-lob.service.js";
+import { allocateAmountByWeights, deliveryDataStatus } from "../process-lob.service.js";
 
 describe("Process LOB shared-cost allocation", () => {
   it("allocates a pool using contracted-seat weights and preserves the total", () => {
@@ -57,6 +57,50 @@ describe("Process LOB shared-cost allocation", () => {
     expect(result.allocated.get("lob-a")).toBe(-2500);
     expect(result.allocated.get("lob-b")).toBe(-2500);
     expect(result.unallocated).toBeCloseTo(0, 5);
+  });
+});
+
+describe("deliveryDataStatus", () => {
+  /**
+   * Pins the exact bug this was extracted to fix: process-lob.service.ts's
+   * recognizedRevenue can be a computed zero for a LOB with zero delivery
+   * rows (calculateRevenue's metricUnits() falls back to 0 units with no
+   * delivery data), and the old dataStatus.delivery check
+   * (`deliveredUnits || billableUnits` truthy) got this specific case wrong
+   * two different ways -- see the two "wrong under the old rule" cases below.
+   */
+
+  it("reports 'available' when the LOB has real delivery rows this period", () => {
+    expect(deliveryDataStatus(true, [{ billingModel: "per_seat" }])).toBe("available");
+  });
+
+  it("reports 'missing' for a volume-billed LOB with zero delivery rows -- recognizedRevenue may be an unverified zero", () => {
+    // Wrong under the old rule when the LOB's own units genuinely summed to 0
+    // that period (a real validated zero-delivery day): deliveredUnits=0 AND
+    // billableUnits=0 read as falsy just the same as "no rows exist at all",
+    // so a real recorded zero and a missing feed were indistinguishable.
+    expect(deliveryDataStatus(false, [{ billingModel: "per_seat" }])).toBe("missing");
+    expect(deliveryDataStatus(false, [{ billingModel: "per_productive_hour" }])).toBe("missing");
+  });
+
+  it("reports 'not_required' for a fixed_monthly-only LOB with zero delivery rows -- its revenue does not depend on delivery data", () => {
+    // Wrong under the old rule in the opposite direction: metricUnits() returns a
+    // constant 1 for fixed_monthly regardless of delivery data, so billableUnits
+    // was always truthy and the old check said "available" -- implying delivery
+    // data existed when none does, for a LOB that never needed any.
+    expect(deliveryDataStatus(false, [{ billingModel: "fixed_monthly" }])).toBe("not_required");
+  });
+
+  it("reports 'missing' when a LOB mixes fixed_monthly with a volume-based rule and has no delivery rows", () => {
+    // The volume-based rule still can't be verified even though the fixed portion can.
+    expect(deliveryDataStatus(false, [
+      { billingModel: "fixed_monthly" },
+      { billingModel: "per_seat" },
+    ])).toBe("missing");
+  });
+
+  it("reports 'not_required' when a LOB has no revenue rules at all -- dataStatus.revenue separately says 'missing_rule'", () => {
+    expect(deliveryDataStatus(false, [])).toBe("not_required");
   });
 });
 

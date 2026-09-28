@@ -5,8 +5,32 @@
  * which agents need coaching on which of the 19 inbound quality parameters.
  *
  * Pass rate convention: each parameter column is TINYINT 0/1 (fail/pass).
- * pass_pct = AVG(param) * 100.  A pass_pct < 60 is a TNI flag.
+ * pass_pct = AVG(param) * 100.
+ *
+ * The threshold that flags a cell is RELATIVE to that parameter's own org-wide
+ * pass rate for the window queried, not a flat 60% for all 19. A flat bar was
+ * tried first and does the wrong thing: checked against live data
+ * (2026-08-09..2026-09-08), "correct_and_complete_information" and
+ * "express_empathy" run a org-wide PASS rate of roughly 50-55%, already below a
+ * flat 60% bar — so a flat threshold there does not find agents with a training
+ * gap, it flags almost every agent, because the org average alone fails to
+ * clear it. effectiveThreshold() computes, per parameter and per query, the
+ * audit-weighted org pass rate and requires a genuine margin below it, clamped
+ * so the bar can never become meaningless in either direction: never so high
+ * that a naturally-hard parameter flags everyone (MAX_THRESHOLD), and never so
+ * low that a catastrophic parameter stops flagging anyone at all (MIN_THRESHOLD).
  */
+
+/** Percentage points below a parameter's own baseline an agent must be to flag. */
+const MARGIN_BELOW_BASELINE = 15;
+/** Never flag someone whose pass rate is still at or above this, no matter how far above them the crowd sits. */
+const MAX_THRESHOLD = 60;
+/** Never require someone to be worse than this before flagging, no matter how bad the crowd already is — keeps a catastrophic parameter from silently stopping all individual flags. */
+const MIN_THRESHOLD = 20;
+
+export function effectiveThreshold(orgBaselinePassPct: number): number {
+  return Math.min(MAX_THRESHOLD, Math.max(MIN_THRESHOLD, orgBaselinePassPct - MARGIN_BELOW_BASELINE));
+}
 
 import { getShivamgiriPool } from "../../db/shivamgiriDb.js";
 import type { RowDataPacket } from "mysql2";
@@ -38,6 +62,10 @@ export type TniParam = (typeof TNI_PARAMS)[number];
 export interface TniAgentRow {
   agent_code: string;
   agent_name: string;
+  process_name: string;
+  reporting_manager: string;
+  branch_name: string;
+  cost_centre_name: string;
   audit_count: number;
   avg_cq_score: number;
   /** pass % per param, keyed by param name */
@@ -54,6 +82,10 @@ export interface TniSummary {
   avg_cq_score: number;
 }
 
+/** The per-parameter bar actually used this query, so a caller (or the page's
+ *  own heatmap coloring) never has to hardcode a threshold it cannot see. */
+export type TniThresholds = Record<TniParam, number>;
+
 export interface TniAgentCallRecord {
   lead_id: string;
   call_date: string;
@@ -62,8 +94,6 @@ export interface TniAgentCallRecord {
   scenario: string;
   client: string;
 }
-
-const TNI_THRESHOLD = 60; // pass % below this = needs training
 
 function buildSelectColumns(): string {
   return TNI_PARAMS.map(
@@ -74,46 +104,96 @@ function buildSelectColumns(): string {
 export async function getTniAnalysis(
   startDate: string,
   endDate: string,
-  clientId?: string | null
-): Promise<{ agents: TniAgentRow[]; summary: TniSummary }> {
+  clientId?: string | null,
+  branchId?: string | null,
+  processId?: string | null,
+  costCentreId?: string | null,
+): Promise<{ agents: TniAgentRow[]; summary: TniSummary; thresholds: TniThresholds }> {
   const pool = getShivamgiriPool();
 
-  const clientCond = clientId ? " AND q.ClientId = ?" : "";
-  const baseParams: (string | number)[] = [startDate, endDate, ...(clientId ? [clientId] : [])];
+  const conditions: string[] = [];
+  const baseParams: (string | number)[] = [startDate, endDate];
+
+  if (clientId) { conditions.push("AND q.ClientId = ?"); baseParams.push(clientId); }
+  if (branchId) { conditions.push("AND e.branch_id = ?"); baseParams.push(branchId); }
+  if (processId) { conditions.push("AND e.process_id = ?"); baseParams.push(processId); }
+  if (costCentreId) { conditions.push("AND e.cost_centre_id = ?"); baseParams.push(costCentreId); }
+
+  const extraCond = conditions.join(" ");
 
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
       q.User AS agent_code,
-      COALESCE(am.AgentName, q.User) AS agent_name,
+      COALESCE(am.AgentName, e.full_name, q.User) AS agent_name,
+      COALESCE(pm.process_name, '') AS process_name,
+      COALESCE(rm.full_name, '') AS reporting_manager,
+      COALESCE(bm.branch_name, '') AS branch_name,
+      COALESCE(ccm.cost_centre_name, '') AS cost_centre_name,
       COUNT(*) AS audit_count,
       ROUND(AVG(q.quality_percentage), 1) AS avg_cq_score,
       ${buildSelectColumns()}
      FROM db_audit.call_quality_assessment q
      LEFT JOIN Shivamgiri.AgentMaster am
        ON am.MasId = q.User COLLATE utf8mb4_unicode_ci
+     LEFT JOIN mas_hrms.employees e
+       ON e.employee_code = q.User COLLATE utf8mb4_unicode_ci AND e.active_status = 1
+     LEFT JOIN mas_hrms.process_master pm ON pm.id = e.process_id
+     LEFT JOIN mas_hrms.branch_master bm ON bm.id = e.branch_id
+     LEFT JOIN mas_hrms.cost_centre_master ccm ON ccm.id = e.cost_centre_id
+     LEFT JOIN mas_hrms.employees rm ON rm.id = e.reporting_manager_id
      WHERE q.CallDate BETWEEN ? AND ?
        AND q.quality_percentage IS NOT NULL
        AND q.User IS NOT NULL AND TRIM(q.User) != ''
-       ${clientCond}
-     GROUP BY q.User, am.AgentName
+       ${extraCond}
+     GROUP BY q.User, am.AgentName, e.full_name, pm.process_name, rm.full_name, bm.branch_name, ccm.cost_centre_name
      ORDER BY audit_count DESC`,
     baseParams
   );
 
-  const agents: TniAgentRow[] = (rows as RowDataPacket[]).map((row) => {
+  // First pass: pull each agent's own per-parameter pass rate, without flagging
+  // yet — flagging needs the org baseline, and the baseline needs every agent.
+  const rawAgents = (rows as RowDataPacket[]).map((row) => {
     const params = {} as Record<TniParam, number>;
-    let flagCount = 0;
-    for (const p of TNI_PARAMS) {
-      const val = Number(row[p] ?? 0);
-      params[p] = val;
-      if (val < TNI_THRESHOLD) flagCount++;
-    }
+    for (const p of TNI_PARAMS) params[p] = Number(row[p] ?? 0);
     return {
       agent_code: String(row.agent_code ?? ""),
       agent_name: String(row.agent_name ?? row.agent_code ?? "Unknown"),
+      process_name: String(row.process_name ?? ""),
+      reporting_manager: String(row.reporting_manager ?? ""),
+      branch_name: String(row.branch_name ?? ""),
+      cost_centre_name: String(row.cost_centre_name ?? ""),
       audit_count: Number(row.audit_count ?? 0),
       avg_cq_score: Number(row.avg_cq_score ?? 0),
       params,
+    };
+  });
+
+  // Audit-weighted org baseline per parameter: sum(agent pass% * agent audits) /
+  // sum(audits) reconstructs the true population pass rate from the per-agent
+  // averages already fetched, without a second query. An unweighted average of
+  // per-agent percentages would let a 5-audit agent move the baseline as much as
+  // a 700-audit agent — exactly the kind of distortion this fix exists to avoid.
+  const totalAudits = rawAgents.reduce((s, a) => s + a.audit_count, 0);
+  const thresholds = {} as TniThresholds;
+  for (const p of TNI_PARAMS) {
+    const weightedSum = rawAgents.reduce((s, a) => s + a.params[p] * a.audit_count, 0);
+    const baseline = totalAudits > 0 ? weightedSum / totalAudits : 100;
+    thresholds[p] = effectiveThreshold(baseline);
+  }
+
+  const agents: TniAgentRow[] = rawAgents.map((a) => {
+    let flagCount = 0;
+    for (const p of TNI_PARAMS) if (a.params[p] < thresholds[p]) flagCount++;
+    return {
+      agent_code: a.agent_code,
+      agent_name: a.agent_name,
+      process_name: a.process_name,
+      reporting_manager: a.reporting_manager,
+      branch_name: a.branch_name,
+      cost_centre_name: a.cost_centre_name,
+      audit_count: a.audit_count,
+      avg_cq_score: a.avg_cq_score,
+      params: a.params,
       tni_flag_count: flagCount,
     };
   });
@@ -151,6 +231,7 @@ export async function getTniAnalysis(
       most_failed_param_pass_pct: Math.round(lowestAvg * 10) / 10,
       avg_cq_score: avgCq,
     },
+    thresholds,
   };
 }
 

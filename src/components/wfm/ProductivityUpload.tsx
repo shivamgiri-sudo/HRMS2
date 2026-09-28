@@ -19,7 +19,7 @@
  * than a claim.
  */
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -35,6 +35,7 @@ import { apiUrl } from "@/lib/apiBase";
 import { getAuthToken } from "@/lib/hrmsApi";
 import { useBranches, useProcesses } from "@/hooks/useOrgMasters";
 import { filterByScope, useWfmScopeFilter } from "@/hooks/useWfmScopeFilter";
+import { useUserRole } from "@/hooks/useUserRole";
 
 /** The role_page_access grant this tab is gated on. Registered by migration 1639. */
 export const PRODUCTIVITY_UPLOAD_PAGE_CODE = "WFM_PRODUCTIVITY_UPLOAD";
@@ -426,6 +427,124 @@ export function SourceMappingBlockedNotice({ source }: { source: DiallerSourceOp
   );
 }
 
+const MANDATORY_TARGETS = ['employee_code', 'report_date', 'login_minutes'] as const;
+const OPTIONAL_TARGETS = ['calls_handled', 'aht_seconds', 'bio_minutes', 'lunch_minutes', 'qa_minutes', 'training_minutes'] as const;
+
+type MandatoryTarget = typeof MANDATORY_TARGETS[number];
+type OptionalTarget = typeof OPTIONAL_TARGETS[number];
+
+const TARGET_LABELS: Record<string, string> = {
+  employee_code: 'Employee Code',
+  report_date: 'Report Date',
+  login_minutes: 'Login Minutes',
+  calls_handled: 'Calls Handled',
+  aht_seconds: 'AHT (seconds)',
+  bio_minutes: 'Bio Minutes',
+  lunch_minutes: 'Lunch Minutes',
+  qa_minutes: 'QA Minutes',
+  training_minutes: 'Training Minutes',
+};
+
+function ColumnMappingConfigPanel({ source, onSaved }: { source: DiallerSourceOption; onSaved: () => void }) {
+  const [mandatoryHeaders, setMandatoryHeaders] = useState<Record<MandatoryTarget, string>>({
+    employee_code: '',
+    report_date: '',
+    login_minutes: '',
+  });
+  const [optionalHeaders, setOptionalHeaders] = useState<Partial<Record<OptionalTarget, string>>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+
+  const canSave = MANDATORY_TARGETS.every((t) => mandatoryHeaders[t].trim() !== '');
+
+  async function handleSave() {
+    const mappings: Record<string, string> = {};
+    for (const target of MANDATORY_TARGETS) {
+      mappings[mandatoryHeaders[target].trim()] = target;
+    }
+    for (const target of OPTIONAL_TARGETS) {
+      const header = optionalHeaders[target]?.trim();
+      if (header) mappings[header] = target;
+    }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const res = await fetch(apiUrl(`${API_ROOT}/sources/${source.diallerSourceId}/column-mapping`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getAuthToken() ?? ''}` },
+        body: JSON.stringify({ columnMappings: mappings }),
+      });
+      const body: { success: boolean; message?: string } = await res.json().catch(() => ({ success: false }));
+      if (!res.ok || !body.success) {
+        setSaveError(body.message ?? 'Failed to save mapping.');
+        return;
+      }
+      onSaved();
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Failed to save mapping.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-xs text-amber-700 underline underline-offset-2 hover:text-amber-900"
+      >
+        Configure mapping (admin)
+      </button>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-slate-700">Configure Column Mapping</p>
+        <button type="button" onClick={() => setOpen(false)} className="text-xs text-slate-400 hover:text-slate-600">Close</button>
+      </div>
+      <p className="text-xs text-slate-500">
+        Enter the exact CSV column header name for each field. Headers are case-sensitive.
+      </p>
+      <div className="space-y-2">
+        <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Required</p>
+        {MANDATORY_TARGETS.map((target) => (
+          <div key={target} className="flex items-center gap-3">
+            <span className="w-32 shrink-0 text-xs text-slate-600">{TARGET_LABELS[target]}</span>
+            <input
+              type="text"
+              placeholder="CSV column header"
+              value={mandatoryHeaders[target]}
+              onChange={(e) => setMandatoryHeaders((prev) => ({ ...prev, [target]: e.target.value }))}
+              className="flex-1 rounded border border-slate-200 px-2 py-1 text-sm"
+            />
+          </div>
+        ))}
+        <p className="text-xs font-bold uppercase tracking-wide text-slate-400 pt-2">Optional</p>
+        {OPTIONAL_TARGETS.map((target) => (
+          <div key={target} className="flex items-center gap-3">
+            <span className="w-32 shrink-0 text-xs text-slate-500">{TARGET_LABELS[target]}</span>
+            <input
+              type="text"
+              placeholder="leave blank to skip"
+              value={optionalHeaders[target] ?? ''}
+              onChange={(e) => setOptionalHeaders((prev) => ({ ...prev, [target]: e.target.value }))}
+              className="flex-1 rounded border border-slate-200 px-2 py-1 text-sm text-slate-500"
+            />
+          </div>
+        ))}
+      </div>
+      {saveError && <p className="text-xs text-rose-600">{saveError}</p>}
+      <Button size="sm" onClick={handleSave} disabled={saving || !canSave}>
+        {saving ? 'Saving…' : 'Save Mapping'}
+      </Button>
+    </div>
+  );
+}
+
 export function PreviewResultPanel({
   accepted,
   rejected,
@@ -637,6 +756,11 @@ export function ProductivityUpload() {
   const [busy, setBusy] = useState<null | "preview" | "commit" | "supersede">(null);
 
   const scope = useWfmScopeFilter();
+  const queryClient = useQueryClient();
+  const { data: roleData } = useUserRole();
+  const isMappingAdmin = (roleData?.roleKeys ?? []).some((r) =>
+    ['super_admin', 'admin', 'wfm'].includes(r),
+  );
 
   const sourcesQuery = useQuery({
     queryKey: ["productivity-upload", "sources"],
@@ -958,7 +1082,19 @@ export function ProductivityUpload() {
         </div>
       </div>
 
-      {source && source.columnMappings === null && <SourceMappingBlockedNotice source={source} />}
+      {source && source.columnMappings === null && (
+        <div className="space-y-2">
+          <SourceMappingBlockedNotice source={source} />
+          {isMappingAdmin && (
+            <ColumnMappingConfigPanel
+              source={source}
+              onSaved={() => {
+                void queryClient.invalidateQueries({ queryKey: ["productivity-upload", "sources"] });
+              }}
+            />
+          )}
+        </div>
+      )}
 
       {source && source.columnMappings && (
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">

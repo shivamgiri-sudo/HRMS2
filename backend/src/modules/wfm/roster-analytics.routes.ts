@@ -12,6 +12,10 @@ import {
   getCostOfNonAdherence,
   getShrinkageForecast,
 } from './roster-analytics.service.js';
+import { getProcessTeamRosterView } from './process-team-roster.service.js';
+import { todayLocalDateStr } from './shift-due.util.js';
+import { lobAnd, readLobFilter } from '../../shared/lobFilter.js';
+import { analyticsCache } from '../../shared/analyticsCache.js';
 
 const router = Router();
 
@@ -35,6 +39,11 @@ const realRoster = (alias: string) =>
 
 const ANALYTICS_ROLES = ['super_admin', 'admin', 'hr', 'wfm', 'branch_head', 'operations_manager', 'ceo', 'coo'];
 
+// Same role set as roster-intelligence.routes.ts's MANAGER_ROLES (not exported from
+// there, so mirrored here) — WFM Roster Console merge Phase C, matches the
+// WFM_ROSTER_TEAM_ROSTER page code's grant list in the console's SQL migration.
+const TEAM_ROSTER_ROLES = ['super_admin', 'admin', 'hr', 'wfm', 'branch_head', 'manager', 'operations_manager', 'process_manager'];
+
 /**
  * GET /api/roster-analytics/shrinkage-intelligence/:branchId
  * Weekly shrinkage breakdown with cost impact, patterns, and manager ranking
@@ -42,6 +51,8 @@ const ANALYTICS_ROLES = ['super_admin', 'admin', 'hr', 'wfm', 'branch_head', 'op
 router.get('/shrinkage-intelligence/:branchId', requireRole(...ANALYTICS_ROLES), async (req, res) => {
   try {
     const { branchId } = req.params;
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
 
     // Default to start of current week (Monday)
     let weekStart = req.query.weekStart ? String(req.query.weekStart) : undefined;
@@ -52,7 +63,7 @@ router.get('/shrinkage-intelligence/:branchId', requireRole(...ANALYTICS_ROLES),
       weekStart = d.toISOString().slice(0, 10);
     }
 
-    const data = await getWeeklyShrinkageIntelligence(branchId, weekStart);
+    const data = await getWeeklyShrinkageIntelligence(branchId, weekStart, lob);
     res.json(data);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -65,8 +76,10 @@ router.get('/shrinkage-intelligence/:branchId', requireRole(...ANALYTICS_ROLES),
  * GET /api/roster-analytics/quality-correlation
  * Correlation between attendance and quality scores
  */
-router.get('/quality-correlation', requireRole(...ANALYTICS_ROLES), async (req, res) => {
+router.get('/quality-correlation', requireRole(...ANALYTICS_ROLES), analyticsCache('roster-analytics-quality-correlation'), async (req, res) => {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     // Default to previous month
     let period = req.query.period ? String(req.query.period) : undefined;
     if (!period) {
@@ -78,7 +91,7 @@ router.get('/quality-correlation', requireRole(...ANALYTICS_ROLES), async (req, 
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
     const processId = req.query.processId ? String(req.query.processId) : undefined;
 
-    const data = await getQualityAdherenceCorrelation(period, branchId, processId);
+    const data = await getQualityAdherenceCorrelation(period, branchId, processId, lob);
     res.json(data);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -91,8 +104,10 @@ router.get('/quality-correlation', requireRole(...ANALYTICS_ROLES), async (req, 
  * GET /api/roster-analytics/cost-impact
  * Cost of non-adherence with breakdown and projections
  */
-router.get('/cost-impact', requireRole(...ANALYTICS_ROLES), async (req, res) => {
+router.get('/cost-impact', requireRole(...ANALYTICS_ROLES), analyticsCache('roster-analytics-cost-impact'), async (req, res) => {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     // Default to previous month
     let period = req.query.period ? String(req.query.period) : undefined;
     if (!period) {
@@ -104,7 +119,7 @@ router.get('/cost-impact', requireRole(...ANALYTICS_ROLES), async (req, res) => 
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
     const processId = req.query.processId ? String(req.query.processId) : undefined;
 
-    const data = await getCostOfNonAdherence(period, branchId, processId);
+    const data = await getCostOfNonAdherence(period, branchId, processId, lob);
     res.json(data);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -120,7 +135,9 @@ router.get('/cost-impact', requireRole(...ANALYTICS_ROLES), async (req, res) => 
 router.get('/forecast/:branchId', requireRole(...ANALYTICS_ROLES), async (req, res) => {
   try {
     const { branchId } = req.params;
-    const data = await getShrinkageForecast(branchId);
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const data = await getShrinkageForecast(branchId, lob);
     res.json(data);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -135,6 +152,8 @@ router.get('/forecast/:branchId', requireRole(...ANALYTICS_ROLES), async (req, r
  */
 router.get('/summary', requireRole(...ANALYTICS_ROLES), async (req, res) => {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
 
     // Current week shrinkage
@@ -151,7 +170,7 @@ router.get('/summary', requireRole(...ANALYTICS_ROLES), async (req, res) => {
     const results: Record<string, unknown> = {};
 
     if (branchId) {
-      const shrinkage = await getWeeklyShrinkageIntelligence(branchId, weekStart);
+      const shrinkage = await getWeeklyShrinkageIntelligence(branchId, weekStart, lob);
       results.currentWeekShrinkage = {
         pct: shrinkage.breakdown.total.pct,
         budgetPct: shrinkage.budgetPct,
@@ -159,14 +178,14 @@ router.get('/summary', requireRole(...ANALYTICS_ROLES), async (req, res) => {
         trend: shrinkage.trendVsPrevWeek,
       };
 
-      const cost = await getCostOfNonAdherence(period, branchId);
+      const cost = await getCostOfNonAdherence(period, branchId, undefined, lob);
       results.monthCostImpact = {
         hoursLost: cost.metrics.hoursLost,
         costINR: cost.metrics.directCostLossINR,
         annualProjection: cost.projectedAnnual.currentTrend,
       };
 
-      const forecast = await getShrinkageForecast(branchId);
+      const forecast = await getShrinkageForecast(branchId, lob);
       results.nextWeekForecast = {
         predictedPct: forecast.nextWeek.predictedShrinkagePct,
         confidence: forecast.nextWeek.confidence,
@@ -174,7 +193,7 @@ router.get('/summary', requireRole(...ANALYTICS_ROLES), async (req, res) => {
       };
     }
 
-    const quality = await getQualityAdherenceCorrelation(period, branchId);
+    const quality = await getQualityAdherenceCorrelation(period, branchId, undefined, lob);
     results.qualityCorrelation = {
       coefficient: quality.correlation.coefficient,
       interpretation: quality.correlation.interpretation,
@@ -318,7 +337,7 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
          COUNT(*) AS total,
          SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS present
        FROM wfm_roster_assignment ra
-       JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
+       JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        WHERE ra.employee_id = ?
          AND ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
@@ -433,8 +452,10 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
  * GET /api/roster-analytics/shift-effectiveness
  * Shift-wise adherence comparison with break compliance
  */
-router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), async (req, res) => {
+router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), analyticsCache('roster-analytics-shift-effectiveness'), async (req, res) => {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     const { db } = await import('../../db/mysql.js');
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
     const processId = req.query.processId ? String(req.query.processId) : undefined;
@@ -450,6 +471,9 @@ router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), async (req, 
       whereClause += ' AND e.process_id = ?';
       params.push(processId);
     }
+    const lobSql = lobAnd(lob);
+    whereClause += lobSql.sql;
+    params.push(...lobSql.params);
 
     const [rows] = await db.execute<any[]>(
       `SELECT
@@ -466,15 +490,34 @@ router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), async (req, 
          AVG(COALESCE(wb.total_break_minutes, 30)) AS avg_break_minutes
        FROM wfm_roster_assignment ra
        JOIN employees e ON ra.employee_id = e.id
-       JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
+       JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        LEFT JOIN (
-         SELECT employee_id, DATE(punch_date) AS d, AVG(quality_percentage) AS quality_percentage
-         FROM call_quality_assessment GROUP BY employee_id, DATE(punch_date)
-       ) qa ON ra.employee_id = qa.employee_id AND ra.roster_date = qa.d
+         -- call_quality_assessment lives in db_audit, not mas_hrms, and is keyed by the
+         -- agent's \`User\` login code (CallDate for the call date) — not employee_id/punch_date,
+         -- which don't exist on this table at all. Unqualified + wrong columns meant this whole
+         -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the
+         -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here.
+         --
+         -- Live-verified the WHERE CallDate bound below is not optional: this subquery had no
+         -- date filter at all, so it grouped the entire historical table on every call to this
+         -- endpoint. Timed directly against the live DB: 115.5s unbounded vs 2.5s bounded to the
+         -- same 30-day window used elsewhere in this file — this alone was making
+         -- /shift-effectiveness time out, and /team-comparison runs this exact unbounded query 3x
+         -- per request (team/process/branch rankings). Every other query against this table
+         -- elsewhere in the codebase (quality-queries.ts) already bounds it by CallDate.
+         SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage
+         FROM db_audit.call_quality_assessment
+         WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
+       ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d
        LEFT JOIN (
-         SELECT employee_id, session_date, SUM(break_duration_minutes) AS total_break_minutes
-         FROM wfm_break_log GROUP BY employee_id, session_date
+         -- wfm_break_log has no session_date/break_duration_minutes columns — same
+         -- pre-existing bug as break-compliance below (real columns: break_start,
+         -- duration_minutes; see sql/005_attendance_wfm.sql). This LEFT JOIN's subquery
+         -- still fails to parse regardless of join type, so this 500'd the whole endpoint.
+         SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break_minutes
+         FROM wfm_break_log GROUP BY employee_id, DATE(break_start)
        ) wb ON ra.employee_id = wb.employee_id AND ra.roster_date = wb.session_date
        ${whereClause}
        GROUP BY sm.id, sm.shift_name, sm.start_time, sm.end_time
@@ -518,8 +561,11 @@ router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), async (req, 
  */
 router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res) => {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     const { db } = await import('../../db/mysql.js');
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const processId = req.query.processId ? String(req.query.processId) : undefined;
 
     let branchFilter = '';
     const params: string[] = [];
@@ -527,6 +573,13 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
       branchFilter = 'AND e.branch_id = ?';
       params.push(branchId);
     }
+    if (processId) {
+      branchFilter += ' AND e.process_id = ?';
+      params.push(processId);
+    }
+    const lobSql = lobAnd(lob);
+    branchFilter += lobSql.sql;
+    params.push(...lobSql.params);
 
     // Overall break compliance
     const [overallRows] = await db.execute<any[]>(
@@ -537,9 +590,16 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
          SUM(CASE WHEN wb.total_break > 30 THEN 1 ELSE 0 END) AS over_break,
          SUM(CASE WHEN wb.total_break < 15 THEN 1 ELSE 0 END) AS under_break
        FROM (
-         SELECT employee_id, session_date, SUM(break_duration_minutes) AS total_break
-         FROM wfm_break_log WHERE session_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-         GROUP BY employee_id, session_date
+         -- wfm_break_log has no session_date/break_duration_minutes columns (that was a
+         -- pre-existing bug predating this merge, reproduced live: "Unknown column
+         -- 'session_date' in 'field list'", breaking this whole endpoint including
+         -- overall/byShift/topViolators, not just the new byProcess added here). The real
+         -- columns are break_start (DATETIME) and duration_minutes (INT) — see
+         -- sql/005_attendance_wfm.sql. Aliased back to the names the rest of this query
+         -- already expects so only these 4 subqueries need the fix.
+         SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break
+         FROM wfm_break_log WHERE break_start >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY employee_id, DATE(break_start)
        ) wb
        JOIN employees e ON wb.employee_id = e.id
        JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
@@ -565,13 +625,14 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
          AVG(wb.total_break) AS avg_break,
          30 AS budget
        FROM (
-         SELECT employee_id, session_date, SUM(break_duration_minutes) AS total_break
-         FROM wfm_break_log WHERE session_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-         GROUP BY employee_id, session_date
+         -- Same real-column fix as the "overall" query above.
+         SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break
+         FROM wfm_break_log WHERE break_start >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY employee_id, DATE(break_start)
        ) wb
        JOIN employees e ON wb.employee_id = e.id
        JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
-       JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
+       JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id
        WHERE 1=1 ${branchFilter}
        GROUP BY sm.id, sm.shift_name`,
       params
@@ -595,9 +656,10 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
          AVG(wb.total_break - 30) AS avg_excess,
          COUNT(*) AS occurrences
        FROM (
-         SELECT employee_id, session_date, SUM(break_duration_minutes) AS total_break
-         FROM wfm_break_log WHERE session_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-         GROUP BY employee_id, session_date
+         -- Same real-column fix as the "overall" query above.
+         SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break
+         FROM wfm_break_log WHERE break_start >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY employee_id, DATE(break_start)
        ) wb
        JOIN employees e ON wb.employee_id = e.id
        JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
@@ -609,10 +671,41 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
       params
     );
 
+    // Merge-plan Phase B bug #13: byProcess was hardcoded to [] — implement it
+    // the same way byShift already works, grouped by process instead of shift.
+    const [processRows] = await db.execute<any[]>(
+      `SELECT
+         p.id AS process_id,
+         p.process_name,
+         AVG(wb.total_break) AS avg_break,
+         30 AS budget
+       FROM (
+         -- Same real-column fix as the "overall" query above.
+         SELECT employee_id, DATE(break_start) AS session_date, SUM(duration_minutes) AS total_break
+         FROM wfm_break_log WHERE break_start >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY employee_id, DATE(break_start)
+       ) wb
+       JOIN employees e ON wb.employee_id = e.id
+       JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
+       JOIN process_master p ON e.process_id = p.id
+       WHERE 1=1 ${branchFilter}
+       GROUP BY p.id, p.process_name`,
+      params
+    );
+
+    const byProcess = processRows.map((r: any) => ({
+      processId: r.process_id,
+      processName: r.process_name,
+      compliancePct: r.budget > 0 ? Math.round(Math.min(100, (r.budget / Math.max(r.avg_break, 1)) * 100)) : 90,
+      avgBreakMinutes: Math.round(r.avg_break ?? r.budget ?? 30),
+      budgetMinutes: r.budget ?? 30,
+      trend: 0,
+    }));
+
     res.json({
       overall,
       byShift,
-      byProcess: [],
+      byProcess,
       topViolators: violatorRows.map((r: any) => ({
         employeeId: r.employee_id,
         employeeCode: r.employee_code,
@@ -630,14 +723,117 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
 
 /**
  * GET /api/roster-analytics/shift-recommendations
- * Shift change recommendations for employees
+ * Shift change recommendations for employees.
+ *
+ * Merge-plan Phase B bug #12: was a permanent stub (`{ recommendations: [] }`),
+ * always reporting "everything is optimal" regardless of real data. Owner chose
+ * a rules-based version (not ML) in the merge-plan clarification. Rule: find the
+ * shift with the best observed 30-day adherence in scope (min 5 employees so a
+ * single lucky employee can't set the bar); flag any employee whose own 30-day
+ * adherence on their current shift is below 70% AND meaningfully below that
+ * best shift's average (>=15pp gap), recommending a move to it. No fabricated
+ * numbers — `expectedImprovement` is the real observed gap between the
+ * employee's own adherence and the target shift's cohort average, and
+ * `confidence` is derived from the employee's own sample size (scheduled days).
  */
-router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), async (_req, res) => {
+router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), analyticsCache('roster-analytics-shift-recommendations'), async (req, res) => {
   try {
-    // Simplified: return empty for now, can be enhanced with ML later
-    res.json({ recommendations: [] });
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const { db } = await import('../../db/mysql.js');
+    const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const processId = req.query.processId ? String(req.query.processId) : undefined;
+
+    let whereClause = `WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ${realRoster('ra')}`;
+    const params: string[] = [];
+    if (branchId) {
+      whereClause += ' AND e.branch_id = ?';
+      params.push(branchId);
+    }
+    if (processId) {
+      whereClause += ' AND e.process_id = ?';
+      params.push(processId);
+    }
+    const lobSql = lobAnd(lob);
+    whereClause += lobSql.sql;
+    params.push(...lobSql.params);
+
+    // Per-shift cohort adherence (same shape as /shift-effectiveness, minimal fields).
+    // Both queries are independent (same filters), so they run concurrently: 2 in flight max.
+    const shiftRowsPromise = db.execute<any[]>(
+      `SELECT
+         sm.id AS shift_id,
+         sm.shift_name,
+         CONCAT(TIME_FORMAT(sm.start_time, '%H:%i'), ' - ', TIME_FORMAT(sm.end_time, '%H:%i')) AS shift_time,
+         COUNT(DISTINCT ra.employee_id) AS total_employees,
+         AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct
+       FROM wfm_roster_assignment ra
+       JOIN employees e ON ra.employee_id = e.id
+       JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id
+       LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
+       ${whereClause}
+       GROUP BY sm.id, sm.shift_name, sm.start_time, sm.end_time`,
+      params
+    );
+
+    // Per-employee personal adherence + current shift, same 30-day window/filters.
+    const empRowsPromise = db.execute<any[]>(
+      `SELECT
+         ra.employee_id,
+         e.employee_code,
+         e.full_name,
+         sm.id AS shift_id,
+         sm.shift_name,
+         CONCAT(TIME_FORMAT(sm.start_time, '%H:%i'), ' - ', TIME_FORMAT(sm.end_time, '%H:%i')) AS shift_time,
+         COUNT(*) AS scheduled_days,
+         SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS present_days
+       FROM wfm_roster_assignment ra
+       JOIN employees e ON ra.employee_id = e.id
+       JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id
+       LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
+       ${whereClause}
+       GROUP BY ra.employee_id, e.employee_code, e.full_name, sm.id, sm.shift_name, sm.start_time, sm.end_time
+       HAVING scheduled_days >= 5`,
+      params
+    );
+    const [[shiftRows], [empRows]] = await Promise.all([shiftRowsPromise, empRowsPromise]);
+
+    const eligibleShifts = shiftRows.filter((r: any) => Number(r.total_employees) >= 5);
+    if (eligibleShifts.length < 2) {
+      // Can't meaningfully recommend a move without at least 2 real cohorts to compare.
+      res.json({ recommendations: [] });
+      return;
+    }
+
+    const bestShift = eligibleShifts.reduce((best: any, r: any) =>
+      Number(r.adherence_pct) > Number(best.adherence_pct) ? r : best
+    );
+
+    const recommendations = empRows
+      .filter((r: any) => r.shift_id !== bestShift.shift_id)
+      .map((r: any) => {
+        const personalAdherence = (Number(r.present_days) / Number(r.scheduled_days)) * 100;
+        const gap = Number(bestShift.adherence_pct) - personalAdherence;
+        return { r, personalAdherence, gap };
+      })
+      .filter(({ personalAdherence, gap }) => personalAdherence < 70 && gap >= 15)
+      .sort((a, b) => b.gap - a.gap)
+      .slice(0, 25)
+      .map(({ r, personalAdherence, gap }) => ({
+        employeeId: r.employee_id,
+        employeeCode: r.employee_code,
+        employeeName: r.full_name,
+        currentShift: `${r.shift_name} (${r.shift_time})`,
+        recommendedShift: `${bestShift.shift_name} (${bestShift.shift_time})`,
+        reason: `Personal adherence is ${Math.round(personalAdherence)}% over the last 30 days (${r.present_days}/${r.scheduled_days} scheduled days present), vs ${Math.round(Number(bestShift.adherence_pct))}% average for employees on ${bestShift.shift_name}.`,
+        expectedImprovement: Math.round(gap),
+        confidence: Number(r.scheduled_days) >= 15 ? 'HIGH' : Number(r.scheduled_days) >= 8 ? 'MEDIUM' : 'LOW',
+      }));
+
+    res.json({ recommendations });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[roster-analytics] shift-recommendations error:', msg);
     res.status(500).json({ error: `Failed to get recommendations: ${msg}` });
   }
 });
@@ -650,6 +846,8 @@ router.get('/shift-recommendations', requireRole(...ANALYTICS_ROLES), async (_re
  */
 router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res) => {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     const { db } = await import('../../db/mysql.js');
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
     const period = req.query.period ? String(req.query.period) : 'current';
@@ -667,6 +865,9 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
       branchFilter = 'AND e.branch_id = ?';
       params.push(branchId);
     }
+    const lobSql = lobAnd(lob);
+    branchFilter += lobSql.sql;
+    params.push(...lobSql.params);
 
     // Team rankings (by manager)
     const [teamRows] = await db.execute<any[]>(
@@ -688,9 +889,24 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
        LEFT JOIN branch_master b ON e.branch_id = b.id
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        LEFT JOIN (
-         SELECT employee_id, DATE(punch_date) AS d, AVG(quality_percentage) AS quality_percentage
-         FROM call_quality_assessment GROUP BY employee_id, DATE(punch_date)
-       ) qa ON ra.employee_id = qa.employee_id AND ra.roster_date = qa.d
+         -- call_quality_assessment lives in db_audit, not mas_hrms, and is keyed by the
+         -- agent's \`User\` login code (CallDate for the call date) — not employee_id/punch_date,
+         -- which don't exist on this table at all. Unqualified + wrong columns meant this whole
+         -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the
+         -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here.
+         --
+         -- Live-verified the WHERE CallDate bound below is not optional: this subquery had no
+         -- date filter at all, so it grouped the entire historical table on every call to this
+         -- endpoint. Timed directly against the live DB: 115.5s unbounded vs 2.5s bounded to the
+         -- same 30-day window used elsewhere in this file — this alone was making
+         -- /shift-effectiveness time out, and /team-comparison runs this exact unbounded query 3x
+         -- per request (team/process/branch rankings). Every other query against this table
+         -- elsewhere in the codebase (quality-queries.ts) already bounds it by CallDate.
+         SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage
+         FROM db_audit.call_quality_assessment
+         WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
+       ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d
        WHERE ${dateFilter} ${branchFilter}
        GROUP BY m.id, m.full_name, p.process_name, b.branch_name
        HAVING team_size >= 3
@@ -733,9 +949,24 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
        LEFT JOIN branch_master b ON e.branch_id = b.id
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        LEFT JOIN (
-         SELECT employee_id, DATE(punch_date) AS d, AVG(quality_percentage) AS quality_percentage
-         FROM call_quality_assessment GROUP BY employee_id, DATE(punch_date)
-       ) qa ON ra.employee_id = qa.employee_id AND ra.roster_date = qa.d
+         -- call_quality_assessment lives in db_audit, not mas_hrms, and is keyed by the
+         -- agent's \`User\` login code (CallDate for the call date) — not employee_id/punch_date,
+         -- which don't exist on this table at all. Unqualified + wrong columns meant this whole
+         -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the
+         -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here.
+         --
+         -- Live-verified the WHERE CallDate bound below is not optional: this subquery had no
+         -- date filter at all, so it grouped the entire historical table on every call to this
+         -- endpoint. Timed directly against the live DB: 115.5s unbounded vs 2.5s bounded to the
+         -- same 30-day window used elsewhere in this file — this alone was making
+         -- /shift-effectiveness time out, and /team-comparison runs this exact unbounded query 3x
+         -- per request (team/process/branch rankings). Every other query against this table
+         -- elsewhere in the codebase (quality-queries.ts) already bounds it by CallDate.
+         SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage
+         FROM db_audit.call_quality_assessment
+         WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
+       ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d
        WHERE ${dateFilter} ${branchFilter}
        GROUP BY p.id, p.process_name, b.branch_name
        ORDER BY adherence_pct DESC`,
@@ -771,9 +1002,24 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
        JOIN branch_master b ON e.branch_id = b.id
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        LEFT JOIN (
-         SELECT employee_id, DATE(punch_date) AS d, AVG(quality_percentage) AS quality_percentage
-         FROM call_quality_assessment GROUP BY employee_id, DATE(punch_date)
-       ) qa ON ra.employee_id = qa.employee_id AND ra.roster_date = qa.d
+         -- call_quality_assessment lives in db_audit, not mas_hrms, and is keyed by the
+         -- agent's \`User\` login code (CallDate for the call date) — not employee_id/punch_date,
+         -- which don't exist on this table at all. Unqualified + wrong columns meant this whole
+         -- join 500'd (unknown table) before ever reaching a row. See quality-queries.ts for the
+         -- same db_audit.call_quality_assessment + UPPER(TRIM(User)) pattern already proven here.
+         --
+         -- Live-verified the WHERE CallDate bound below is not optional: this subquery had no
+         -- date filter at all, so it grouped the entire historical table on every call to this
+         -- endpoint. Timed directly against the live DB: 115.5s unbounded vs 2.5s bounded to the
+         -- same 30-day window used elsewhere in this file — this alone was making
+         -- /shift-effectiveness time out, and /team-comparison runs this exact unbounded query 3x
+         -- per request (team/process/branch rankings). Every other query against this table
+         -- elsewhere in the codebase (quality-queries.ts) already bounds it by CallDate.
+         SELECT UPPER(TRIM(\`User\`)) AS agent_user, DATE(CallDate) AS d, AVG(quality_percentage) AS quality_percentage
+         FROM db_audit.call_quality_assessment
+         WHERE CallDate >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY UPPER(TRIM(\`User\`)), DATE(CallDate)
+       ) qa ON UPPER(TRIM(e.call_centre_code)) = qa.agent_user AND ra.roster_date = qa.d
        WHERE ${dateFilter}
        GROUP BY b.id, b.branch_name
        ORDER BY adherence_pct DESC`,
@@ -819,6 +1065,8 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
  */
 router.get('/team-status-mobile', requireRole(...ANALYTICS_ROLES, 'manager', 'process_manager', 'tl'), async (req, res) => {
   try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
     const { db } = await import('../../db/mysql.js');
     const authReq = req as any;
     const managerId = authReq.authUser?.id;
@@ -841,18 +1089,22 @@ router.get('/team-status-mobile', requireRole(...ANALYTICS_ROLES, 'manager', 'pr
               wb.on_break
        FROM employees e
        LEFT JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = ?
-       LEFT JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
+       LEFT JOIN wfm_shift_template sm ON ra.shift_template_id = sm.id
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id AND adr.record_date = ?
        LEFT JOIN (
+         -- Same pre-existing wfm_break_log column bug as break-compliance/shift-effectiveness
+         -- above: no session_date or end_time columns exist. Real columns: break_start
+         -- (DATETIME) and break_end (DATETIME, NULL while the break is still open) — see
+         -- sql/005_attendance_wfm.sql.
          SELECT employee_id, 1 AS on_break
          FROM wfm_break_log
-         WHERE session_date = ? AND end_time IS NULL
+         WHERE DATE(break_start) = ? AND break_end IS NULL
        ) wb ON wb.employee_id = e.id
        WHERE e.reporting_manager_id = ?
          AND e.active_status = 1
-         AND e.employment_status = 'Active'
+         AND e.employment_status = 'Active'${lobAnd(lob).sql}
        ORDER BY e.full_name`,
-      [today, today, today, today, managerId]
+      [today, today, today, today, managerId, ...lobAnd(lob).params]
     );
 
     const members = teamRows.map((r: any) => {
@@ -902,6 +1154,38 @@ router.get('/team-status-mobile', requireRole(...ANALYTICS_ROLES, 'manager', 'pr
     const msg = err instanceof Error ? err.message : 'Unknown error';
     console.error('[roster-analytics] team-status-mobile error:', msg);
     res.status(500).json({ error: `Failed to get team status: ${msg}` });
+  }
+});
+
+/**
+ * GET /api/roster-analytics/process-roster?processId=<uuid>&date=YYYY-MM-DD
+ * WFM Roster Console merge Phase C: color-coded "who's on my team right now" view for
+ * a selected process — the new Team Roster feature. Date defaults to today; a future
+ * date is rejected since a roster for a day that hasn't happened yet would be all
+ * UPCOMING/meaningless (the frontend's date control is separately capped at today).
+ */
+router.get('/process-roster', requireRole(...TEAM_ROSTER_ROLES), async (req, res) => {
+  try {
+    const lob = readLobFilter(req, res);
+    if (!lob) return;
+    const processId = req.query.processId ? String(req.query.processId) : undefined;
+    if (!processId) {
+      res.status(400).json({ error: 'processId is required' });
+      return;
+    }
+    const today = todayLocalDateStr();
+    const date = req.query.date ? String(req.query.date) : today;
+    if (date > today) {
+      res.status(400).json({ error: 'date cannot be in the future' });
+      return;
+    }
+
+    const view = await getProcessTeamRosterView(processId, date, lob);
+    res.json(view);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[roster-analytics] process-roster error:', msg);
+    res.status(500).json({ error: `Failed to get process team roster: ${msg}` });
   }
 });
 

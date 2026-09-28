@@ -140,6 +140,12 @@ describe('Mira secure assistant release contract', () => {
         special_allowance: 12000,
         pf_employee: 1440,
         esic_employee: 0,
+        // professional_tax: 200 is a leftover historical-style mock value. It is not
+        // asserted against here (this test only checks the authenticated-employee-id
+        // security property, via "Net take-home" + the SQL/params below) and is
+        // harmless post-2026-09-11 PT removal: ai-account.service.ts no longer emits
+        // a "Professional tax" line from this response at all, so this field's value
+        // reaches no assertion either way.
         professional_tax: 200,
         tds: 0,
         lwp_deduction: 0,

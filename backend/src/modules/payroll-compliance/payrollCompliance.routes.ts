@@ -196,6 +196,11 @@ router.get("/runs/:runId/register/:registerType", requireRole("admin", "hr", "fi
             WHERE spl.run_id = ? AND (spl.esic_employee > 0 OR spl.esic_employer > 0)
             ORDER BY spl.employee_code`;
   } else if (registerType === "pt") {
+    // PT (Professional Tax) removed from active payroll 2026-09-11 by explicit
+    // stakeholder decision — it is no longer computed/deducted for any employee
+    // or state. This register is kept read-only for historical runs where
+    // spl.professional_tax > 0 was already recorded (audit access); it will
+    // return empty for every run processed after the removal.
     sql = `SELECT spl.employee_code, e.full_name, b.state AS state_code, spl.gross_salary, spl.professional_tax
              FROM salary_prep_line spl JOIN employees e ON e.id = spl.employee_id
              LEFT JOIN branch_master b ON b.id = e.branch_id

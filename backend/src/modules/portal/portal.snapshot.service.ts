@@ -6,6 +6,30 @@ import { portalAttritionService } from "./portal.attrition.service.js";
 import { portalGovernanceService } from "./portal.governance.service.js";
 import { maskPortalEmployee } from "../../shared/portalMask.js";
 
+/**
+ * ⚠ KNOWN GAP, confirmed 2026-09-19 during a full portal audit — not something to fix
+ * silently, flagging for an explicit decision:
+ *
+ * migration 035_portal_published_data.sql's own header says portal_published_snapshot
+ * "Stores HR-approved, pre-aggregated, masked snapshots visible to clients." The full
+ * admin side of that workflow IS built and reachable (this file, NativePortalDataManager.tsx
+ * at /portal-data-manager, all 5 /internal/snapshots/* routes) — an admin can prepare,
+ * review/approve/reject, and list published snapshots today.
+ *
+ * But no client-facing read anywhere (portal.controller.ts's getKpis/getAttrition/
+ * getOperations/etc.) ever checks portal_published_snapshot. Every client tab always
+ * reads live data directly, regardless of what has or hasn't been approved here. So
+ * approving or rejecting a snapshot today has ZERO effect on what any client actually
+ * sees — the write side of this feature was finished, the read side never was.
+ *
+ * This was deliberately NOT wired in during this session's portal-completion pass: doing
+ * so would change every tab's trust model from "always live" (which this session spent
+ * significant effort verifying end-to-end against the real DB) to "live unless an admin
+ * has approved a snapshot, in which case frozen as of approval time" — a real product
+ * decision (does a client see live numbers or an admin-vetted checkpoint?) that needs an
+ * explicit answer, not something to infer and build unilaterally.
+ */
+
 type SnapshotType = "kpi" | "governance" | "attrition" | "staffing" | "quality";
 
 export interface QueueItem {

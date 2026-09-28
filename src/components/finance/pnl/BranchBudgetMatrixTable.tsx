@@ -117,7 +117,10 @@ export function BranchBudgetMatrixTable({
                       >
                         {pinned ? <Pin className="h-3 w-3 fill-current" /> : <PinOff className="h-3 w-3" />}
                       </button>
-                      <span className="truncate">{cc.costCentreName}</span>
+                      <span className="min-w-0 text-right">
+                        <span className="block truncate" title={cc.costCentreName}>{cc.costCentreCode || cc.costCentreName}</span>
+                        {cc.processName && <span className="block truncate text-[11px] font-normal normal-case text-blue-700" title={cc.processName}>{cc.processName}</span>}
+                      </span>
                     </div>
                   </th>
                 );

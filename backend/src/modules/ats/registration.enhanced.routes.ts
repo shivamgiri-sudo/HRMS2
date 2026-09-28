@@ -21,15 +21,19 @@ import {
 import { jobRequisitionService } from "../job-requisition/job-requisition.service.js";
 import { privacyService } from "../privacy/privacy.service.js";
 import { toStoredNameRequired } from "../../shared/nameFormat.js";
+import { publicRegistrationLimiter } from "../../middleware/rateLimiter.js";
+import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
+import { readRewalkinPrior, recordRewalkin } from "./rewalkin.service.js";
 
 export const registrationEnhancedRouter = Router();
 
 // TEMP TEST ENDPOINT - REMOVE AFTER TESTING
-registrationEnhancedRouter.post("/test-daily-report", async (req, res) => {
+registrationEnhancedRouter.post("/test-daily-report", requireAuth, requireRole("admin", "hr_admin", "super_admin"), async (req, res) => {
   const { date, email } = req.body;
   try {
     const { runDailyHiringReport } = await import("./ats-reminders.cron.js");
-    const result = await runDailyHiringReport(date || '2026-08-24', email || 'shivam.giri@teammas.in');
+    const result = await runDailyHiringReport(date, email);
     return res.json(result);
   } catch (error: any) {
     return res.status(500).json({ success: false, error: error.message });
@@ -181,7 +185,7 @@ const enhancedRegistrationSchema = z.object({
   requisitionId: z.string().uuid().optional(), // set by recruiter drive picker; absent = no change to existing behaviour
 });
 
-registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
+registrationEnhancedRouter.post("/submit-enhanced", publicRegistrationLimiter, async (req, res) => {
   try {
     const input = enhancedRegistrationSchema.parse(req.body);
 
@@ -219,6 +223,10 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
     }
 
     let candidateId: string;
+    // Captured before the UPDATE below overwrites walk_in_date/stage; logged after assignment.
+    const rewalkinPrior = existingCandidate
+      ? await readRewalkinPrior(existingCandidate.id)
+      : null;
     if (existingCandidate) {
       await db.execute(
         // This endpoint is unauthenticated and matches an existing candidate by
@@ -243,6 +251,11 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
         // old label in place silently hid genuine candidates from
         // excludeEmployeeShapedCandidatesSql()'s callers, including the recruiter's
         // own "My Candidates" queue (see ats-reporting-scope.ts).
+        //
+        // sourcing_channel is first-touch for a Meta lead: a candidate created from a Meta Lead Gen ad
+        // keeps 'Social Media' when they later fill this form, otherwise every walk-in overwrote it with
+        // 'Recruiter' / 'Walk-In' and Meta lost its conversions in every source report (50 of 89 live).
+        // The form's own answer still drives auto-assignment above; it just no longer rewrites the source.
         `UPDATE ats_candidate
          SET full_name = COALESCE(NULLIF(TRIM(full_name), ''), ?),
              email = COALESCE(NULLIF(TRIM(email), ''), ?),
@@ -252,7 +265,7 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
              role_applied = ?,
              applied_for_branch = ?,
              branch_display_name = ?,
-             sourcing_channel = ?,
+             sourcing_channel = CASE WHEN sourcing_channel = 'Social Media' THEN sourcing_channel ELSE ? END,
              referred_by = ?,
              walk_in_date = ?,
              address = ?,
@@ -419,7 +432,8 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
 
     await db.execute(
       `UPDATE ats_candidate
-       SET branch_display_name = ?, preferred_recruiter_id = ?, recruiter_name = ?, referred_by = ?, sourcing_channel = ?
+       SET branch_display_name = ?, preferred_recruiter_id = ?, recruiter_name = ?, referred_by = ?,
+           sourcing_channel = CASE WHEN sourcing_channel = 'Social Media' THEN sourcing_channel ELSE ? END
        WHERE id = ?`,
       [
         input.branchDisplayName,
@@ -436,6 +450,10 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
       candidateId,
       resolvedRecruiterId
     );
+
+    if (existingCandidate) {
+      await recordRewalkin(candidateId, rewalkinPrior, walkInDate);
+    }
 
     // 5. Generate token if recruiter assigned
     let tokenNumber: string | null = null;
@@ -542,6 +560,14 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
       }
     }
 
+    // A candidate created from a META Lead Gen ad is only queued once they fill this form — tell
+    // their recruiter so the lead is not missed (owner ruling 2026-09-25).
+    const [metaLeadRows] = await db.execute<RowDataPacket[]>(
+      'SELECT 1 FROM meta_lead_raw WHERE ats_candidate_id = ? LIMIT 1',
+      [candidateId]
+    );
+    const isMetaLead = metaLeadRows.length > 0;
+
     // 7. Send emails (async, don't wait)
     const recruiterEmail = recruiterDetails?.email ?? null;
     const recruiterName = recruiterDetails?.name ?? "Recruiter";
@@ -564,20 +590,21 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
         recruiterMobile,
         registrationDate,
       }).catch((err) => console.error('Failed to send candidate email:', err));
+    }
 
-      // Send recruiter notification
-      if (recruiterEmail) {
-        sendRecruiterNotificationEmail({
-          candidateId,
-          to: recruiterEmail,
-          recruiterName,
-          candidateName: input.name,
-          candidateMobile: input.mobile,
-          tokenNumber: tokenNumber || 'Pending',
-          branchDisplayName: input.branchDisplayName,
-          roleApplied: input.roleApplied || 'Not specified',
-        }).catch((err) => console.error('Failed to send recruiter email:', err));
-      }
+    // Recruiter notification: as before when the candidate gave an email, and always for a META lead.
+    if (recruiterEmail && recruiterDetails && (input.email || isMetaLead)) {
+      sendRecruiterNotificationEmail({
+        candidateId,
+        to: recruiterEmail,
+        recruiterName,
+        candidateName: input.name,
+        candidateMobile: input.mobile,
+        tokenNumber: tokenNumber || 'Pending',
+        branchDisplayName: input.branchDisplayName,
+        roleApplied: input.roleApplied || 'Not specified',
+        metaLead: isMetaLead,
+      }).catch((err) => console.error('Failed to send recruiter email:', err));
     }
 
     // 8. Auto-link to requisition if recruiter set an active drive (fire-and-forget, safe)
@@ -630,6 +657,7 @@ const resumeParseUpload = multer({
 
 registrationEnhancedRouter.post(
   "/parse-resume",
+  publicRegistrationLimiter,
   resumeParseUpload.single("file"),
   async (req, res) => {
     try {

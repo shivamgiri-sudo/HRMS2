@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
+// CartesianGrid intentionally not imported — removes Excel-style gridlines
+// from every chart on this dashboard for a clean, plain background.
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
+  BarChart, Bar, LineChart, Line, XAxis, YAxis,
   Tooltip, ResponsiveContainer,
 } from "recharts";
 import {
@@ -14,6 +16,8 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { InterventionPanel } from "@/components/dashboard/InterventionPanel";
 import type { InterventionFlag } from "@/components/dashboard/InterventionPanel";
+import { qualityScoreTextClass } from "@/lib/qualityScoreFormatting";
+import { exportDashboardToExcel, type ExcelSheetSpec } from "@/lib/dashboardExcelExport";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface KPIData {
@@ -192,6 +196,99 @@ export default function NativeCallMasterDashboard() {
     { id: "export",    label: "Export" },
   ];
 
+  /**
+   * Export/Download to Excel — exports exactly what is currently displayed on
+   * the active tab (the same KPI/trend/agent/client figures already rendered
+   * on screen), never a raw or backend export. Built from the same state
+   * (`kpis`, `trend`, `topAgents`, `clients`, etc.) the tab already renders.
+   */
+  function exportActiveTabToExcel() {
+    const sheets: ExcelSheetSpec[] = [];
+    const rangeLabel = `Range: ${from} to ${to} · LOB: ${lob}`;
+
+    if (tab === "overview") {
+      sheets.push({
+        name: "KPI Summary",
+        title: rangeLabel,
+        rows: [{
+          "Inbound Audits": kpis?.inbound?.total ?? "",
+          "Avg IB Quality (%)": kpis?.inbound?.avg_quality ?? "",
+          "Fatal Rate (%)": kpis?.inbound?.fatal_score ?? "",
+          "Active Agents": kpis?.active_agents ?? "",
+          "Outbound Calls": kpis?.outbound?.total ?? "",
+          "OB Conversion (%)": kpis?.outbound?.conversion ?? "",
+          "OB Quality Avg (%)": kpis?.outbound?.ob_quality ?? "",
+          "CX Score IB (%)": kpis?.inbound?.avg_cx ?? "",
+        }],
+      });
+      if (trend.length) {
+        sheets.push({
+          name: "Quality Trend",
+          rows: trend.map((t) => ({ "Period": t.period, "Quality (%)": t.quality, "Calls": t.calls, "Fatal (%)": t.fatal })),
+        });
+      }
+      if (topAgents.length) {
+        sheets.push({
+          name: "Top Agents",
+          rows: topAgents.map((a) => ({
+            "Agent": a.agent, "Calls": a.calls, "Quality (%)": a.quality, "Compliance (%)": a.compliance, "Fatal Rate (%)": a.fatal_rate,
+          })),
+        });
+      }
+      if (clients.length) {
+        sheets.push({
+          name: "Calls by Client",
+          rows: clients.map((c) => ({ "Client": c.client, "Calls": c.calls, "Avg Quality (%)": c.avg_quality ?? "", "Conversion (%)": c.conversion ?? "" })),
+        });
+      }
+      if (funnel) {
+        sheets.push({
+          name: "Sales Funnel",
+          rows: [{
+            "Total": funnel.total, "Offered": funnel.offered, "Objection": funnel.objection,
+            "Upsell": funnel.upsell, "Sold": funnel.sold,
+          }],
+        });
+      }
+    }
+
+    if (tab === "opening" && oiExec) {
+      sheets.push({
+        name: "Opening Intelligence",
+        title: rangeLabel,
+        rows: [{
+          "Total OB Calls": oiExec.total, "Good Opening %": ((oiExec.opening_good / (oiExec.total || 1)) * 100).toFixed(1),
+          "Opening Score": oiExec.opening_score, "Context Set": oiExec.context_set, "Context Score": oiExec.context_score, "Sales": oiExec.sales,
+        }],
+      });
+    }
+
+    if (tab === "customer" && ciExec) {
+      sheets.push({
+        name: "Customer Intelligence",
+        title: rangeLabel,
+        rows: [{
+          "Total": ciExec.total, "Positive": ciExec.positive, "Negative": ciExec.negative,
+          "Satisfaction (%)": ciExec.satisfaction_pct, "Conversion (%)": ciExec.conv_pct, "Trust Score": ciExec.trust_score,
+        }],
+      });
+    }
+
+    if (tab === "outbound" && obSummary) {
+      sheets.push({
+        name: "Outbound Sales",
+        title: rangeLabel,
+        rows: [{
+          "Total Calls": obSummary.total, "Sales": obSummary.sales, "Conversion (%)": obSummary.conversion,
+          "Avg Duration (min)": obSummary.avg_duration,
+          "Trust Score": kpis?.outbound?.trust_score ?? "", "CX Score": kpis?.outbound?.cx_score ?? "", "Happiness Index": kpis?.outbound?.happiness_index ?? "",
+        }],
+      });
+    }
+
+    exportDashboardToExcel(`Call-Master-Dashboard_${tab}`, sheets);
+  }
+
   return (
     <DashboardLayout>
       <div className="space-y-5 p-4 md:p-6">
@@ -225,6 +322,12 @@ export default function NativeCallMasterDashboard() {
             <button onClick={() => setRefresh(r => r + 1)}
               className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700">
               <RefreshCcw className="h-4 w-4" /> Refresh
+            </button>
+            {/* Exports exactly what is displayed on the current tab — no raw/backend data. */}
+            <button onClick={exportActiveTabToExcel}
+              title="Export the currently displayed dashboard data to Excel"
+              className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+              <Download className="h-4 w-4" /> Export to Excel
             </button>
           </div>
         </div>
@@ -276,7 +379,6 @@ export default function NativeCallMasterDashboard() {
               <p className="mb-3 text-sm font-semibold text-slate-700">Inbound Quality Trend</p>
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={trend} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                   <XAxis dataKey="period" tick={{ fontSize: 10 }} />
                   <YAxis tick={{ fontSize: 10 }} />
                   <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
@@ -298,7 +400,7 @@ export default function NativeCallMasterDashboard() {
                         <span className="text-sm font-medium text-slate-700">{a.agent}</span>
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className={`text-xs font-semibold ${n(a.quality) >= 80 ? "text-emerald-600" : n(a.quality) >= 60 ? "text-amber-600" : "text-red-500"}`}>{n(a.quality).toFixed(1)}%</span>
+                        <span className={`text-xs font-semibold ${qualityScoreTextClass(n(a.quality))}`}>{n(a.quality).toFixed(1)}%</span>
                         <span className="text-xs text-slate-400">{a.calls} calls</span>
                       </div>
                     </div>
@@ -309,8 +411,7 @@ export default function NativeCallMasterDashboard() {
                 <p className="mb-3 text-sm font-semibold text-slate-700">Calls by Client</p>
                 <ResponsiveContainer width="100%" height={220}>
                   <BarChart data={clients.slice(0, 8)} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis dataKey="client" tick={{ fontSize: 9 }} />
+                          <XAxis dataKey="client" tick={{ fontSize: 9 }} />
                     <YAxis tick={{ fontSize: 10 }} />
                     <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
                     <Bar dataKey="calls" fill="#3B82F6" radius={[4, 4, 0, 0]} />
@@ -403,7 +504,6 @@ function OpeningIntelligenceTab({ qs, oiExec }: { qs: string; oiExec: OIExec | n
           <p className="mb-3 text-sm font-semibold text-slate-700">Opening Category vs Conversion</p>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={cats} margin={{ top: 4, right: 8, left: -16, bottom: 40 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="category" tick={{ fontSize: 9 }} angle={-30} textAnchor="end" />
               <YAxis tick={{ fontSize: 10 }} />
               <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
@@ -416,7 +516,6 @@ function OpeningIntelligenceTab({ qs, oiExec }: { qs: string; oiExec: OIExec | n
           <p className="mb-3 text-sm font-semibold text-slate-700">Opening Score Trend</p>
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={trend} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="period" tick={{ fontSize: 9 }} />
               <YAxis tick={{ fontSize: 10 }} />
               <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
@@ -456,7 +555,6 @@ function CustomerIntelligenceTab({ qs, ciExec }: { qs: string; ciExec: CIExec | 
           <p className="mb-3 text-sm font-semibold text-slate-700">Sentiment Trend</p>
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={sentiment} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="period" tick={{ fontSize: 9 }} />
               <YAxis tick={{ fontSize: 10 }} />
               <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
@@ -469,7 +567,6 @@ function CustomerIntelligenceTab({ qs, ciExec }: { qs: string; ciExec: CIExec | 
           <p className="mb-3 text-sm font-semibold text-slate-700">Feedback Categories</p>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={fbCats.slice(0, 8)} layout="vertical" margin={{ top: 4, right: 8, left: 60, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis type="number" tick={{ fontSize: 10 }} />
               <YAxis dataKey="category" type="category" tick={{ fontSize: 9 }} width={60} />
               <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />
@@ -540,7 +637,6 @@ function OutboundSalesTab({ qs, obSummary, kpis }: { qs: string; obSummary: OBSu
           <p className="mb-3 text-sm font-semibold text-slate-700">Daily Sales vs Calls</p>
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={dailyTrend} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="date" tick={{ fontSize: 9 }} />
               <YAxis tick={{ fontSize: 10 }} />
               <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8 }} />

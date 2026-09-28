@@ -26,6 +26,7 @@ import { resolveEmployeeLetterhead, assertPrintableLetterhead } from "../org/bra
 import { renderAppointmentLetterPdf } from "./appointmentLetterPdf.service.js";
 import { signPdfAsCompany } from "./dscSigner.service.js";
 import { allocateLetterNumber, mintVerificationToken, verificationUrl } from "./appointmentLetterVerify.service.js";
+import { mintAcceptToken, acceptUrl } from "./appointmentLetterAcceptToken.js";
 import { istDisplayDate } from "./letterFormat.js";
 
 const STORAGE_ROOT = () => path.resolve(process.cwd(), "private-storage", "appointment-letters");
@@ -90,14 +91,18 @@ export async function issueAppointmentLetter(params: {
   }
 
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id, e.employee_code, e.branch_id, e.date_of_joining, e.personal_email,
+    `SELECT e.id, e.employee_code, e.branch_id, e.date_of_joining, e.salary_start_date, e.personal_email,
             COALESCE(NULLIF(TRIM(e.official_email), ''), NULLIF(TRIM(e.office_email), ''), e.email) AS official_email,
             COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS full_name,
             d.designation_name, b.branch_name,
+            pm.process_name,
+            COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name,
             (SELECT ab.candidate_id FROM ats_onboarding_bridge ab WHERE ab.employee_id = e.id LIMIT 1) AS candidate_id
        FROM employees e
        LEFT JOIN designation_master d ON d.id = e.designation_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
+       LEFT JOIN process_master pm ON pm.id = e.process_id
+       LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
       WHERE e.id = ? LIMIT 1`,
     [params.employeeId],
   );
@@ -123,6 +128,9 @@ export async function issueAppointmentLetter(params: {
   }
 
   const { token, tokenHash } = mintVerificationToken();
+  // The accept link gets its own token: the verification token is printed on the
+  // PDF as a QR and shown to third parties, so it must not open the accept flow.
+  const { token: acceptToken, tokenHash: acceptTokenHash } = mintAcceptToken();
   const verifyUrl = verificationUrl(frontendBaseUrl(), token);
   const qr = await QRCode.toDataURL(verifyUrl, { width: 220, margin: 1 }).catch(() => null);
 
@@ -131,6 +139,7 @@ export async function issueAppointmentLetter(params: {
     employeeCode: String(emp.employee_code ?? ""),
     designation: String(emp.designation_name ?? ""),
     dateOfJoining: (emp.date_of_joining as Date | string | null) ?? null,
+    salaryStartDate: (emp.salary_start_date as Date | string | null) ?? null,
     letterNumber,
     verificationUrl: verifyUrl,
     qrPngDataUrl: qr,
@@ -153,6 +162,7 @@ export async function issueAppointmentLetter(params: {
     employeeCode: String(emp.employee_code ?? ""),
     designation: String(emp.designation_name ?? ""),
     dateOfJoining: (emp.date_of_joining as Date | string | null) ?? null,
+    salaryStartDate: (emp.salary_start_date as Date | string | null) ?? null,
     letterNumber,
     verificationUrl: verifyUrl,
     qrPngDataUrl: qr,
@@ -183,15 +193,15 @@ export async function issueAppointmentLetter(params: {
         date_of_joining, salary_source, salary_snapshot_json,
         certificate_id, signed_by_name, signed_by_designation, is_ca_issued,
         company_signed_at, signed_file_path, file_sha256, verify_token_hash,
-        status, issued_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSON),?,?,?,?,NOW(),?,?,?,'issued',?)`,
+        accept_token_hash, status, issued_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSON),?,?,?,?,NOW(),?,?,?,?,'issued',?)`,
     [
       issueId, letterNumber, letterSeq, letterYear, params.employeeId,
       emp.candidate_id ?? null, emp.employee_code ?? null, emp.full_name ?? null,
       emp.designation_name ?? null, emp.branch_id ?? null, emp.branch_name ?? null,
       emp.date_of_joining ?? null, salary.source, JSON.stringify(salary),
       signed.certificateId, signed.signerName, signed.signerDesignation,
-      signed.isCaIssued ? 1 : 0, filePath, fileSha, tokenHash, params.actorUserId,
+      signed.isCaIssued ? 1 : 0, filePath, fileSha, tokenHash, acceptTokenHash, params.actorUserId,
     ],
   );
   await audit(issueId, "ISSUE", params.actorUserId, {
@@ -212,11 +222,14 @@ export async function issueAppointmentLetter(params: {
         subject: `Your Appointment Letter — ${letterNumber} — MAS Callnet`,
         html: buildAppointmentLetterEmailHtml({
           employeeName: String(emp.full_name ?? ""),
+          employeeCode: emp.employee_code ? String(emp.employee_code) : null,
+          processName: emp.process_name ? String(emp.process_name) : null,
+          reportingManagerName: emp.reporting_manager_name ? String(emp.reporting_manager_name) : null,
           letterNumber,
           designation: String(emp.designation_name ?? ""),
           dateOfJoining: istDisplayDate(emp.date_of_joining as Date | null),
           verifyUrl,
-          acceptUrl: `${frontendBaseUrl()}/employee/appointment-letter/${token}`,
+          acceptUrl: acceptUrl(frontendBaseUrl(), acceptToken),
         }),
         attachments: [{ filename: `${letterNumber}.pdf`, content: signed.bytes }],
       });
@@ -261,9 +274,10 @@ export async function revokeAppointmentLetter(params: {
   await audit(params.issueId, "REVOKE", params.actorUserId, { reason: params.reason.trim() });
 }
 
-function buildAppointmentLetterEmailHtml(d: {
-  employeeName: string; letterNumber: string; designation: string;
-  dateOfJoining: string; verifyUrl: string; acceptUrl: string;
+export function buildAppointmentLetterEmailHtml(d: {
+  employeeName: string; employeeCode?: string | null; processName?: string | null;
+  reportingManagerName?: string | null; letterNumber: string; designation: string;
+  dateOfJoining: string; verifyUrl: string | null; acceptUrl: string;
 }): string {
   return `<!doctype html><html><body style="margin:0;background:#0f172a;font-family:Segoe UI,Arial,sans-serif">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#0f172a;padding:28px 12px">
@@ -281,8 +295,14 @@ function buildAppointmentLetterEmailHtml(d: {
           <table width="100%" style="background:#f1f5f9;border-radius:10px;padding:14px;margin:0 0 18px">
             <tr><td style="color:#475569;font-size:13px;padding:3px 0">Letter ID</td>
                 <td style="color:#0f172a;font-size:13px;font-weight:700;text-align:right">${d.letterNumber}</td></tr>
+            <tr><td style="color:#475569;font-size:13px;padding:3px 0">Employee code</td>
+                <td style="color:#0f172a;font-size:13px;font-weight:700;text-align:right">${d.employeeCode || "—"}</td></tr>
             <tr><td style="color:#475569;font-size:13px;padding:3px 0">Designation</td>
                 <td style="color:#0f172a;font-size:13px;font-weight:700;text-align:right">${d.designation || "—"}</td></tr>
+            <tr><td style="color:#475569;font-size:13px;padding:3px 0">Process</td>
+                <td style="color:#0f172a;font-size:13px;font-weight:700;text-align:right">${d.processName || "—"}</td></tr>
+            <tr><td style="color:#475569;font-size:13px;padding:3px 0">Reporting manager</td>
+                <td style="color:#0f172a;font-size:13px;font-weight:700;text-align:right">${d.reportingManagerName || "—"}</td></tr>
             <tr><td style="color:#475569;font-size:13px;padding:3px 0">Date of joining</td>
                 <td style="color:#0f172a;font-size:13px;font-weight:700;text-align:right">${d.dateOfJoining || "—"}</td></tr>
           </table>
@@ -290,10 +310,10 @@ function buildAppointmentLetterEmailHtml(d: {
             Please review it and confirm your acceptance by signing electronically.
           </p>
           <a href="${d.acceptUrl}" style="display:block;background:#0891b2;color:#ffffff;text-decoration:none;padding:14px;border-radius:10px;font-weight:700;text-align:center;font-size:15px">Review &amp; Accept</a>
-          <p style="margin:16px 0 0;color:#64748b;font-size:12px;line-height:1.6">
+          ${d.verifyUrl ? `<p style="margin:16px 0 0;color:#64748b;font-size:12px;line-height:1.6">
             Anyone can confirm this letter is genuine at<br>
             <a href="${d.verifyUrl}" style="color:#0891b2;word-break:break-all">${d.verifyUrl}</a>
-          </p>
+          </p>` : ""}
         </td></tr>
         <tr><td style="background:#f8fafc;padding:14px 26px;color:#94a3b8;font-size:11px;text-align:center">
           This is an automated message from MAS Callnet HRMS.

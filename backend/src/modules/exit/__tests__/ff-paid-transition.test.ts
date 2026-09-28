@@ -73,7 +73,19 @@ function ffRow(over: Record<string, unknown> = {}) {
  * one that matched no row because a concurrent actor got there first. `updateAffectedRows: 0`
  * simulates losing that race.
  */
-function stub(row: Record<string, unknown> | null, opts: { updateAffectedRows?: number } = {}) {
+/**
+ * NOC status queried inside markFfPaid via nocReleaseStatusForEmployee — see noc-release-gate
+ * .service.ts. Two of its own queries run on this same mocked db.execute (employees.employment_
+ * status, then noc_case), so the stub must answer them explicitly rather than falling through
+ * to the generic `[[], []]` default, which nocReleaseStatusForEmployee reads as "no employee
+ * row found" -> not blocked. That fallback is what let every pre-existing test in this file
+ * keep passing unchanged when the NOC check was added; nocBlocked below is what actually
+ * exercises the gate on purpose.
+ */
+function stub(
+  row: Record<string, unknown> | null,
+  opts: { updateAffectedRows?: number; nocBlocked?: boolean } = {},
+) {
   execute.mockReset();
   execute.mockImplementation((sql: string) => {
     if (String(sql).includes("SELECT * FROM full_final_calculation")) {
@@ -81,6 +93,18 @@ function stub(row: Record<string, unknown> | null, opts: { updateAffectedRows?: 
     }
     if (/^\s*UPDATE full_final_calculation/i.test(String(sql))) {
       return Promise.resolve([{ affectedRows: opts.updateAffectedRows ?? 1 }, []]);
+    }
+    // nocReleaseStatusForEmployee: kill-switch flag (payroll_config_flags) — always on for
+    // these tests, then employment_status, then noc_case.
+    if (/FROM payroll_config_flags/i.test(String(sql))) {
+      return Promise.resolve([[{ config_value: "true" }], []]);
+    }
+    if (/SELECT employment_status FROM employees/i.test(String(sql))) {
+      return Promise.resolve([[{ employment_status: opts.nocBlocked ? "Exited" : "active" }], []]);
+    }
+    if (/FROM noc_case/i.test(String(sql))) {
+      // No case at all when nocBlocked is requested — "no NOC raised" is itself a blocked state.
+      return Promise.resolve([opts.nocBlocked ? [] : [{ status: "completed", override_at: null }], []]);
     }
     return Promise.resolve([[], []]);
   });
@@ -226,6 +250,43 @@ describe("markFfPaid — the transition that did not exist", () => {
   it("404s a settlement that does not exist", async () => {
     stub(null);
     await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toThrow(/not found/i);
+  });
+});
+
+/**
+ * Owner ruling 2026-09-12 (Q7): "A leaver without a signed NOC must not appear in the bank
+ * file." fnf-transfer.service.ts enforces this at the eligibility stage, BEFORE a settlement
+ * can enter a batch — but markFfPaid has a second caller that bypasses eligibility entirely:
+ * NativeFullFinal.tsx's "Mark Paid" button posts straight here with a hand-typed reference, no
+ * bank file involved at all. Without a check in markFfPaid itself, that second door had no
+ * lock on it — the NOC gate was real for one path into 'paid' and decorative for the other.
+ */
+describe("markFfPaid — the same NOC gate the bank-transfer batch enforces, enforced here too", () => {
+  it("refuses to mark paid when the employee's NOC is not cleared", async () => {
+    stub(ffRow(), { nocBlocked: true });
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toMatchObject({ statusCode: 409 });
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toThrow(/NOC/i);
+    expect(execute.mock.calls.some(([s]) => String(s).includes("SET status = 'paid'"))).toBe(false);
+  });
+
+  it("does not silently drop the payment reference or audit trail on the NOC-blocked path", async () => {
+    stub(ffRow(), { nocBlocked: true });
+    await ffService.markFfPaid(FF_ID, PAYER, "UTR1").catch(() => undefined);
+    // No audit entry for a payment that never happened — the refusal itself is the record.
+    expect(execute.mock.calls.some(([s]) => /INSERT INTO sensitive_action_log/i.test(String(s)))).toBe(false);
+  });
+
+  it("still pays when the NOC is cleared — the gate does not block a legitimate settlement", async () => {
+    stub(ffRow(), { nocBlocked: false });
+    await ffService.markFfPaid(FF_ID, PAYER, "UTR1").catch(() => undefined);
+    expect(execute.mock.calls.some(([s]) => String(s).includes("SET status = 'paid'"))).toBe(true);
+  });
+
+  it("checks the NOC before touching the maker-checker guard is irrelevant — NOC still blocks even for a fresh approver", async () => {
+    // Confirms the two checks are independent: an otherwise-valid payer (not the approver) is
+    // still refused if NOC is not cleared.
+    stub(ffRow({ approved_by: "someone-else" }), { nocBlocked: true });
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toThrow(/NOC/i);
   });
 });
 

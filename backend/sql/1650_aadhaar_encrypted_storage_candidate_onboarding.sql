@@ -21,6 +21,16 @@
 -- by dropping the column; nothing else reads or writes it until the paired app change
 -- (onboarding-full.service.ts) ships.
 
-ALTER TABLE candidate_onboarding_profile
-  ADD COLUMN IF NOT EXISTS aadhaar_number_encrypted TEXT DEFAULT NULL
-    AFTER aadhaar_number_hash;
+-- SYNTAX: ADD COLUMN IF NOT EXISTS is MariaDB. MySQL 8.0.42 -- which this system
+-- runs -- rejects it outright, and the runner stops on the first failure, so a
+-- fresh database would have failed to boot the moment this was registered.
+-- Rewritten as an information_schema-guarded PREPARE/EXECUTE, matching 1048 and
+-- the rest of this directory. Declared type, nullability, default and position
+-- are unchanged from the original.
+SET @c := (SELECT COUNT(1) FROM information_schema.columns
+            WHERE table_schema = DATABASE() AND table_name = 'candidate_onboarding_profile'
+              AND column_name = 'aadhaar_number_encrypted');
+SET @ddl := IF(@c = 0,
+  'ALTER TABLE candidate_onboarding_profile ADD COLUMN aadhaar_number_encrypted TEXT DEFAULT NULL AFTER aadhaar_number_hash',
+  'SELECT 1');
+PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;

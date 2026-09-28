@@ -664,21 +664,17 @@ async function reimbursementChecks(scope: RunScope): Promise<CategoryCheckResult
           "employee_reimbursement_claim does not exist. There is no source of truth for employee reimbursement in payroll.",
         );
       }
-      // The read path payroll actually uses names a column that does not exist. Probe it rather
-      // than asserting from source, so this reports the truth if either side is ever changed.
-      const readColumnPresent = await columnExists("employee_reimbursement_claim", "claim_amount");
+      // payrollCalculate.service.ts was fixed 2026-08-13 to read amount_approved.
+      // Probe the column the live code actually uses so this check reflects current reality.
       const approvedColumnPresent = await columnExists("employee_reimbursement_claim", "amount_approved");
-      if (!readColumnPresent) {
+      if (!approvedColumnPresent) {
         return sourceMissing(
-          "Reimbursement→payroll integration is not implemented. payrollCalculate.service.ts reads " +
-            "employee_reimbursement_claim.claim_amount, which does not exist on the table (the real columns are " +
-            "amount_claimed / amount_approved), and the failure is swallowed by a bare catch — so approved " +
-            "reimbursements are always read as zero. No other path writes salary_prep_line.reimbursement_total. " +
-            "Reimbursement cannot currently be paid through payroll at all.",
-          { reads_column: "claim_amount", column_exists: false, amount_approved_exists: approvedColumnPresent },
+          "employee_reimbursement_claim.amount_approved does not exist. " +
+            "payrollCalculate.service.ts reads this column; without it the reimbursement amount is always zero.",
+          { reads_column: "amount_approved", column_exists: false },
         );
       }
-      return pass("Payroll reads a reimbursement column that exists on the claim table.");
+      return pass("payrollCalculate.service.ts reads employee_reimbursement_claim.amount_approved, which exists.");
     },
   );
 

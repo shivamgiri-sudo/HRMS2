@@ -53,8 +53,8 @@ async function main() {
 
   const [sums] = await conn.query<any[]>(
     `SELECT budget_line_id,
-            SUM(CASE WHEN lifecycle_status='reserved' THEN pnl_cost_amount ELSE 0 END) AS real_reserved,
-            SUM(CASE WHEN lifecycle_status='consumed' THEN pnl_cost_amount ELSE 0 END) AS real_consumed
+            SUM(CASE WHEN lifecycle_status='reserved' THEN COALESCE(NULLIF(amount_without_tax, 0), amount_with_tax - COALESCE(tax_amount, 0), pnl_cost_amount) ELSE 0 END) AS real_reserved,
+            SUM(CASE WHEN lifecycle_status='consumed' THEN COALESCE(NULLIF(amount_without_tax, 0), amount_with_tax - COALESCE(tax_amount, 0), pnl_cost_amount) ELSE 0 END) AS real_consumed
        FROM grn_cost_allocation
       WHERE budget_line_id IS NOT NULL
       GROUP BY budget_line_id`

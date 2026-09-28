@@ -23,6 +23,19 @@ const WRITE_ROLES = [
   "payroll_head",
 ] as const;
 
+// F-01: this whole router inherits requireAuth + requireRole(...PNL_READ_ROLES) from its mount
+// point at /pnl/bpo in process-pnl.routes.ts, which includes branch_head/process_manager for
+// row-scoped operational reads (/summary, /processes/:id, /export below use scopedFilters and
+// are fine). The six config routes below take no branch-aware filter and previously passed
+// req.query straight through unscoped, returning every process/branch's revenue rules, delivery
+// actuals and rate/cost/allocation configuration to any branch_head/process_manager. They are
+// exclusively consumed by the Master Control Centre (useBpoPnlConfiguration.ts), whose frontend
+// route already excludes both roles (finance.routes.tsx `pnlRoles`) — this closes the matching
+// backend gap rather than adding new branch-scoping surface those roles have no UI for.
+const CONFIG_READ_ROLES = [
+  "super_admin", "admin", "ceo", "coo", "finance", "finance_head", "accounts_head", "payroll_head",
+] as const;
+
 function filters(req: AuthenticatedRequest, scopedBranchId?: string | null) {
   return {
     period: req.query.period ? String(req.query.period) : undefined,
@@ -98,14 +111,14 @@ router.get("/export", h(async (req, res) => {
   res.send(csv);
 }));
 
-router.get("/revenue-rules", h(async (req, res) => {
+router.get("/revenue-rules", requireRole(...CONFIG_READ_ROLES), h(async (req, res) => {
   const data = await bpoPnlConfigurationService.listRevenueRules(
     req.query.processId ? String(req.query.processId) : undefined
   );
   res.json({ success: true, data });
 }));
 
-router.get("/delivery-actuals", h(async (req, res) => {
+router.get("/delivery-actuals", requireRole(...CONFIG_READ_ROLES), h(async (req, res) => {
   const data = await bpoPnlConfigurationService.listDeliveryActuals(
     req.query.period ? String(req.query.period) : undefined,
     req.query.processId ? String(req.query.processId) : undefined
@@ -113,7 +126,7 @@ router.get("/delivery-actuals", h(async (req, res) => {
   res.json({ success: true, data });
 }));
 
-router.get("/revenue-components", h(async (req, res) => {
+router.get("/revenue-components", requireRole(...CONFIG_READ_ROLES), h(async (req, res) => {
   const data = await bpoPnlConfigurationService.listRevenueComponents(
     req.query.period ? String(req.query.period) : undefined,
     req.query.processId ? String(req.query.processId) : undefined
@@ -121,7 +134,7 @@ router.get("/revenue-components", h(async (req, res) => {
   res.json({ success: true, data });
 }));
 
-router.get("/cost-components", h(async (req, res) => {
+router.get("/cost-components", requireRole(...CONFIG_READ_ROLES), h(async (req, res) => {
   const data = await bpoPnlConfigurationService.listCostComponents(
     req.query.period ? String(req.query.period) : undefined,
     req.query.processId ? String(req.query.processId) : undefined
@@ -129,14 +142,14 @@ router.get("/cost-components", h(async (req, res) => {
   res.json({ success: true, data });
 }));
 
-router.get("/allocation-policies", h(async (req, res) => {
+router.get("/allocation-policies", requireRole(...CONFIG_READ_ROLES), h(async (req, res) => {
   const data = await bpoPnlConfigurationService.listAllocationPolicies(
     req.query.branchId ? String(req.query.branchId) : undefined
   );
   res.json({ success: true, data });
 }));
 
-router.get("/classification-rules", h(async (req, res) => {
+router.get("/classification-rules", requireRole(...CONFIG_READ_ROLES), h(async (req, res) => {
   const data = await bpoPnlConfigurationService.listClassificationRules(
     req.query.processId ? String(req.query.processId) : undefined,
     req.query.branchId ? String(req.query.branchId) : undefined

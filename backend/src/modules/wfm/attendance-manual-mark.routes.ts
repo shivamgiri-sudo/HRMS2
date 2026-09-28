@@ -36,13 +36,16 @@ router.post(
     const actorId = (req.authUser as any).id;
     const lwpValue = LWP_MAP[attendance_status] ?? 0;
 
-    // Verify employee exists
+    // Verify employee exists and is still active
     const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM employees WHERE id = ? LIMIT 1`,
+      `SELECT id, active_status FROM employees WHERE id = ? LIMIT 1`,
       [employee_id],
     );
     if (!(empRows as any[]).length) {
       return res.status(404).json({ success: false, message: 'Employee not found' });
+    }
+    if (Number((empRows as any[])[0].active_status) !== 1) {
+      return res.status(409).json({ success: false, message: 'Cannot mark attendance for an inactive (exited) employee' });
     }
 
     // Capture old status for audit

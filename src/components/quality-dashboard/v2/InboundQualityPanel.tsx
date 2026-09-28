@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
+// CartesianGrid intentionally not imported — clean plain background, no gridlines.
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { safeNum } from "./types";
@@ -150,7 +151,6 @@ export function InboundQualityPanel({ from, to, queryKey }: Props) {
                   <stop offset="95%" stopColor="#1baf7a" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false} />
               <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} />
               <Tooltip contentStyle={{ borderRadius: "10px", border: "1px solid #e2e8f0", fontSize: 12 }} formatter={(v: number) => [`${v}%`, "CQ Score"]} />

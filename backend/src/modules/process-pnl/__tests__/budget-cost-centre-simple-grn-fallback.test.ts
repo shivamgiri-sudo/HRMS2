@@ -72,7 +72,7 @@ function makeExecute(opts: { lines: Line[]; allocated?: AllocatedStatuses[] }) {
       return [rows, []];
     }
 
-    if (s.includes("AS cnt, COALESCE(SUM(l.gross_amount)")) return [[{ cnt: 0, total_budget: 0 }], []];
+    if (s.includes("AS cnt, COALESCE(SUM(")) return [[{ cnt: 0, total_budget: 0 }], []];
     if (s.includes("FROM cost_centre_master")) return [[{ id: "cc-A", cost_centre_code: "A", cost_centre_name: "CC A" }], []];
 
     throw new Error(`Unhandled SQL in fake DB router: ${s.slice(0, 160)}`);

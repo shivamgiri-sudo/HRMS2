@@ -21,6 +21,7 @@ const NativeExitPass                = lazy(() => import("@/pages/NativeExitPass"
 const NativeExitPassPrint           = lazy(() => import("@/pages/NativeExitPassPrint"));
 const NativeExitPassVerify          = lazy(() => import("@/pages/NativeExitPassVerify"));
 const NativeHelpdesk                = lazy(() => import("@/pages/NativeHelpdesk"));
+const NativeHrmsGuide               = lazy(() => import("@/pages/NativeHrmsGuide"));
 const NativeUatFeedback             = lazy(() => import("@/pages/NativeUatFeedback"));
 const NativeUatTriageConsole        = lazy(() => import("@/pages/NativeUatTriageConsole"));
 const NativeUatReleaseBoard         = lazy(() => import("@/pages/NativeUatReleaseBoard"));
@@ -41,6 +42,8 @@ const NativeWorkflowAdmin           = lazy(() => import("@/pages/NativeWorkflowA
 const NativeBenefitsClaims          = lazy(() => import("@/pages/NativeBenefitsClaims"));
 const NativeIntegrationHub          = lazy(() => import("@/pages/NativeIntegrationHub"));
 const EnhancedClientMaster          = lazy(() => import("@/pages/EnhancedClientMaster"));
+const SuperAdminClientPortalAccess  = lazy(() => import("@/pages/portal/SuperAdminClientPortalAccess"));
+const PortalContentAdmin            = lazy(() => import("@/pages/portal/PortalContentAdmin"));
 const NativeCustomizationManager    = lazy(() => import("@/pages/customization/NativeCustomizationManager"));
 const NativeCustomizationRuleEditor = lazy(() => import("@/pages/customization/NativeCustomizationRuleEditor"));
 const NativeMigrationConsole        = lazy(() => import("@/pages/NativeMigrationConsole"));
@@ -48,6 +51,7 @@ const NativeAuditLog                = lazy(() => import("@/pages/NativeAuditLog"
 const NativeSecurityCenter          = lazy(() => import("@/pages/NativeSecurityCenter"));
 const UnifiedAccessControl          = lazy(() => import("@/pages/UnifiedAccessControl"));
 const SuperAdminAccessControl       = lazy(() => import("@/pages/SuperAdminAccessControl"));
+const TpzAccessAdmin                = lazy(() => import("@/pages/TpzAccessAdmin"));
 const SuperAdminModuleAccess        = lazy(() => import("@/pages/SuperAdminModuleAccess"));
 const NativePolicyEngine            = lazy(() => import("@/pages/NativePolicyEngine"));
 const AIProviderSettings            = lazy(() => import("@/pages/AIProviderSettings"));
@@ -76,7 +80,6 @@ const NativeLeaderboard             = lazy(() => import("@/pages/NativeLeaderboa
 const ReportsHub                    = lazy(() => import("@/pages/ReportsHub"));
 const LiveLocationMap               = lazy(() => import("@/pages/LiveLocationMap"));
 const BulkUploadHub                 = lazy(() => import("@/pages/BulkUploadHub"));
-const OnfidoProcessDashboard         = lazy(() => import("@/pages/onfido-process/OnfidoProcessDashboard"));
 const BulkUploadApprovals           = lazy(() => import("@/pages/BulkUploadApprovals"));
 const Departments                   = lazy(() => import("@/pages/Departments"));
 const CompanyCalendar               = lazy(() => import("@/pages/CompanyCalendar"));
@@ -142,8 +145,9 @@ export const platformRouteElements = (
       <Route path="/notification-preferences" element={<Navigate to="/communication/preferences" replace />} />
       <Route path="/modules"         element={<ProtectedRoute><ModuleLauncher /></ProtectedRoute>} />
       <Route path="/changelog"       element={<ProtectedRoute><Changelog /></ProtectedRoute>} />
-      <Route path="/bulk-upload"     element={<ProtectedRoute roles={['admin','hr','super_admin','wfm','payroll','payroll_hr','branch_admin','payroll_head']}><Gate pageCode="BULK_UPLOAD"><BulkUploadHub /></Gate></ProtectedRoute>} />
-      <Route path="/onfido-process/dashboard" element={<ProtectedRoute roles={['admin','super_admin','ceo','coo','manager','process_manager','team_leader','branch_head','qa','quality_analyst','wfm']}><Gate pageCode="ONFIDO_PROCESS_DASHBOARD"><OnfidoProcessDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/bulk-upload"     element={<ProtectedRoute roles={['admin','hr','super_admin','wfm','payroll','payroll_hr','branch_admin','payroll_head','branch_wfm','ho_wfm','wfm_spoc']}><Gate pageCode="BULK_UPLOAD"><BulkUploadHub /></Gate></ProtectedRoute>} />
+      {/* Onfido's dashboard lives inside Process Operations; the old URL lands there. */}
+      <Route path="/onfido-process/dashboard" element={<Navigate to="/process-operations?process=onfido&view=live" replace />} />
       {/* Gated on BULK_UPLOAD_APPROVALS, not BULK_UPLOAD.
         * branch_head holds NO BULK_UPLOAD grant (live, 2026-09-03) — so the only role
         * allowed to approve a gated batch was being turned away by the gate on the very
@@ -190,6 +194,9 @@ export const platformRouteElements = (
       <Route path="/settings/branch-payroll-hr" element={<ProtectedRoute><NativeBranchPayrollHrSignatory /></ProtectedRoute>} />
       {/* /employee/joining-documents/esign/:token and /employee/epf-compliance/review/:token are in public.routes */}
 
+      {/* HRMS Guide — public to all authenticated users */}
+      <Route path="/guide"                           element={<ProtectedRoute><NativeHrmsGuide /></ProtectedRoute>} />
+
       {/* Helpdesk / Support */}
       <Route path="/helpdesk"                        element={<ProtectedRoute><Gate pageCode="HELPDESK_KB"><NativeHelpdesk /></Gate></ProtectedRoute>} />
       <Route path="/uat/feedback"                    element={<ProtectedRoute><Gate pageCode="UAT_FEEDBACK"><NativeUatFeedback /></Gate></ProtectedRoute>} />
@@ -205,6 +212,14 @@ export const platformRouteElements = (
       <Route path="/workflow-admin"               element={<ProtectedRoute><Gate pageCode="WORKFLOW_ADMIN"><NativeWorkflowAdmin /></Gate></ProtectedRoute>} />
       <Route path="/process-config"               element={<ProtectedRoute><Gate pageCode="PROCESS_CONFIG"><NativeProcessConfig /></Gate></ProtectedRoute>} />
       <Route path="/client-master"                element={<ProtectedRoute><Gate pageCode="CLIENT_MASTER"><EnhancedClientMaster /></Gate></ProtectedRoute>} />
+      {/* Super-admin-only: open any client's real portal dashboard directly (no OTP needed).
+          Backend independently enforces requireRole("super_admin","admin") on the API this
+          calls, so the role gate here is a UX convenience, not the actual security boundary. */}
+      <Route path="/super-admin/client-portal-access" element={<ProtectedRoute roles={['super_admin','admin']}><SuperAdminClientPortalAccess /></ProtectedRoute>} />
+      {/* Admin content for the client portal's Action Plans / Glide Paths / Commentary tabs.
+          Backend independently enforces requireRole(admin,hr,finance_head,operations_manager,ceo)
+          on every /internal/* write this page calls -- same convention as client-portal-access above. */}
+      <Route path="/portal/content-admin" element={<ProtectedRoute roles={['admin','hr','finance_head','operations_manager','ceo','super_admin']}><PortalContentAdmin /></ProtectedRoute>} />
 
       {/* Integration / migration / audit */}
       <Route path="/integration-hub"              element={<ProtectedRoute><Gate pageCode="INTEGRATION_HUB"><NativeIntegrationHub /></Gate></ProtectedRoute>} />
@@ -216,6 +231,7 @@ export const platformRouteElements = (
 
       {/* Security / access */}
       <Route path="/security-center"             element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="SECURITY_CENTER"><NativeSecurityCenter /></Gate></ProtectedRoute>} />
+      <Route path="/settings/tpz-access"         element={<ProtectedRoute roles={['super_admin','admin']}><TpzAccessAdmin /></ProtectedRoute>} />
       <Route path="/settings/access-control"     element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="ACCESS_CONTROL"><UnifiedAccessControl /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/page-access"     element={<ProtectedRoute roles={['super_admin']}><Gate pageCode="ACCESS_CONTROL"><SuperAdminAccessControl /></Gate></ProtectedRoute>} />
       <Route path="/super-admin/module-access"   element={<ProtectedRoute roles={['admin','branch_admin','it_head','payroll_head']}><Gate pageCode="MODULE_ACCESS"><SuperAdminModuleAccess /></Gate></ProtectedRoute>} />

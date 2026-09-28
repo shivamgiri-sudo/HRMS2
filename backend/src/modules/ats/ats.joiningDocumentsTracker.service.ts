@@ -1,23 +1,43 @@
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { buildScopeWhereClause } from '../../shared/scopeAccess.js';
+import { nonReactivatableSqlList } from '../exit/exitEmploymentStatus.js';
 import { sendJoiningDocReminderEmail } from './ats.email.service.js';
 import { generateJoiningDocumentChecklist, recalculateDocumentProgress } from '../employees/employeeJoiningDocuments.service.js';
 // Esign_State_Authority. The eSign counters below are GENERATED from it rather
 // than hand-written, so the query cannot drift from `classifyEsignState`.
 import { esignBucketCaseSql } from './esignState.js';
-// archiver ships a CJS default; @types/archiver only declares named exports so we
-// need a type-cast to satisfy the compiler while keeping vi.mock('archiver') working.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-import * as _archiverNs from 'archiver';
-import type { ArchiverOptions, Archiver as ArchiverInstance } from 'archiver';
+import { ZipArchive } from 'archiver';
+import type { Archiver as ArchiverInstance } from 'archiver';
 import fs from 'fs';
 import path from 'path';
 import type { Response } from 'express';
 
-// esModuleInterop wraps the CJS default as .default; fall back to the namespace itself.
-const archiverLib = ((_archiverNs as unknown as { default?: unknown }).default ??
-  _archiverNs) as (format: string, options?: ArchiverOptions) => ArchiverInstance;
+/**
+ * archiver 8 removed the callable factory.
+ *
+ * This was `archiver('zip', opts)` reached through a CJS-interop shim,
+ * `(ns.default ?? ns) as (format, options) => Archiver`. archiver 8.0.0 (the
+ * installed version) exports only classes — Archiver, ZipArchive, TarArchive,
+ * JsonArchive — and no `default`, so the shim resolved to the namespace OBJECT
+ * and calling it threw "archiverLib is not a function" at the first line of the
+ * download. The cast is what let it type-check: it asserted a call signature the
+ * package has not had since the upgrade.
+ *
+ * The route is a bare async handler, so that throw was an unhandled rejection
+ * and took the whole backend process down rather than failing one request.
+ *
+ * The unit test did not catch it because vi.mock('archiver') returned a callable
+ * `default` — the OLD API. A mock of an API the package does not have cannot
+ * fail when the code calls an API the package does not have; that mock is now a
+ * class, matching the installed package.
+ *
+ * Same fix already applied in payroll/esi-reg-docs.routes.ts, where this was
+ * first found.
+ */
+function newZipArchive(): ArchiverInstance {
+  return new ZipArchive({ zlib: { level: 9 } }) as unknown as ArchiverInstance;
+}
 
 const STORAGE_ROOT = path.resolve(process.cwd(), 'private-storage', 'employee-joining-documents');
 
@@ -63,6 +83,14 @@ const TRACKER_POPULATION_JOIN = `
        WHERE employment_status = 'preboarding'
          AND date_of_joining >= DATE_SUB(NOW(), INTERVAL 120 DAY)
     ) tracker_population ON tracker_population.id = e.id`;
+
+/**
+ * The employee-ID-creation SLA clock, shared between the row SELECT, the HAVING
+ * filter, and the summary aggregate for the same reason `overdueCountSQL` is
+ * shared: one expression, so the tile, the HAVING filter and the row badge cannot
+ * disagree about what "breached" means.
+ */
+const DAYS_SINCE_ID_CREATED_SQL = `DATEDIFF(CURDATE(), e.created_at)`;
 
 export interface KeyDocumentStatus {
   code: 'APPOINTMENT_LETTER' | 'ID_PROOF' | 'BANK_DETAILS' | 'ADDRESS_PROOF';
@@ -116,6 +144,10 @@ export interface EmployeeDocumentRow {
   last_document_update: string | null;
   assigned_hr_name: string | null;
   key_documents: KeyDocumentStatus[];
+  /** Days since `employees.created_at` — the employee ID creation SLA clock. */
+  days_since_id_created: number;
+  /** `days_since_id_created > 3` — mirrors `overdue_count > 0`'s badge/tile pattern. */
+  id_creation_sla_breached: boolean;
 }
 
 export interface TrackerSummary {
@@ -137,6 +169,8 @@ export interface TrackerSummary {
   // unrendered: a field nothing reads is how this drifted in the first place.
   overdue_count: number;
   needs_correction: number;
+  /** Cross-cutting, like `overdue_count` — how many employees have `id_creation_sla_breached`. */
+  id_creation_overdue_count: number;
 }
 
 export interface TrackerQueryParams {
@@ -147,6 +181,7 @@ export interface TrackerQueryParams {
   completion_max?: number;
   document_code?: string;
   overdue_only?: boolean;
+  id_creation_sla_only?: boolean;
   updated_since?: string;
   search?: string;
   /** 1-based. Clamped to >= 1; anything unparseable falls back to `DEFAULT_PAGE`. */
@@ -305,6 +340,7 @@ export function calculateTrackerSummary(employees: EmployeeDocumentRow[]): Track
     pending_count: 0,
     overdue_count: 0,
     needs_correction: 0,
+    id_creation_overdue_count: 0,
   };
 
   for (const emp of employees) {
@@ -319,6 +355,10 @@ export function calculateTrackerSummary(employees: EmployeeDocumentRow[]): Track
 
     if (emp.needs_correction_count > 0) {
       summary.needs_correction++;
+    }
+
+    if (emp.id_creation_sla_breached) {
+      summary.id_creation_overdue_count++;
     }
   }
 
@@ -351,6 +391,8 @@ interface TrackerQueryRow extends RowDataPacket {
   esign_pending_count: number | null;
   last_document_update: string | null;
   assigned_hr_name: string | null;
+  /** `DATEDIFF(CURDATE(), e.created_at)` — the employee ID creation SLA clock. */
+  days_since_id_created: number;
   /**
    * `COUNT(*) OVER ()` — employees left after WHERE, GROUP BY and HAVING, before
    * ORDER BY and LIMIT. Identical on every row of the page. Absent entirely when the
@@ -368,6 +410,7 @@ interface TrackerSummaryRow extends RowDataPacket {
   pending_count: number;
   overdue_count: number;
   needs_correction: number;
+  id_creation_overdue_count: number;
 }
 
 /**
@@ -428,7 +471,13 @@ export async function getJoiningDocumentsTracker(
     // 59,356 employee rows and ran the checklist EXISTS once per row, 6.4s per
     // call — and the page issues two of these per keystroke, which is why the
     // search box looked broken rather than slow.
-    `(e.employment_status IS NULL OR e.employment_status NOT IN ('resigned', 'terminated'))`,
+    // NON_REACTIVATABLE_STATUSES is the canonical exit-management guard list
+    // (exitEmploymentStatus.ts), not a copy hand-written here. This used to read
+    // `NOT IN ('resigned', 'terminated')` — values Exit Management has never
+    // written (it writes 'inactive'/'terminated'/'absconded'/'not_joined') — so a
+    // resigned employee (the common case, maps to 'inactive') was never excluded
+    // and stayed on this tracker indefinitely.
+    `(e.employment_status IS NULL OR e.employment_status NOT IN (${nonReactivatableSqlList()}))`,
     'e.employee_code IS NOT NULL',
     // Legacy (db_bill-migrated) employees get a placeholder checklist row from
     // createLegacyJoiningChecklists.ts (mandatory=0, status='verified' — their
@@ -489,11 +538,15 @@ export async function getJoiningDocumentsTracker(
     params.push(searchPattern, searchPattern);
   }
 
-  // Subquery for overdue_only filter (need HAVING clause)
-  let havingClause = '';
-  if (filters.overdue_only) {
-    havingClause = 'HAVING overdue_count > 0';
-  }
+  // Subquery for overdue_only / id_creation_sla_only filters (need HAVING clause).
+  // The SLA predicate is the raw DATEDIFF expression, not the `days_since_id_created`
+  // alias — HAVING can filter on it directly against the grouped `employees e` source
+  // (e.created_at is functionally dependent on e.id, the GROUP BY key) without it
+  // having to be selected by every statement that interpolates `fromWhereGroupSQL`.
+  const havingParts: string[] = [];
+  if (filters.overdue_only) havingParts.push('overdue_count > 0');
+  if (filters.id_creation_sla_only) havingParts.push(`${DAYS_SINCE_ID_CREATED_SQL} > 3`);
+  const havingClause = havingParts.length ? `HAVING ${havingParts.join(' AND ')}` : '';
 
   const whereSQL = whereClauses.join(' AND ');
 
@@ -583,6 +636,7 @@ export async function getJoiningDocumentsTracker(
       e.joining_document_status,
       e.joining_document_completion_pct,
       e.active_status,
+      ${DAYS_SINCE_ID_CREATED_SQL} AS days_since_id_created,
       b.branch_name,
       p.process_name,
       p.business_lob AS lob_name,
@@ -671,6 +725,8 @@ export async function getJoiningDocumentsTracker(
     last_document_update: row.last_document_update,
     assigned_hr_name: row.assigned_hr_name,
     key_documents: parseKeyDocuments(row.key_documents_raw),
+    days_since_id_created: Number(row.days_since_id_created ?? 0),
+    id_creation_sla_breached: Number(row.days_since_id_created ?? 0) > 3,
   }));
 
   /**
@@ -744,20 +800,28 @@ async function queryTrackerSummary(
     .map(([bucket, field]) => `SUM(${summaryBucketCaseSql('t.pct')} = '${bucket}') AS ${field}`)
     .join(',\n      ');
 
-  const [summaryRows] = await db.execute<TrackerSummaryRow[]>(
+  // db.query, not db.execute — same reason the main row query above already
+  // uses it (see that query's own comment): this shares the same UNION-based
+  // fromWhereGroupSQL population subquery, so it is exposed to the identical
+  // prepared-statement-plan regression. Confirmed live 2026-09-22 on the
+  // sibling onboarding-requests query (561ms via db.query vs 8.7s via
+  // db.execute for the same SQL/data).
+  const [summaryRows] = await db.query<TrackerSummaryRow[]>(
     `SELECT
       COUNT(*) AS total_employees,
       ${bucketCountSelects},
       -- Cross-cutting, not buckets: an employee can be both in_progress and overdue,
       -- so these sit outside the three-way partition and must not be added into it.
       SUM(CASE WHEN t.overdue_count > 0 THEN 1 ELSE 0 END) AS overdue_count,
-      SUM(CASE WHEN t.needs_correction_count > 0 THEN 1 ELSE 0 END) AS needs_correction
+      SUM(CASE WHEN t.needs_correction_count > 0 THEN 1 ELSE 0 END) AS needs_correction,
+      SUM(CASE WHEN t.days_since_id_created > 3 THEN 1 ELSE 0 END) AS id_creation_overdue_count
     FROM (
       SELECT
         e.id,
         e.joining_document_completion_pct AS pct,
         ${overdueCountSQL} AS overdue_count,
-        ${needsCorrectionCountSQL} AS needs_correction_count
+        ${needsCorrectionCountSQL} AS needs_correction_count,
+        ${DAYS_SINCE_ID_CREATED_SQL} AS days_since_id_created
       ${fromWhereGroupSQL}
     ) t`,
     params
@@ -773,6 +837,7 @@ async function queryTrackerSummary(
     pending_count: Number(row?.pending_count ?? 0),
     overdue_count: Number(row?.overdue_count ?? 0),
     needs_correction: Number(row?.needs_correction ?? 0),
+    id_creation_overdue_count: Number(row?.id_creation_overdue_count ?? 0),
   };
 }
 
@@ -1105,7 +1170,7 @@ export async function streamBulkDocumentsZip(
   res: Response,
   actorUserId?: string
 ): Promise<void> {
-  const archive = archiverLib('zip', { zlib: { level: 9 } });
+  const archive = newZipArchive();
 
   // Pipe archive data to Express response
   archive.pipe(res);

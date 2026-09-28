@@ -421,6 +421,111 @@ export async function applyIncentiveBatch(
   return { applied, failed, errors };
 }
 
+/**
+ * Re-process the error rows of a partially_applied INCENTIVE_BULK batch.
+ * Retries each incentive_upload_batch that is still 'pending_approval' and has
+ * at least one row_status='error' row.
+ */
+export async function reapplyIncentiveBatch(
+  batch: BatchRecord,
+  approverUserId: string,
+  remarks: string | null,
+): Promise<ApplyOutcome> {
+  // Find error rows whose parent incentive_upload_batch is still pending_approval
+  const [rawRows] = await db.execute<RowDataPacket[]>(
+    `SELECT ubr.id AS ubr_id, ubr.row_no, ubr.created_entity_id, iul.batch_id AS incentive_batch_id
+       FROM upload_batch_row ubr
+       JOIN incentive_upload_line iul ON iul.id = ubr.created_entity_id
+       JOIN incentive_upload_batch iub ON iub.id = iul.batch_id
+      WHERE ubr.upload_batch_id = ? AND ubr.created_entity_type = ?
+        AND ubr.row_status = 'error'
+        AND iub.status = 'pending_approval'
+      ORDER BY ubr.row_no ASC`,
+    [batch.id, ENTITY_TYPE],
+  );
+  const rows = rawRows as Array<{
+    ubr_id: string; row_no: number; created_entity_id: string; incentive_batch_id: string;
+  }>;
+
+  const byIncentiveBatch = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const key = row.incentive_batch_id;
+    if (!byIncentiveBatch.has(key)) byIncentiveBatch.set(key, []);
+    byIncentiveBatch.get(key)!.push(row);
+  }
+
+  const toLock: string[] = [];
+  const errors: string[] = [];
+  let applied = 0;
+  let failed = 0;
+
+  for (const [incentiveBatchId, batchRows] of byIncentiveBatch) {
+    try {
+      await withBulkLockRetry(async () => {
+        const [res] = await db.execute<ResultSetHeader>(
+          `UPDATE incentive_upload_batch
+              SET status = 'approved', updated_at = NOW()
+            WHERE id = ? AND status = 'pending_approval'`,
+          [incentiveBatchId],
+        );
+        if (res.affectedRows === 0) {
+          throw new Error("incentive batch is no longer pending approval");
+        }
+        await db.execute(
+          `INSERT INTO incentive_approval_step
+             (id, batch_id, step_number, required_role, approver_user_id, status, remarks,
+              decided_at, actioned_at)
+           VALUES (?, ?, 1, 'branch_head', ?, 'approved', ?, NOW(), NOW())`,
+          [
+            randomUUID(), incentiveBatchId, approverUserId,
+            remarks ?? `Branch Head bulk re-apply (${batch.upload_batch_no})`,
+          ],
+        );
+      });
+      for (const row of batchRows) {
+        await db.execute(
+          `UPDATE upload_batch_row SET row_status = 'imported', error_messages = NULL WHERE id = ?`,
+          [row.ubr_id],
+        );
+        toLock.push(row.created_entity_id);
+      }
+      applied += batchRows.length;
+      void logSensitiveAction({
+        actor_user_id: approverUserId,
+        actor_role: "branch_head",
+        action_type: "INCENTIVE_BATCH_APPROVED",
+        module_key: "incentives",
+        entity_type: "incentive_upload_batch",
+        entity_id: incentiveBatchId,
+        reason: remarks ?? undefined,
+        new_value_json: { via_bulk_upload: true, upload_batch_no: batch.upload_batch_no },
+      });
+    } catch (err) {
+      const msg = `Incentive batch ${incentiveBatchId}: ${(err as Error)?.message ?? String(err)}`;
+      errors.push(msg);
+      failed += batchRows.length;
+      for (const row of batchRows) {
+        await markRowFailed(row.ubr_id, msg);
+      }
+    }
+  }
+
+  if (toLock.length > 0) {
+    await lockEntities(
+      toLock.map((entityId) => ({
+        entityType: ENTITY_TYPE,
+        entityId,
+        batchId: batch.id,
+        batchNo: batch.upload_batch_no,
+        employeeId: null,
+        lockedBy: approverUserId,
+      })),
+    );
+  }
+
+  return { applied, failed, errors };
+}
+
 export async function rejectIncentiveBatch(
   batch: BatchRecord,
   approverUserId: string,

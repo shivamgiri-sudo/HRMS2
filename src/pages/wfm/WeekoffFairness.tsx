@@ -3,7 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { hrmsApi } from "@/lib/hrmsApi";
 
 const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
@@ -30,7 +32,6 @@ type Row = {
 
 export default function WeekoffFairness() {
   const { roleKeys } = useWorkforceAccess();
-  const token = localStorage.getItem("hrms_access_token");
 
   const [processId, setProcessId] = useState("");
   const [weekStartDate, setWeekStartDate] = useState(upcomingMonday());
@@ -38,46 +39,63 @@ export default function WeekoffFairness() {
   const [loading, setLoading] = useState(false);
   const [computing, setComputing] = useState(false);
   const [inline, setInline] = useState<Record<number, { day: string; reason: string }>>({});
+  // Form Input Rule (CLAUDE.md): Process ID is a closed set (process_master.id), not
+  // free text — was a plain <Input> a user had to type a raw UUID into, which the
+  // backend (weekoff-fairness.service.ts matches against employees.process_id) never
+  // validated, so a typo just silently returned an empty/wrong result.
+  const [processes, setProcesses] = useState<{ id: string; process_name: string }[]>([]);
 
-  const allowed = ["wfm", "admin", "super_admin"].some(r => roleKeys.includes(r));
+  useEffect(() => {
+    hrmsApi.get<{ data: { id: string; process_name: string }[] }>("/api/processes?limit=200")
+      .then((res) => setProcesses(res.data ?? []))
+      .catch(() => setProcesses([]));
+  }, []);
 
+  const allowed = ["wfm", "admin", "super_admin", "branch_head"].some(r => roleKeys.includes(r));
+  // Compute (recalculate + write scores) stays wfm/admin/super_admin-only on the backend —
+  // branch_head is view-only here, so the button is hidden rather than shown and 403ing.
+  const canCompute = ["wfm", "admin", "super_admin"].some(r => roleKeys.includes(r));
+
+  // Was raw fetch() to a relative URL with a manually-read localStorage token — on this
+  // dev setup that resolves against the Vite origin (8080), not the real API (5055), so
+  // it 401'd before ever reaching the backend. hrmsApi.* (apiBaseUrl() + the real token
+  // key) is what every other panel in this console already uses. Also unwraps the
+  // backend's real `{ success, data }` envelope — the old code checked
+  // Array.isArray(wholeResponse), which is never true for that shape, so the table
+  // stayed empty even on a request that did reach the server.
   async function fetchScores() {
     if (!processId) return;
     setLoading(true);
-    const res = await fetch(
-      `/api/wfm/weekoff/fairness-scores?processId=${processId}&weekStartDate=${weekStartDate}`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    const data = await res.json();
-    setRows(Array.isArray(data) ? data : []);
-    setLoading(false);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: Row[] }>(
+        `/api/wfm/weekoff/fairness-scores?processId=${processId}&weekStartDate=${weekStartDate}`,
+      );
+      setRows(Array.isArray(res.data) ? res.data : []);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function computeScores() {
     if (!processId) return;
     setComputing(true);
-    await fetch("/api/wfm/weekoff/fairness-scores/compute", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ processId, weekStartDate }),
-    });
-    setComputing(false);
-    fetchScores();
+    try {
+      await hrmsApi.post("/api/wfm/weekoff/fairness-scores/compute", { processId, weekStartDate });
+      await fetchScores();
+    } finally {
+      setComputing(false);
+    }
   }
 
   async function recordAllocation(row: Row) {
     const inp = inline[row.employee_id];
     if (!inp) return;
-    await fetch("/api/wfm/weekoff/allocations/record", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        employeeId: row.employee_id,
-        processId,
-        weekStartDate,
-        assignedDay: parseInt(inp.day),
-        exceptionReason: inp.reason || undefined,
-      }),
+    await hrmsApi.post("/api/wfm/weekoff/allocations/record", {
+      employeeId: row.employee_id,
+      processId,
+      weekStartDate,
+      assignedDay: parseInt(inp.day),
+      exceptionReason: inp.reason || undefined,
     });
     setInline((p) => { const n = { ...p }; delete n[row.employee_id]; return n; });
     fetchScores();
@@ -98,12 +116,21 @@ export default function WeekoffFairness() {
       <h1 className="text-2xl font-bold">Week-off Fairness Scores</h1>
 
       <div className="flex flex-wrap gap-3 items-end">
-        <Input placeholder="Process ID" value={processId} onChange={(e) => setProcessId(e.target.value)} className="w-40" />
+        <Select value={processId} onValueChange={setProcessId}>
+          <SelectTrigger className="w-52"><SelectValue placeholder="Select process" /></SelectTrigger>
+          <SelectContent>
+            {processes.map((p) => (
+              <SelectItem key={p.id} value={p.id}>{p.process_name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Input type="date" value={weekStartDate} onChange={(e) => setWeekStartDate(e.target.value)} className="w-44" />
         <Button onClick={fetchScores} disabled={loading || !processId}>Load</Button>
-        <Button variant="secondary" onClick={computeScores} disabled={computing || !processId}>
-          {computing ? "Computing…" : "Compute Scores"}
-        </Button>
+        {canCompute && (
+          <Button variant="secondary" onClick={computeScores} disabled={computing || !processId}>
+            {computing ? "Computing…" : "Compute Scores"}
+          </Button>
+        )}
       </div>
 
       {rows.length > 0 && (
@@ -142,17 +169,23 @@ export default function WeekoffFairness() {
                     <td className="px-3 py-2">{row.consecutive_no_preferred_weekoff > 0 && <Badge variant="secondary">{row.consecutive_no_preferred_weekoff}</Badge>}</td>
                     <td className="px-3 py-2 max-w-[160px] truncate">{row.allocation_exception_reason ?? "—"}</td>
                     <td className="px-3 py-2">
-                      {row.assigned_day == null && !inp && (
-                        <Button size="sm" variant="outline" onClick={() => setInline((p) => ({ ...p, [row.employee_id]: { day: "", reason: "" } }))}>
-                          Record
-                        </Button>
-                      )}
-                      {inp && (
-                        <div className="flex gap-1 items-center">
-                          <Input className="w-14 h-7 text-xs" type="number" min={0} max={6} placeholder="0-6" value={inp.day} onChange={(e) => setInline((p) => ({ ...p, [row.employee_id]: { ...p[row.employee_id], day: e.target.value } }))} />
-                          <Input className="w-24 h-7 text-xs" placeholder="reason" value={inp.reason} onChange={(e) => setInline((p) => ({ ...p, [row.employee_id]: { ...p[row.employee_id], reason: e.target.value } }))} />
-                          <Button size="sm" className="h-7 text-xs" onClick={() => recordAllocation(row)}>Save</Button>
-                        </div>
+                      {!canCompute ? (
+                        "—"
+                      ) : (
+                        <>
+                          {row.assigned_day == null && !inp && (
+                            <Button size="sm" variant="outline" onClick={() => setInline((p) => ({ ...p, [row.employee_id]: { day: "", reason: "" } }))}>
+                              Record
+                            </Button>
+                          )}
+                          {inp && (
+                            <div className="flex gap-1 items-center">
+                              <Input className="w-14 h-7 text-xs" type="number" min={0} max={6} placeholder="0-6" value={inp.day} onChange={(e) => setInline((p) => ({ ...p, [row.employee_id]: { ...p[row.employee_id], day: e.target.value } }))} />
+                              <Input className="w-24 h-7 text-xs" placeholder="reason" value={inp.reason} onChange={(e) => setInline((p) => ({ ...p, [row.employee_id]: { ...p[row.employee_id], reason: e.target.value } }))} />
+                              <Button size="sm" className="h-7 text-xs" onClick={() => recordAllocation(row)}>Save</Button>
+                            </div>
+                          )}
+                        </>
                       )}
                     </td>
                   </tr>

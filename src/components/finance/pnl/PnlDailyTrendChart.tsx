@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePnlDailyTrend, type DailyTrendSeriesMeta } from "@/hooks/usePnlDailyTrend";
+import { pnlLabel } from "./pnlLabels";
 
 /**
  * Revenue against cost, day by day.
@@ -119,11 +120,11 @@ export function PnlDailyTrendChart({ period, branchId }: { period: string; branc
               <thead className="sticky top-0 bg-white">
                 <tr className="border-b border-slate-200 text-left text-slate-500">
                   <th className="py-2 pr-3 font-semibold uppercase tracking-wide">Date</th>
-                  <th className="py-2 pr-3 text-right font-semibold uppercase tracking-wide">Revenue</th>
-                  <th className="py-2 pr-3 text-right font-semibold uppercase tracking-wide">GRN cost</th>
-                  <th className="py-2 pr-3 text-right font-semibold uppercase tracking-wide">People cost</th>
+                  <th className="py-2 pr-3 text-right font-semibold uppercase tracking-wide">{pnlLabel("RECOGNISED_REVENUE")}</th>
+                  <th className="py-2 pr-3 text-right font-semibold uppercase tracking-wide">{pnlLabel("INDIRECT_COST")}</th>
+                  <th className="py-2 pr-3 text-right font-semibold uppercase tracking-wide">{pnlLabel("PEOPLE_COST")}</th>
                   <th className="py-2 pr-3 text-right font-semibold uppercase tracking-wide">Headcount</th>
-                  <th className="py-2 text-right font-semibold uppercase tracking-wide">Cum. OP %</th>
+                  <th className="py-2 text-right font-semibold uppercase tracking-wide">Cum. {pnlLabel("OPERATING_MARGIN")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -165,7 +166,7 @@ export function PnlDailyTrendChart({ period, branchId }: { period: string; branc
                         stroke={COLOR.grnCost} strokeWidth={2} dot={false} />
                 )}
                 {visible.peopleCost && (
-                  <Line type="monotone" dataKey="peopleCost" name="People cost (modelled)"
+                  <Line type="monotone" dataKey="peopleCost" name={`${pnlLabel("PEOPLE_COST")} (modelled)`}
                         stroke={COLOR.peopleCost} strokeWidth={2} strokeDasharray="5 3" dot={false} />
                 )}
               </LineChart>

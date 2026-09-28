@@ -186,6 +186,7 @@ describe("decideDerivedItem — grn_request", () => {
     });
     expect(resolveFinanceStageRole).toHaveBeenCalledWith({
       primaryRole: "branch_head", userRoles: ["branch_head"], currentStatus: "submitted", workflow: "grn",
+      grnType: null,
     });
     expect(reviewGrn).toHaveBeenCalledWith(
       "grn-1",

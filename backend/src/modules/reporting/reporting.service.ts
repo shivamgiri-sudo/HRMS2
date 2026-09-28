@@ -175,6 +175,8 @@ const QUERIES: Record<string, Builder> = {
                spl.pf_employer,
                spl.esic_employee,
                spl.esic_employer,
+               -- PT removed from active payroll 2026-09-11 (explicit stakeholder
+               -- decision, company-wide, all states); reads 0 on runs after removal.
                spl.professional_tax,
                spl.tds_amount,
                spl.advance_recovery,
@@ -256,6 +258,8 @@ const QUERIES: Record<string, Builder> = {
                spl.esic_employee,
                spl.esic_employer,
                (spl.esic_employee + spl.esic_employer) AS total_esic,
+               -- PT removed from active payroll 2026-09-11 (explicit stakeholder
+               -- decision, company-wide, all states); reads 0 on runs after removal.
                spl.professional_tax AS pt,
                spl.tds_amount AS tds
              FROM salary_prep_line spl
@@ -371,6 +375,8 @@ const QUERIES: Record<string, Builder> = {
                SUM(spl.pf_employee) AS ytd_pf_employee,
                SUM(spl.pf_employer) AS ytd_pf_employer,
                SUM(spl.esic_employee) AS ytd_esic_employee,
+               -- PT removed from active payroll 2026-09-11 (explicit stakeholder
+               -- decision, company-wide, all states); reads 0 on runs after removal.
                SUM(spl.professional_tax) AS ytd_pt,
                SUM(spl.tds_amount) AS ytd_tds,
                SUM(spl.lwp_deduction) AS ytd_lwp_deduction,
@@ -507,6 +513,9 @@ const QUERIES: Record<string, Builder> = {
                -- NULL (not tracked) keeps the column contract while making it clear
                -- nothing backs them; selecting the invented names threw and this whole
                -- statutory register returned nothing.
+               -- PT additionally removed from active payroll 2026-09-11 (explicit
+               -- stakeholder decision, company-wide, all states) — pt_applicable
+               -- staying NULL is now doubly correct: never modeled, and no longer applicable.
                esi.pf_eligible  AS pf_applicable,
                esi.esi_eligible AS esic_applicable,
                NULL             AS pt_applicable,

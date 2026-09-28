@@ -7,6 +7,7 @@
  */
 
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
+import type { ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
@@ -27,6 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { hrmsApi } from "@/lib/hrmsApi";
+import RosterUploadTracker from "./roster-upload-tracker/RosterUploadTracker";
 import {
   Upload,
   FileSpreadsheet,
@@ -73,11 +75,32 @@ interface ImportBatch {
   branch_id?: string | null;
 }
 
+interface PendingBatch {
+  id: number;
+  status: string;
+  file_name: string;
+  import_mode: "NEW" | "UPDATE";
+  total_rows: number | null;
+  valid_rows: number | null;
+  warning_rows: number | null;
+  error_rows: number | null;
+  branch_id: string | null;
+  branch_name: string | null;
+  process_id: string | null;
+  process_name: string | null;
+  date_range_start: string | null;
+  date_range_end: string | null;
+  created_by: string | null;
+  created_by_email: string | null;
+  created_at: string;
+}
+
 interface ImportRow {
   id: number;
   row_number: number;
   employee_id_raw: string;
   employee_name_raw: string;
+  lob_name?: string | null;
   roster_date: string;
   raw_value: string;
   normalized_type: string;
@@ -265,7 +288,7 @@ function CellEditModal({ row, batchId, onClose }: CellEditModalProps) {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
-export default function RosterImportPage() {
+function RosterUploadWorkspace({ tabBar }: { tabBar: ReactNode }) {
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -286,7 +309,17 @@ export default function RosterImportPage() {
   const cycleId = linkedParams.get("cycleId");
   const [processId, setProcessId] = useState(() => linkedParams.get("processId") ?? "");
   const [importMode, setImportMode] = useState<"NEW" | "UPDATE">("NEW");
-  const [batchId, setBatchId] = useState<number | null>(null);
+  // A batch is normally only ever known to the browser tab that just created it (see upload
+  // mutation below) — there is no "browse pending imports" list yet, so a checker who did not
+  // do the upload themselves has no way to reach a PREVIEW batch to commit it. Opening
+  // /wfm/roster-import?batchId=51 is the interim escape hatch for that maker-checker deadlock
+  // until a real pending-imports list ships.
+  const [batchId, setBatchId] = useState<number | null>(() => {
+    const raw = linkedParams.get("batchId");
+    const parsed = raw ? parseInt(raw, 10) : NaN;
+    return Number.isFinite(parsed) ? parsed : null;
+  });
+  const [openBatchInput, setOpenBatchInput] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [editingRow, setEditingRow] = useState<ImportRow | null>(null);
   const [showMissing, setShowMissing] = useState(false);
@@ -326,6 +359,16 @@ export default function RosterImportPage() {
     enabled: uploadScope === "branch",
   });
   const branches: Branch[] = branchData?.branches ?? [];
+
+  // Pending import batches — every open (uncommitted) batch, from any uploader. Only fetched
+  // while no batch is open, since once one is open this list isn't shown.
+  const { data: pendingData, isLoading: pendingLoading } = useQuery({
+    queryKey: ["roster-import-pending-batches"],
+    queryFn: () =>
+      hrmsApi.get<{ batches: PendingBatch[] }>("/api/wfm/roster-imports"),
+    enabled: !batchId,
+  });
+  const pendingBatches: PendingBatch[] = pendingData?.batches ?? [];
 
   // Current batch
   const { data: batchData, isLoading: batchLoading } = useQuery({
@@ -455,14 +498,14 @@ export default function RosterImportPage() {
   const { employees, sortedDates } = useMemo(() => {
     const empMap = new Map<
       string,
-      { name: string; dates: Map<string, ImportRow> }
+      { name: string; lobName: string | null; dates: Map<string, ImportRow> }
     >();
     const dateSet = new Set<string>();
 
     for (const row of allRows) {
       const key = row.employee_id_raw || `__row_${row.row_number}`;
       if (!empMap.has(key)) {
-        empMap.set(key, { name: row.employee_name_raw || key, dates: new Map() });
+        empMap.set(key, { name: row.employee_name_raw || key, lobName: row.lob_name ?? null, dates: new Map() });
       }
       empMap.get(key)!.dates.set(row.roster_date, row);
       dateSet.add(row.roster_date);
@@ -472,6 +515,7 @@ export default function RosterImportPage() {
     const employees = Array.from(empMap.entries()).map(([id, v]) => ({
       id,
       name: v.name,
+      lobName: v.lobName,
       dates: v.dates,
     }));
 
@@ -551,6 +595,8 @@ export default function RosterImportPage() {
   return (
     <DashboardLayout>
       <div className="p-6 max-w-full space-y-5">
+
+        {tabBar}
 
         {/* Header */}
         <div className="rounded-xl bg-gradient-to-r from-slate-800 to-slate-700 text-white p-6">
@@ -645,6 +691,95 @@ export default function RosterImportPage() {
             </Button>
           )}
         </div>
+
+        {/* Pending imports — every open (uncommitted) batch from any uploader, so a checker who
+            did not do the upload themselves (or the uploader who lost track of the tab) can find
+            and open it. Previously there was no way to discover a batch's id at all except
+            knowing it in advance; found live 2026-09-11 with 3 real batches sitting invisible. */}
+        {!batchId && (
+          <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200">
+              <span className="text-sm font-semibold text-slate-700">Pending imports (not yet committed)</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2"
+                onClick={() => qc.invalidateQueries({ queryKey: ["roster-import-pending-batches"] })}
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+            {pendingLoading ? (
+              <div className="p-3 text-sm text-slate-400">Loading…</div>
+            ) : pendingBatches.length === 0 ? (
+              <div className="p-3 text-sm text-slate-400">No pending imports right now.</div>
+            ) : (
+              <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
+                {pendingBatches.map((b) => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    className="w-full text-left px-3 py-2 hover:bg-slate-100 flex items-center justify-between gap-3"
+                    onClick={() => {
+                      const url = new URL(window.location.href);
+                      url.searchParams.set("batchId", String(b.id));
+                      window.history.replaceState(null, "", url.toString());
+                      setBatchId(b.id);
+                    }}
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-slate-800 truncate">
+                        {b.file_name} <span className="text-slate-400 font-normal">#{b.id}</span>
+                      </div>
+                      <div className="text-xs text-slate-500 truncate">
+                        {b.branch_name ?? b.process_name ?? "—"} · {b.date_range_start ?? "?"}–{b.date_range_end ?? "?"} · uploaded by{" "}
+                        {b.created_by_email ?? b.created_by ?? "unknown"}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant="outline" className="text-xs">{b.status}</Badge>
+                      {(b.error_rows ?? 0) > 0 && (
+                        <Badge variant="destructive" className="text-xs">{b.error_rows} errors</Badge>
+                      )}
+                      {(b.warning_rows ?? 0) > 0 && (b.error_rows ?? 0) === 0 && (
+                        <Badge className="text-xs bg-amber-100 text-amber-700 hover:bg-amber-100">{b.warning_rows} warnings</Badge>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* Fallback: open by id directly, in case a batch is somehow outside this list's
+                default status filter (e.g. a status this list doesn't default to showing). */}
+            <div className="flex items-center gap-2 px-3 py-2 border-t border-slate-200">
+              <span className="text-xs text-slate-500 whitespace-nowrap">Or open by ID:</span>
+              <Input
+                value={openBatchInput}
+                onChange={(e) => setOpenBatchInput(e.target.value)}
+                placeholder="e.g. 51"
+                className="h-7 w-24 text-xs"
+                inputMode="numeric"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                disabled={!openBatchInput.trim()}
+                onClick={() => {
+                  const parsed = parseInt(openBatchInput, 10);
+                  if (Number.isFinite(parsed)) {
+                    const url = new URL(window.location.href);
+                    url.searchParams.set("batchId", String(parsed));
+                    window.history.replaceState(null, "", url.toString());
+                    setBatchId(parsed);
+                  }
+                }}
+              >
+                Open
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Drop zone */}
         {!batchId && (
@@ -944,6 +1079,7 @@ export default function RosterImportPage() {
                             {emp.name}
                           </p>
                           <p className="text-slate-400 font-mono text-[10px]">{emp.id}</p>
+                          <p className="text-[10px] text-slate-500">LOB: {emp.lobName ?? <span className="text-slate-400">Unassigned</span>}</p>
                           {nightCnt > 0 && (
                             <span className="inline-flex items-center gap-0.5 text-amber-700 text-[10px]">
                               <Moon className="h-2.5 w-2.5" /> {nightCnt}d night
@@ -1067,4 +1203,58 @@ export default function RosterImportPage() {
       </div>
     </DashboardLayout>
   );
+}
+
+type PageTab = "upload" | "tracker";
+
+/** Upload workspace plus the weekly Upload tracker; ?tab=tracker opens the tracker directly. */
+export default function RosterImportPage() {
+  const [tab, setTab] = useState<PageTab>(() =>
+    new URLSearchParams(window.location.search).get("tab") === "tracker" ? "tracker" : "upload",
+  );
+
+  const choose = (next: PageTab) => {
+    setTab(next);
+    const url = new URL(window.location.href);
+    if (next === "tracker") url.searchParams.set("tab", "tracker"); else url.searchParams.delete("tab");
+    window.history.replaceState(null, "", url);
+  };
+
+  const tabBar = (
+    <div role="tablist" aria-label="Roster import views" className="flex gap-1 border-b">
+      {([["upload", "Upload roster"], ["tracker", "Upload tracker"]] as const).map(([value, label]) => (
+        <button
+          key={value}
+          type="button"
+          role="tab"
+          aria-selected={tab === value}
+          onClick={() => choose(value)}
+          className={`-mb-px min-h-[40px] border-b-2 px-4 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 ${
+            tab === value ? "border-blue-600 text-slate-900" : "border-transparent text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (tab === "tracker") {
+    return (
+      <DashboardLayout>
+        <div className="p-6 max-w-full space-y-5">
+          {tabBar}
+          <div>
+            <p className="text-xs font-semibold tracking-widest uppercase text-slate-500 mb-1">WFM · ROSTER IMPORT</p>
+            <h1 className="text-2xl font-bold text-slate-900">Roster Upload Tracker</h1>
+            <p className="text-sm text-slate-600">
+              Every process uploads its roster for the week starting Monday by the Sunday before, 18:00 IST.
+            </p>
+          </div>
+          <RosterUploadTracker />
+        </div>
+      </DashboardLayout>
+    );
+  }
+  return <RosterUploadWorkspace tabBar={tabBar} />;
 }

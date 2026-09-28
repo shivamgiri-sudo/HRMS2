@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Mail, MessageSquare, MessagesSquare, CheckCircle2, XCircle,
-  Loader2, Eye, EyeOff, Settings2,
+  Loader2, Eye, EyeOff, Settings2, OctagonAlert,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -23,7 +24,7 @@ import { formatIST } from "@/lib/utils";
 
 type Channel = "email" | "sms" | "whatsapp";
 type EmailProviderType = "nodemailer" | "sendgrid" | "mailgun" | "local-email-tool";
-type SMSProviderType = "twilio" | "msg91" | "local-sms-tool";
+type SMSProviderType = "twilio" | "msg91" | "smartping" | "local-sms-tool";
 type WAProviderType = "twilio" | "meta" | "local-whatsapp-tool";
 
 interface ChannelConfig {
@@ -32,6 +33,10 @@ interface ChannelConfig {
   provider_type: string;
   config_json: Record<string, any>;
   is_enabled: boolean;
+  /** The actual kill switch — is_enabled only chooses DB vs env credentials, not whether the
+   *  channel sends at all. See send-block.ts. */
+  send_blocked: boolean;
+  block_reason: string | null;
   test_ok: boolean | null;
   test_error: string | null;
   test_at: string | null;
@@ -71,10 +76,98 @@ function SecretInput({
 }
 
 function StatusBadge({ config }: { config: ChannelConfig }) {
+  if (config.send_blocked) return <Badge variant="destructive">Paused</Badge>;
   if (!config.is_enabled) return <Badge variant="secondary">Disabled</Badge>;
   if (config.test_ok === null) return <Badge variant="outline" className="border-slate-300">Not Tested</Badge>;
   if (config.test_ok) return <Badge className="bg-green-100 text-green-800 hover:bg-green-100">Connected ✓</Badge>;
   return <Badge variant="destructive">Connection Failed</Badge>;
+}
+
+// ── Emergency Stop — the genuine kill switch, distinct from the Enabled/Disabled Switch above
+// (which only chooses DB-stored vs env-var credentials and does not itself stop a send). This
+// one is enforced in providerFactory: paused, every send for this channel resolves as a failure
+// with no network call attempted, from any of the app's send paths.
+function EmergencyStopControl({
+  channel, cfg, onBlock, onUnblock, pending,
+}: {
+  channel: Channel;
+  cfg: ChannelConfig;
+  onBlock: (reason: string) => void;
+  onUnblock: () => void;
+  pending: boolean;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [reason, setReason] = useState("");
+
+  if (cfg.send_blocked) {
+    return (
+      <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-2">
+        <div className="flex items-center gap-2 text-sm font-semibold text-red-800">
+          <OctagonAlert className="h-4 w-4" /> {channel} sending is paused
+        </div>
+        {cfg.block_reason && (
+          <p className="text-sm text-red-700">Reason: {cfg.block_reason}</p>
+        )}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onUnblock}
+          disabled={pending}
+          className="border-red-300 text-red-800 hover:bg-red-100"
+        >
+          {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+          Resume {channel} sending
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-slate-700">Emergency stop</p>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Actually stops every {channel} send immediately, regardless of provider or credentials —
+            unlike Enabled/Disabled above, which only chooses where credentials come from.
+          </p>
+        </div>
+        {!confirming && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setConfirming(true)}
+            className="shrink-0 border-red-300 text-red-700 hover:bg-red-50"
+          >
+            Pause
+          </Button>
+        )}
+      </div>
+      {confirming && (
+        <div className="space-y-2">
+          <Textarea
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            placeholder={`Why is ${channel} sending being paused?`}
+            rows={2}
+            className="text-sm"
+          />
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={pending || !reason.trim()}
+              onClick={() => { onBlock(reason.trim()); setConfirming(false); setReason(""); }}
+            >
+              {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+              Confirm pause
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>Cancel</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── EMAIL FORM ─────────────────────────────────────────────────────────────
@@ -333,6 +426,7 @@ function SMSForm({
           <SelectContent>
             <SelectItem value="twilio">Twilio (Global)</SelectItem>
             <SelectItem value="msg91">MSG91 — India (DLT registered)</SelectItem>
+            <SelectItem value="smartping">SmartPing (Sparc) — India (DLT registered)</SelectItem>
             <SelectItem value="local-sms-tool">Custom HTTP Endpoint</SelectItem>
           </SelectContent>
         </Select>
@@ -399,6 +493,45 @@ function SMSForm({
             <strong>India DLT requirement:</strong> Your Sender ID must be registered with TRAI. The DLT Template ID is required for every message.
             Registration takes 1–3 business days.{" "}
             <a href="https://msg91.com/in" target="_blank" rel="noopener noreferrer" className="underline font-medium">Get Auth Key from MSG91 dashboard.</a>
+          </div>
+        </div>
+      )}
+
+      {provider === "smartping" && (
+        <div className="space-y-4">
+          <SecretInput
+            label="Username"
+            value={secrets.smartping_username ?? ""}
+            onChange={s("smartping_username")}
+            placeholder="Your SmartPing (Sparc) username"
+          />
+          <SecretInput
+            label="Password"
+            value={secrets.smartping_password ?? ""}
+            onChange={s("smartping_password")}
+            placeholder="Your SmartPing (Sparc) password"
+          />
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Sender ID <span className="text-slate-400">(DLT registered)</span></Label>
+              <Input
+                value={cfg.smartping_sender_id ?? ""}
+                onChange={e => f("smartping_sender_id")(e.target.value)}
+                placeholder="Ispark"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Entity ID <span className="text-slate-400">(TRAI DLT)</span></Label>
+              <Input
+                value={cfg.smartping_entity_id ?? ""}
+                onChange={e => f("smartping_entity_id")(e.target.value)}
+                placeholder="Your registered TRAI entity ID"
+              />
+            </div>
+          </div>
+          <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
+            <strong>India DLT requirement:</strong> messages are sent against a registered template id, matched exactly — see
+            {" "}<em>event-sms-template-map.ts</em> for which catalogue events have one mapped.
           </div>
         </div>
       )}
@@ -679,7 +812,22 @@ export default function NativeCommunicationConfig() {
 
   const emptyConfig = (ch: Channel): ChannelConfig => ({
     id: "", channel: ch, provider_type: ch === "sms" ? "twilio" : ch === "whatsapp" ? "twilio" : "nodemailer",
-    config_json: {}, is_enabled: false, test_ok: null, test_error: null, test_at: null,
+    config_json: {}, is_enabled: false, send_blocked: false, block_reason: null,
+    test_ok: null, test_error: null, test_at: null,
+  });
+
+  const blockMutation = useMutation({
+    mutationFn: async ({ channel, block, reason }: { channel: Channel; block: boolean; reason?: string }) => {
+      return hrmsApi.post(
+        `/api/communication/config/${channel}/${block ? "block" : "unblock"}`,
+        block ? { reason } : {}
+      );
+    },
+    onSuccess: (_r, { channel, block }) => {
+      toast.success(`${channel} sending ${block ? "paused" : "resumed"}`);
+      qc.invalidateQueries({ queryKey: ["communication-config"] });
+    },
+    onError: (e: any) => toast.error(e.message),
   });
 
   const isSaving = saveMutation.isPending || testMutation.isPending;
@@ -767,6 +915,16 @@ export default function NativeCommunicationConfig() {
                           </span>
                         </div>
                       )}
+
+                      <div className="mt-3">
+                        <EmergencyStopControl
+                          channel={ch.key}
+                          cfg={cfg}
+                          pending={blockMutation.isPending}
+                          onBlock={reason => blockMutation.mutate({ channel: ch.key, block: true, reason })}
+                          onUnblock={() => blockMutation.mutate({ channel: ch.key, block: false })}
+                        />
+                      </div>
                     </CardHeader>
 
                     <CardContent>

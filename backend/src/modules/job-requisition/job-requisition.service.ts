@@ -114,12 +114,163 @@ import { templateService } from "../communication/template.service.js";
 import { env } from "../../config/env.js";
 import { getConfiguredRecipients } from "../it-provisioning/notification-recipients.service.js";
 
-function generateRequisitionCode(): string {
-  const now = new Date();
-  const year = now.getFullYear().toString().slice(-2);
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-  return `REQ-${year}${month}-${random}`;
+function abbreviate(name: string | null | undefined, maxLen = 12): string {
+  if (!name) return "UNK";
+  // Keep only first word, strip non-alphanumeric, title-case
+  const word = name.trim().split(/[\s/_\-]+/)[0]!;
+  const clean = word.replace(/[^a-zA-Z0-9]/g, "");
+  return clean.slice(0, maxLen);
+}
+
+async function generateRequisitionCode(
+  branchId: string | null | undefined,
+  branchName: string | null | undefined,
+  processId: string | null | undefined,
+  processName: string | null | undefined,
+): Promise<string> {
+  const bAbbr = abbreviate(branchName);
+  const pAbbr = abbreviate(processName);
+
+  // Count existing JRs for this branch+process combination to derive sequence
+  let seq = 1;
+  try {
+    const whereClause = branchId && processId
+      ? "branch_id = ? AND process_id = ?"
+      : "branch_name = ? AND process_name = ?";
+    const params = branchId && processId ? [branchId, processId] : [branchName ?? "", processName ?? ""];
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt FROM job_requisition WHERE ${whereClause}`,
+      params
+    );
+    seq = ((rows[0]?.cnt as number) ?? 0) + 1;
+  } catch {
+    // fallback to random suffix if DB count fails
+    return `${bAbbr}-${pAbbr}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
+  }
+  return `${bAbbr}-${pAbbr}-${seq}`;
+}
+
+/**
+ * Read one org_settings key as a de-duplicated list of email addresses.
+ *
+ * Stored in org_settings (the codebase's key/value table — there is no `system_config` table,
+ * despite what the feature plan assumed). Two keys use this: `marketing_team_emails` (the brief's
+ * To line, one editable marketing owner — currently brijesh.kumar@teammas.co.in per 1816) and
+ * `marketing_team_cc_emails` (the fixed Cc list — rajesh.ramachandran@teammas.in,
+ * shivam.giri@teammas.in). An empty list from either key makes that part of the send a no-op, not
+ * an error. Accepts either a JSON array or a bare comma-separated string, because an admin editing
+ * the setting by hand through raw SQL is far more likely to type the latter.
+ */
+async function getEmailListSetting(settingKey: string): Promise<string[]> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT setting_value FROM org_settings WHERE setting_key = ? LIMIT 1`,
+      [settingKey]
+    );
+    const raw = rows[0]?.setting_value as string | null | undefined;
+    if (!raw) return [];
+    const trimmed = raw.trim();
+    let list: string[];
+    if (trimmed.startsWith("[")) {
+      const parsed: unknown = JSON.parse(trimmed);
+      list = Array.isArray(parsed) ? parsed.filter((e): e is string => typeof e === "string") : [];
+    } else {
+      list = trimmed.split(",");
+    }
+    const seen = new Set<string>();
+    for (const raw2 of list) {
+      const email = raw2.trim().toLowerCase();
+      if (email.includes("@")) seen.add(email);
+    }
+    return [...seen];
+  } catch (e: unknown) {
+    console.warn(`[JobRequisition getEmailListSetting:${settingKey}] failed:`, e instanceof Error ? e.message : e);
+    return [];
+  }
+}
+
+/** The brief's To line — the marketing team member who builds the META campaign. */
+/** cost_centre_master.company_name of MAS's own cost centres (the others are IDC and Pikquick). */
+const MAS_COMPANY_NAME = "Mas Callnet India Pvt Ltd";
+
+const getMarketingEmails = () => getEmailListSetting("marketing_team_emails");
+
+/** The brief's fixed Cc list. The requisition's branch head is added on top of this, not stored in it. */
+const getMarketingCcEmails = () => getEmailListSetting("marketing_team_cc_emails");
+
+/**
+ * Official email of the branch head for one requisition's branch, or null.
+ *
+ * Deliberately does NOT fall back to any inferred contact when a branch has no active branch head
+ * assignment — notifyRequisitionRaised's own comment on this file documents why: that inference was
+ * tried once, turned out unreliable (branch_head_assignments then held only 3 seed rows), and
+ * silently emailing the wrong person is worse than emailing one fewer person. Unioned across both
+ * scoping models live in this codebase (see branch-head-approval.service.ts's resolveBranchScope
+ * for the same union), so a branch head assigned via either path is found.
+ */
+async function getBranchHeadEmail(branchName: string | null | undefined): Promise<string | null> {
+  if (!branchName) return null;
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT au.email
+         FROM branch_head_assignments bha
+         JOIN employees e ON e.id = bha.branch_head_id AND e.active_status = 1
+         JOIN auth_user au ON au.id = e.user_id
+        WHERE bha.branch_name = ? AND bha.is_active = TRUE
+        UNION
+       SELECT au2.email
+         FROM user_assignment_scope uas
+         JOIN branch_master bm ON bm.id = uas.branch_id AND bm.branch_name = ?
+         JOIN employees e2 ON e2.user_id = uas.user_id AND e2.active_status = 1
+         JOIN auth_user au2 ON au2.id = e2.user_id
+        WHERE uas.scope_type = 'branch_head'
+        LIMIT 1`,
+      [branchName, branchName]
+    );
+    const email = rows[0]?.email as string | undefined;
+    return email && email.includes("@") ? email.trim() : null;
+  } catch (e: unknown) {
+    // Missing table/column on an older schema, or a bad join, must not block the brief from
+    // sending to its To+fixed-Cc list — the branch head is an addition, not a precondition.
+    console.warn("[JobRequisition getBranchHeadEmail] failed:", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+/**
+ * Escape a DB value before interpolating it into the brief's HTML.
+ *
+ * The brief is assembled as a raw HTML string rather than through templateService, so every
+ * interpolated field is a potential injection point. Designation, skills and location strings are
+ * all originally free-text user input, and marketing mail clients render HTML — an unescaped
+ * `<` in a job description would at best corrupt the layout.
+ */
+function escapeHtml(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Parse a MySQL JSON column that may arrive as an object (mysql2 auto-parses) or a string. */
+function parseJsonArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string");
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function formatInr(value: unknown): string {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n) || n === 0) return "—";
+  return `₹${n.toLocaleString("en-IN")}`;
 }
 
 export const jobRequisitionService = {
@@ -401,7 +552,12 @@ export const jobRequisitionService = {
     requestedByName: string | null
   ): Promise<JobRequisition> {
     const id = randomUUID();
-    const code = generateRequisitionCode();
+    const code = await generateRequisitionCode(
+      input.branch_id,
+      input.branch_name,
+      input.process_id,
+      input.process_name,
+    );
 
     const preferredSourcesJson = input.preferred_sources
       ? JSON.stringify(input.preferred_sources)
@@ -414,8 +570,10 @@ export const jobRequisitionService = {
         salary_min, salary_max, experience_min_years, experience_max_years, education_requirement,
         skills_required, job_description, shift_requirement, rotational_shift, night_shift_required,
         target_joining_date, requisition_validity, priority, requisition_type, business_justification,
-        preferred_sources, internal_posting, requested_by, requested_by_name, approval_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        preferred_sources, internal_posting, requested_by, requested_by_name,
+        bmi_assessment_url, meta_target_age_min, meta_target_age_max, meta_target_locations,
+        meta_target_radius_km, meta_screening_config, approval_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
       [
         id,
         code,
@@ -448,6 +606,12 @@ export const jobRequisitionService = {
         input.internal_posting ? 1 : 0,
         requestedBy,
         requestedByName,
+        input.bmi_assessment_url ?? null,
+        input.meta_target_age_min ?? null,
+        input.meta_target_age_max ?? null,
+        input.meta_target_locations ? JSON.stringify(input.meta_target_locations) : null,
+        input.meta_target_radius_km ?? null,
+        input.meta_screening_config ? JSON.stringify(input.meta_screening_config) : null,
       ]
     );
 
@@ -496,12 +660,23 @@ export const jobRequisitionService = {
       "rotational_shift", "night_shift_required", "target_joining_date", "requisition_validity",
       "priority", "requisition_type", "business_justification", "preferred_sources",
       "internal_posting", "owner_recruiter_id",
+      // META campaign targeting (migration 1810).
+      "bmi_assessment_url", "meta_target_age_min", "meta_target_age_max",
+      "meta_target_locations", "meta_target_radius_km",
+      // META screening config (migration 1829).
+      "meta_screening_config",
     ];
 
     for (const field of allowedFields) {
       if (field in input) {
         const value = input[field];
-        if (field === "preferred_sources" && Array.isArray(value)) {
+        // meta_target_locations is a JSON column like preferred_sources, so it needs the same
+        // stringify treatment. Without it mysql2 would bind a JS array by flattening it into the
+        // placeholder list and the statement would fail on argument count.
+        if ((field === "preferred_sources" || field === "meta_target_locations") && Array.isArray(value)) {
+          sets.push(`${field} = ?`);
+          params.push(JSON.stringify(value));
+        } else if (field === "meta_screening_config" && value !== null && typeof value === "object") {
           sets.push(`${field} = ?`);
           params.push(JSON.stringify(value));
         } else if (field === "rotational_shift" || field === "night_shift_required" || field === "internal_posting") {
@@ -645,6 +820,13 @@ export const jobRequisitionService = {
       action_url: `/recruitment/job-requisition`,
       priority: "high",
     }).catch((e: unknown) => console.warn("[JR notify]", e));
+
+    // META campaign brief to marketing. Fired without awaiting: the approval is already committed
+    // above, and an email failure must not surface as a failed approval to the approver. The
+    // method swallows its own errors too, so this .catch is belt-and-braces.
+    this.notifyMarketingTeam(id).catch((e: unknown) =>
+      console.warn("[JR notifyMarketingTeam]", e)
+    );
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM job_requisition WHERE id = ? LIMIT 1",
@@ -1260,6 +1442,128 @@ export const jobRequisitionService = {
     }
   },
 
+  /**
+   * META campaign brief — sent to the marketing team when a requisition is APPROVED.
+   *
+   * Distinct from notifyRequisitionRaised above in trigger, audience and purpose: that one fires
+   * at raise-time to the branch's HR/Branch Head so they know an approval is pending; this one
+   * fires at approval-time to a global marketing list so they can build the META Lead Gen
+   * campaign. They deliberately do not share the branch_notification_recipient mechanism —
+   * marketing is not a branch-scoped audience, and a per-branch table would mean re-configuring
+   * every branch before the first campaign could run.
+   *
+   * Two independent conditions make this inert rather than noisy:
+   *   - emailService.isConfigured() — same guard as every other sender here. Per
+   *     communication/providers/provider.interface.ts, uncredentialed channels have historically
+   *     produced ~1,800 guaranteed-failed dispatch rows; this refuses to add to that.
+   *   - an empty org_settings.marketing_team_emails, which is how 1811 seeds it.
+   *
+   * Never throws. The caller fires it without awaiting, because a marketing email must not be
+   * able to fail an approval that has already been committed to the database.
+   */
+  async notifyMarketingTeam(requisitionId: string): Promise<void> {
+    try {
+      if (!emailService.isConfigured()) return;
+
+      const recipients = await getMarketingEmails();
+      if (recipients.length === 0) return;
+
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT * FROM job_requisition WHERE id = ? LIMIT 1`,
+        [requisitionId]
+      );
+      const req = rows[0];
+      if (!req) return;
+
+      // Cc = the fixed marketing Cc list (rajesh, shivam) plus this requisition's branch head, if
+      // one is assigned. Deduped against the To list so the marketing owner is never both To and
+      // Cc, and lower-cased so a differently-cased duplicate does not slip through.
+      const toSet = new Set(recipients.map((e) => e.toLowerCase()));
+      const branchHeadEmail = await getBranchHeadEmail(req.branch_name as string | null);
+      const ccList = [...(await getMarketingCcEmails()), ...(branchHeadEmail ? [branchHeadEmail] : [])]
+        .map((e) => e.trim().toLowerCase())
+        .filter((e, i, arr) => e.includes("@") && !toSet.has(e) && arr.indexOf(e) === i);
+
+      const locations = parseJsonArray(req.meta_target_locations);
+      const sources = parseJsonArray(req.preferred_sources);
+      const ageBand =
+        req.meta_target_age_min || req.meta_target_age_max
+          ? `${req.meta_target_age_min ?? "?"}–${req.meta_target_age_max ?? "?"} years`
+          : "Not specified";
+      const salaryBand =
+        req.salary_min || req.salary_max
+          ? `${formatInr(req.salary_min)} – ${formatInr(req.salary_max)}`
+          : "Not specified";
+      const targetDate = req.target_joining_date
+        ? new Date(req.target_joining_date as string).toLocaleDateString("en-IN")
+        : "—";
+      const frontendUrl = process.env.FRONTEND_URL ?? "";
+
+      const row = (label: string, value: string, shaded: boolean) =>
+        `<tr${shaded ? ' style="background:#f1f5f9"' : ""}>` +
+        `<td style="font-weight:bold;width:210px;padding:6px;vertical-align:top">${label}</td>` +
+        `<td style="padding:6px">${value}</td></tr>`;
+
+      const fields: Array<[string, string]> = [
+        ["Requisition ID", `<code>${escapeHtml(req.requisition_code)}</code>`],
+        ["Role / Designation", escapeHtml(req.designation_name)],
+        ["Process", escapeHtml(req.process_name)],
+        ["Branch", escapeHtml(req.branch_name)],
+        ["Headcount Required", escapeHtml(req.requested_headcount)],
+        ["Target Joining Date", escapeHtml(targetDate)],
+        ["Employment Type", escapeHtml(req.employment_type)],
+        ["Salary Range", salaryBand],
+        [
+          "Experience Required",
+          `${escapeHtml(req.experience_min_years ?? 0)}–${escapeHtml(req.experience_max_years ?? 0)} years`,
+        ],
+        ["Education Requirement", escapeHtml(req.education_requirement)],
+        ["Target Age Group", escapeHtml(ageBand)],
+        ["Target Locations", locations.length ? escapeHtml(locations.join(", ")) : "Not specified"],
+        ["Target Radius", req.meta_target_radius_km ? `${escapeHtml(req.meta_target_radius_km)} km` : "—"],
+        ["Skills Required", escapeHtml(req.skills_required)],
+        ["Preferred Sources", sources.length ? escapeHtml(sources.join(", ")) : "—"],
+      ];
+
+      const bmiUrl = req.bmi_assessment_url as string | null;
+      const bmiBlock = bmiUrl
+        ? `<h3 style="color:#1e40af;margin-top:22px">Assessment / BMI Link</h3>
+<p style="margin:0 0 8px">Include this link in the META Lead Ad form:</p>
+<p><a href="${escapeHtml(bmiUrl)}" style="background:#1e40af;color:#fff;padding:8px 16px;text-decoration:none;border-radius:4px;display:inline-block">${escapeHtml(bmiUrl)}</a></p>`
+        : `<p style="margin-top:22px;color:#b45309"><strong>No assessment / BMI link was set on this requisition.</strong> Ask the raiser to add one before the ad goes live if the campaign needs it.</p>`;
+
+      const html = `<html><body style="font-family:Arial,Helvetica,sans-serif;color:#333;line-height:1.5">
+<h2 style="color:#1e40af;margin-bottom:4px">New Recruitment Campaign Brief</h2>
+<p style="margin-top:0;color:#64748b">Requisition ${escapeHtml(req.requisition_code)} has been approved. Details below are ready for a META Lead Gen campaign.</p>
+<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:14px">
+${fields.map(([l, v], i) => row(l, v, i % 2 === 1)).join("\n")}
+</table>
+${bmiBlock}
+<h3 style="color:#1e40af;margin-top:22px">Important Instructions</h3>
+<ol style="padding-left:20px">
+  <li>Create the META campaign and a Lead Gen Form using the details above. Use a <strong>separate Lead Gen Form for this requisition</strong> — one form must feed only one requisition.</li>
+  <li><strong>Add a hidden field named <code>requisition_code</code> to the Lead Gen Form and set its value to <code>${escapeHtml(req.requisition_code)}</code>.</strong> This is what routes every lead back to this requisition automatically — no manual step in HRMS is needed. Set it as a hidden / tracking field so the applicant does not see it.</li>
+  <li><em>Fallback only:</em> if you cannot add a hidden field, open HRMS and link this form's <strong>Lead Gen Form ID</strong> to this requisition on its META panel. Leads from a form with neither the hidden code nor a manual link will sit unrouted until one is added (they are not lost).</li>
+</ol>
+<p style="margin:8px 0 0;font-size:13px;color:#475569"><strong>Routing code for this requisition:</strong> <code style="background:#f1f5f9;padding:2px 6px;border-radius:3px">${escapeHtml(req.requisition_code)}</code></p>
+<p style="margin-top:18px"><a href="${escapeHtml(frontendUrl)}/ats/meta-campaigns" style="color:#1e40af">Open the campaign dashboard in HRMS</a> · <a href="${escapeHtml(frontendUrl)}/ats/meta-leads" style="color:#1e40af">View all captured leads</a></p>
+<p style="font-size:12px;color:#999;margin-top:28px">Auto-generated by MAS PeopleOS on ${new Date().toLocaleString("en-IN")}.</p>
+</body></html>`;
+
+      await emailService.send({
+        to: recipients.join(", "),
+        ...(ccList.length ? { cc: ccList.join(", ") } : {}),
+        subject: `[Campaign Brief] ${req.designation_name} — ${req.branch_name} — ${req.requisition_code}`,
+        html,
+      });
+    } catch (e: unknown) {
+      console.warn(
+        "[JobRequisition notifyMarketingTeam] failed:",
+        e instanceof Error ? e.message : e
+      );
+    }
+  },
+
   async logApprovalAction(
     requisitionId: string,
     step: number,
@@ -1313,16 +1617,52 @@ export const jobRequisitionService = {
 
   /**
    * Get process list for a branch from process_master (for cascading dropdown)
+   *
+   * Only live MAS Callnet processes: a process is listed when it is tied to at least one
+   * open cost centre (active_status = 1, status not 'closed') of MAS_COMPANY_NAME. The tie
+   * is any of:
+   *   - cost_centre_master.process_id = the process;
+   *   - the process_code derived from an unmapped cost centre's code, the way the nightly
+   *     backfillProcessMasterForOrphanedCostCentres() (cost-centre-sync.ts) creates it
+   *     (non-alphanumerics -> "_", upper-cased, first 50 chars). Only when the cost centre
+   *     has no process_id, so the auto-created duplicate of a mapped client is not listed;
+   *   - an active employee of the process sitting on that cost centre (Bella-Vita's staff
+   *     are on the IDAM cost centre, with no direct mapping).
+   *
+   * Owner ruling 2026-09-24: "only mas callnet company process and active process for that
+   * branch". Live that day NOIDA went from 76 listed processes to 18: closed clients
+   * (Spicejet, HDFC LIFE, seven "Boost Media" rows), IDC cost centres (Terrier Security,
+   * GENLEAP) and auto-created duplicates (IDAM / IDAM NATURAL WELLNESS PRIVATE LIMITED)
+   * all dropped out.
    */
   async getProcessesForBranch(branchName: string): Promise<Array<{id: string; process_name: string; process_code: string}>> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT pm.id, pm.process_name, pm.process_code
-       FROM process_master pm
-       JOIN branch_master bm ON bm.id = pm.branch_id
-       WHERE LOWER(TRIM(bm.branch_name)) = LOWER(TRIM(?))
-         AND pm.active_status = 1
-       ORDER BY pm.process_name ASC`,
-      [branchName]
+      `WITH open_cc AS (
+         SELECT id, process_id,
+                LEFT(UPPER(REGEXP_REPLACE(cost_centre_code, '[^A-Za-z0-9]+', '_')), 50) AS derived_code
+           FROM cost_centre_master
+          WHERE company_name = ?
+            AND active_status = 1
+            AND LOWER(COALESCE(status, '')) <> 'closed'
+       ),
+       live_process AS (
+         SELECT process_id AS id FROM open_cc WHERE process_id IS NOT NULL
+         UNION
+         SELECT pm2.id FROM process_master pm2
+           JOIN open_cc oc ON oc.process_id IS NULL AND oc.derived_code = pm2.process_code
+         UNION
+         SELECT e.process_id FROM employees e
+           JOIN open_cc oc ON oc.id = e.cost_centre_id
+          WHERE e.employment_status = 'active' AND e.process_id IS NOT NULL
+       )
+       SELECT pm.id, pm.process_name, pm.process_code
+         FROM process_master pm
+         JOIN branch_master bm ON bm.id = pm.branch_id
+         JOIN live_process lp ON lp.id = pm.id
+        WHERE LOWER(TRIM(bm.branch_name)) = LOWER(TRIM(?))
+          AND pm.active_status = 1
+        ORDER BY pm.process_name ASC`,
+      [MAS_COMPANY_NAME, branchName]
     );
     return rows as Array<{id: string; process_name: string; process_code: string}>;
   },

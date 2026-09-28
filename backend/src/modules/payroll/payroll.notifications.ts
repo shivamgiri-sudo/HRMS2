@@ -124,6 +124,9 @@ export async function notifyPayrollRunStatus(runId: string, newStatus: string): 
 interface PayslipRow extends RowDataPacket {
   employee_id: string;
   employee_code: string | null;
+  employee_name: string | null;
+  process_name: string | null;
+  reporting_manager_name: string | null;
   net_salary: number | null;
   gross_salary: number | null;
   lwp_days: number | null;
@@ -153,9 +156,14 @@ export async function notifyPayslipsReady(runId: string): Promise<{ employees: n
 
     const [lines] = await db.execute<PayslipRow[]>(
       `SELECT spl.employee_id, spl.employee_code, spl.net_salary, spl.gross_salary, spl.lwp_days,
-              e.branch_id, COALESCE(spl.advance_recovery, 0) AS advance_recovery
+              e.branch_id, COALESCE(spl.advance_recovery, 0) AS advance_recovery,
+              COALESCE(NULLIF(TRIM(e.full_name), ''), e.employee_code) AS employee_name,
+              pm.process_name,
+              COALESCE(NULLIF(TRIM(mgr.full_name), ''), mgr.employee_code) AS reporting_manager_name
          FROM salary_prep_line spl
          JOIN employees e ON e.id = spl.employee_id AND e.active_status = 1
+         LEFT JOIN process_master pm ON pm.id = e.process_id
+         LEFT JOIN employees mgr ON mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
         WHERE spl.run_id = ?
         ORDER BY spl.employee_code`,
       [runId],
@@ -174,6 +182,9 @@ export async function notifyPayslipsReady(runId: string): Promise<{ employees: n
           data: {
             run_month: run.run_month,
             employee_code: line.employee_code,
+            employee_name: line.employee_name,
+            process_name: line.process_name,
+            reporting_manager_name: line.reporting_manager_name,
             // analytics strip (catalogue 6.4): net · LOP days
             net_pay: line.net_salary == null ? null : Number(line.net_salary),
             gross_pay: line.gross_salary == null ? null : Number(line.gross_salary),
@@ -203,6 +214,9 @@ export async function notifyPayslipsReady(runId: string): Promise<{ employees: n
             data: {
               run_month: run.run_month,
               employee_code: line.employee_code,
+              employee_name: line.employee_name,
+              process_name: line.process_name,
+              reporting_manager_name: line.reporting_manager_name,
               advance_recovery: Number(line.advance_recovery),
               net_pay: line.net_salary == null ? null : Number(line.net_salary),
             },

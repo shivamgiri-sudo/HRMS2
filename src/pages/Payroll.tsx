@@ -187,7 +187,7 @@ const Payroll = () => {
     page: currentPage,
     limit: currentPageSize,
   }), [monthFilter, currentMonth, currentYear, debouncedSearchQuery, currentStatus, currentBranchId, currentDeptId, currentProcessId, currentPage, currentPageSize]);
-  const { data: recordsPage, isLoading, error: recordsError, isPlaceholderData } = usePayrollRecords(currentMonthFilters);
+  const { data: recordsPage, isLoading, error: recordsError, isPlaceholderData, isError: isRecordsError, refetch: refetchRecords } = usePayrollRecords(currentMonthFilters);
   const currentRecords = recordsPage?.records ?? [];
   const currentTotalItems = recordsPage?.total ?? 0;
   const currentTotalPages = Math.max(1, Math.ceil(currentTotalItems / currentPageSize));
@@ -951,6 +951,19 @@ const Payroll = () => {
             </p>
           </CardContent>
         </Card>
+      </DashboardLayout>
+    );
+  }
+
+  if (isRecordsError) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+          <p className="text-sm text-rose-600 font-semibold">Failed to load data. Please try again.</p>
+          <button onClick={() => refetchRecords()} className="text-sm text-blue-600 underline hover:no-underline">
+            Retry
+          </button>
+        </div>
       </DashboardLayout>
     );
   }

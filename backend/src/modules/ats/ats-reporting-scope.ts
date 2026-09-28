@@ -44,7 +44,9 @@
  * Both must be 0. That is exactly what the backfill prints as its own verification, and
  * re-running it is idempotent.
  */
-export function excludeEmployeeShapedCandidatesSql(candidateAlias: string): string {
+export function excludeEmployeeShapedCandidatesSql(
+  candidateAlias: string,
+): string {
   return `${candidateAlias}.record_type = 'candidate'`;
 }
 
@@ -91,11 +93,85 @@ export function recordTypeDriftSql(): string {
  * Excluded by default and reported, never silently dropped: the count travels in the payload as
  * `summary.excludedOtherEntity` so the dashboard can state what it left out.
  */
-export function excludeOtherEntityCandidatesSql(candidateAlias: string): string {
+export function excludeOtherEntityCandidatesSql(
+  candidateAlias: string,
+): string {
   return `${candidateAlias}.candidate_code NOT LIKE 'IDC%'`;
 }
 
 /** True when a candidate row belongs to a different legal entity than MAS. */
 export function isOtherEntityCandidateCode(code: unknown): boolean {
   return /^IDC/i.test(String(code ?? "").trim());
+}
+
+const SUBMISSION_REOPEN_GRACE_MINUTES = 5;
+
+/**
+ * Excludes candidates the recruiter has already disposed of, from a "still pending" queue.
+ *
+ * `getMyPendingCandidates`/`getOtherRecruitersPendingCandidates` (recruiterInterview.service.ts)
+ * decide "pending" from `ats_candidate.status`/`current_stage` staying in an open value
+ * (Waiting/New/Applied/Screening/Registered). A candidate stays in the queue until their STATUS is
+ * closed — Selected, Rejected, Client Round, Hold, No Show, anything — however many days ago they
+ * walked in.
+ *
+ * The one thing that closes a candidate without touching those columns is the recruiter's own
+ * interview-outcome form:
+ *   `ats_interview_submission` — submitInterviewUpdate() normally sets ats_candidate.status too,
+ *   but a submission row can exist from a prior attempt while a later data fix or retry left status
+ *   behind. Any submission row for the candidate is proof the recruiter's form has been filled in.
+ *
+ * Queue-token states are deliberately NOT resolution signals:
+ *   - 'completed': the walk-in desk marks the token Completed once the candidate has been seen at the
+ *     desk — before the recruiter fills the interview form (walkin-sla.cron.ts treats exactly that
+ *     state as "feedback pending"). Excluding it emptied recruiters' queues (live 2026-09-24).
+ *   - 'no_show': the queue's Mark No-Show button (or its auto sweep) closes the TOKEN without
+ *     updating ats_candidate at all. Excluding on it made ~25 still-Waiting candidates vanish from
+ *     five recruiters' pages (live 2026-09-25) with nobody having recorded a decision. Owner ruling
+ *     2026-09-25 (supersedes 2026-09-24): pendency ends only when the candidate's status is closed,
+ *     including a recorded No Show.
+ * This is a read-side rule — it does not change what either write path stores.
+ *
+ * A submission only resolves the candidate if it is not older than the candidate's last update.
+ * When a candidate is re-opened after a submission (e.g. Rejected, then moved back to Waiting /
+ * "Round 2- Op's"), ats_candidate.updated_at moves past the submission and the candidate must
+ * reappear. Live 2026-09-25: PARIKSHIT KAUSHIK (RAKHI) was hidden by a 09-18 Rejected submission
+ * after being re-opened; 11 re-opened candidates across 7 recruiters were hidden the same way.
+ *
+ * `candidateAlias` must be the ats_candidate alias in the calling query (pass the literal table
+ * name, e.g. "ats_candidate", if the query has no alias).
+ */
+export function excludeResolvedInterviewCandidatesSql(
+  candidateAlias: string,
+): string {
+  return `NOT EXISTS (
+      SELECT 1 FROM ats_interview_submission ais
+       WHERE ais.candidate_id = ${candidateAlias}.id
+         AND ais.submitted_at >= DATE_SUB(${candidateAlias}.updated_at, INTERVAL ${SUBMISSION_REOPEN_GRACE_MINUTES} MINUTE)
+    )`;
+}
+
+/**
+ * Excludes Meta lead-ad candidates who have not registered yet.
+ *
+ * createCandidateFromLead() (meta-campaign.service.ts) inserts an ats_candidate at stage 'Applied'
+ * with status 'Waiting' the moment a lead qualifies — before the person has ever come to a branch.
+ * Owner ruling 2026-09-25: a Meta lead appears in the walk-in queue and on a recruiter's My
+ * Candidates only once they have filled the candidate registration form. Registration is what stamps
+ * profile_status = 'registered' and walk_in_date, and is what issues the queue token; none of those
+ * exist on an unregistered lead (live: 19 Waiting leads, all profile_status NULL, no token, no walk-in
+ * date). Only Social Media candidates are held back — every other source keeps today's behaviour.
+ *
+ * `candidateAlias` must be the ats_candidate alias in the calling query (pass the literal table
+ * name, e.g. "ats_candidate", if the query has no alias).
+ */
+export function excludeUnregisteredLeadCandidatesSql(
+  candidateAlias: string,
+): string {
+  return `NOT (
+      ${candidateAlias}.sourcing_channel = 'Social Media'
+      AND COALESCE(${candidateAlias}.profile_status, '') = ''
+      AND ${candidateAlias}.walk_in_date IS NULL
+      AND NOT EXISTS (SELECT 1 FROM ats_queue_token lqt WHERE lqt.candidate_id = ${candidateAlias}.id)
+    )`;
 }

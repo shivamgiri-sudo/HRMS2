@@ -283,7 +283,7 @@ export function renderAppointmentLetter(d: Record<string, string>, logoUrl: stri
     <p class="body-para">9.6 You are also required to update yourself about Code of Conduct guidelines, company policies and procedures as framed and changed by company from time to time in the light of changing business scenarios. Any Violation of the above terms and any other Code of Conduct guidelines or Company policies and procedures would result in immediate termination of service without any notice or warning or compensation in lieu thereof.</p>
     <p class="body-para">9.7 In case any declaration or particulars given by you in your application for employment is found to be wrong or you are found to have willfully suppressed any material information, this appointment will be liable to termination without any notice or compensation in lieu thereof.</p>
     <p class="body-para">All terms and conditions will be governed by the Company's policies as stated from time to time and the company may in its sole discretion as it deems fit revoke or change such Policies.</p>
-    <p class="body-para">The terms of this offer shall be kept strictly confidential. You shall execute all the documents as indicated in Annexure-I so as to give effect to this offer.</p>
+    <p class="body-para">The terms of this offer shall be kept strictly confidential.</p>
     <p class="body-para">Please return the duplicate copy of this letter duly signed in token of your having accepted the offer. Please initial each page in acceptance of the terms and conditions set out herein latest by 10 days of the issuance of the letter else this offer stands automatically withdrawn.</p>
     <p class="body-para">We welcome you and wish you every success in your career with Mas Callnet India Pvt. Ltd.</p>
 
@@ -296,43 +296,6 @@ export function renderAppointmentLetter(d: Record<string, string>, logoUrl: stri
     ${footer(d)}
   </div>
 
-  <div class="page">
-    <div class="annexure-title">ANNEXURE-I</div>
-    <div class="annexure-sub">DOCUMENTS/CREDENTIALS/REQUIRED AT THE TIME OF JOINING</div>
-    <ol class="nda-ol">
-      <li>Six recent passport sized photographs.</li>
-      <li>A Copy of updated Curriculum Vitae</li>
-      <li>A Copy of Appointment letter</li>
-      <li>Proof of Address ( Copy of Rent Agreement, Ration Card, Voter's ID card, Driving License, Electricity Bill, Landline Bill)</li>
-      <li>Secondary School Certificate (10th) / 10th Mark sheet</li>
-      <li>Senior Secondary School Certificate (12th)/ 12th Mark sheet</li>
-      <li>Bachelor's Degree, All yrs. Mark sheet / Graduation degree certificate/ diploma/ Certification Course</li>
-      <li>Post Graduation Certificate.</li>
-      <li>Additional Qualification</li>
-      <li>Proof of Identity ( Copy of passport/ driving license/ voter's ID card/ bank pass book with photo/ pan card)</li>
-      <li>Appointment Letter of Last Organization Served.</li>
-      <li>Last Pay Slip drawn</li>
-      <li>Form 16 (1) (Pertaining to Tax deducted at source) from the previous or salary certificate.</li>
-    </ol>
-    <div class="annexure-sub">DOCUMENTS TO BE DULY FILLED AND SIGNED AT THE TIME OF JOINING</div>
-    <ol class="nda-ol">
-      <li>Employee's Record Form</li>
-      <li>Code of Conduct</li>
-      <li>Phone Undertaking/Asset Undertaking</li>
-      <li>ESI Form</li>
-      <li>EPF Form</li>
-    </ol>
-    <div class="annexure-sub" style="text-decoration:underline">INFORMATION REQUIRED FOR TRANSFERRING PROVIDENT FUND/ SUPERANNUATION FROM PREVIOUS COMPANY</div>
-    <p class="body-para">If already a member of a Provident Fund (PF)/ Superannuation Scheme with Previous employer,</p>
-    <ol class="nda-ol">
-      <li>Employer's name</li>
-      <li>Date of Joining and leaving service with them</li>
-      <li>Name and address of the PF/ Superannuation Trust or the Regional Provident Fund</li>
-      <li>Personal PF/ Superannuation Account No.</li>
-      <li>Social Security No. (SSN) if allotted</li>
-    </ol>
-    ${footer(d)}
-  </div>
   </body></html>`;
 }
 

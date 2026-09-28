@@ -8,7 +8,7 @@ import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from '../modules/reportin
 
 const WORKER_NAME = 'report-email-delivery';
 const INTERVAL_MS = 30_000;
-const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024; // 20 MB
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // 25 MB (Gmail hard limit)
 
 // Retry delays in minutes for each attempt number
 const RETRY_DELAYS_MINUTES = [0, 5, 30, 120];

@@ -16,15 +16,16 @@ import { useWorkforceAccess } from "@/hooks/useUserRole";
 /**
  * Mirrors ESI_ROLES in backend/src/modules/payroll/esi-reg-docs.routes.ts.
  *
- * The tab is hidden rather than shown-and-broken. The page itself admits a wider set of payroll
- * roles because its other four tabs serve them, but every ESI endpoint refuses anyone outside this
- * list — so payroll_hr and payroll users were being offered a tab whose every button returned 403.
- * Hiding it removes a control that never worked; it takes nothing away that anyone could use.
+ * payroll_hr is now granted there, so the tab is shown to it again. The earlier note here said
+ * payroll_hr was "being offered a tab whose every button returned 403" and hid it — correct at the
+ * time, but it treated the symptom: Payroll HR is the role that actually performs ESI registration,
+ * so the answer was to grant the API, not to hide the control. Owner confirmed 2026-09-08 that
+ * Payroll HR and the Payroll Head are the two who need this.
  *
  * The backend guard remains the security boundary. This only stops the UI advertising access the
- * API does not grant.
+ * API does not grant, so the two lists must be changed together.
  */
-const ESI_TAB_ROLES = ["payroll_branch", "payroll_head", "super_admin"];
+const ESI_TAB_ROLES = ["payroll", "payroll_hr", "payroll_branch", "payroll_head", "super_admin"];
 
 export default function PfManagement() {
   const [searchParams, setSearchParams] = useSearchParams();

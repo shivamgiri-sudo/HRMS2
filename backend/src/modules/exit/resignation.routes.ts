@@ -65,6 +65,12 @@ resignationRouter.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const userId = req.authUser!.id;
     const isPrivileged = await hasRole(userId, "admin", "hr", "manager");
+    // See the equivalent block in exit.routes.ts POST / — initiated_by is derived from the
+    // caller's roles, not accepted from the body, so an exit raised on someone else's behalf
+    // is recorded as such instead of masquerading as a self-resignation.
+    (req as unknown as { exitInitiatedBy?: string }).exitInitiatedBy = !isPrivileged
+      ? "employee"
+      : (await hasRole(userId, "admin", "hr")) ? "hr" : "manager";
     if (!isPrivileged) {
       const emp = await getEmployeeForUser(userId);
       if (!emp) {

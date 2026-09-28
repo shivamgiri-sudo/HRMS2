@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { Button } from '@/components/ui/button';
-import { Printer, Download } from 'lucide-react';
+import { Printer, Download, MapPin, Send, CheckCircle, XCircle, Clock } from 'lucide-react';
 import { formatISTDate, formatISTTime } from '@/lib/utils';
 import QRCode from 'qrcode';
 import { downloadBGVReportPDF, fetchDigilockerPhotoBase64, qualificationRow } from '@/lib/bgvReportPdfGenerator';
@@ -17,6 +17,18 @@ export default function NativeBGVReportView() {
   // Not every candidate has completed DigiLocker, so this can stay undefined
   // with no error shown — the photo block simply doesn't render.
   const [digilockerPhoto, setDigilockerPhoto] = useState<string | undefined>(undefined);
+  const [addrVerif, setAddrVerif] = useState<any[]>([]);
+  const [addrMeta, setAddrMeta] = useState<{ totalAttempts: number; maxAttempts: number; attemptsLeft: number } | null>(null);
+  const [sendingLink, setSendingLink] = useState(false);
+
+  const loadAddrVerif = useCallback(async () => {
+    if (!candidateId) return;
+    try {
+      const r = await hrmsApi.get<any>(`/api/bgv/address-verification/result/${candidateId}`);
+      setAddrVerif(r.data?.data ?? []);
+      setAddrMeta(r.data?.meta ?? null);
+    } catch { /* non-critical */ }
+  }, [candidateId]);
 
   useEffect(() => {
     if (!candidateId) return;
@@ -25,10 +37,10 @@ export default function NativeBGVReportView() {
         const res = await hrmsApi.get<any>(`/api/ats/bgv/report/full?candidateId=${candidateId}`);
         setData(res.data);
 
-        // Generate QR code
+        // Generate QR code pointing to this report's URL so scanning opens it in a browser.
         if (res.data?.report) {
-          const qrData = `BGV-${res.data.report.candidate_id}-${res.data.report.completed_at || new Date().toISOString()}`;
-          const qr = await QRCode.toDataURL(qrData, { width: 200, margin: 1 });
+          const reportUrl = `${window.location.origin}/bgv-report-view/${res.data.report.candidate_id}`;
+          const qr = await QRCode.toDataURL(reportUrl, { width: 200, margin: 1 });
           setQrCodeUrl(qr);
         }
       } catch (e: any) {
@@ -39,7 +51,8 @@ export default function NativeBGVReportView() {
     };
     void load();
     void fetchDigilockerPhotoBase64(candidateId).then(setDigilockerPhoto);
-  }, [candidateId]);
+    void loadAddrVerif();
+  }, [candidateId, loadAddrVerif]);
 
   const handlePrint = () => {
     window.print();
@@ -81,11 +94,90 @@ export default function NativeBGVReportView() {
   const reportDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const reportId = `BGV-${report.candidate_code}-${reportDate}`;
 
+  // Build per-category best status from API checks (same normalization as the backend).
+  // Falls back to the manual *_status field on the report for categories with no API check.
+  const checkNorm: Record<string, string> = {
+    aadhaar_offline: 'aadhaar', address_doc: 'address',
+    education_doc: 'education', court: 'criminal', experience: 'employment',
+  };
+  const precedence: Record<string, number> = { verified: 4, waived: 3, manual_review: 2, mismatch: 1, failed: 1, partial: 1 };
+  const bestCheckStatus = new Map<string, string>();
+  for (const c of bgvChecks as any[]) {
+    const norm = checkNorm[c.check_type] ?? c.check_type;
+    const inc = precedence[c.status] ?? 0;
+    const ex = precedence[bestCheckStatus.get(norm) ?? ''] ?? -1;
+    if (inc > ex) bestCheckStatus.set(norm, c.status);
+  }
+  // Fold in manual statuses for categories not covered by an API check
+  const manualMap: Record<string, string | undefined> = {
+    aadhaar: report.aadhaar_status, pan: report.pan_status, bank: report.bank_status,
+    education: report.education_status, employment: report.employment_status,
+    address: report.address_status, criminal: report.criminal_status,
+  };
+  for (const [cat, val] of Object.entries(manualMap)) {
+    if (bestCheckStatus.has(cat)) continue;
+    if (val === 'passed') bestCheckStatus.set(cat, 'verified');
+    else if (val === 'failed') bestCheckStatus.set(cat, 'failed');
+    else if (val === 'partial') bestCheckStatus.set(cat, 'partial');
+  }
+  const digilockerClear = bestCheckStatus.get('digilocker') === 'verified' || bestCheckStatus.get('digilocker') === 'waived';
+  const isClearCat = (t: string) => { const s = bestCheckStatus.get(t); return s === 'verified' || s === 'waived'; };
+  const isHalfCat = (t: string) => bestCheckStatus.get(t) === 'partial';
+
+  // Derive denominator and inclusion flags from offer/experience data
+  const expYears = parseFloat(String(experience?.experience_year ?? '0'));
+  const expText = String(experience?.working_experience ?? '').toLowerCase();
+  const isFresherDerived = !expYears && (!expText || expText === 'fresher' || expText === 'no' || expText === '0');
+  const includeEmployment = !isFresherDerived;
+  const denominator = 80 + (includeEmployment ? 10 : 0);
+
+  type ScoreRow = { label: string; weight: number; earned: number; status: string; applicable: boolean };
+  const scoreRows: ScoreRow[] = [
+    {
+      label: 'Aadhaar / Identity', weight: 25,
+      earned: digilockerClear || isClearCat('aadhaar') ? 25 : isHalfCat('aadhaar') ? 12.5 : 0,
+      status: digilockerClear ? 'verified (DigiLocker)' : (bestCheckStatus.get('aadhaar') ?? 'not_run'),
+      applicable: true,
+    },
+    {
+      label: 'PAN', weight: 20,
+      earned: digilockerClear || isClearCat('pan') ? 20 : isHalfCat('pan') ? 10 : 0,
+      status: digilockerClear ? 'verified (DigiLocker)' : (bestCheckStatus.get('pan') ?? 'not_run'),
+      applicable: true,
+    },
+    {
+      label: 'Bank Account', weight: 15,
+      earned: isClearCat('bank') ? 15 : isHalfCat('bank') ? 7.5 : 0,
+      status: bestCheckStatus.get('bank') ?? 'not_run',
+      applicable: true,
+    },
+    {
+      label: 'Education', weight: 10,
+      earned: isClearCat('education') ? 10 : isHalfCat('education') ? 5 : 0,
+      status: bestCheckStatus.get('education') ?? 'not_run',
+      applicable: true,
+    },
+    {
+      label: 'Address', weight: 10,
+      earned: isClearCat('address') ? 10 : isHalfCat('address') ? 5 : 0,
+      status: bestCheckStatus.get('address') ?? 'not_run',
+      applicable: true,
+    },
+    {
+      label: 'Employment / Experience', weight: 10,
+      earned: isClearCat('employment') ? 10 : isHalfCat('employment') ? 5 : 0,
+      status: bestCheckStatus.get('employment') ?? 'not_run',
+      applicable: includeEmployment,
+    },
+  ];
+
   const safeText = (value: any) => value || '-';
   const boolText = (value: any) => (value ? 'Yes' : 'No');
 
   const statusColors: Record<string, string> = {
     passed: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+    verified: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+    waived: 'bg-emerald-100 text-emerald-800 border-emerald-300',
     failed: 'bg-red-100 text-red-800 border-red-300',
     partial: 'bg-amber-100 text-amber-800 border-amber-300',
     not_run: 'bg-slate-100 text-slate-600 border-slate-300',
@@ -94,6 +186,8 @@ export default function NativeBGVReportView() {
     negative: 'bg-red-100 text-red-800 border-red-300',
     pending: 'bg-slate-100 text-slate-600 border-slate-300',
     in_progress: 'bg-blue-100 text-blue-800 border-blue-300',
+    pending_review: 'bg-amber-100 text-amber-800 border-amber-300',
+    manual_review: 'bg-amber-100 text-amber-800 border-amber-300',
     validated: 'bg-emerald-100 text-emerald-800 border-emerald-300',
     not_done: 'bg-slate-100 text-slate-600 border-slate-300',
     invalid: 'bg-red-100 text-red-800 border-red-300',
@@ -116,19 +210,31 @@ export default function NativeBGVReportView() {
   const photoCheck = checkDetailMap.get('photo_match');
   const nameMatchCheck = checkDetailMap.get('name_match');
 
+  // Zero and placeholder match values from the API response are not meaningful to display.
+  const cleanMatch = (v: unknown) => {
+    if (!v) return null;
+    const s = String(v).trim();
+    if (!s || s === '0' || s === '0%' || s === '-' || s === 'null') return null;
+    return s;
+  };
+
+  // photo_match "manual_review" means the system flagged for human review, NOT that fraud
+  // was detected. Show it as "Pending HR Review" so HR can act, rather than as a failure badge.
+  const photoStatus = photoCheck?.status === 'manual_review' ? 'pending_review' : photoCheck?.status;
+
   const verificationChecks = [
-    { name: 'Aadhaar Verification', status: report.aadhaar_status, match: report.aadhaar_name_match, remarks: report.aadhaar_remarks, type: 'aadhaar' },
+    { name: 'Aadhaar Verification', status: report.aadhaar_status, match: cleanMatch(report.aadhaar_name_match), remarks: report.aadhaar_remarks, type: 'aadhaar' },
     { name: 'DigiLocker KYC', status: report.digilocker_status || 'not_run', match: null, remarks: report.digilocker_remarks, type: 'digilocker' },
-    { name: 'PAN Verification', status: report.pan_status, match: report.pan_name_match, remarks: report.pan_remarks, type: 'pan' },
-    { name: 'Bank Account Verification', status: report.bank_status, match: report.bank_account_match, remarks: report.bank_remarks, type: 'bank' },
+    { name: 'PAN Verification', status: report.pan_status, match: cleanMatch(report.pan_name_match), remarks: report.pan_remarks, type: 'pan' },
+    { name: 'Bank Account Verification', status: report.bank_status, match: cleanMatch(report.bank_account_match), remarks: report.bank_remarks, type: 'bank' },
     { name: 'Education Verification', status: report.education_status, match: null, remarks: report.education_remarks, type: 'education' },
     { name: 'Employment Verification', status: report.employment_status, match: null, remarks: report.employment_remarks, type: 'employment' },
     { name: 'Address Verification', status: report.address_status, match: null, remarks: report.address_remarks, type: 'address' },
     { name: 'Criminal / Court Records Check', status: report.criminal_status || report.court_status || 'not_run', match: null, remarks: report.criminal_remarks || report.court_remarks, type: 'court' },
-    { name: 'E-Signature Verification', status: report.esignature_status, match: null, remarks: report.esignature_remarks, type: 'esignature' },
+    // E-Signature is a joining document flow, not a BGV check — excluded from this report section
     // Photo match and name reconciliation — internal system checks shown to HR
-    ...(photoCheck ? [{ name: 'Photo Identity Match', status: photoCheck.status, match: null, remarks: photoCheck.result_summary, type: 'photo_match' }] : []),
-    ...(nameMatchCheck ? [{ name: 'Cross-Source Name Match', status: nameMatchCheck.status, match: nameMatchCheck.matched_name ? `${nameMatchCheck.matched_name}${nameMatchCheck.match_score != null ? ` (${nameMatchCheck.match_score}%)` : ''}` : null, remarks: nameMatchCheck.result_summary, type: 'name_match' }] : []),
+    ...(photoCheck ? [{ name: 'Photo Identity Match', status: photoStatus, match: null, remarks: photoCheck.result_summary, type: 'photo_match' }] : []),
+    ...(nameMatchCheck ? [{ name: 'Cross-Source Name Match', status: nameMatchCheck.status, match: nameMatchCheck.matched_name ? `${nameMatchCheck.matched_name}${nameMatchCheck.match_score != null && nameMatchCheck.match_score > 0 ? ` (${nameMatchCheck.match_score}%)` : ''}` : null, remarks: nameMatchCheck.result_summary, type: 'name_match' }] : []),
   ];
 
   return (
@@ -181,6 +287,9 @@ export default function NativeBGVReportView() {
               <div><span className="font-bold">Generated On:</span> {formatISTDate(new Date())} {formatISTTime(new Date())}</div>
               <div><span className="font-bold">Candidate Name:</span> {safeText(report.candidate_name)}</div>
               <div><span className="font-bold">Candidate Code:</span> {safeText(report.candidate_code)}</div>
+              {report.employee_code && (
+                <div><span className="font-bold">Employee Code:</span> {safeText(report.employee_code)}</div>
+              )}
               <div><span className="font-bold">Branch:</span> {safeText(report.branch_name)}</div>
               <div><span className="font-bold">Process / LOB:</span> {safeText(report.process_name)}</div>
               <div><span className="font-bold">Mobile:</span> {safeText(report.mobile)}</div>
@@ -546,8 +655,10 @@ export default function NativeBGVReportView() {
               <tbody>
                 {[
                   ['Photo', report.photo_received],
-                  ['Aadhaar Card', report.aadhaar_received],
-                  ['PAN Card', report.pan_received],
+                  // DigiLocker KYC delivers Aadhaar and PAN digitally — treat them as received
+                  // even if the HR hasn't ticked the physical-receipt checkbox on the report form.
+                  ['Aadhaar Card', report.aadhaar_received || digilockerClear],
+                  ['PAN Card', report.pan_received || digilockerClear],
                   ['Passport', report.passport_received],
                   ['Driving License', report.driving_license_received],
                   ['Education Certificate', report.edu_cert_received],
@@ -556,12 +667,13 @@ export default function NativeBGVReportView() {
                   ['Offer Letter', report.offer_letter_received],
                 ].map(([docType, received], i) => {
                   const doc = documents.find((d: any) => d.doc_type?.toLowerCase().includes((docType as string).toLowerCase().split(' ')[0]));
+                  const isDigilocker = digilockerClear && (docType === 'Aadhaar Card' || docType === 'PAN Card');
                   return (
                     <tr key={i} className="border-b border-slate-200">
-                      <td className="py-2 px-3">{docType}</td>
-                      <td className="py-2 px-3 text-center">{received ? '✓' : '✗'}</td>
-                      <td className="py-2 px-3">{doc?.uploaded_at ? formatISTDate(new Date(doc.uploaded_at)) : '-'}</td>
-                      <td className="py-2 px-3">{safeText(doc?.document_status)}</td>
+                      <td className="py-2 px-3">{docType}{isDigilocker && !report.aadhaar_received && !report.pan_received ? <span className="ml-1 text-xs text-blue-600">(DigiLocker)</span> : null}</td>
+                      <td className="py-2 px-3 text-center text-base">{received ? '✓' : '✗'}</td>
+                      <td className="py-2 px-3">{doc?.uploaded_at ? formatISTDate(new Date(doc.uploaded_at)) : (isDigilocker ? 'Via DigiLocker KYC' : '-')}</td>
+                      <td className="py-2 px-3">{doc?.document_status ? safeText(doc.document_status) : (isDigilocker ? 'verified' : '-')}</td>
                     </tr>
                   );
                 })}
@@ -651,13 +763,172 @@ export default function NativeBGVReportView() {
 
             {/* BGV Score Card */}
             <h3 className="text-lg font-bold text-slate-700 mb-3">BGV Score</h3>
-            <div className={`p-6 rounded-lg mb-6 ${report.bgv_score >= 80 ? 'bg-emerald-500' : report.bgv_score >= 60 ? 'bg-amber-500' : 'bg-red-500'}`}>
+            <div className={`p-6 rounded-lg mb-4 ${report.bgv_score >= 80 ? 'bg-emerald-500' : report.bgv_score >= 60 ? 'bg-amber-500' : 'bg-red-500'}`}>
               <p className="text-4xl font-bold text-white text-center">{report.bgv_score} / 100</p>
             </div>
+
+            {/* Score breakdown — shows exactly which categories contributed and which are pending */}
+            <h3 className="text-base font-bold text-slate-700 mb-2">Score Breakdown</h3>
+            <table className="w-full text-sm border-collapse border border-slate-300 mb-6">
+              <thead>
+                <tr className="bg-slate-100">
+                  <th className="py-2 px-3 text-left border-b border-slate-300">Category</th>
+                  <th className="py-2 px-3 text-center border-b border-slate-300">Weight</th>
+                  <th className="py-2 px-3 text-center border-b border-slate-300">Status</th>
+                  <th className="py-2 px-3 text-center border-b border-slate-300">Points</th>
+                </tr>
+              </thead>
+              <tbody>
+                {scoreRows.map((row) => {
+                  // Normalize weight to /100 scale so totals always read as /100
+                  const normWeight = row.applicable ? Math.round(row.weight / denominator * 100 * 10) / 10 : 0;
+                  const normEarned = row.applicable ? Math.round(row.earned / denominator * 100 * 10) / 10 : 0;
+                  return (
+                  <tr key={row.label} className={`border-b border-slate-200 ${!row.applicable ? 'text-slate-400' : ''}`}>
+                    <td className="py-2 px-3">{row.label}{!row.applicable && <span className="ml-2 text-xs text-slate-400">(N/A)</span>}</td>
+                    <td className="py-2 px-3 text-center">{row.applicable ? normWeight : '—'}</td>
+                    <td className="py-2 px-3 text-center">
+                      {!row.applicable ? '—' : (
+                        <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                          row.status.startsWith('verified') || row.status === 'waived' ? 'bg-emerald-100 text-emerald-800' :
+                          row.status === 'partial' ? 'bg-amber-100 text-amber-800' :
+                          row.status === 'not_run' ? 'bg-slate-100 text-slate-600' :
+                          'bg-red-100 text-red-800'
+                        }`}>{row.status}</span>
+                      )}
+                    </td>
+                    <td className={`py-2 px-3 text-center font-semibold ${row.applicable && normEarned === 0 && row.status !== 'not_run' ? 'text-red-600' : row.applicable && normEarned === 0 ? 'text-slate-400' : 'text-emerald-700'}`}>
+                      {row.applicable ? `${normEarned}/${normWeight}` : '—'}
+                    </td>
+                  </tr>
+                  );
+                })}
+                <tr className="bg-slate-50 font-bold">
+                  <td className="py-2 px-3">Total</td>
+                  <td className="py-2 px-3 text-center">100</td>
+                  <td className="py-2 px-3 text-center">—</td>
+                  <td className="py-2 px-3 text-center text-slate-800">
+                    {report.bgv_score} / 100
+                  </td>
+                </tr>
+              </tbody>
+            </table>
 
             <div className="mb-6">
               <span className="text-base font-bold mr-3">Overall Status:</span>
               <StatusBadge status={report.overall_status} />
+            </div>
+
+            {/* Address Geo-Selfie Verification Panel (screen only — not printed) */}
+            <div className="print:hidden mb-8">
+              <h3 className="text-lg font-bold text-slate-700 mb-3 flex items-center gap-2">
+                <MapPin className="w-5 h-5 text-blue-500" /> Address Verification (Geo-Selfie)
+              </h3>
+
+              {/* Send link */}
+              <div className="mb-4 flex items-center gap-3 flex-wrap">
+                {addrMeta && (
+                  <span className="text-sm text-slate-600">
+                    Attempts used: <strong>{addrMeta.totalAttempts}/{addrMeta.maxAttempts}</strong>
+                    {addrMeta.attemptsLeft > 0
+                      ? <span className="ml-2 text-slate-500">({addrMeta.attemptsLeft} left)</span>
+                      : <span className="ml-2 text-red-600 font-semibold"> — Max reached</span>}
+                  </span>
+                )}
+                <Button
+                  size="sm"
+                  disabled={sendingLink || (addrMeta?.attemptsLeft === 0 && addrMeta?.totalAttempts >= (addrMeta?.maxAttempts ?? 3))}
+                  onClick={async () => {
+                    setSendingLink(true);
+                    try {
+                      const r = await hrmsApi.post<any>('/api/bgv/address-verification/initiate', { candidateId, forceUnblock: addrMeta?.attemptsLeft === 0 });
+                      const link = r.data?.data?.link;
+                      if (link) {
+                        await navigator.clipboard.writeText(link).catch(() => {});
+                        alert(`Link generated and copied to clipboard:\n\n${link}\n\nSend this to the candidate via WhatsApp or SMS.`);
+                      }
+                      await loadAddrVerif();
+                    } catch (e: any) {
+                      alert(e?.response?.data?.message || 'Failed to generate link');
+                    } finally { setSendingLink(false); }
+                  }}
+                  className="flex items-center gap-2"
+                >
+                  <Send className="w-4 h-4" />
+                  {sendingLink ? 'Generating…' : addrMeta?.attemptsLeft === 0 ? 'Force New Link (HR Override)' : 'Generate & Copy Verification Link'}
+                </Button>
+              </div>
+
+              {/* Results */}
+              {addrVerif.length === 0 ? (
+                <p className="text-sm text-slate-400 italic">No address verification requests sent yet.</p>
+              ) : (
+                <div className="space-y-3">
+                  {addrVerif.map((v: any) => (
+                    <div key={v.id} className={`border rounded-xl p-4 text-sm ${v.status === 'verified' ? 'bg-emerald-50 border-emerald-200' : v.status === 'failed' || v.status === 'expired' ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
+                      <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                        <span className="font-semibold">Attempt {v.attempt_number}</span>
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                          v.status === 'verified' ? 'bg-emerald-500 text-white' :
+                          v.status === 'submitted' ? 'bg-blue-500 text-white' :
+                          v.status === 'pending' ? 'bg-amber-400 text-white' :
+                          'bg-red-500 text-white'
+                        }`}>{v.status.toUpperCase()}</span>
+                        {v.auto_verified === 1 && <span className="text-xs text-emerald-600 font-semibold">✓ Auto-verified ≤10m</span>}
+                      </div>
+
+                      {v.submitted_at && (
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600 mb-2">
+                          <span><strong>Submitted:</strong> {formatISTDate(new Date(v.submitted_at))} {formatISTTime(new Date(v.submitted_at))}</span>
+                          {v.gps_distance_m !== null && <span><strong>GPS Distance:</strong> {Number(v.gps_distance_m).toFixed(1)} m from declared address</span>}
+                          {v.gps_latitude && <span><strong>Coordinates:</strong> <a href={`https://maps.google.com/?q=${v.gps_latitude},${v.gps_longitude}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">{Number(v.gps_latitude).toFixed(5)}, {Number(v.gps_longitude).toFixed(5)}</a></span>}
+                          {v.gps_accuracy_m && <span><strong>GPS Accuracy:</strong> ±{Number(v.gps_accuracy_m).toFixed(0)} m</span>}
+                        </div>
+                      )}
+
+                      {/* HR decision controls */}
+                      {v.status === 'submitted' && !v.hr_decision && (
+                        <div className="flex gap-2 mt-2">
+                          <button
+                            onClick={async () => {
+                              await hrmsApi.patch(`/api/bgv/address-verification/decide/${v.id}`, { decision: 'pass', notes: 'HR reviewed and approved' });
+                              await loadAddrVerif();
+                            }}
+                            className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded-lg font-semibold flex items-center gap-1"
+                          >
+                            <CheckCircle className="w-3.5 h-3.5" /> Pass
+                          </button>
+                          <button
+                            onClick={async () => {
+                              const notes = prompt('Reason for failing this attempt?');
+                              if (notes === null) return;
+                              await hrmsApi.patch(`/api/bgv/address-verification/decide/${v.id}`, { decision: 'fail', notes });
+                              await loadAddrVerif();
+                            }}
+                            className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded-lg font-semibold flex items-center gap-1"
+                          >
+                            <XCircle className="w-3.5 h-3.5" /> Fail
+                          </button>
+                          <button
+                            onClick={async () => {
+                              await hrmsApi.patch(`/api/bgv/address-verification/decide/${v.id}`, { decision: 'review' });
+                              await loadAddrVerif();
+                            }}
+                            className="px-3 py-1 bg-slate-500 hover:bg-slate-600 text-white text-xs rounded-lg font-semibold flex items-center gap-1"
+                          >
+                            <Clock className="w-3.5 h-3.5" /> Need Review
+                          </button>
+                        </div>
+                      )}
+
+                      {v.hr_decision && (
+                        <p className="text-xs text-slate-500 mt-1">HR: {v.hr_decision?.toUpperCase()} by {v.decided_by_name ?? 'HR'} {v.hr_decided_at ? `on ${formatISTDate(new Date(v.hr_decided_at))}` : ''}</p>
+                      )}
+                      {v.hr_notes && <p className="text-xs text-slate-500 italic mt-0.5">"{v.hr_notes}"</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* HR Final Remarks */}
@@ -672,12 +943,14 @@ export default function NativeBGVReportView() {
               <tbody>
                 <tr className="border-b border-slate-200">
                   <td className="py-2 px-3 font-semibold bg-slate-50 w-1/3">Completed By</td>
-                  <td className="py-2 px-3">{completedByName || safeText(report.completed_by)}</td>
+                  <td className="py-2 px-3">{completedByName || safeText(report.completed_by) || <span className="text-slate-400 italic">Not yet finalized</span>}</td>
                 </tr>
                 <tr className="border-b border-slate-200">
                   <td className="py-2 px-3 font-semibold bg-slate-50">Completed At</td>
                   <td className="py-2 px-3">
-                    {report.completed_at ? `${formatISTDate(new Date(report.completed_at))} ${formatISTTime(new Date(report.completed_at))}` : '-'}
+                    {report.completed_at
+                      ? `${formatISTDate(new Date(report.completed_at))} ${formatISTTime(new Date(report.completed_at))}`
+                      : <span className="text-slate-400 italic">Not yet finalized — BGV still in progress</span>}
                   </td>
                 </tr>
                 <tr className="border-b border-slate-200">

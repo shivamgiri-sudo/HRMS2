@@ -32,6 +32,11 @@ export interface KpiScorecardRow {
   actual: number | null;
   rag: "good" | "warn" | "crit" | null;
   trend: Array<{ period: string; value: number | null }>;
+  /**
+   * The counts behind a rate, already descaled by the API. Present only for a
+   * ratio metric whose every day in the window carried its parts.
+   */
+  support?: { numerator: number; denominator: number } | null;
   note?: string;
 }
 
@@ -92,6 +97,16 @@ function KpiCard({ row, onOpen }: { row: KpiScorecardRow; onOpen: () => void }) 
         </span>
         <span className="text-[11px] text-slate-400">of target {formatKpiValue(row.target, row.unit)}</span>
       </div>
+      {/* A rate with no volume beside it is unreadable: 98% of 12 calls and 98% of
+          12,000 are the same number and not the same fact. Shown only when every
+          day in the window carried its parts, so the pair always reconstructs the
+          figure above it rather than covering part of the period. */}
+      {interactive && row.support && (
+        <p className="mt-1 text-[11px] text-slate-500 tabular-nums">
+          {row.support.numerator.toLocaleString("en-IN")} of{" "}
+          {row.support.denominator.toLocaleString("en-IN")}
+        </p>
+      )}
       {!interactive && row.note && (
         <p className="mt-2 text-[11px] text-slate-400 line-clamp-2">{row.note}</p>
       )}

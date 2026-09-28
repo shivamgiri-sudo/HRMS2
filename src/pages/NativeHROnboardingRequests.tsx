@@ -3,11 +3,18 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
+import { parseCtcInput, formatCtcPreview } from '@/lib/ctcParser';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDateLockMin } from '@/hooks/useDateLockMin';
 import { useWorkforceAccess } from '@/hooks/useUserRole';
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { FraudComparisonPanel } from "@/components/ats/FraudComparisonPanel";
+import { fraudReviewState, isBlocking, isUnresolved } from "@/lib/fraudReview";
+import { ReviewRequiredDialog } from "@/components/ats/fraud/ReviewRequiredDialog";
+import { PackageBuilderDialog } from '@/components/payroll/PackageBuilderDialog';
 import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   AlertTriangle,
   Calculator,
@@ -16,11 +23,14 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  ClipboardList,
   Download,
   Eye,
   FileCheck,
+  Filter,
   Loader2,
   Maximize2,
+  MoreVertical,
   RotateCcw,
   RotateCw,
   Search,
@@ -34,6 +44,61 @@ import {
 } from 'lucide-react';
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
+
+interface OfferAuditRow {
+  offer_id: string;
+  status: 'draft' | 'submitted' | 'bh_approved' | 'bh_rejected' | string;
+  candidate_name: string;
+  candidate_code: string;
+  candidate_email?: string;
+  candidate_mobile?: string;
+  branch_name?: string;
+  branch_id?: string;
+  emp_type?: string;
+  date_of_joining?: string;
+  date_of_salary?: string;
+  profile?: string;
+  cost_centre?: string;
+  cost_centre_name?: string;
+  department_name?: string;
+  designation_name?: string;
+  reporting_manager_name?: string;
+  role_type?: string;
+  kpi?: string;
+  work_status?: string;
+  emp_location_type?: string;
+  home_branch?: string;
+  salary_band?: string;
+  offered_ctc?: number;
+  basic?: number;
+  hra?: number;
+  conveyance?: number;
+  da?: number;
+  special_allowance?: number;
+  other_allowance?: number;
+  bonus?: number;
+  gross?: number;
+  pf_employee?: number;
+  pf_employer?: number;
+  esic_employee?: number;
+  esic_employer?: number;
+  professional_tax?: number;
+  gratuity?: number;
+  admin_charges?: number;
+  net_in_hand?: number;
+  pli?: number;
+  pay_mode?: string;
+  salary_payment_mode?: string;
+  pf_eligible?: number;
+  esi_eligible?: number;
+  pf_opt_out?: number;
+  esic_opt_out?: number;
+  is_proposed_exception?: number;
+  proposed_exception_reason?: string;
+  submitted_at?: string;
+  offer_created_at?: string;
+  created_by_name?: string;
+}
 
 interface OnboardingRequest {
   id: string;
@@ -49,8 +114,11 @@ interface OnboardingRequest {
   branch_name: string;
   applied_for_process?: string;
   process_name?: string;
+  process_raw?: string;
   offer_id?: string;
   offer_status?: string;
+  offer_date_of_joining?: string | null;
+  offer_date_of_salary?: string | null;
   offered_ctc?: number;
   documents_uploaded?: number;
   bank_verification_status?: string;
@@ -131,7 +199,6 @@ interface SalaryPreview {
   pf_employer: number;
   esic_employee: number;
   esic_employer: number;
-  professional_tax: number;
   net_in_hand: number;
   admin_charges?: number;
 }
@@ -257,11 +324,11 @@ function OfferBadge({ status }: { status?: string }) {
 function ErrorBanner({ message, onRetry }: { message: string | null; onRetry?: () => void }) {
   if (!message) return null;
   return (
-    <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex items-start gap-3">
-      <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+    <div role="alert" className="rounded-[var(--radius-card)] border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-sm text-[#B91C1C] flex items-start gap-3">
+      <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
       <div className="flex-1">
         <p className="font-semibold">{message}</p>
-        {onRetry && <Button type="button" variant="outline" size="sm" onClick={onRetry} className="mt-2 min-h-[44px] bg-white">Retry</Button>}
+        {onRetry && <Button type="button" variant="outline" size="sm" onClick={onRetry} className="mt-2 min-h-[44px] bg-[var(--color-surface)]">Try again</Button>}
       </div>
     </div>
   );
@@ -385,9 +452,10 @@ function SectionCard({ n, label, complete, children }: { n: number; label: strin
 
 export default function NativeHROnboardingRequests() {
   const { user } = useAuth();
+  const dateMin = useDateLockMin();
   const { roleKeys, isLoading: roleLoading } = useWorkforceAccess();
   const role = String((user as any)?.role ?? '').toLowerCase();
-  const allowed = roleKeys.some(k => ['admin', 'super_admin', 'hr', 'manager', 'payroll_hr', 'payroll'].includes(k));
+  const allowed = roleKeys.some(k => ['admin', 'super_admin', 'hr', 'manager', 'payroll_hr', 'payroll_head', 'payroll'].includes(k));
   const canChangePfEsi = roleKeys.some(k => ['payroll_hr', 'admin', 'super_admin', 'hr'].includes(k));
   // Narrower than the general page grant, matching the backend route gate on
   // PATCH .../not-joining — this is a decisive, terminal state change, not
@@ -395,7 +463,7 @@ export default function NativeHROnboardingRequests() {
   const canMarkNotJoining = roleKeys.some(k => ['admin', 'super_admin', 'hr'].includes(k));
 
   // ── Main view tab
-  const [mainTab, setMainTab] = useState<'onboarding' | 'bgv_review'>('onboarding');
+  const [mainTab, setMainTab] = useState<'onboarding' | 'bgv_review' | 'offer_audit'>('onboarding');
 
   // ── BGV Review queue state
   const [bgvQueue, setBgvQueue] = useState<BgvQueueItem[]>([]);
@@ -406,6 +474,17 @@ export default function NativeHROnboardingRequests() {
   const [bgvReviewError, setBgvReviewError] = useState<string | null>(null);
   const [bgvDetailCandidate, setBgvDetailCandidate] = useState<string | null>(null);
   const [bgvDetail, setBgvDetail] = useState<BgvDetailData | null>(null);
+
+  // ── Offer Audit state
+  const [auditRows, setAuditRows] = useState<OfferAuditRow[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditBranch, setAuditBranch] = useState('');
+  const [auditStatus, setAuditStatus] = useState('');
+  const [auditFrom, setAuditFrom] = useState('');
+  const [auditTo, setAuditTo] = useState('');
+  const [auditSelected, setAuditSelected] = useState<OfferAuditRow | null>(null);
 
   // ── List state
   const [rows, setRows] = useState<OnboardingRequest[]>([]);
@@ -431,8 +510,16 @@ export default function NativeHROnboardingRequests() {
   // ── Send appointment letter state
   const [sendLetterLoading, setSendLetterLoading] = useState(false);
   const [sendLetterResult, setSendLetterResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [sendLetterCcEmail, setSendLetterCcEmail] = useState('');
   const [notJoiningId, setNotJoiningId] = useState<string | null>(null);
   const [notJoiningResult, setNotJoiningResult] = useState<{ id: string; ok: boolean; msg: string } | null>(null);
+
+  // ── Change branch state — modal, not inline, since it needs a mandatory reason
+  const [branchModalRow, setBranchModalRow] = useState<OnboardingRequest | null>(null);
+  const [branchModalNewId, setBranchModalNewId] = useState('');
+  const [branchModalReason, setBranchModalReason] = useState('');
+  const [branchChangingId, setBranchChangingId] = useState<string | null>(null);
+  const [branchChangeResult, setBranchChangeResult] = useState<{ id: string; ok: boolean; msg: string } | null>(null);
 
   // ── Detail / selected state
   const [selected, setSelected] = useState<OnboardingRequest | null>(null);
@@ -450,8 +537,17 @@ export default function NativeHROnboardingRequests() {
   // fraudAlertCount: open critical/high alerts for the selected candidate
   // fraudAcknowledged: HR checked "I have reviewed" — unblocks Approve
   // showFraudPanel: controls collapse of the fraud section
+  // fraudStatus: "idle" before check, "loading" during, "ok" on success, "unknown" if check API failed
+  const [fraudStatus, setFraudStatus] = useState<"idle" | "loading" | "ok" | "unknown">("idle");
   const [fraudAlertCount, setFraudAlertCount] = useState(0);
   const [fraudAcknowledged, setFraudAcknowledged] = useState(false);
+  // fraudAnyCount: every alert still waiting for a decision, of any severity.
+  // fraudPanelOpened: the reviewer has actually opened the Fraud & Identity Review section
+  // for this candidate — the photos and documents only appear once it is open.
+  const [fraudAnyCount, setFraudAnyCount] = useState(0);
+  const [fraudPanelOpened, setFraudPanelOpened] = useState(false);
+  const [showReviewDialog, setShowReviewDialog] = useState(false);
+  const fraudSectionRef = useRef<HTMLDivElement>(null);
   const [showFraudPanel, setShowFraudPanel] = useState(false);
 
   // ── Document preview state
@@ -515,6 +611,7 @@ export default function NativeHROnboardingRequests() {
   const [formFieldErrors, setFormFieldErrors] = useState<Record<string, string>>({});
   const [proposedCtc, setProposedCtc] = useState('');
   const [proposedReason, setProposedReason] = useState('');
+  const [showPackageBuilder, setShowPackageBuilder] = useState(false);
 
   // ── Manager search state
   const [managerSearch, setManagerSearch] = useState('');
@@ -541,7 +638,12 @@ export default function NativeHROnboardingRequests() {
 
   // ── Re-filter cost centres when allCostCentres loads or selected changes
   useEffect(() => {
-    if (!selected || !allCostCentres.length) return;
+    if (!selected) return;
+    // An empty list must clear the picker too, or the previous branch's cost centres linger.
+    if (!allCostCentres.length) {
+      setCostCentres([]);
+      return;
+    }
     // Prefer branch_id UUID directly; fall back to name lookup in allBranches
     const branchId = selected.branch_id
       ?? allBranches.find((b: any) =>
@@ -663,6 +765,30 @@ export default function NativeHROnboardingRequests() {
     if (mainTab === 'bgv_review') void loadBgvQueue();
   }, [mainTab, loadBgvQueue]);
 
+  const loadOfferAudit = useCallback(async () => {
+    setAuditLoading(true);
+    setAuditError(null);
+    try {
+      const params = new URLSearchParams();
+      if (auditSearch)  params.set('search',    auditSearch);
+      if (auditBranch)  params.set('branch_name', auditBranch);
+      if (auditStatus)  params.set('status',    auditStatus);
+      if (auditFrom)    params.set('from_date', auditFrom);
+      if (auditTo)      params.set('to_date',   auditTo);
+      const qs = params.toString();
+      const r = await hrmsApi.get<any>(`/api/ats/onboarding/offer-audit${qs ? `?${qs}` : ''}`);
+      setAuditRows(Array.isArray(r) ? r : (r?.data ?? []));
+    } catch (e: any) {
+      setAuditError(e?.message || 'Unable to load offer audit data.');
+    } finally {
+      setAuditLoading(false);
+    }
+  }, [auditSearch, auditBranch, auditStatus, auditFrom, auditTo]);
+
+  useEffect(() => {
+    if (mainTab === 'offer_audit') void loadOfferAudit();
+  }, [mainTab, loadOfferAudit]);
+
   // ── Load full BGV detail for a candidate
   const loadBgvDetail = useCallback(async (candidateId: string) => {
     if (bgvDetailCandidate === candidateId) {
@@ -674,7 +800,16 @@ export default function NativeHROnboardingRequests() {
     setBgvDetail(null);
     try {
       const r = await hrmsApi.get<any>(`/api/ats/bgv/status/${candidateId}`);
-      setBgvDetail((r as BgvDetailData) ?? null);
+      const d = (r?.data ?? r) as Partial<BgvDetailData> | null;
+      setBgvDetail(d ? {
+        checks: d.checks ?? [],
+        documents: d.documents ?? [],
+        bank_verifications: d.bank_verifications ?? [],
+        score: d.score ?? 0,
+        overall_status: d.overall_status ?? "pending",
+        missing_mandatory_checks: d.missing_mandatory_checks ?? [],
+        consent: d.consent ?? null,
+      } : null);
     } catch {
       setBgvDetail(null);
     }
@@ -808,6 +943,45 @@ export default function NativeHROnboardingRequests() {
     }
   }, []);
 
+  // ── Change candidate branch — corrects ats_onboarding_request.branch_id, the
+  // column both the displayed branch and branch-HR queue visibility key off.
+  const openBranchModal = useCallback((row: OnboardingRequest, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setBranchModalReason('');
+    setBranchModalNewId(row.branch_id ?? '');
+    setBranchModalRow(row);
+  }, []);
+
+  const submitBranchChange = useCallback(async () => {
+    const row = branchModalRow;
+    if (!row) return;
+    if (!branchModalNewId) { window.alert('Select a branch.'); return; }
+    if (!branchModalReason.trim()) { window.alert('A reason is required.'); return; }
+    setBranchChangingId(row.candidate_id);
+    setBranchChangeResult(null);
+    setBranchModalRow(null);
+    try {
+      const result: any = await hrmsApi.patch(`/api/ats/onboarding/candidates/${row.candidate_id}/branch`, {
+        branchId: branchModalNewId,
+        reason: branchModalReason.trim(),
+      });
+      const newBranchName = result?.branchName ?? allBranches.find((b: any) => b.id === branchModalNewId)?.branch_name ?? '';
+      setRows((prev) => prev.map((x) => x.candidate_id === row.candidate_id
+        ? { ...x, branch_id: branchModalNewId, branch_name: newBranchName }
+        : x));
+      setSelected((prev) => prev && prev.candidate_id === row.candidate_id
+        ? { ...prev, branch_id: branchModalNewId, branch_name: newBranchName }
+        : prev);
+      setBranchChangeResult({ id: row.candidate_id, ok: true, msg: `${row.full_name}'s branch changed to ${newBranchName}.` });
+      setTimeout(() => setBranchChangeResult(null), 6000);
+    } catch (err: any) {
+      setBranchChangeResult({ id: row.candidate_id, ok: false, msg: err?.message || 'Failed to change branch.' });
+      setTimeout(() => setBranchChangeResult(null), 6000);
+    } finally {
+      setBranchChangingId(null);
+    }
+  }, [branchModalRow, branchModalNewId, branchModalReason, allBranches]);
+
   // ── Load master dropdowns once
   useEffect(() => {
     hrmsApi.get<unknown>('/api/org/departments?active=1').then((r) => setDepartments(masterFrom(r, 'department_name'))).catch(() => setDepartments([]));
@@ -829,7 +1003,7 @@ export default function NativeHROnboardingRequests() {
     hrmsApi.get<unknown>('/api/org/branches')
       .then((r: any) => setAllBranches(r?.data ?? []))
       .catch(() => setAllBranches([]));
-    hrmsApi.get<unknown>('/api/org/cost-centres')
+    hrmsApi.get<unknown>('/api/org/cost-centres?active_status=1&limit=500')
       .then((r: any) => setAllCostCentres(r?.data ?? []))
       .catch(() => setAllCostCentres([]));
   }, []);
@@ -925,15 +1099,28 @@ export default function NativeHROnboardingRequests() {
     setDetailLoading(true);
     setOpenStep(null);
     resetOffer();
+    // A saved (draft / rejected) offer keeps its dates: reopening it must not show blank pickers.
+    if (row.offer_status && !['submitted', 'bh_approved'].includes(row.offer_status)) {
+      setOffer((p) => ({
+        ...p,
+        date_of_joining: String(row.offer_date_of_joining ?? '').slice(0, 10),
+        date_of_salary: String(row.offer_date_of_salary ?? '').slice(0, 10),
+      }));
+    }
     setBgv(null);
     setPushbackRemarks('');
     setReviewError(null);
     setCostCentres([]);  // cleared — useEffect will populate once selected + allBranches/allCostCentres are ready
     setFraudAlertCount(0);
+    setFraudStatus("idle");
     setFraudAcknowledged(false);
+    setFraudAnyCount(0);
+    setFraudPanelOpened(false);
+    setShowReviewDialog(false);
     setShowFraudPanel(false);
     // Load all branch employees upfront for reporting manager dropdown
     void loadManagersByBranch(row.branch_id ?? '');
+    setFraudStatus("loading");
     Promise.allSettled([
       hrmsApi.get<any>(`/api/ats/onboarding-full/candidate/${row.candidate_id}`)
         .then((r: any) => setDetailData(r?.data ?? r))
@@ -944,11 +1131,15 @@ export default function NativeHROnboardingRequests() {
       hrmsApi.get<any>(`/api/ats/fraud-alerts/candidate/${row.candidate_id}`)
         .then((r: any) => {
           const alerts: any[] = r?.alerts ?? [];
-          const blocking = alerts.filter((a: any) => (a.status === 'open' || a.status === 'under_review') && (a.severity === 'critical' || a.severity === 'high'));
+          const blocking = alerts.filter((a: any) => isBlocking(a));
+          const waiting = alerts.filter((a: any) => isUnresolved(a));
           setFraudAlertCount(blocking.length);
-          if (blocking.length > 0) setShowFraudPanel(true);
+          setFraudAnyCount(waiting.length);
+          setFraudStatus("ok");
+          // Anything the system flagged opens the review for the reviewer; nothing flagged leaves it closed.
+          if (waiting.length > 0) setShowFraudPanel(true);
         })
-        .catch(() => setFraudAlertCount(0)),
+        .catch(() => { setFraudAlertCount(0); setFraudStatus("unknown"); }),
     ]).finally(() => setDetailLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadManagersByBranch]);
@@ -960,11 +1151,21 @@ export default function NativeHROnboardingRequests() {
       setFormError('Enter CTC and salary band before calculating salary.');
       return;
     }
+    // See src/lib/ctcParser.ts -- a bare Number() here silently corrupted real offers
+    // (comma-typed "16,500" became 0; period-typed "16.500" became a broken 16.5).
+    const monthlyCtc = parseCtcInput(offer.offered_ctc);
+    if (monthlyCtc === null || monthlyCtc <= 0) {
+      setFormError(`"${offer.offered_ctc}" doesn't look like a valid monthly CTC. Enter digits only, e.g. 16500.`);
+      return;
+    }
     setCalcLoading(true);
     try {
       const r = await hrmsApi.post<{ components?: SalaryPreview }>('/api/ats/onboarding/calculate-salary', {
-        ctc: Number(offer.offered_ctc) * 12,
+        ctc: monthlyCtc * 12,
         bandCode: offer.salary_band,
+        pf_eligible: offer.pf_eligible,
+        esi_eligible: offer.esi_eligible,
+        branch_id: selected?.branch_id ?? null,
       });
       setSalaryPreview(r.components ?? null);
     } catch (e: any) {
@@ -991,7 +1192,6 @@ export default function NativeHROnboardingRequests() {
       pf_employer: Number(pkg.epf_employer ?? pkg.pf_employer ?? 0),
       esic_employee: Number(pkg.esic_employee ?? 0),
       esic_employer: Number(pkg.esic_employer ?? 0),
-      professional_tax: Number(pkg.professional_tax ?? 0),
       net_in_hand: Number(pkg.net_in_hand ?? 0),
       admin_charges: Number(pkg.admin_charges ?? 0),
     });
@@ -1002,16 +1202,34 @@ export default function NativeHROnboardingRequests() {
     const errors: Record<string, string> = {};
     const isProposed = offerTab === 'proposed';
     if (!offer.date_of_joining) errors.date_of_joining = 'Date of joining is required.';
+    if (offer.date_of_salary && offer.date_of_joining && offer.date_of_salary < offer.date_of_joining) {
+      errors.date_of_salary = `Salary start date cannot be before date of joining (${offer.date_of_joining}).`;
+    }
     if (!offer.department_id) errors.department_id = 'Department is required.';
     if (!offer.designation_id) errors.designation_id = 'Designation is required.';
     if (!offer.cost_centre) errors.cost_centre = 'Cost centre is required.';
     if (!offer.reporting_manager_id) errors.reporting_manager_id = 'Reporting manager is required.';
     if (!offer.salary_band) errors.salary_band = 'Salary band is required.';
     if (isProposed) {
-      if (!proposedCtc) errors.proposed_ctc = 'Proposed CTC is required.';
+      // `!proposedCtc` alone only catches an empty field -- the *string* "0"
+      // is truthy in JS, so a candidate could be submitted with a proposed
+      // CTC of zero and no error shown. Checked as a number instead.
+      // parseCtcInput (not bare Number()) so a comma/period-grouped entry like
+      // "16,500" or "16.500" is read correctly instead of silently corrupted --
+      // see src/lib/ctcParser.ts for the exact live incident this closes.
+      const parsedProposed = parseCtcInput(proposedCtc);
+      if (parsedProposed === null || !(parsedProposed > 0)) errors.proposed_ctc = 'Proposed CTC must be greater than zero.';
       if (!proposedReason.trim()) errors.proposed_reason = 'Exception reason is required.';
-    } else if (!offer.offered_ctc) {
-      errors.offered_ctc = 'Package or monthly CTC is required.';
+    } else {
+      const parsedOffered = parseCtcInput(offer.offered_ctc);
+      if (parsedOffered === null || !(parsedOffered > 0)) {
+        // Same truthiness gap as above -- "0" (typed, or left over from a
+        // package whose amount didn't populate) passed this check silently and
+        // produced a ₹0 CTC/gross offer with a negative net-in-hand once
+        // submitted. See ats.onboarding.service.ts saveOffer() for the
+        // matching server-side guard (client validation alone is not enough).
+        errors.offered_ctc = 'Enter a package or a monthly CTC greater than zero.';
+      }
     }
     setFormFieldErrors(errors);
     if (Object.keys(errors).length) {
@@ -1028,7 +1246,9 @@ export default function NativeHROnboardingRequests() {
     setFormError(null);
     try {
       const isProposed = offerTab === 'proposed';
-      const monthlyCtc = isProposed ? Number(proposedCtc) : Number(offer.offered_ctc);
+      // parseCtcInput, not bare Number() -- see src/lib/ctcParser.ts. validateOffer()
+      // above already confirmed this parses to a positive number before we get here.
+      const monthlyCtc = (isProposed ? parseCtcInput(proposedCtc) : parseCtcInput(offer.offered_ctc)) ?? 0;
       await hrmsApi.post(`/api/ats/onboarding/requests/${selected.id}/offer`, {
         ...offer,
         offered_ctc: monthlyCtc * 12,
@@ -1045,10 +1265,32 @@ export default function NativeHROnboardingRequests() {
     }
   };
 
+  // ── Fraud review gate
+  // When the system has flagged anything, the profile cannot be approved until the reviewer has
+  // looked at the review section, recorded a decision on every serious alert and confirmed.
+  // A profile with no flags is not affected. The server enforces the serious-alert part too.
+  useEffect(() => { if (showFraudPanel) setFraudPanelOpened(true); }, [showFraudPanel]);
+  const { needsReview: needsFraudReview, done: fraudReviewDone, pending: fraudReviewPending } = fraudReviewState({
+    anyUnresolved: fraudAnyCount,
+    blocking: fraudAlertCount,
+    opened: fraudPanelOpened,
+    acknowledged: fraudAcknowledged,
+  });
+
+  const openFraudSection = () => {
+    setShowReviewDialog(false);
+    setShowFraudPanel(true);
+    setTimeout(() => fraudSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+  };
+
   // ── Submit review
   const submitReview = async (status: 'approved' | 'hr_review') => {
     if (!selected) return;
     setReviewError(null);
+    if (status === 'approved' && fraudReviewPending) {
+      setShowReviewDialog(true);
+      return;
+    }
     if (status === 'hr_review' && !pushbackRemarks.trim()) {
       setReviewError('Push-back remarks are required.');
       return;
@@ -1220,6 +1462,13 @@ export default function NativeHROnboardingRequests() {
                   </span>
                 )}
               </button>
+              <button
+                type="button"
+                onClick={() => setMainTab('offer_audit')}
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold border-b-2 transition-colors ${mainTab === 'offer_audit' ? 'border-violet-600 text-violet-700' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+              >
+                <ClipboardList className="h-4 w-4" /> Offer Submissions
+              </button>
             </div>
 
             {mainTab === 'onboarding' && (
@@ -1300,6 +1549,43 @@ export default function NativeHROnboardingRequests() {
             </div>
             )}
 
+            {/* ── OFFER AUDIT FILTERS ─────────────────────────────────── */}
+            {mainTab === 'offer_audit' && (
+              <div className="flex flex-wrap gap-2 items-center">
+                <div className="relative w-full sm:w-64">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input value={auditSearch} onChange={(e) => setAuditSearch(e.target.value)} placeholder="Search candidate…" className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" />
+                </div>
+                <select className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" value={auditStatus} onChange={(e) => setAuditStatus(e.target.value)}>
+                  <option value="">All Statuses</option>
+                  <option value="draft">Draft</option>
+                  <option value="submitted">Submitted</option>
+                  <option value="bh_approved">BH Approved</option>
+                  <option value="bh_rejected">BH Rejected</option>
+                </select>
+                <select className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400" value={auditBranch} onChange={(e) => setAuditBranch(e.target.value)}>
+                  <option value="">All Branches</option>
+                  {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+                </select>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-slate-500 shrink-0">From</span>
+                  <input type="date" value={auditFrom} onChange={(e) => setAuditFrom(e.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none" />
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-slate-500 shrink-0">To</span>
+                  <input type="date" value={auditTo} onChange={(e) => setAuditTo(e.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none" />
+                </div>
+                <Button variant="outline" size="sm" onClick={() => void loadOfferAudit()} className="h-9 gap-1.5">
+                  <Filter className="h-3.5 w-3.5" /> Apply
+                </Button>
+                {(auditSearch || auditBranch || auditStatus || auditFrom || auditTo) && (
+                  <button type="button" className="text-xs text-slate-400 hover:text-slate-600 underline" onClick={() => { setAuditSearch(''); setAuditBranch(''); setAuditStatus(''); setAuditFrom(''); setAuditTo(''); }}>
+                    Clear
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* ── BGV REVIEW TAB ──────────────────────────────────────── */}
             {mainTab === 'bgv_review' && (
               <div className="space-y-4">
@@ -1318,7 +1604,7 @@ export default function NativeHROnboardingRequests() {
                     <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
                   </div>
                 )}
-                {bgvQueueError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{bgvQueueError}</div>}
+                {bgvQueueError && <ErrorBanner message={bgvQueueError} onRetry={() => void loadBgvQueue()} />}
                 {!bgvQueueLoading && bgvQueue.length === 0 && !bgvQueueError && (
                   <div className="flex flex-col items-center justify-center rounded-xl border bg-white py-16 text-center">
                     <ShieldCheck className="h-12 w-12 text-emerald-400 mb-3" />
@@ -1577,7 +1863,7 @@ export default function NativeHROnboardingRequests() {
                         <button type="button" onClick={() => { setBgvReviewState(null); setBgvReviewError(null); }}><X className="h-4 w-4 text-slate-400" /></button>
                       </div>
                       <div className="p-5 space-y-4">
-                        {bgvReviewError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{bgvReviewError}</div>}
+                        {bgvReviewError && <ErrorBanner message={bgvReviewError} />}
 
                         <div>
                           <label className="block text-xs font-bold text-slate-600 mb-1.5">Decision</label>
@@ -1631,6 +1917,281 @@ export default function NativeHROnboardingRequests() {
               </div>
             )}
 
+            {/* ── OFFER AUDIT TAB ──────────────────────────────────────── */}
+            {mainTab === 'offer_audit' && (
+              <div className="space-y-4">
+                {auditError && (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{auditError}</div>
+                )}
+                {!auditLoading && auditRows.length > 0 && (
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    <div className="rounded-2xl border border-white/60 bg-white/95 p-4 shadow-sm">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Offers by branch</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {Object.entries(auditRows.reduce<Record<string, number>>((acc, r) => { const k = (r.branch_name || "").trim() || "Not recorded"; acc[k] = (acc[k] ?? 0) + 1; return acc; }, {})).sort((x, y) => y[1] - x[1]).map(([name, n]) => (
+                          <span key={name} className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 text-blue-700 px-2.5 py-1 text-xs font-semibold">{name}<span className="rounded-full bg-white/70 px-1.5 text-[10px] font-bold">{n}</span></span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-white/60 bg-white/95 p-4 shadow-sm">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Offers by Payroll HR (created by)</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {Object.entries(auditRows.reduce<Record<string, number>>((acc, r) => { const k = (r.created_by_name || "").trim() || "Not recorded"; acc[k] = (acc[k] ?? 0) + 1; return acc; }, {})).sort((x, y) => y[1] - x[1]).map(([name, n]) => (
+                          <span key={name} className="inline-flex items-center gap-1.5 rounded-full bg-violet-50 text-violet-700 px-2.5 py-1 text-xs font-semibold">{name}<span className="rounded-full bg-white/70 px-1.5 text-[10px] font-bold">{n}</span></span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {auditLoading ? (
+                  <div className="flex items-center gap-2 py-12 justify-center text-slate-500"><Loader2 className="h-5 w-5 animate-spin" /> Loading offer submissions…</div>
+                ) : auditRows.length === 0 ? (
+                  <div className="rounded-xl border border-slate-100 bg-slate-50 py-16 text-center text-slate-400 text-sm">No offer submissions found.</div>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                    <table className="min-w-full divide-y divide-slate-100 text-sm">
+                      <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                        <tr>
+                          <th className="px-4 py-3 text-left font-bold">Candidate</th>
+                          <th className="px-4 py-3 text-left font-bold">Branch</th>
+                          <th className="px-4 py-3 text-left font-bold">Emp Type</th>
+                          <th className="px-4 py-3 text-left font-bold">DOJ</th>
+                          <th className="px-4 py-3 text-left font-bold">Salary Start</th>
+                          <th className="px-4 py-3 text-left font-bold">Band</th>
+                          <th className="px-4 py-3 text-right font-bold">CTC/mo</th>
+                          <th className="px-4 py-3 text-right font-bold">Gross/mo</th>
+                          <th className="px-4 py-3 text-right font-bold">Net/mo</th>
+                          <th className="px-4 py-3 text-left font-bold">Cost Centre</th>
+                          <th className="px-4 py-3 text-left font-bold">PF</th>
+                          <th className="px-4 py-3 text-left font-bold">ESI</th>
+                          <th className="px-4 py-3 text-left font-bold">Status</th>
+                          <th className="px-4 py-3 text-left font-bold">Created By</th>
+                          <th className="px-4 py-3 text-left font-bold">Offer Created</th>
+                          <th className="px-4 py-3 text-left font-bold">Submitted</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {auditRows.map((row) => {
+                          const fmtDate = (v?: string) => v ? v.slice(0, 10) : '—';
+                          const doJStr = (row.date_of_joining ?? '').slice(0, 10);
+                          const dosStr = (row.date_of_salary ?? '').slice(0, 10);
+                          const dateGap = dosStr && doJStr && dosStr < doJStr;
+                          const statusColor: Record<string, string> = {
+                            bh_approved: 'bg-emerald-100 text-emerald-700',
+                            bh_rejected: 'bg-red-100 text-red-700',
+                            submitted:   'bg-blue-100 text-blue-700',
+                            draft:       'bg-amber-100 text-amber-700',
+                          };
+                          return (
+                            <tr
+                              key={row.offer_id}
+                              className="cursor-pointer hover:bg-violet-50 transition-colors"
+                              onClick={() => setAuditSelected(row)}
+                            >
+                              <td className="px-4 py-3">
+                                <div className="font-semibold text-slate-800">{row.candidate_name}</div>
+                                <div className="text-xs text-slate-400">{row.candidate_code}</div>
+                              </td>
+                              <td className="px-4 py-3 text-slate-600">{row.branch_name ?? '—'}</td>
+                              <td className="px-4 py-3">
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${row.emp_type === 'OnRoll' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>{row.emp_type ?? '—'}</span>
+                              </td>
+                              <td className="px-4 py-3 text-slate-600">{fmtDate(row.date_of_joining)}</td>
+                              <td className="px-4 py-3">
+                                <span className={dateGap ? 'text-red-600 font-semibold' : 'text-slate-600'}>{fmtDate(row.date_of_salary)}</span>
+                                {dateGap && <span className="ml-1 text-[10px] text-red-500">⚠ before DOJ</span>}
+                              </td>
+                              <td className="px-4 py-3 text-slate-600">{row.salary_band ?? '—'}</td>
+                              <td className="px-4 py-3 text-right font-mono text-slate-700">
+                                {row.offered_ctc != null ? `₹${Number(row.offered_ctc).toLocaleString('en-IN')}` : '—'}
+                              </td>
+                              <td className="px-4 py-3 text-right font-mono text-slate-700">
+                                {row.gross != null ? `₹${Number(row.gross).toLocaleString('en-IN')}` : '—'}
+                              </td>
+                              <td className="px-4 py-3 text-right font-mono text-slate-700">
+                                {row.net_in_hand != null ? `₹${Number(row.net_in_hand).toLocaleString('en-IN')}` : '—'}
+                              </td>
+                              <td className="px-4 py-3 text-slate-600 max-w-[160px] truncate">{row.cost_centre_name ?? row.cost_centre ?? '—'}</td>
+                              <td className="px-4 py-3">
+                                <span className={`text-xs font-medium ${row.pf_eligible ? 'text-emerald-600' : 'text-slate-400'}`}>{row.pf_eligible ? 'Yes' : 'No'}</span>
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className={`text-xs font-medium ${row.esi_eligible ? 'text-emerald-600' : 'text-slate-400'}`}>{row.esi_eligible ? 'Yes' : 'No'}</span>
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${statusColor[row.status] ?? 'bg-slate-100 text-slate-700'}`}>{row.status.replace('_', ' ')}</span>
+                                {row.is_proposed_exception ? <span className="ml-1 rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-bold text-red-600">EXCEPTION</span> : null}
+                              </td>
+                              <td className="px-4 py-3 text-slate-500 text-xs">{row.created_by_name ?? '—'}</td>
+                              <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{row.offer_created_at ? row.offer_created_at.slice(0, 16).replace('T', ' ') : '—'}</td>
+                              <td className="px-4 py-3 text-slate-500 text-xs">{row.submitted_at ? row.submitted_at.slice(0, 10) : '—'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* ── Offer Audit Drill-down Drawer ── */}
+                {auditSelected && (
+                  <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setAuditSelected(null)}>
+                    <div className="absolute inset-0 bg-black/30" />
+                    <div
+                      className="relative z-10 flex h-full w-full max-w-2xl flex-col overflow-y-auto bg-white shadow-2xl"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {/* Header */}
+                      <div className="flex items-start justify-between border-b border-slate-100 px-6 py-4 bg-gradient-to-r from-violet-600 to-purple-600 text-white">
+                        <div>
+                          <p className="text-xs font-bold uppercase tracking-widest text-violet-200">Offer Detail</p>
+                          <h2 className="mt-0.5 text-lg font-bold">{auditSelected.candidate_name}</h2>
+                          <p className="text-xs text-violet-200">{auditSelected.candidate_code} · {auditSelected.branch_name ?? '—'}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`rounded-full px-3 py-1 text-xs font-bold ${auditSelected.status === 'submitted' ? 'bg-emerald-400/20 text-white' : 'bg-amber-400/20 text-white'}`}>
+                            {auditSelected.status.toUpperCase()}
+                          </span>
+                          <button type="button" onClick={() => setAuditSelected(null)} className="rounded-lg p-1.5 hover:bg-white/20 transition-colors"><X className="h-5 w-5" /></button>
+                        </div>
+                      </div>
+
+                      <div className="flex-1 space-y-5 px-6 py-5">
+
+                        {/* Candidate */}
+                        <section>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Candidate</p>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                            <div><span className="text-xs text-slate-400">Name</span><p className="font-medium text-slate-800">{auditSelected.candidate_name}</p></div>
+                            <div><span className="text-xs text-slate-400">Code</span><p className="font-medium text-slate-800">{auditSelected.candidate_code}</p></div>
+                            <div><span className="text-xs text-slate-400">Email</span><p className="text-slate-700">{auditSelected.candidate_email ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Mobile</span><p className="text-slate-700">{auditSelected.candidate_mobile ?? '—'}</p></div>
+                          </div>
+                        </section>
+
+                        {/* Employment */}
+                        <section>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Employment Details</p>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                            <div><span className="text-xs text-slate-400">Branch</span><p className="font-medium text-slate-800">{auditSelected.branch_name ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Emp Type</span><p className="font-medium text-slate-800">{auditSelected.emp_type ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Department</span><p className="text-slate-700">{auditSelected.department_name ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Designation</span><p className="text-slate-700">{auditSelected.designation_name ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Cost Centre</span><p className="text-slate-700">{auditSelected.cost_centre_name ?? auditSelected.cost_centre ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Reporting Manager</span><p className="text-slate-700">{auditSelected.reporting_manager_name ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Role Type</span><p className="text-slate-700">{auditSelected.role_type ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">KPI</span><p className="text-slate-700">{auditSelected.kpi ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Work Status</span><p className="text-slate-700">{auditSelected.work_status ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Location Type</span><p className="text-slate-700">{auditSelected.emp_location_type ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Home Branch</span><p className="text-slate-700">{auditSelected.home_branch ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Profile/Band</span><p className="text-slate-700">{auditSelected.profile ?? '—'} / {auditSelected.salary_band ?? '—'}</p></div>
+                          </div>
+                        </section>
+
+                        {/* Dates */}
+                        <section>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Dates</p>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                            <div>
+                              <span className="text-xs text-slate-400">Date of Joining</span>
+                              <p className="font-medium text-slate-800">{(auditSelected.date_of_joining ?? '').slice(0, 10) || '—'}</p>
+                            </div>
+                            <div>
+                              <span className="text-xs text-slate-400">Salary Start Date</span>
+                              {(() => {
+                                const d1 = (auditSelected.date_of_joining ?? '').slice(0, 10);
+                                const d2 = (auditSelected.date_of_salary ?? '').slice(0, 10);
+                                const gap = d1 && d2 && d2 < d1;
+                                return <p className={`font-medium ${gap ? 'text-red-600' : 'text-slate-800'}`}>{d2 || '—'}{gap && <span className="ml-1 text-xs text-red-500">⚠ before DOJ</span>}</p>;
+                              })()}
+                            </div>
+                            <div><span className="text-xs text-slate-400">Offer Created At</span><p className="text-slate-700">{auditSelected.offer_created_at ? auditSelected.offer_created_at.slice(0, 16).replace('T', ' ') : '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Submitted At</span><p className="text-slate-700">{auditSelected.submitted_at ? auditSelected.submitted_at.slice(0, 16).replace('T', ' ') : '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Created At</span><p className="text-slate-700">{auditSelected.offer_created_at ? auditSelected.offer_created_at.slice(0, 16).replace('T', ' ') : '—'}</p></div>
+                          </div>
+                        </section>
+
+                        {/* Salary Breakdown */}
+                        <section>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Salary Breakdown (Monthly)</p>
+                          <div className="grid grid-cols-3 gap-x-4 gap-y-2 text-sm">
+                            {([
+                              ['CTC',               auditSelected.offered_ctc],
+                              ['Basic',             auditSelected.basic],
+                              ['HRA',               auditSelected.hra],
+                              ['Conveyance',        auditSelected.conveyance],
+                              ['DA',                auditSelected.da],
+                              ['Special Allow.',    auditSelected.special_allowance],
+                              ['Other Allow.',      auditSelected.other_allowance],
+                              ['Bonus',             auditSelected.bonus],
+                              ['PLI',               auditSelected.pli],
+                              ['Gross',             auditSelected.gross],
+                              ['Net In Hand',       auditSelected.net_in_hand],
+                            ] as [string, number | undefined][]).map(([label, val]) => (
+                              <div key={label}>
+                                <span className="text-xs text-slate-400">{label}</span>
+                                <p className="font-mono font-medium text-slate-800">{val != null ? `₹${Number(val).toLocaleString('en-IN')}` : '—'}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+
+                        {/* Deductions */}
+                        <section>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Deductions (Monthly)</p>
+                          <div className="grid grid-cols-3 gap-x-4 gap-y-2 text-sm">
+                            {([
+                              ['PF Employee',   auditSelected.pf_employee],
+                              ['PF Employer',   auditSelected.pf_employer],
+                              ['ESI Employee',  auditSelected.esic_employee],
+                              ['ESI Employer',  auditSelected.esic_employer],
+                              ['Prof. Tax',     auditSelected.professional_tax],
+                              ['Gratuity',      auditSelected.gratuity],
+                              ['Admin Charges', auditSelected.admin_charges],
+                            ] as [string, number | undefined][]).map(([label, val]) => (
+                              <div key={label}>
+                                <span className="text-xs text-slate-400">{label}</span>
+                                <p className="font-mono font-medium text-slate-800">{val != null ? `₹${Number(val).toLocaleString('en-IN')}` : '—'}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+
+                        {/* Payment */}
+                        <section>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Payment Settings</p>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                            <div><span className="text-xs text-slate-400">Pay Mode</span><p className="text-slate-700">{auditSelected.pay_mode ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">Salary Payment Mode</span><p className="text-slate-700">{auditSelected.salary_payment_mode ?? '—'}</p></div>
+                            <div><span className="text-xs text-slate-400">PF Eligible</span><p className={`font-medium ${auditSelected.pf_eligible ? 'text-emerald-600' : 'text-slate-500'}`}>{auditSelected.pf_eligible ? 'Yes' : 'No'}</p></div>
+                            <div><span className="text-xs text-slate-400">PF Opt-Out</span><p className={`font-medium ${auditSelected.pf_opt_out ? 'text-red-600' : 'text-slate-500'}`}>{auditSelected.pf_opt_out ? 'Yes' : 'No'}</p></div>
+                            <div><span className="text-xs text-slate-400">ESI Eligible</span><p className={`font-medium ${auditSelected.esi_eligible ? 'text-emerald-600' : 'text-slate-500'}`}>{auditSelected.esi_eligible ? 'Yes' : 'No'}</p></div>
+                            <div><span className="text-xs text-slate-400">ESI Opt-Out</span><p className={`font-medium ${auditSelected.esic_opt_out ? 'text-red-600' : 'text-slate-500'}`}>{auditSelected.esic_opt_out ? 'Yes' : 'No'}</p></div>
+                          </div>
+                        </section>
+
+                        {/* Exception */}
+                        <section>
+                          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">Exception / Audit</p>
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                            <div><span className="text-xs text-slate-400">Proposed Exception</span><p className={`font-medium ${auditSelected.is_proposed_exception ? 'text-red-600' : 'text-slate-500'}`}>{auditSelected.is_proposed_exception ? 'Yes' : 'No'}</p></div>
+                            <div><span className="text-xs text-slate-400">Created By</span><p className="text-slate-700">{auditSelected.created_by_name ?? '—'}</p></div>
+                            {auditSelected.is_proposed_exception ? (
+                              <div className="col-span-2">
+                                <span className="text-xs text-slate-400">Exception Reason</span>
+                                <p className="mt-1 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 border border-red-100">{auditSelected.proposed_exception_reason ?? '—'}</p>
+                              </div>
+                            ) : <div className="col-span-2"><span className="text-xs text-slate-400">Exception Reason</span><p className="text-slate-400">None</p></div>}
+                          </div>
+                        </section>
+
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* ── ONBOARDING TAB content guard ── */}
             {mainTab === 'onboarding' && <>
 
@@ -1656,6 +2217,16 @@ export default function NativeHROnboardingRequests() {
               </div>
             )}
 
+            {/* Change Branch result toast */}
+            {branchChangeResult && (
+              <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm font-medium ${branchChangeResult.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                {branchChangeResult.ok
+                  ? <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-500" />
+                  : <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-red-500" />}
+                {branchChangeResult.msg}
+              </div>
+            )}
+
             {loading ? (
               <div className="flex h-64 items-center justify-center rounded-xl border bg-white">
                 <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
@@ -1667,17 +2238,16 @@ export default function NativeHROnboardingRequests() {
                 <table className="w-full text-sm">
                   <thead className="border-b bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
                     <tr>
-                      <th className="px-4 py-3 text-left">#</th>
+                      <th className="w-10 px-4 py-3 text-left">#</th>
                       <th className="px-4 py-3 text-left">Name / Code</th>
-                      <th className="px-4 py-3 text-left">Date</th>
+                      <th className="w-28 px-4 py-3 text-left">Date</th>
                       <th className="px-4 py-3 text-left">Branch</th>
                       <th className="px-4 py-3 text-left">Process</th>
-                      <th className="px-4 py-3 text-left">Status</th>
-                      <th className="px-4 py-3 text-left">Offer</th>
-                      <th className="px-4 py-3 text-left">Docs</th>
-                      <th className="px-4 py-3 text-left">Bank</th>
-                      <th className="px-4 py-3 text-left">Resend Link</th>
-                      <th className="px-4 py-3 text-left">Action</th>
+                      <th className="w-32 px-4 py-3 text-left">Status</th>
+                      <th className="w-28 px-4 py-3 text-left">Offer</th>
+                      <th className="w-16 px-4 py-3 text-left">Docs</th>
+                      <th className="w-24 px-4 py-3 text-left">Bank</th>
+                      <th className="w-16 px-4 py-3 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -1696,87 +2266,84 @@ export default function NativeHROnboardingRequests() {
                           {r.created_at ? new Date(r.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
                         </td>
                         <td className="px-4 py-3 text-slate-600">{r.branch_name || '—'}</td>
-                        <td className="px-4 py-3 text-slate-600">{r.process_name || r.applied_for_process || '—'}</td>
+                        <td className="px-4 py-3 text-slate-600">{r.process_name || r.process_raw || '—'}</td>
                         <td className="px-4 py-3"><StatusBadge status={resolveDisplayStatus(r)} /></td>
                         <td className="px-4 py-3"><OfferBadge status={r.offer_status} /></td>
                         <td className="px-4 py-3 text-slate-600">{r.documents_uploaded ?? 0}</td>
                         <td className="px-4 py-3 text-slate-600 capitalize">{statusLabel(r.bank_verification_status)}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-col gap-1">
-                            {r.candidate_status === 'not_joining' ? (
-                              canMarkNotJoining && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={notJoiningId === r.candidate_id}
-                                  onClick={(e) => void clearNotJoining(r, e)}
-                                  className="min-h-[32px] gap-1 text-slate-600 border-slate-200 hover:bg-slate-50"
-                                >
-                                  {notJoiningId === r.candidate_id
-                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                    : null}
-                                  Reactivate
-                                </Button>
-                              )
-                            ) : (
-                              <>
-                                {['onboarding_sent', 'profile_in_progress', 'profile_submitted'].includes(r.profile_status) ? (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={resendingId === r.candidate_id}
-                                    onClick={(e) => void resendLink(r, e)}
-                                    className="min-h-[32px] gap-1 text-blue-700 border-blue-200 hover:bg-blue-50"
-                                  >
-                                    {resendingId === r.candidate_id
-                                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                      : <Send className="h-3.5 w-3.5" />}
-                                    Resend
-                                  </Button>
-                                ) : (
-                                  <span className="text-xs text-slate-300">—</span>
-                                )}
-                                {r.form_step && FORM_IN_PROGRESS_STEPS.has(r.form_step) && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={reminderSendingId === r.candidate_id}
-                                    onClick={(e) => void sendReminder(r, e)}
-                                    className="min-h-[32px] gap-1 text-orange-700 border-orange-200 hover:bg-orange-50"
-                                  >
-                                    {reminderSendingId === r.candidate_id
-                                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                      : <Send className="h-3.5 w-3.5" />}
-                                    Remind
-                                  </Button>
-                                )}
-                                {canMarkNotJoining && !r.employee_id && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
+                        <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                          {/* Was up to 4 buttons stacked in one column plus a separate always-visible
+                              "Open" column — the actions column ballooned in height/width while the
+                              short columns (Status, Offer, Docs, Bank) sat mostly empty beside it. One
+                              compact menu per row; "View Details" replaces the redundant Open button
+                              (the row itself already opens detail on click). */}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 w-8 p-0"
+                                aria-label="Row actions"
+                              >
+                                {resendingId === r.candidate_id
+                                  || reminderSendingId === r.candidate_id
+                                  || notJoiningId === r.candidate_id
+                                  || branchChangingId === r.candidate_id
+                                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                                  : <MoreVertical className="h-4 w-4" />}
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-48">
+                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); void openDetail(r); }}>
+                                View Details
+                              </DropdownMenuItem>
+                              {r.candidate_status === 'not_joining' ? (
+                                canMarkNotJoining && (
+                                  <DropdownMenuItem
                                     disabled={notJoiningId === r.candidate_id}
-                                    onClick={(e) => void markNotJoining(r, e)}
-                                    className="min-h-[32px] gap-1 text-slate-500 border-slate-200 hover:bg-slate-50"
+                                    onClick={(e) => void clearNotJoining(r, e)}
                                   >
-                                    {notJoiningId === r.candidate_id
-                                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                      : <X className="h-3.5 w-3.5" />}
-                                    Not Joining
-                                  </Button>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={(e) => { e.stopPropagation(); void openDetail(r); }}
-                            className="min-h-[36px]"
-                          >
-                            Open
-                          </Button>
+                                    Reactivate
+                                  </DropdownMenuItem>
+                                )
+                              ) : (
+                                <>
+                                  {['onboarding_sent', 'profile_in_progress', 'profile_submitted'].includes(r.profile_status) && (
+                                    <DropdownMenuItem
+                                      disabled={resendingId === r.candidate_id}
+                                      onClick={(e) => void resendLink(r, e)}
+                                    >
+                                      <Send className="mr-2 h-3.5 w-3.5" /> Resend Link
+                                    </DropdownMenuItem>
+                                  )}
+                                  {r.form_step && FORM_IN_PROGRESS_STEPS.has(r.form_step) && (
+                                    <DropdownMenuItem
+                                      disabled={reminderSendingId === r.candidate_id}
+                                      onClick={(e) => void sendReminder(r, e)}
+                                    >
+                                      <Send className="mr-2 h-3.5 w-3.5" /> Send Reminder
+                                    </DropdownMenuItem>
+                                  )}
+                                  {canMarkNotJoining && !r.employee_id && (
+                                    <DropdownMenuItem
+                                      disabled={notJoiningId === r.candidate_id}
+                                      onClick={(e) => void markNotJoining(r, e)}
+                                    >
+                                      <X className="mr-2 h-3.5 w-3.5" /> Mark Not Joining
+                                    </DropdownMenuItem>
+                                  )}
+                                  {canMarkNotJoining && !r.employee_id && (
+                                    <DropdownMenuItem
+                                      disabled={branchChangingId === r.candidate_id}
+                                      onClick={(e) => openBranchModal(r, e)}
+                                    >
+                                      Change Branch
+                                    </DropdownMenuItem>
+                                  )}
+                                </>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </td>
                       </tr>
                     ))}
@@ -1808,7 +2375,7 @@ export default function NativeHROnboardingRequests() {
               </div>
               <div className="flex flex-wrap gap-4 text-sm text-slate-600">
                 <span><span className="text-slate-400">Branch: </span>{selected.branch_name || '—'}</span>
-                <span><span className="text-slate-400">Process: </span>{selected.process_name || selected.applied_for_process || '—'}</span>
+                <span><span className="text-slate-400">Process: </span>{selected.process_name || selected.process_raw || '—'}</span>
                 <span><span className="text-slate-400">Mobile: </span>{maskMobile(selected.mobile)}</span>
                 <span><span className="text-slate-400">Email: </span>{maskEmail(selected.email)}</span>
               </div>
@@ -1881,6 +2448,19 @@ export default function NativeHROnboardingRequests() {
                       Mark as Not Joining
                     </Button>
                   )
+                )}
+                {canMarkNotJoining && !selected.employee_id && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={branchChangingId === selected.candidate_id}
+                    onClick={(e) => openBranchModal(selected, e)}
+                    className="gap-1 min-h-[36px] text-slate-500 border-slate-200 hover:bg-slate-50"
+                  >
+                    {branchChangingId === selected.candidate_id && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                    Change Branch
+                  </Button>
                 )}
               </div>
             </div>
@@ -2102,7 +2682,7 @@ export default function NativeHROnboardingRequests() {
                           <span className="text-xs text-slate-400">{esign.status ?? '—'}</span>
                         )}
                         {esign.status === 'signed' && (
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex flex-wrap items-center gap-1.5">
                             <a
                               href={`/api/letters/appointment/by-candidate/${selected.candidate_id}/download`}
                               target="_blank"
@@ -2111,15 +2691,27 @@ export default function NativeHROnboardingRequests() {
                             >
                               ↓ Download
                             </a>
+                            <input
+                              type="email"
+                              value={sendLetterCcEmail}
+                              onChange={(e) => setSendLetterCcEmail(e.target.value)}
+                              placeholder="CC email (optional)"
+                              className="h-6 w-44 rounded border border-slate-300 px-2 text-xs text-slate-700 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none"
+                            />
                             <button
                               type="button"
                               disabled={sendLetterLoading}
                               onClick={async () => {
+                                const cc = sendLetterCcEmail.trim();
+                                if (cc && !cc.includes('@')) {
+                                  setSendLetterResult({ ok: false, msg: 'CC email address looks invalid.' });
+                                  return;
+                                }
                                 setSendLetterLoading(true);
                                 setSendLetterResult(null);
                                 try {
-                                  await hrmsApi.post(`/api/letters/appointment/by-candidate/${selected.candidate_id}/hr-send`, {});
-                                  setSendLetterResult({ ok: true, msg: 'Appointment letter sent to employee email.' });
+                                  await hrmsApi.post(`/api/letters/appointment/by-candidate/${selected.candidate_id}/hr-send`, cc ? { ccEmail: cc } : {});
+                                  setSendLetterResult({ ok: true, msg: cc ? `Appointment letter sent${`, CC: ${cc}`}.` : 'Appointment letter sent to employee email.' });
                                   setTimeout(() => setSendLetterResult(null), 6000);
                                 } catch (e: any) {
                                   setSendLetterResult({ ok: false, msg: e?.message ?? 'Failed to send' });
@@ -2213,7 +2805,7 @@ export default function NativeHROnboardingRequests() {
 
             {/* C-0 — Fraud Review Section (auto-expands when blocking alerts exist) */}
             {selected.profile_status !== 'onboarded' && (
-              <div className={`rounded-xl border shadow-sm overflow-hidden ${fraudAlertCount > 0 ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-white'}`}>
+              <div ref={fraudSectionRef} className={`rounded-xl border shadow-sm overflow-hidden ${fraudAlertCount > 0 ? 'border-red-300 bg-red-50' : needsFraudReview ? 'border-amber-300 bg-amber-50' : 'border-slate-200 bg-white'}`}>
                 <button
                   type="button"
                   onClick={() => setShowFraudPanel(v => !v)}
@@ -2229,12 +2821,12 @@ export default function NativeHROnboardingRequests() {
                         {fraudAlertCount}
                       </span>
                     )}
-                    {fraudAlertCount > 0 && !fraudAcknowledged && (
+                    {fraudReviewPending && (
                       <span className="text-xs font-semibold text-red-700 bg-red-100 border border-red-200 px-2 py-0.5 rounded-full">
                         Review required before approving
                       </span>
                     )}
-                    {fraudAcknowledged && (
+                    {needsFraudReview && fraudReviewDone && (
                       <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
                         <CheckCircle2 className="h-3 w-3" /> Reviewed
                       </span>
@@ -2254,8 +2846,8 @@ export default function NativeHROnboardingRequests() {
                         hrmsApi.get<any>(`/api/ats/fraud-alerts/candidate/${selected.candidate_id}`)
                           .then((r: any) => {
                             const alerts: any[] = r?.alerts ?? [];
-                            const blocking = alerts.filter((a: any) => (a.status === 'open' || a.status === 'under_review') && (a.severity === 'critical' || a.severity === 'high'));
-                            setFraudAlertCount(blocking.length);
+                            setFraudAlertCount(alerts.filter((a: any) => isBlocking(a)).length);
+                            setFraudAnyCount(alerts.filter((a: any) => isUnresolved(a)).length);
                           })
                           .catch(() => {/* non-fatal */});
                       }}
@@ -2269,12 +2861,12 @@ export default function NativeHROnboardingRequests() {
             {selected.profile_status !== 'onboarded' && (
               <div className="rounded-xl border bg-white p-5 shadow-sm space-y-3">
                 <h3 className="font-bold text-slate-800">HR Review Decision</h3>
-                {fraudAlertCount > 0 && !fraudAcknowledged && (
+                {fraudReviewPending && (
                   <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800">
                     <ShieldAlert className="h-3.5 w-3.5 shrink-0 mt-0.5 text-red-600" />
                     <span>
-                      <strong>{fraudAlertCount} blocking fraud {fraudAlertCount === 1 ? 'alert' : 'alerts'} detected.</strong>{' '}
-                      Open the Fraud &amp; Identity Review section above, review each flag, and check the acknowledgement box to enable approval.
+                      <strong>The system flagged this profile ({fraudAnyCount} {fraudAnyCount === 1 ? 'alert' : 'alerts'}).</strong>{' '}
+                      Review the documents and the Fraud &amp; Identity Review section above, record a decision on each alert, and tick the box saying you have reviewed it. Approval stays locked until then.
                     </span>
                   </div>
                 )}
@@ -2286,6 +2878,11 @@ export default function NativeHROnboardingRequests() {
                   placeholder="Push-back remarks (required only when pushing back)…"
                   className={`${SEL} py-2`}
                 />
+                {fraudStatus === "unknown" && (
+                  <p className="text-xs text-amber-700 font-semibold mb-2">
+                    Fraud check unavailable — approval blocked until check completes.
+                  </p>
+                )}
                 <div className="flex gap-2">
                   <Button
                     type="button"
@@ -2298,16 +2895,26 @@ export default function NativeHROnboardingRequests() {
                   </Button>
                   <Button
                     type="button"
-                    disabled={reviewSaving || (fraudAlertCount > 0 && !fraudAcknowledged)}
+                    disabled={reviewSaving || fraudStatus === "loading" || fraudStatus === "unknown"}
                     onClick={() => void submitReview('approved')}
-                    title={fraudAlertCount > 0 && !fraudAcknowledged ? 'Review fraud flags above before approving' : undefined}
-                    className={`min-h-[44px] flex-1 text-white transition-all ${fraudAlertCount > 0 && !fraudAcknowledged ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+                    title={fraudStatus === "loading" ? 'Fraud check in progress' : fraudStatus === "unknown" ? 'Fraud check unavailable — approval blocked' : fraudReviewPending ? 'Review the flagged documents and fraud section first' : undefined}
+                    className={`min-h-[44px] flex-1 text-white transition-all ${fraudStatus === "loading" || fraudStatus === "unknown" ? 'bg-slate-300 cursor-not-allowed' : fraudReviewPending ? 'bg-slate-400 hover:bg-slate-500' : 'bg-emerald-600 hover:bg-emerald-700'}`}
                   >
                     {reviewSaving && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Approve Profile
                   </Button>
                 </div>
               </div>
             )}
+
+            {/* Shown when Approve is pressed on a profile the system flagged and the review is not finished */}
+            <ReviewRequiredDialog
+              open={showReviewDialog}
+              onOpenChange={setShowReviewDialog}
+              onGoToReview={openFraudSection}
+              panelOpened={fraudPanelOpened}
+              blockingCount={fraudAlertCount}
+              acknowledged={fraudAcknowledged}
+            />
 
             {/* D — Employment Offer form: hide when offer submitted/approved, show pending BH rejection or no offer yet */}
             {(selected.profile_status === 'profile_submitted' || selected.profile_status === 'hr_approved') && (() => {
@@ -2349,10 +2956,16 @@ export default function NativeHROnboardingRequests() {
                   {/* Core fields */}
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                     <Field label="Date of Joining" required error={formFieldErrors.date_of_joining}>
-                      <input type="date" className={SEL} value={offer.date_of_joining} onChange={(e) => setF('date_of_joining', e.target.value)} />
+                      <input type="date" className={SEL} value={offer.date_of_joining} min={dateMin} onChange={(e) => setF('date_of_joining', e.target.value)} />
                     </Field>
-                    <Field label="Salary Start Date">
-                      <input type="date" className={SEL} value={offer.date_of_salary} onChange={(e) => setF('date_of_salary', e.target.value)} />
+                    <Field label="Salary Start Date" error={formFieldErrors.date_of_salary}>
+                      <input
+                        type="date"
+                        className={`${SEL}${offer.date_of_salary && offer.date_of_joining && offer.date_of_salary < offer.date_of_joining ? ' border-red-500 bg-red-50' : ''}`}
+                        value={offer.date_of_salary}
+                        min={[offer.date_of_joining, dateMin].filter(Boolean).sort().pop()}
+                        onChange={(e) => setF('date_of_salary', e.target.value)}
+                      />
                     </Field>
                     <Field label="Employment Type">
                       <select className={SEL} value={offer.emp_type} onChange={(e) => setF('emp_type', e.target.value)}>
@@ -2388,7 +3001,14 @@ export default function NativeHROnboardingRequests() {
                         }}
                       >
                         <option value="">Select</option>
-                        {costCentres.map((c) => <option key={c.id} value={c.id}>{c.cost_centre_name || c.cost_centre_code}{c.process_name ? ` (${c.process_name})` : ''}</option>)}
+                        {costCentres.map((c) => {
+                          const code = c.cost_centre_code || c.cost_centre_name || '';
+                          const name = c.process_name || c.cost_centre_name || '';
+                          const label = name && name.trim().toUpperCase() !== code.trim().toUpperCase()
+                            ? `${code} / ${name}`
+                            : code;
+                          return <option key={c.id} value={c.id}>{label}</option>;
+                        })}
                       </select>
                     </Field>
 
@@ -2501,20 +3121,49 @@ export default function NativeHROnboardingRequests() {
                               </button>
                             </div>
                           ) : (
-                            <input
-                              inputMode="numeric"
-                              className={SEL}
-                              value={offer.offered_ctc}
-                              onChange={(e) => setF('offered_ctc', e.target.value)}
-                              placeholder="e.g. 18000"
-                            />
+                            <>
+                              <input
+                                inputMode="decimal"
+                                className={SEL}
+                                value={offer.offered_ctc}
+                                onChange={(e) => setF('offered_ctc', e.target.value)}
+                                placeholder="e.g. 16500 or 16,500"
+                              />
+                              {/* Live "you typed X, this means Y" readback -- commas and Excel-paste
+                                  period-grouping ("16.500") used to silently corrupt this field into
+                                  a near-zero CTC with no warning. See src/lib/ctcParser.ts. */}
+                              {offer.offered_ctc && (() => {
+                                const parsed = parseCtcInput(offer.offered_ctc);
+                                return parsed !== null && parsed > 0 ? (
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    = <span className="font-semibold text-slate-700">{formatCtcPreview(parsed)}</span>/month
+                                  </p>
+                                ) : (
+                                  <p className="mt-1 text-xs font-medium text-amber-600">
+                                    ⚠ "{offer.offered_ctc}" doesn't read as a valid amount — use digits only.
+                                  </p>
+                                );
+                              })()}
+                            </>
                           )}
                         </Field>
                       </>
                     ) : (
                       <>
                         <Field label="Proposed Monthly CTC" required error={formFieldErrors.proposed_ctc}>
-                          <input inputMode="numeric" className={SEL} value={proposedCtc} onChange={(e) => setProposedCtc(e.target.value)} placeholder="e.g. 18000" />
+                          <input inputMode="decimal" className={SEL} value={proposedCtc} onChange={(e) => setProposedCtc(e.target.value)} placeholder="e.g. 16500 or 16,500" />
+                          {proposedCtc && (() => {
+                            const parsed = parseCtcInput(proposedCtc);
+                            return parsed !== null && parsed > 0 ? (
+                              <p className="mt-1 text-xs text-slate-500">
+                                = <span className="font-semibold text-slate-700">{formatCtcPreview(parsed)}</span>/month
+                              </p>
+                            ) : (
+                              <p className="mt-1 text-xs font-medium text-amber-600">
+                                ⚠ "{proposedCtc}" doesn't read as a valid amount — use digits only.
+                              </p>
+                            );
+                          })()}
                         </Field>
                         <Field label="Exception Reason" required error={formFieldErrors.proposed_reason}>
                           <input className={SEL} value={proposedReason} onChange={(e) => setProposedReason(e.target.value)} placeholder="Skill premium / approval reason" />
@@ -2523,18 +3172,29 @@ export default function NativeHROnboardingRequests() {
                     )}
                   </div>
 
-                  {/* Calculate salary button (standard only, no package selected) */}
-                  {offerTab === 'standard' && !offer.selected_package_id && (
+                  {/* Calculate salary button + Advanced Package Builder */}
+                  <div className="flex flex-wrap gap-2">
+                    {offerTab === 'standard' && !offer.selected_package_id && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void calcSalaryManual()}
+                        disabled={calcLoading || !offer.offered_ctc || !offer.salary_band}
+                        className="min-h-[44px] gap-2"
+                      >
+                        {calcLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Calculator className="h-4 w-4" />} Calculate Salary
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={() => void calcSalaryManual()}
-                      disabled={calcLoading || !offer.offered_ctc || !offer.salary_band}
-                      className="min-h-[44px] gap-2"
+                      onClick={() => setShowPackageBuilder(true)}
+                      disabled={!offer.salary_band}
+                      className="min-h-[44px] gap-2 border-blue-200 text-blue-700 hover:bg-blue-50"
                     >
-                      {calcLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Calculator className="h-4 w-4" />} Calculate Salary
+                      <Calculator className="h-4 w-4" /> Advanced Package Builder
                     </Button>
-                  )}
+                  </div>
 
                   {/* Full salary breakdown — 13 components */}
                   {salaryPreview && (
@@ -2552,7 +3212,6 @@ export default function NativeHROnboardingRequests() {
                           ['PF (Emplr)', salaryPreview.pf_employer],
                           ['ESIC (Emp)', salaryPreview.esic_employee],
                           ['ESIC (Emplr)', salaryPreview.esic_employer],
-                          ['Prof. Tax', salaryPreview.professional_tax],
                           ['Admin Chrg', salaryPreview.admin_charges],
                         ] as [string, number | undefined][]).map(([label, value]) => (
                           <div key={label} className="rounded-lg bg-white p-3 text-center shadow-sm">
@@ -2975,6 +3634,101 @@ export default function NativeHROnboardingRequests() {
             </div>
           </div>
         )}
+
+        {/* Change Branch Modal — top-level, renders regardless of active tab.
+            Updates ats_onboarding_request.branch_id, the column both the displayed
+            branch and branch-HR queue visibility key off. Reassigns which Branch
+            Head approves the offer, so a reason is mandatory and it's audited. */}
+        {branchModalRow && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+              <div className="flex items-center justify-between border-b px-5 py-4">
+                <h3 className="font-bold text-slate-800">Change Branch</h3>
+                <button type="button" onClick={() => setBranchModalRow(null)}><X className="h-4 w-4 text-slate-400" /></button>
+              </div>
+              <div className="p-5 space-y-4">
+                <p className="text-sm text-slate-600">
+                  Moving <strong>{branchModalRow.full_name}</strong> from{' '}
+                  <strong>{branchModalRow.branch_name || '—'}</strong> to a different branch.
+                  This changes which Branch Head approves the offer and which branch's HR
+                  sees this candidate — not just the label on this page.
+                </p>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">New Branch</label>
+                  <Select value={branchModalNewId} onValueChange={setBranchModalNewId}>
+                    <SelectTrigger className={SEL}>
+                      <SelectValue placeholder="Select branch…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {allBranches.map((b: any) => (
+                        <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">Reason (required)</label>
+                  <input
+                    type="text"
+                    value={branchModalReason}
+                    onChange={(e) => setBranchModalReason(e.target.value)}
+                    placeholder="e.g. Entered wrong at intake — candidate actually joining NOIDA-2"
+                    className={SEL}
+                  />
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <Button
+                    type="button"
+                    className="flex-1 min-h-[44px]"
+                    disabled={!branchModalNewId || !branchModalReason.trim()}
+                    onClick={() => void submitBranchChange()}
+                  >
+                    Save
+                  </Button>
+                  <Button type="button" variant="outline" className="min-h-[44px]" onClick={() => setBranchModalRow(null)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Package Builder Dialog */}
+        <PackageBuilderDialog
+          open={showPackageBuilder}
+          onOpenChange={setShowPackageBuilder}
+          defaultBand={offer.salary_band || undefined}
+          defaultCtc={offer.offered_ctc ? Number(offer.offered_ctc) : undefined}
+          defaultPfOpt={!offer.pf_eligible}
+          defaultEsiOpt={!offer.esi_eligible}
+          onSave={(pkg) => {
+            setOffer((prev) => ({
+              ...prev,
+              offered_ctc: String(pkg.ctc),
+              salary_band: pkg.band,
+              pf_eligible: !pkg.pfOptOut,
+              esi_eligible: !pkg.esiOptOut,
+            }));
+            setSalaryPreview({
+              gross: pkg.gross,
+              net_in_hand: pkg.net,
+              basic: pkg.basic,
+              hra: pkg.hra,
+              conveyance: pkg.conveyance ?? 0,
+              special_allowance: pkg.specialAllowance ?? 0,
+              bonus: pkg.bonus ?? 0,
+              pf_employee: pkg.pfEmployee,
+              pf_employer: pkg.pfEmployer,
+              esic_employee: pkg.esicEmployee,
+              esic_employer: pkg.esicEmployer,
+              professional_tax: pkg.pt ?? 0,
+              lwf_employee: pkg.lwfEmployee ?? 0,
+              lwf_employer: pkg.lwfEmployer ?? 0,
+            });
+            setShowPackageBuilder(false);
+          }}
+        />
 
       </div>
     </DashboardLayout>
