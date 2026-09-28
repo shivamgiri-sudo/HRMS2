@@ -103,6 +103,51 @@ function MandateManpowerCard() {
   );
 }
 
+interface CapacityBuilderRow {
+  lob: string; activeHc: number; approvedHc: number | null; inTraining: number; bufferPct: number | null;
+}
+
+function CapacityBuilderCard() {
+  const q = useQuery({
+    queryKey: ["onfido-process", "capacity-builder"],
+    queryFn: () => hrmsApi.get<{ data: CapacityBuilderRow[] }>("/api/onfido-process/overview-report/capacity-builder"),
+  });
+  const rows = q.data?.data ?? [];
+  const N = (v: number | null): CSSProperties => (v !== null && v < 0 ? { color: "var(--red)" } : {});
+  return (
+    <SectionCard title="Capacity Builder (LOB Wise)" accent="var(--green)" subtitle="Active HC from HRMS employee LOB assignments, excluding active NHT trainees. Buffer % = (Active − Approved) / Approved.">
+      <SectionState loading={q.isLoading} error={q.isError ? "Could not load capacity builder." : null} empty={!q.isLoading && rows.length === 0} emptyText="No LOB capacity data available. Ensure employees have LOB assigned in HRMS.">
+        {rows.length > 0 && (
+          <div style={{ overflowX: "auto" }}>
+            <table className="oc-table">
+              <thead>
+                <tr>
+                  <th>LOB</th>
+                  <th className="oc-right">Active HC</th>
+                  <th className="oc-right">In NHT Training</th>
+                  <th className="oc-right">Approved HC</th>
+                  <th className="oc-right">Buffer %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.lob}>
+                    <td>{r.lob}</td>
+                    <td className="oc-right">{r.activeHc}</td>
+                    <td className="oc-right">{r.inTraining}</td>
+                    <td className="oc-right">{r.approvedHc ?? "—"}</td>
+                    <td className="oc-right" style={N(r.bufferPct)}>{r.bufferPct !== null ? `${r.bufferPct.toFixed(1)}%` : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </SectionState>
+    </SectionCard>
+  );
+}
+
 export default function OnfidoOverviewReport({ range, tlFilter, amFilter }: { range: DateRange; tlFilter: string; amFilter: string }) {
   const [fallback, setFallback] = useState<Granularity>("monthly");
   const [overrides, setOverrides] = useState<Partial<Record<string, Granularity>>>({});
@@ -180,6 +225,8 @@ export default function OnfidoOverviewReport({ range, tlFilter, amFilter }: { ra
       </SectionCard>
 
       <MandateManpowerCard />
+
+      <CapacityBuilderCard />
 
       <SectionCard title="Queue Wise" accent="var(--teal)" subtitle="Required HC = Approved HC x 120%. Click a row for its approved-HC history.">
         <SectionState loading={loadingFor("manpower")} error={errorFor("manpower") ?? manpowerSection?.error} empty={!mp} emptyText="No manpower data in this range.">

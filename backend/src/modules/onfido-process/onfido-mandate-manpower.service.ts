@@ -115,3 +115,46 @@ export async function getOnfidoMandateManpower(
     bufferPct,
   };
 }
+
+// ── Capacity Builder (LOB Wise) ────────────────────────────────────────────────
+
+export interface CapacityBuilderRow {
+  lob: string;
+  activeHc: number;
+  approvedHc: number | null;
+  inTraining: number;
+  bufferPct: number | null;
+}
+
+export async function getOnfidoCapacityBuilder(
+  costCenterCode: string = ONFIDO_MANDATE_COST_CENTRE,
+): Promise<CapacityBuilderRow[]> {
+  const [lobRows, inTrainingCodes] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT lm.lob_code, lm.lob_name, COUNT(e.id) AS active_hc,
+              GROUP_CONCAT(e.employee_code) AS emp_codes
+         FROM employees e
+         JOIN lob_master lm ON lm.id = e.lob_id
+        WHERE e.active_status = 1 AND e.cost_center_code = ?
+        GROUP BY lm.lob_code, lm.lob_name
+        ORDER BY lm.lob_name`,
+      [costCenterCode],
+    ),
+    getInTrainingEmployeeCodes(),
+  ]);
+
+  const rows: CapacityBuilderRow[] = [];
+  for (const r of lobRows[0]) {
+    const codes: string[] = r.emp_codes ? String(r.emp_codes).split(",").filter(Boolean) : [];
+    const inTraining = codes.filter((c) => inTrainingCodes.has(c)).length;
+    const activeHc = Number(r.active_hc) - inTraining;
+    rows.push({
+      lob: r.lob_name || r.lob_code,
+      activeHc,
+      approvedHc: null,
+      inTraining,
+      bufferPct: null,
+    });
+  }
+  return rows;
+}

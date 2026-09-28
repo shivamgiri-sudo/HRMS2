@@ -1232,6 +1232,48 @@ router.get(
   }),
 );
 
+router.get(
+  "/audit-sampling",
+  requireAuth,
+  requireRole(...VIEWER_ROLES),
+  h(async (req, res) => {
+    const q = req.query as Record<string, string | undefined>;
+    const data = await svc.getAuditSampling(
+      {
+        from: q.from,
+        to: q.to,
+        tlName: q.tlName,
+        amName: q.amName,
+        queue: q.queue,
+        clientName: q.clientName,
+        documentType: q.documentType,
+      },
+      readGranularity(req),
+    );
+    res.json({ success: true, data });
+  }),
+);
+
+router.get(
+  "/stack-ranking",
+  requireAuth,
+  requireRole(...VIEWER_ROLES),
+  h(async (req, res) => {
+    const q = req.query as Record<string, string | undefined>;
+    const data = await svc.getStackRanking(
+      {
+        from: q.from,
+        to: q.to,
+        tlName: q.tlName,
+        amName: q.amName,
+        tier: q.tier,
+      },
+      readGranularity(req),
+    );
+    res.json({ success: true, data });
+  }),
+);
+
 // Live/Today — deliberately not range-filtered, see the service's own comment.
 router.get(
   "/live/overview",

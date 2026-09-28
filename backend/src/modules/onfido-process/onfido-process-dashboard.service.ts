@@ -5688,3 +5688,303 @@ export async function getAnalystRanking(rawFilters: {
     poaTasks: poaMap.get(String(r.email).toLowerCase()) ?? 0,
   }));
 }
+
+// ── Audit Sampling ────────────────────────────────────────────────────────────
+
+export interface AuditSamplingRow {
+  client: string;
+  documentType: string;
+  taskType: string;
+  totalAudited: number;
+  errors: number;
+  errPct: number | null;
+  avgAht: number | null;
+}
+
+export async function getAuditSampling(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; queue?: string; clientName?: string; documentType?: string },
+  granularity: TrendGranularity,
+): Promise<AuditSamplingRow[]> {
+  const f = readFilters(rawFilters);
+  const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, undefined);
+  const pool = await getOnfidoPool();
+  const pct1 = (err: number, tot: number): number | null =>
+    tot > 0 ? Math.round((err / tot) * 1000) / 10 : null;
+
+  const extraClauses: string[] = [];
+  const extraParams: unknown[] = [];
+  if (rawFilters.clientName) { extraClauses.push("AND ims_client_name = ?"); extraParams.push(rawFilters.clientName); }
+  if (rawFilters.documentType) { extraClauses.push("AND docupedia_document_name = ?"); extraParams.push(rawFilters.documentType); }
+  const extra = extraClauses.join(" ");
+
+  const rows: AuditSamplingRow[] = [];
+
+  if (!rawFilters.queue || rawFilters.queue === "DOC") {
+    // Internal quality (DOC Check)
+    const [intRows] = await pool.query<RowDataPacket[]>(
+      `SELECT COALESCE(NULLIF(TRIM(ims_client_name),''), '(unknown)') AS client,
+              COALESCE(NULLIF(TRIM(docupedia_document_name),''), '(unknown)') AS doc_type,
+              'DOC Check' AS task_type,
+              COALESCE(SUM(total_audits),0) AS audited,
+              COALESCE(SUM(total_error),0) AS errors
+         FROM onfido_doc_quality_raw
+        WHERE task_complete_date BETWEEN ? AND ? ${clause} ${extra}
+        GROUP BY client, doc_type
+        ORDER BY audited DESC`,
+      [f.from, f.to, ...params, ...extraParams],
+    );
+    for (const r of intRows) {
+      const audited = Number(r.audited);
+      rows.push({
+        client: r.client,
+        documentType: r.doc_type,
+        taskType: r.task_type,
+        totalAudited: audited,
+        errors: Number(r.errors),
+        errPct: pct1(Number(r.errors), audited),
+        avgAht: null,
+      });
+    }
+    // External quality (DOC) — has AHT via manual_processing_time_secs
+    const [extRows] = await pool.query<RowDataPacket[]>(
+      `SELECT COALESCE(NULLIF(TRIM(ims_client_name),''), '(unknown)') AS client,
+              COALESCE(NULLIF(TRIM(docupedia_document_name),''), '(unknown)') AS doc_type,
+              'DOC External' AS task_type,
+              COUNT(*) AS audited,
+              COALESCE(SUM(has_error),0) AS errors,
+              AVG(manual_processing_time_secs) AS avg_aht
+         FROM onfido_doc_external_audit_raw
+        WHERE report_date BETWEEN ? AND ? ${clause} ${extra}
+        GROUP BY client, doc_type
+        ORDER BY audited DESC`,
+      [f.from, f.to, ...params, ...extraParams],
+    );
+    for (const r of extRows) {
+      const audited = Number(r.audited);
+      rows.push({
+        client: r.client,
+        documentType: r.doc_type,
+        taskType: r.task_type,
+        totalAudited: audited,
+        errors: Number(r.errors),
+        errPct: pct1(Number(r.errors), audited),
+        avgAht: r.avg_aht !== null ? Math.round(Number(r.avg_aht)) : null,
+      });
+    }
+  }
+
+  if (!rawFilters.queue || rawFilters.queue === "POA") {
+    // POA quality
+    const [poaRows] = await pool.query<RowDataPacket[]>(
+      `SELECT COALESCE(NULLIF(TRIM(ims_client_name),''), '(unknown)') AS client,
+              COALESCE(NULLIF(TRIM(docupedia_document_name),''), '(unknown)') AS doc_type,
+              'POA' AS task_type,
+              COUNT(*) AS audited,
+              COALESCE(SUM(has_error),0) AS errors,
+              AVG(manual_processing_time_secs) AS avg_aht
+         FROM onfido_poa_quality_raw
+        WHERE report_date BETWEEN ? AND ? ${clause} ${extra}
+        GROUP BY client, doc_type
+        ORDER BY audited DESC`,
+      [f.from, f.to, ...params, ...extraParams],
+    );
+    for (const r of poaRows) {
+      const audited = Number(r.audited);
+      rows.push({
+        client: r.client,
+        documentType: r.doc_type,
+        taskType: r.task_type,
+        totalAudited: audited,
+        errors: Number(r.errors),
+        errPct: pct1(Number(r.errors), audited),
+        avgAht: r.avg_aht !== null ? Math.round(Number(r.avg_aht)) : null,
+      });
+    }
+  }
+
+  void granularity; // granularity available for future period-based slicing
+  return rows;
+}
+
+// ── Stack Ranking ─────────────────────────────────────────────────────────────
+
+export interface StackRankingRow {
+  name: string;
+  tier: "AM" | "TL" | "Analyst";
+  intErrPct: number | null;
+  extErrPct: number | null;
+  crePct: number | null;
+  attritionPct: number | null;
+  shrinkagePct: number | null;
+  ahtSecs: number | null;
+  score: number;
+  rank: number;
+}
+
+export async function getStackRanking(
+  rawFilters: { from?: string; to?: string; tlName?: string; amName?: string; tier?: string },
+  _granularity: TrendGranularity,
+): Promise<StackRankingRow[]> {
+  const f = readFilters(rawFilters);
+  const tier = rawFilters.tier === "AM" || rawFilters.tier === "TL" ? rawFilters.tier : "Analyst";
+  const pool = await getOnfidoPool();
+
+  const pct1 = (err: number, tot: number): number | null =>
+    tot > 0 ? Math.round((err / tot) * 1000) / 10 : null;
+
+  let rows: StackRankingRow[] = [];
+
+  if (tier === "Analyst") {
+    const { clause, params } = tlAmFilter(rawFilters.tlName, rawFilters.amName, undefined);
+
+    const [intRows] = await pool.query<RowDataPacket[]>(
+      `SELECT analyst_email AS name, COALESCE(SUM(total_audits),0) AS audited, COALESCE(SUM(total_error),0) AS errors
+         FROM onfido_doc_quality_raw WHERE task_complete_date BETWEEN ? AND ? ${clause}
+           AND analyst_email IS NOT NULL AND analyst_email <> ''
+         GROUP BY analyst_email`,
+      [f.from, f.to, ...params],
+    );
+    const [extRows] = await pool.query<RowDataPacket[]>(
+      `SELECT analyst_email AS name, COUNT(*) AS audited, COALESCE(SUM(has_error),0) AS errors,
+              AVG(manual_processing_time_secs) AS avg_aht
+         FROM onfido_doc_external_audit_raw WHERE report_date BETWEEN ? AND ? ${clause}
+           AND analyst_email IS NOT NULL AND analyst_email <> ''
+         GROUP BY analyst_email`,
+      [f.from, f.to, ...params],
+    );
+    const [creRows] = await pool.query<RowDataPacket[]>(
+      `SELECT analyst_email AS name, COUNT(*) AS cre_count
+         FROM onfido_cre_cra_raw WHERE report_date BETWEEN ? AND ? ${clause}
+           AND analyst_email IS NOT NULL AND analyst_email <> ''
+         GROUP BY analyst_email`,
+      [f.from, f.to, ...params],
+    );
+    const intMap = new Map(intRows.map((r) => [String(r.name).toLowerCase(), r]));
+    const creMap = new Map(creRows.map((r) => [String(r.name).toLowerCase(), Number(r.cre_count)]));
+
+    for (const r of extRows) {
+      const key = String(r.name).toLowerCase();
+      const ir = intMap.get(key);
+      const intAud = ir ? Number(ir.audited) : 0;
+      const intErr = ir ? Number(ir.errors) : 0;
+      const extAud = Number(r.audited);
+      const extErr = Number(r.errors);
+      const cre = creMap.get(key) ?? 0;
+      const totalTasks = extAud > 0 ? extAud : 1;
+      rows.push({
+        name: r.name,
+        tier: "Analyst",
+        intErrPct: pct1(intErr, intAud),
+        extErrPct: pct1(extErr, extAud),
+        crePct: pct1(cre, totalTasks),
+        attritionPct: null,
+        shrinkagePct: null,
+        ahtSecs: r.avg_aht !== null ? Math.round(Number(r.avg_aht)) : null,
+        score: 0,
+        rank: 0,
+      });
+    }
+
+    // Normalise and score (lower is better for all metrics)
+    const score = (row: StackRankingRow): number => {
+      const w = { intErrPct: 0.30, extErrPct: 0.30, crePct: 0.15, ahtSecs: 0.25 };
+      let s = 0;
+      const vals = rows.map((r) => r.ahtSecs ?? 0).filter((v) => v > 0);
+      const maxAht = vals.length ? Math.max(...vals) : 1;
+      const norm = (v: number | null, max: number) => (v !== null && max > 0 ? (v / max) * 100 : 0);
+      s += w.intErrPct * norm(row.intErrPct, 100);
+      s += w.extErrPct * norm(row.extErrPct, 100);
+      s += w.crePct * norm(row.crePct, 100);
+      s += w.ahtSecs * norm(row.ahtSecs, maxAht);
+      return Math.round(s * 10) / 10;
+    };
+
+    rows = rows.map((r) => ({ ...r, score: score(r) }));
+    rows.sort((a, b) => a.score - b.score);
+    rows = rows.map((r, i) => ({ ...r, rank: i + 1 }));
+  } else {
+    // AM or TL tier — group by am_name / tl_name
+    const dimCol = tier === "AM" ? "am_name" : "tl_name";
+
+    const [intRows] = await pool.query<RowDataPacket[]>(
+      `SELECT ${dimCol} AS name, COALESCE(SUM(total_audits),0) AS audited, COALESCE(SUM(total_error),0) AS errors
+         FROM onfido_doc_quality_raw WHERE task_complete_date BETWEEN ? AND ?
+           AND ${dimCol} IS NOT NULL AND TRIM(${dimCol}) <> ''
+         GROUP BY ${dimCol}`,
+      [f.from, f.to],
+    );
+    const [extRows] = await pool.query<RowDataPacket[]>(
+      `SELECT ${dimCol} AS name, COUNT(*) AS audited, COALESCE(SUM(has_error),0) AS errors,
+              AVG(manual_processing_time_secs) AS avg_aht
+         FROM onfido_doc_external_audit_raw WHERE report_date BETWEEN ? AND ?
+           AND ${dimCol} IS NOT NULL AND TRIM(${dimCol}) <> ''
+         GROUP BY ${dimCol}`,
+      [f.from, f.to],
+    );
+    const [creRows] = await pool.query<RowDataPacket[]>(
+      `SELECT ${dimCol} AS name, COUNT(*) AS cre_count
+         FROM onfido_cre_cra_raw WHERE report_date BETWEEN ? AND ?
+           AND ${dimCol} IS NOT NULL AND TRIM(${dimCol}) <> ''
+         GROUP BY ${dimCol}`,
+      [f.from, f.to],
+    );
+    const [attrRows] = await pool.query<RowDataPacket[]>(
+      `SELECT ${dimCol} AS name, COALESCE(SUM(attrition_flag),0) AS attrition,
+              COALESCE(SUM(ul_minutes),0) AS ul, COALESCE(SUM(scheduled_minutes),0) AS scheduled
+         FROM onfido_agent_daily_raw WHERE work_date BETWEEN ? AND ?
+           AND ${dimCol} IS NOT NULL AND TRIM(${dimCol}) <> ''
+         GROUP BY ${dimCol}`,
+      [f.from, f.to],
+    );
+
+    const intMap = new Map(intRows.map((r) => [String(r.name).toLowerCase(), r]));
+    const creMap = new Map(creRows.map((r) => [String(r.name).toLowerCase(), Number(r.cre_count)]));
+    const attrMap = new Map(attrRows.map((r) => [String(r.name).toLowerCase(), r]));
+
+    for (const r of extRows) {
+      const key = String(r.name).toLowerCase();
+      const ir = intMap.get(key);
+      const ar = attrMap.get(key);
+      const intAud = ir ? Number(ir.audited) : 0;
+      const intErr = ir ? Number(ir.errors) : 0;
+      const extAud = Number(r.audited);
+      const extErr = Number(r.errors);
+      const cre = creMap.get(key) ?? 0;
+      const totalTasks = extAud > 0 ? extAud : 1;
+      const scheduled = ar ? Number(ar.scheduled) : 0;
+      rows.push({
+        name: r.name,
+        tier: tier as "AM" | "TL",
+        intErrPct: pct1(intErr, intAud),
+        extErrPct: pct1(extErr, extAud),
+        crePct: pct1(cre, totalTasks),
+        attritionPct: ar ? pct1(Number(ar.attrition), scheduled > 0 ? scheduled / 60 / 8 : 1) : null,
+        shrinkagePct: ar && scheduled > 0 ? pct1(Number(ar.ul), scheduled) : null,
+        ahtSecs: r.avg_aht !== null ? Math.round(Number(r.avg_aht)) : null,
+        score: 0,
+        rank: 0,
+      });
+    }
+
+    const score = (row: StackRankingRow): number => {
+      const w = { intErrPct: 0.25, extErrPct: 0.25, crePct: 0.10, attritionPct: 0.10, shrinkagePct: 0.10, ahtSecs: 0.20 };
+      const vals = rows.map((r) => r.ahtSecs ?? 0).filter((v) => v > 0);
+      const maxAht = vals.length ? Math.max(...vals) : 1;
+      const norm = (v: number | null, max: number) => (v !== null && max > 0 ? (v / max) * 100 : 0);
+      let s = 0;
+      s += w.intErrPct * norm(row.intErrPct, 100);
+      s += w.extErrPct * norm(row.extErrPct, 100);
+      s += w.crePct * norm(row.crePct, 100);
+      s += w.attritionPct * norm(row.attritionPct, 100);
+      s += w.shrinkagePct * norm(row.shrinkagePct, 100);
+      s += w.ahtSecs * norm(row.ahtSecs, maxAht);
+      return Math.round(s * 10) / 10;
+    };
+
+    rows = rows.map((r) => ({ ...r, score: score(r) }));
+    rows.sort((a, b) => a.score - b.score);
+    rows = rows.map((r, i) => ({ ...r, rank: i + 1 }));
+  }
+
+  return rows;
+}

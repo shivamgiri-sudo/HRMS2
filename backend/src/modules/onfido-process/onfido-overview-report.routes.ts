@@ -23,7 +23,7 @@ import {
   getOverviewReport,
 } from "./onfido-overview-report.service.js";
 import { getUtilizationReport } from "./onfido-utilization.service.js";
-import { getOnfidoMandateManpower } from "./onfido-mandate-manpower.service.js";
+import { getOnfidoMandateManpower, getOnfidoCapacityBuilder } from "./onfido-mandate-manpower.service.js";
 import {
   validateRange,
   type Granularity,
@@ -110,6 +110,14 @@ export function mountOverviewReportRoutes(
     ...viewGuard,
     wrap(async (_req, res) => {
       res.json({ success: true, data: await getOnfidoMandateManpower() });
+    }),
+  );
+
+  router.get(
+    "/overview-report/capacity-builder",
+    ...viewGuard,
+    wrap(async (_req, res) => {
+      res.json({ success: true, data: await getOnfidoCapacityBuilder() });
     }),
   );
 

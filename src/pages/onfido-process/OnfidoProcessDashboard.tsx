@@ -1,10 +1,10 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { PoaExternalPage, PoaInternalPage, PoaTrailPage, type PoaDrill } from "./PoaPagesViews";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, Bar, BarChart, Cell, ComposedChart, LabelList, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import {
-  AlertTriangle, ArrowLeft, CalendarRange, Database, FileBarChart2, FileSearch, FileText, FlaskConical, Gauge, LayoutGrid, Layers3,
-  MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, UserCheck, Users2,
+  AlertTriangle, ArrowLeft, CalendarRange, ClipboardCheck, Database, FileBarChart2, FileSearch, FileText, FlaskConical, Gauge, LayoutGrid, Layers3,
+  MessageSquareWarning, Radio, Search, ShieldAlert, SkipForward, TrendingDown, TrendingUp, Trophy, UserCheck, Users2,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { OnfidoDownloadButton } from "./OnfidoDownloadButton";
@@ -81,7 +81,8 @@ type RawRecord = Record<string, unknown> & { id: string; raw_data: Record<string
 
 type ViewKey =
   | "overview" | "analyst" | "utilization" | "trends" | "alerts" | "outliers" | "attrition" | "etm" | "taskskip" | "quality"
-  | "escalations" | "docraw" | "poa" | "poatrial" | "clientdoc" | "poaexternal" | "gdmcnsla" | "live" | "namemapping";
+  | "escalations" | "docraw" | "poa" | "poatrial" | "clientdoc" | "poaexternal" | "gdmcnsla" | "live" | "namemapping"
+  | "auditsampling" | "stackranking";
 type Granularity = "daily" | "weekly" | "monthly";
 
 interface VolumeTrendPoint { bucket: string; doc: number; poa: number }
@@ -415,7 +416,7 @@ function TaskAhtTrendChart({ points, barLabel, lineLabel, barColor: barC = "var(
   return (
     <ResponsiveContainer width="100%" height={260}>
       <ComposedChart data={data} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
-        <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+
         <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
         <YAxis yAxisId="count" tickLine={false} axisLine={false} width={48} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
         <YAxis yAxisId="aht" orientation="right" tickLine={false} axisLine={false} width={48} tick={{ fontSize: 11, fill: lineColor }} tickFormatter={(v: number) => `${v}s`} />
@@ -535,7 +536,7 @@ function GdMcnPercentChart({ points }: { points: GdMcnSlaTrendPoint[] }) {
   return (
     <ResponsiveContainer width="100%" height={260}>
       <LineChart data={points} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
-        <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+
         <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
         <YAxis tickLine={false} axisLine={false} width={48} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v}%`} />
         <RTooltip content={<DarkTooltip />} />
@@ -590,7 +591,7 @@ function AhtLineChart({ points, granularity = "monthly" }: { points: { bucket: s
   return (
     <ResponsiveContainer width="100%" height={260}>
       <LineChart data={data} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
-        <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+
         <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: string) => formatBucketTick(v, granularity)} />
         <YAxis tickLine={false} axisLine={false} width={48} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v}s`} />
         <RTooltip content={<DarkTooltip />} />
@@ -604,13 +605,13 @@ function AhtLineChart({ points, granularity = "monthly" }: { points: { bucket: s
 
 /**
  * Quality scorecard bar chart — mirrors the reference's buildScorecardBar().
- * Bars are threshold-colored: green (≤ 1%), amber (> 1% to 1.5%), red (> 1.5%).
+ * Bars are threshold-colored: green (≤ 0.75%), amber (> 0.75% to 1%), red (> 1%).
  * Each bar is one quality metric; the height is its error %.
  */
 function barColor(v: number): string {
-  if (v > 1.5) return "var(--red)";
-  if (v > 1.0) return "var(--orange)";
-  if (v > 0)    return "var(--green)";
+  if (v > 1.0)   return "var(--red)";
+  if (v > 0.75)  return "var(--orange)";
+  if (v > 0)     return "var(--green)";
   return "var(--muted)";
 }
 
@@ -640,7 +641,7 @@ function ScorecardBarChart({ metrics, title, hc }: { metrics: { name: string; va
       <h3>{title}</h3>
       <ResponsiveContainer width="100%" height={Math.max(200, data.length * 44 + 60)}>
         <BarChart data={data} margin={{ top: 8, right: 64, left: 0, bottom: 32 }} layout="vertical">
-          <CartesianGrid horizontal={false} stroke="rgba(42,58,82,0.18)" strokeDasharray="3 3" />
+  
           <XAxis
             type="number" domain={[0, xDomainMax]}
             tickLine={false} axisLine={false}
@@ -668,7 +669,7 @@ function ScorecardBarChart({ metrics, title, hc }: { metrics: { name: string; va
         </BarChart>
       </ResponsiveContainer>
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 4, fontSize: 11 }}>
-        {[{ c: "var(--green)", l: "≤ 1% (Good)" }, { c: "var(--orange)", l: "1–1.5% (Warning)" }, { c: "var(--red)", l: "> 1.5% (Breach)" }].map(({ c, l }) => (
+        {[{ c: "var(--green)", l: "≤ 0.75% (Good)" }, { c: "var(--orange)", l: "0.75–1% (Warning)" }, { c: "var(--red)", l: "> 1% (Breach)" }].map(({ c, l }) => (
           <span key={l} style={{ display: "flex", alignItems: "center", gap: 5, color: "var(--muted)" }}>
             <span style={{ width: 10, height: 10, borderRadius: 3, background: c, flexShrink: 0 }} /> {l}
           </span>
@@ -678,11 +679,10 @@ function ScorecardBarChart({ metrics, title, hc }: { metrics: { name: string; va
   );
 }
 
-/** Green <= 1.0%, amber > 1.0-1.5%, red > 1.5%, muted for zero/no data — the
- *  reference dashboard's own buildTrendTable() thresholds. */
+/** Green <= 0.75%, amber > 0.75-1%, red > 1%, muted for zero/no data. */
 function metricCellColor(pct: number | null): string {
   if (pct === null || pct === 0) return "var(--muted)";
-  return pct > 1.5 ? "var(--red)" : pct > 1.0 ? "var(--orange)" : "var(--green)";
+  return pct > 1.0 ? "var(--red)" : pct > 0.75 ? "var(--orange)" : "var(--green)";
 }
 
 /** Metric-rows x time-bucket-columns table — mirrors the reference dashboard's
@@ -769,6 +769,7 @@ function QualityAreaChart({ points, title, hc, granularity = "monthly" }: { poin
  *  rather than silently doing nothing when changed. */
 const FILTERABLE_VIEWS = new Set<ViewKey>([
   "overview", "trends", "alerts", "outliers", "attrition", "quality", "etm", "taskskip", "escalations", "docraw", "poa", "poatrial", "clientdoc", "poaexternal",
+  "auditsampling", "stackranking",
 ]);
 
 const VIEW_TABS: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
@@ -790,6 +791,8 @@ const VIEW_TABS: { key: ViewKey; label: string; icon: typeof LayoutGrid }[] = [
   { key: "gdmcnsla", label: "GD MCN SLA APS", icon: Gauge },
   { key: "live", label: "Live", icon: Radio },
   { key: "namemapping", label: "Name Mapping (HR)", icon: UserCheck },
+  { key: "auditsampling", label: "Audit Sampling", icon: ClipboardCheck },
+  { key: "stackranking", label: "Stack Ranking", icon: Trophy },
 ];
 
 function TabBar({ view, onChange }: { view: ViewKey; onChange: (v: ViewKey) => void }) {
@@ -867,22 +870,24 @@ function TrendsView({ range, tlFilter, amFilter, analystFilter = "" }: { range: 
             <div style={{ padding: "40px 0", textAlign: "center", fontSize: 13, color: "var(--muted)" }}>No volume in this range yet.</div>
           ) : (
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={4} barCategoryGap={points.length <= 3 ? "35%" : "20%"}>
-                <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+              <LineChart data={points.map((p) => ({ ...p, total: p.doc + p.poa }))} margin={{ top: 24, right: 24, left: 0, bottom: 0 }}>
                 <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickMargin={8} tickFormatter={(v: string) => formatBucketTick(v, granularity)} />
                 <YAxis tickLine={false} axisLine={false} width={44} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-                <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
-                <Bar dataKey="doc" name="DOC" fill="var(--blue)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                  <LabelList dataKey="doc" position="inside" fill="#fff" fontSize={10} fontWeight={700} />
-                </Bar>
-                <Bar dataKey="poa" name="POA" fill="var(--teal)" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                  <LabelList dataKey="poa" position="inside" fill="#fff" fontSize={10} fontWeight={700} />
-                </Bar>
-              </BarChart>
+                <RTooltip content={<DarkTooltip />} />
+                <Legend verticalAlign="top" align="left" height={28} iconType="line" wrapperStyle={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }} />
+                <Line type="monotone" dataKey="doc" name="DOC" stroke="var(--blue)" strokeWidth={2} dot={{ r: 3 }} connectNulls>
+                  <LabelList dataKey="doc" position="top" fontSize={10} fontWeight={700} fill="var(--blue)" formatter={(v: number) => v > 0 ? v.toLocaleString("en-IN") : ""} />
+                </Line>
+                <Line type="monotone" dataKey="poa" name="POA" stroke="var(--teal)" strokeWidth={2} dot={{ r: 3 }} connectNulls>
+                  <LabelList dataKey="poa" position="bottom" offset={8} fontSize={10} fontWeight={700} fill="var(--teal)" formatter={(v: number) => v > 0 ? v.toLocaleString("en-IN") : ""} />
+                </Line>
+                <Line type="monotone" dataKey="total" name="Total" stroke="var(--purple)" strokeWidth={2} strokeDasharray="5 3" dot={{ r: 3 }} connectNulls>
+                  <LabelList dataKey="total" position="top" offset={12} fontSize={10} fontWeight={700} fill="var(--purple)" formatter={(v: number) => v > 0 ? v.toLocaleString("en-IN") : ""} />
+                </Line>
+              </LineChart>
             </ResponsiveContainer>
           )}
         </div>
-        {points.length > 0 && <ChartLegendRow />}
       </div>
 
       <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
@@ -1105,7 +1110,7 @@ function AnalystPerformanceView({ range }: { range: { from: string; to: string }
             ) : (
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={perf.monthly} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                  <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+          
                   <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
                   <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
                   <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
@@ -2069,7 +2074,7 @@ function EtmView({
         ) : (
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+      
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={44} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
@@ -2260,7 +2265,7 @@ function TaskSkipView({
         ) : (
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+      
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={44} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
@@ -2539,7 +2544,7 @@ function QualityView({
                   <stop offset="100%" stopColor="var(--red)" stopOpacity={0.02} />
                 </linearGradient>
               </defs>
-              <CartesianGrid vertical={false} stroke="rgba(42,58,82,0.25)" strokeDasharray="3 3" />
+
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={44} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v.toFixed(1)}%`} />
               <RTooltip content={<DarkTooltip />} />
@@ -2627,7 +2632,7 @@ function QualityView({
         const allRows = analystQualityQuery.data?.data ?? [];
         const loading = analystQualityQuery.isLoading;
         const errColor = (v: number | null) =>
-          v === null ? undefined : v > 2 ? "var(--red)" : v > 1 ? "var(--warn)" : "var(--good)";
+          v === null ? undefined : v > 1 ? "var(--red)" : v > 0.75 ? "var(--orange)" : "var(--green)";
         const fmtErr = (v: number | null) => v !== null ? `${v}%` : "—";
 
         const top20perf = [...allRows]
@@ -2680,7 +2685,7 @@ function QualityView({
               </table>
             </div>
             <div style={{ marginTop: 8, fontSize: 10, color: "var(--muted)" }}>
-              Conditional formatting: <span style={{ color: "var(--good)", fontWeight: 700 }}>Green</span> = &lt;1% · <span style={{ color: "var(--warn)", fontWeight: 700 }}>Amber</span> = 1–2% · <span style={{ color: "var(--red)", fontWeight: 700 }}>Red</span> = &gt;2%
+              Conditional formatting: <span style={{ color: "var(--green)", fontWeight: 700 }}>Green</span> = ≤0.75% · <span style={{ color: "var(--orange)", fontWeight: 700 }}>Amber</span> = 0.75–1% · <span style={{ color: "var(--red)", fontWeight: 700 }}>Red</span> = &gt;1%
             </div>
           </div>
         );
@@ -2996,7 +3001,7 @@ function DocRawView({
         ) : (
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+      
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
@@ -3016,7 +3021,7 @@ function DocRawView({
             options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]}
           />
         </div>
-        <TaskAhtTrendChart points={points} barLabel="DOC Tasks" lineLabel="DOC Avg AHT" barColor="var(--blue)" lineColor="var(--teal)" />
+        <AhtLineChart points={points} granularity={granularity} />
       </div>
 
       <div className="oc-card" style={{ "--hc": "var(--teal)" } as React.CSSProperties}>
@@ -3066,11 +3071,10 @@ function DocRawView({
   );
 }
 
-/** Green <= 1.0%, amber > 1.0-1.5%, red > 1.5% — the reference dashboard's own
- *  POA quality thresholds (peCol/xpCol in buildGroupedTable). */
+/** Green <= 0.75%, amber > 0.75-1%, red > 1%. */
 function poaCellColor(pct: number | null): string {
   if (pct === null) return "var(--muted)";
-  return pct > 1.5 ? "var(--red)" : pct > 1.0 ? "var(--orange)" : "var(--green)";
+  return pct > 1.0 ? "var(--red)" : pct > 0.75 ? "var(--orange)" : "var(--green)";
 }
 
 /** Entity x month grouped table (AM/TL/Analyst Wise POA tables, 2026-09-17
@@ -3377,7 +3381,7 @@ function PoaView({
                     <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginBottom: 8 }}>SLA Bucket Split</div>
                     <ResponsiveContainer width="100%" height={180}>
                       <BarChart data={sla.buckets} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                        <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+                
                         <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "var(--muted)" }} />
                         <YAxis tickLine={false} axisLine={false} width={36} allowDecimals={false} tick={{ fontSize: 10, fill: "var(--muted)" }} />
                         <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
@@ -3464,7 +3468,7 @@ function PoaView({
         ) : (
           <ResponsiveContainer width="100%" height={240}>
             <LineChart data={poaMonthlyErrPct} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+      
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={48} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v: number) => `${v}%`} />
               <RTooltip content={<DarkTooltip />} />
@@ -3494,7 +3498,7 @@ function PoaView({
         ) : (
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+      
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
@@ -3520,7 +3524,7 @@ function PoaView({
         ) : (
           <ResponsiveContainer width="100%" height={240}>
             <LineChart data={ahtPoints} margin={{ top: 24, right: 16, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+      
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
@@ -3649,7 +3653,7 @@ function PoaTrialView({
         ) : (
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+      
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
@@ -3996,7 +4000,7 @@ function PoaExternalView({
         ) : (
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+      
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
@@ -4193,7 +4197,7 @@ function GdMcnSlaView({
         ) : (
           <ResponsiveContainer width="100%" height={240}>
             <BarChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+      
               <XAxis dataKey="bucket" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis tickLine={false} axisLine={false} width={40} unit="%" tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
@@ -4313,7 +4317,7 @@ function LiveView() {
       ) : (
         <ResponsiveContainer width="100%" height={260}>
           <BarChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-            <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.14)" strokeDasharray="3 3" />
+    
             <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "var(--muted)" }} interval={0} angle={-20} textAnchor="end" height={50} />
             <YAxis tickLine={false} axisLine={false} width={40} allowDecimals={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
             <RTooltip content={<DarkTooltip />} cursor={{ fill: "rgba(148,163,184,0.06)" }} />
@@ -4535,6 +4539,229 @@ function isoLocal(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// ── Audit Sampling View ────────────────────────────────────────────────────────
+
+interface AuditSamplingRow {
+  client: string; documentType: string; taskType: string;
+  totalAudited: number; errors: number; errPct: number | null; avgAht: number | null;
+}
+
+function AuditSamplingView({ range, tlFilter, amFilter }: { range: DateRange; tlFilter: string; amFilter: string }) {
+  const [granularity, setGranularity] = useState<Granularity>("monthly");
+  const [queueFilter, setQueueFilter] = useState<"" | "DOC" | "POA">("");
+  const [clientFilter, setClientFilter] = useState("");
+  const [docTypeFilter, setDocTypeFilter] = useState("");
+
+  const qs = `from=${range.from}&to=${range.to}&granularity=${granularity}`
+    + (tlFilter ? `&tlName=${encodeURIComponent(tlFilter)}` : "")
+    + (amFilter ? `&amName=${encodeURIComponent(amFilter)}` : "")
+    + (queueFilter ? `&queue=${queueFilter}` : "")
+    + (clientFilter ? `&clientName=${encodeURIComponent(clientFilter)}` : "")
+    + (docTypeFilter ? `&documentType=${encodeURIComponent(docTypeFilter)}` : "");
+
+  const q = useQuery({
+    queryKey: ["onfido-process", "audit-sampling", qs],
+    queryFn: () => hrmsApi.get<{ data: AuditSamplingRow[] }>(`/api/onfido-process/audit-sampling?${qs}`),
+  });
+
+  const rows = q.data?.data ?? [];
+  const clients = [...new Set(rows.map((r) => r.client))].sort();
+  const docTypes = [...new Set(rows.map((r) => r.documentType))].sort();
+
+  const filtered = rows.filter((r) => (!clientFilter || r.client === clientFilter) && (!docTypeFilter || r.documentType === docTypeFilter));
+
+  const errC = (v: number | null) =>
+    v === null ? undefined : v > 1 ? ({ background: "var(--red)", color: "#fff" } as React.CSSProperties) : v > 0.75 ? ({ background: "var(--orange)", color: "#fff" } as React.CSSProperties) : ({ background: "var(--green)", color: "#fff" } as React.CSSProperties);
+
+  return (
+    <div className="space-y-4">
+      <div className="oc-card" style={{ "--hc": "var(--blue)" } as React.CSSProperties}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 style={{ marginBottom: 0 }}>Audit Sampling — DOC Check &amp; POA</h3>
+          <div className="oc-pillbar">
+            {(["daily", "weekly", "monthly"] as Granularity[]).map((g) => (
+              <button key={g} className={g === granularity ? "oc-pill-btn active" : "oc-pill-btn"} onClick={() => setGranularity(g)}>
+                {g[0].toUpperCase() + g.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="oc-filterbar" style={{ marginTop: 12 }}>
+          <div className="oc-field">
+            <label>Queue</label>
+            <select className="oc-select" value={queueFilter} onChange={(e) => setQueueFilter(e.target.value as "" | "DOC" | "POA")}>
+              <option value="">All</option>
+              <option value="DOC">DOC Check</option>
+              <option value="POA">POA</option>
+            </select>
+          </div>
+          <div className="oc-field">
+            <label>Client</label>
+            <select className="oc-select" style={{ width: 180 }} value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}>
+              <option value="">All Clients</option>
+              {clients.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div className="oc-field">
+            <label>Document Type</label>
+            <select className="oc-select" style={{ width: 200 }} value={docTypeFilter} onChange={(e) => setDocTypeFilter(e.target.value)}>
+              <option value="">All Document Types</option>
+              {docTypes.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {q.isLoading && <div style={{ padding: "40px 0", textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Loading...</div>}
+        {q.isError && <div style={{ padding: "20px 0", color: "var(--red)", fontSize: 13 }}>Failed to load audit sampling data.</div>}
+        {!q.isLoading && filtered.length === 0 && <div style={{ padding: "40px 0", textAlign: "center", color: "var(--muted)", fontSize: 13 }}>No audit data in this range.</div>}
+        {filtered.length > 0 && (
+          <div style={{ overflowX: "auto", marginTop: 12 }}>
+            <table className="oc-table">
+              <thead>
+                <tr>
+                  <th>Client</th>
+                  <th>Document Type</th>
+                  <th>Task Type</th>
+                  <th className="oc-right">Audited</th>
+                  <th className="oc-right">Errors</th>
+                  <th className="oc-right">Error %</th>
+                  <th className="oc-right">Avg AHT (s)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.client}</td>
+                    <td>{r.documentType}</td>
+                    <td>{r.taskType}</td>
+                    <td className="oc-right">{r.totalAudited.toLocaleString("en-IN")}</td>
+                    <td className="oc-right">{r.errors.toLocaleString("en-IN")}</td>
+                    <td className="oc-right" style={errC(r.errPct)}>{r.errPct !== null ? `${r.errPct.toFixed(1)}%` : "—"}</td>
+                    <td className="oc-right">{r.avgAht !== null ? r.avgAht.toFixed(0) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div style={{ marginTop: 8, fontSize: 11, color: "var(--muted)" }}>
+          Conditional formatting: <span style={{ color: "var(--green)", fontWeight: 700 }}>Green</span> ≤0.75% · <span style={{ color: "var(--orange)", fontWeight: 700 }}>Amber</span> 0.75–1% · <span style={{ color: "var(--red)", fontWeight: 700 }}>Red</span> &gt;1%
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Stack Ranking View ─────────────────────────────────────────────────────────
+
+interface StackRankingRow {
+  name: string; tier: "AM" | "TL" | "Analyst";
+  intErrPct: number | null; extErrPct: number | null; crePct: number | null;
+  attritionPct: number | null; shrinkagePct: number | null; ahtSecs: number | null;
+  score: number; rank: number;
+}
+
+function StackRankingView({ range, tlFilter, amFilter }: { range: DateRange; tlFilter: string; amFilter: string }) {
+  const [granularity, setGranularity] = useState<Granularity>("monthly");
+  const [tier, setTier] = useState<"AM" | "TL" | "Analyst">("Analyst");
+
+  const qs = `from=${range.from}&to=${range.to}&granularity=${granularity}&tier=${tier}`
+    + (tlFilter ? `&tlName=${encodeURIComponent(tlFilter)}` : "")
+    + (amFilter ? `&amName=${encodeURIComponent(amFilter)}` : "");
+
+  const q = useQuery({
+    queryKey: ["onfido-process", "stack-ranking", qs],
+    queryFn: () => hrmsApi.get<{ data: StackRankingRow[] }>(`/api/onfido-process/stack-ranking?${qs}`),
+  });
+
+  const rows = q.data?.data ?? [];
+
+  const WEIGHTS_AM_TL = [
+    { key: "intErrPct", label: "Internal Error %", weight: 25, lowerIsBetter: true },
+    { key: "extErrPct", label: "External Error %", weight: 25, lowerIsBetter: true },
+    { key: "crePct", label: "CRE", weight: 10, lowerIsBetter: true },
+    { key: "attritionPct", label: "Attrition", weight: 10, lowerIsBetter: true },
+    { key: "shrinkagePct", label: "Shrinkage", weight: 10, lowerIsBetter: true },
+    { key: "ahtSecs", label: "AHT", weight: 20, lowerIsBetter: true },
+  ];
+  const WEIGHTS_ANALYST = [
+    { key: "intErrPct", label: "Internal Error %", weight: 30, lowerIsBetter: true },
+    { key: "extErrPct", label: "External Error %", weight: 30, lowerIsBetter: true },
+    { key: "crePct", label: "CRE", weight: 15, lowerIsBetter: true },
+    { key: "ahtSecs", label: "AHT", weight: 25, lowerIsBetter: true },
+  ];
+  const weights = tier === "Analyst" ? WEIGHTS_ANALYST : WEIGHTS_AM_TL;
+
+  return (
+    <div className="space-y-4">
+      <div className="oc-card" style={{ "--hc": "var(--purple)" } as React.CSSProperties}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 style={{ marginBottom: 0 }}>Stack Ranking</h3>
+          <div className="oc-pillbar">
+            {(["daily", "weekly", "monthly"] as Granularity[]).map((g) => (
+              <button key={g} className={g === granularity ? "oc-pill-btn active" : "oc-pill-btn"} onClick={() => setGranularity(g)}>
+                {g[0].toUpperCase() + g.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="oc-filterbar" style={{ marginTop: 12 }}>
+          <div className="oc-field">
+            <label>Tier</label>
+            <select className="oc-select" value={tier} onChange={(e) => setTier(e.target.value as "AM" | "TL" | "Analyst")}>
+              <option value="AM">AM</option>
+              <option value="TL">TL</option>
+              <option value="Analyst">Analyst</option>
+            </select>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 8, fontSize: 11, color: "var(--muted)" }}>
+          {tier === "Analyst"
+            ? "Weights: Internal Error 30% · External Error 30% · CRE 15% · AHT 25%"
+            : "Weights: Internal Error 25% · External Error 25% · CRE 10% · Attrition 10% · Shrinkage 10% · AHT 20%"}
+          {" · "}Lower score = better performance
+        </div>
+
+        {q.isLoading && <div style={{ padding: "40px 0", textAlign: "center", color: "var(--muted)", fontSize: 13 }}>Loading...</div>}
+        {q.isError && <div style={{ padding: "20px 0", color: "var(--red)", fontSize: 13 }}>Failed to load stack ranking data.</div>}
+        {!q.isLoading && rows.length === 0 && <div style={{ padding: "40px 0", textAlign: "center", color: "var(--muted)", fontSize: 13 }}>No ranking data in this range.</div>}
+        {rows.length > 0 && (
+          <div style={{ overflowX: "auto", marginTop: 12 }}>
+            <table className="oc-table">
+              <thead>
+                <tr>
+                  <th className="oc-right">#</th>
+                  <th>{tier === "Analyst" ? "Analyst" : tier}</th>
+                  {weights.map((w) => (
+                    <th key={w.key} className="oc-right">{w.label} <span style={{ color: "var(--muted)", fontWeight: 400 }}>({w.weight}%)</span></th>
+                  ))}
+                  <th className="oc-right">Score</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={`${r.tier}-${r.name}`}>
+                    <td className="oc-right" style={{ fontWeight: 700, color: r.rank <= 3 ? "var(--green)" : undefined }}>{r.rank}</td>
+                    <td>{r.name}</td>
+                    {weights.map((w) => {
+                      const v = r[w.key as keyof StackRankingRow] as number | null;
+                      return <td key={w.key} className="oc-right">{v !== null ? (w.key === "ahtSecs" ? `${v}s` : `${v.toFixed(1)}%`) : "—"}</td>;
+                    })}
+                    <td className="oc-right" style={{ fontWeight: 700 }}>{r.score.toFixed(1)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Defaulting to "1st of this month -> today" looked reasonable but was wrong
 // for this dashboard specifically: every Onfido source table is filled by a
 // batch upload that lags real time by days to weeks (confirmed live: the most
@@ -4661,6 +4888,8 @@ export default function OnfidoProcessDashboard({ embedded = false }: { embedded?
           {view === "gdmcnsla" && <GdMcnSlaView range={range} onOpenRecord={openRecord} />}
           {view === "live" && <LiveView />}
           {view === "namemapping" && <OnfidoNameMapping />}
+          {view === "auditsampling" && <AuditSamplingView range={range} tlFilter={tlFilter} amFilter={amFilter} />}
+          {view === "stackranking" && <StackRankingView range={range} tlFilter={tlFilter} amFilter={amFilter} />}
 
           {view === "overview" && <OnfidoOverviewReport range={range} tlFilter={tlFilter} amFilter={amFilter} />}
         </div>
