@@ -1,4 +1,7 @@
 {
+  "modules/ai/ai-insights.routes.ts": [
+    "salary_payslip.run_id"
+  ],
   "modules/reporting/report-suite.routes.ts": [
     "action_plan.action_plan_number",
     "action_plan.action_type",
