@@ -1105,6 +1105,7 @@ grnRouter.post(
         userRoles: user.roles,
         currentStatus: String(req.financeGrn?.status ?? ""),
         workflow: "grn",
+        grnType: req.financeGrn?.grn_type ?? null,
       });
       const result = await grnService.reviewGrn(
         req.params.id,

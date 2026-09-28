@@ -2934,7 +2934,7 @@ export const grnService = {
  */
 function decorateGrnPendency(row: RowDataPacket): RowDataPacket {
   const status = String(row.status ?? "");
-  const pending = resolvePendingWith(status, "grn");
+  const pending = resolvePendingWith(status, "grn", row.grn_type ?? null);
 
   // Check if this is legacy data from db_bill
   const isLegacyData = Boolean(row.bill_source_id);

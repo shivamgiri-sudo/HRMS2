@@ -278,7 +278,7 @@ export const grnReportService = {
     );
 
     const decorated = (rows as RowDataPacket[]).map((row) => {
-      const pending = resolvePendingWith(String(row.status ?? ""), "grn");
+      const pending = resolvePendingWith(String(row.status ?? ""), "grn", row.grn_type ?? null);
       const stageStartedAt = row.branch_head_reviewed_at ?? row.submitted_at ?? row.grn_date ?? null;
       const isLegacyData = Boolean(row.bill_source_id);
       let ageDays: number | null = null;

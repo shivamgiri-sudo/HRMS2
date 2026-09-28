@@ -696,6 +696,7 @@ smartGrnRouter.post(
         userRoles: user.roles,
         currentStatus: String(req.financeGrn?.status ?? ""),
         workflow: "grn",
+        grnType: req.financeGrn?.grn_type ?? null,
       });
       const decision = String(req.body?.decision ?? "") as "approved" | "rejected";
       if (!("approved,rejected".split(",")).includes(decision)) {
