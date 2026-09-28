@@ -25,9 +25,14 @@ export interface SheetEmployee {
   employeeCode: string;
   employeeName: string;
   branch: string | null;
+  department: string | null;
+  designation: string | null;
+  profile: string | null;
   costCentre: string | null;
   process: string | null;
   lob: string | null;
+  /** ISO date string — last working day; days after this are blank, not absent. */
+  dateOfLeaving: string | null;
   /** APR, COSEC, or "APR + COSEC" when the month mixes both. */
   attendanceSource: string;
   /** Keyed by YYYY-MM-DD; a day with no attendance row is simply absent. */
@@ -162,6 +167,8 @@ function employeeWhere(
 const EMPLOYEE_FROM = `
   FROM employees e
   LEFT JOIN branch_master bm ON bm.id = e.branch_id
+  LEFT JOIN department_master dm ON dm.id = e.department_id
+  LEFT JOIN designation_master desm ON desm.id = e.designation_id
   LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id
   LEFT JOIN process_master pm ON pm.id = e.process_id
   LEFT JOIN lob_master lm ON lm.id = e.lob_id`;
@@ -194,7 +201,14 @@ export async function fetchSheet(
   const offset = Math.trunc(page.offset);
   const [emps] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, e.employee_code, e.full_name,
-            bm.branch_name, ccm.cost_centre_code, pm.process_name, lm.lob_name
+            bm.branch_name,
+            dm.dept_name,
+            desm.designation_name,
+            e.profile_type,
+            ccm.cost_centre_code,
+            pm.process_name,
+            lm.lob_name,
+            DATE_FORMAT(COALESCE(e.date_of_exit, e.date_of_leaving), '%Y-%m-%d') AS date_of_leaving
        ${EMPLOYEE_FROM}
       WHERE ${w.sql}
       ORDER BY e.employee_code
@@ -223,15 +237,30 @@ export async function fetchSheet(
   }
 
   return employees.map((e) => {
-    const days = byEmployee.get(String(e.id)) ?? {};
+    const rawDays = byEmployee.get(String(e.id)) ?? {};
+    const dol: string | null = e.date_of_leaving ? String(e.date_of_leaving) : null;
+
+    // Days after DOL must be blank (not absent). Strip them from the day map — the
+    // XLSX/API consumer treats a missing key as blank when DOL is set, unlike a missing
+    // key for an active employee (which renders as "A").
+    const days: Record<string, SheetDay> = {};
+    for (const [day, data] of Object.entries(rawDays)) {
+      if (dol && day > dol) continue;
+      days[day] = data;
+    }
+
     return {
       employeeId: String(e.id),
       employeeCode: String(e.employee_code ?? ""),
       employeeName: String(e.full_name ?? ""),
       branch: e.branch_name ?? null,
+      department: e.dept_name ?? null,
+      designation: e.designation_name ?? null,
+      profile: e.profile_type ?? null,
       costCentre: e.cost_centre_code ?? null,
       process: e.process_name ?? null,
       lob: e.lob_name ?? null,
+      dateOfLeaving: dol,
       attendanceSource: summariseSource(Object.values(days)),
       days,
     };

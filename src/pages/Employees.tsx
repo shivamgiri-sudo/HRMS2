@@ -1268,9 +1268,9 @@ const Employees = () => {
           }}
           employees={employeesToDeactivate}
           isSubmitting={bulkStatusMutation.isPending}
-          onConfirm={(reason) => {
+          onConfirm={({ reason, attrition_date, attrition_reason, attrition_reason_notes }) => {
             bulkStatusMutation.mutate(
-              { employeeIds: employeesToDeactivate.map((employee) => employee.id), status: "inactive", reason },
+              { employeeIds: employeesToDeactivate.map((employee) => employee.id), status: "inactive", reason, attrition_date, attrition_reason, attrition_reason_notes },
               {
                 onSuccess: ({ updatedCount, failedCount, firstError }) => {
                   if (updatedCount > 0) {

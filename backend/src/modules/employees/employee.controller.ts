@@ -42,12 +42,22 @@ export const employeeController = {
   },
 
   async deactivateEmployee(req: Request, res: Response) {
-    const reason = (req.body as { reason?: string } | undefined)?.reason
-      ?? (req.query.reason as string | undefined);
+    const body = (req.body as {
+      reason?: string;
+      attrition_date?: string;
+      attrition_reason?: string;
+      attrition_reason_notes?: string;
+    } | undefined) ?? {};
+    const reason = body.reason ?? (req.query.reason as string | undefined);
     await employeeService.deactivateEmployee(
       req.params.id,
       (req as any).authUser?.id ?? "system",
-      reason
+      reason,
+      {
+        attritionDate: body.attrition_date ?? null,
+        attritionReason: body.attrition_reason ?? null,
+        attritionReasonNotes: body.attrition_reason_notes ?? null,
+      }
     );
     res.status(204).send();
   },

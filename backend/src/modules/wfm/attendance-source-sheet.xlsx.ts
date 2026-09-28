@@ -14,10 +14,14 @@ const IDENTITY_HEADERS = [
   "Employee name",
   "Emp Code",
   "Branch",
+  "Department",
+  "Designation",
+  "Profile",
   "Cost Center",
   "Process Name",
-  "LOB",
+  "Process LOB",
   "Attendance Source",
+  "Date of Leaving",
 ] as const;
 
 const STATUS_FILLS: Readonly<Record<string, string>> = {
@@ -97,10 +101,18 @@ export function buildAttendanceSourceWorkbook(
   const identityCount = IDENTITY_HEADERS.length;
   const dateRow = ws.getRow(1);
   const headerRow = ws.getRow(2);
+  const IDENTITY_WIDTHS: Record<number, number> = {
+    1: 26,  // Employee name
+    4: 22,  // Department
+    5: 22,  // Designation
+    8: 22,  // Process Name
+    9: 18,  // Process LOB
+    11: 14, // Date of Leaving
+  };
   IDENTITY_HEADERS.forEach((h, i) => {
     headerRow.getCell(i + 1).value = h;
     styleHeader(headerRow.getCell(i + 1));
-    ws.getColumn(i + 1).width = i === 1 ? 26 : i === 4 || i === 5 ? 22 : 14;
+    ws.getColumn(i + 1).width = IDENTITY_WIDTHS[i + 1] ?? 14;
   });
   days.forEach((date, i) => {
     const first = identityCount + i * 3 + 1;
@@ -122,10 +134,14 @@ export function buildAttendanceSourceWorkbook(
       emp.employeeName,
       emp.employeeCode,
       emp.branch,
+      emp.department,
+      emp.designation,
+      emp.profile,
       emp.costCentre,
       emp.process,
       emp.lob,
       emp.attendanceSource,
+      emp.dateOfLeaving ?? "",
     ].forEach((v, i) => {
       const cell = row.getCell(i + 1);
       cell.value = v ?? "";
@@ -134,6 +150,7 @@ export function buildAttendanceSourceWorkbook(
     days.forEach((date, i) => {
       const first = identityCount + i * 3 + 1;
       const day = emp.days[date];
+      const afterDOL = !!emp.dateOfLeaving && date > emp.dateOfLeaving;
       const cells = [
         row.getCell(first),
         row.getCell(first + 1),
@@ -143,6 +160,13 @@ export function buildAttendanceSourceWorkbook(
         c.border = thin;
         c.alignment = { horizontal: "center" };
       });
+      // After DOL: blank cell with a light grey fill, no code
+      if (afterDOL) {
+        cells.forEach((c) => {
+          c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
+        });
+        return;
+      }
       if (!day) return;
       cells[0].value = day.code;
       cells[0].font = { bold: true };

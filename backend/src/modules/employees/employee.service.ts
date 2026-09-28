@@ -631,6 +631,30 @@ export const employeeService = {
     // in the same statement, so the two can never disagree again.
     if (isDeactivating && wasActive) { sets.push("active_status = 0"); }
 
+    // Write attrition fields when provided on a deactivation PATCH (issue #10 / #4).
+    // COALESCE preserves an existing value if the caller passes null/undefined.
+    const attrInput = input as {
+      attrition_date?: string | null;
+      attrition_reason?: string | null;
+      attrition_reason_notes?: string | null;
+    };
+    if (isDeactivating) {
+      if (attrInput.attrition_date !== undefined && attrInput.attrition_date) {
+        sets.push("date_of_leaving = COALESCE(?, date_of_leaving)");
+        params.push(attrInput.attrition_date);
+        sets.push("attrition_date = COALESCE(?, attrition_date)");
+        params.push(attrInput.attrition_date);
+      }
+      if (attrInput.attrition_reason !== undefined && attrInput.attrition_reason) {
+        sets.push("attrition_reason = COALESCE(?, attrition_reason)");
+        params.push(attrInput.attrition_reason);
+      }
+      if (attrInput.attrition_reason_notes !== undefined && attrInput.attrition_reason_notes) {
+        sets.push("attrition_reason_notes = COALESCE(?, attrition_reason_notes)");
+        params.push(attrInput.attrition_reason_notes);
+      }
+    }
+
     // A salary start date change is validated NOW (ownership, date locks, closed payroll months;
     // nothing is written) and applied after the profile UPDATE below, so a refused date cannot
     // leave the rest of the edit half-saved and a failed profile UPDATE cannot leave the date moved.
@@ -824,7 +848,16 @@ export const employeeService = {
     return this.getEmployee(id);
   },
 
-  async deactivateEmployee(id: string, actorUserId: string, reason?: string): Promise<void> {
+  async deactivateEmployee(
+    id: string,
+    actorUserId: string,
+    reason?: string,
+    opts?: {
+      attritionDate?: string | null;
+      attritionReason?: string | null;
+      attritionReasonNotes?: string | null;
+    }
+  ): Promise<void> {
     const existing = await this.getEmployee(id);
 
     // This endpoint recorded nothing at all — the actor argument was received as
@@ -838,9 +871,20 @@ export const employeeService = {
       );
     }
 
+    const dolDate = opts?.attritionDate ?? null;
+    const attrReason = opts?.attritionReason ?? null;
+    const attrNotes = opts?.attritionReasonNotes ?? null;
+
     await db.execute(
-      "UPDATE employees SET active_status = 0, employment_status = 'Inactive' WHERE id = ?",
-      [id]
+      `UPDATE employees
+          SET active_status = 0,
+              employment_status = 'Inactive',
+              date_of_leaving   = COALESCE(?, date_of_leaving),
+              attrition_date    = COALESCE(?, attrition_date),
+              attrition_reason  = COALESCE(?, attrition_reason),
+              attrition_reason_notes = COALESCE(?, attrition_reason_notes)
+        WHERE id = ?`,
+      [dolDate, dolDate, attrReason, attrNotes, id]
     );
 
     await logSensitiveAction({

@@ -466,10 +466,13 @@ export function useBulkUpdateEmployeeStatus() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ employeeIds, status, reason }: {
+    mutationFn: async ({ employeeIds, status, reason, attrition_date, attrition_reason, attrition_reason_notes }: {
       employeeIds: string[];
       status: "active" | "inactive";
       reason?: string;
+      attrition_date?: string;
+      attrition_reason?: string;
+      attrition_reason_notes?: string;
     }) => {
       const employmentStatus = status === "active" ? "Active" : "Inactive";
 
@@ -477,7 +480,12 @@ export function useBulkUpdateEmployeeStatus() {
         employeeIds.map((id) =>
           hrmsApi.patch(`/api/employees/${id}`, {
             employmentStatus,
-            ...(status === "inactive" ? { deactivationReason: reason } : {}),
+            ...(status === "inactive" ? {
+              deactivationReason: reason,
+              attrition_date: attrition_date ?? null,
+              attrition_reason: attrition_reason ?? null,
+              attrition_reason_notes: attrition_reason_notes ?? null,
+            } : {}),
           })
         )
       );

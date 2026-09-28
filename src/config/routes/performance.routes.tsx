@@ -51,6 +51,7 @@ const LMSIntegrationAdmin   = lazy(() => import("@/pages/LMSIntegrationAdmin"));
 const NativeLMSIntegration  = lazy(() => import("@/pages/NativeLMSIntegration"));
 const LMSProgressDashboard  = lazy(() => import("@/pages/LMSProgressDashboard"));
 const LMSModuleLaunch       = lazy(() => import("@/pages/LMSModuleLaunch"));
+const SkillRoadmapPage      = lazy(() => import("@/pages/SkillRoadmapPage"));
 
 export const performanceRouteElements = (
   <>
@@ -166,5 +167,6 @@ export const performanceRouteElements = (
       <Route path="/lms/integration"         element={<ProtectedRoute><Gate pageCode="LMS_INTEGRATION"><NativeLMSIntegration /></Gate></ProtectedRoute>} />
       <Route path="/lms/progress-dashboard"  element={<ProtectedRoute><Gate pageCode="LMS_PROGRESS_DASHBOARD"><LMSProgressDashboard /></Gate></ProtectedRoute>} />
       <Route path="/lms/module-launch"       element={<ProtectedRoute><Gate pageCode="LMS_MODULE_LAUNCH"><LMSModuleLaunch /></Gate></ProtectedRoute>} />
+      <Route path="/skill-roadmap"           element={<ProtectedRoute><Gate pageCode="SKILL_ROADMAP"><SkillRoadmapPage /></Gate></ProtectedRoute>} />
   </>
 );
