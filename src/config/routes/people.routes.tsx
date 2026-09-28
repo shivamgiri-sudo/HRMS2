@@ -27,6 +27,7 @@ const NativeExitCommandCenter       = lazy(() => import("@/pages/NativeExitComma
 const MyTeamPage                    = lazy(() => import("@/pages/MyTeamPage"));
 const EmployeeJourney               = lazy(() => import("@/pages/EmployeeJourney"));
 const IjpPage                       = lazy(() => import("@/pages/people/IjpPage"));
+const SkillRoadmapPage              = lazy(() => import("@/pages/SkillRoadmapPage"));
 
 export const peopleRouteElements = (
   <>
@@ -133,5 +134,12 @@ export const peopleRouteElements = (
 
       {/* Internal Job Postings */}
       <Route path="/people/ijp" element={<ProtectedRoute><Gate pageCode="ijp_opportunities"><IjpPage /></Gate></ProtectedRoute>} />
+
+      {/* Skill Roadmaps */}
+      <Route path="/people/skill-roadmap" element={
+        <ProtectedRoute roles={['super_admin','admin','hr','manager','process_manager','branch_head','operations_manager','ceo','coo','employee']}>
+          <SkillRoadmapPage />
+        </ProtectedRoute>
+      } />
   </>
 );

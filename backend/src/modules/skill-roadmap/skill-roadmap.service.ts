@@ -116,19 +116,27 @@ export const skillRoadmapService = {
     roadmapId: string,
     nodes: Array<{ slug: string; label: string; description?: string; sortOrder: number }>
   ) {
-    for (const [i, node] of nodes.entries()) {
-      const id = `${roadmapId}:${node.slug}`;
-      await db.execute(
-        `INSERT INTO skill_roadmap_nodes (id, roadmap_id, node_slug, label, description, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE label = VALUES(label), description = VALUES(description),
-           sort_order = VALUES(sort_order)`,
-        [id, roadmapId, node.slug, node.label, node.description ?? null, node.sortOrder]
-      );
-    }
+    if (nodes.length === 0) return;
+    // Single multi-row INSERT instead of N separate round-trips.
+    const placeholders = nodes.map(() => "(?, ?, ?, ?, ?, ?)").join(", ");
+    const values = nodes.flatMap((node) => [
+      `${roadmapId}:${node.slug}`,
+      roadmapId,
+      node.slug,
+      node.label,
+      node.description ?? null,
+      node.sortOrder,
+    ]);
+    await db.execute(
+      `INSERT INTO skill_roadmap_nodes (id, roadmap_id, node_slug, label, description, sort_order)
+       VALUES ${placeholders}
+       ON DUPLICATE KEY UPDATE label = VALUES(label), description = VALUES(description),
+         sort_order = VALUES(sort_order)`,
+      values,
+    );
     await db.execute(
       `UPDATE skill_roadmaps SET node_count = (SELECT COUNT(*) FROM skill_roadmap_nodes WHERE roadmap_id = ?) WHERE id = ?`,
-      [roadmapId, roadmapId]
+      [roadmapId, roadmapId],
     );
   },
 };
