@@ -538,7 +538,10 @@ describe("What each approval stage actually does to the money", () => {
     expect(sideEffects.auditActions).toContain("GRN_IMPREST_LEDGER_SKIPPED");
   });
 
-  it("a float that cannot cover the voucher fails the approval rather than going negative", async () => {
+  it("a float that cannot cover the voucher still approves, debits, and audits the shortfall", async () => {
+    // Deliberate: a branch float is allowed to run negative between spend and the Finance Head's
+    // next top-up (no ceiling). Blocking approval here would stop every such voucher, which is
+    // the normal case, not the exception.
     stateRef.current = makeState({
       grn: baseGrn({
         grn_type: "imprest", status: "accounts_head_approved",
@@ -548,10 +551,10 @@ describe("What each approval stage actually does to the money", () => {
       floatShort: true,
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
-    await expect(
-      grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head")
-    ).rejects.toThrow(/float is short/i);
-    expect(sideEffects.imprestDebits).toHaveLength(0);
+    const result = await grnSmartService.review("grn-1", "approved", "ok", "u-fh", "finance_head");
+    expect(result.newStatus).toBe("approved");
+    expect(sideEffects.imprestDebits).toEqual([{ grnId: "grn-1", amount: 1000 }]);
+    expect(sideEffects.auditActions).toContain("GRN_IMPREST_LEDGER_NEGATIVE_BALANCE");
   });
 
   it("a Finance Head REJECTION releases the reservation", async () => {

@@ -3553,6 +3553,11 @@ async function writePeriodSplits(
  * production, so throwing here would stop every imprest approval the moment this deploys. The
  * debit is skipped and the skip is AUDITED with its reason — visible rather than silent, which
  * is the whole failure mode this function exists to close.
+ *
+ * A NEGATIVE RESULTING BALANCE DOES NOT BLOCK APPROVAL EITHER (confirmed business rule, no
+ * ceiling: a branch float is expected to run negative between spend and the Finance Head's next
+ * top-up/allocation). The debit still posts; the negative result is AUDITED with its reason so
+ * it stays visible rather than becoming a hard stop on every approval.
  */
 async function postImprestVoucherDebit(
   connection: PoolConnection,
@@ -3588,11 +3593,20 @@ async function postImprestVoucherDebit(
     return null;
   }
 
-  // Refuses a debit the float cannot cover. Also never called before — the guard existed and
-  // nothing consulted it, so a branch could spend a float it did not have and go negative
-  // silently. Checked before posting, inside the same transaction, so the approval fails
-  // rather than the ledger going into deficit.
-  await imprestLedgerService.assertSufficientBalance(managerId, amount, connection);
+  // Negative floats are expected here (spend now, Finance Head tops up later, no ceiling), so a
+  // shortfall is audited rather than blocking approval — same treatment as the missing-manager
+  // case above.
+  try {
+    await imprestLedgerService.assertSufficientBalance(managerId, amount, connection);
+  } catch (error) {
+    await writeAudit("IMPREST_LEDGER_NEGATIVE_BALANCE", grnId, actorUserId, "finance_head", {
+      reason:
+        error instanceof Error ? error.message : "Voucher amount exceeds the current imprest balance",
+      manager_id: managerId,
+      branch_id: branchId,
+      amount,
+    });
+  }
 
   return imprestLedgerService.post(
     {
