@@ -143,8 +143,14 @@ export const FIELD_OWNERSHIP: Record<string, FieldOwnership> = {
     tab: "personal", employeeEditable: false, hrEditable: true,
     approvalRequired: false, immutable: false,
     liveRoute: "PATCH /:id",
-    notes: "The canonical login identity. PATCH /me explicitly rejects this key with a 403 " +
-      "regardless of value — 'Contact HR.' HR/admin edits also sync auth_user.email.",
+    notes: "The canonical login identity. Not in SELF_EDITABLE_PERSONAL_COLUMNS (the " +
+      "employeeEditable:false flag above), but PATCH /me handles it as a one-shot special " +
+      "case ahead of that list: self-service may set it exactly once, only while " +
+      "employees.official_email is still empty (i.e. before IT provisioning or HR has " +
+      "assigned one) — see employee.routes.ts. Once set by any path, it locks; PATCH /me " +
+      "403s further attempts and directs the employee to HR. HR/admin edits (PATCH /:id) " +
+      "and IT provisioning completion always sync auth_user.email; the self-service path " +
+      "now does the same.",
   },
   working_hours_start: {
     tab: "personal", employeeEditable: true, hrEditable: false,

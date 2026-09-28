@@ -21,10 +21,30 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Loader2, User, Mail, Phone, MapPin, Building2, Calendar,
-    Briefcase, Save, Clock, Wallet, Files, Package, Star, ScrollText,
-    Users, Cake, Edit3, X, ChevronRight, GitBranch, Landmark,
-    HeartHandshake, ShieldCheck,
+  Loader2,
+  User,
+  Mail,
+  Phone,
+  MapPin,
+  Building2,
+  Calendar,
+  Briefcase,
+  Save,
+  Clock,
+  Wallet,
+  Files,
+  Package,
+  Star,
+  ScrollText,
+  Users,
+  Cake,
+  Edit3,
+  X,
+  ChevronRight,
+  GitBranch,
+  Landmark,
+  HeartHandshake,
+  ShieldCheck,
 } from "lucide-react";
 import { PhotoUpload } from "@/components/employee/PhotoUpload";
 import { useToast } from "@/hooks/use-toast";
@@ -39,18 +59,29 @@ import { LeaveRequestHistory } from "@/components/profile/LeaveRequestHistory";
 import { PayslipViewer } from "@/components/profile/PayslipViewer";
 import { TaxDocumentsViewer } from "@/components/profile/TaxDocumentsViewer";
 import { MyAttendanceHistory } from "@/components/profile/MyAttendanceHistory";
-import { AttendanceCalendar, adrRecordsToAttendanceDays } from "@/components/attendance/AttendanceCalendar";
+import {
+  AttendanceCalendar,
+  adrRecordsToAttendanceDays,
+} from "@/components/attendance/AttendanceCalendar";
 import { useAttendanceDailyRecords } from "@/hooks/useAttendanceHub";
 import { MyAssets } from "@/components/profile/MyAssets";
 import { MyPerformanceReviews } from "@/components/profile/MyPerformanceReviews";
 import { EmployeeJourneyTimeline } from "@/components/employees/EmployeeJourneyTimeline";
-import { BLOOD_GROUPS, isKnownBloodGroup, displayBloodGroup } from "@/lib/bloodGroups";
+import {
+  BLOOD_GROUPS,
+  isKnownBloodGroup,
+  displayBloodGroup,
+} from "@/lib/bloodGroups";
 import {
   BankStatutoryDetails,
   EmergencyNomineeDetails,
 } from "@/components/profile/ProfileSensitiveDetails";
 
 interface ProfileForm {
+  // Only sent to PATCH /me when employee.official_email is still empty — see
+  // buildProfileSavePayload(). Once IT provisioning or HR has set it, the field
+  // is locked and this stays display-only.
+  official_email: string;
   mobile: string;
   personal_email: string;
   personal_phone: string;
@@ -70,7 +101,9 @@ const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const formatDate = (dateStr: string | null) => {
   if (!dateStr) return "—";
-  const datePart = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/)?.slice(1);
+  const datePart = String(dateStr)
+    .match(/^(\d{4})-(\d{2})-(\d{2})/)
+    ?.slice(1);
   if (!datePart) return "—";
   const [year, month, day] = datePart.map(Number);
   // Use UTC to avoid timezone offset issues
@@ -84,7 +117,9 @@ const formatDate = (dateStr: string | null) => {
     return "—";
   }
   return date.toLocaleDateString("en-IN", {
-    year: "numeric", month: "long", day: "numeric",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
     timeZone: "UTC",
   });
 };
@@ -96,15 +131,27 @@ const formatTime = (time: string | null) => {
   return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
 };
 
-function InfoRow({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string | null | undefined }) {
+function InfoRow({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string | null | undefined;
+}) {
   return (
     <div className="flex items-start gap-3 py-3">
       <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-100">
         <Icon className="h-4 w-4 text-slate-700" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500">{label}</p>
-        <p className="mt-1 break-words text-base font-extrabold leading-6 text-slate-950 uppercase">{value || "—"}</p>
+        <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500">
+          {label}
+        </p>
+        <p className="mt-1 break-words text-base font-extrabold leading-6 text-slate-950 uppercase">
+          {value || "—"}
+        </p>
       </div>
     </div>
   );
@@ -114,7 +161,9 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <div className="mb-4 flex items-center gap-2">
       <span className="h-px flex-1 bg-slate-100" />
-      <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{children}</span>
+      <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+        {children}
+      </span>
       <span className="h-px flex-1 bg-slate-100" />
     </div>
   );
@@ -129,8 +178,24 @@ const Profile = () => {
   const isReadOnly = useIsReadOnly();
 
   const tabParam = (searchParams.get("tab") || "").toLowerCase();
-  const allowedTabs = ["profile", "statutory", "emergency", "journey", "leaves", "attendance", "assets", "reviews", "payslips", "documents", "security"] as const;
-  const initialTab = allowedTabs.includes(tabParam as (typeof allowedTabs)[number]) ? tabParam : "profile";
+  const allowedTabs = [
+    "profile",
+    "statutory",
+    "emergency",
+    "journey",
+    "leaves",
+    "attendance",
+    "assets",
+    "reviews",
+    "payslips",
+    "documents",
+    "security",
+  ] as const;
+  const initialTab = allowedTabs.includes(
+    tabParam as (typeof allowedTabs)[number],
+  )
+    ? tabParam
+    : "profile";
 
   const [activeTab, setActiveTab] = useState<string>(initialTab);
   const [isEditing, setIsEditing] = useState(false);
@@ -144,31 +209,55 @@ const Profile = () => {
     return { m: now.getMonth(), y: now.getFullYear() };
   });
   const [formData, setFormData] = useState<ProfileForm>({
-    mobile: "", personal_email: "", personal_phone: "", alternate_mobile: "", address_line1: "", city: "",
-    date_of_birth: "", gender: "", marital_status: "", blood_group: "",
-    working_hours_start: "09:00", working_hours_end: "18:00",
+    official_email: "",
+    mobile: "",
+    personal_email: "",
+    personal_phone: "",
+    alternate_mobile: "",
+    address_line1: "",
+    city: "",
+    date_of_birth: "",
+    gender: "",
+    marital_status: "",
+    blood_group: "",
+    working_hours_start: "09:00",
+    working_hours_end: "18:00",
     working_days: [1, 2, 3, 4, 5, 6], // Default: Mon-Sat (Sunday off)
   });
 
   useEffect(() => {
-    if (allowedTabs.includes(tabParam as (typeof allowedTabs)[number]) && tabParam !== activeTab) {
+    if (
+      allowedTabs.includes(tabParam as (typeof allowedTabs)[number]) &&
+      tabParam !== activeTab
+    ) {
       setActiveTab(tabParam);
     }
   }, [tabParam]);
 
   const handleTabChange = (value: string) => {
     setActiveTab(value);
-    setSearchParams((prev) => { const n = new URLSearchParams(prev); n.set("tab", value); return n; });
+    setSearchParams((prev) => {
+      const n = new URLSearchParams(prev);
+      n.set("tab", value);
+      return n;
+    });
   };
 
   const { data: myRMRequests } = useMyRMChangeRequests();
-  const hasPendingRMRequest = myRMRequests?.some(r => r.status === "pending") ?? false;
+  const hasPendingRMRequest =
+    myRMRequests?.some((r) => r.status === "pending") ?? false;
 
-  const { data: employee, isLoading, refetch } = useQuery({
+  const {
+    data: employee,
+    isLoading,
+    refetch,
+  } = useQuery({
     queryKey: ["my-profile", user?.id],
     queryFn: async () => {
       if (!user?.id) return null;
-      const res = await hrmsApi.get<{ success: boolean; data: any }>("/api/employees/me");
+      const res = await hrmsApi.get<{ success: boolean; data: any }>(
+        "/api/employees/me",
+      );
       return res.data ?? null;
     },
     enabled: !!user?.id,
@@ -191,17 +280,15 @@ const Profile = () => {
    */
   const attFrom = `${attMonth.y}-${String(attMonth.m + 1).padStart(2, "0")}-01`;
   const attTo = `${attMonth.y}-${String(attMonth.m + 1).padStart(2, "0")}-${String(new Date(attMonth.y, attMonth.m + 1, 0).getDate()).padStart(2, "0")}`;
-  const { data: attRows = [], isLoading: attLoading } = useAttendanceDailyRecords(
-    employee?.id ?? null,
-    attFrom,
-    attTo,
-  );
+  const { data: attRows = [], isLoading: attLoading } =
+    useAttendanceDailyRecords(employee?.id ?? null, attFrom, attTo);
 
   useEffect(() => {
     if (employee) {
       if (!avatarUrl) setAvatarUrl(employee.avatar_url ?? null);
       const fmt = (t: string | null) => (t ? t.slice(0, 5) : "");
       setFormData({
+        official_email: employee.official_email || "",
         mobile: employee.mobile || "",
         personal_email: employee.personal_email || "",
         personal_phone: employee.personal_phone || "",
@@ -224,22 +311,29 @@ const Profile = () => {
   const { data: journeyEvents = [], isLoading: journeyLoading } = useQuery({
     queryKey: ["my-journey", employee?.id],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/employees/me/journey");
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+        "/api/employees/me/journey",
+      );
       return res.data ?? [];
     },
     enabled: !!employee?.id,
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data: ProfileForm) => hrmsApi.patch("/api/employees/me", data),
+    mutationFn: (data: Partial<ProfileForm>) =>
+      hrmsApi.patch("/api/employees/me", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["my-profile"] });
       setIsEditing(false);
-      toast({ title: "Profile updated", description: "Your information has been saved." });
+      toast({
+        title: "Profile updated",
+        description: "Your information has been saved.",
+      });
     },
     onError: (err: Error) => {
       console.error("[Profile Save Error]", err);
-      const msg = err.message || "Failed to save profile. Check console and network tab.";
+      const msg =
+        err.message || "Failed to save profile. Check console and network tab.";
       toast({ title: "Error", description: msg, variant: "destructive" });
     },
   });
@@ -247,26 +341,42 @@ const Profile = () => {
   const cancelEdit = () => {
     setIsEditing(false);
     const fmt = (t: string | null) => (t ? t.slice(0, 5) : "");
-    if (employee) setFormData({
-      mobile: employee.mobile || "",
-      personal_email: employee.personal_email || "",
-      personal_phone: employee.personal_phone || "",
-      alternate_mobile: employee.alternate_mobile || "",
-      address_line1: employee.address_line1 || employee.address || "",
-      city: employee.city || "",
-      date_of_birth: employee.date_of_birth ? employee.date_of_birth.slice(0, 10) : "",
-      gender: employee.gender || "",
-      marital_status: employee.marital_status || "",
-      blood_group: employee.blood_group || "",
-      working_hours_start: fmt(employee.working_hours_start) || "09:00",
-      working_hours_end: fmt(employee.working_hours_end) || "18:00",
-      working_days: employee.working_days || [1, 2, 3, 4, 5, 6],
-    });
+    if (employee)
+      setFormData({
+        official_email: employee.official_email || "",
+        mobile: employee.mobile || "",
+        personal_email: employee.personal_email || "",
+        personal_phone: employee.personal_phone || "",
+        alternate_mobile: employee.alternate_mobile || "",
+        address_line1: employee.address_line1 || employee.address || "",
+        city: employee.city || "",
+        date_of_birth: employee.date_of_birth
+          ? employee.date_of_birth.slice(0, 10)
+          : "",
+        gender: employee.gender || "",
+        marital_status: employee.marital_status || "",
+        blood_group: employee.blood_group || "",
+        working_hours_start: fmt(employee.working_hours_start) || "09:00",
+        working_hours_end: fmt(employee.working_hours_end) || "18:00",
+        working_days: employee.working_days || [1, 2, 3, 4, 5, 6],
+      });
   };
 
   const initials = employee
     ? `${employee.first_name?.[0] ?? ""}${employee.last_name?.[0] ?? ""}`.toUpperCase()
-    : user?.email?.slice(0, 2).toUpperCase() ?? "U";
+    : (user?.email?.slice(0, 2).toUpperCase() ?? "U");
+
+  // official_email can only be self-set once, while IT provisioning/HR hasn't assigned
+  // one yet. The backend 403s if it's already set, so never resend an unchanged value —
+  // only include the key when the employee is filling it in for the first time.
+  const officialEmailIsOpen = !employee?.official_email;
+  const buildSavePayload = (): Partial<ProfileForm> => {
+    const { official_email, ...rest } = formData;
+    if (officialEmailIsOpen && official_email.trim()) {
+      return { ...rest, official_email: official_email.trim().toLowerCase() };
+    }
+    return rest;
+  };
 
   if (isLoading) {
     return (
@@ -281,15 +391,17 @@ const Profile = () => {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-
         {!employee ? (
           <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-16 text-center">
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100">
               <User className="h-8 w-8 text-slate-400" />
             </div>
-            <h3 className="mt-4 text-lg font-bold text-slate-900">No Employee Profile</h3>
+            <h3 className="mt-4 text-lg font-bold text-slate-900">
+              No Employee Profile
+            </h3>
             <p className="mt-2 text-sm text-slate-500">
-              Your account is not linked to an employee profile. Please contact HR.
+              Your account is not linked to an employee profile. Please contact
+              HR.
             </p>
           </div>
         ) : (
@@ -309,14 +421,21 @@ const Profile = () => {
                     onSuccess={async (url) => {
                       console.log("[Profile] Photo upload success, URL:", url);
                       // Add cache-busting timestamp to force browser reload
-                      const cacheBustedUrl = url ? `${url}?t=${Date.now()}` : null;
+                      const cacheBustedUrl = url
+                        ? `${url}?t=${Date.now()}`
+                        : null;
                       setAvatarUrl(cacheBustedUrl);
                       // Hard remove queries to force fresh fetch
                       queryClient.removeQueries({ queryKey: ["my-profile"] });
-                      queryClient.removeQueries({ queryKey: ["employee-profile"] });
+                      queryClient.removeQueries({
+                        queryKey: ["employee-profile"],
+                      });
                       console.log("[Profile] Refetching employee data...");
                       const result = await refetch();
-                      console.log("[Profile] Refetch complete:", result.data?.avatar_url);
+                      console.log(
+                        "[Profile] Refetch complete:",
+                        result.data?.avatar_url,
+                      );
                     }}
                     size="2xl"
                   />
@@ -334,18 +453,29 @@ const Profile = () => {
                     {employee.designation || "—"}
                   </p>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <Badge className={`rounded-full px-3 py-0.5 text-xs font-bold ${
-                      employee.status === "active"
-                        ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
-                        : "bg-slate-500/20 text-slate-300 border-slate-500/30"
-                    }`}>
-                      {employee.status === "active" ? "Active" : employee.status}
+                    <Badge
+                      className={`rounded-full px-3 py-0.5 text-xs font-bold ${
+                        employee.status === "active"
+                          ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
+                          : "bg-slate-500/20 text-slate-300 border-slate-500/30"
+                      }`}
+                    >
+                      {employee.status === "active"
+                        ? "Active"
+                        : employee.status}
                     </Badge>
                     <Badge className="rounded-full bg-white/10 px-3 py-0.5 text-xs font-bold text-white border-white/20">
                       {employee.employee_code}
                     </Badge>
                     {employee.department?.name && (
-                      <Badge className="rounded-full border px-4 py-1 text-sm font-extrabold" style={{ background: "rgba(27,106,181,0.3)", color: "#d9ecff", borderColor: "rgba(139,189,233,0.55)" }}>
+                      <Badge
+                        className="rounded-full border px-4 py-1 text-sm font-extrabold"
+                        style={{
+                          background: "rgba(27,106,181,0.3)",
+                          color: "#d9ecff",
+                          borderColor: "rgba(139,189,233,0.55)",
+                        }}
+                      >
                         {employee.department.name}
                       </Badge>
                     )}
@@ -355,14 +485,27 @@ const Profile = () => {
                 {/* Quick stats */}
                 <div className="grid shrink-0 grid-cols-2 gap-3 lg:w-[420px]">
                   {[
-                    { label: "Joined", value: formatDate(employee.date_of_joining) },
+                    {
+                      label: "Joined",
+                      value: formatDate(employee.date_of_joining),
+                    },
                     { label: "DOB", value: formatDate(employee.date_of_birth) },
-                    { label: "Email", value: employee.official_email || employee.email },
+                    {
+                      label: "Email",
+                      value: employee.official_email || employee.email,
+                    },
                     { label: "Phone", value: employee.mobile || "—" },
                   ].map(({ label, value }) => (
-                    <div key={label} className="rounded-2xl border border-white/20 bg-white/10 px-4 py-4">
-                      <p className="text-xs font-black uppercase tracking-widest text-blue-200">{label}</p>
-                      <p className="mt-1 truncate text-sm font-bold text-white">{value}</p>
+                    <div
+                      key={label}
+                      className="rounded-2xl border border-white/20 bg-white/10 px-4 py-4"
+                    >
+                      <p className="text-xs font-black uppercase tracking-widest text-blue-200">
+                        {label}
+                      </p>
+                      <p className="mt-1 truncate text-sm font-bold text-white">
+                        {value}
+                      </p>
                     </div>
                   ))}
                 </div>
@@ -370,22 +513,34 @@ const Profile = () => {
             </div>
 
             {/* ── Tabs ─────────────────────────────────────────────────── */}
-            <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
+            <Tabs
+              value={activeTab}
+              onValueChange={handleTabChange}
+              className="space-y-6"
+            >
               <div className="overflow-x-auto pb-px">
                 <TabsList className="inline-flex h-auto gap-1 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
                   {[
-                    { value: "profile",    icon: User,       label: "Profile" },
-                    { value: "statutory",  icon: Landmark,   label: "Bank & Statutory" },
-                    { value: "emergency",  icon: HeartHandshake, label: "Emergency & Nominee" },
-                    { value: "journey",    icon: GitBranch,  label: "Journey" },
-                    { value: "leaves",     icon: Calendar,   label: "Leaves" },
-                    { value: "attendance", icon: Clock,     label: "Attendance" },
-                    { value: "assets",     icon: Package,  label: "Assets" },
-                    { value: "reviews",    icon: Star,     label: "Reviews" },
-                    { value: "payslips",   icon: Wallet,   label: "Payslips" },
-                    { value: "documents",  icon: Files,    label: "Documents" },
-                    { value: "policies",   icon: ScrollText, label: "Policies" },
-                    { value: "security",   icon: ShieldCheck, label: "Security" },
+                    { value: "profile", icon: User, label: "Profile" },
+                    {
+                      value: "statutory",
+                      icon: Landmark,
+                      label: "Bank & Statutory",
+                    },
+                    {
+                      value: "emergency",
+                      icon: HeartHandshake,
+                      label: "Emergency & Nominee",
+                    },
+                    { value: "journey", icon: GitBranch, label: "Journey" },
+                    { value: "leaves", icon: Calendar, label: "Leaves" },
+                    { value: "attendance", icon: Clock, label: "Attendance" },
+                    { value: "assets", icon: Package, label: "Assets" },
+                    { value: "reviews", icon: Star, label: "Reviews" },
+                    { value: "payslips", icon: Wallet, label: "Payslips" },
+                    { value: "documents", icon: Files, label: "Documents" },
+                    { value: "policies", icon: ScrollText, label: "Policies" },
+                    { value: "security", icon: ShieldCheck, label: "Security" },
                   ].map(({ value, icon: Icon, label }) => (
                     <TabsTrigger
                       key={value}
@@ -402,16 +557,31 @@ const Profile = () => {
               {/* ── Profile Tab ─────────────────────────────────────── */}
               <TabsContent value="profile" className="space-y-6">
                 <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
-
                   {/* Left — identity card */}
                   <div className="space-y-4">
                     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                       <SectionTitle>Contact Info</SectionTitle>
                       <div className="divide-y divide-slate-50">
-                        <InfoRow icon={Mail}      label="Official Email" value={employee.official_email || employee.email} />
-                        <InfoRow icon={Phone}     label="Phone"      value={employee.mobile} />
-                        <InfoRow icon={Phone}     label="Alternate"  value={employee.alternate_mobile} />
-                        <InfoRow icon={MapPin}    label="City"       value={employee.city} />
+                        <InfoRow
+                          icon={Mail}
+                          label="Official Email"
+                          value={employee.official_email || employee.email}
+                        />
+                        <InfoRow
+                          icon={Phone}
+                          label="Phone"
+                          value={employee.mobile}
+                        />
+                        <InfoRow
+                          icon={Phone}
+                          label="Alternate"
+                          value={employee.alternate_mobile}
+                        />
+                        <InfoRow
+                          icon={MapPin}
+                          label="City"
+                          value={employee.city}
+                        />
                       </div>
                     </div>
 
@@ -421,18 +591,42 @@ const Profile = () => {
                     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                       <SectionTitle>Address</SectionTitle>
                       <div className="divide-y divide-slate-50">
-                        <InfoRow icon={MapPin} label="Current Address"   value={employee.current_address} />
-                        <InfoRow icon={MapPin} label="Permanent Address" value={employee.permanent_address} />
+                        <InfoRow
+                          icon={MapPin}
+                          label="Current Address"
+                          value={employee.current_address}
+                        />
+                        <InfoRow
+                          icon={MapPin}
+                          label="Permanent Address"
+                          value={employee.permanent_address}
+                        />
                       </div>
                     </div>
 
                     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                       <SectionTitle>Work Info</SectionTitle>
                       <div className="divide-y divide-slate-50">
-                        <InfoRow icon={Briefcase}  label="Designation"        value={employee.designation} />
-                        <InfoRow icon={Building2}  label="Department"         value={employee.department?.name} />
-                        <InfoRow icon={Users}      label="Reporting Manager"  value={employee.reporting_manager_name} />
-                        <InfoRow icon={Calendar}   label="Date of Joining"    value={formatDate(employee.date_of_joining)} />
+                        <InfoRow
+                          icon={Briefcase}
+                          label="Designation"
+                          value={employee.designation}
+                        />
+                        <InfoRow
+                          icon={Building2}
+                          label="Department"
+                          value={employee.department?.name}
+                        />
+                        <InfoRow
+                          icon={Users}
+                          label="Reporting Manager"
+                          value={employee.reporting_manager_name}
+                        />
+                        <InfoRow
+                          icon={Calendar}
+                          label="Date of Joining"
+                          value={formatDate(employee.date_of_joining)}
+                        />
                       </div>
                       <div className="mt-4">
                         <Button
@@ -443,9 +637,14 @@ const Profile = () => {
                           className="w-full rounded-xl text-xs font-bold"
                         >
                           {hasPendingRMRequest ? (
-                            <span className="text-amber-600">Manager Change Pending</span>
+                            <span className="text-amber-600">
+                              Manager Change Pending
+                            </span>
                           ) : (
-                            <>Request Manager Change <ChevronRight className="ml-1 h-3 w-3" /></>
+                            <>
+                              Request Manager Change{" "}
+                              <ChevronRight className="ml-1 h-3 w-3" />
+                            </>
                           )}
                         </Button>
                         <Button
@@ -462,10 +661,26 @@ const Profile = () => {
                     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                       <SectionTitle>Personal</SectionTitle>
                       <div className="divide-y divide-slate-50">
-                        <InfoRow icon={Cake}      label="Date of Birth"  value={formatDate(employee.date_of_birth)} />
-                        <InfoRow icon={User}      label="Gender"         value={employee.gender} />
-                        <InfoRow icon={HeartHandshake} label="Marital Status" value={employee.marital_status} />
-                        <InfoRow icon={User} label="Blood Group" value={displayBloodGroup(employee.blood_group)} />
+                        <InfoRow
+                          icon={Cake}
+                          label="Date of Birth"
+                          value={formatDate(employee.date_of_birth)}
+                        />
+                        <InfoRow
+                          icon={User}
+                          label="Gender"
+                          value={employee.gender}
+                        />
+                        <InfoRow
+                          icon={HeartHandshake}
+                          label="Marital Status"
+                          value={employee.marital_status}
+                        />
+                        <InfoRow
+                          icon={User}
+                          label="Blood Group"
+                          value={displayBloodGroup(employee.blood_group)}
+                        />
                       </div>
                     </div>
                   </div>
@@ -475,8 +690,12 @@ const Profile = () => {
                     {/* form header */}
                     <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
                       <div>
-                        <h2 className="text-base font-black text-slate-950">Personal Information</h2>
-                        <p className="mt-0.5 text-xs text-slate-500">Update your editable contact & schedule details</p>
+                        <h2 className="text-base font-black text-slate-950">
+                          Personal Information
+                        </h2>
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          Update your editable contact & schedule details
+                        </p>
                       </div>
                       {!isEditing ? (
                         <Button
@@ -485,24 +704,36 @@ const Profile = () => {
                           onClick={() => setIsEditing(true)}
                           disabled={isReadOnly}
                           className="gap-1.5 rounded-xl text-xs font-bold"
-                          title={isReadOnly ? "Cannot edit in read-only mode" : ""}
+                          title={
+                            isReadOnly ? "Cannot edit in read-only mode" : ""
+                          }
                         >
-                          <Edit3 className="h-3.5 w-3.5" /> {isReadOnly ? "Read-Only" : "Edit"}
+                          <Edit3 className="h-3.5 w-3.5" />{" "}
+                          {isReadOnly ? "Read-Only" : "Edit"}
                         </Button>
                       ) : (
                         <div className="flex gap-2">
-                          <Button variant="ghost" size="sm" onClick={cancelEdit} className="rounded-xl text-xs font-bold">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={cancelEdit}
+                            className="rounded-xl text-xs font-bold"
+                          >
                             <X className="mr-1 h-3.5 w-3.5" /> Cancel
                           </Button>
                           <Button
                             size="sm"
-                            onClick={() => updateMutation.mutate(formData)}
+                            onClick={() =>
+                              updateMutation.mutate(buildSavePayload())
+                            }
                             disabled={updateMutation.isPending}
                             className="gap-1.5 rounded-xl bg-slate-950 text-xs font-bold text-white hover:bg-slate-800"
                           >
-                            {updateMutation.isPending
-                              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              : <Save className="h-3.5 w-3.5" />}
+                            {updateMutation.isPending ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Save className="h-3.5 w-3.5" />
+                            )}
                             Save
                           </Button>
                         </div>
@@ -515,37 +746,81 @@ const Profile = () => {
                         <SectionTitle>Identity</SectionTitle>
                         <div className="grid gap-4 sm:grid-cols-2">
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">First Name</Label>
-                            <Input value={employee.first_name} disabled className="rounded-xl bg-slate-50" />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Last Name</Label>
-                            <Input value={employee.last_name} disabled className="rounded-xl bg-slate-50" />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Official Email</Label>
-                            {/* Read-only: official_email is the login identity, HR-only —
-                                the backend 403s any self-service PATCH /me that even carries
-                                this key, changed or not. Was previously rendered as an
-                                editable input wired to nothing the backend would accept,
-                                which made every save on this tab fail regardless of what
-                                the employee actually changed. */}
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              First Name
+                            </Label>
                             <Input
-                              type="email"
-                              value={employee.official_email || ""}
+                              value={employee.first_name}
                               disabled
-                              placeholder="name@teammas.in"
                               className="rounded-xl bg-slate-50"
                             />
-                            <p className={`text-xs font-semibold ${employee.official_email_compliant ? "text-emerald-600" : "text-amber-600"}`}>
-                              {employee.official_email_compliant
-                                ? "Official email verified"
-                                : "Use @teammas.in or @teammas.co.in"} · Contact HR to change
-                            </p>
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Employee Code</Label>
-                            <Input value={employee.employee_code} disabled className="rounded-xl bg-slate-50 font-mono" />
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              Last Name
+                            </Label>
+                            <Input
+                              value={employee.last_name}
+                              disabled
+                              className="rounded-xl bg-slate-50"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              Official Email
+                            </Label>
+                            {/* Editable exactly once, only while IT provisioning/HR has not
+                                yet assigned an official email (employee.official_email is
+                                still empty). Once set — by IT, HR, or the employee here — it
+                                locks for good; the backend 403s any further self-service
+                                change to this key. See PATCH /me in employee.routes.ts. */}
+                            <Input
+                              type="email"
+                              value={
+                                officialEmailIsOpen
+                                  ? formData.official_email
+                                  : employee.official_email || ""
+                              }
+                              onChange={(e) =>
+                                setFormData((p) => ({
+                                  ...p,
+                                  official_email: e.target.value.toLowerCase(),
+                                }))
+                              }
+                              disabled={!officialEmailIsOpen || !isEditing}
+                              placeholder="name@teammas.in"
+                              className={
+                                officialEmailIsOpen
+                                  ? "rounded-xl"
+                                  : "rounded-xl bg-slate-50"
+                              }
+                            />
+                            {officialEmailIsOpen ? (
+                              <p className="text-xs font-semibold text-amber-600">
+                                Not yet assigned by IT provisioning — you can
+                                set it once yourself (@teammas.in or
+                                @teammas.co.in), or wait for IT to assign it.
+                              </p>
+                            ) : (
+                              <p
+                                className={`text-xs font-semibold ${employee.official_email_compliant ? "text-emerald-600" : "text-amber-600"}`}
+                              >
+                                {employee.official_email_compliant
+                                  ? "Official email verified"
+                                  : "Use @teammas.in or @teammas.co.in"}{" "}
+                                · Contact HR to change
+                              </p>
+                            )}
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              Employee Code
+                            </Label>
+                            <Input
+                              value={employee.employee_code}
+                              disabled
+                              className="rounded-xl bg-slate-50 font-mono"
+                            />
                           </div>
                         </div>
                       </div>
@@ -557,73 +832,122 @@ const Profile = () => {
                         <SectionTitle>Contact & Location</SectionTitle>
                         <div className="grid gap-4 sm:grid-cols-2">
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Phone</Label>
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              Phone
+                            </Label>
                             <Input
                               value={formData.mobile}
-                              onChange={(e) => setFormData(p => ({ ...p, mobile: e.target.value }))}
+                              onChange={(e) =>
+                                setFormData((p) => ({
+                                  ...p,
+                                  mobile: e.target.value,
+                                }))
+                              }
                               disabled={!isEditing}
                               placeholder="e.g. +91 98765 43210"
                               className="rounded-xl"
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Personal Email</Label>
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              Personal Email
+                            </Label>
                             <Input
                               type="email"
                               value={formData.personal_email}
-                              onChange={(e) => setFormData(p => ({ ...p, personal_email: e.target.value.toLowerCase() }))}
+                              onChange={(e) =>
+                                setFormData((p) => ({
+                                  ...p,
+                                  personal_email: e.target.value.toLowerCase(),
+                                }))
+                              }
                               disabled={!isEditing}
                               placeholder="personal@gmail.com"
                               className="rounded-xl"
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Personal Phone</Label>
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              Personal Phone
+                            </Label>
                             <Input
                               type="tel"
                               value={formData.personal_phone}
-                              onChange={(e) => setFormData(p => ({ ...p, personal_phone: e.target.value }))}
+                              onChange={(e) =>
+                                setFormData((p) => ({
+                                  ...p,
+                                  personal_phone: e.target.value,
+                                }))
+                              }
                               disabled={!isEditing}
                               placeholder="+91 98765 43210"
                               className="rounded-xl"
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Alternate Number</Label>
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              Alternate Number
+                            </Label>
                             <Input
                               type="tel"
                               value={formData.alternate_mobile}
-                              onChange={(e) => setFormData(p => ({ ...p, alternate_mobile: e.target.value }))}
+                              onChange={(e) =>
+                                setFormData((p) => ({
+                                  ...p,
+                                  alternate_mobile: e.target.value,
+                                }))
+                              }
                               disabled={!isEditing}
                               placeholder="Alternate contact number"
                               className="rounded-xl"
                             />
                           </div>
                           <div className="space-y-1.5 sm:col-span-2">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Address</Label>
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              Address
+                            </Label>
                             <Input
                               value={formData.address_line1}
-                              onChange={(e) => setFormData(p => ({ ...p, address_line1: e.target.value }))}
+                              onChange={(e) =>
+                                setFormData((p) => ({
+                                  ...p,
+                                  address_line1: e.target.value,
+                                }))
+                              }
                               disabled={!isEditing}
                               placeholder="Street address"
                               className="rounded-xl"
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">City</Label>
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              City
+                            </Label>
                             <Input
                               value={formData.city}
-                              onChange={(e) => setFormData(p => ({ ...p, city: e.target.value }))}
+                              onChange={(e) =>
+                                setFormData((p) => ({
+                                  ...p,
+                                  city: e.target.value,
+                                }))
+                              }
                               disabled={!isEditing}
                               placeholder="Mumbai"
                               className="rounded-xl"
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">State</Label>
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              State
+                            </Label>
                             <Input
                               value={(formData as any).state || ""}
-                              onChange={(e) => setFormData(p => ({ ...p, state: e.target.value } as any))}
+                              onChange={(e) =>
+                                setFormData(
+                                  (p) =>
+                                    ({ ...p, state: e.target.value }) as any,
+                                )
+                              }
                               disabled={!isEditing}
                               placeholder="Delhi"
                               className="rounded-xl"
@@ -639,22 +963,40 @@ const Profile = () => {
                         <SectionTitle>Personal Details</SectionTitle>
                         <div className="grid gap-4 sm:grid-cols-2">
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Date of Birth</Label>
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              Date of Birth
+                            </Label>
                             <Input
                               type="date"
                               value={formData.date_of_birth}
-                              onChange={(e) => setFormData(p => ({ ...p, date_of_birth: e.target.value }))}
+                              onChange={(e) =>
+                                setFormData((p) => ({
+                                  ...p,
+                                  date_of_birth: e.target.value,
+                                }))
+                              }
                               disabled={!isEditing}
-                              max={new Date(new Date().getFullYear() - 18, new Date().getMonth(), new Date().getDate())
-                                .toISOString().split("T")[0]}
+                              max={
+                                new Date(
+                                  new Date().getFullYear() - 18,
+                                  new Date().getMonth(),
+                                  new Date().getDate(),
+                                )
+                                  .toISOString()
+                                  .split("T")[0]
+                              }
                               className="rounded-xl"
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Gender</Label>
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              Gender
+                            </Label>
                             <Select
                               value={formData.gender}
-                              onValueChange={(v) => setFormData(p => ({ ...p, gender: v }))}
+                              onValueChange={(v) =>
+                                setFormData((p) => ({ ...p, gender: v }))
+                              }
                               disabled={!isEditing}
                             >
                               <SelectTrigger className="rounded-xl">
@@ -664,15 +1006,24 @@ const Profile = () => {
                                 <SelectItem value="male">Male</SelectItem>
                                 <SelectItem value="female">Female</SelectItem>
                                 <SelectItem value="other">Other</SelectItem>
-                                <SelectItem value="prefer_not_to_say">Prefer not to say</SelectItem>
+                                <SelectItem value="prefer_not_to_say">
+                                  Prefer not to say
+                                </SelectItem>
                               </SelectContent>
                             </Select>
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Marital Status</Label>
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              Marital Status
+                            </Label>
                             <Select
                               value={formData.marital_status}
-                              onValueChange={(v) => setFormData(p => ({ ...p, marital_status: v }))}
+                              onValueChange={(v) =>
+                                setFormData((p) => ({
+                                  ...p,
+                                  marital_status: v,
+                                }))
+                              }
                               disabled={!isEditing}
                             >
                               <SelectTrigger className="rounded-xl">
@@ -681,13 +1032,17 @@ const Profile = () => {
                               <SelectContent>
                                 <SelectItem value="single">Single</SelectItem>
                                 <SelectItem value="married">Married</SelectItem>
-                                <SelectItem value="divorced">Divorced</SelectItem>
+                                <SelectItem value="divorced">
+                                  Divorced
+                                </SelectItem>
                                 <SelectItem value="widowed">Widowed</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Blood Group</Label>
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              Blood Group
+                            </Label>
                             {/* Was a free-text Input. That is where 'B+ve', 'O +' and one
                                 'SAMBHLI' in live data came from, and a typo here reaches
                                 the printed employee ID card. A legacy value that is not
@@ -695,8 +1050,14 @@ const Profile = () => {
                                 placeholder — matches no item, so the field shows its
                                 placeholder and asks for a real choice. */}
                             <Select
-                              value={isKnownBloodGroup(formData.blood_group) ? formData.blood_group : ""}
-                              onValueChange={(v) => setFormData(p => ({ ...p, blood_group: v }))}
+                              value={
+                                isKnownBloodGroup(formData.blood_group)
+                                  ? formData.blood_group
+                                  : ""
+                              }
+                              onValueChange={(v) =>
+                                setFormData((p) => ({ ...p, blood_group: v }))
+                              }
                               disabled={!isEditing}
                             >
                               <SelectTrigger className="rounded-xl">
@@ -704,7 +1065,9 @@ const Profile = () => {
                               </SelectTrigger>
                               <SelectContent>
                                 {BLOOD_GROUPS.map((bg) => (
-                                  <SelectItem key={bg} value={bg}>{bg}</SelectItem>
+                                  <SelectItem key={bg} value={bg}>
+                                    {bg}
+                                  </SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -719,13 +1082,20 @@ const Profile = () => {
                         <SectionTitle>Working Schedule</SectionTitle>
                         <div className="grid gap-4 sm:grid-cols-2">
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Start Time</Label>
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              Start Time
+                            </Label>
                             <div className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm font-semibold text-slate-900 disabled:bg-slate-50">
                               {isEditing ? (
                                 <Input
                                   type="time"
                                   value={formData.working_hours_start}
-                                  onChange={(e) => setFormData(p => ({ ...p, working_hours_start: e.target.value }))}
+                                  onChange={(e) =>
+                                    setFormData((p) => ({
+                                      ...p,
+                                      working_hours_start: e.target.value,
+                                    }))
+                                  }
                                   className="rounded-xl border-0 p-0 shadow-none focus-visible:ring-0"
                                 />
                               ) : (
@@ -737,13 +1107,20 @@ const Profile = () => {
                             </div>
                           </div>
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">End Time</Label>
+                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                              End Time
+                            </Label>
                             <div className="flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm font-semibold text-slate-900">
                               {isEditing ? (
                                 <Input
                                   type="time"
                                   value={formData.working_hours_end}
-                                  onChange={(e) => setFormData(p => ({ ...p, working_hours_end: e.target.value }))}
+                                  onChange={(e) =>
+                                    setFormData((p) => ({
+                                      ...p,
+                                      working_hours_end: e.target.value,
+                                    }))
+                                  }
                                   className="rounded-xl border-0 p-0 shadow-none focus-visible:ring-0"
                                 />
                               ) : (
@@ -757,10 +1134,13 @@ const Profile = () => {
                         </div>
 
                         <div className="mt-4 space-y-2">
-                          <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Working Days</Label>
+                          <Label className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+                            Working Days
+                          </Label>
                           <div className="flex flex-wrap gap-2">
                             {DAY_LABELS.map((label, idx) => {
-                              const active = formData.working_days.includes(idx);
+                              const active =
+                                formData.working_days.includes(idx);
                               return (
                                 <button
                                   key={idx}
@@ -768,11 +1148,15 @@ const Profile = () => {
                                   disabled={!isEditing}
                                   onClick={() => {
                                     if (!isEditing) return;
-                                    setFormData(p => ({
+                                    setFormData((p) => ({
                                       ...p,
                                       working_days: active
-                                        ? p.working_days.filter(d => d !== idx)
-                                        : [...p.working_days, idx].sort((a, b) => a - b),
+                                        ? p.working_days.filter(
+                                            (d) => d !== idx,
+                                          )
+                                        : [...p.working_days, idx].sort(
+                                            (a, b) => a - b,
+                                          ),
                                     }));
                                   }}
                                   className={`h-9 w-12 rounded-xl text-xs font-bold transition-colors ${
@@ -795,7 +1179,10 @@ const Profile = () => {
 
               {/* ── Other Tabs ─────────────────────────────────────────── */}
               <TabsContent value="statutory">
-                <BankStatutoryDetails employee={employee} allowStatutoryEdit={isAdminOrHR} />
+                <BankStatutoryDetails
+                  employee={employee}
+                  allowStatutoryEdit={isAdminOrHR}
+                />
               </TabsContent>
 
               <TabsContent value="emergency">
