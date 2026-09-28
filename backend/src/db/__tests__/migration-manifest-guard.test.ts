@@ -3,7 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+const ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "..",
+);
 const LOCK_PATH = path.join(ROOT, "sql", "MIGRATION_MANIFEST.lock.json");
 
 /**
@@ -24,16 +29,25 @@ const LOCK_PATH = path.join(ROOT, "sql", "MIGRATION_MANIFEST.lock.json");
  */
 
 function readManifest(): string[] {
-  const src = fs.readFileSync(path.join(ROOT, "src", "db", "runPendingMigrations.ts"), "utf8");
+  const src = fs.readFileSync(
+    path.join(ROOT, "src", "db", "runPendingMigrations.ts"),
+    "utf8",
+  );
   const start = src.indexOf("MIGRATION_MANIFEST");
   const end = src.indexOf("export type MigrationHealth");
   expect(start, "MIGRATION_MANIFEST not found").toBeGreaterThan(-1);
-  return [...src.slice(start, end).matchAll(/"([^"]+\.sql)"/g)].map((m) => m[1]);
+  return [...src.slice(start, end).matchAll(/"([^"]+\.sql)"/g)].map(
+    (m) => m[1],
+  );
 }
 
 function readLock(): {
   released: string[];
-  approvedDeletions: Array<{ filename: string; reason: string; approvedBy?: string }>;
+  approvedDeletions: Array<{
+    filename: string;
+    reason: string;
+    approvedBy?: string;
+  }>;
   knownDangling: string[];
   knownUnlisted: string[];
 } {
@@ -75,8 +89,11 @@ const sqlFilesIncludingSubdirs = (): string[] => {
       continue;
     }
     if (entry.isDirectory()) {
-      for (const nested of fs.readdirSync(path.join(root, entry.name), { withFileTypes: true })) {
-        if (nested.isFile() && /\.sql$/.test(nested.name)) out.push(`${entry.name}/${nested.name}`);
+      for (const nested of fs.readdirSync(path.join(root, entry.name), {
+        withFileTypes: true,
+      })) {
+        if (nested.isFile() && /\.sql$/.test(nested.name))
+          out.push(`${entry.name}/${nested.name}`);
       }
     }
   }
@@ -90,16 +107,18 @@ describe("migration manifest — removals", () => {
     const lock = readLock();
     const approved = new Set(lock.approvedDeletions.map((d) => d.filename));
 
-    const removed = lock.released.filter((f) => !manifest.has(f) && !approved.has(f));
+    const removed = lock.released.filter(
+      (f) => !manifest.has(f) && !approved.has(f),
+    );
 
     expect(
       removed,
       removed.length
         ? `${removed.length} migration(s) vanished from the manifest with no approved deletion:\n` +
-          removed.map((f) => `  ${f}`).join("\n") +
-          `\n\nOn a fresh database these will never run. If the removal is intended, add each to ` +
-          `approvedDeletions in sql/MIGRATION_MANIFEST.lock.json with a reason, then run ` +
-          `node scripts/update-migration-lock.mjs --write`
+            removed.map((f) => `  ${f}`).join("\n") +
+            `\n\nOn a fresh database these will never run. If the removal is intended, add each to ` +
+            `approvedDeletions in sql/MIGRATION_MANIFEST.lock.json with a reason, then run ` +
+            `node scripts/update-migration-lock.mjs --write`
         : "",
     ).toEqual([]);
   });
@@ -108,7 +127,10 @@ describe("migration manifest — removals", () => {
     // An approval with no reason is a rubber stamp, and the next person cannot
     // tell a deliberate removal from a mistake someone waved through.
     for (const d of readLock().approvedDeletions) {
-      expect(d.reason?.trim(), `approvedDeletions entry "${d.filename}" has no reason`).toBeTruthy();
+      expect(
+        d.reason?.trim(),
+        `approvedDeletions entry "${d.filename}" has no reason`,
+      ).toBeTruthy();
     }
   });
 });
@@ -127,7 +149,10 @@ describe("migration manifest — ordering", () => {
     for (let i = 1; i < stillPresent.length; i++) {
       const prev = position.get(stillPresent[i - 1])!;
       const cur = position.get(stillPresent[i])!;
-      if (cur < prev) outOfOrder.push(`${stillPresent[i]} now runs before ${stillPresent[i - 1]}`);
+      if (cur < prev)
+        outOfOrder.push(
+          `${stillPresent[i]} now runs before ${stillPresent[i - 1]}`,
+        );
     }
     expect(outOfOrder, outOfOrder.join("\n")).toEqual([]);
   });
@@ -139,14 +164,16 @@ describe("migration manifest — files and entries agree", () => {
     // everything after it never applies either.
     const files = new Set(sqlFilesIncludingSubdirs());
     const known = new Set(readLock().knownDangling);
-    const dangling = readManifest().filter((m) => !files.has(m) && !known.has(m));
+    const dangling = readManifest().filter(
+      (m) => !files.has(m) && !known.has(m),
+    );
 
     expect(
       dangling,
       dangling.length
         ? `manifest names ${dangling.length} file(s) that do not exist:\n` +
-          dangling.map((f) => `  ${f}`).join("\n") +
-          `\nA fresh migration run stops here, so nothing after it applies either.`
+            dangling.map((f) => `  ${f}`).join("\n") +
+            `\nA fresh migration run stops here, so nothing after it applies either.`
         : "",
     ).toEqual([]);
   });
@@ -163,8 +190,8 @@ describe("migration manifest — files and entries agree", () => {
       orphans,
       orphans.length
         ? `${orphans.length} migration file(s) exist but are in neither the manifest nor the lock:\n` +
-          orphans.map((f) => `  ${f}`).join("\n") +
-          `\nAdd them to MIGRATION_MANIFEST, or to knownUnlisted if they are deliberately not run.`
+            orphans.map((f) => `  ${f}`).join("\n") +
+            `\nAdd them to MIGRATION_MANIFEST, or to knownUnlisted if they are deliberately not run.`
         : "",
     ).toEqual([]);
   });
@@ -175,12 +202,15 @@ describe("migration manifest — files and entries agree", () => {
     const files = new Set(sqlFiles());
     const lock = readLock();
     const knownDangling = new Set(lock.knownDangling);
-    const gone = lock.released.filter((f) => !files.has(f) && !knownDangling.has(f));
+    const gone = lock.released.filter(
+      (f) => !files.has(f) && !knownDangling.has(f),
+    );
 
     expect(
       gone,
       gone.length
-        ? `${gone.length} released migration file(s) are no longer on disk:\n` + gone.map((f) => `  ${f}`).join("\n")
+        ? `${gone.length} released migration file(s) are no longer on disk:\n` +
+            gone.map((f) => `  ${f}`).join("\n")
         : "",
     ).toEqual([]);
   });
@@ -192,14 +222,20 @@ describe("migration manifest — duplicates", () => {
     // no-op or a double application depending on the DDL.
     const manifest = readManifest();
     const seen = new Set<string>();
-    const dupes = manifest.filter((f) => (seen.has(f) ? true : (seen.add(f), false)));
-    expect(dupes, `duplicate manifest entries: ${dupes.join(", ")}`).toEqual([]);
+    const dupes = manifest.filter((f) =>
+      seen.has(f) ? true : (seen.add(f), false),
+    );
+    expect(dupes, `duplicate manifest entries: ${dupes.join(", ")}`).toEqual(
+      [],
+    );
   });
 
   it("no two files share a name", () => {
     const files = sqlFiles();
     const seen = new Set<string>();
-    const dupes = files.filter((f) => (seen.has(f) ? true : (seen.add(f), false)));
+    const dupes = files.filter((f) =>
+      seen.has(f) ? true : (seen.add(f), false),
+    );
     expect(dupes).toEqual([]);
   });
 
@@ -303,6 +339,18 @@ describe("migration manifest — duplicates", () => {
     // 91 -> 92 (2026-09-22): 1836_journal_voucher.sql registered alongside the
     // already-registered 1836_user_assignment_scope_cost_centre.sql — same concurrent-session
     // number collision pattern as every jump above.
-    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(92);
+    //
+    // 92 -> 95 (2026-09-29): merging Collections module (1870-1895) into main. The branch's
+    // 1870_collections_masters.sql, 1871_collections_source_file.sql, and
+    // 1880_collections_contact_policy_suppression.sql collided with main's independently-numbered
+    // migrations/1870_job_requisition_deadline_automation.sql, 1871_process_metric_actual_covering_indexes.sql,
+    // and 1880_payroll_head_review_history_action_enum_reapply.sql respectively. Same shape as every
+    // jump above — concurrent sessions picked the same next-available numbers. All are real,
+    // already-applied-or-registered migrations; renaming any of them is the one thing that would
+    // break schema_migrations' by-filename tracking.
+    expect(
+      shared.length,
+      "duplicate migration numbers grew unexpectedly",
+    ).toBeLessThanOrEqual(95);
   });
 });
