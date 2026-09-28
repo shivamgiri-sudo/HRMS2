@@ -816,4 +816,79 @@ router.post(
   },
 );
 
+/**
+ * Upload_Batch history (requirements.md criterion 17.13 — "a history screen ... lists many
+ * batches per branch"). Every batch this route's evidence phase creates (see createAprBulkUploadBatch
+ * above) is one row here: which file, which branch/process/date range, who uploaded it, and the
+ * accepted/rejected row counts (criterion 17.11). Nothing wrote this table until the attribution
+ * work above shipped, so a batch here is guaranteed to already carry a real Dialler_Source.
+ *
+ * Read-only, same role gate as the upload itself — no branch/process filter is applied server-side
+ * beyond what the caller asks for, matching every other list in this hub (e.g. Master Data's own
+ * batch list), which does not scope by the viewer's own branch either.
+ */
+interface BatchHistoryRow extends RowDataPacket {
+  id: string;
+  batch_reference: string;
+  file_name: string;
+  date_from: string;
+  date_to: string;
+  submitted_at: string;
+  submitted_row_count: number;
+  accepted_row_count: number;
+  rejected_row_count: number;
+  status: 'pending' | 'accepted' | 'rejected' | 'superseded';
+  supersedes_batch_id: string | null;
+  superseded_by_batch_id: string | null;
+  dialler_source_name: string | null;
+  branch_name: string | null;
+  process_name: string | null;
+  uploaded_by_name: string | null;
+}
+
+router.get(
+  '/apr-bulk-upload/batches',
+  requireRole('wfm', 'hr', 'payroll_head', 'super_admin', 'admin'),
+  async (req: any, res: any) => {
+    const { branchId, processId, status, limit } = req.query as Record<string, string | undefined>;
+    const conds: string[] = [];
+    const params: unknown[] = [];
+    if (branchId) { conds.push('pub.branch_id = ?'); params.push(branchId); }
+    if (processId) { conds.push('pub.process_id = ?'); params.push(processId); }
+    if (status) { conds.push('pub.status = ?'); params.push(status); }
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+    const limitClause = `LIMIT ${Math.min(Number(limit) || 100, 500)}`;
+
+    try {
+      const [rows] = await db.execute<BatchHistoryRow[]>(
+        `SELECT pub.id, pub.batch_reference, pub.file_name,
+                DATE_FORMAT(pub.date_from, '%Y-%m-%d') AS date_from,
+                DATE_FORMAT(pub.date_to, '%Y-%m-%d') AS date_to,
+                DATE_FORMAT(pub.submitted_at, '%Y-%m-%d %H:%i:%s') AS submitted_at,
+                pub.submitted_row_count, pub.accepted_row_count, pub.rejected_row_count,
+                pub.status, pub.supersedes_batch_id, pub.superseded_by_batch_id,
+                ds.display_name AS dialler_source_name,
+                bm.branch_name, pm.process_name,
+                CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, '')) AS uploaded_by_name
+           FROM productivity_upload_batch pub
+           LEFT JOIN dialler_source ds ON ds.id = pub.dialler_source_id
+           LEFT JOIN branch_master bm ON bm.id = pub.branch_id
+           LEFT JOIN process_master pm ON pm.id = pub.process_id
+           LEFT JOIN employees e ON e.user_id = pub.uploaded_by
+           ${where}
+           ORDER BY pub.submitted_at DESC
+           ${limitClause}`,
+        params,
+      );
+      res.json({ success: true, data: rows });
+    } catch (err) {
+      console.error('[apr-bulk-upload] batch history query failed', err);
+      res.status(500).json({
+        success: false,
+        message: 'The upload history could not be loaded because of a server error. Please retry.',
+      });
+    }
+  },
+);
+
 export { router as attendanceAprBulkRouter };
